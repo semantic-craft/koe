@@ -1,3 +1,5 @@
+> **Private mirror — self-use only.** Source: https://github.com/tacshi/Soundcore (upstream author: [tacshi](https://github.com/tacshi)). Upstream has **no license**; all rights remain with the author. Private personal use only — **not for redistribution**; do not make this repository public.
+
 # Soundcore Manager（安克录音豆）
 
 **soundcore Work**（安克 AI 录音豆 / **D3200**）本地管理 App，基于逆向出的设备协议（见 [`PROTOCOL.md`](PROTOCOL.md)）用 Flutter 实现，脱离飞书 App 独立使用：BLE 配对连接、录音管理、AI 实时/批量转写、Wi‑Fi SoftAP 批量导出。
