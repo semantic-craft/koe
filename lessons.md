@@ -80,7 +80,7 @@
 
 - 起因与后果：2026-10-15，千问单元测试只检查 MultipartRequest 的字段，真实 OSS 却因文件 part 将 Content-Type 放在 Content-Disposition 前而返回 HTTP 400 MalformedPOSTRequest，双端都无法提交任务。
 - 修复与证据：专用 OssUploadRequest 调整文件头顺序，保持流式音频和进度；同音频对照仅交换顺序即从 400 变 200。`test/qwen_stt_test.dart` 序列化回归先红后绿；真实双端提交后终止进程、重启、同任务编号完成，见 `docs/recording-processing-validation.md`。
-- 正确做法：在实际发送字节层检查文件头、Content-Length 与音频完整性；配置成功、模拟 HTTP 通过与真实上传成功分别验收。不得记录上传凭据或完整请求体。
+- 正确做法：在实际发送字节层检查文件头、Content-Length 与音频完整性；配置成功、模拟 HTTP 通过与真实上传成功分别验收。不得记录上传凭据或完整请求体。 对长录音还须核对准备阶段与上传阶段是否整份读入内存；流式 multipart 外层不能掩盖先 readAsBytes 的全量缓冲。#23 已改为分块 OGG 封装及磁盘流上传，25 MiB 合成夹具覆盖分块取消，真实短样本验证服务接受。
 - 复发记录：Seen 1x (2026-10-15)。
 
 ### 手动断开意图不能被一次状态通知消耗

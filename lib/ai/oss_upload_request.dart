@@ -5,11 +5,12 @@ import 'package:http/http.dart' as http;
 
 /// OSS requires Content-Disposition before Content-Type in the file part.
 /// Keep the payload streamed and byte-for-byte intact; only encode headers here.
-class OssUploadRequest extends http.BaseRequest {
+class OssUploadRequest extends http.BaseRequest with http.Abortable {
   OssUploadRequest(
     Uri url, {
     required Map<String, String> fields,
     required this.file,
+    this.abortTrigger,
   }) : fields = Map.unmodifiable(fields),
        super('POST', url) {
     final random = Random.secure();
@@ -35,6 +36,8 @@ class OssUploadRequest extends http.BaseRequest {
 
   final Map<String, String> fields;
   final http.MultipartFile file;
+  @override
+  final Future<void>? abortTrigger;
   late final List<int> _prefix;
   late final List<int> _suffix;
 

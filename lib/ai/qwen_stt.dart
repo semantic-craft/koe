@@ -7,9 +7,9 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
 import '../audio/ogg_opus.dart';
+import '../audio/audio_duration.dart';
 import 'cloud_stt_service.dart';
 import 'oss_upload_request.dart';
-import 'progress_multipart.dart';
 import 'stt_types.dart';
 
 /// DashScope Qwen-Audio 3.1 file transcription.
@@ -53,6 +53,13 @@ class QwenSttService extends CloudFileSttService {
   final http.Client _client;
   final Duration pollInterval;
   final Duration taskTimeout;
+  Completer<void>? _abort;
+  bool _cancelled = false;
+  void cancelCurrent() {
+    _cancelled = true;
+    final abort = _abort;
+    if (abort != null && !abort.isCompleted) abort.complete();
+  }
 
   static const defaultBaseUrl = 'https://dashscope.aliyuncs.com';
   static const intlBaseUrl = 'https://dashscope-intl.aliyuncs.com';
@@ -94,6 +101,10 @@ class QwenSttService extends CloudFileSttService {
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
+    _cancelled = false;
+    _abort = Completer<void>();
+    final ownerIsCurrent = isCurrent;
+    isCurrent = () => !_cancelled && (ownerIsCurrent?.call() ?? true);
     final key = (apiKey ?? this.apiKey)?.trim();
     if (key == null || key.isEmpty) {
       throw const QwenSttException('请在设置中配置通义 Qwen');
@@ -113,7 +124,16 @@ class QwenSttService extends CloudFileSttService {
     if (taskId == null) {
       onProgress?.call(const SttFileProgress(SttFileStage.preparing));
       _ensureCurrent(isCurrent);
-      final audioPath = await OggOpus.ensurePlayable(path);
+      final uploadSource = await qwenUploadSource(path);
+      final duration = await AudioDuration.read(uploadSource);
+      validateQwenAudio(
+        length: await File(uploadSource).length(),
+        duration: duration,
+      );
+      final audioPath = await OggOpus.prepareUpload(
+        uploadSource,
+        isCurrent: isCurrent,
+      );
       final file = File(audioPath);
       final length = await file.length();
       if (!await file.exists() || length < 64) {
@@ -132,7 +152,7 @@ class QwenSttService extends CloudFileSttService {
         origin: origin,
         apiKey: key,
         model: resolvedModel,
-        bytes: await file.readAsBytes(),
+        file: file,
         filename: filename,
         onProgress: onProgress,
         isCurrent: isCurrent,
@@ -180,7 +200,7 @@ class QwenSttService extends CloudFileSttService {
     required String origin,
     required String apiKey,
     required String model,
-    required Uint8List bytes,
+    required File file,
     required String filename,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
@@ -193,14 +213,15 @@ class QwenSttService extends CloudFileSttService {
       );
       _ensureCurrent(isCurrent);
       final maxMb = policy.maxFileSizeMb;
-      if (maxMb != null && bytes.length > maxMb * 1024 * 1024) {
+      if (maxMb != null && await file.length() > maxMb * 1024 * 1024) {
         throw QwenSttException('音频超过通义允许的 $maxMb MB');
       }
       return _postToOss(
         policy: policy,
-        bytes: bytes,
+        file: file,
         filename: filename,
         onProgress: onProgress,
+        isCurrent: isCurrent,
       );
     }
 
@@ -234,13 +255,15 @@ class QwenSttService extends CloudFileSttService {
 
   Future<String> _postToOss({
     required QwenUploadPolicy policy,
-    required Uint8List bytes,
+    required File file,
     required String filename,
     SttFileProgressCallback? onProgress,
+    bool Function()? isCurrent,
   }) async {
     final key = '${policy.uploadDir}/$filename';
     final request = OssUploadRequest(
       Uri.parse(policy.uploadHost),
+      abortTrigger: _abort?.future,
       fields: {
         'OSSAccessKeyId': policy.accessKeyId,
         'Signature': policy.signature,
@@ -250,9 +273,10 @@ class QwenSttService extends CloudFileSttService {
         'key': key,
         'success_action_status': '200',
       },
-      file: multipartFileWithProgress(
+      file: multipartFileFromDisk(
         field: 'file',
-        bytes: bytes,
+        file: file,
+        isCurrent: isCurrent,
         filename: filename,
         onProgress: (sent, total) => onProgress?.call(
           SttFileProgress(
@@ -266,7 +290,9 @@ class QwenSttService extends CloudFileSttService {
     final streamed = await _client
         .send(request)
         .timeout(const Duration(minutes: 10));
-    final body = await streamed.stream.bytesToString();
+    final body = await streamed.stream.bytesToString().timeout(
+      const Duration(seconds: 30),
+    );
     if (streamed.statusCode == 403 && body.contains('Policy expired')) {
       throw const QwenPolicyExpired();
     }
@@ -412,6 +438,7 @@ class QwenSttService extends CloudFileSttService {
 
   @override
   void dispose() {
+    cancelCurrent();
     _client.close();
   }
 }
@@ -752,4 +779,53 @@ class QwenTaskRecovery {
 
 class QwenTaskFailedException extends QwenSttException {
   const QwenTaskFailedException(super.message);
+}
+
+/// Prefer the original compressed recording only when its measured duration
+/// matches the generated playback file. Never substitute unrelated audio.
+Future<String> qwenUploadSource(String path) async {
+  if (!path.endsWith('.wav')) return path;
+  final raw = '${path.substring(0, path.length - 4)}.opus';
+  if (!await File(raw).exists()) return path;
+  final playbackDuration = await AudioDuration.read(path);
+  final rawDuration = await AudioDuration.read(raw);
+  if (playbackDuration == null ||
+      rawDuration == null ||
+      (playbackDuration - rawDuration).inMilliseconds.abs() > 500) {
+    return path;
+  }
+  return raw;
+}
+
+void validateQwenAudio({required int length, Duration? duration}) {
+  if (length > QwenSttService.maxUploadBytes) {
+    throw const QwenSttException('音频超过当前上传方式的 1 GiB 限制');
+  }
+  if (duration != null && duration > const Duration(hours: 12)) {
+    throw const QwenSttException('音频超过千问支持的 12 小时');
+  }
+}
+
+http.MultipartFile multipartFileFromDisk({
+  required String field,
+  required File file,
+  required String filename,
+  required void Function(int, int) onProgress,
+  bool Function()? isCurrent,
+}) {
+  final length = file.lengthSync();
+  Stream<List<int>> chunks() async* {
+    var sent = 0;
+    onProgress(0, length);
+    await for (final chunk in file.openRead()) {
+      if (isCurrent != null && !isCurrent()) {
+        throw const QwenSttException('已取消');
+      }
+      yield chunk;
+      sent += chunk.length;
+      onProgress(sent, length);
+    }
+  }
+
+  return http.MultipartFile(field, chunks(), length, filename: filename);
 }
