@@ -67,6 +67,10 @@ flutter run -d android
 ## 构建
 
 ```bash
+# macOS 本机安装（固定 Developer ID 签名，升级后保留 Keychain 访问）
+./scripts/install-macos.sh           # 先退出已安装 App，再构建并安装
+./scripts/install-macos.sh --skip-build # 安装已有 Release 构建
+
 # macOS release + DMG → dist/soundcore-manager-<version>-macos.dmg
 ./scripts/build-dmg.sh
 ./scripts/build-dmg.sh --open       # 构建后在 Finder 中显示 DMG
