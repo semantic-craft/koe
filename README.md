@@ -94,6 +94,7 @@ flutter test
 - **摘要与分析**：录音详情点击“摘要与分析”，手动生成摘要或输入自定义要求；使用 Qwen3.8-Flash 与已有千问 Key。结果独立保存，可复制、导出和查看原文依据；长文分段处理并保留完成进度。
 - **结构化纪要**：在“摘要与分析”进入纪要，使用千问生成议题、决策、待办及未决问题；支持编辑、来源回溯与 Markdown 导出。验证范围见 [交付记录](docs/structured-minutes-validation.md)。
 - **思维导图**：从结构化纪要直接生成，可缩放、折叠、查看原文并导出完整 PNG；不再次调用模型。大图限制与验证见 [交付记录](docs/mind-map-validation.md)。
+- **豆包极速版上传**：按 100 MB / 2 小时分别检查，优先使用匹配的压缩录音；分块 Base64 上传，可停止等待，结果未知时不自动重发。范围及验证见 [交付记录](docs/doubao-upload-validation.md)。
 - **千问长录音**：支持范围以模型规格与当前临时上传限制共同约束；分块封装与上传，保留已提交任务供重启后查询。短录音链路验收及长时使用边界见 [交付记录](docs/qwen-long-recording-analysis.md)。
 - **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，App 当前限制直传 20 MB。按当前产品决定，不接入豆包标准版；超过豆包当前直传限制时提示压缩音频或手动选择已配置的千问，不自动切换供应商。
 - **实时转写**：BLE Opus → PCM16 → 服务商 WebSocket。千问使用 `qwen-audio-3.1-asr-flash-streaming`；豆包使用 `volc.seedasr.sauc.duration`，优化双向流式接口开启 `enable_nonstream` 二遍识别。成功的实时结果不再自动重复提交文件；实时未完成时由同一服务的文件任务补齐。

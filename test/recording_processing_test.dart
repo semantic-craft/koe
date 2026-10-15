@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:anker_recorder/ai/apple_speech.dart';
 import 'package:anker_recorder/ai/doubao_stt.dart';
+import 'package:anker_recorder/audio/ogg_opus.dart';
 import 'package:anker_recorder/ai/engine_config.dart';
 import 'package:anker_recorder/ai/qwen_stt.dart';
 import 'package:anker_recorder/ai/stt_types.dart';
@@ -492,8 +493,9 @@ void main() {
     () async {
       final directory = await Directory.systemTemp.createTemp('doubao-demo-');
       addTearDown(() => directory.delete(recursive: true));
-      final audio = Uint8List(80);
-      audio.setRange(0, 4, const [0x4F, 0x67, 0x67, 0x53]);
+      final audio = OggOpus.muxRawFrames(
+        Uint8List.fromList(List.filled(160, 1)),
+      );
       final file = File('${directory.path}/406.wav');
       await file.writeAsBytes(audio);
 
@@ -537,15 +539,19 @@ void main() {
         RealtimeStreamState(fileId: 406, path: file.path, bytesReceived: 320),
       );
 
-      await settleUntil(() => client.requests.length == 1);
-      final request = client.requests.single as http.Request;
+      await settleUntil(
+        () =>
+            c.recordingView(RecordingReference(path: file.path)).text ==
+            '你好，世界。',
+      );
+      final request = client.requests.single;
       expect(
         request.url.toString(),
         'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
       );
       expect(request.headers['x-api-key'], 'doubao-key');
       expect(request.headers['x-api-resource-id'], 'volc.bigasr.auc_turbo');
-      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final body = jsonDecode(client.bodies.single) as Map<String, dynamic>;
       expect((body['audio'] as Map)['data'], base64Encode(audio));
       expect((body['audio'] as Map)['language'], 'zh-CN');
 
@@ -1241,6 +1247,7 @@ class _Doubao extends DoubaoSttService {
 
 class _ScriptedClient extends http.BaseClient {
   final requests = <http.BaseRequest>[];
+  final bodies = <String>[];
   final _responses = <http.StreamedResponse>[];
 
   void enqueue(int status, Object body, {Map<String, String>? headers}) {
@@ -1256,6 +1263,7 @@ class _ScriptedClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    bodies.add(await request.finalize().bytesToString());
     requests.add(request);
     if (_responses.isEmpty) {
       throw StateError('unexpected ${request.method} ${request.url}');

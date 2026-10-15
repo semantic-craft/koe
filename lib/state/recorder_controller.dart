@@ -53,6 +53,15 @@ class RecorderController extends ChangeNotifier {
       );
   final RecordingAnalysis? _analysisOverride;
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
+  bool get doubaoFileProcessing => _fileJobProvider == SttProvider.doubao;
+  void cancelDoubaoFileProcessing() {
+    if (doubaoFileProcessing) {
+      _doubaoStt.cancelCurrent();
+      statusMessage = '正在停止等待；结果未确认时，重试会重新上传并可能重复计费';
+      notifyListeners();
+    }
+  }
+
   void cancelQwenFileProcessing() {
     if (_fileJobProvider == SttProvider.qwen) {
       _qwenStt.cancelCurrent();

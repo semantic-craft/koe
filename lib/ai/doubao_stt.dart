@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../audio/ogg_opus.dart';
+import '../audio/audio_duration.dart';
+import '../audio/upload_source.dart';
+import 'streaming_audio_json.dart';
 import 'cloud_stt_service.dart';
 import 'stt_types.dart';
 
@@ -48,9 +51,14 @@ class DoubaoSttService extends CloudFileSttService {
   static const defaultBaseUrl = 'https://openspeech.bytedance.com';
   static const defaultModel = 'volc.bigasr.auc_turbo';
 
-  /// Flash direct base64 upload is recommended up to 20 MB (the API hard
-  /// cap is 100 MB). Keep the conservative limit as the pre-flight check.
-  static const maxDirectUploadBytes = 20 * 1024 * 1024;
+  // The official page says MB without defining the byte convention. Use
+  // decimal MB conservatively, and expose this exact boundary to the user.
+  static const maxDirectUploadBytes = 100000000;
+  Completer<void>? _activeAbort;
+  void cancelCurrent() {
+    final abort = _activeAbort;
+    if (abort != null && !abort.isCompleted) abort.complete();
+  }
 
   @override
   String get engineLabel => '豆包';
@@ -96,68 +104,142 @@ class DoubaoSttService extends CloudFileSttService {
       throw DoubaoSttException(rejection);
     }
 
-    onProgress?.call(const SttFileProgress(SttFileStage.preparing));
-    _ensureCurrent(isCurrent);
-    final audioPath = await OggOpus.ensurePlayable(path);
-    final file = File(audioPath);
-    final length = await file.length();
-    if (!await file.exists() || length < 64) {
-      throw const DoubaoSttException('音频太短或无效，无法转写');
-    }
-    if (length > maxDirectUploadBytes) {
-      throw const DoubaoSttException('音频超过 20 MB，无法直传豆包极速版；请压缩音频，或在配置千问后手动选择千问转写');
-    }
-
-    final bytes = await file.readAsBytes();
-    final requestId = _requestId();
-    debugPrint(
-      '[Doubao] flash ${file.uri.pathSegments.last} ${bytes.length}B '
-      'model=$resolvedModel host=${Uri.parse(origin).host}',
-    );
-    onProgress?.call(const SttFileProgress(SttFileStage.uploading));
-    _ensureCurrent(isCurrent);
-    final response = await _client
-        .post(
-          Uri.parse('$origin/api/v3/auc/bigmodel/recognize/flash'),
-          headers: {
-            'X-Api-Key': key,
-            'X-Api-Resource-Id': resolvedModel,
-            'X-Api-Request-Id': requestId,
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode(
-            doubaoTranscriptionBody(
-              data: base64Encode(bytes),
-              language: language,
-              format: OggOpus.isWav(bytes) ? 'wav' : 'ogg',
-            ),
-          ),
-        )
-        .timeout(requestTimeout);
-
-    final status = _statusCode(response);
-    if (status != '20000000') {
-      // Prefer the status header's message; fall back to a body `message`
-      // so credential hints surface wherever the provider puts them.
-      final hint = _statusMessage(response) ?? _bodyMessage(response);
-      final readable = doubaoStatusMessage(status, hint);
-      throw DoubaoSttException(
-        readable ?? _httpFailure(response) ?? '豆包返回无法解析',
+    if (_activeAbort != null) throw const DoubaoSttException('已有豆包任务正在处理');
+    final abort = Completer<void>();
+    _activeAbort = abort;
+    var submitted = false;
+    bool current() => !abort.isCompleted && (isCurrent?.call() ?? true);
+    final timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (!(isCurrent?.call() ?? true) && !abort.isCompleted) abort.complete();
+    });
+    try {
+      onProgress?.call(const SttFileProgress(SttFileStage.preparing));
+      _ensureCurrent(current);
+      final selected = await compressedUploadSource(path);
+      final sourceDuration = await AudioDuration.read(selected);
+      validateDoubaoAudio(
+        length: await File(selected).length(),
+        duration: sourceDuration,
       );
-    }
+      final String audioPath;
+      try {
+        audioPath = await OggOpus.prepareUpload(selected, isCurrent: current);
+      } on StateError catch (e) {
+        throw DoubaoSttException(
+          current() ? '无法准备音频：${e.message}' : '已取消，原录音已保留',
+        );
+      }
+      final file = File(audioPath);
+      final length = await file.length();
+      validateDoubaoAudio(length: length, duration: sourceDuration);
+      final input = await file.open();
+      final List<int> header;
+      try {
+        header = await input.read(128);
+      } finally {
+        await input.close();
+      }
+      final format = OggOpus.isWav(header)
+          ? 'wav'
+          : OggOpus.isOgg(header) &&
+                ascii.decode(header, allowInvalid: true).contains('OpusHead')
+          ? 'ogg'
+          : null;
+      if (format == null) {
+        throw const DoubaoSttException('音频格式无效，需要 WAV 或 OGG Opus');
+      }
+      final request =
+          StreamingAudioJsonRequest(
+              Uri.parse('$origin/api/v3/auc/bigmodel/recognize/flash'),
+              file: file,
+              body: doubaoTranscriptionBody(
+                data: '',
+                language: language,
+                format: format,
+              ),
+              abort: abort.future,
+              isCurrent: current,
+              onProgress: (sent, total) => onProgress?.call(
+                SttFileProgress(
+                  SttFileStage.uploading,
+                  uploadedBytes: sent,
+                  totalBytes: total,
+                ),
+              ),
+              onUploaded: () => onProgress?.call(
+                const SttFileProgress(SttFileStage.processing),
+              ),
+            )
+            ..headers.addAll({
+              'X-Api-Key': key,
+              'X-Api-Resource-Id': resolvedModel,
+              'X-Api-Request-Id': _requestId(),
+              'X-Api-Sequence': '-1',
+              'Content-Type': 'application/json',
+            });
+      _ensureCurrent(current);
+      submitted = true;
+      final response = await (() async {
+        final streamed = await _client.send(request);
+        final body = BytesBuilder(copy: false);
+        await for (final chunk in streamed.stream) {
+          _ensureCurrent(current);
+          if (body.length + chunk.length > 16 * 1024 * 1024) {
+            throw const DoubaoSttException('豆包响应过大，结果未确认；请勿自动重复提交');
+          }
+          body.add(chunk);
+        }
+        return http.Response.bytes(
+          body.takeBytes(),
+          streamed.statusCode,
+          headers: streamed.headers,
+        );
+      })().timeout(requestTimeout);
+      _ensureCurrent(current);
 
-    onProgress?.call(const SttFileProgress(SttFileStage.fetching));
-    _ensureCurrent(isCurrent);
-    final document = _decodeObject(response);
-    final recognized = parseDoubaoRecognize(document);
-    return SttResult(
-      text: renderDoubaoTranscript(document),
-      sourcePath: path,
-      language: (language == null || language.trim().isEmpty)
-          ? 'auto'
-          : language.trim().toLowerCase(),
-      durationSec: recognized.durationSec,
-    );
+      final status = _statusCode(response);
+      if (status != '20000000') {
+        // Prefer the status header's message; fall back to a body `message`
+        // so credential hints surface wherever the provider puts them.
+        final hint = _statusMessage(response) ?? _bodyMessage(response);
+        final readable = doubaoStatusMessage(status, hint);
+        throw DoubaoSttException(
+          readable ?? _httpFailure(response) ?? '豆包返回无法解析',
+        );
+      }
+
+      onProgress?.call(const SttFileProgress(SttFileStage.fetching));
+      _ensureCurrent(current);
+      final document = _decodeObject(response);
+      final recognized = parseDoubaoRecognize(document);
+      return SttResult(
+        text: renderDoubaoTranscript(document),
+        sourcePath: path,
+        language: (language == null || language.trim().isEmpty)
+            ? 'auto'
+            : language.trim().toLowerCase(),
+        durationSec: recognized.durationSec,
+      );
+    } catch (error) {
+      if (submitted &&
+          (abort.isCompleted ||
+              error is TimeoutException ||
+              error is http.ClientException ||
+              error is SocketException)) {
+        throw DoubaoSttException(
+          '${abort.isCompleted
+              ? '已停止等待'
+              : error is TimeoutException
+              ? '豆包转写超时'
+              : '网络中断'}；结果未确认，重试会重新上传，可能重复计费',
+        );
+      }
+      rethrow;
+    } finally {
+      if (!abort.isCompleted) abort.complete();
+      timer.cancel();
+      if (identical(_activeAbort, abort)) _activeAbort = null;
+    }
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {
@@ -209,6 +291,7 @@ class DoubaoSttService extends CloudFileSttService {
 
   @override
   void dispose() {
+    cancelCurrent();
     _client.close();
   }
 }
@@ -218,6 +301,16 @@ class DoubaoSttException extends CloudSttException {
 
   @override
   String toString() => 'DoubaoSttException($message)';
+}
+
+void validateDoubaoAudio({required int length, Duration? duration}) {
+  if (length < 64) throw const DoubaoSttException('音频太短或无效，无法转写');
+  if (length > DoubaoSttService.maxDirectUploadBytes) {
+    throw const DoubaoSttException('音频超过 100 MB（100,000,000 字节），无法上传豆包极速版');
+  }
+  if (duration != null && duration > const Duration(hours: 2)) {
+    throw const DoubaoSttException('音频超过豆包极速版的 2 小时限制');
+  }
 }
 
 /// One diarized utterance from a completed flash result.

@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../audio/ogg_opus.dart';
 import '../audio/audio_duration.dart';
+import '../audio/upload_source.dart';
 import 'cloud_stt_service.dart';
 import 'oss_upload_request.dart';
 import 'stt_types.dart';
@@ -783,19 +784,7 @@ class QwenTaskFailedException extends QwenSttException {
 
 /// Prefer the original compressed recording only when its measured duration
 /// matches the generated playback file. Never substitute unrelated audio.
-Future<String> qwenUploadSource(String path) async {
-  if (!path.endsWith('.wav')) return path;
-  final raw = '${path.substring(0, path.length - 4)}.opus';
-  if (!await File(raw).exists()) return path;
-  final playbackDuration = await AudioDuration.read(path);
-  final rawDuration = await AudioDuration.read(raw);
-  if (playbackDuration == null ||
-      rawDuration == null ||
-      (playbackDuration - rawDuration).inMilliseconds.abs() > 500) {
-    return path;
-  }
-  return raw;
-}
+Future<String> qwenUploadSource(String path) => compressedUploadSource(path);
 
 void validateQwenAudio({required int length, Duration? duration}) {
   if (length > QwenSttService.maxUploadBytes) {
