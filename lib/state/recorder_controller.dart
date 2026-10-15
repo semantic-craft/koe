@@ -290,7 +290,10 @@ class RecorderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _enqueueMossRecording(
+  /// Hands a finished take to the shared deferred-job mechanism, which serves
+  /// every engine that transcribes only after the take stops (Moss, Qwen,
+  /// Doubao); see [DeferredFileJobs].
+  Future<void> _enqueueDeferredRecording(
     _RecordingSession owner,
     String path,
   ) async {
@@ -1029,7 +1032,7 @@ class RecorderController extends ChangeNotifier {
           unawaited(
             _convertExportToWav(s.path!).whenComplete(() {
               _finalizingRecordings.remove(key);
-              unawaited(_enqueueMossRecording(owner, s.path!));
+              unawaited(_enqueueDeferredRecording(owner, s.path!));
               notifyListeners();
             }),
           );
@@ -1068,7 +1071,7 @@ class RecorderController extends ChangeNotifier {
           );
           if (owner?.configuration.provider.defersTranscription == true) {
             owner!.finalizing = false;
-            unawaited(_enqueueMossRecording(owner, finishedPath));
+            unawaited(_enqueueDeferredRecording(owner, finishedPath));
           }
           notifyListeners();
         }),
@@ -1890,7 +1893,7 @@ class RecorderController extends ChangeNotifier {
       if (previous.path != null &&
           !realtimeState.active &&
           !_finalizingRecordings.contains(_recordingKey(path: previous.path))) {
-        unawaited(_enqueueMossRecording(previous, previous.path!));
+        unawaited(_enqueueDeferredRecording(previous, previous.path!));
       }
     }
     final config = _settingsConfiguration;
@@ -3156,7 +3159,7 @@ class RecorderController extends ChangeNotifier {
       if (status == 0 && !realtimeState.active) {
         final owner = _currentRecording;
         if (owner?.path != null) {
-          unawaited(_enqueueMossRecording(owner!, owner.path!));
+          unawaited(_enqueueDeferredRecording(owner!, owner.path!));
         }
       }
       // Refresh inventory after hardware/app stop so Files tab shows the clip.
