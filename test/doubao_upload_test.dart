@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 
 class UploadClient extends http.BaseClient {
   int calls = 0, bytes = 0, largest = 0;
+  void Function()? beforeResponse;
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     calls++;
@@ -17,6 +18,7 @@ class UploadClient extends http.BaseClient {
       bytes += chunk.length;
       if (chunk.length > largest) largest = chunk.length;
     }
+    beforeResponse?.call();
     return http.StreamedResponse(
       Stream.value(utf8.encode('{"result":{"text":"成功"}}')),
       200,
@@ -61,6 +63,33 @@ class WaitingClient extends http.BaseClient {
 }
 
 void main() {
+  test(
+    'invalidated run rejects late result with explicit unknown status',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('late-flash');
+      addTearDown(() => dir.delete(recursive: true));
+      final f = await wav('${dir.path}/clip.wav', 32044);
+      var current = true;
+      final client = UploadClient()..beforeResponse = () => current = false;
+      final service = DoubaoSttService(client: client);
+      addTearDown(service.dispose);
+      await expectLater(
+        service.transcribePath(
+          f.path,
+          apiKey: 'test',
+          isCurrent: () => current,
+        ),
+        throwsA(
+          isA<DoubaoSttException>().having(
+            (e) => e.message,
+            'message',
+            contains('结果未确认'),
+          ),
+        ),
+      );
+    },
+  );
+
   test('separate byte and duration boundaries use decimal MB', () {
     for (final length in [
       20 * 1024 * 1024,

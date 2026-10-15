@@ -223,6 +223,7 @@ class DoubaoSttService extends CloudFileSttService {
     } catch (error) {
       if (submitted &&
           (abort.isCompleted ||
+              !(isCurrent?.call() ?? true) ||
               error is TimeoutException ||
               error is http.ClientException ||
               error is SocketException)) {
