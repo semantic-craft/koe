@@ -6,6 +6,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../state/meeting_minutes.dart';
 import '../../state/recording_analysis.dart';
 import '../../state/recorder_controller.dart';
+import 'minutes_mind_map.dart';
 
 class MinutesPanel extends StatefulWidget {
   const MinutesPanel({
@@ -241,7 +242,24 @@ class _MinutesPanelState extends State<MinutesPanel> {
       }
       final busy = manager.busy(key);
       return Scaffold(
-        appBar: AppBar(title: const Text('结构化纪要')),
+        appBar: AppBar(
+          title: const Text('结构化纪要'),
+          actions: [
+            TextButton(
+              onPressed: minutes == null
+                  ? null
+                  : () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => MinutesMindMap(
+                          controller: widget.controller,
+                          reference: widget.reference,
+                        ),
+                      ),
+                    ),
+              child: const Text('思维导图'),
+            ),
+          ],
+        ),
         body: SafeArea(
           child: ListView(
             padding: const EdgeInsets.all(20),
