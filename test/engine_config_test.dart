@@ -1,4 +1,4 @@
-import 'package:anker_recorder/ai/engine_config.dart';
+import 'package:koe/ai/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:anker_recorder/ai/engine_config.dart';
-import 'package:anker_recorder/ai/speech_provider.dart';
-import 'package:anker_recorder/ai/stt_types.dart';
-import 'package:anker_recorder/state/app_settings_store.dart';
+import 'package:koe/ai/engine_config.dart';
+import 'package:koe/ai/speech_provider.dart';
+import 'package:koe/ai/stt_types.dart';
+import 'package:koe/state/app_settings_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:anker_recorder/audio/opus_pcm_decoder.dart';
+import 'package:koe/audio/opus_pcm_decoder.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

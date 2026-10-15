@@ -2,11 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:anker_recorder/ai/oss_upload_request.dart';
+import 'package:koe/ai/oss_upload_request.dart';
 
-import 'package:anker_recorder/ai/qwen_stt.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/ui/screens/settings_screen.dart';
+import 'package:koe/ai/qwen_stt.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;

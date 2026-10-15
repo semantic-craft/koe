@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../app_identity.dart';
 import '../../ai/engine_config.dart';
 import '../../ai/cloud_stt_service.dart';
 import '../../ai/stt_types.dart';
@@ -8,6 +9,7 @@ import '../../ai/apple_speech.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/about_koe.dart';
 
 /// Processing choices apply to the next recording.
 class SettingsScreen extends StatelessWidget {
@@ -84,6 +86,17 @@ class SettingsScreen extends StatelessWidget {
                   if (c.fileJobRecoveryError != null)
                     Text(c.fileJobRecoveryError!),
                 ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            _SettingsGroup(
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.info_outline_rounded),
+                title: const Text('关于 Koe'),
+                subtitle: const Text(AppIdentity.subtitle),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => showKoeAboutDialog(context),
               ),
             ),
           ],

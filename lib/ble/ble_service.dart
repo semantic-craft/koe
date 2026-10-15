@@ -121,9 +121,9 @@ class BleService {
     if (state == BluetoothAdapterState.unauthorized) {
       throw Exception(
         Platform.isMacOS
-            ? '安克录音豆未获得蓝牙权限。\n'
+            ? 'Koe 未获得蓝牙权限。\n'
                   '系统设置 → 隐私与安全性 → 蓝牙 → 启用本应用后重试。'
-            : '蓝牙权限被拒绝。请允许安克录音豆使用蓝牙后重试。',
+            : '蓝牙权限被拒绝。请允许 Koe 使用蓝牙后重试。',
       );
     }
 

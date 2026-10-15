@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../app_identity.dart';
 import '../ai/stt_types.dart';
 import '../state/recorder_controller.dart';
 import '../theme/app_theme.dart';
@@ -554,7 +555,7 @@ class _DesktopSidebar extends StatelessWidget {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Soundcore',
+                      AppIdentity.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -615,7 +616,7 @@ class _DesktopSidebar extends StatelessWidget {
               ],
               const Spacer(),
               const Text(
-                'Soundcore Manager',
+                AppIdentity.subtitle,
                 style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 4),

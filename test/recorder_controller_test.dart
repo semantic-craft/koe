@@ -1,9 +1,9 @@
-import 'package:anker_recorder/ai/stt_types.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/ui/screens/device_screen.dart';
-import 'package:anker_recorder/ui/screens/home_screen.dart';
-import 'package:anker_recorder/ui/screens/communication_screen.dart';
-import 'package:anker_recorder/ui/widgets/widgets.dart';
+import 'package:koe/ai/stt_types.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/screens/device_screen.dart';
+import 'package:koe/ui/screens/home_screen.dart';
+import 'package:koe/ui/screens/communication_screen.dart';
+import 'package:koe/ui/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';

@@ -1,8 +1,8 @@
 import 'dart:ui' as ui;
 
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/theme/app_theme.dart';
-import 'package:anker_recorder/ui/shell.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/theme/app_theme.dart';
+import 'package:koe/ui/shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';

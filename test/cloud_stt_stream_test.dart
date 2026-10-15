@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:anker_recorder/ai/cloud_stt_stream.dart';
+import 'package:koe/ai/cloud_stt_stream.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

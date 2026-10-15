@@ -1,5 +1,5 @@
-import 'package:anker_recorder/protocol/models.dart';
-import 'package:anker_recorder/state/export_catalog.dart';
+import 'package:koe/protocol/models.dart';
+import 'package:koe/state/export_catalog.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

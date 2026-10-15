@@ -1,12 +1,12 @@
-import 'package:anker_recorder/ai/engine_config.dart';
+import 'package:koe/ai/engine_config.dart';
 import 'dart:async';
 import 'dart:io';
 
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/protocol/models.dart';
-import 'package:anker_recorder/ui/screens/files_screen.dart';
-import 'package:anker_recorder/ui/screens/recording_detail_screen.dart';
-import 'package:anker_recorder/ui/widgets/widgets.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/protocol/models.dart';
+import 'package:koe/ui/screens/files_screen.dart';
+import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:koe/ui/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';

@@ -1,10 +1,10 @@
-import 'package:anker_recorder/main.dart';
+import 'package:koe/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('app boots to home shell', (tester) async {
-    await tester.pumpWidget(const SoundcoreManagerApp());
+    await tester.pumpWidget(const KoeApp());
     // Primary tab is Home with recording history while idle.
     expect(find.text('首页'), findsOneWidget);
     expect(find.text('设备'), findsOneWidget);

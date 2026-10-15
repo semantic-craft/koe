@@ -1,23 +1,23 @@
 import 'dart:async';
-import 'package:anker_recorder/state/file_job_journal.dart';
-import 'package:anker_recorder/state/speech_configuration.dart';
+import 'package:koe/state/file_job_journal.dart';
+import 'package:koe/state/speech_configuration.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data' show Endian;
 
 import 'package:http/http.dart' as http;
 
-import 'package:anker_recorder/ai/apple_speech.dart';
-import 'package:anker_recorder/ai/doubao_stt.dart';
-import 'package:anker_recorder/audio/ogg_opus.dart';
-import 'package:anker_recorder/ai/engine_config.dart';
-import 'package:anker_recorder/ai/qwen_stt.dart';
-import 'package:anker_recorder/ai/stt_types.dart';
-import 'package:anker_recorder/ble/ble_service.dart';
-import 'package:anker_recorder/ble/realtime_stream.dart';
-import 'package:anker_recorder/protocol/frame.dart';
-import 'package:anker_recorder/protocol/models.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
+import 'package:koe/ai/apple_speech.dart';
+import 'package:koe/ai/doubao_stt.dart';
+import 'package:koe/audio/ogg_opus.dart';
+import 'package:koe/ai/engine_config.dart';
+import 'package:koe/ai/qwen_stt.dart';
+import 'package:koe/ai/stt_types.dart';
+import 'package:koe/ble/ble_service.dart';
+import 'package:koe/ble/realtime_stream.dart';
+import 'package:koe/protocol/frame.dart';
+import 'package:koe/protocol/models.dart';
+import 'package:koe/state/recorder_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 

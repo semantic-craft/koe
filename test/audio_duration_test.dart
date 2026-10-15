@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:anker_recorder/audio/audio_duration.dart';
-import 'package:anker_recorder/audio/ogg_opus.dart';
+import 'package:koe/audio/audio_duration.dart';
+import 'package:koe/audio/ogg_opus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

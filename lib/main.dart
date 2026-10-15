@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:provider/provider.dart';
 
+import 'app_identity.dart';
 import 'state/recorder_controller.dart';
 import 'platform/recording_shortcut_service.dart';
 import 'theme/app_theme.dart';
@@ -40,7 +41,7 @@ Future<void> main() async {
     ),
   );
   final controller = RecorderController();
-  runApp(SoundcoreManagerApp(controller: controller));
+  runApp(KoeApp(controller: controller));
   unawaited(
     RecordingShortcutService.instance.initialize(
       onStartRecording: controller.requestRecordingFromShortcut,
@@ -48,15 +49,15 @@ Future<void> main() async {
   );
 }
 
-class SoundcoreManagerApp extends StatelessWidget {
-  const SoundcoreManagerApp({super.key, this.controller});
+class KoeApp extends StatelessWidget {
+  const KoeApp({super.key, this.controller});
 
   final RecorderController? controller;
 
   @override
   Widget build(BuildContext context) {
     final app = MaterialApp(
-      title: '安克录音豆',
+      title: AppIdentity.name,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
