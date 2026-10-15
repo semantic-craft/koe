@@ -606,11 +606,9 @@ class BleService {
   }
 
   Future<void> disconnect() async {
-    await _cleanupSession(emitDisconnect: true);
-    // Always notify UI we are down (even if never fully ready).
-    if (!_fullyReady) {
-      _emitConnection(false);
-    }
+    await _cleanupSession(emitDisconnect: false);
+    // One operation emits one down event, including a partially ready session.
+    _emitConnection(false);
   }
 
   Future<void> dispose() async {
