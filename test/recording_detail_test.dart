@@ -309,6 +309,32 @@ void main() {
     },
   );
 
+  testWidgets('paused current detail offers continue without hiding its text', (
+    tester,
+  ) async {
+    final c = _RecordingController()..connected = true;
+    addTearDown(c.dispose);
+    c.start('continuation', 'First section');
+    final ref = c.currentRecordingReference!;
+    c.recording = false;
+    c.views[ref.key] = RecordingViewData(
+      reference: ref,
+      title: 'Current take',
+      text: 'First section',
+      paused: true,
+    );
+    await pump(tester, c, RecordingDetailScreen(reference: ref));
+    expect(find.text('First section'), findsOneWidget);
+    expect(find.byKey(const ValueKey('resume-recording')), findsOneWidget);
+    expect(find.text('正在保存录音'), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('resume-recording')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
   testWidgets('an older detail keeps its own text across a newer session', (
     tester,
   ) async {

@@ -217,6 +217,17 @@ Static header `AUDIO_CONTROL = {08 EE 00 00 00 18 82}`
 | `0x82` | startRecord | `01` |
 | `0x82` | pauseRecord | `02` |
 
+Live verification (D3200 firmware `04.92`, 2026-10-15): `18 82 02`
+returns status `2`, and device-info payload offset 50 (full-frame offset 59)
+also remains `2`. Sending `18 82 01` continues the same device file: the
+controller probe retained its session/file identity and appended audio from
+38,400 to 85,440 bytes. Preserve all three device-info states (`0` stopped,
+`1` recording, `2` paused); converting `2` to boolean false and then to `0`
+incorrectly ends the App session. Continue transfer at the existing file offset,
+not from byte zero or a guessed latest file. A distinct `1A06` file id still
+means a new recording. This evidence covers continuation within the connected
+session, not continuation across a hardware stop, disconnect, or App restart.
+
 ### 5.3 Audio / file transport — `cmdType = 0x1A` / `0x1B`
 
 | type,id | Name | Payload |
@@ -424,7 +435,7 @@ Source: `DeviceInfoDispatch.onParseDeviceInfo` — parse from **full frame**, in
 | autoPowerOffIndex | 1 | |
 | pickupIndicatorLight | 1 | |
 | boxIndicatorLight | 1 | |
-| recording | 1 | |
+| recording | 1 | `0` stopped, `1` recording, `2` paused; preserve the raw state |
 | wifiFirmware | 5 | ASCII |
 
 **Live battery push** (`type=0x01 id=0x03`): payload `micBattery, caseBattery`.  

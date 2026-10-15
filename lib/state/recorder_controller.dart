@@ -607,7 +607,7 @@ class RecorderController extends ChangeNotifier {
         session?.configuration ?? _settingsConfiguration,
       ),
       live: current && recording,
-      paused: session?.paused ?? false,
+      paused: current && _recordWireStatus == 2 && session.paused,
       audioLocked:
           (current && (recording || session.finalizing)) ||
           _isRecordingAudioLocked(id, path),
@@ -2998,6 +2998,8 @@ class RecorderController extends ChangeNotifier {
   /// status `0` stop, `1` recording, `2` pause.
   /// Last wire status: 0=stop, 1=recording, 2=pause (for resume vs new take).
   int _recordWireStatus = 0;
+  bool get recordingPaused =>
+      _recordWireStatus == 2 && _currentRecording != null;
 
   void _applyRecordStatus(
     int status, {
@@ -3031,29 +3033,24 @@ class RecorderController extends ChangeNotifier {
     recording = active;
     _recordWireStatus = status;
     // Keep DeviceInfoModel bit aligned so later device-info packets don't re-stick UI.
-    if (info != null && info!.recording != active) {
-      info = info!.copyWith(recording: active);
+    if (info != null && info!.recordingStatus != status) {
+      info = info!.copyWith(recordingStatus: status);
       lastKnownInfo = info;
     }
 
     if (active) {
-      // New take after a full stop (not pause→resume): wipe live draft UI.
-      final fileOnly =
-          _currentRecording?.configuration.provider.defersTranscription == true;
-      final fileOnlyResume =
-          prevWire == 2 &&
-          fileOnly &&
-          (fileId == null ||
-              _currentRecording?.fileId == null ||
-              _currentRecording?.fileId == fileId);
-      final fileOnlyNewFile =
-          fileOnly &&
+      // Continue the existing take regardless of its speech provider. A
+      // different device file id is an explicit new take, never a continuation.
+      final current = _currentRecording;
+      final differentFile =
           fileId != null &&
-          _currentRecording?.fileId != null &&
-          _currentRecording?.fileId != fileId;
-      if (prevWire == 0 ||
-          fileOnlyNewFile ||
-          (source == 'app_start' && !fileOnlyResume)) {
+          current?.fileId != null &&
+          current!.fileId != fileId;
+      final resuming = prevWire == 2 && current != null && !differentFile;
+      if (current == null ||
+          differentFile ||
+          (prevWire == 0 && !wasRecording) ||
+          (source == 'app_start' && !wasRecording && !resuming)) {
         unawaited(_beginNewLiveTranscriptSession());
       }
       _bindCurrentRecording(fileId: fileId);
@@ -3069,6 +3066,8 @@ class RecorderController extends ChangeNotifier {
       if (!isWifiExportSession) {
         if (fileId != null && fileId > 0) {
           unawaited(_startCurrentRecordingTransfer(fileId));
+        } else if (resuming && current.fileId != null) {
+          unawaited(_startCurrentRecordingTransfer(current.fileId!));
         } else {
           unawaited(
             _maybeStartAutoRealtime(
@@ -3159,11 +3158,11 @@ class RecorderController extends ChangeNotifier {
     int? fileId;
     if (curr != null && curr > 0) {
       fileId = curr;
-    } else if (recording || info?.recording == true) {
-      // Fall back to newest offline entry (often the live file once listed).
-      if (list.files.isNotEmpty) {
-        fileId = list.files.first.fileId; // already sorted newest-first
-      }
+    } else {
+      // Inventory contains completed files, sometimes oldest first. Only an
+      // explicit current timestamp / 1A06 or this session's known identity can
+      // identify live audio. Guessing an entry briefly replays an old recording.
+      fileId = _currentRecording?.fileId;
     }
 
     if (fileId == null || fileId <= 0) {
@@ -4451,12 +4450,13 @@ class RecorderController extends ChangeNotifier {
       }
     }
 
-    // Device info recording bit (0/1/2; we store bool as status==1 only).
+    // Preserve device-info stopped/recording/paused states independently.
     // Always sync UI so hardware mic-off clears the sticky 「录音中」 pill.
     if (p.cmdType == RxCmd.deviceInfoType && p.cmdId == RxCmd.deviceInfoId) {
-      final deviceRecording = info?.recording == true;
-      if (deviceRecording != recording) {
-        _applyRecordStatus(deviceRecording ? 1 : 0, source: 'device_info');
+      final deviceStatus = info?.recordingStatus ?? 0;
+      final deviceRecording = deviceStatus == 1;
+      if (deviceStatus != _recordWireStatus && deviceStatus <= 2) {
+        _applyRecordStatus(deviceStatus, source: 'device_info');
       } else if (deviceRecording &&
           !realtimeState.active &&
           !isWifiExportSession) {

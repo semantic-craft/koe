@@ -136,7 +136,11 @@ class DeviceScreen extends StatelessWidget {
                     children: [
                       Expanded(
                         child: AccentButton(
-                          label: c.recording ? '录音中…' : '开始',
+                          label: c.recording
+                              ? '录音中…'
+                              : c.recordingPaused
+                              ? '继续'
+                              : '开始',
                           icon: Icons.mic_rounded,
                           color: AppColors.coral,
                           onPressed: c.recording || c.blocksRecordingControl

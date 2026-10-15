@@ -574,7 +574,13 @@ class _DesktopSidebar extends StatelessWidget {
                       ? null
                       : c.startRecord,
                   icon: const Icon(Icons.add_rounded, size: 18),
-                  label: Text(c.recording ? '录音中' : '开始录音'),
+                  label: Text(
+                    c.recording
+                        ? '录音中'
+                        : c.recordingPaused
+                        ? '继续录音'
+                        : '开始录音',
+                  ),
                 ),
               ),
               const SizedBox(height: 24),

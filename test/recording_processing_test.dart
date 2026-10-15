@@ -890,9 +890,87 @@ void main() {
   });
 
   test(
-    'Apple live revisions replace partial text and pause rejects late events',
+    'pause then continue keeps recording identity and earlier text',
     () async {
       final c = controller(_Apple(), ble: _Ble());
+      await c.refreshAppleCapabilities();
+      await c.startRecord();
+      final ref = c.currentRecordingReference!;
+      final first = _Stream();
+      c.attachSttStreamForTesting(first);
+      first.emit('First section.');
+      await Future<void>.delayed(Duration.zero);
+      await c.pauseRecord();
+      await c.startRecord();
+      expect(c.currentRecordingReference!.key, ref.key);
+      expect(c.recordingView(ref).text, contains('First section.'));
+    },
+  );
+
+  test(
+    'a disconnected paused take becomes a saved detail rather than a dead continue control',
+    () async {
+      final ble = _Ble();
+      final c = controller(_Apple(), ble: ble);
+      await c.startRecord();
+      final ref = c.currentRecordingReference!;
+      await c.pauseRecord();
+      expect(c.recordingView(ref).paused, isTrue);
+      ble.disconnected();
+      await Future<void>.delayed(Duration.zero);
+      expect(c.recordingView(ref).paused, isFalse);
+    },
+  );
+
+  test('an old inventory entry cannot become the new live recording', () async {
+    final ble = _Ble();
+    final c = controller(_Apple(), ble: ble);
+    await c.startRecord();
+    final ref = c.currentRecordingReference!;
+    c.connected = true;
+    ble.filePage([10, 20]);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.currentRecordingReference!.key, ref.key);
+    expect(
+      c.currentRecordingReference!.fileId,
+      isNull,
+      reason:
+          'wait for a current timestamp or 1A06, not a historical list entry',
+    );
+  });
+
+  test(
+    'device pause info and duplicate resume preserve file identity and configuration',
+    () async {
+      final ble = _Ble();
+      final c = controller(_Apple(), ble: ble);
+      await c.refreshAppleCapabilities();
+      await c.startRecord();
+      c.handleRealtimeStateForTesting(
+        const RealtimeStreamState(active: true, fileId: 44),
+      );
+      final ref = c.currentRecordingReference!;
+      await c.pauseRecord();
+      ble.deviceStatus(2);
+      await Future<void>.delayed(Duration.zero);
+      expect(c.info!.recordingStatus, 2);
+      expect(c.recordingPaused, isTrue);
+      c.setSpeechProvider(SttProvider.doubao);
+      await c.startRecord();
+      ble.deviceStatus(1);
+      await Future<void>.delayed(Duration.zero);
+      expect(c.currentRecordingReference!.key, ref.key);
+      expect(c.currentRecordingReference!.fileId, 44);
+      expect(c.recordingView(ref).provider, SttProvider.apple);
+      expect(c.recordingView(ref).paused, isFalse);
+    },
+  );
+
+  test(
+    'Apple live revisions replace partial text and stop rejects late events',
+    () async {
+      final ble = _Ble();
+      final c = controller(_Apple(), ble: ble);
       await c.refreshAppleCapabilities();
       await c.startRecord();
       final ref = c.currentRecordingReference!;
@@ -909,6 +987,8 @@ void main() {
       expect(c.recordingView(ref).text, 'Ice cream');
       expect(c.recordingView(ref).paused, isTrue);
       expect(stream.closed, isTrue);
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
       await c.startRecord();
       final next = _Stream();
       c.attachSttStreamForTesting(next);
@@ -925,7 +1005,8 @@ void main() {
   test(
     'provider and language changes take effect only for the next take',
     () async {
-      final c = controller(_Apple(), ble: _Ble());
+      final ble = _Ble();
+      final c = controller(_Apple(), ble: ble);
       await c.refreshAppleCapabilities();
       await c.startRecord();
       final ref = c.currentRecordingReference!;
@@ -933,7 +1014,8 @@ void main() {
       c.setTranscriptLanguage('ja');
       expect(c.recordingView(ref).provider, SttProvider.apple);
       expect(c.recordingView(ref).sourceLanguage, 'en-US');
-      await c.pauseRecord();
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
       await c.startRecord();
       final next = c.recordingView(c.currentRecordingReference!);
       expect(next.provider, SttProvider.doubao);
@@ -1200,6 +1282,8 @@ class _Cloud extends DoubaoSttService {
 }
 
 class _Ble extends BleService {
+  final _connections = StreamController<bool>.broadcast();
+  void disconnected() => _connections.add(false);
   final _packets = StreamController<DecodedPacket>.broadcast();
   void filePage(List<int> ids) {
     final data = ByteData(2 + ids.length * 12)
@@ -1220,6 +1304,19 @@ class _Ble extends BleService {
     );
   }
 
+  void deviceStatus(int status) {
+    final raw = Uint8List(75)..[59] = status;
+    _packets.add(
+      DecodedPacket(
+        raw: raw,
+        statusByte: 1,
+        cmdType: 1,
+        cmdId: 1,
+        payload: Uint8List.sublistView(raw, 9, 74),
+      ),
+    );
+  }
+
   void stopRecording() => _packets.add(
     DecodedPacket(
       raw: Uint8List(0),
@@ -1234,7 +1331,7 @@ class _Ble extends BleService {
   @override
   Stream<List<ScannedDevice>> get scanResults => const Stream.empty();
   @override
-  Stream<bool> get connectionState => const Stream.empty();
+  Stream<bool> get connectionState => _connections.stream;
   @override
   Stream<String> get logs => const Stream.empty();
   @override
@@ -1242,7 +1339,10 @@ class _Ble extends BleService {
   @override
   Future<void> writeCommand(List<int> frame) async {}
   @override
-  Future<void> dispose() => _packets.close();
+  Future<void> dispose() async {
+    await _packets.close();
+    await _connections.close();
+  }
 }
 
 class _Stream implements SttStreamSession {

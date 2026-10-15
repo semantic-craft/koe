@@ -424,9 +424,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           recording.paused
                               ? '已暂停'
                               : recording.live
-                              ? (recording.provider.retired
-                                    ? '录音中'
-                                    : '实时转写')
+                              ? (recording.provider.retired ? '录音中' : '实时转写')
                               : '转写文本',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -560,7 +558,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: recording.live || recording.audioLocked
+      bottomNavigationBar:
+          recording.live || recording.paused || recording.audioLocked
           ? _LiveControls(recording: recording)
           : fileReady
           ? Material(
@@ -767,8 +766,10 @@ class _LiveControls extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  recording.live
-                      ? (recording.paused ? '已暂停' : '录音中')
+                  recording.paused
+                      ? '已暂停'
+                      : recording.live
+                      ? '录音中'
                       : '正在保存录音',
                   style: const TextStyle(color: AppColors.textSecondary),
                 ),
@@ -792,6 +793,17 @@ class _LiveControls extends StatelessWidget {
                       ],
                     ),
                   ),
+                ),
+              if (recording.paused &&
+                  c.currentRecordingReference?.sessionId ==
+                      recording.reference.sessionId)
+                FilledButton.icon(
+                  key: const ValueKey('resume-recording'),
+                  onPressed: c.blocksRecordingControl || !c.connected
+                      ? null
+                      : c.startRecord,
+                  icon: const Icon(Icons.mic_rounded),
+                  label: const Text('继续录音'),
                 ),
               if (recording.live && c.recording)
                 FilledButton.icon(
