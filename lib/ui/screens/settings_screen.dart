@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../ai/engine_config.dart';
+import '../../ai/cloud_stt_service.dart';
 import '../../ai/qwen_stt.dart';
 import '../../ai/doubao_stt.dart';
 import '../../ai/stt_types.dart';
@@ -73,12 +74,11 @@ class SettingsScreen extends StatelessWidget {
                     _TranscriptLanguageSelector(controller: c),
                   ] else if (c.speechProvider == SttProvider.moss)
                     _MossKeyField(controller: c)
-                  else if (c.speechProvider == SttProvider.qwen) ...[
-                    _QwenSettings(controller: c),
-                    const SizedBox(height: 14),
-                    _TranscriptLanguageSelector(controller: c),
-                  ] else if (c.speechProvider == SttProvider.doubao) ...[
-                    _DoubaoSettings(controller: c),
+                  else if (c.speechProvider.usesEngineTrio) ...[
+                    _CloudEngineSettings(
+                      controller: c,
+                      provider: c.speechProvider,
+                    ),
                     const SizedBox(height: 14),
                     _TranscriptLanguageSelector(controller: c),
                   ] else
@@ -126,24 +126,24 @@ class _ProviderSelector extends StatelessWidget {
   const _ProviderSelector({required this.controller});
   final RecorderController controller;
 
-  static const _metadata = <String, ({IconData icon, String description})>{
-    'apple': (
+  static const _metadata = <SttProvider, ({IconData icon, String description})>{
+    SttProvider.apple: (
       icon: Icons.phone_iphone_rounded,
       description: 'iOS 本地神经网络语音引擎，离线可用、隐私优先',
     ),
-    'soniox': (
+    SttProvider.soniox: (
       icon: Icons.cloud_outlined,
       description: '云端低延迟流式转写，支持多语种同传与双人对话',
     ),
-    'moss': (
+    SttProvider.moss: (
       icon: Icons.graphic_eq_rounded,
       description: '录音完成后整段精细转写，自动切分说话人段落',
     ),
-    'qwen': (
+    SttProvider.qwen: (
       icon: Icons.auto_awesome_rounded,
       description: '通义千问语音识别模型，录音完成后文件转写',
     ),
-    'doubao': (
+    SttProvider.doubao: (
       icon: Icons.bolt_rounded,
       description: '火山引擎豆包语音识别，录音完成后极速版整段转写',
     ),
@@ -151,7 +151,7 @@ class _ProviderSelector extends StatelessWidget {
 
   ({IconData icon, String description, String statusLabel, Color statusColor})
   _metaFor(SttProvider provider, KoeTokens tokens) {
-    final meta = _metadata[provider.name] ??
+    final meta = _metadata[provider] ??
         (
           icon: Icons.mic_none_rounded,
           description: '${provider.label} 语音识别引擎',
@@ -1137,23 +1137,62 @@ class _MossKeyFieldState extends State<_MossKeyField> {
   );
 }
 
-class _QwenSettings extends StatefulWidget {
-  const _QwenSettings({required this.controller});
+/// Credential-trio form shared by the cloud file engines. The engine is
+/// data — labels, defaults and the base-URL normalizer come from the
+/// [_engines] map keyed by [SttProvider] — so adding a cloud engine is a
+/// map entry (plus the lineup metadata), not another copy of this form.
+/// Widget keys (`apikey-qwen`, `qwen-base-url`, …) derive from the
+/// provider name and stay stable per engine.
+class _CloudEngineSettings extends StatefulWidget {
+  const _CloudEngineSettings({required this.controller, required this.provider});
+
   final RecorderController controller;
+  final SttProvider provider;
 
   @override
-  State<_QwenSettings> createState() => _QwenSettingsState();
+  State<_CloudEngineSettings> createState() => _CloudEngineSettingsState();
 }
 
-class _QwenSettingsState extends State<_QwenSettings> {
+class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
+  static final Map<
+    SttProvider,
+    ({
+      String keyLabel,
+      String defaultBaseUrl,
+      String defaultModel,
+      String baseUrlHelper,
+      String modelHelper,
+      String Function(String) normalizeBaseUrl,
+    })
+  >
+  _engines = {
+    SttProvider.qwen: (
+      keyLabel: '通义 API Key',
+      defaultBaseUrl: QwenSttService.defaultBaseUrl,
+      defaultModel: QwenSttService.defaultModel,
+      baseUrlHelper: '留空使用北京站。国际站 ${QwenSttService.intlBaseUrl}',
+      modelHelper: '默认 ${QwenSttService.defaultModel}。只支持文件转写',
+      normalizeBaseUrl: normalizeDashScopeBaseUrl,
+    ),
+    SttProvider.doubao: (
+      keyLabel: '豆包 API Key',
+      defaultBaseUrl: DoubaoSttService.defaultBaseUrl,
+      defaultModel: DoubaoSttService.defaultModel,
+      baseUrlHelper: '留空使用 ${DoubaoSttService.defaultBaseUrl}',
+      modelHelper: '默认 ${DoubaoSttService.defaultModel}。只支持极速版文件转写',
+      normalizeBaseUrl: normalizeDoubaoBaseUrl,
+    ),
+  };
+
+  late final _engine = _engines[widget.provider]!;
   late final TextEditingController _key = TextEditingController(
-    text: widget.controller.engineConfig(SttProvider.qwen).apiKey ?? '',
+    text: widget.controller.engineConfig(widget.provider).apiKey ?? '',
   );
   late final TextEditingController _base = TextEditingController(
-    text: widget.controller.engineConfig(SttProvider.qwen).baseUrl ?? '',
+    text: widget.controller.engineConfig(widget.provider).baseUrl ?? '',
   );
   late final TextEditingController _model = TextEditingController(
-    text: widget.controller.engineConfig(SttProvider.qwen).model ?? '',
+    text: widget.controller.engineConfig(widget.provider).model ?? '',
   );
   String? _error;
 
@@ -1167,162 +1206,61 @@ class _QwenSettingsState extends State<_QwenSettings> {
 
   void _save() {
     try {
-      widget.controller.setQwenConfig(
+      widget.controller.setEngineConfig(
+        widget.provider,
         EngineConfig(
           apiKey: _key.text,
           baseUrl: _base.text,
           model: _model.text,
         ),
       );
-      final stored = widget.controller.engineConfig(SttProvider.qwen).baseUrl;
+      final stored = widget.controller.engineConfig(widget.provider).baseUrl;
       if (stored != null) _base.text = stored;
       setState(() => _error = null);
-    } on QwenSttException catch (error) {
+    } on CloudSttException catch (error) {
       setState(() => _error = error.message);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final name = widget.provider.name;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextField(
-          key: const ValueKey('apikey-qwen'),
+          key: ValueKey('apikey-$name'),
           controller: _key,
           obscureText: true,
           autocorrect: false,
           enableSuggestions: false,
-          decoration: const InputDecoration(labelText: '通义 API Key'),
+          decoration: InputDecoration(labelText: _engine.keyLabel),
           onSubmitted: (_) => _save(),
         ),
         const SizedBox(height: 12),
         TextField(
-          key: const ValueKey('qwen-base-url'),
+          key: ValueKey('$name-base-url'),
           controller: _base,
           autocorrect: false,
           enableSuggestions: false,
           keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: '服务地址',
-            hintText: QwenSttService.defaultBaseUrl,
-            helperText: '留空使用北京站。国际站 ${QwenSttService.intlBaseUrl}',
+            hintText: _engine.defaultBaseUrl,
+            helperText: _engine.baseUrlHelper,
           ),
           onSubmitted: (_) => _save(),
         ),
         const SizedBox(height: 12),
         TextField(
-          key: const ValueKey('qwen-model'),
+          key: ValueKey('$name-model'),
           controller: _model,
           autocorrect: false,
           enableSuggestions: false,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: '模型',
-            hintText: QwenSttService.defaultModel,
-            helperText: '默认 ${QwenSttService.defaultModel}。只支持文件转写',
-          ),
-          onSubmitted: (_) => _save(),
-        ),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton(onPressed: _save, child: const Text('保存')),
-        ),
-        if (_error != null) ...[
-          const SizedBox(height: 8),
-          Text(_error!, style: const TextStyle(color: AppColors.coral)),
-        ],
-      ],
-    );
-  }
-}
-
-/// Doubao credential trio, grouped like [_QwenSettings].
-class _DoubaoSettings extends StatefulWidget {
-  const _DoubaoSettings({required this.controller});
-  final RecorderController controller;
-
-  @override
-  State<_DoubaoSettings> createState() => _DoubaoSettingsState();
-}
-
-class _DoubaoSettingsState extends State<_DoubaoSettings> {
-  late final TextEditingController _key = TextEditingController(
-    text: widget.controller.engineConfig(SttProvider.doubao).apiKey ?? '',
-  );
-  late final TextEditingController _base = TextEditingController(
-    text: widget.controller.engineConfig(SttProvider.doubao).baseUrl ?? '',
-  );
-  late final TextEditingController _model = TextEditingController(
-    text: widget.controller.engineConfig(SttProvider.doubao).model ?? '',
-  );
-  String? _error;
-
-  @override
-  void dispose() {
-    _key.dispose();
-    _base.dispose();
-    _model.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    try {
-      widget.controller.setDoubaoConfig(
-        EngineConfig(
-          apiKey: _key.text,
-          baseUrl: _base.text,
-          model: _model.text,
-        ),
-      );
-      final stored = widget.controller.engineConfig(
-        SttProvider.doubao,
-      ).baseUrl;
-      if (stored != null) _base.text = stored;
-      setState(() => _error = null);
-    } on DoubaoSttException catch (error) {
-      setState(() => _error = error.message);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          key: const ValueKey('apikey-doubao'),
-          controller: _key,
-          obscureText: true,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: const InputDecoration(labelText: '豆包 API Key'),
-          onSubmitted: (_) => _save(),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          key: const ValueKey('doubao-base-url'),
-          controller: _base,
-          autocorrect: false,
-          enableSuggestions: false,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            labelText: '服务地址',
-            hintText: DoubaoSttService.defaultBaseUrl,
-            helperText: '留空使用 ${DoubaoSttService.defaultBaseUrl}',
-          ),
-          onSubmitted: (_) => _save(),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          key: const ValueKey('doubao-model'),
-          controller: _model,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: const InputDecoration(
-            labelText: '模型',
-            hintText: DoubaoSttService.defaultModel,
-            helperText: '默认 ${DoubaoSttService.defaultModel}。只支持极速版文件转写',
+            hintText: _engine.defaultModel,
+            helperText: _engine.modelHelper,
           ),
           onSubmitted: (_) => _save(),
         ),

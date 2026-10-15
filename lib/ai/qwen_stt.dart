@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
 import '../audio/ogg_opus.dart';
+import 'cloud_stt_service.dart';
 import 'progress_multipart.dart';
 import 'stt_types.dart';
 
@@ -39,7 +40,7 @@ import 'stt_types.dart';
 /// https://help.aliyun.com/zh/model-studio/asr-model
 /// https://help.aliyun.com/zh/model-studio/get-temporary-file-url
 /// https://help.aliyun.com/zh/model-studio/manage-asynchronous-tasks
-class QwenSttService {
+class QwenSttService extends CloudFileSttService {
   QwenSttService({
     http.Client? client,
     this.pollInterval = const Duration(seconds: 2),
@@ -59,63 +60,29 @@ class QwenSttService {
   /// when the caller already has a public URL.
   static const maxUploadBytes = 1024 * 1024 * 1024;
 
-  String? apiKeyOverride;
-  String? baseUrlOverride;
-  String? modelOverride;
+  @override
+  String get engineLabel => '通义';
 
-  String? get apiKey {
-    final override = apiKeyOverride?.trim();
-    if (override != null && override.isNotEmpty) return override;
-    final env = Platform.environment['DASHSCOPE_API_KEY']?.trim();
-    if (env != null && env.isNotEmpty) return env;
-    return null;
-  }
+  @override
+  String get apiKeyEnvVar => 'DASHSCOPE_API_KEY';
 
-  /// Resolved HTTPS origin. Settings win, then `DASHSCOPE_HTTP_BASE_URL`.
-  String get baseUrl => resolveDashScopeBaseUrl(
-    baseUrlOverride,
-    environment: Platform.environment['DASHSCOPE_HTTP_BASE_URL'],
-  );
+  @override
+  String get baseUrlEnvVar => 'DASHSCOPE_HTTP_BASE_URL';
 
-  String get model {
-    final override = modelOverride?.trim();
-    if (override != null && override.isNotEmpty) return override;
-    return defaultModel;
-  }
+  @override
+  String get fallbackBaseUrl => defaultBaseUrl;
 
-  bool get isConfigured => apiKey != null;
+  @override
+  String get fallbackModel => defaultModel;
 
-  Future<SttResult> transcribePath(
-    String path, {
-    String? apiKey,
-    String? baseUrl,
-    String? model,
-    String? language,
-    SttFileProgressCallback? onProgress,
-    bool Function()? isCurrent,
-  }) async {
-    try {
-      return await _transcribe(
-        path,
-        apiKey: apiKey,
-        baseUrl: baseUrl,
-        model: model,
-        language: language,
-        onProgress: onProgress,
-        isCurrent: isCurrent,
-      );
-    } on QwenSttException {
-      rethrow;
-    } on TimeoutException {
-      throw const QwenSttException('通义转写超时，请稍后重试');
-    } on SocketException {
-      throw const QwenSttException('无法连接通义服务，请检查网络后重试');
-    } on http.ClientException {
-      throw const QwenSttException('无法连接通义服务，请检查网络后重试');
-    }
-  }
+  @override
+  String get apiSuffix => '/api/v1';
 
-  Future<SttResult> _transcribe(
+  @override
+  CloudSttException fail(String message) => QwenSttException(message);
+
+  @override
+  Future<SttResult> run(
     String path, {
     String? apiKey,
     String? baseUrl,
@@ -128,10 +95,7 @@ class QwenSttService {
     if (key == null || key.isEmpty) {
       throw const QwenSttException('请在设置中配置通义 Qwen');
     }
-    final origin = resolveDashScopeBaseUrl(
-      (baseUrl == null || baseUrl.trim().isEmpty) ? baseUrlOverride : baseUrl,
-      environment: Platform.environment['DASHSCOPE_HTTP_BASE_URL'],
-    );
+    final origin = resolvedBaseUrl(baseUrl);
     final resolvedModel = (model == null || model.trim().isEmpty)
         ? this.model
         : model.trim();
@@ -364,7 +328,7 @@ class QwenSttService {
           throw QwenSttException(
             task.failureMessage == null || task.failureMessage!.isEmpty
                 ? '通义转写失败，请重试'
-                : '通义转写失败：${_clip(task.failureMessage!)}',
+                : '通义转写失败：${clipSttMessage(task.failureMessage!)}',
           );
         }
         return task;
@@ -373,7 +337,7 @@ class QwenSttService {
         throw QwenSttException(
           task.failureMessage == null || task.failureMessage!.isEmpty
               ? '通义转写失败，请重试'
-              : '通义转写失败：${_clip(task.failureMessage!)}',
+              : '通义转写失败：${clipSttMessage(task.failureMessage!)}',
         );
       }
       onProgress?.call(
@@ -426,7 +390,7 @@ class QwenSttService {
     return switch (response.statusCode) {
       401 || 403 => '通义 API Key 无效，请在设置中更新',
       429 => '通义请求过多，请稍后重试',
-      _ => message == null ? '通义转写失败，请重试' : '通义转写失败：${_clip(message)}',
+      _ => message == null ? '通义转写失败，请重试' : '通义转写失败：${clipSttMessage(message)}',
     };
   }
 
@@ -436,14 +400,15 @@ class QwenSttService {
     }
   }
 
+  @override
   void dispose() {
     _client.close();
   }
 }
 
-class QwenSttException implements Exception {
-  const QwenSttException(this.message);
-  final String message;
+class QwenSttException extends CloudSttException {
+  const QwenSttException(super.message);
+
   @override
   String toString() => 'QwenSttException($message)';
 }
@@ -587,32 +552,20 @@ Map<String, dynamic> qwenTranscriptionBody({
   };
 }
 
-String resolveDashScopeBaseUrl(String? configured, {String? environment}) {
-  final raw = configured?.trim();
-  final candidate = (raw == null || raw.isEmpty) ? environment?.trim() : raw;
-  if (candidate == null || candidate.isEmpty) {
-    return QwenSttService.defaultBaseUrl;
-  }
-  return normalizeDashScopeBaseUrl(candidate);
-}
+String resolveDashScopeBaseUrl(String? configured, {String? environment}) =>
+    resolveCloudBaseUrl(
+      configured,
+      environment: environment,
+      fallback: QwenSttService.defaultBaseUrl,
+      normalize: normalizeDashScopeBaseUrl,
+    );
 
-String normalizeDashScopeBaseUrl(String raw) {
-  var value = raw.trim();
-  if (value.isEmpty) return QwenSttService.defaultBaseUrl;
-  if (!value.contains('://')) value = 'https://$value';
-  while (value.endsWith('/')) {
-    value = value.substring(0, value.length - 1);
-  }
-  const apiSuffix = '/api/v1';
-  if (value.endsWith(apiSuffix)) {
-    value = value.substring(0, value.length - apiSuffix.length);
-  }
-  final uri = Uri.tryParse(value);
-  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
-    throw const QwenSttException('通义服务地址需要 HTTPS');
-  }
-  return uri.origin;
-}
+String normalizeDashScopeBaseUrl(String raw) => normalizeCloudHttpsOrigin(
+  raw,
+  fallback: QwenSttService.defaultBaseUrl,
+  apiSuffix: '/api/v1',
+  fail: (message) => QwenSttException('通义$message'),
+);
 
 QwenUploadPolicy parseQwenUploadPolicy(Map<String, dynamic> json) {
   final data = json['data'];
@@ -779,9 +732,3 @@ String _uploadFilename(String path) {
 }
 
 String _utf8Body(http.Response response) => utf8.decode(response.bodyBytes);
-
-String _clip(String value) {
-  final trimmed = value.trim();
-  if (trimmed.length <= 180) return trimmed;
-  return '${trimmed.substring(0, 180)}…';
-}
