@@ -18,12 +18,13 @@ class GradientScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [AppColors.gradientTop, AppColors.gradientBottom],
+          colors: [tokens.gradientTop, tokens.gradientBottom],
         ),
       ),
       child: Scaffold(
@@ -43,6 +44,8 @@ class SurfaceCard extends StatelessWidget {
     this.padding = const EdgeInsets.all(18),
     this.onTap,
     this.borderColor,
+    this.backgroundColor,
+    this.radius = AppRadii.lg,
     this.glow = false,
     this.shadow = false,
   });
@@ -51,30 +54,35 @@ class SurfaceCard extends StatelessWidget {
   final EdgeInsets padding;
   final VoidCallback? onTap;
   final Color? borderColor;
+  final Color? backgroundColor;
+  final double radius;
   final bool glow;
   final bool shadow;
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    final borderRadius = BorderRadius.circular(radius);
     final card = AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
+      duration: AppMotion.normal,
+      curve: AppMotion.easeOut,
       padding: padding,
       decoration: BoxDecoration(
-        color: AppColors.bgCard,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderColor ?? AppColors.border),
+        color: backgroundColor ?? tokens.bgCard,
+        borderRadius: borderRadius,
+        border: Border.all(color: borderColor ?? tokens.border),
         boxShadow: !shadow
             ? const []
             : glow
             ? [
                 BoxShadow(
-                  color: AppColors.accent.withValues(alpha: 0.14),
+                  color: tokens.accent.withValues(alpha: 0.14),
                   blurRadius: 20,
                   offset: const Offset(0, 6),
                 ),
-                ...AppColors.cardShadow,
+                ...tokens.cardShadow,
               ]
-            : AppColors.cardShadow,
+            : tokens.cardShadow,
       ),
       child: Material(color: Colors.transparent, child: child),
     );
@@ -83,9 +91,9 @@ class SurfaceCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        splashColor: AppColors.accent.withValues(alpha: 0.08),
-        highlightColor: AppColors.accent.withValues(alpha: 0.04),
+        borderRadius: borderRadius,
+        splashColor: tokens.accent.withValues(alpha: 0.08),
+        highlightColor: tokens.accent.withValues(alpha: 0.04),
         child: card,
       ),
     );
@@ -110,7 +118,7 @@ class StatusPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppRadii.pill),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -155,18 +163,23 @@ class BatteryRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final p = percent.clamp(0, 100) / 100.0;
     final color = percent > 50
-        ? AppColors.mint
+        ? tokens.mint
         : percent > 20
-        ? AppColors.amber
-        : AppColors.coral;
+        ? tokens.amber
+        : tokens.coral;
 
     return SizedBox(
       width: size,
       height: size,
       child: CustomPaint(
-        painter: _RingPainter(progress: p, color: color),
+        painter: _RingPainter(
+          progress: p,
+          color: color,
+          trackColor: tokens.border,
+        ),
         child: Padding(
           padding: EdgeInsets.all(size * 0.14),
           child: FittedBox(
@@ -175,18 +188,14 @@ class BatteryRing extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (charging)
-                  const Icon(
-                    Icons.bolt_rounded,
-                    color: AppColors.amber,
-                    size: 14,
-                  ),
+                  Icon(Icons.bolt_rounded, color: tokens.amber, size: 14),
                 Text(
                   '$percent%',
                   style: TextStyle(
                     fontSize: size * 0.21,
                     height: 1,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
+                    color: tokens.textPrimary,
                     letterSpacing: -0.5,
                   ),
                 ),
@@ -196,7 +205,7 @@ class BatteryRing extends StatelessWidget {
                   style: TextStyle(
                     fontSize: size * 0.1,
                     height: 1,
-                    color: AppColors.textMuted,
+                    color: tokens.textMuted,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -210,17 +219,22 @@ class BatteryRing extends StatelessWidget {
 }
 
 class _RingPainter extends CustomPainter {
-  _RingPainter({required this.progress, required this.color});
+  _RingPainter({
+    required this.progress,
+    required this.color,
+    required this.trackColor,
+  });
 
   final double progress;
   final Color color;
+  final Color trackColor;
 
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
     final r = size.width / 2 - 6;
     final bg = Paint()
-      ..color = AppColors.border
+      ..color = trackColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 7
       ..strokeCap = StrokeCap.round;
@@ -245,7 +259,9 @@ class _RingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RingPainter old) =>
-      old.progress != progress || old.color != color;
+      old.progress != progress ||
+      old.color != color ||
+      old.trackColor != trackColor;
 }
 
 class AccentButton extends StatelessWidget {
@@ -268,13 +284,14 @@ class AccentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = color ?? AppColors.accent;
+    final tokens = KoeTokens.of(context);
+    final foreground = color ?? tokens.accent;
     final style = (filled ? FilledButton.styleFrom : OutlinedButton.styleFrom)(
       foregroundColor: filled ? Colors.white : foreground,
-      backgroundColor: filled ? foreground : AppColors.bgCardHover,
+      backgroundColor: filled ? foreground : tokens.bgPanel,
       minimumSize: const Size(44, 48),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.sm)),
     );
     final content = Row(
       mainAxisSize: MainAxisSize.min,
@@ -299,6 +316,7 @@ class InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -306,8 +324,8 @@ class InfoRow extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                color: AppColors.textMuted,
+              style: TextStyle(
+                color: tokens.textMuted,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
@@ -317,11 +335,11 @@ class InfoRow extends StatelessWidget {
             child: Text(
               value,
               textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
+              style: TextStyle(
+                color: tokens.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                fontFeatures: [FontFeature.tabularFigures()],
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -332,22 +350,129 @@ class InfoRow extends StatelessWidget {
 }
 
 class SectionLabel extends StatelessWidget {
-  const SectionLabel(this.text, {super.key});
+  const SectionLabel(this.text, {super.key, this.trailing});
 
   final String text;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    final label = Text(
+      text.toUpperCase(),
+      style: TextStyle(
+        color: tokens.textMuted,
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.2,
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 10, top: 4),
-      child: Text(
-        text.toUpperCase(),
-        style: const TextStyle(
-          color: AppColors.textMuted,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 1.2,
-        ),
+      child: trailing == null
+          ? label
+          : Row(
+              children: [
+                Expanded(child: label),
+                trailing!,
+              ],
+            ),
+    );
+  }
+}
+
+/// Rounded-square icon badge adapted from open-design `SettingsWorkspaceSection`
+/// (`.entryIcon`).
+class IconBadge extends StatelessWidget {
+  const IconBadge({
+    super.key,
+    required this.icon,
+    this.color,
+    this.backgroundColor,
+    this.borderColor,
+    this.size = 34,
+    this.iconSize = 17,
+    this.radius = 9,
+  });
+
+  final IconData icon;
+  final Color? color;
+  final Color? backgroundColor;
+  final Color? borderColor;
+  final double size;
+  final double iconSize;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    final fg = color ?? tokens.textPrimary;
+    final bg = backgroundColor ?? tokens.bgPanel;
+    final border = borderColor ?? tokens.borderSoft;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: border),
+      ),
+      alignment: Alignment.center,
+      child: Icon(icon, size: iconSize, color: fg),
+    );
+  }
+}
+
+/// Semantic notice banner adapted from open-design `.lockedBanner` / `.warning`.
+class BannerNotice extends StatelessWidget {
+  const BannerNotice({
+    super.key,
+    required this.message,
+    this.icon = Icons.info_outline_rounded,
+    this.color,
+    this.backgroundColor,
+    this.borderColor,
+    this.trailing,
+  });
+
+  final String message;
+  final IconData icon;
+  final Color? color;
+  final Color? backgroundColor;
+  final Color? borderColor;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    final fg = color ?? tokens.accent;
+    final bg = backgroundColor ?? fg.withValues(alpha: 0.08);
+    final border = borderColor ?? fg.withValues(alpha: 0.24);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(icon, size: 16, color: fg),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: fg,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+                height: 1.35,
+              ),
+            ),
+          ),
+          if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+        ],
       ),
     );
   }

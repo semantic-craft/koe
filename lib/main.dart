@@ -52,6 +52,8 @@ class SoundcoreManagerApp extends StatelessWidget {
       title: '安克录音豆',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.light,
       home: const AppShell(),
     );
     final controller = this.controller;
