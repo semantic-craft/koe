@@ -364,7 +364,8 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
         body: SafeArea(
           child: Column(
             children: [
-              if (result.sourceHash != analysisFingerprint(view.text))
+              if (widget.controller.recordingAudioChanged(widget.reference) ||
+                  result.sourceHash != analysisFingerprint(view.text))
                 const Text('原文已更新，当前导图对应旧纪要'),
               if (tooLarge) const Text('超过 300 个节点，显示完整层级文本；请使用文字纪要导出'),
               Wrap(

@@ -18,6 +18,8 @@ import 'package:koe/ble/realtime_stream.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/audio/audio_version.dart';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -170,6 +172,116 @@ void main() async {
       expect(journal.jobs.values.single.stage, 'complete');
       await c.processRetrievedRecording(path);
       expect(qwen.calls, 1);
+    },
+  );
+
+  test(
+    'retrieved changed audio keeps old result and requires explicit retry',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('audio-version-');
+      addTearDown(() => directory.delete(recursive: true));
+      final audio = File('${directory.path}/987654.wav');
+      await audio.writeAsBytes([1, 2, 3]);
+      final qwen = _Qwen()..apiKeyOverride = 'key';
+      final journal = FileJobJournal(inMemory: true);
+      final c = RecorderController(
+        loadPersistedState: false,
+        qwenSpeech: qwen,
+        fileJobJournal: journal,
+      )..setSpeechProvider(SttProvider.qwen);
+      addTearDown(c.dispose);
+      await c.processRetrievedRecording(audio.path);
+      await settleUntil(
+        () => journal.jobs.values.any((j) => j.stage == 'complete'),
+      );
+      await audio.writeAsBytes([4, 5, 6]);
+      await c.processRetrievedRecording(audio.path);
+      expect(qwen.calls, 1);
+      expect(c.transcriptForPath(audio.path), '通义文本');
+      expect(
+        c.recordingView(RecordingReference(path: audio.path)).error,
+        contains('音频内容已变化'),
+      );
+      await c.transcribeLocalFile(audio.path);
+      expect(qwen.calls, 2);
+      expect(
+        c.recordingView(RecordingReference(path: audio.path)).error,
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'changed audio during request cannot overwrite existing transcription',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('audio-late-');
+      addTearDown(() => directory.delete(recursive: true));
+      final audio = File('${directory.path}/456789.wav');
+      await audio.writeAsBytes([1, 2, 3]);
+      final qwen = _Qwen()
+        ..apiKeyOverride = 'key'
+        ..pending = Completer<void>();
+      final c = RecorderController(loadPersistedState: false, qwenSpeech: qwen)
+        ..setSpeechProvider(SttProvider.qwen)
+        ..rememberTranscript(audio.path, '原有成功结果');
+      addTearDown(c.dispose);
+      final processing = c.transcribeLocalFile(audio.path);
+      await settleUntil(() => qwen.calls == 1);
+      await audio.writeAsBytes([7, 8, 9]);
+      qwen.pending!.complete();
+      await processing;
+      expect(c.transcriptForPath(audio.path), '原有成功结果');
+      expect(
+        c.recordingView(RecordingReference(path: audio.path)).error,
+        contains('音频内容已变化'),
+      );
+    },
+  );
+
+  test(
+    'known remote task rejects changed audio and resumes only after source restored',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('restore-version-');
+      addTearDown(() => dir.delete(recursive: true));
+      final audio = File('${dir.path}/456789.wav');
+      await audio.writeAsBytes([1, 2, 3]);
+      final journal = FileJobJournal(file: File('${dir.path}/jobs.json'));
+      final qwen = _Qwen()..apiKeyOverride = 'key';
+      final first = RecorderController(
+        loadPersistedState: false,
+        qwenSpeech: qwen,
+        fileJobJournal: journal,
+      )..setSpeechProvider(SttProvider.qwen);
+      await first.transcribeLocalFile(audio.path);
+      first.dispose();
+      final job = journal.jobs.values.single;
+      job.stage = 'running';
+      job.taskId = 'existing-paid-task';
+      job.text = null;
+      await journal.save();
+      await audio.writeAsBytes([9, 8, 7]);
+      final restoredJournal = FileJobJournal(file: journal.file);
+      final service = _Qwen()..apiKeyOverride = 'key';
+      final restored = RecorderController(
+        loadPersistedState: false,
+        qwenSpeech: service,
+        fileJobJournal: restoredJournal,
+      );
+      addTearDown(restored.dispose);
+      await settleUntil(
+        () => restoredJournal.jobs.values.any((j) => j.audioChanged),
+      );
+      expect(service.calls, 0);
+      expect(restoredJournal.jobs.values.single.taskId, 'existing-paid-task');
+      await audio.writeAsBytes([1, 2, 3]);
+      await restored.transcribeLocalFile(audio.path);
+      expect(service.calls, 1);
+      expect(service.seenTaskId, 'existing-paid-task');
+      expect(restoredJournal.jobs.values.single.audioChanged, false);
+      expect(
+        restoredJournal.jobs.values.single.audioHash,
+        await audioVersion(audio.path),
+      );
     },
   );
 
@@ -1041,7 +1153,7 @@ void main() async {
       const ref = RecordingReference(path: '/tmp/127.wav');
       c.rememberTranscript(ref.path!, 'Original');
       final processing = c.transcribeRecording(ref);
-      await Future<void>.delayed(Duration.zero);
+      await settleUntil(() => apple.fileCalls == 1);
       await c.startRecord();
       pending.complete(const SttResult(text: 'Cancelled result'));
       await processing;

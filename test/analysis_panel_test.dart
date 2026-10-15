@@ -22,6 +22,9 @@ class _Controller extends RecorderController {
     : super(loadPersistedState: false, analysisController: manager);
   @override
   String get analysisApiKey => 'test-key';
+  bool changed = false;
+  @override
+  bool recordingAudioChanged(RecordingReference ref) => changed;
   @override
   String analysisKey(RecordingReference ref) => 'file:123';
   @override
@@ -73,4 +76,37 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+  testWidgets(
+    'changed audio marks old analysis stale and prevents paid generation',
+    (tester) async {
+      final manager = RecordingAnalysis(inMemory: true, service: _Service());
+      final c = _Controller(manager);
+      addTearDown(c.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AnalysisPanel(
+            controller: c,
+            reference: const RecordingReference(fileId: 123),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('generate-analysis')));
+      await tester.pumpAndSettle();
+      c.changed = true;
+      c.notifyListeners();
+      await tester.pump();
+      expect(find.textContaining('音频内容已变化'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('generate-analysis')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(find.textContaining('已过期'), findsOneWidget);
+      expect(manager.results.values.single.text, '已完成的摘要 [S1]');
+    },
+  );
 }

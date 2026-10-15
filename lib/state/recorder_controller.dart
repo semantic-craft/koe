@@ -18,6 +18,7 @@ import '../ai/stt_types.dart';
 import '../ai/apple_speech.dart';
 import '../ai/speech_provider.dart';
 import '../audio/audio_duration.dart';
+import '../audio/audio_version.dart';
 import '../audio/ogg_opus.dart';
 import '../audio/opus_pcm_decoder.dart';
 import '../audio/opus_wave.dart';
@@ -53,6 +54,9 @@ class RecorderController extends ChangeNotifier {
       );
   final RecordingAnalysis? _analysisOverride;
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
+  bool recordingAudioChanged(RecordingReference ref) =>
+      _fileJobs.jobs[_referenceKey(ref)]?.audioChanged == true;
+
   bool get doubaoFileProcessing => _fileJobProvider == SttProvider.doubao;
   void cancelDoubaoFileProcessing() {
     if (doubaoFileProcessing) {
@@ -228,7 +232,12 @@ class RecorderController extends ChangeNotifier {
           !_liveProcessing,
       engine: (config) => config.provider,
       accept: (recordingKey, path, config) async {
+        final version = await audioVersion(path);
         final job = await _fileJobs.enqueue(recordingKey, path, config);
+        if (job.audioHash == null && version != null) {
+          job.audioHash = version;
+          await _fileJobs.save();
+        }
         return !job.recoverable;
       },
       run: _runFileTranscription,
@@ -284,11 +293,40 @@ class RecorderController extends ChangeNotifier {
       return;
     }
     final key = _recordingKey(path: path);
-    if ((transcriptForPath(path) ?? '').trim().isNotEmpty ||
-        _fileJobs.jobs.containsKey(key)) {
+    if (_isRecordingAudioLocked(fileIdFromPath(path), path)) return;
+    final config = _settingsConfiguration;
+    if (!_isConfigured(config) &&
+        !_fileJobs.jobs.containsKey(key) &&
+        (transcriptForPath(path) ?? '').trim().isEmpty) {
+      _recordingErrors[key] = '录音已保存，请先配置语音服务后重试转写';
+      notifyListeners();
       return;
     }
-    final config = _settingsConfiguration;
+    try {
+      final version = await audioVersion(path);
+      if (version == null) return;
+      final previous = _fileJobs.jobs[key];
+      if (previous != null) {
+        if (previous.audioHash != null && previous.audioHash != version) {
+          previous.audioChanged = true;
+          previous.error = '音频内容已变化，已有文字和分析保留；请手动重新转写';
+          _recordingErrors[key] = previous.error!;
+          await _fileJobs.save();
+          notifyListeners();
+        } else if (previous.audioHash == null) {
+          // Legacy records lack a prior digest. Establish a baseline without
+          // replaying a paid request or claiming historical content equality.
+          previous.audioHash = version;
+          await _fileJobs.save();
+        }
+        return;
+      }
+      if ((transcriptForPath(path) ?? '').trim().isNotEmpty) return;
+    } catch (_) {
+      _recordingErrors[key] = '无法确认完整音频版本，录音已保留，请重试';
+      notifyListeners();
+      return;
+    }
     if (!_isConfigured(config)) {
       _recordingErrors[key] = '录音已保存，请先配置语音服务后重试转写';
       notifyListeners();
@@ -768,6 +806,7 @@ class RecorderController extends ChangeNotifier {
 
   String _speechErrorMessage(Object error) {
     if (error is CloudSttException) return error.message;
+    if (error is AudioVersionException) return error.message;
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
       'unsupported' => '此设备不支持设备端处理，请在设置中选择云端语音服务',
@@ -1980,7 +2019,29 @@ class RecorderController extends ChangeNotifier {
     _fileJobPreparing = true;
     FileJob job;
     try {
+      final version = await audioVersion(path);
+      final previous = _fileJobs.jobs[key];
+      if (previous?.audioHash != null &&
+          previous!.audioHash != version &&
+          (fromQueue ||
+              previous.stage == 'result' ||
+              previous.stage == 'running' && previous.taskId != null)) {
+        previous.audioChanged = true;
+        previous.error = '音频内容已变化，原任务与结果保留；请恢复原音频后重试';
+        _recordingErrors[key] = previous.error!;
+        await _fileJobs.save();
+        _fileJobPreparing = false;
+        notifyListeners();
+        return true;
+      }
       job = await _fileJobs.enqueue(key, path, config, retry: !fromQueue);
+      if (previous?.audioHash != null && previous!.audioHash != version) {
+        job.audioChanged = true;
+      }
+      if (version != null && job.audioHash == null) {
+        job.audioHash = version;
+        await _fileJobs.save();
+      }
       if (fromQueue && !job.recoverable) {
         _fileJobPreparing = false;
         return true;
@@ -2004,6 +2065,12 @@ class RecorderController extends ChangeNotifier {
     }
     _fileJobPreparing = false;
     if (_disposed) return true;
+    if (_isRecordingAudioLocked(fileIdFromPath(path), path) ||
+        config.provider == SttProvider.apple && _liveProcessing) {
+      _recordingErrors[key] = '处理因录音暂停，可在录音结束后重试';
+      notifyListeners();
+      return !fromQueue;
+    }
     final revision = ++_fileJobRevision;
     _fileJobKey = key;
     _fileJobProvider = config.provider;
@@ -2064,6 +2131,11 @@ class RecorderController extends ChangeNotifier {
               },
             );
       if (_disposed || revision != _fileJobRevision) return true;
+      if (job.audioHash != null && await audioVersion(path) != job.audioHash) {
+        job.audioChanged = true;
+        throw const AudioVersionException('音频内容已变化，迟到结果未覆盖原有文字；请手动重新转写');
+      }
+      if (_disposed || revision != _fileJobRevision) return true;
       if (result.text.trim().isEmpty) {
         _recordingErrors[key] = '未识别到语音，可重试';
         job.stage = 'failed';
@@ -2091,6 +2163,7 @@ class RecorderController extends ChangeNotifier {
         await _persistTranscripts(strict: !_fileJobs.inMemory);
         job.stage = 'complete';
         job.error = null;
+        job.audioChanged = false;
         await _fileJobs.save();
         statusMessage = '转写已保存';
         // Refresh a closed live route without retaining an obsolete error.

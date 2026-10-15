@@ -18,6 +18,8 @@ class FileJob {
   final Map<String, dynamic> config;
   String stage = 'queued';
   String? taskId;
+  String? audioHash;
+  bool audioChanged = false;
   String? text;
   String? language;
   String? error;
@@ -31,6 +33,8 @@ class FileJob {
     'config': config,
     'stage': stage,
     'taskId': taskId,
+    'audioHash': audioHash,
+    'audioChanged': audioChanged,
     'text': text,
     'language': language,
     'error': error,
@@ -62,6 +66,8 @@ class FileJob {
       throw const FormatException('Unknown task stage');
     }
     job.taskId = json['taskId'] as String?;
+    job.audioHash = json['audioHash'] as String?;
+    job.audioChanged = json['audioChanged'] == true;
     job.text = json['text'] as String?;
     job.language = json['language'] as String?;
     job.error = json['error'] as String?;
