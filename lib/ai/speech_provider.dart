@@ -15,6 +15,11 @@ enum SttProvider {
       this == SttProvider.qwen ||
       this == SttProvider.doubao;
 
+  /// Cloud engines whose credentials are the grouped (API key, base URL,
+  /// model) trio saved through [EngineConfig]; key-only engines are not.
+  bool get usesEngineTrio =>
+      this == SttProvider.qwen || this == SttProvider.doubao;
+
   static SttProvider? parse(Object? value) {
     for (final provider in values) {
       if (provider.name == value) return provider;
