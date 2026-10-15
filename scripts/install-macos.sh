@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEAM_ID="${TEAM_ID:-LQAVR62TK2}"
+TARGET="${MACOS_INSTALL_PATH:-/Applications/Soundcore Manager.app}"
 SKIP_BUILD=0
 IDENTITY="${MACOS_SIGN_IDENTITY:-}"
 while [[ $# -gt 0 ]]; do
@@ -15,19 +16,13 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 cd "$ROOT"
-if [[ -z "$IDENTITY" ]]; then
-  identities=()
-  while IFS= read -r value; do
-    [[ -z "$value" ]] || identities+=("$value")
-  done < <(security find-identity -v -p codesigning | sed -nE 's/.*"(Developer ID Application:[^"]*)".*/\1/p' | awk -v team="($TEAM_ID)" 'index($0,team)')
-  if [[ ${#identities[@]} -ne 1 ]]; then
-    echo 'A unique Developer ID Application certificate is required; pass --identity. No ad-hoc fallback.' >&2
-    exit 1
-  fi
-  IDENTITY="${identities[0]}"
-fi
+
+designated_requirement() {
+  codesign -d -r- "$1" 2>/dev/null | sed -n 's/^designated => //p'
+}
+
 # Do not replace files while the installed process is still running.
-if pgrep -f '^/Applications/Soundcore Manager.app/Contents/MacOS/Soundcore Manager$' >/dev/null; then
+if pgrep -f "^${TARGET}/Contents/MacOS/Soundcore Manager$" >/dev/null; then
   echo 'Quit Soundcore Manager before installing.' >&2
   exit 1
 fi
@@ -38,12 +33,27 @@ STAGING="$(mktemp -d "${TMPDIR:-/tmp}/koe-install.XXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT
 APP="$STAGING/Soundcore Manager.app"
 ditto "$SOURCE" "$APP"
-codesign --force --deep --sign "$IDENTITY" --options runtime --timestamp=none \
-  --entitlements macos/Runner/Release.entitlements "$APP"
-codesign --verify --deep --strict "$APP"
-# Verify the stable trust boundary before replacing the installed app.
-REQUIREMENT="=identifier \"com.anker.ankerRecorder\" and anchor apple generic and certificate leaf[subject.OU] = \"$TEAM_ID\""
-codesign --verify --strict -R "$REQUIREMENT" "$APP"
-ditto "$APP" '/Applications/Soundcore Manager.app'
-codesign --verify --deep --strict -R "$REQUIREMENT" '/Applications/Soundcore Manager.app'
+if [[ -n "$IDENTITY" ]]; then
+  "$ROOT/scripts/sign-macos.sh" --identity "$IDENTITY" "$APP"
+else
+  "$ROOT/scripts/sign-macos.sh" "$APP"
+fi
+
+# A build with a different code requirement cannot reuse an existing Keychain
+# authorization: macOS asks the user once, when the item is first read.
+NEXT="$(designated_requirement "$APP")"
+if [[ -e "$TARGET" ]]; then
+  PREVIOUS="$(designated_requirement "$TARGET")"
+  if [[ "$PREVIOUS" == "$NEXT" ]]; then
+    echo 'Existing install shares this code requirement; saved Keychain access stays valid.'
+  else
+    echo 'NOTE: the installed build carries a different code requirement:'
+    echo "  installed: $PREVIOUS"
+    echo "  new:       $NEXT"
+    echo 'The first read of an existing Keychain item needs a one-time authorization in the app.'
+  fi
+fi
+
+ditto "$APP" "$TARGET"
+"$ROOT/scripts/sign-macos.sh" --verify-only "$TARGET"
 echo 'Installed signed macOS Release; existing app data retained.'

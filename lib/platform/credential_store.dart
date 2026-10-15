@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 class CredentialStorageException implements Exception {
   const CredentialStorageException();
-  String get message => '无法确认系统安全存储状态；请解锁设备后重试读取配置';
+  String get message => '无法确认系统安全存储状态；请在设置中点击“重试读取安全配置”完成授权';
   @override
   String toString() => message;
 }
@@ -15,6 +15,17 @@ class CredentialStore {
   static const channel = MethodChannel(
     'com.semanticcraft.soundcore/credentials',
   );
+
+  Future<bool> get isIsolated async =>
+      await channel.invokeMethod<String>('mode') != 'system';
+
+  Future<void> authorize() async {
+    try {
+      await channel.invokeMethod<void>('authorize');
+    } catch (_) {
+      throw const CredentialStorageException();
+    }
+  }
 
   Future<Map<String, String?>> read() async {
     try {

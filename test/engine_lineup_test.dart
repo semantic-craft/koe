@@ -428,6 +428,8 @@ void main() async {
       String? item = stored;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(CredentialStore.channel, (call) async {
+            if (call.method == 'mode') return 'system';
+            if (call.method == 'authorize') return null;
             if (call.method == 'read') return item;
             if (fail) throw PlatformException(code: 'locked');
             item = call.arguments as String;

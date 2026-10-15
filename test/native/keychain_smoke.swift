@@ -5,7 +5,7 @@ import Security
 enum KeychainSmoke {
   static func main() throws {
     let service = "com.semanticcraft.koe.validation.\(UUID().uuidString)"
-    let store = KeychainStore(service: service)
+    let store = KeychainStore(service: service, mode: .system)
     defer {
       SecItemDelete([kSecClass as String: kSecClassGenericPassword,
                      kSecAttrService as String: service,
