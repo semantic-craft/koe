@@ -12,21 +12,21 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'pause closes Soniox and ignores its late transcript and error',
+    'pause closes cloud streaming and ignores its late transcript and error',
     () async {
       final ble = _PauseBleService();
-      final soniox = _FakeSttStreamSession();
+      final session = _FakeSttStreamSession();
       final controller = RecorderController(ble: ble, loadPersistedState: false)
         ..connected = true
         ..phase = AppPhase.ready
         ..recording = true
-        ..attachSttStreamForTesting(soniox);
+        ..attachSttStreamForTesting(session);
       addTearDown(() async {
         controller.dispose();
         await Future<void>.delayed(Duration.zero);
       });
 
-      soniox.emit(
+      session.emit(
         const SttStreamEvent(
           type: 'partial',
           text: '录音中的文字',
@@ -37,21 +37,21 @@ void main() {
       expect(controller.transcript, '录音中的文字');
 
       await controller.pauseRecord();
-      soniox.emit(
+      session.emit(
         const SttStreamEvent(
           type: 'partial',
           text: '暂停后不应出现',
           speechFinal: true,
         ),
       );
-      soniox.emit(
+      session.emit(
         const SttStreamEvent(type: 'error', error: '408 Request timeout.'),
       );
       await Future<void>.delayed(Duration.zero);
 
-      expect(soniox.closeCalls, 1);
-      expect(soniox.finishCalls, 0);
-      expect(soniox.finalizeUtteranceCalls, 0);
+      expect(session.closeCalls, 1);
+      expect(session.finishCalls, 0);
+      expect(session.finalizeUtteranceCalls, 0);
       expect(controller.streamingSttActive, isFalse);
       expect(controller.transcript, '录音中的文字');
       expect(controller.transcriptError, isNull);

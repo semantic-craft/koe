@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../ai/soniox_languages.dart';
+import '../../ai/speech_languages.dart';
 import '../../ai/stt_types.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
@@ -126,7 +126,7 @@ class _TranslationPanel extends StatelessWidget {
               .toList()
               .reversed
               .toList();
-    final language = sonioxLanguageFor(languageCode);
+    final language = speechLanguageFor(languageCode);
 
     return Semantics(
       label: '${language.name} translation',
@@ -257,7 +257,7 @@ class _CenterControls extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    current && c.recording ? '交流 · Soniox' : '已暂停',
+                    current && c.recording ? '交流' : '已暂停',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                   ),
                 ),

@@ -12,14 +12,14 @@ import 'stt_types.dart';
 /// Doubao (Volcano Engine) recorded-file transcription via the
 /// "big model flash" one-shot recognize API.
 ///
-/// File jobs only. Live streaming is a follow-up and is not implemented.
+/// File adapter; realtime recognition is implemented in cloud_stt_stream.dart.
 ///
 /// Confirmed from current Volcano docs (2026-10-15, see
 /// koe-notes/doubao-volcano-api.md):
 /// - Standard edition (`volc.seedasr.auc` / `volc.bigasr.auc`,
 ///   submit + query) accepts only a publicly downloadable `audio.url`
-///   and has no hosted upload, so local recordings cannot reach it without
-///   the user's own object storage. Those resource ids are rejected here.
+///   and this adapter does not yet have a verified hosted-upload route.
+///   Those resource ids are rejected here.
 /// - Flash edition is the only recorded-file API that accepts inline audio
 ///   (`audio.data`, base64) and returns the transcript in a single
 ///   synchronous request: `POST {base}/api/v3/auc/bigmodel/recognize/flash`,
@@ -105,9 +105,7 @@ class DoubaoSttService extends CloudFileSttService {
       throw const DoubaoSttException('音频太短或无效，无法转写');
     }
     if (length > maxDirectUploadBytes) {
-      throw const DoubaoSttException(
-        '音频超过 20 MB，无法直传豆包极速版；请压缩音频或改用标准版',
-      );
+      throw const DoubaoSttException('音频超过 20 MB，无法直传豆包极速版；请压缩音频或改用标准版');
     }
 
     final bytes = await file.readAsBytes();
@@ -131,6 +129,7 @@ class DoubaoSttService extends CloudFileSttService {
             doubaoTranscriptionBody(
               data: base64Encode(bytes),
               language: language,
+              format: OggOpus.isWav(bytes) ? 'wav' : 'ogg',
             ),
           ),
         )
@@ -231,6 +230,7 @@ class DoubaoUtterance {
   });
 
   final String text;
+
   /// Provider-assigned speaker number (`additions.speaker`, `0`..`9`).
   final String? speaker;
   final int? startTimeMs;
@@ -247,6 +247,7 @@ class DoubaoRecognize {
 
   final String text;
   final List<DoubaoUtterance> utterances;
+
   /// `audio_info.duration` is milliseconds.
   final double? durationSec;
 }
@@ -307,12 +308,13 @@ String? doubaoModelRejection(String model) {
 Map<String, dynamic> doubaoTranscriptionBody({
   required String data,
   String? language,
+  String format = 'ogg',
 }) {
   final audio = <String, dynamic>{
     'data': data,
-    'format': 'ogg',
-    'codec': 'opus',
-    'rate': 48000,
+    'format': format,
+    if (format == 'ogg') 'codec': 'opus',
+    if (format == 'ogg') 'rate': 48000,
     'bits': 16,
     'channel': 1,
   };
@@ -327,6 +329,7 @@ Map<String, dynamic> doubaoTranscriptionBody({
       'enable_punc': true,
       'enable_speaker_info': true,
       'show_utterances': true,
+      if (code == null || code == 'zh-CN') 'ssd_version': '200',
     },
   };
 }
@@ -362,7 +365,8 @@ String? doubaoStatusMessage(String? code, String? message) {
     '20000001' || '20000002' => '豆包转写未同步完成，请重试',
     '20000003' => '未识别到语音，可重试',
     '45000001' when credential => '豆包 API Key 无效，请在设置中更新',
-    '45000001' => text.isEmpty ? '豆包请求参数无效，请重试' : '豆包请求参数无效：${clipSttMessage(text)}',
+    '45000001' =>
+      text.isEmpty ? '豆包请求参数无效，请重试' : '豆包请求参数无效：${clipSttMessage(text)}',
     '45000002' => '音频太短或无效，无法转写',
     '45000131' => '豆包请求过多，请稍后重试',
     '45000132' => '音频超过大小限制，无法转写',

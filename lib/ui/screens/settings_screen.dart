@@ -3,12 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../../ai/engine_config.dart';
 import '../../ai/cloud_stt_service.dart';
-import '../../ai/qwen_stt.dart';
-import '../../ai/doubao_stt.dart';
 import '../../ai/stt_types.dart';
-import '../../ai/moss_stt.dart';
 import '../../ai/apple_speech.dart';
-import '../../ai/soniox_languages.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
@@ -54,27 +50,14 @@ class SettingsScreen extends StatelessWidget {
                 children: [
                   _SettingsSwitch(
                     title: '自动转写',
-                    subtitle: c.speechProvider.defersTranscription
-                        ? '录音结束后生成文字'
-                        : '录音时生成文字',
+                    subtitle: '连接录音时实时转写，取回独立录音后自动处理',
                     value: c.autoTranscribe,
                     onChanged: c.setAutoTranscribe,
                   ),
                   const Divider(height: 20),
                   _ProviderSelector(controller: c),
                   const SizedBox(height: 16),
-                  if (c.speechProvider == SttProvider.soniox) ...[
-                    _ApiKeyField(
-                      key: const ValueKey('apikey-soniox'),
-                      label: 'Soniox API Key',
-                      initialValue: c.sonioxApiKeyStored ?? '',
-                      onSave: c.setSonioxApiKey,
-                    ),
-                    const SizedBox(height: 14),
-                    _TranscriptLanguageSelector(controller: c),
-                  ] else if (c.speechProvider == SttProvider.moss)
-                    _MossKeyField(controller: c)
-                  else if (c.speechProvider.usesEngineTrio) ...[
+                  if (c.speechProvider.usesEngineTrio) ...[
                     _CloudEngineSettings(
                       key: ValueKey(c.speechProvider),
                       controller: c,
@@ -98,19 +81,8 @@ class SettingsScreen extends StatelessWidget {
                     const Divider(height: 28),
                     _SttModeSelector(controller: c),
                   ],
-                  if (c.mossRecoveryError != null) Text(c.mossRecoveryError!),
                   if (c.fileJobRecoveryError != null)
                     Text(c.fileJobRecoveryError!),
-                  if (c.sttMode == SttDisplayMode.translation &&
-                      c.speechProvider == SttProvider.soniox) ...[
-                    const SizedBox(height: 14),
-                    _TranslationLanguageSettings(controller: c),
-                  ],
-                  if (c.speechProvider == SttProvider.soniox &&
-                      c.sttMode == SttDisplayMode.conversation) ...[
-                    const SizedBox(height: 14),
-                    _CommunicationLanguageSettings(controller: c),
-                  ],
                 ],
               ),
             ),
@@ -121,7 +93,7 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
-/// Data-driven ASR engine lineup. Iterates over [SttProvider.values] and
+/// Data-driven ASR engine lineup. Iterates over [SttProvider.available] and
 /// derives each card from per-engine metadata plus the controller's
 /// configuration state, so adding an engine is a data change (enum value plus
 /// a [_metadata] entry) — no engine-specific widget code.
@@ -134,21 +106,13 @@ class _ProviderSelector extends StatelessWidget {
       icon: Icons.phone_iphone_rounded,
       description: 'iOS 本地神经网络语音引擎，离线可用、隐私优先',
     ),
-    SttProvider.soniox: (
-      icon: Icons.cloud_outlined,
-      description: '云端低延迟流式转写，支持多语种同传与双人对话',
-    ),
-    SttProvider.moss: (
-      icon: Icons.graphic_eq_rounded,
-      description: '录音完成后整段精细转写，自动切分说话人段落',
-    ),
     SttProvider.qwen: (
       icon: Icons.auto_awesome_rounded,
-      description: '通义千问语音识别模型，录音完成后文件转写',
+      description: '千问 3.1 实时转写与长录音识别',
     ),
     SttProvider.doubao: (
       icon: Icons.bolt_rounded,
-      description: '火山引擎豆包语音识别，录音完成后极速版整段转写',
+      description: '豆包 2.0 实时二遍识别与录音文件极速转写',
     ),
   };
 
@@ -208,7 +172,7 @@ class _ProviderSelector extends StatelessWidget {
               ),
             ),
             Text(
-              '共 ${SttProvider.values.length} 个引擎',
+              '共 ${SttProvider.available.length} 个引擎',
               style: TextStyle(
                 fontSize: 12,
                 color: tokens.textMuted,
@@ -218,16 +182,16 @@ class _ProviderSelector extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        for (var i = 0; i < SttProvider.values.length; i++) ...[
+        for (var i = 0; i < SttProvider.available.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),
           _EngineOptionCard(
-            provider: SttProvider.values[i],
-            selected: controller.speechProvider == SttProvider.values[i],
-            meta: _metaFor(SttProvider.values[i], tokens),
+            provider: SttProvider.available[i],
+            selected: controller.speechProvider == SttProvider.available[i],
+            meta: _metaFor(SttProvider.available[i], tokens),
             enabled:
-                SttProvider.values[i] == SttProvider.apple ||
-                controller.engineConfigured(SttProvider.values[i]),
-            onTap: () => _tap(context, SttProvider.values[i]),
+                SttProvider.available[i] == SttProvider.apple ||
+                controller.engineConfigured(SttProvider.available[i]),
+            onTap: () => _tap(context, SttProvider.available[i]),
           ),
         ],
       ],
@@ -247,24 +211,20 @@ class _ProviderSelector extends StatelessWidget {
         content: SizedBox(
           width: 480,
           child: SingleChildScrollView(
-            child: provider.usesEngineTrio
-                ? _CloudEngineSettings(
-                    controller: controller,
-                    provider: provider,
-                  )
-                : provider == SttProvider.moss
-                ? _MossKeyField(controller: controller)
-                : _ApiKeyField(
-                    label: 'Soniox API Key',
-                    initialValue: controller.sonioxApiKeyStored ?? '',
-                    onSave: controller.setSonioxApiKey,
-                  ),
+            child: _CloudEngineSettings(
+              controller: controller,
+              provider: provider,
+              onSaved: () {
+                controller.setSpeechProvider(provider);
+                Navigator.pop(context);
+              },
+            ),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('完成'),
+            child: const Text('取消'),
           ),
         ],
       ),
@@ -622,12 +582,7 @@ class _SttModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
-    final soniox = c.speechProvider == SttProvider.soniox;
-    final subtitle = !c.autoTranscribe
-        ? '请先开启自动转写'
-        : soniox
-        ? '翻译为单向，交流为双向'
-        : null;
+    final subtitle = !c.autoTranscribe ? '请先开启自动转写' : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -661,14 +616,8 @@ class _SttModeSelector extends StatelessWidget {
                   c.autoTranscribe &&
                   (c.speechProvider == SttProvider.apple
                       ? c.appleTranslationAvailable
-                      : c.sonioxTranslationModeAvailable),
+                      : c.translationModeAvailable),
             ),
-            if (soniox)
-              ButtonSegment(
-                value: SttDisplayMode.conversation,
-                label: const Text('交流'),
-                enabled: c.conversationModeAvailable,
-              ),
           ],
           selected: {c.sttMode},
           showSelectedIcon: false,
@@ -677,22 +626,6 @@ class _SttModeSelector extends StatelessWidget {
           },
         ),
       ],
-    );
-  }
-}
-
-class _TranslationLanguageSettings extends StatelessWidget {
-  const _TranslationLanguageSettings({required this.controller});
-
-  final RecorderController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return _LanguageField(
-      label: '目标语言',
-      code: controller.translationTargetLanguage,
-      excludedCode: null,
-      onSelected: controller.setTranslationTargetLanguage,
     );
   }
 }
@@ -749,511 +682,101 @@ class _SettingsSwitch extends StatelessWidget {
   }
 }
 
-class _CommunicationLanguageSettings extends StatelessWidget {
-  const _CommunicationLanguageSettings({required this.controller});
-
-  final RecorderController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = controller;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _LanguageField(
-          label: '我的语言',
-          code: c.ownerLanguage,
-          excludedCode: c.guestLanguage,
-          onSelected: c.setOwnerLanguage,
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Center(
-            child: IconButton(
-              key: const ValueKey('swap-communication-languages'),
-              tooltip: '交换语言',
-              visualDensity: VisualDensity.compact,
-              onPressed: c.swapCommunicationLanguages,
-              icon: const Icon(
-                Icons.swap_vert_rounded,
-                color: AppColors.violet,
-              ),
-            ),
-          ),
-        ),
-        _LanguageField(
-          label: '对方语言',
-          code: c.guestLanguage,
-          excludedCode: c.ownerLanguage,
-          onSelected: c.setGuestLanguage,
-        ),
-      ],
-    );
-  }
-}
-
-class _LanguageField extends StatelessWidget {
-  const _LanguageField({
-    required this.label,
-    required this.code,
-    required this.excludedCode,
-    required this.onSelected,
-  });
-
-  final String label;
-  final String code;
-  final String? excludedCode;
-  final ValueChanged<String> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final language = sonioxLanguageFor(code);
-    return OutlinedButton(
-      key: ValueKey('communication-language-$label'),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: AppColors.textPrimary,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        side: const BorderSide(color: AppColors.border),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-      onPressed: () async {
-        final selected = await showModalBottomSheet<String>(
-          context: context,
-          useSafeArea: true,
-          isScrollControlled: true,
-          backgroundColor: AppColors.bgCard,
-          builder: (_) => _LanguagePickerSheet(
-            title: label,
-            selectedCode: code,
-            excludedCode: excludedCode,
-          ),
-        );
-        if (selected != null) onSelected(selected);
-      },
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  language.label,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ),
-          const Icon(Icons.search_rounded, size: 20),
-        ],
-      ),
-    );
-  }
-}
-
-class _LanguagePickerSheet extends StatefulWidget {
-  const _LanguagePickerSheet({
-    required this.title,
-    required this.selectedCode,
-    required this.excludedCode,
-  });
-
-  final String title;
-  final String selectedCode;
-  final String? excludedCode;
-
-  @override
-  State<_LanguagePickerSheet> createState() => _LanguagePickerSheetState();
-}
-
-class _LanguagePickerSheetState extends State<_LanguagePickerSheet> {
-  String _query = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final query = _query.trim().toLowerCase();
-    final languages = sonioxLanguages.where((language) {
-      if (language.code == widget.excludedCode) return false;
-      if (query.isEmpty) return true;
-      return language.code.contains(query) ||
-          language.name.toLowerCase().contains(query);
-    }).toList();
-
-    return SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.82,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  '选择${widget.title}',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SearchBar(
-                  hintText: '搜索语言或代码',
-                  leading: const Icon(Icons.search_rounded),
-                  onChanged: (value) => setState(() => _query = value),
-                ),
-              ],
-            ),
-          ),
-          const Divider(),
-          Expanded(
-            child: ListView.builder(
-              itemCount: languages.length,
-              itemBuilder: (context, index) {
-                final language = languages[index];
-                final selected = language.code == widget.selectedCode;
-                return ListTile(
-                  title: Text(language.name),
-                  subtitle: Text(language.code),
-                  trailing: selected
-                      ? const Icon(Icons.check_rounded, color: AppColors.accent)
-                      : null,
-                  onTap: () => Navigator.of(context).pop(language.code),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ApiKeyField extends StatefulWidget {
-  const _ApiKeyField({
-    super.key,
-    required this.label,
-    required this.initialValue,
-    required this.onSave,
-  });
-
-  final String label;
-  final String initialValue;
-  final ValueChanged<String?> onSave;
-
-  @override
-  State<_ApiKeyField> createState() => _ApiKeyFieldState();
-}
-
-class _ApiKeyFieldState extends State<_ApiKeyField> {
-  late final TextEditingController _controller;
-  bool _dirty = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialValue);
-  }
-
-  @override
-  void didUpdateWidget(covariant _ApiKeyField oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Sync from controller only when not mid-edit.
-    if (!_dirty && oldWidget.initialValue != widget.initialValue) {
-      _controller.text = widget.initialValue;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _commit() {
-    final v = _controller.text.trim();
-    widget.onSave(v.isEmpty ? null : v);
-    setState(() => _dirty = false);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          v.isEmpty ? '已清除 ${widget.label}' : '已保存 ${widget.label}',
-        ),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                widget.label,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _controller,
-          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-          obscureText: true,
-          autocorrect: false,
-          enableSuggestions: false,
-          style: const TextStyle(
-            fontSize: 13,
-            fontFamily: 'Menlo',
-            color: AppColors.textPrimary,
-          ),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: '粘贴 API Key…',
-            hintStyle: const TextStyle(
-              fontSize: 12,
-              color: AppColors.textSecondary,
-            ),
-            filled: true,
-            fillColor: AppColors.bgElevated,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
-            ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppColors.border),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppColors.border),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppColors.accent, width: 1.4),
-            ),
-            suffixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_controller.text.isNotEmpty)
-                  IconButton(
-                    tooltip: '清除',
-                    onPressed: () {
-                      _controller.clear();
-                      setState(() => _dirty = true);
-                      widget.onSave(null);
-                      setState(() => _dirty = false);
-                    },
-                    icon: const Icon(
-                      Icons.clear_rounded,
-                      size: 18,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          onChanged: (_) {
-            if (!_dirty) setState(() => _dirty = true);
-          },
-          onSubmitted: (_) => _commit(),
-        ),
-        if (_dirty) ...[
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: AccentButton(
-              label: '保存',
-              icon: Icons.save_rounded,
-              expand: false,
-              onPressed: _commit,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _MossKeyField extends StatefulWidget {
-  const _MossKeyField({required this.controller});
-  final RecorderController controller;
-  @override
-  State<_MossKeyField> createState() => _MossKeyFieldState();
-}
-
-class _MossKeyFieldState extends State<_MossKeyField> {
-  late final TextEditingController _text = TextEditingController(
-    text: widget.controller.mossApiKeyStored ?? '',
-  );
-  bool _busy = false;
-  String? _message;
-  Future<void> _save() async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _message = null;
-    });
-    try {
-      await widget.controller.validateAndSaveMossApiKey(_text.text);
-      if (mounted) setState(() => _message = 'MOSS API Key 已保存');
-    } catch (error) {
-      if (mounted) {
-        setState(
-          () => _message = error is MossException ? error.message : '无法保存，请重试',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _text.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      TextField(
-        key: const ValueKey('apikey-moss'),
-        controller: _text,
-        enabled: !_busy,
-        obscureText: true,
-        autocorrect: false,
-        enableSuggestions: false,
-        decoration: InputDecoration(
-          labelText: 'MOSS API Key',
-          suffixIcon: widget.controller.mossApiKeyStored == null
-              ? null
-              : IconButton(
-                  tooltip: '清除',
-                  onPressed: _busy
-                      ? null
-                      : () {
-                          widget.controller.clearMossApiKey();
-                          _text.clear();
-                          setState(() => _message = 'MOSS API Key 已清除');
-                        },
-                  icon: const Icon(Icons.clear_rounded),
-                ),
-        ),
-        onSubmitted: (_) => _save(),
-      ),
-      const SizedBox(height: 12),
-      Align(
-        alignment: Alignment.centerRight,
-        child: FilledButton(
-          onPressed: _busy ? null : _save,
-          child: Text(_busy ? '正在验证…' : '验证并保存'),
-        ),
-      ),
-      if (_message != null) ...[const SizedBox(height: 8), Text(_message!)],
-    ],
-  );
-}
-
-/// Credential-trio form shared by the cloud file engines. The engine is
-/// data — labels, defaults and the base-URL normalizer come from the
-/// [_engines] map keyed by [SttProvider] — so adding a cloud engine is a
-/// map entry (plus the lineup metadata), not another copy of this form.
-/// Widget keys (`apikey-qwen`, `qwen-base-url`, …) derive from the
-/// provider name and stay stable per engine.
 class _CloudEngineSettings extends StatefulWidget {
   const _CloudEngineSettings({
     super.key,
     required this.controller,
     required this.provider,
+    this.onSaved,
   });
 
   final RecorderController controller;
   final SttProvider provider;
+  final VoidCallback? onSaved;
 
   @override
   State<_CloudEngineSettings> createState() => _CloudEngineSettingsState();
 }
 
 class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
-  static final Map<
-    SttProvider,
-    ({
-      String keyLabel,
-      String defaultBaseUrl,
-      String defaultModel,
-      String baseUrlHelper,
-      String modelHelper,
-      String Function(String) normalizeBaseUrl,
-    })
-  >
-  _engines = {
-    SttProvider.qwen: (
-      keyLabel: '通义 API Key',
-      defaultBaseUrl: QwenSttService.defaultBaseUrl,
-      defaultModel: QwenSttService.defaultModel,
-      baseUrlHelper: '留空使用北京站。国际站 ${QwenSttService.intlBaseUrl}',
-      modelHelper: '默认 ${QwenSttService.defaultModel}。只支持文件转写',
-      normalizeBaseUrl: normalizeDashScopeBaseUrl,
-    ),
-    SttProvider.doubao: (
-      keyLabel: '豆包 API Key',
-      defaultBaseUrl: DoubaoSttService.defaultBaseUrl,
-      defaultModel: DoubaoSttService.defaultModel,
-      baseUrlHelper: '留空使用 ${DoubaoSttService.defaultBaseUrl}',
-      modelHelper: '默认 ${DoubaoSttService.defaultModel}。只支持极速版文件转写',
-      normalizeBaseUrl: normalizeDoubaoBaseUrl,
-    ),
-  };
-
-  late final _engine = _engines[widget.provider]!;
   late final TextEditingController _key = TextEditingController(
     text: widget.controller.engineConfig(widget.provider).apiKey ?? '',
   );
-  late final TextEditingController _base = TextEditingController(
-    text: widget.controller.engineConfig(widget.provider).baseUrl ?? '',
+  late final TextEditingController _workspace = TextEditingController(
+    text: _workspaceId(widget.controller.engineConfig(widget.provider).baseUrl),
   );
-  late final TextEditingController _model = TextEditingController(
-    text: widget.controller.engineConfig(widget.provider).model ?? '',
-  );
+  static String _workspaceId(String? baseUrl) {
+    final host = Uri.tryParse(baseUrl ?? '')?.host ?? '';
+    return host.endsWith('.maas.aliyuncs.com') ? host.split('.').first : '';
+  }
+
   String? _error;
+  EngineConfig? _lastSaved;
+  bool _saved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastSaved = widget.controller.engineConfig(widget.provider);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CloudEngineSettings oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final saved = widget.controller.engineConfig(widget.provider);
+    if (saved != _lastSaved) {
+      _lastSaved = saved;
+      _key.text = saved.apiKey ?? '';
+      _workspace.text = _workspaceId(saved.baseUrl);
+    }
+  }
 
   @override
   void dispose() {
     _key.dispose();
-    _base.dispose();
-    _model.dispose();
+    _workspace.dispose();
     super.dispose();
   }
 
   void _save() {
+    if (_key.text.trim().isEmpty) {
+      setState(() => _error = '请输入 API Key');
+      return;
+    }
     try {
+      final current = widget.controller.engineConfig(widget.provider);
+      var baseUrl = current.baseUrl;
+      if (widget.provider == SttProvider.qwen) {
+        final workspace = _workspace.text.trim();
+        if (workspace.isNotEmpty &&
+            !RegExp(
+              r'^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$',
+            ).hasMatch(workspace)) {
+          setState(() => _error = '请填写 Workspace ID，不需要填写网址');
+          return;
+        }
+        final host = Uri.tryParse(current.baseUrl ?? '')?.host ?? '';
+        final region = host.endsWith('.maas.aliyuncs.com')
+            ? host.split('.')[1]
+            : host == 'dashscope-intl.aliyuncs.com'
+            ? 'ap-southeast-1'
+            : 'cn-beijing';
+        baseUrl = workspace.isNotEmpty
+            ? 'https://$workspace.$region.maas.aliyuncs.com'
+            : region == 'ap-southeast-1'
+            ? 'https://dashscope-intl.aliyuncs.com'
+            : null;
+      }
       widget.controller.setEngineConfig(
         widget.provider,
-        EngineConfig(
-          apiKey: _key.text,
-          baseUrl: _base.text,
-          model: _model.text,
-        ),
+        EngineConfig(apiKey: _key.text, baseUrl: baseUrl, model: current.model),
       );
-      final stored = widget.controller.engineConfig(widget.provider).baseUrl;
-      if (stored != null) _base.text = stored;
-      setState(() => _error = null);
+      setState(() {
+        _error = null;
+        _saved = true;
+      });
+      FocusScope.of(context).unfocus();
+      widget.onSaved?.call();
     } on CloudSttException catch (error) {
       setState(() => _error = error.message);
     }
@@ -1261,51 +784,45 @@ class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.provider.name;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextField(
-          key: ValueKey('apikey-$name'),
+          key: ValueKey('apikey-${widget.provider.name}'),
           controller: _key,
           obscureText: true,
           autocorrect: false,
           enableSuggestions: false,
-          decoration: InputDecoration(labelText: _engine.keyLabel),
-          onSubmitted: (_) => _save(),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          key: ValueKey('$name-base-url'),
-          controller: _base,
-          autocorrect: false,
-          enableSuggestions: false,
-          keyboardType: TextInputType.url,
           decoration: InputDecoration(
-            labelText: '服务地址',
-            hintText: _engine.defaultBaseUrl,
-            helperText: _engine.baseUrlHelper,
+            labelText: widget.provider == SttProvider.qwen
+                ? '通义 API Key'
+                : '豆包 API Key',
           ),
+          onChanged: (_) => setState(() => _saved = false),
           onSubmitted: (_) => _save(),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          key: ValueKey('$name-model'),
-          controller: _model,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: InputDecoration(
-            labelText: '模型',
-            hintText: _engine.defaultModel,
-            helperText: _engine.modelHelper,
+        if (widget.provider == SttProvider.qwen) ...[
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('qwen-workspace'),
+            controller: _workspace,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(
+              labelText: 'Workspace ID（选填）',
+              helperText: '使用专属工作空间时填写；现有配置可留空',
+              helperMaxLines: 2,
+            ),
+            onChanged: (_) => setState(() => _saved = false),
+            onSubmitted: (_) => _save(),
           ),
-          onSubmitted: (_) => _save(),
-        ),
+        ],
         const SizedBox(height: 12),
         Align(
           alignment: Alignment.centerRight,
           child: FilledButton(onPressed: _save, child: const Text('保存')),
         ),
+        if (_saved) const Text('已保存'),
         if (_error != null) ...[
           const SizedBox(height: 8),
           Text(_error!, style: const TextStyle(color: AppColors.coral)),

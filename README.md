@@ -21,7 +21,7 @@
 - **首页**：浏览本地与设备端录音，下拉刷新、长按批量选择；点开详情阅读全文、翻译、播放、分享或重命名
 - **录音详情**：实时转写与保存后的文本使用同一详情页；返回首页不停止录音，暂停后保留当前页面。向上滚动可阅读旧内容，点「最新内容」恢复跟随
 - **设备**：电量（耳机 + 充电盒）、录音控制、配对绑定 / 解绑、恢复出厂设置
-- **设置**：选择 Apple 设备端、Soniox、MOSS Pro、通义 Qwen 或豆包，准备语言、自动转写、API Key 管理与诊断日志
+- **设置**：选择 Apple 设备端、通义 Qwen 或豆包，准备语言、自动转写、API Key 管理与诊断日志
 - **扫描**：首页顶部按钮触发底部弹窗（非独立 Tab）搜索并连接 BLE 设备
 - **Wi‑Fi 批量导出**：SoftAP 直连 + AES 解密，导出文件本地播放
 - **iPhone 操作按钮**：从锁屏或其他 App 打开本应用，并让已绑定的 D3200 立即开始录音
@@ -40,7 +40,7 @@
 
 ```
 lib/
-├── ai/          # Soniox STT（实时流式 + 批量文件）
+├── ai/          # Apple / 千问 / 豆包转写（实时 + 文件）
 ├── audio/       # Ogg/Opus 封装、Opus→PCM 解码
 ├── ble/         # 扫描广播解析、GATT 服务、离线文件拉取、实时音频流
 ├── crypto/      # 设备端 ECDH / AES 会话加解密
@@ -89,13 +89,12 @@ flutter test
 
 ## 说明
 
-- **Apple 设备端处理**（iOS 26+，取决于设备和语言）：D3200 实时音频与已保存录音可在 iPhone 上转写；支持实时单向翻译及已有转写文本的翻译。实时录音语言在设置中选择；已有录音可在转写或重新转写时选择语言，并按提示下载资源。Apple 处理失败不会自动切换到云端。面对面双向交流使用 Soniox。
-- **文件转写**：MOSS Pro、通义 Qwen 与豆包在录音保存后处理；通义默认 Qwen-Audio 3.1 文件模型，豆包当前为极速版。各模型支持范围与限制见设置及 [长录音工单 #11](https://github.com/semantic-craft/koe/issues/11)，并非任意模型名都兼容。
-- **Soniox 转写**（可选）：实时或批量生成转写。
-  - 实时路径：BLE Opus → PCM16 → 对应服务商 WebSocket STT。
-  - 批量路径：通过 Soniox 异步 Files API 上传 Ogg 文件。
-  - Key 配置：`export SONIOX_API_KEY=…` 后重启 App，或在设置页粘贴保存。
+- **Apple 设备端处理**（iOS 26+，取决于设备和语言）：D3200 实时音频与已保存录音可在 iPhone 上转写；支持实时单向翻译及已有转写文本的翻译。实时录音语言在设置中选择；已有录音可在转写或重新转写时选择语言，并按提示下载资源。Apple 处理失败不会自动切换到云端。云端 ASR 当前不提供翻译或双向交流。
+- **配置**：豆包只填写 API Key；千问填写 API Key 和可选 Workspace ID。程序自动选择服务地址与模型，首次保存后自动启用并关闭配置窗口。
+- **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，App 当前限制直传 20 MB。标准版仍需解决可下载链接的接入，不能只替换模型名。
+- **实时转写**：BLE Opus → PCM16 → 服务商 WebSocket。千问使用 `qwen-audio-3.1-asr-flash-streaming`；豆包使用 `volc.seedasr.sauc.duration`，优化双向流式接口开启 `enable_nonstream` 二遍识别。成功的实时结果不再自动重复提交文件；实时未完成时由同一服务的文件任务补齐。
+- **配置与验收**：在设置中保存服务商 Key。Helios 开发可参考 `.envrc.example`，通过 `direnv exec . python3 scripts/run-with-secrets.py macos` 给已安装 Mac App 注入凭据；凭据不会编入产物。iPhone 普通使用仍通过设置保存 Key。真实样本、接口限制与双端验收见 [语音服务替换验证](docs/speech-provider-validation.md)。
 - **Wi‑Fi SoftAP 批量导出 + 解密**：BLE 连接后先做 ECDH 握手（`0x2E/0x01`）生成会话密钥；导出时打开设备 SoftAP → 加入 → WebSocket 拉取，每 160 字节分片用 `1A07` 头（`soundcored3200` magic）中的单文件密钥做 AES‑CTR 解密。导出文件保存在 `Documents/AnkerRecorder/exports` 下，命名为 `{fileId}.opus`（握手失败则为 `.opus.bin`）。本地**播放**使用 `just_audio` 播放已导出文件。
 - 设备协议细节（服务/特征 UUID、命令字、加密流程等）见 [`PROTOCOL.md`](PROTOCOL.md)。
 - 请保持蓝牙开启；旧版 Android 扫描需授予定位权限。
-- 录音进行中修改处理服务、模式或语言，将在下次录音生效。已有 Soniox 配置会保留；支持 Apple 处理且未配置 Soniox 的新设置优先选择 Apple。
+- 录音进行中修改处理服务、模式或语言，将在下次录音生效。旧服务的历史文本和来源保留，旧密钥不再读写，未完成的旧任务不会自动改投新服务。有效的已选服务优先；否则优先已配置的千问，再考虑 Apple。

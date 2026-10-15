@@ -71,6 +71,12 @@ class FileJob {
     if (job.stage == 'running' && job.taskId == null) {
       job.error = '上次请求结果未确认；重试可能重复计费';
     }
+    if (SttProvider.parse(job.config['provider'])?.retired == true &&
+        job.stage != 'complete' &&
+        job.stage != 'result') {
+      job.stage = 'failed';
+      job.error = '原语音服务已停用，录音已保留；请选择千问或豆包后手动重试';
+    }
     return job;
   }
   static Map<String, dynamic> snapshot(SpeechConfiguration c) => {

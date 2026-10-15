@@ -458,25 +458,25 @@ void main() {
             size: size,
             scale: scale,
           );
-          expect(find.text('交流'), findsOneWidget);
-          c.setSpeechProvider(SttProvider.moss);
+          expect(find.text('交流'), findsNothing);
+          c.setSpeechProvider(SttProvider.doubao);
           await tester.pumpAndSettle();
-          expect(find.byKey(const ValueKey('apikey-moss')), findsOneWidget);
-          expect(find.text('录音结束后生成文字'), findsOneWidget);
+          expect(find.byKey(const ValueKey('apikey-doubao')), findsOneWidget);
+          expect(find.text('连接录音时实时转写，取回独立录音后自动处理'), findsOneWidget);
           expect(find.text('实时模式'), findsNothing);
-          expect(find.text('语言提示'), findsNothing);
+          expect(find.text('语言提示'), findsOneWidget);
           expect(find.text('交流'), findsNothing);
           expect(find.text('Soniox API Key'), findsNothing);
           await savePreview(
             tester,
-            'moss-settings-${size.width.toInt()}-$scale',
+            'doubao-settings-${size.width.toInt()}-$scale',
           );
-          await tester.ensureVisible(find.text('验证并保存'));
+          await tester.ensureVisible(find.text('保存'));
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
           c.setSpeechProvider(SttProvider.apple);
           await tester.pumpAndSettle();
-          expect(find.byKey(const ValueKey('apikey-moss')), findsNothing);
+          expect(find.byKey(const ValueKey('apikey-doubao')), findsNothing);
           final mode = tester.widget<SegmentedButton<SttDisplayMode>>(
             find.byKey(const ValueKey('stt-display-mode-selector')),
           );

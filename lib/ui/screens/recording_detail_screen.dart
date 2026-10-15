@@ -424,7 +424,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           recording.paused
                               ? '已暂停'
                               : recording.live
-                              ? (recording.provider.defersTranscription
+                              ? (recording.provider.retired
                                     ? '录音中'
                                     : '实时转写')
                               : '转写文本',
@@ -834,7 +834,7 @@ class _EmptyRecording extends StatelessWidget {
               ? (recording.provider == SttProvider.apple
                     ? '在设置中下载并准备语音语言'
                     : '请在设置中配置 ${recording.provider.label}')
-              : recording.provider.defersTranscription
+              : recording.provider.retired
               ? '录音结束后生成文字'
               : '开始说话后，文字会显示在这里')
         : !local
