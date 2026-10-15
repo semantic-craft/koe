@@ -35,6 +35,7 @@ import 'device_store.dart';
 import 'export_catalog.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
+import 'recording_analysis.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
@@ -45,6 +46,23 @@ export '../ai/speech_provider.dart';
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
 class RecorderController extends ChangeNotifier {
+  late final analysis =
+      _analysisOverride ??
+      RecordingAnalysis(
+        service: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
+      );
+  final RecordingAnalysis? _analysisOverride;
+  String analysisKey(RecordingReference ref) => _referenceKey(ref);
+  void cancelQwenFileProcessing() {
+    if (_fileJobProvider == SttProvider.qwen) {
+      _qwenStt.cancelCurrent();
+      statusMessage = '正在停止等待；云端任务如已提交会保留，稍后可继续查询';
+      notifyListeners();
+    }
+  }
+
+  String get analysisApiKey => _qwenStt.apiKey ?? '';
+
   static const _bleScanTimeout = Duration(seconds: 30);
   static const _boundReconnectDelays = <Duration>[
     Duration(seconds: 2),
@@ -61,8 +79,10 @@ class RecorderController extends ChangeNotifier {
     QwenSttService? qwenSpeech,
     DoubaoSttService? doubaoSpeech,
     FileJobJournal? fileJobJournal,
+    RecordingAnalysis? analysisController,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
-  }) : _ble = ble ?? BleService(),
+  }) : _analysisOverride = analysisController,
+       _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
@@ -4577,6 +4597,7 @@ class RecorderController extends ChangeNotifier {
     _opusPcm.dispose();
     unawaited(_player.dispose());
     unawaited(_realtime.dispose());
+    analysis.dispose();
     _qwenStt.dispose();
     _doubaoStt.dispose();
     _deferredJobs.dispose();

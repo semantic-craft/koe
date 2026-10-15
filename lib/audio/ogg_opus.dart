@@ -61,6 +61,94 @@ class OggOpus {
     return oggPath;
   }
 
+  /// Bounded-memory variant for large uploads. Partial output is never reused.
+  static Future<String> prepareUpload(
+    String path, {
+    bool Function()? isCurrent,
+  }) async {
+    void check() {
+      if (isCurrent != null && !isCurrent()) throw StateError('已取消');
+    }
+
+    check();
+    final source = File(path);
+    final input = await source.open();
+    File? partial;
+    RandomAccessFile? output;
+    try {
+      final header = await input.read(12);
+      if (header.isEmpty) throw StateError('文件为空');
+      if (isWav(header) || isOgg(header)) return path;
+      if (!path.endsWith('.opus') && !path.endsWith('.opus.bin')) {
+        throw StateError('不支持的音频格式');
+      }
+      final destination = path.endsWith('.opus')
+          ? '${path.substring(0, path.length - 5)}.ogg'
+          : '$path.ogg';
+      partial = File('$destination.upload-part');
+      output = await partial.open(mode: FileMode.write);
+      await input.setPosition(0);
+      const serial = 0x41524b52;
+      var sequence = 0;
+      var granule = 0;
+      await output.writeFrom(
+        _page(
+          packets: [_opusHead(channels: 1, sampleRate: sampleRate)],
+          serial: serial,
+          sequence: sequence++,
+          granule: 0,
+          bos: true,
+        ),
+      );
+      await output.writeFrom(
+        _page(
+          packets: [_opusTags()],
+          serial: serial,
+          sequence: sequence++,
+          granule: 0,
+        ),
+      );
+      final length = await input.length();
+      while (await input.position() < length) {
+        check();
+        final bytes = await input.read(frameSize * 50);
+        final packets = <Uint8List>[];
+        for (var offset = 0; offset < bytes.length; offset += frameSize) {
+          packets.add(
+            _trimTrailingZeros(
+              Uint8List.sublistView(
+                bytes,
+                offset,
+                (offset + frameSize).clamp(0, bytes.length),
+              ),
+            ),
+          );
+        }
+        granule += samplesPerFrame * packets.length;
+        await output.writeFrom(
+          _page(
+            packets: packets,
+            serial: serial,
+            sequence: sequence++,
+            granule: granule,
+            eos: await input.position() >= length,
+          ),
+        );
+      }
+      check();
+      await output.flush();
+      await output.close();
+      output = null;
+      await partial.rename(destination);
+      partial = null;
+      return destination;
+    } finally {
+      await input.close();
+      await output?.close();
+      if (partial != null && await partial.exists()) await partial.delete();
+    }
+  }
+
   /// Mux fixed-size (or trailing partial) frames into Ogg Opus bytes.
   static Uint8List muxRawFrames(Uint8List raw) {
     if (raw.isEmpty) {

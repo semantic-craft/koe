@@ -6,7 +6,7 @@
 
 ## 开发状态
 
-开发计划与验收以 [GitHub 总工单 #6](https://github.com/semantic-craft/koe/issues/6) 为入口。当前包含多引擎转写和暖色双端布局；分析摘要、长录音方案与双端数据交接仍在规划。代码、自动测试、真实服务和真机验收分别记录，平台目录存在不代表整条使用流程已经验收。
+开发计划与验收以 [GitHub 总工单 #6](https://github.com/semantic-craft/koe/issues/6) 为入口。当前包含多引擎转写和暖色双端布局；已接入千问长录音上传及 Qwen3.8-Flash 摘要/自定义分析，双端数据交接仍在规划。代码、自动测试、真实服务和真机验收分别记录，平台目录存在不代表整条使用流程已经验收。
 
 ## 支持平台
 
@@ -91,6 +91,8 @@ flutter test
 
 - **Apple 设备端处理**（iOS 26+，取决于设备和语言）：D3200 实时音频与已保存录音可在 iPhone 上转写；支持实时单向翻译及已有转写文本的翻译。实时录音语言在设置中选择；已有录音可在转写或重新转写时选择语言，并按提示下载资源。Apple 处理失败不会自动切换到云端。云端 ASR 当前不提供翻译或双向交流。
 - **配置**：豆包只填写 API Key；千问填写 API Key 和可选 Workspace ID。程序自动选择服务地址与模型，首次保存后自动启用并关闭配置窗口。
+- **摘要与分析**：录音详情点击“摘要与分析”，手动生成摘要或输入自定义要求；使用 Qwen3.8-Flash 与已有千问 Key。结果独立保存，可复制、导出和查看原文依据；长文分段处理并保留完成进度。
+- **千问长录音**：支持范围以模型规格与当前临时上传限制共同约束；分块封装与上传，保留已提交任务供重启后查询。短录音链路验收及长时使用边界见 [交付记录](docs/qwen-long-recording-analysis.md)。
 - **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，App 当前限制直传 20 MB。按当前产品决定，不接入豆包标准版；超过豆包当前直传限制时提示压缩音频或手动选择已配置的千问，不自动切换供应商。
 - **实时转写**：BLE Opus → PCM16 → 服务商 WebSocket。千问使用 `qwen-audio-3.1-asr-flash-streaming`；豆包使用 `volc.seedasr.sauc.duration`，优化双向流式接口开启 `enable_nonstream` 二遍识别。成功的实时结果不再自动重复提交文件；实时未完成时由同一服务的文件任务补齐。
 - **配置与验收**：在设置中保存服务商 Key。Helios 开发可参考 `.envrc.example`，通过 `direnv exec . python3 scripts/run-with-secrets.py macos` 给已安装 Mac App 注入凭据；凭据不会编入产物。iPhone 普通使用仍通过设置保存 Key。真实样本、接口限制与双端验收见 [语音服务替换验证](docs/speech-provider-validation.md)。

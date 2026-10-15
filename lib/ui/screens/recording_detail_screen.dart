@@ -13,6 +13,7 @@ import '../../state/export_catalog.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/inline_player.dart';
+import '../widgets/analysis_panel.dart';
 import '../recording_navigation.dart';
 import '../widgets/scan_sheet.dart';
 
@@ -433,6 +434,19 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           ),
                         ),
                       ),
+                    if (source.isNotEmpty && !recording.live)
+                      IconButton(
+                        tooltip: '摘要与分析',
+                        icon: const Icon(Icons.auto_awesome_outlined),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => AnalysisPanel(
+                              controller: c,
+                              reference: widget.reference,
+                            ),
+                          ),
+                        ),
+                      ),
                     if (recording.processing) ...[
                       const SizedBox(width: 8),
                       const Tooltip(
@@ -505,6 +519,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             children: [
                               if (recording.processing)
                                 _ProcessingStatus(progress: recording.progress),
+                              if (recording.processing &&
+                                  c.speechProvider == SttProvider.qwen)
+                                TextButton(
+                                  onPressed: c.cancelQwenFileProcessing,
+                                  child: const Text('停止等待（保留已提交任务）'),
+                                ),
                               if (recording.error != null)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 16),
