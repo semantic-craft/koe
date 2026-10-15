@@ -19,10 +19,12 @@
 
 ## 自动验证
 
-- `flutter test`：195 项通过（原有 193 项，加 2 项桌面回归）。
+- `flutter test`：196 项通过（原有 193 项，加 2 项桌面回归与 1 项逐帧语义更新回归）。
 - `flutter analyze --no-pub`：通过。
 - `flutter build macos --debug -t lib/main.dart`：正式入口 Debug 构建通过。插件仍提示 flutter_opus 未采用 Swift Package Manager；不影响此次构建。
 - `git diff --check`：通过。
+- 新增 `test/macos_accessibility_update_test.dart`：拦截逐帧发送引擎的语义更新批次，出现任何不可从根到达的序列化节点即失败。红绿验证：撤销 `lib/ui/widgets/inline_player.dart` 的滑块浮层修复时失败（孤儿节点 id 60、84、108），恢复修复后通过。
+- `scripts/check-macos-accessibility.py`：需 VoiceOver 已开启。实测 9 步场景 0 次 `Failed to update ui::AXTree`，日志在 `build/ui-evidence/ax-native.log`；脚本本身不替代人工读屏验收。
 - 新增回归覆盖桌面分栏、同一详情去重、切设置后回到选中录音、设置页/详情页缩窄、手机返回、实时录音跨页保持、快捷指令返回、暂停不退页和左侧导航语义可见。
 - 原有测试继续覆盖长正文跟随解除/恢复、原译文独立滚动、底部安全区、200% 字号、批选与处理条件。
 
@@ -48,7 +50,7 @@ flutter test test/recording_detail_test.dart \
 
 ## 未完成的端到端验收
 
-- macOS 原生 AX 观察到初始导航和列表节点，Flutter widgets 语义回归通过；但交互后系统桥接出现 `Failed to update ui::AXTree`，原生树存在更新不稳定，因此不把完整 VoiceOver 验收记为通过。尚未确定此桥接错误是否为既存 Flutter 问题，本轮没有改引擎或推断为已解决。
+- 交互后系统桥接报 `Failed to update ui::AXTree` 已定位：上游 flutter/flutter#190357，Material Slider 的数值指示浮层经全局 Overlay 串入路由切换，序列化出无父可达的孤立节点。修复为 `InlinePlayer` 内用 `Overlay.wrap` 将滑块浮层限制在自身子树，导航结构、切页动画未改。原生回归 0 错误、逐帧语义更新回归红绿通过。完整 VoiceOver 人工朗读验收仍未执行，不记为通过。
 - 未安装到 iPhone 实机；手机证据来自 Flutter 的指定尺寸/安全区/字体缩放测试。
 - 未连接 D3200、实际录音、下载、调用转写服务、回听或执行系统分享/保存。这些业务实现未修改，自动测试通过不能替代实机验收。
 

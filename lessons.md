@@ -25,6 +25,15 @@
 **嵌套 Navigator 与可交互侧栏并排时，必须验证路由外的控件仍在语义树中。**
 
 - 起因与后果：2026-10-15 将录音列表和详情并排后，视觉与点击正常，但详情路由会遮掉左侧语义；单纯布局测试没有覆盖这一点。
-- 修复与证据：为 Navigator 增加独立 Semantics 容器，录音行标注 button；`test/recording_detail_test.dart` 的桌面回归检查导航语义仍可见。原生 macOS AXTree 更新仍有桥接错误，完整 VoiceOver 尚未验收，见 `docs/ui-workspace-validation.md`。
+- 修复与证据：为 Navigator 增加独立 Semantics 容器，录音行标注 button；`test/recording_detail_test.dart` 的桌面回归检查导航语义仍可见。后续定位剩余桥接错误为 Slider 浮层孤立节点（见下条），原生回归已 0 错误；完整 VoiceOver 尚未人工验收，见 `docs/ui-workspace-validation.md`。
 - 正确做法（Done right）：同时验证宽/窄窗口、真实可达导航与 Semantics；widgets 语义通过不等于原生读屏验收。
+- 复发记录：Seen 1x (2026-10-15)。
+
+### 孤立语义节点只能靠逐帧更新流回归抓住
+
+**判断原生 AXTree 健康不能只看 settle 后的语义树；必须检查逐帧发送引擎的序列化更新批次。**
+
+- 起因与后果：2026-10-15 录音工作台切路由时 macOS 报 `Failed to update ui::AXTree`（上游 flutter/flutter#190357，Material Slider 数值气泡浮层经全局 Overlay 送出孤立节点）。settle 后的语义树检查通过，问题只存在于过渡帧的更新批次。
+- 修复与证据：`lib/ui/widgets/inline_player.dart` 用 `Overlay.wrap` 把滑块浮层限制在自身子树，导航与动画保留。`test/macos_accessibility_update_test.dart` 重载 `createSemanticsUpdateBuilder` 记录每批 updateNode 边并做根可达检查：撤销修复时失败（孤儿 id 60/84/108），恢复后通过；`scripts/check-macos-accessibility.py` 实测 9 步 0 错误（`build/ui-evidence/ax-native.log`）。
+- 正确做法（Done right）：涉语义的改动至少覆盖宽/窄窗口、settle 树、逐帧序列化更新与原生读屏四层；前两层通过不代表后两层通过。
 - 复发记录：Seen 1x (2026-10-15)。
