@@ -10,26 +10,35 @@ import '../audio/ogg_opus.dart';
 import 'progress_multipart.dart';
 import 'stt_types.dart';
 
-/// DashScope Paraformer file transcription.
+/// DashScope Qwen-Audio 3.1 file transcription.
 ///
 /// File jobs only. Live streaming is a follow-up and is not implemented.
 ///
-/// Confirmed from current Model Studio docs:
+/// Confirmed from current Model Studio docs (Beijing and Singapore legacy
+/// hosts still work; workspace domains are optional via [baseUrl]):
+/// - Model: `qwen-audio-3.1-asr-flash-filetrans` (recommended long-audio
+///   file model). `qwen3-asr-flash-filetrans` is a different body
+///   (`input.file_url`) and is rejected here.
 /// - Submit: POST `{base}/api/v1/services/audio/asr/transcription`
-///   with `Authorization: Bearer`, `X-DashScope-Async: enable`, and
-///   `X-DashScope-OssResourceResolve: enable` when `file_urls` is `oss://`.
-/// - Poll: GET `{base}/api/v1/tasks/{task_id}` (task API and the non-realtime
-///   guide). The Paraformer page's method table says POST; its own curl is GET.
-/// - Result: `output.results[].transcription_url` JSON (`transcripts[].text`,
-///   `sentences[].speaker_id` when diarization is on).
+///   with `Authorization: Bearer`, `Content-Type: application/json`,
+///   `X-DashScope-Async: enable`, and `X-DashScope-OssResourceResolve: enable`
+///   when `file_urls` is `oss://`. `parameters` is required for this model
+///   (an empty object is enough; this client always sends options).
+/// - Poll: GET `{base}/api/v1/tasks/{task_id}` with `Authorization: Bearer`.
+/// - Result: `output.results[].transcription_url` (24h JSON;
+///   `transcripts[].text`, `sentences[].speaker_id` when diarization is on).
+///   Task `usage.duration` is seconds.
 /// - Local files: GET `{base}/api/v1/uploads?action=getPolicy&model=...`,
 ///   then multipart POST to `upload_host`. The URL is `oss://` + object key
-///   and expires in 48 hours. Base64 audio is not supported.
+///   and expires in 48 hours. Base64 audio is not supported. Temporary
+///   upload is capped at 1 GB; the model itself allows 2 GB via a public URL.
 ///
-/// https://help.aliyun.com/zh/model-studio/paraformer-recorded-speech-recognition-restful-api
+/// https://help.aliyun.com/zh/model-studio/fun-asr-recorded-speech-recognition-http-api
+/// https://help.aliyun.com/zh/model-studio/qwen-audio-3-1-asr-flash-filetrans
+/// https://help.aliyun.com/zh/model-studio/non-realtime-speech-recognition-user-guide
+/// https://help.aliyun.com/zh/model-studio/asr-model
 /// https://help.aliyun.com/zh/model-studio/get-temporary-file-url
-/// https://help.aliyun.com/en/model-studio/manage-asynchronous-tasks
-/// https://help.aliyun.com/en/model-studio/non-realtime-speech-recognition-user-guide
+/// https://help.aliyun.com/zh/model-studio/manage-asynchronous-tasks
 class QwenSttService {
   QwenSttService({
     http.Client? client,
@@ -43,7 +52,11 @@ class QwenSttService {
 
   static const defaultBaseUrl = 'https://dashscope.aliyuncs.com';
   static const intlBaseUrl = 'https://dashscope-intl.aliyuncs.com';
-  static const defaultModel = 'paraformer-v2';
+  static const defaultModel = 'qwen-audio-3.1-asr-flash-filetrans';
+  static const incompatibleFileUrlModel = 'qwen3-asr-flash-filetrans';
+
+  /// Temporary upload credential limit. The filetrans model allows 2 GB
+  /// when the caller already has a public URL.
   static const maxUploadBytes = 1024 * 1024 * 1024;
 
   String? apiKeyOverride;
@@ -122,6 +135,11 @@ class QwenSttService {
     final resolvedModel = (model == null || model.trim().isEmpty)
         ? this.model
         : model.trim();
+    if (resolvedModel == QwenSttService.incompatibleFileUrlModel) {
+      throw const QwenSttException(
+        'qwen3-asr-flash-filetrans 使用 input.file_url，请改用 qwen-audio-3.1-asr-flash-filetrans',
+      );
+    }
 
     onProgress?.call(const SttFileProgress(SttFileStage.preparing));
     _ensureCurrent(isCurrent);
@@ -375,7 +393,9 @@ class QwenSttService {
     if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
       throw const QwenSttException('通义转写结果地址无效');
     }
-    final response = await _client.get(uri).timeout(const Duration(seconds: 60));
+    final response = await _client
+        .get(uri)
+        .timeout(const Duration(seconds: 60));
     return _decodeObject(response);
   }
 
@@ -384,7 +404,7 @@ class QwenSttService {
       throw QwenSttException(_httpFailure(response));
     }
     try {
-      final value = jsonDecode(response.body);
+      final value = jsonDecode(_utf8Body(response));
       if (value is Map<String, dynamic>) return value;
     } on FormatException {
       // Fall through to the generic parse error.
@@ -395,7 +415,7 @@ class QwenSttService {
   String _httpFailure(http.Response response) {
     String? message;
     try {
-      final value = jsonDecode(response.body);
+      final value = jsonDecode(_utf8Body(response));
       if (value is Map) {
         final text = '${value['message'] ?? ''}'.trim();
         if (text.isNotEmpty) message = text;
@@ -406,10 +426,7 @@ class QwenSttService {
     return switch (response.statusCode) {
       401 || 403 => '通义 API Key 无效，请在设置中更新',
       429 => '通义请求过多，请稍后重试',
-      _ =>
-        message == null
-            ? '通义转写失败，请重试'
-            : '通义转写失败：${_clip(message)}',
+      _ => message == null ? '通义转写失败，请重试' : '通义转写失败：${_clip(message)}',
     };
   }
 
@@ -473,7 +490,42 @@ class QwenTaskStatus {
   final double? durationSec;
 }
 
-const qwenLanguageHintCodes = {
+/// `language_hints` codes for Qwen-Audio-3.x filetrans and `fun-asr`.
+const qwenAudio3LanguageCodes = {
+  'zh',
+  'en',
+  'ja',
+  'ko',
+  'vi',
+  'th',
+  'id',
+  'ms',
+  'tl',
+  'hi',
+  'ar',
+  'fr',
+  'de',
+  'es',
+  'pt',
+  'ru',
+  'it',
+  'nl',
+  'sv',
+  'da',
+  'fi',
+  'no',
+  'el',
+  'pl',
+  'cs',
+  'hu',
+  'ro',
+  'bg',
+  'hr',
+  'sk',
+};
+
+/// `language_hints` codes documented only for `paraformer-v2`.
+const paraformerV2LanguageCodes = {
   'zh',
   'en',
   'ja',
@@ -484,19 +536,35 @@ const qwenLanguageHintCodes = {
   'ru',
 };
 
-/// `language_hints` is documented only for `paraformer-v2`.
+const _diarizationModels = {
+  'qwen-audio-3.1-asr-flash-filetrans',
+  'qwen-audio-3.0-asr-flash-filetrans',
+  'fun-asr',
+  'paraformer-v2',
+};
+
+bool qwenDiarizationEnabled(String model) => _diarizationModels.contains(model);
+
+/// One hint, or null when the model should auto-detect.
 List<String>? qwenLanguageHints({required String model, String? language}) {
-  if (model != QwenSttService.defaultModel) return null;
   final code = language?.trim().toLowerCase();
   if (code == null || code.isEmpty || code == 'auto') return null;
-  if (!qwenLanguageHintCodes.contains(code)) return null;
+  final allowed = switch (model) {
+    'qwen-audio-3.1-asr-flash-filetrans' ||
+    'qwen-audio-3.0-asr-flash-filetrans' ||
+    'fun-asr' => qwenAudio3LanguageCodes,
+    'paraformer-v2' => paraformerV2LanguageCodes,
+    _ => null,
+  };
+  if (allowed == null || !allowed.contains(code)) return null;
   return [code];
 }
 
-/// Body for the shared async file API (`input.file_urls`, one URL).
+/// Body for the async file API (`input.file_urls`, one URL).
 ///
-/// `Qwen3-ASR-Flash-Filetrans` uses singular `input.file_url` and is not
-/// this request shape.
+/// `parameters` is always present. Qwen-Audio-3.1/3.0 filetrans fails when
+/// that object is omitted. `qwen3-asr-flash-filetrans` uses singular
+/// `input.file_url` and is rejected before this body is sent.
 Map<String, dynamic> qwenTranscriptionBody({
   required String model,
   required String fileUrl,
@@ -505,7 +573,7 @@ Map<String, dynamic> qwenTranscriptionBody({
   final parameters = <String, dynamic>{
     'channel_id': [0],
   };
-  if (model.startsWith('paraformer')) {
+  if (qwenDiarizationEnabled(model)) {
     parameters['diarization_enabled'] = true;
   }
   final hints = qwenLanguageHints(model: model, language: language);
@@ -570,11 +638,13 @@ QwenUploadPolicy parseQwenUploadPolicy(Map<String, dynamic> json) {
     final parsed = int.tryParse(maxRaw.trim());
     if (parsed != null && parsed > 0) maxMb = parsed;
   }
+  final rawHost = hostUri.toString();
+  final fragment = rawHost.indexOf('#');
   return QwenUploadPolicy(
     policy: field('policy'),
     signature: field('signature'),
     uploadDir: field('upload_dir').replaceAll(RegExp(r'/+$'), ''),
-    uploadHost: hostUri.origin,
+    uploadHost: fragment == -1 ? rawHost : rawHost.substring(0, fragment),
     accessKeyId: field('oss_access_key_id'),
     objectAcl: field('x_oss_object_acl'),
     forbidOverwrite: field('x_oss_forbid_overwrite'),
@@ -707,6 +777,8 @@ String _uploadFilename(String path) {
   };
   return 'audio${allowed.contains(ext) ? ext : '.ogg'}';
 }
+
+String _utf8Body(http.Response response) => utf8.decode(response.bodyBytes);
 
 String _clip(String value) {
   final trimmed = value.trim();

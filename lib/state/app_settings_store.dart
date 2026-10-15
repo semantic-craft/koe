@@ -119,9 +119,7 @@ class AppSettings {
       mossApiKey: clearMoss ? null : (mossApiKey ?? this.mossApiKey),
       sonioxApiKey: clearSoniox ? null : (sonioxApiKey ?? this.sonioxApiKey),
       qwenApiKey: clearQwenKey ? null : (qwenApiKey ?? this.qwenApiKey),
-      qwenBaseUrl: clearQwenBaseUrl
-          ? null
-          : (qwenBaseUrl ?? this.qwenBaseUrl),
+      qwenBaseUrl: clearQwenBaseUrl ? null : (qwenBaseUrl ?? this.qwenBaseUrl),
       qwenModel: clearQwenModel ? null : (qwenModel ?? this.qwenModel),
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
@@ -172,6 +170,9 @@ class AppSettings {
       appleSourceLanguage: _str(map['appleSourceLanguage']) ?? '',
       sonioxApiKey: _str(map['sonioxApiKey']),
       mossApiKey: _str(map['mossApiKey']),
+      qwenApiKey: _str(map['qwenApiKey']),
+      qwenBaseUrl: _str(map['qwenBaseUrl']),
+      qwenModel: _str(map['qwenModel']),
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,
       transcriptLanguage: _str(map['transcriptLanguage']) ?? 'auto',

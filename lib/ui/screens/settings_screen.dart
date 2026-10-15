@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../ai/qwen_stt.dart';
 import '../../ai/stt_types.dart';
 import '../../ai/moss_stt.dart';
 import '../../ai/apple_speech.dart';
@@ -43,7 +44,7 @@ class SettingsScreen extends StatelessWidget {
                 children: [
                   _SettingsSwitch(
                     title: '自动转写',
-                    subtitle: c.speechProvider == SttProvider.moss
+                    subtitle: c.speechProvider.defersTranscription
                         ? '录音结束后生成文字'
                         : '录音时生成文字',
                     value: c.autoTranscribe,
@@ -63,7 +64,11 @@ class SettingsScreen extends StatelessWidget {
                     _TranscriptLanguageSelector(controller: c),
                   ] else if (c.speechProvider == SttProvider.moss)
                     _MossKeyField(controller: c)
-                  else
+                  else if (c.speechProvider == SttProvider.qwen) ...[
+                    _QwenSettings(controller: c),
+                    const SizedBox(height: 14),
+                    _TranscriptLanguageSelector(controller: c),
+                  ] else
                     _AppleLanguageSettings(controller: c),
                   if (c.isLiveSession) ...[
                     const SizedBox(height: 12),
@@ -75,7 +80,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ),
                   ],
-                  if (c.speechProvider != SttProvider.moss) ...[
+                  if (!c.speechProvider.defersTranscription) ...[
                     const Divider(height: 28),
                     _SttModeSelector(controller: c),
                   ],
@@ -882,4 +887,100 @@ class _MossKeyFieldState extends State<_MossKeyField> {
       if (_message != null) ...[const SizedBox(height: 8), Text(_message!)],
     ],
   );
+}
+
+class _QwenSettings extends StatefulWidget {
+  const _QwenSettings({required this.controller});
+  final RecorderController controller;
+
+  @override
+  State<_QwenSettings> createState() => _QwenSettingsState();
+}
+
+class _QwenSettingsState extends State<_QwenSettings> {
+  late final TextEditingController _key = TextEditingController(
+    text: widget.controller.qwenApiKeyStored ?? '',
+  );
+  late final TextEditingController _base = TextEditingController(
+    text: widget.controller.qwenBaseUrlStored ?? '',
+  );
+  late final TextEditingController _model = TextEditingController(
+    text: widget.controller.qwenModelStored ?? '',
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _key.dispose();
+    _base.dispose();
+    _model.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    try {
+      widget.controller.setQwenBaseUrl(_base.text);
+      widget.controller.setQwenModel(_model.text);
+      widget.controller.setQwenApiKey(_key.text);
+      final stored = widget.controller.qwenBaseUrlStored;
+      if (stored != null) _base.text = stored;
+      setState(() => _error = null);
+    } on QwenSttException catch (error) {
+      setState(() => _error = error.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          key: const ValueKey('apikey-qwen'),
+          controller: _key,
+          obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: const InputDecoration(labelText: '通义 API Key'),
+          onSubmitted: (_) => _save(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const ValueKey('qwen-base-url'),
+          controller: _base,
+          autocorrect: false,
+          enableSuggestions: false,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: '服务地址',
+            hintText: QwenSttService.defaultBaseUrl,
+            helperText: '留空使用北京站。国际站 ${QwenSttService.intlBaseUrl}',
+          ),
+          onSubmitted: (_) => _save(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const ValueKey('qwen-model'),
+          controller: _model,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: const InputDecoration(
+            labelText: '模型',
+            hintText: QwenSttService.defaultModel,
+            helperText: '默认 ${QwenSttService.defaultModel}。只支持文件转写',
+          ),
+          onSubmitted: (_) => _save(),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton(onPressed: _save, child: const Text('保存')),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: const TextStyle(color: AppColors.coral)),
+        ],
+      ],
+    );
+  }
 }
