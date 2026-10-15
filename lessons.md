@@ -1,7 +1,16 @@
 # 项目教训
 
 实现、评审或验收前阅读相关条目；用户纠正、返工或漏验暴露可复用教训后补记。
-当前仅保留模板，尚未整理经核实的教训；这不表示项目从未出现问题。
+已有教训如下；后续沿用文末模板补记。三条同一教训将按 [AGENTS.md](AGENTS.md) 升级为交付硬规则。
+
+### 系统凭据只允许授权一次，且开发构建不得触达个人凭据
+
+**开发与验证构建默认隔离系统凭据，交付构建用稳定签名交付；验收必须包含真实安装升级后的一次读取。**
+
+- 起因与后果：2026-10-16 用户截图显示安装版因签名标识随构建变化反复索取登录钥匙串密码；同一轮复验还发现 Debug/验证构建缺少启动变量时会回退读取个人 Keychain，用户只看到“又弹窗”，无法判断是开发还是安装问题。实测 kSecUseAuthenticationUIFail 对旧条目的 ACL 弹窗无效（阻塞 ≥8 秒），而 SecKeychainSetUserInteractionAllowed(false) 在同一场景 0.06 秒返回 errSecAuthFailed 且无弹窗。
+- 修复与证据：darwin/KeychainStore.swift 增加 isolated/system 模式，macOS Debug 与任何 KOE_CREDENTIAL_SOURCE 取值一律隔离，Release 用 SecCodeCheckValidity 校验团队与 bundle 要求后才走系统存储；scripts/sign-macos.sh 只接受唯一 Developer ID 证书、无 ad-hoc 回退并内外层签名后验证指定要求；scripts/install-macos.sh 复用该签名器并比较升级前后的指定要求，脚本失效时不会静默成功。skills/verify-koe/scripts/check.py 的 native 模式用两个内容不同（SHA-256 不同）的 Developer ID 构建共享一条合成条目、ad-hoc 对照必须在 0.06 秒内失败且不拉起 SecurityAgent；isolated-app 模式跑真实 App 并要求 securityCalls=0。真实升级：原安装 68f30bf6… 换成本次构建 6179d37c…，指定要求不变，安装后启动设置页仍显示“通义 Qwen 使用中”，全程无授权弹窗（证据在 build/verify-koe/）。
+- 正确做法（Done right）：新增或改动签名、安装脚本、系统凭据读写时，先跑 check.py doctor 记录指定要求与 CDHash，再跑 native + isolated-app，最后按 skills/verify-koe/features/signed-install-upgrade.md 做真实安装升级读取；签名校验、同一构建重启、模拟通道各自只作证一层。开发与验证构建不得回退到个人凭据，也不得放开交互开关绕过。上层规则见 WORKING_STANDARDS.md“工程与验证”。
+- 复发记录：Seen 2x (2026-10-16)；同日两起独立事件：#41 复验发现 ad-hoc 签名的 ACL 绑定旧 CDHash（见 docs/credential-storage-validation.md），随后发现验证程序默认回退个人钥匙串并留下弹窗。
 
 ## 记录模板
 
