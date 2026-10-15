@@ -73,3 +73,12 @@
 - 修复与证据：FileJobJournal 保留配置和任务阶段，Qwen 提交编号在查询前落盘；真实临时文件重开、模拟 HTTP、控制器恢复和重复完成通知测试见 `docs/recording-processing-validation.md`。
 - 正确做法（Done right）：已知任务编号继续查询；未知提交不自动重做；结果先保存再确认；配置凭据不进入任务文件。单元测试与编译不能替代系统休眠和真实设备验收。
 - 复发记录：Seen 1x (2026-10-15)。
+
+### 上传字段测试不能替代真实请求编码验证
+
+**云端文件上传必须检查序列化字节，并至少用授权测试音频完成一次真实服务验收。**
+
+- 起因与后果：2026-10-15，千问单元测试只检查 MultipartRequest 的字段，真实 OSS 却因文件 part 将 Content-Type 放在 Content-Disposition 前而返回 HTTP 400 MalformedPOSTRequest，双端都无法提交任务。
+- 修复与证据：专用 OssUploadRequest 调整文件头顺序，保持流式音频和进度；同音频对照仅交换顺序即从 400 变 200。`test/qwen_stt_test.dart` 序列化回归先红后绿；真实双端提交后终止进程、重启、同任务编号完成，见 `docs/recording-processing-validation.md`。
+- 正确做法：在实际发送字节层检查文件头、Content-Length 与音频完整性；配置成功、模拟 HTTP 通过与真实上传成功分别验收。不得记录上传凭据或完整请求体。
+- 复发记录：Seen 1x (2026-10-15)。

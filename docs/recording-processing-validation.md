@@ -21,3 +21,18 @@
 - iOS 锁屏/切换应用、macOS 休眠恢复、真实 D3200 取回与服务转写仍需 #15/#16 验收。系统终止进程后不会继续运行，重新打开应用才恢复。
 - 旧版本仅在内存里的任务无法凭空恢复；新记录从本版本开始建立。不扫描历史录音并自动重提。
 - 分析/摘要尚未实现，因此没有新增分析请求或自动分析队列；#10/#13 的分析部分等待 #12 的方案明确。
+
+## 2026-10-15 真机千问验收
+
+基线 `67144e6` 安装到 Hermes iPhone 与本机 Mac 后，千问上传在两端共用的 Dart 服务中复现 HTTP 400 `MalformedPOSTRequest`。同一 WAV 用独立编码器上传成功；仅交换文件 part 的 `Content-Disposition` / `Content-Type` 顺序也成功。修复使用 `OssUploadRequest`，先写 disposition，再写 type，保留流式文件与进度回调。原 `http.MultipartRequest` 在此 OSS 接口不兼容；不是 Key 失效或模型选型问题。
+
+- 回归：原真实服务调用在修复前上传失败，修复后上传、提交、查询与读取结果成功。`test/qwen_stt_test.dart` 检查实际序列化的文件头顺序、长度和音频字节；先红后绿。270 项测试通过，`flutter analyze --no-pub` 无问题，iOS/macOS Release 构建成功。
+- 安装：修复版已覆盖安装到 iPhone `com.semanticcraft.soundcore` 和 `/Applications/Soundcore Manager.app`，保留数据。两端使用已有千问 Key 与默认 `qwen-audio-3.1-asr-flash-filetrans`，未变更正式模型方案、分析方案或同步方案。
+- 样本：用户用录音豆独立录制约 30 秒测试音频，iPhone 通过 BLE 取回，保留设备原件。此前自动处理走 Apple；本轮显式重新转写走千问。
+- iPhone：云端任务编号保存且状态为 running 后 SIGKILL App；重启后同一编号变为 complete，界面显示新千问文字（131 字）。恢复记录位于本机忽略目录 `build/device-validation/ios-interruption.json` 与 `ios-restored.json`。
+- Mac：使用从 iPhone 取回的相同 WAV（本地测试传入，不是同步功能）。App 内启动千问转写，保存任务编号后 SIGKILL；重启后同一编号 complete，界面显示文字（129 字）。证据为 `mac-interruption.json` 与 `mac-restored.json`。两端分别提交各自验收任务，不能据此推断跨端去重。
+- 结果：这段样本中千问识别出了“千问”和“DeepSeek”，但两次输出有细微差别；尚无人工逐字标注，不给准确率或优于其他模型的结论。
+- 边界：进程被结束后由用户/测试重新启动才恢复；本轮没有验证锁屏持续执行、系统休眠、上传/提交编号尚未保存时的恢复。Mac 扫描未找到录音豆，未证明 Mac 直接 BLE 取回。iPhone 明确断开连接后再次扫描仍未发现，故不能把原因只归于手机占用。没有解绑或删除录音。
+- 已知偏差：验收时出现另一条约 14 秒录音，保持原样，其旧失败记录未作为本轮样本重提。自动传输开关重启后的保持行为需另查；本轮曾关闭但后续取回了新增录音。
+
+验收日志和样本仅保存在本机 `build/device-validation/`（Git 忽略）；不上传密钥、录音原文或用户音频。
