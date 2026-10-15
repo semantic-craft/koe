@@ -1,6 +1,6 @@
-# Soundcore Manager 开发入口
+# Koe 开发入口
 
-目录名为 koe，Flutter package 名称与产品身份以 [pubspec.yaml](pubspec.yaml) 和 [README](README.md) 为准。
+产品身份以 [pubspec.yaml](pubspec.yaml) 和 [README](README.md) 为准。
 
 | 改动 | 入口 |
 | --- | --- |
@@ -27,5 +27,3 @@
 
 ### Domain docs
 采用单一领域文档布局。见 [docs/agents/domain.md](docs/agents/domain.md)。
-
-- main 已启用分支保护、只许 squash，2026-10-15
