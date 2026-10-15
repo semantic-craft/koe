@@ -220,6 +220,101 @@ void main() {
   );
 
   test(
+    'queued deferred jobs run one at a time in FIFO order',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('qwen-fifo-');
+      addTearDown(() => directory.delete(recursive: true));
+      final first = File('${directory.path}/311.wav');
+      await first.writeAsBytes([1, 2, 3]);
+      final second = File('${directory.path}/312.wav');
+      await second.writeAsBytes([1, 2, 3]);
+      final qwen = _Qwen()
+        ..apiKeyOverride = 'qwen-key'
+        ..pending = Completer<void>();
+      final ble = _Ble();
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        qwenSpeech: qwen,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.qwen);
+      addTearDown(c.dispose);
+
+      Future<void> recordTake(int fileId, File file) async {
+        await c.startRecord();
+        c.handleRealtimeStateForTesting(
+          RealtimeStreamState(
+            active: true,
+            fileId: fileId,
+            path: file.path,
+            bytesReceived: 320,
+          ),
+        );
+        c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+        ble.stopRecording();
+        await Future<void>.delayed(Duration.zero);
+        c.handleRealtimeStateForTesting(
+          RealtimeStreamState(fileId: fileId, path: file.path, bytesReceived: 320),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      await recordTake(311, first);
+      await settleUntil(() => qwen.calls == 1);
+      // The first job is still in flight; record and stop a second take so it
+      // queues behind it.
+      await recordTake(312, second);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(qwen.calls, 1, reason: '单并发：第二个任务必须等第一个完成');
+      qwen.pending!.complete();
+      await settleUntil(() => qwen.calls == 2);
+      expect(qwen.paths, [first.path, second.path]);
+    },
+  );
+
+  test(
+    'a repeated stop event does not rerun a started deferred job',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('qwen-redo-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/313.wav');
+      await file.writeAsBytes([1, 2, 3]);
+      final qwen = _Qwen()..apiKeyOverride = 'qwen-key';
+      final ble = _Ble();
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        qwenSpeech: qwen,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.qwen);
+      addTearDown(c.dispose);
+      await c.startRecord();
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          active: true,
+          fileId: 313,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+      c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
+      final stopped = RealtimeStreamState(
+        fileId: 313,
+        path: file.path,
+        bytesReceived: 320,
+      );
+      c.handleRealtimeStateForTesting(stopped);
+      await settleUntil(() => qwen.calls == 1);
+      // A duplicated stop notification must not transcribe the take again.
+      c.handleRealtimeStateForTesting(stopped);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(qwen.calls, 1);
+    },
+  );
+
+  test(
     'Doubao failure shows a readable error and one manual retry succeeds',
     () async {
       final directory = await Directory.systemTemp.createTemp('doubao-retry-');
@@ -1048,6 +1143,8 @@ class _Apple extends AppleSpeechService {
 
 class _Qwen extends QwenSttService {
   int calls = 0;
+  final paths = <String>[];
+  Completer<void>? pending;
   String? seenKey;
   String? seenModel;
   String? seenBase;
@@ -1064,6 +1161,8 @@ class _Qwen extends QwenSttService {
     bool Function()? isCurrent,
   }) async {
     calls++;
+    paths.add(path);
+    if (pending != null) await pending!.future;
     seenKey = apiKey;
     seenBase = baseUrl;
     seenModel = model;
