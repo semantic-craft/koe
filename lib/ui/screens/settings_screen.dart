@@ -126,24 +126,24 @@ class _ProviderSelector extends StatelessWidget {
   const _ProviderSelector({required this.controller});
   final RecorderController controller;
 
-  static const _metadata = <String, ({IconData icon, String description})>{
-    'apple': (
+  static const _metadata = <SttProvider, ({IconData icon, String description})>{
+    SttProvider.apple: (
       icon: Icons.phone_iphone_rounded,
       description: 'iOS 本地神经网络语音引擎，离线可用、隐私优先',
     ),
-    'soniox': (
+    SttProvider.soniox: (
       icon: Icons.cloud_outlined,
       description: '云端低延迟流式转写，支持多语种同传与双人对话',
     ),
-    'moss': (
+    SttProvider.moss: (
       icon: Icons.graphic_eq_rounded,
       description: '录音完成后整段精细转写，自动切分说话人段落',
     ),
-    'qwen': (
+    SttProvider.qwen: (
       icon: Icons.auto_awesome_rounded,
       description: '通义千问语音识别模型，录音完成后文件转写',
     ),
-    'doubao': (
+    SttProvider.doubao: (
       icon: Icons.bolt_rounded,
       description: '火山引擎豆包语音识别，录音完成后极速版整段转写',
     ),
@@ -151,7 +151,7 @@ class _ProviderSelector extends StatelessWidget {
 
   ({IconData icon, String description, String statusLabel, Color statusColor})
   _metaFor(SttProvider provider, KoeTokens tokens) {
-    final meta = _metadata[provider.name] ??
+    final meta = _metadata[provider] ??
         (
           icon: Icons.mic_none_rounded,
           description: '${provider.label} 语音识别引擎',
