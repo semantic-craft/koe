@@ -113,15 +113,21 @@ class _FilesBodyState extends State<FilesBody>
           const SizedBox(height: 8),
           DecoratedBox(
             decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: AppColors.border)),
+              color: AppColors.bgCardHover,
+              borderRadius: BorderRadius.all(Radius.circular(24)),
             ),
             child: TabBar(
               controller: _tabs,
               dividerColor: Colors.transparent,
-              indicatorSize: TabBarIndicatorSize.label,
+              indicatorSize: TabBarIndicatorSize.tab,
+              indicator: BoxDecoration(
+                color: AppColors.bgCard,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              indicatorPadding: const EdgeInsets.all(4),
               indicatorColor: AppColors.accent,
               indicatorWeight: 2,
-              labelColor: AppColors.accent,
+              labelColor: AppColors.textPrimary,
               unselectedLabelColor: AppColors.textSecondary,
               labelStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
                 fontWeight: FontWeight.w700,
@@ -271,6 +277,19 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (!_selecting &&
+            widget.paths.isNotEmpty &&
+            (RecordingNavigation.of(context)?.wide ?? false))
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _saving || _deleting || selectablePaths.isEmpty
+                  ? null
+                  : _toggleSelecting,
+              icon: const Icon(Icons.checklist_rounded, size: 18),
+              label: const Text('选择'),
+            ),
+          ),
         if (_selecting)
           _SelectionToolbar(
             count: _selected.length,
@@ -519,6 +538,17 @@ class _DeviceFilesTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (!c.selecting &&
+            c.files.isNotEmpty &&
+            (RecordingNavigation.of(context)?.wide ?? false))
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: busy ? null : c.toggleSelecting,
+              icon: const Icon(Icons.checklist_rounded, size: 18),
+              label: const Text('选择'),
+            ),
+          ),
         if (!c.selecting && downloadableCount > 0)
           OutlinedButton.icon(
             onPressed: c.connected && !busy && !anyDownloadLocked
@@ -684,89 +714,92 @@ class _LocalExportCard extends StatelessWidget {
         : text.isNotEmpty
         ? '已转写'
         : null;
-    return Material(
-      color: selected
-          ? AppColors.mint.withValues(alpha: 0.08)
-          : Colors.transparent,
-      child: InkWell(
-        key: ValueKey('recording-row-$path'),
-        onLongPress: onLongPress,
-        onTap: selecting
-            ? (recording.audioLocked ? null : onSelected)
-            : () => RecordingNavigation.open(context, reference),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (selecting)
-                Checkbox(
-                  value: selected,
-                  onChanged: recording.audioLocked || onSelected == null
-                      ? null
-                      : (_) => onSelected?.call(),
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.only(top: 3, right: 12),
-                  child: Icon(
-                    loaded
-                        ? Icons.graphic_eq_rounded
-                        : Icons.audio_file_outlined,
-                    color: loaded ? AppColors.accent : AppColors.textMuted,
-                    size: 24,
+    return Semantics(
+      button: !selecting,
+      child: Material(
+        color: selected || RecordingNavigation.isSelected(context, reference)
+            ? AppColors.accentSoft
+            : Colors.transparent,
+        child: InkWell(
+          key: ValueKey('recording-row-$path'),
+          onLongPress: onLongPress,
+          onTap: selecting
+              ? (recording.audioLocked ? null : onSelected)
+              : () => RecordingNavigation.open(context, reference),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (selecting)
+                  Checkbox(
+                    value: selected,
+                    onChanged: recording.audioLocked || onSelected == null
+                        ? null
+                        : (_) => onSelected?.call(),
+                  )
+                else
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3, right: 12),
+                    child: Icon(
+                      loaded
+                          ? Icons.graphic_eq_rounded
+                          : Icons.audio_file_outlined,
+                      color: loaded ? AppColors.accent : AppColors.textMuted,
+                      size: 24,
+                    ),
                   ),
-                ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      recording.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '$duration${status == null ? '' : ' · $status'}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: recording.error != null
-                            ? AppColors.coral
-                            : AppColors.textSecondary,
-                      ),
-                    ),
-                    if (text.isNotEmpty && !selecting) ...[
-                      const SizedBox(height: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        text,
-                        key: ValueKey('recording-preview-$path'),
-                        maxLines: 2,
+                        recording.title,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 14,
-                          height: 1.45,
-                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$duration${status == null ? '' : ' · $status'}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: recording.error != null
+                              ? AppColors.coral
+                              : AppColors.textSecondary,
+                        ),
+                      ),
+                      if (text.isNotEmpty && !selecting) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          text,
+                          key: ValueKey('recording-preview-$path'),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            height: 1.45,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-              ),
-              if (!selecting)
-                const Padding(
-                  padding: EdgeInsets.only(top: 3, left: 8),
-                  child: Icon(
-                    Icons.chevron_right_rounded,
-                    color: AppColors.textMuted,
-                    size: 20,
                   ),
                 ),
-            ],
+                if (!selecting)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 3, left: 8),
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      color: AppColors.textMuted,
+                      size: 20,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1418,101 +1451,111 @@ class _DeviceFileTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected
-          ? AppColors.mint.withValues(alpha: 0.08)
-          : Colors.transparent,
-      child: InkWell(
-        key: ValueKey('device-recording-row-${file.fileId}'),
-        onLongPress: onLongPress,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-          child: Row(
-            children: [
-              if (selecting) ...[
-                Icon(
-                  selected ? Icons.check_circle_rounded : Icons.circle_outlined,
-                  color: selected ? AppColors.mint : AppColors.textMuted,
-                  size: 22,
-                ),
-                const SizedBox(width: 10),
-              ],
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: AppColors.violet.withValues(alpha: 0.15),
-                ),
-                child: Icon(
-                  hasLocal
-                      ? Icons.audiotrack_rounded
-                      : Icons.audiotrack_outlined,
-                  color: AppColors.violet,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      file.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '${file.sizeLabel}${hasLocal ? ' · 已下载' : ''}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (!selecting) ...[
-                IconButton(
-                  tooltip: hasLocal
-                      ? '已下载'
-                      : downloading
-                      ? '正在下载'
-                      : '通过蓝牙下载',
-                  onPressed: onExport,
-                  icon: downloading
-                      ? const SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: AppColors.mint,
-                          ),
-                        )
-                      : Icon(
-                          hasLocal
-                              ? Icons.download_done_rounded
-                              : Icons.download_rounded,
-                          color: hasLocal || onExport == null
-                              ? AppColors.textMuted
-                              : AppColors.mint,
-                        ),
-                ),
-                IconButton(
-                  tooltip: '在设备上删除',
-                  onPressed: onDelete,
-                  icon: const Icon(
-                    Icons.delete_outline_rounded,
-                    color: AppColors.coral,
+    return Semantics(
+      button: !selecting,
+      child: Material(
+        color:
+            selected ||
+                RecordingNavigation.isSelected(
+                  context,
+                  RecordingReference(fileId: file.fileId),
+                )
+            ? AppColors.accentSoft
+            : Colors.transparent,
+        child: InkWell(
+          key: ValueKey('device-recording-row-${file.fileId}'),
+          onLongPress: onLongPress,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+            child: Row(
+              children: [
+                if (selecting) ...[
+                  Icon(
+                    selected
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
+                    color: selected ? AppColors.mint : AppColors.textMuted,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: AppColors.violet.withValues(alpha: 0.15),
+                  ),
+                  child: Icon(
+                    hasLocal
+                        ? Icons.audiotrack_rounded
+                        : Icons.audiotrack_outlined,
+                    color: AppColors.violet,
                   ),
                 ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        file.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${file.sizeLabel}${hasLocal ? ' · 已下载' : ''}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!selecting) ...[
+                  IconButton(
+                    tooltip: hasLocal
+                        ? '已下载'
+                        : downloading
+                        ? '正在下载'
+                        : '通过蓝牙下载',
+                    onPressed: onExport,
+                    icon: downloading
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: AppColors.mint,
+                            ),
+                          )
+                        : Icon(
+                            hasLocal
+                                ? Icons.download_done_rounded
+                                : Icons.download_rounded,
+                            color: hasLocal || onExport == null
+                                ? AppColors.textMuted
+                                : AppColors.mint,
+                          ),
+                  ),
+                  IconButton(
+                    tooltip: '在设备上删除',
+                    onPressed: onDelete,
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: AppColors.coral,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

@@ -64,7 +64,7 @@ class InlinePlayer extends StatelessWidget {
             Text(
               loaded ? _fmt(c.position) : '00:00',
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 color: AppColors.textSecondary,
                 fontFeatures: [FontFeature.tabularFigures()],
               ),
@@ -74,7 +74,7 @@ class InlinePlayer extends StatelessWidget {
               Text(
                 _fmt(c.duration),
                 style: const TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: AppColors.textSecondary,
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
@@ -101,9 +101,8 @@ class InlinePlayer extends StatelessWidget {
                 constraints: const BoxConstraints(minWidth: 72, minHeight: 48),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
-                  color: AppColors.bgElevated,
+                  color: AppColors.bgCardHover,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.border),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,

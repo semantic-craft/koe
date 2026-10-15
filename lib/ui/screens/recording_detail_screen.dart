@@ -13,6 +13,7 @@ import '../../state/export_catalog.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/inline_player.dart';
+import '../recording_navigation.dart';
 import '../widgets/scan_sheet.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
@@ -319,9 +320,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
     return Scaffold(
       key: ValueKey('recording-detail-${widget.reference.key}'),
-      backgroundColor: AppColors.bg,
+      backgroundColor: AppColors.bgElevated,
       appBar: AppBar(
-        backgroundColor: AppColors.bgCard,
+        backgroundColor: AppColors.bgElevated,
+        automaticallyImplyLeading:
+            !(RecordingNavigation.of(context)?.wide ?? false),
+        toolbarHeight: (RecordingNavigation.of(context)?.wide ?? false)
+            ? 88
+            : 64,
         title: Text(
           recording.title,
           maxLines: 1,
@@ -329,7 +335,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         ),
         titleTextStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
           color: AppColors.textPrimary,
-          fontSize: 18,
+          fontSize: (RecordingNavigation.of(context)?.wide ?? false) ? 24 : 18,
           fontWeight: FontWeight.w600,
         ),
         actions: [
@@ -398,15 +404,18 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   children: [
                     if (hasTranslation)
                       Expanded(
-                        child: SegmentedButton<bool>(
-                          segments: const [
-                            ButtonSegment(value: false, label: Text('原文')),
-                            ButtonSegment(value: true, label: Text('译文')),
-                          ],
-                          selected: {_showTranslation},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (value) =>
-                              setState(() => _showTranslation = value.first),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: false, label: Text('原文')),
+                              ButtonSegment(value: true, label: Text('译文')),
+                            ],
+                            selected: {_showTranslation},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (value) =>
+                                setState(() => _showTranslation = value.first),
+                          ),
                         ),
                       )
                     else
@@ -685,7 +694,7 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
               child: ListView.builder(
                 key: ValueKey('recording-text-scroll-${widget.key}'),
                 controller: _scroll,
-                padding: EdgeInsets.fromLTRB(20, 12, 20, widget.live ? 80 : 20),
+                padding: EdgeInsets.fromLTRB(24, 24, 24, widget.live ? 80 : 28),
                 itemCount: _paragraphs.length + (widget.header == null ? 0 : 1),
                 itemBuilder: (context, index) => Align(
                   alignment: Alignment.topCenter,
@@ -702,7 +711,7 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                           (widget.header == null ? 0 : 1) -
                                           1
                               ? 0
-                              : 16,
+                              : 24,
                         ),
                         child: widget.header != null && index == 0
                             ? widget.header!
@@ -710,8 +719,8 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                 _paragraphs[index -
                                     (widget.header == null ? 0 : 1)],
                                 style: const TextStyle(
-                                  fontSize: 18,
-                                  height: 1.65,
+                                  fontSize: 17,
+                                  height: 1.85,
                                   color: AppColors.textPrimary,
                                 ),
                               ),

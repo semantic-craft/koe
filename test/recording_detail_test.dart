@@ -79,6 +79,20 @@ void main() {
                   primaryTextTheme: AppTheme.light.primaryTextTheme.apply(
                     fontFamily: 'RecordingPreview',
                   ),
+                  filledButtonTheme: FilledButtonThemeData(
+                    style: AppTheme.light.filledButtonTheme.style!.copyWith(
+                      textStyle: const WidgetStatePropertyAll(
+                        TextStyle(fontFamily: 'RecordingPreview', fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  segmentedButtonTheme: SegmentedButtonThemeData(
+                    style: AppTheme.light.segmentedButtonTheme.style!.copyWith(
+                      textStyle: const WidgetStatePropertyAll(
+                        TextStyle(fontFamily: 'RecordingPreview', fontSize: 14),
+                      ),
+                    ),
+                  ),
                   dialogTheme: AppTheme.light.dialogTheme.copyWith(
                     titleTextStyle: const TextStyle(
                       fontFamily: 'RecordingPreview',
@@ -808,6 +822,113 @@ void main() {
     },
   );
 
+  testWidgets(
+    'desktop keeps library beside reader and returns to the selected recording',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final c = _RecordingController();
+      addTearDown(c.dispose);
+      for (final id in [100, 101]) {
+        final ref = RecordingReference(fileId: id, path: '/tmp/$id.wav');
+        c.exportedPaths.add(ref.path!);
+        c.views[ref.key] = RecordingViewData(
+          reference: ref,
+          path: ref.path,
+          title: 'Recording $id',
+          text: 'Transcript $id',
+        );
+      }
+      await pump(tester, c, const AppShell(), size: const Size(1280, 900));
+      expect(find.byKey(const ValueKey('desktop-navigation')), findsOneWidget);
+      expect(find.byKey(const ValueKey('bottom-navigation-bar')), findsNothing);
+      await tester.tap(
+        find.byKey(const ValueKey('recording-row-/tmp/100.wav')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Transcript 100'), findsWidgets);
+      expect(find.bySemanticsLabel('录音库'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('recording-row-/tmp/101.wav')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('recording-row-/tmp/101.wav')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byType(RecordingDetailScreen, skipOffstage: false),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('nav-settings')));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      expect(find.byType(RecordingDetailScreen), findsNothing);
+      tester.view.physicalSize = const Size(1280, 900);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('nav-home')));
+      await tester.pumpAndSettle();
+      expect(find.byType(RecordingDetailScreen), findsOneWidget);
+      expect(
+        tester
+            .widget<RecordingDetailScreen>(find.byType(RecordingDetailScreen))
+            .reference
+            .fileId,
+        101,
+      );
+      // Resize the same navigator; retain the detail and recover normal Back.
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pumpAndSettle();
+      expect(find.byType(RecordingDetailScreen), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('bottom-navigation-bar')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('recording-row-/tmp/101.wav')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'desktop live session stays accessible from settings without duplicate detail',
+    (tester) async {
+      final c = _RecordingController();
+      addTearDown(c.dispose);
+      await pump(tester, c, const AppShell(), size: const Size(1280, 900));
+      c.start('desktop-live', 'Live text');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('nav-settings')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('active-recording-bar')),
+        findsOneWidget,
+      );
+      c.updateText('More live text');
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      c.shortcut();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('active-recording-bar')), findsNothing);
+      expect(
+        find.byType(RecordingDetailScreen, skipOffstage: false),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('pause-recording')));
+      await tester.pumpAndSettle();
+      expect(c.recording, isFalse);
+      expect(find.byType(RecordingDetailScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   if (previewDirectory.isNotEmpty) {
     testWidgets('render recording UI previews', (tester) async {
       final c = _RecordingController();
@@ -843,7 +964,7 @@ void main() {
       }
       for (final variant in [
         ('phone', const Size(390, 844), 1.0),
-        ('wide', const Size(1024, 900), 1.0),
+        ('wide', const Size(1280, 900), 1.0),
         ('large-text', const Size(320, 740), 2.0),
       ]) {
         await tester.pumpWidget(const SizedBox.shrink());

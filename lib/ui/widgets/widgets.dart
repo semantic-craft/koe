@@ -44,7 +44,7 @@ class SurfaceCard extends StatelessWidget {
     this.onTap,
     this.borderColor,
     this.glow = false,
-    this.shadow = true,
+    this.shadow = false,
   });
 
   final Widget child;
@@ -61,7 +61,7 @@ class SurfaceCard extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: AppColors.bgCard,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: borderColor ?? AppColors.border),
         boxShadow: !shadow
             ? const []
@@ -83,7 +83,7 @@ class SurfaceCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
         splashColor: AppColors.accent.withValues(alpha: 0.08),
         highlightColor: AppColors.accent.withValues(alpha: 0.04),
         child: card,
@@ -111,7 +111,6 @@ class StatusPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -269,63 +268,26 @@ class AccentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? AppColors.accent;
-    final enabled = onPressed != null;
-    final child = Row(
+    final foreground = color ?? AppColors.accent;
+    final style = (filled ? FilledButton.styleFrom : OutlinedButton.styleFrom)(
+      foregroundColor: filled ? Colors.white : foreground,
+      backgroundColor: filled ? foreground : AppColors.bgCardHover,
+      minimumSize: const Size(44, 48),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    );
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
       children: [
-        if (icon != null) ...[
-          Icon(icon, size: 18, color: filled ? Colors.white : c),
-          const SizedBox(width: 8),
-        ],
-        Flexible(
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: filled ? Colors.white : c,
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-            ),
-          ),
-        ),
+        if (icon != null) ...[Icon(icon, size: 18), const SizedBox(width: 8)],
+        Flexible(child: Text(label, textAlign: TextAlign.center)),
       ],
     );
-
-    return Opacity(
-      opacity: enabled ? 1 : 0.45,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(14),
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              gradient: filled
-                  ? LinearGradient(
-                      colors: [c, Color.lerp(c, Colors.black, 0.25)!],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                  : null,
-              color: filled ? null : Colors.transparent,
-              border: filled
-                  ? null
-                  : Border.all(color: c.withValues(alpha: 0.5)),
-            ),
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: expand ? 16 : 18,
-                vertical: 14,
-              ),
-              child: child,
-            ),
-          ),
-        ),
-      ),
-    );
+    final button = filled
+        ? FilledButton(onPressed: onPressed, style: style, child: content)
+        : OutlinedButton(onPressed: onPressed, style: style, child: content);
+    return expand ? SizedBox(width: double.infinity, child: button) : button;
   }
 }
 
@@ -382,8 +344,8 @@ class SectionLabel extends StatelessWidget {
         text.toUpperCase(),
         style: const TextStyle(
           color: AppColors.textMuted,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
           letterSpacing: 1.2,
         ),
       ),
