@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../ai/soniox_stt.dart';
 import '../ai/moss_stt.dart';
 import '../ai/qwen_stt.dart';
+import '../ai/doubao_stt.dart';
 import '../ai/engine_config.dart';
 import '../ai/soniox_stt_stream.dart';
 import '../ai/soniox_languages.dart';
@@ -59,6 +60,7 @@ class RecorderController extends ChangeNotifier {
     SonioxSttService? sonioxSpeech,
     MossSttService? mossSpeech,
     QwenSttService? qwenSpeech,
+    DoubaoSttService? doubaoSpeech,
     MossJobStore? mossJobStore,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
   }) : _ble = ble ?? BleService(),
@@ -66,6 +68,7 @@ class RecorderController extends ChangeNotifier {
        _sonioxStt = sonioxSpeech ?? SonioxSttService(),
        _mossStt = mossSpeech ?? MossSttService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
+       _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load {
     _subs.add(
       _ble.scanResults.listen((list) {
@@ -288,6 +291,13 @@ class RecorderController extends ChangeNotifier {
       unawaited(_pumpQwenJobs());
       return;
     }
+    if (owner.configuration.provider == SttProvider.doubao) {
+      final key = _recordingKey(path: path);
+      if (_doubaoStarted.contains(key)) return;
+      _pendingDoubao[key] = (path: path, config: owner.configuration);
+      unawaited(_pumpDoubaoJobs());
+      return;
+    }
     try {
       await _mossJobs.enqueue(
         _recordingKey(path: path),
@@ -324,6 +334,31 @@ class RecorderController extends ChangeNotifier {
     }
   }
 
+  /// Doubao shares the Qwen shape: an in-memory queue with no durable job
+  /// store. Wait until the live take is idle, then run the file
+  /// transcription captured with that take's settings.
+  Future<void> _pumpDoubaoJobs() async {
+    if (_doubaoPumping || _disposed || _pendingDoubao.isEmpty) return;
+    if (_liveProcessing || _fileJobKey != null || _mossJobs.busy) return;
+    final entry = _pendingDoubao.entries.first;
+    _doubaoPumping = true;
+    var accepted = false;
+    try {
+      accepted = await _runFileTranscription(
+        entry.value.path,
+        entry.value.config,
+        fromQueue: true,
+      );
+    } finally {
+      if (accepted) {
+        _pendingDoubao.remove(entry.key);
+        _doubaoStarted.add(entry.key);
+      }
+      _doubaoPumping = false;
+      if (accepted && _pendingDoubao.isNotEmpty) unawaited(_pumpDoubaoJobs());
+    }
+  }
+
   Future<void> _loadPersistedSettings() async {
     final s = await AppSettingsStore.load();
     if (s.sonioxApiKey != null) _sonioxStt.apiKeyOverride = s.sonioxApiKey;
@@ -332,6 +367,10 @@ class RecorderController extends ChangeNotifier {
     _qwenStt.apiKeyOverride = qwenConfig.apiKey;
     _qwenStt.baseUrlOverride = qwenConfig.baseUrl;
     _qwenStt.modelOverride = qwenConfig.model;
+    final doubaoConfig = s.engineConfig(SttProvider.doubao);
+    _doubaoStt.apiKeyOverride = doubaoConfig.apiKey;
+    _doubaoStt.baseUrlOverride = doubaoConfig.baseUrl;
+    _doubaoStt.modelOverride = doubaoConfig.model;
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
     transcriptLanguage = s.transcriptLanguage;
@@ -390,6 +429,11 @@ class RecorderController extends ChangeNotifier {
       apiKey: _qwenStt.apiKeyOverride,
       baseUrl: _qwenStt.baseUrlOverride,
       model: _qwenStt.modelOverride,
+    ),
+    SttProvider.doubao.name: EngineConfig(
+      apiKey: _doubaoStt.apiKeyOverride,
+      baseUrl: _doubaoStt.baseUrlOverride,
+      model: _doubaoStt.modelOverride,
     ),
   };
 
@@ -515,6 +559,9 @@ class RecorderController extends ChangeNotifier {
     qwenKey: _qwenStt.apiKey,
     qwenBaseUrl: _resolvedQwenBaseUrl(),
     qwenModel: _qwenStt.model,
+    doubaoKey: _doubaoStt.apiKey,
+    doubaoBaseUrl: _resolvedDoubaoBaseUrl(),
+    doubaoModel: _doubaoStt.model,
   );
 
   _RecordingSession? get _currentRecording =>
@@ -533,6 +580,7 @@ class RecorderController extends ChangeNotifier {
     SttProvider.apple => config.appleReady && config.sourceLanguage.isNotEmpty,
     SttProvider.moss => config.mossKey?.isNotEmpty == true,
     SttProvider.qwen => config.qwenKey?.isNotEmpty == true,
+    SttProvider.doubao => config.doubaoKey?.isNotEmpty == true,
     SttProvider.soniox => config.sonioxKey?.isNotEmpty == true,
   };
 
@@ -541,6 +589,14 @@ class RecorderController extends ChangeNotifier {
       return _qwenStt.baseUrl;
     } on QwenSttException {
       return QwenSttService.defaultBaseUrl;
+    }
+  }
+
+  String _resolvedDoubaoBaseUrl() {
+    try {
+      return _doubaoStt.baseUrl;
+    } on DoubaoSttException {
+      return DoubaoSttService.defaultBaseUrl;
     }
   }
 
@@ -750,6 +806,7 @@ class RecorderController extends ChangeNotifier {
   String _speechErrorMessage(Object error) {
     if (error is MossException) return error.message;
     if (error is QwenSttException) return error.message;
+    if (error is DoubaoSttException) return error.message;
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
       'unsupported' => '此设备不支持设备端处理，请在设置中选择云端语音服务',
@@ -1711,6 +1768,12 @@ class RecorderController extends ChangeNotifier {
           baseUrl: _qwenStt.baseUrlOverride,
           model: _qwenStt.modelOverride,
         );
+      case SttProvider.doubao:
+        return EngineConfig(
+          apiKey: _doubaoStt.apiKeyOverride,
+          baseUrl: _doubaoStt.baseUrlOverride,
+          model: _doubaoStt.modelOverride,
+        );
     }
   }
 
@@ -1725,6 +1788,8 @@ class RecorderController extends ChangeNotifier {
         return _mossStt.apiKey != null;
       case SttProvider.qwen:
         return _qwenStt.isConfigured;
+      case SttProvider.doubao:
+        return _doubaoStt.isConfigured;
     }
   }
 
@@ -1739,6 +1804,24 @@ class RecorderController extends ChangeNotifier {
         ? null
         : normalizeDashScopeBaseUrl(rawBaseUrl);
     _qwenStt
+      ..apiKeyOverride = apiKey
+      ..baseUrlOverride = baseUrl
+      ..modelOverride = model;
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
+  /// Saves the whole Doubao credential trio at once. The base URL is
+  /// normalized on save; an invalid one throws [DoubaoSttException] and
+  /// leaves the current configuration untouched.
+  void setDoubaoConfig(EngineConfig config) {
+    final apiKey = _blankToNull(config.apiKey);
+    final model = _blankToNull(config.model);
+    final rawBaseUrl = _blankToNull(config.baseUrl);
+    final baseUrl = rawBaseUrl == null
+        ? null
+        : normalizeDoubaoBaseUrl(rawBaseUrl);
+    _doubaoStt
       ..apiKeyOverride = apiKey
       ..baseUrlOverride = baseUrl
       ..modelOverride = model;
@@ -2208,6 +2291,20 @@ class RecorderController extends ChangeNotifier {
         isCurrent: isCurrent,
       );
     }
+    if (config.provider == SttProvider.doubao) {
+      // The service maps ISO short codes (`zh`) to Volcano BCP-47 (`zh-CN`).
+      return _doubaoStt.transcribePath(
+        path,
+        apiKey: config.doubaoKey,
+        baseUrl: config.doubaoBaseUrl,
+        model: config.doubaoModel,
+        language: config.sourceLanguage == 'auto'
+            ? null
+            : config.sourceLanguage,
+        onProgress: onProgress,
+        isCurrent: isCurrent,
+      );
+    }
     return _sonioxStt.transcribePath(
       path,
       language: config.sourceLanguage == 'auto' ? null : config.sourceLanguage,
@@ -2399,6 +2496,7 @@ class RecorderController extends ChangeNotifier {
   final SonioxSttService _sonioxStt;
   final MossSttService _mossStt;
   final QwenSttService _qwenStt;
+  final DoubaoSttService _doubaoStt;
   late final MossJobQueue _mossJobs;
   final AppleSpeechService _appleSpeech;
   SttProvider speechProvider = SttProvider.soniox;
@@ -2424,6 +2522,13 @@ class RecorderController extends ChangeNotifier {
       {};
   final Set<String> _qwenStarted = {};
   bool _qwenPumping = false;
+
+  /// Doubao queue: same shape as Qwen's, independent of it so the two
+  /// engines can hold jobs for different takes at the same time.
+  final Map<String, ({String path, _SpeechConfiguration config})>
+  _pendingDoubao = {};
+  final Set<String> _doubaoStarted = {};
+  bool _doubaoPumping = false;
   SttProvider? _fileJobProvider;
   Future<void> _fileCancellation = Future<void>.value();
   final OpusPcmDecoder _opusPcm = OpusPcmDecoder(outputSampleRate: 16000);
@@ -4546,6 +4651,7 @@ class RecorderController extends ChangeNotifier {
       super.notifyListeners();
       _mossJobs.wake();
       unawaited(_pumpQwenJobs());
+      unawaited(_pumpDoubaoJobs());
     }
   }
 
@@ -4572,6 +4678,7 @@ class RecorderController extends ChangeNotifier {
     unawaited(_realtime.dispose());
     _sonioxStt.dispose();
     _qwenStt.dispose();
+    _doubaoStt.dispose();
     _mossJobs.dispose();
     unawaited(_appleSpeech.dispose());
     _wifi.dispose();
@@ -4596,6 +4703,9 @@ class _SpeechConfiguration {
     this.qwenKey,
     this.qwenBaseUrl,
     this.qwenModel,
+    this.doubaoKey,
+    this.doubaoBaseUrl,
+    this.doubaoModel,
   });
   final SttProvider provider;
   final String sourceLanguage;
@@ -4611,6 +4721,9 @@ class _SpeechConfiguration {
   final String? qwenKey;
   final String? qwenBaseUrl;
   final String? qwenModel;
+  final String? doubaoKey;
+  final String? doubaoBaseUrl;
+  final String? doubaoModel;
 
   _SpeechConfiguration withSourceLanguage(String source) =>
       _SpeechConfiguration(
@@ -4628,6 +4741,9 @@ class _SpeechConfiguration {
         qwenKey: qwenKey,
         qwenBaseUrl: qwenBaseUrl,
         qwenModel: qwenModel,
+        doubaoKey: doubaoKey,
+        doubaoBaseUrl: doubaoBaseUrl,
+        doubaoModel: doubaoModel,
       );
 }
 

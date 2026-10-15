@@ -87,7 +87,26 @@ void main() {
     expect(settings.toJson(), isNot(contains('xaiApiKey')));
   });
 
-  test('Qwen key, base URL, and model round-trip independently', () {
+  test('Qwen key, base URL, and model round-trip independently', () async {
+    // Doubao rides the same grouped engines map: saving and reloading the
+    // trio (and a saved provider choice) round-trips losslessly.
+    final withDoubao = const AppSettings().copyWith(
+      speechProvider: SttProvider.doubao,
+      engines: {
+        'doubao': EngineConfig(
+          apiKey: 'doubao-key',
+          baseUrl: 'https://openspeech.bytedance.com',
+          model: 'volc.bigasr.auc_turbo',
+        ),
+      },
+    );
+    final doubaoRestored = AppSettings.fromJson(withDoubao.toJson());
+    expect(doubaoRestored.speechProvider, SttProvider.doubao);
+    final doubao = doubaoRestored.engineConfig(SttProvider.doubao);
+    expect(doubao.apiKey, 'doubao-key');
+    expect(doubao.baseUrl, 'https://openspeech.bytedance.com');
+    expect(doubao.model, 'volc.bigasr.auc_turbo');
+
     final settings = AppSettings.fromJson({
       'speechProvider': 'qwen',
       'qwenApiKey': 'qwen-key',

@@ -257,6 +257,36 @@ void main() {
     );
   });
 
+  test('Doubao is a deferred engine outside the default fallback chain', () {
+    expect(SttProvider.doubao.label, '豆包');
+    expect(SttProvider.doubao.defersTranscription, isTrue);
+
+    // Doubao is never picked by default, even when it is the only engine
+    // configured: the chain stays saved -> Apple -> Soniox -> Qwen.
+    expect(
+      initialSpeechProvider(
+        saved: null,
+        appleSupported: false,
+        sonioxConfigured: false,
+        qwenConfigured: false,
+      ),
+      SttProvider.soniox,
+    );
+
+    // An explicitly saved Doubao choice wins.
+    expect(
+      initialSpeechProvider(
+        saved: SttProvider.doubao,
+        appleSupported: true,
+        sonioxConfigured: true,
+      ),
+      SttProvider.doubao,
+    );
+
+    expect(SttProvider.parse('doubao'), SttProvider.doubao);
+    expect(SttProvider.parse('unknown'), isNull);
+  });
+
   testWidgets('settings exposes the Qwen key, URL, and model', (tester) async {
     final controller = RecorderController(loadPersistedState: false)
       ..setSpeechProvider(SttProvider.qwen);

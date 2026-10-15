@@ -2,14 +2,18 @@ enum SttProvider {
   apple('Apple 设备端'),
   soniox('Soniox'),
   moss('MOSS Pro'),
-  qwen('通义 Qwen');
+  qwen('通义 Qwen'),
+  doubao('豆包');
 
   const SttProvider(this.label);
   final String label;
 
-  /// Transcription starts after the recording is saved. There is no live stream.
+  /// Transcription starts after the recording is saved. There is no live
+  /// stream.
   bool get defersTranscription =>
-      this == SttProvider.moss || this == SttProvider.qwen;
+      this == SttProvider.moss ||
+      this == SttProvider.qwen ||
+      this == SttProvider.doubao;
 
   static SttProvider? parse(Object? value) {
     for (final provider in values) {
