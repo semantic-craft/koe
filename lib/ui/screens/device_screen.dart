@@ -423,10 +423,12 @@ class _OfflineDeviceView extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 14),
-                    const Text(
-                      '设备已断开。点下方按钮扫描并重新连接。',
+                    Text(
+                      c.manuallyDisconnected
+                          ? '已手动断开，重启应用也不会自动连接。扫描后点选设备即可重新连接。'
+                          : '设备已断开。点下方按钮扫描并重新连接。',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 13,
                         height: 1.35,

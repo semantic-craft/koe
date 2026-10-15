@@ -9,6 +9,7 @@ import '../protocol/models.dart';
 
 typedef PersistedDeviceState = ({
   bool bound,
+  bool manuallyDisconnected,
   ScannedDevice? device,
   DeviceInfoModel? info,
 });
@@ -34,8 +35,29 @@ class DeviceStore {
     return File(p.join(dir.path, _fileName));
   }
 
+  static Future<void> _writes = Future<void>.value();
+
   static Future<void> save({
     required bool bound,
+    bool manuallyDisconnected = false,
+    ScannedDevice? device,
+    DeviceInfoModel? info,
+  }) {
+    final operation = _writes.then(
+      (_) => _save(
+        bound: bound,
+        manuallyDisconnected: manuallyDisconnected,
+        device: device,
+        info: info,
+      ),
+    );
+    _writes = operation;
+    return operation;
+  }
+
+  static Future<void> _save({
+    required bool bound,
+    required bool manuallyDisconnected,
     ScannedDevice? device,
     DeviceInfoModel? info,
   }) async {
@@ -43,6 +65,7 @@ class DeviceStore {
       final f = await _file();
       final map = <String, dynamic>{
         'bound': bound,
+        'manuallyDisconnected': manuallyDisconnected,
         'savedAt': DateTime.now().toIso8601String(),
       };
       if (device != null) {
@@ -70,7 +93,12 @@ class DeviceStore {
           'boxMac': info.boxMac,
         };
       }
-      await f.writeAsString(const JsonEncoder.withIndent('  ').convert(map));
+      final pending = File('${f.path}.part');
+      await pending.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(map),
+        flush: true,
+      );
+      await pending.rename(f.path);
       debugPrint('[DeviceStore] saved bound=$bound id=${device?.id}');
     } catch (e) {
       debugPrint('[DeviceStore] save failed: $e');
@@ -81,7 +109,12 @@ class DeviceStore {
     try {
       final f = await _file();
       if (!await f.exists()) {
-        return (bound: false, device: null, info: null);
+        return (
+          bound: false,
+          manuallyDisconnected: false,
+          device: null,
+          info: null,
+        );
       }
       final map = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
       final bound = map['bound'] == true;
@@ -118,10 +151,20 @@ class DeviceStore {
       debugPrint(
         '[DeviceStore] loaded bound=$bound id=${device?.id} name=${device?.displayName}',
       );
-      return (bound: bound, device: device, info: info);
+      return (
+        bound: bound,
+        manuallyDisconnected: map['manuallyDisconnected'] == true,
+        device: device,
+        info: info,
+      );
     } catch (e) {
       debugPrint('[DeviceStore] load failed: $e');
-      return (bound: false, device: null, info: null);
+      return (
+        bound: false,
+        manuallyDisconnected: false,
+        device: null,
+        info: null,
+      );
     }
   }
 
