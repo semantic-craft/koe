@@ -88,14 +88,15 @@ class _ScanDevicesSheetState extends State<ScanDevicesSheet> {
   }
 
   void _maybeAutoConnectBound(RecorderController c) {
-    if (_autoConnectTried || _showOnboarding) return;
+    if (c.manuallyDisconnected || _autoConnectTried || _showOnboarding) return;
     if (c.connected || c.phase == AppPhase.connecting) return;
     for (final d in c.devices) {
       if (_isBoundMatch(c, d)) {
         _autoConnectTried = true;
-        WidgetsBinding.instance.addPostFrameCallback(
-          (_) => unawaited(_connectDevice(d)),
-        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || c.manuallyDisconnected) return;
+          unawaited(_connectDevice(d));
+        });
         return;
       }
     }

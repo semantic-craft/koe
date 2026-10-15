@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:anker_recorder/ble/ble_service.dart';
 import 'package:anker_recorder/protocol/frame.dart';
@@ -7,9 +9,109 @@ import 'package:anker_recorder/state/device_store.dart';
 import 'package:anker_recorder/state/recorder_controller.dart';
 import 'package:anker_recorder/wifi/wifi_export_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  late Directory deviceDirectory;
+  setUp(() async {
+    deviceDirectory = await Directory.systemTemp.createTemp('recorder-device-');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (_) async => deviceDirectory.path,
+        );
+  });
+  tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          null,
+        );
+    await deviceDirectory.delete(recursive: true);
+  });
+
+  test('legacy device records retain automatic connection', () async {
+    await DeviceStore.save(bound: true, device: _device);
+    final file = File(
+      '${deviceDirectory.path}/AnkerRecorder/bound_device.json',
+    );
+    final legacy =
+        jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+    legacy.remove('manuallyDisconnected');
+    await file.writeAsString(jsonEncode(legacy));
+    final restored = await DeviceStore.load();
+    expect(restored.bound, isTrue);
+    expect(restored.manuallyDisconnected, isFalse);
+  });
+
+  test('latest disconnect intent wins overlapping metadata saves', () async {
+    final metadata = DeviceStore.save(bound: true, device: _device);
+    final disconnect = DeviceStore.save(
+      bound: true,
+      device: _device,
+      manuallyDisconnected: true,
+    );
+    await Future.wait([metadata, disconnect]);
+    expect((await DeviceStore.load()).manuallyDisconnected, isTrue);
+  });
+
+  test(
+    'manual disconnect survives restart until an explicit connection',
+    () async {
+      final first = _controller(_FakeBleService()..ready = true)
+        ..bound = true
+        ..lastKnownDevice = _device
+        ..activeDevice = _device
+        ..connected = true;
+      await first.disconnect();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      first.dispose();
+
+      final ble = _FakeBleService();
+      final restarted = RecorderController(
+        ble: ble,
+        loadPersistedState: false,
+        persistedDeviceLoader: DeviceStore.load,
+      );
+      _disposeAfterSettling(restarted);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(restarted.bound, isTrue);
+      expect(
+        ble.startScanCalls,
+        0,
+        reason: 'restart must preserve manual disconnect',
+      );
+      await restarted.startScan();
+      ble.emitScan([_device]);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        ble.connectCalls,
+        0,
+        reason: 'scanning alone must not resume connection',
+      );
+      await restarted.requestRecordingFromShortcut();
+      expect(ble.connectCalls, 0);
+      expect(restarted.recordingShortcutPending, isFalse);
+      await restarted.connect(_device);
+      expect(ble.connectCalls, 1);
+      final nextBle = _FakeBleService();
+      final next = RecorderController(
+        ble: nextBle,
+        loadPersistedState: false,
+        persistedDeviceLoader: DeviceStore.load,
+      );
+      _disposeAfterSettling(next);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(
+        nextBle.startScanCalls,
+        1,
+        reason: 'explicit connection restores automatic reconnection',
+      );
+      await next.stopScan();
+    },
+  );
 
   testWidgets('expired scan returns to idle so it can be retried', (
     tester,
@@ -183,7 +285,12 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(ble.startScanCalls, 0);
 
-      loaded.complete((bound: true, device: _device, info: null));
+      loaded.complete((
+        bound: true,
+        manuallyDisconnected: false,
+        device: _device,
+        info: null,
+      ));
       await request;
       await Future<void>.delayed(Duration.zero);
 

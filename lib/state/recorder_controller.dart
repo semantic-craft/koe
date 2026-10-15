@@ -820,19 +820,21 @@ class RecorderController extends ChangeNotifier {
   Future<void> _loadPersistedDevice() async {
     final saved = await _persistedDeviceLoader();
     if (saved.device == null && !saved.bound) return;
+    _explicitDisconnect = saved.manuallyDisconnected;
     lastKnownDevice = saved.device;
     lastKnownInfo = saved.info;
     if (saved.bound) bound = true;
     // Surface on Device tab even before this session connects.
     activeDevice ??= lastKnownDevice;
     notifyListeners();
-    if (saved.bound && saved.device != null) {
+    if (!_explicitDisconnect && saved.bound && saved.device != null) {
       unawaited(_startBoundDeviceReconnect());
     }
   }
 
   Future<void> _startBoundDeviceReconnect() async {
-    if (connected ||
+    if (_explicitDisconnect ||
+        connected ||
         phase == AppPhase.scanning ||
         phase == AppPhase.connecting ||
         _ble.isConnecting) {
@@ -870,6 +872,11 @@ class RecorderController extends ChangeNotifier {
 
     await _persistedDeviceLoaded;
     if (!_recordingShortcutPending) return;
+
+    if (_explicitDisconnect) {
+      _failRecordingShortcut('已手动断开，请先在应用中连接录音豆');
+      return;
+    }
 
     if (recording) {
       _finishRecordingShortcut();
@@ -1006,6 +1013,7 @@ class RecorderController extends ChangeNotifier {
     }
     await DeviceStore.save(
       bound: bound,
+      manuallyDisconnected: _explicitDisconnect,
       device: d,
       info: info ?? lastKnownInfo,
     );
@@ -2702,9 +2710,9 @@ class RecorderController extends ChangeNotifier {
   int _boundReconnectAttempt = 0;
   bool get recordingShortcutPending => _recordingShortcutPending;
 
-  /// User intent survives duplicate/late disconnect events and scan results.
-  /// Explicit scan/connect resumes automatic reconnection for this session.
+  /// Persisted user intent; only explicit connection resumes reconnection.
   bool _explicitDisconnect = false;
+  bool get manuallyDisconnected => _explicitDisconnect;
 
   /// Survives disconnect so the Device tab can still show a known/bound unit.
   ScannedDevice? lastKnownDevice;
@@ -2865,7 +2873,12 @@ class RecorderController extends ChangeNotifier {
       selectedFiles.where((f) => localPathFor(f.fileId) == null).toList();
 
   Future<void> startScan() async {
-    _explicitDisconnect = false;
+    await _persistedDeviceLoaded;
+    if (connected ||
+        phase == AppPhase.scanning ||
+        phase == AppPhase.connecting) {
+      return;
+    }
     _boundReconnectTimer?.cancel();
     _boundReconnectTimer = null;
     _scanTimeoutTimer?.cancel();
@@ -2874,7 +2887,7 @@ class RecorderController extends ChangeNotifier {
     statusMessage = '正在检查蓝牙…';
     notifyListeners();
     try {
-      final saved = bound ? lastKnownDevice : null;
+      final saved = bound && !_explicitDisconnect ? lastKnownDevice : null;
       if (saved != null && await _ble.isD3200ConnectedToSystem(saved.id)) {
         statusMessage = '正在恢复 ${saved.displayName} 的连接…';
         notifyListeners();
@@ -2965,6 +2978,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<void> connect(ScannedDevice d) async {
+    await _persistedDeviceLoaded;
     // Single-flight: ignore extra taps while connecting (or BLE layer busy).
     if (phase == AppPhase.connecting || _ble.isConnecting) {
       statusMessage = '正在连接…';
@@ -2992,6 +3006,7 @@ class RecorderController extends ChangeNotifier {
     bool? shortcutResult;
     String? shortcutFailure;
     try {
+      await _persistDevice();
       await _ble.connect(d.id, serviceUuidHint: d.serviceUuid);
       // Retry after GATT is ready in case Android initially rejected the
       // connected-device service before Bluetooth permission settled.
@@ -3058,7 +3073,9 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    await _persistedDeviceLoaded;
     _explicitDisconnect = true;
+    await _persistDevice();
     _resetBoundReconnectBackoff();
     _scanTimeoutTimer?.cancel();
     _postBindFileRefreshTimer?.cancel();
