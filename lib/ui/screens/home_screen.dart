@@ -39,7 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const Expanded(
             child: FilesBody(
               key: ValueKey('files'),
-              padding: EdgeInsets.fromLTRB(20, 8, 20, 0),
+              padding: EdgeInsets.fromLTRB(20, 10, 20, 0),
             ),
           ),
         ],
@@ -66,17 +66,21 @@ class _ConnectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final online = c.connected;
     final live = c.isLiveSession;
     final name = c.displayDeviceName;
 
     return Container(
-      color: AppColors.bgCard,
+      decoration: BoxDecoration(
+        color: tokens.bgCard,
+        border: Border(bottom: BorderSide(color: tokens.borderSoft)),
+      ),
       padding: EdgeInsets.fromLTRB(
         20,
         MediaQuery.paddingOf(context).top + 12,
         20,
-        16,
+        14,
       ),
       child: Row(
         children: [
@@ -84,39 +88,64 @@ class _ConnectionHeader extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: (online ? AppColors.mint : AppColors.accent).withValues(
-                alpha: 0.12,
+              color: online ? tokens.mintSoft : tokens.bgPanel,
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              border: Border.all(
+                color: online ? tokens.mintBorder : tokens.border,
               ),
-              borderRadius: BorderRadius.circular(12),
             ),
             clipBehavior: Clip.antiAlias,
             child: online
                 ? Image.asset(
                     'assets/product/d3200_device_white.webp',
                     fit: BoxFit.contain,
-                    errorBuilder: (_, _, _) => const Icon(
+                    errorBuilder: (_, _, _) => Icon(
                       Icons.headphones_rounded,
-                      color: AppColors.mint,
+                      color: tokens.mint,
+                      size: 20,
                     ),
                   )
-                : const Icon(Icons.link_off_rounded, color: AppColors.accent),
+                : Icon(
+                    Icons.link_off_rounded,
+                    color: tokens.textSecondary,
+                    size: 20,
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  online ? name : (c.displayDevice != null ? name : '未连接设备'),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: online ? tokens.mint : tokens.textFaint,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        online
+                            ? name
+                            : (c.displayDevice != null ? name : '未连接设备'),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14.5,
+                          color: tokens.textPrimary,
+                          letterSpacing: -0.2,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
                 if (!live) ...[
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
                     online
                         ? (c.isPlaying
@@ -127,9 +156,7 @@ class _ConnectionHeader extends StatelessWidget {
                         : '点「扫描」查找 soundcore Work',
                     style: TextStyle(
                       fontSize: 12,
-                      color: c.isPlaying
-                          ? AppColors.accent
-                          : AppColors.textSecondary,
+                      color: c.isPlaying ? tokens.accent : tokens.textSecondary,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -143,11 +170,15 @@ class _ConnectionHeader extends StatelessWidget {
               tooltip: '扫描',
               onPressed: onScan,
               style: IconButton.styleFrom(
-                foregroundColor: AppColors.accent,
+                backgroundColor: tokens.accentSoft,
+                foregroundColor: tokens.accent,
                 minimumSize: const Size(48, 48),
-                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadii.md),
+                  side: BorderSide(color: tokens.accentBorder),
+                ),
               ),
-              icon: const Icon(Icons.radar_rounded, size: 44),
+              icon: const Icon(Icons.radar_rounded, size: 22),
             ),
         ],
       ),

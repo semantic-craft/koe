@@ -12,6 +12,7 @@ class DeviceScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     if (!c.connected) {
       return _OfflineDeviceView(controller: c);
     }
@@ -19,28 +20,36 @@ class DeviceScreen extends StatelessWidget {
     final info = c.info;
     final micBat = info?.battery;
     final caseBat = info?.boxBattery;
+    final transcribing = c.transcribing || c.streamingSttActive;
+    final paused = c.isLiveSession && !c.recording;
+
     return GradientScaffold(
       appBar: AppBar(
+        backgroundColor: tokens.bgCard,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(height: 1, color: tokens.borderSoft),
+        ),
         title: Row(
           children: [
             Image.asset(
               'assets/product/d3200_device_connected_white.webp',
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) => Image.asset(
                 'assets/product/hero_connected_white.png',
-                width: 40,
-                height: 40,
+                width: 36,
+                height: 36,
                 fit: BoxFit.contain,
-                errorBuilder: (_, _, _) => const Icon(
+                errorBuilder: (_, _, _) => Icon(
                   Icons.headphones_rounded,
-                  size: 28,
-                  color: AppColors.textMuted,
+                  size: 24,
+                  color: tokens.textMuted,
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             Flexible(
               child: Text(
                 info?.hasIdentity == true ? 'soundcore Work' : '已连接',
@@ -59,18 +68,18 @@ class DeviceScreen extends StatelessWidget {
           IconButton(
             tooltip: '断开连接',
             onPressed: c.disconnect,
-            icon: const Icon(Icons.link_off_rounded, color: AppColors.coral),
+            icon: Icon(Icons.link_off_rounded, color: tokens.coral),
           ),
         ],
       ),
       child: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 100),
           children: [
             const SectionLabel('电量'),
             _DeviceSection(
               key: const ValueKey('device-battery-section'),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -81,24 +90,24 @@ class DeviceScreen extends StatelessWidget {
                         height: 28,
                         errorBuilder: (_, _, _) => const SizedBox.shrink(),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       BatteryRing(
                         percent: micBat ?? 0,
                         charging: info?.charging ?? false,
-                        size: 72,
+                        size: 74,
                       ),
-                      const SizedBox(height: 5),
-                      const Text(
+                      const SizedBox(height: 6),
+                      Text(
                         '麦克风',
                         style: TextStyle(
-                          color: AppColors.textSecondary,
+                          color: tokens.textSecondary,
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
                         ),
                       ),
                     ],
                   ),
-                  Container(width: 1, height: 82, color: AppColors.border),
+                  Container(width: 1, height: 84, color: tokens.borderSoft),
                   Column(
                     children: [
                       Image.asset(
@@ -106,17 +115,17 @@ class DeviceScreen extends StatelessWidget {
                         height: 28,
                         errorBuilder: (_, _, _) => const SizedBox.shrink(),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       BatteryRing(
                         percent: caseBat ?? 0,
                         charging: info?.boxCharging ?? false,
-                        size: 72,
+                        size: 74,
                       ),
-                      const SizedBox(height: 5),
-                      const Text(
+                      const SizedBox(height: 6),
+                      Text(
                         '充电盒',
                         style: TextStyle(
-                          color: AppColors.textSecondary,
+                          color: tokens.textSecondary,
                           fontWeight: FontWeight.w600,
                           fontSize: 12,
                         ),
@@ -127,18 +136,87 @@ class DeviceScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
-            const SectionLabel('录音'),
+            const SectionLabel('录音控制'),
             _DeviceSection(
               key: const ValueKey('device-recording-section'),
+              borderColor: c.recording
+                  ? tokens.coralBorder
+                  : paused
+                  ? tokens.amberBorder
+                  : tokens.border,
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: c.recording
+                          ? tokens.coralSoft
+                          : paused
+                          ? tokens.amberSoft
+                          : transcribing
+                          ? tokens.accentSoft
+                          : tokens.bgPanel,
+                      borderRadius: BorderRadius.circular(AppRadii.md),
+                      border: Border.all(
+                        color: c.recording
+                            ? tokens.coralBorder
+                            : paused
+                            ? tokens.amberBorder
+                            : transcribing
+                            ? tokens.accentBorder
+                            : tokens.borderSoft,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: c.recording
+                                ? tokens.coral
+                                : paused
+                                ? tokens.amber
+                                : transcribing
+                                ? tokens.accent
+                                : tokens.mint,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            c.recording
+                                ? (transcribing
+                                      ? '正在录音并实时转写'
+                                      : '录音进行中')
+                                : paused
+                                ? '录音已暂停'
+                                : transcribing
+                                ? '正在转写音频…'
+                                : '设备就绪 · 可随时开始录音',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: tokens.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(
                         child: AccentButton(
                           label: c.recording ? '录音中…' : '开始',
                           icon: Icons.mic_rounded,
-                          color: AppColors.coral,
+                          color: tokens.coral,
                           onPressed: c.recording || c.blocksRecordingControl
                               ? null
                               : c.startRecord,
@@ -150,7 +228,7 @@ class DeviceScreen extends StatelessWidget {
                           label: '暂停',
                           icon: Icons.pause_rounded,
                           filled: false,
-                          color: AppColors.amber,
+                          color: tokens.amber,
                           onPressed: !c.recording || c.phase == AppPhase.busy
                               ? null
                               : c.pauseRecord,
@@ -163,6 +241,7 @@ class DeviceScreen extends StatelessWidget {
                     label: '同步设备时钟',
                     icon: Icons.schedule_rounded,
                     filled: false,
+                    color: tokens.textPrimary,
                     onPressed: c.phase == AppPhase.busy ? null : c.syncTime,
                   ),
                 ],
@@ -192,22 +271,22 @@ class DeviceScreen extends StatelessWidget {
                           label: '解绑',
                           icon: Icons.link_off_rounded,
                           filled: false,
-                          color: AppColors.textSecondary,
+                          color: tokens.textSecondary,
                           onPressed: !c.bound || c.phase == AppPhase.busy
                               ? null
                               : () async {
                                   final ok = await showDialog<bool>(
                                     context: context,
                                     builder: (ctx) => AlertDialog(
-                                      backgroundColor: AppColors.bgCard,
+                                      backgroundColor: tokens.bgCard,
                                       title: const Text('确认解绑？'),
-                                      content: const Text(
+                                      content: Text(
                                         '将向设备发送解绑指令（与飞书相同，payload 00）。\n'
                                         '• 不会清空录音或恢复出厂\n'
                                         '• 成功后会断开连接\n'
                                         '• 之后可再扫描、连接并重新绑定',
                                         style: TextStyle(
-                                          color: AppColors.textSecondary,
+                                          color: tokens.textSecondary,
                                           height: 1.4,
                                         ),
                                       ),
@@ -241,21 +320,21 @@ class DeviceScreen extends StatelessWidget {
               child: Column(
                 children: [
                   const _DeviceInfoRow(label: '产品', value: 'D3200'),
-                  const Divider(),
+                  const Divider(height: 16),
                   _DeviceInfoRow(
                     label: '序列号',
                     value: info?.serialNumber.isNotEmpty == true
                         ? info!.serialNumber
                         : '—',
                   ),
-                  const Divider(),
+                  const Divider(height: 16),
                   _DeviceInfoRow(
                     label: '固件版本',
                     value: info?.firmwareVersion.isNotEmpty == true
                         ? info!.firmwareVersion
                         : '—',
                   ),
-                  const Divider(),
+                  const Divider(height: 16),
                   _DeviceInfoRow(label: '存储', value: info?.storageLabel ?? '—'),
                 ],
               ),
@@ -264,11 +343,11 @@ class DeviceScreen extends StatelessWidget {
             const SectionLabel('危险操作'),
             _DeviceSection(
               key: const ValueKey('device-danger-section'),
-              borderColor: AppColors.coral.withValues(alpha: 0.25),
+              borderColor: tokens.coralBorder,
               child: AccentButton(
                 label: '恢复出厂设置',
                 icon: Icons.restart_alt_rounded,
-                color: AppColors.coral,
+                color: tokens.coral,
                 filled: false,
                 onPressed: c.phase == AppPhase.busy
                     ? null
@@ -276,12 +355,12 @@ class DeviceScreen extends StatelessWidget {
                         final ok = await showDialog<bool>(
                           context: context,
                           builder: (ctx) => AlertDialog(
-                            backgroundColor: AppColors.bgCard,
+                            backgroundColor: tokens.bgCard,
                             title: const Text('确定恢复出厂？'),
-                            content: const Text(
+                            content: Text(
                               '将发送重置指令（0x01/0xB8）。'
                               '设备将恢复默认设置。',
-                              style: TextStyle(color: AppColors.textSecondary),
+                              style: TextStyle(color: tokens.textSecondary),
                             ),
                             actions: [
                               TextButton(
@@ -290,9 +369,9 @@ class DeviceScreen extends StatelessWidget {
                               ),
                               TextButton(
                                 onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text(
+                                child: Text(
                                   '重置',
-                                  style: TextStyle(color: AppColors.coral),
+                                  style: TextStyle(color: tokens.coral),
                                 ),
                               ),
                             ],
@@ -313,21 +392,26 @@ class _DeviceSection extends StatelessWidget {
   const _DeviceSection({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.fromLTRB(0, 12, 0, 16),
-    this.borderColor = AppColors.border,
+    this.padding = const EdgeInsets.all(16),
+    this.borderColor,
   });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
-  final Color borderColor;
+  final Color? borderColor;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    final tokens = KoeTokens.of(context);
+    return Container(
+      padding: padding,
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: borderColor)),
+        color: tokens.bgCard,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        border: Border.all(color: borderColor ?? tokens.border),
+        boxShadow: tokens.cardShadow,
       ),
-      child: Padding(padding: padding, child: child),
+      child: child,
     );
   }
 }
@@ -340,15 +424,16 @@ class _DeviceInfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(
-                color: AppColors.textMuted,
+              style: TextStyle(
+                color: tokens.textSecondary,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
@@ -357,12 +442,14 @@ class _DeviceInfoRow extends StatelessWidget {
           Expanded(
             child: Text(
               value,
+              textAlign: TextAlign.right,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
+              style: TextStyle(
+                color: tokens.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -382,6 +469,7 @@ class _OfflineDeviceView extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = controller;
     final d = c.displayDevice;
+    final tokens = KoeTokens.of(context);
 
     return GradientScaffold(
       child: SafeArea(
@@ -390,12 +478,12 @@ class _OfflineDeviceView extends StatelessWidget {
           children: [
             if (d != null) ...[
               SurfaceCard(
-                glow: true,
+                padding: const EdgeInsets.all(22),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const Center(child: _OfflineProductImage()),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     Text(
                       d.displayName,
                       textAlign: TextAlign.center,
@@ -406,7 +494,7 @@ class _OfflineDeviceView extends StatelessWidget {
                       Center(
                         child: StatusPill(
                           label: c.bound ? '已绑定' : '广告已绑定',
-                          color: AppColors.accent,
+                          color: tokens.accent,
                         ),
                       ),
                     ],
@@ -415,24 +503,24 @@ class _OfflineDeviceView extends StatelessWidget {
                       Text(
                         d.macAddress!,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.textMuted,
+                        style: TextStyle(
+                          color: tokens.textMuted,
                           fontSize: 12,
-                          fontFeatures: [FontFeature.tabularFigures()],
+                          fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
                     ],
                     const SizedBox(height: 14),
-                    const Text(
+                    Text(
                       '设备已断开。点下方按钮扫描并重新连接。',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: AppColors.textSecondary,
+                        color: tokens.textSecondary,
                         fontSize: 13,
-                        height: 1.35,
+                        height: 1.4,
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
                     AccentButton(
                       label: '扫描并连接',
                       icon: Icons.radar_rounded,
@@ -444,13 +532,17 @@ class _OfflineDeviceView extends StatelessWidget {
             ] else ...[
               const SizedBox(height: 48),
               SurfaceCard(
-                glow: true,
+                padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    const Icon(
-                      Icons.devices_other_rounded,
-                      size: 48,
-                      color: AppColors.textMuted,
+                    IconBadge(
+                      icon: Icons.devices_other_rounded,
+                      size: 52,
+                      iconSize: 26,
+                      radius: 14,
+                      color: tokens.textSecondary,
+                      backgroundColor: tokens.bgPanel,
+                      borderColor: tokens.border,
                     ),
                     const SizedBox(height: 16),
                     Text(
@@ -458,16 +550,17 @@ class _OfflineDeviceView extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    const SizedBox(height: 8),
-                    const Text(
+                    const SizedBox(height: 6),
+                    Text(
                       '扫描附近的 soundcore Work（D3200）并连接。',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: AppColors.textMuted,
+                        color: tokens.textSecondary,
                         fontSize: 13,
+                        height: 1.4,
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 18),
                     AccentButton(
                       label: '扫描设备',
                       icon: Icons.radar_rounded,
@@ -489,6 +582,7 @@ class _OfflineProductImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Semantics(
       image: true,
       label: '设备离线，蓝牙连接已断开',
@@ -528,10 +622,10 @@ class _OfflineProductImage extends StatelessWidget {
                   height: 132,
                   fit: BoxFit.contain,
                   excludeFromSemantics: true,
-                  errorBuilder: (_, _, _) => const Icon(
+                  errorBuilder: (_, _, _) => Icon(
                     Icons.headphones_rounded,
                     size: 64,
-                    color: AppColors.textMuted,
+                    color: tokens.textMuted,
                   ),
                 ),
               ),
@@ -543,23 +637,14 @@ class _OfflineProductImage extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: AppColors.coral.withValues(alpha: 0.08),
+                  color: tokens.coralSoft,
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppColors.coral.withValues(alpha: 0.24),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.coral.withValues(alpha: 0.12),
-                      blurRadius: 14,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
+                  border: Border.all(color: tokens.coralBorder),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.bluetooth_disabled_rounded,
-                  size: 24,
-                  color: AppColors.coral,
+                  size: 22,
+                  color: tokens.coral,
                 ),
               ),
             ),

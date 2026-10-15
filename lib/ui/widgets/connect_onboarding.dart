@@ -57,8 +57,8 @@ class _ConnectOnboardingState extends State<ConnectOnboarding> {
   @override
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 280),
-      switchInCurve: Curves.easeOut,
+      duration: AppMotion.slow,
+      switchInCurve: AppMotion.easeOut,
       switchOutCurve: Curves.easeIn,
       child: KeyedSubtree(key: ValueKey(_step), child: _buildStep(context)),
     );
@@ -127,6 +127,7 @@ class _SuccessStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final info = c.info ?? c.lastKnownInfo;
     final mic = info?.battery ?? info?.displayBatteryPercent ?? 0;
     final box = info?.boxBattery ?? mic;
@@ -142,16 +143,17 @@ class _SuccessStep extends StatelessWidget {
               icon: const Icon(Icons.close_rounded),
             ),
           ),
-          const Text(
+          Text(
             '🎉  连接成功',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 22,
+              fontSize: 21,
               fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
+              color: tokens.textPrimary,
+              letterSpacing: -0.3,
             ),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
           Expanded(
             child: Row(
               children: [
@@ -176,17 +178,17 @@ class _SuccessStep extends StatelessWidget {
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
-            height: 52,
+            height: 50,
             child: FilledButton(
               onPressed: onContinue,
               style: FilledButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                foregroundColor: Colors.white,
+                backgroundColor: tokens.inkAccent,
+                foregroundColor: tokens.onInkAccent,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(26),
+                  borderRadius: BorderRadius.circular(AppRadii.pill),
                 ),
                 textStyle: const TextStyle(
-                  fontSize: 16,
+                  fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -212,47 +214,57 @@ class _BatteryProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final p = percent.clamp(0, 100);
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Image.asset(
-          image,
-          height: 120,
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, _) => Icon(
-            label.contains('仓')
-                ? Icons.battery_charging_full_rounded
-                : Icons.mic_external_on_rounded,
-            size: 72,
-            color: AppColors.textMuted,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: tokens.bgPanel,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        border: Border.all(color: tokens.border),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Image.asset(
+            image,
+            height: 112,
+            fit: BoxFit.contain,
+            errorBuilder: (_, _, _) => Icon(
+              label.contains('仓')
+                  ? Icons.battery_charging_full_rounded
+                  : Icons.mic_external_on_rounded,
+              size: 64,
+              color: tokens.textMuted,
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          '$p%',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
+          const SizedBox(height: 14),
+          Text(
+            '$p%',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: tokens.textPrimary,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: p / 100.0,
-            minHeight: 6,
-            backgroundColor: AppColors.border,
-            color: AppColors.mint,
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadii.pill),
+            child: LinearProgressIndicator(
+              value: p / 100.0,
+              minHeight: 5,
+              backgroundColor: tokens.bgSubtle,
+              color: tokens.mint,
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
-        ),
-      ],
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: tokens.textSecondary),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -278,6 +290,7 @@ class _TipStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
       child: Column(
@@ -309,10 +322,10 @@ class _TipStep extends StatelessWidget {
                             errorBuilder: (_, _, _) => Image.asset(
                               'assets/product/guide_connect_device.webp',
                               height: 160,
-                              errorBuilder: (_, _, _) => const Icon(
+                              errorBuilder: (_, _, _) => Icon(
                                 Icons.headphones_rounded,
                                 size: 96,
-                                color: AppColors.textMuted,
+                                color: tokens.textMuted,
                               ),
                             ),
                           ),
@@ -332,24 +345,25 @@ class _TipStep extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 26),
                 Text(
                   page.title,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 20,
+                  style: TextStyle(
+                    fontSize: 19,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
+                    color: tokens.textPrimary,
+                    letterSpacing: -0.2,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 Text(
                   page.body,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     height: 1.5,
-                    color: AppColors.textSecondary,
+                    color: tokens.textSecondary,
                   ),
                 ),
               ],
@@ -360,13 +374,14 @@ class _TipStep extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(pageCount, (i) {
               final on = i == pageIndex;
-              return Container(
+              return AnimatedContainer(
+                duration: AppMotion.fast,
                 margin: const EdgeInsets.symmetric(horizontal: 3),
-                width: on ? 14 : 6,
+                width: on ? 16 : 6,
                 height: 6,
                 decoration: BoxDecoration(
-                  color: on ? AppColors.accent : AppColors.border,
-                  borderRadius: BorderRadius.circular(3),
+                  color: on ? tokens.inkAccent : tokens.border,
+                  borderRadius: BorderRadius.circular(AppRadii.pill),
                 ),
               );
             }),
@@ -375,17 +390,17 @@ class _TipStep extends StatelessWidget {
           if (primaryFilled)
             SizedBox(
               width: double.infinity,
-              height: 52,
+              height: 50,
               child: FilledButton(
                 onPressed: onPrimary,
                 style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  foregroundColor: Colors.white,
+                  backgroundColor: tokens.inkAccent,
+                  foregroundColor: tokens.onInkAccent,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(26),
+                    borderRadius: BorderRadius.circular(AppRadii.pill),
                   ),
                   textStyle: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -397,10 +412,10 @@ class _TipStep extends StatelessWidget {
               onPressed: onPrimary,
               child: Text(
                 primaryLabel,
-                style: const TextStyle(
-                  fontSize: 16,
+                style: TextStyle(
+                  fontSize: 15,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.accent,
+                  color: tokens.accent,
                 ),
               ),
             ),
@@ -440,6 +455,7 @@ class _PulseDotState extends State<_PulseDot>
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {
@@ -450,9 +466,9 @@ class _PulseDotState extends State<_PulseDot>
           height: s,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppColors.accent.withValues(alpha: 0.25 + 0.25 * t),
+            color: tokens.accent.withValues(alpha: 0.25 + 0.25 * t),
             border: Border.all(
-              color: AppColors.accent.withValues(alpha: 0.7),
+              color: tokens.accent.withValues(alpha: 0.7),
               width: 2.5,
             ),
           ),
@@ -460,9 +476,9 @@ class _PulseDotState extends State<_PulseDot>
             child: Container(
               width: widget.size * 0.45,
               height: widget.size * 0.45,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.accent,
+                color: tokens.accent,
               ),
             ),
           ),

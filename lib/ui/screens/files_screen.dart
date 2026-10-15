@@ -11,9 +11,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../ai/stt_types.dart';
 import '../../protocol/models.dart';
 import '../../state/recorder_controller.dart';
-import '../recording_navigation.dart';
 import '../../theme/app_theme.dart';
 import '../../wifi/wifi_export_service.dart';
+import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
 
 /// On-device + local export file list (embedded in Home when not live recording).
@@ -69,6 +69,7 @@ class _FilesBodyState extends State<FilesBody>
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final exporting = c.isExporting || c.needsWifiJoin;
     final busy =
         c.phase == AppPhase.busy || exporting || c.downloadingFileId != null;
@@ -85,22 +86,23 @@ class _FilesBodyState extends State<FilesBody>
           if (c.errorMessage != null) ...[
             const SizedBox(height: 12),
             SurfaceCard(
-              borderColor: AppColors.coral.withValues(alpha: 0.4),
+              borderColor: tokens.coralBorder,
+              backgroundColor: tokens.coralSoft,
               padding: const EdgeInsets.all(12),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(
-                    Icons.error_outline,
-                    color: AppColors.coral,
+                  Icon(
+                    Icons.error_outline_rounded,
+                    color: tokens.coral,
                     size: 18,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       c.errorMessage!,
-                      style: const TextStyle(
-                        color: AppColors.coral,
+                      style: TextStyle(
+                        color: tokens.coral,
                         fontSize: 12,
                         height: 1.35,
                       ),
@@ -110,25 +112,25 @@ class _FilesBodyState extends State<FilesBody>
               ),
             ),
           ],
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           DecoratedBox(
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: AppColors.border)),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: tokens.border)),
             ),
             child: TabBar(
               controller: _tabs,
               dividerColor: Colors.transparent,
               indicatorSize: TabBarIndicatorSize.label,
-              indicatorColor: AppColors.accent,
+              indicatorColor: tokens.inkAccent,
               indicatorWeight: 2,
-              labelColor: AppColors.accent,
-              unselectedLabelColor: AppColors.textSecondary,
+              labelColor: tokens.textPrimary,
+              unselectedLabelColor: tokens.textSecondary,
               labelStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
                 fontWeight: FontWeight.w700,
-                fontSize: 13,
+                fontSize: 13.5,
               ),
               unselectedLabelStyle: Theme.of(context).textTheme.labelLarge
-                  ?.copyWith(fontWeight: FontWeight.w500, fontSize: 13),
+                  ?.copyWith(fontWeight: FontWeight.w500, fontSize: 13.5),
               tabs: [
                 Tab(text: localCount > 0 ? '本地 ($localCount)' : '本地'),
                 Tab(text: deviceCount > 0 ? '设备端 ($deviceCount)' : '设备端'),
@@ -208,7 +210,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
       if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('无法打开分享菜单，请重试')));
+      ).showSnackBar(const SnackBar(content: Text('无法打开分享菜单，请重试')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -216,6 +218,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
 
   Future<void> _deleteSelected(BuildContext context) async {
     if (_selected.isEmpty || _saving || _deleting) return;
+    final tokens = KoeTokens.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -228,7 +231,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除', style: TextStyle(color: AppColors.coral)),
+            child: Text('删除', style: TextStyle(color: tokens.coral)),
           ),
         ],
       ),
@@ -259,6 +262,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     bool selectable(String path) => !c
         .recordingView(
           RecordingReference(fileId: c.fileIdFromPath(path), path: path),
@@ -321,7 +325,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
                     padding: const EdgeInsets.only(bottom: 20),
                     itemCount: widget.paths.length,
                     separatorBuilder: (_, _) =>
-                        const Divider(height: 1, color: AppColors.border),
+                        Divider(height: 1, color: tokens.borderSoft),
                     itemBuilder: (context, i) {
                       final path = widget.paths[i];
                       return _LocalExportCard(
@@ -386,6 +390,7 @@ class _SelectionToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
+      final tokens = KoeTokens.of(context);
       final compact =
           constraints.maxWidth < 340 ||
           MediaQuery.textScalerOf(context).scale(14) > 18;
@@ -397,67 +402,78 @@ class _SelectionToolbar extends StatelessWidget {
         minimumSize: const Size.square(48),
         visualDensity: VisualDensity.standard,
       );
-      return Row(
-        key: const ValueKey('recording-selection-toolbar'),
-        children: [
-          if (compact)
-            IconButton(
-              tooltip: allSelected ? '清空' : '全选',
-              style: iconButtonStyle,
-              onPressed: allSelected ? onClear : onSelectAll,
-              icon: Icon(
-                allSelected ? Icons.deselect_rounded : Icons.select_all_rounded,
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: tokens.bgPanel,
+          borderRadius: BorderRadius.circular(AppRadii.md),
+          border: Border.all(color: tokens.border),
+        ),
+        child: Row(
+          key: const ValueKey('recording-selection-toolbar'),
+          children: [
+            if (compact)
+              IconButton(
+                tooltip: allSelected ? '清空' : '全选',
+                style: iconButtonStyle,
+                onPressed: allSelected ? onClear : onSelectAll,
+                icon: Icon(
+                  allSelected
+                      ? Icons.deselect_rounded
+                      : Icons.select_all_rounded,
+                ),
+              )
+            else ...[
+              TextButton(
+                style: textButtonStyle,
+                onPressed: onSelectAll,
+                child: const Text('全选'),
               ),
-            )
-          else ...[
-            TextButton(
-              style: textButtonStyle,
-              onPressed: onSelectAll,
-              child: const Text('全选'),
-            ),
-            TextButton(
-              style: textButtonStyle,
-              onPressed: onClear,
-              child: const Text('清空'),
-            ),
-          ],
-          Expanded(
-            child: Semantics(
-              label: '已选 $count 项',
-              excludeSemantics: true,
-              child: Text(
-                compact ? '$count 项' : '已选 $count 项',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
+              TextButton(
+                style: textButtonStyle,
+                onPressed: onClear,
+                child: const Text('清空'),
+              ),
+            ],
+            Expanded(
+              child: Semantics(
+                label: '已选 $count 项',
+                excludeSemantics: true,
+                child: Text(
+                  compact ? '$count 项' : '已选 $count 项',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: tokens.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ),
-          ),
-          IconButton(
-            tooltip: saveLabel,
-            style: iconButtonStyle,
-            onPressed: onSave,
-            icon: saving ? _progress() : const Icon(Icons.save_alt_rounded),
-          ),
-          IconButton(
-            tooltip: deleting ? '删除中…' : '删除所选',
-            onPressed: onDelete,
-            style: iconButtonStyle,
-            color: AppColors.coral,
-            icon: deleting
-                ? _progress()
-                : const Icon(Icons.delete_outline_rounded),
-          ),
-          IconButton(
-            tooltip: '取消选择',
-            style: iconButtonStyle,
-            onPressed: onCancel,
-            icon: const Icon(Icons.close_rounded),
-          ),
-        ],
+            IconButton(
+              tooltip: saveLabel,
+              style: iconButtonStyle,
+              onPressed: onSave,
+              icon: saving ? _progress() : const Icon(Icons.save_alt_rounded),
+            ),
+            IconButton(
+              tooltip: deleting ? '删除中…' : '删除所选',
+              onPressed: onDelete,
+              style: iconButtonStyle,
+              color: tokens.coral,
+              icon: deleting
+                  ? _progress()
+                  : const Icon(Icons.delete_outline_rounded),
+            ),
+            IconButton(
+              tooltip: '取消选择',
+              style: iconButtonStyle,
+              onPressed: onCancel,
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
       );
     },
   );
@@ -473,6 +489,7 @@ class _DeviceFilesTab extends StatelessWidget {
     RecorderController controller,
   ) async {
     if (controller.selectedFileIds.isEmpty) return;
+    final tokens = KoeTokens.of(context);
     final count = controller.selectedFileIds.length;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -486,7 +503,7 @@ class _DeviceFilesTab extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除', style: TextStyle(color: AppColors.coral)),
+            child: Text('删除', style: TextStyle(color: tokens.coral)),
           ),
         ],
       ),
@@ -502,6 +519,7 @@ class _DeviceFilesTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final downloadableCount = c.unexportedFiles.length;
     final selectedDownloadableCount = c.selectedUnexportedFiles.length;
     final selectedLocked = c.selectedFileIds.any(
@@ -521,10 +539,15 @@ class _DeviceFilesTab extends StatelessWidget {
       children: [
         if (!c.selecting && downloadableCount > 0)
           OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              backgroundColor: tokens.bgCard,
+              side: BorderSide(color: tokens.border),
+              minimumSize: const Size.fromHeight(44),
+            ),
             onPressed: c.connected && !busy && !anyDownloadLocked
                 ? () => startWifiExport(context, c)
                 : null,
-            icon: const Icon(Icons.wifi_rounded),
+            icon: const Icon(Icons.wifi_rounded, size: 18),
             label: const Text('通过 Wi-Fi 下载全部'),
           ),
         if (c.selecting && c.files.isNotEmpty)
@@ -588,7 +611,7 @@ class _DeviceFilesTab extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 20),
                     itemCount: c.files.length,
                     separatorBuilder: (_, _) =>
-                        const Divider(height: 1, color: AppColors.border),
+                        Divider(height: 1, color: tokens.borderSoft),
                     itemBuilder: (context, i) {
                       final f = c.files[i];
                       final selected = c.selectedFileIds.contains(f.fileId);
@@ -667,6 +690,7 @@ class _LocalExportCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final reference = RecordingReference(
       fileId: c.fileIdFromPath(path),
       path: path,
@@ -686,16 +710,17 @@ class _LocalExportCard extends StatelessWidget {
         : null;
     return Material(
       color: selected
-          ? AppColors.mint.withValues(alpha: 0.08)
+          ? tokens.accent.withValues(alpha: 0.08)
           : Colors.transparent,
       child: InkWell(
         key: ValueKey('recording-row-$path'),
+        borderRadius: BorderRadius.circular(AppRadii.sm),
         onLongPress: onLongPress,
         onTap: selecting
             ? (recording.audioLocked ? null : onSelected)
             : () => RecordingNavigation.open(context, reference),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -708,13 +733,19 @@ class _LocalExportCard extends StatelessWidget {
                 )
               else
                 Padding(
-                  padding: const EdgeInsets.only(top: 3, right: 12),
-                  child: Icon(
-                    loaded
+                  padding: const EdgeInsets.only(top: 2, right: 12),
+                  child: IconBadge(
+                    icon: loaded
                         ? Icons.graphic_eq_rounded
                         : Icons.audio_file_outlined,
-                    color: loaded ? AppColors.accent : AppColors.textMuted,
-                    size: 24,
+                    size: 36,
+                    iconSize: 18,
+                    radius: 9,
+                    color: loaded ? tokens.accent : tokens.textSecondary,
+                    backgroundColor: loaded
+                        ? tokens.accentSoft
+                        : tokens.bgPanel,
+                    borderColor: loaded ? tokens.accentBorder : tokens.border,
                   ),
                 ),
               Expanded(
@@ -725,32 +756,35 @@ class _LocalExportCard extends StatelessWidget {
                       recording.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 15,
+                        color: tokens.textPrimary,
+                        letterSpacing: -0.15,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 3),
                     Text(
                       '$duration${status == null ? '' : ' · $status'}',
                       style: TextStyle(
                         fontSize: 12,
                         color: recording.error != null
-                            ? AppColors.coral
-                            : AppColors.textSecondary,
+                            ? tokens.coral
+                            : tokens.textSecondary,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                     if (text.isNotEmpty && !selecting) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 7),
                       Text(
                         text,
                         key: ValueKey('recording-preview-$path'),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          height: 1.45,
-                          color: AppColors.textSecondary,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          height: 1.48,
+                          color: tokens.textSecondary,
                         ),
                       ),
                     ],
@@ -758,12 +792,12 @@ class _LocalExportCard extends StatelessWidget {
                 ),
               ),
               if (!selecting)
-                const Padding(
-                  padding: EdgeInsets.only(top: 3, left: 8),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, left: 8),
                   child: Icon(
                     Icons.chevron_right_rounded,
-                    color: AppColors.textMuted,
-                    size: 20,
+                    color: tokens.textMuted,
+                    size: 19,
                   ),
                 ),
             ],
@@ -778,14 +812,15 @@ class _LocalExportCard extends StatelessWidget {
 Future<void> startWifiExport(BuildContext context, RecorderController c) async {
   final ep = await c.beginWifiExport();
   if (ep == null || !context.mounted) return;
+  final tokens = KoeTokens.of(context);
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     isDismissible: false,
     enableDrag: false,
-    backgroundColor: AppColors.bgElevated,
+    backgroundColor: tokens.bgCard,
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.xl)),
     ),
     builder: (ctx) => _WifiJoinSheet(controller: c),
   );
@@ -800,39 +835,40 @@ class _ExportBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = controller.exportProgress;
     if (p.phase == ExportPhase.idle) return const SizedBox.shrink();
+    final tokens = KoeTokens.of(context);
 
     Color color;
     IconData icon;
     switch (p.phase) {
       case ExportPhase.error:
-        color = AppColors.coral;
+        color = tokens.coral;
         icon = Icons.error_outline_rounded;
       case ExportPhase.done:
-        color = AppColors.mint;
+        color = tokens.mint;
         icon = Icons.check_circle_outline_rounded;
       case ExportPhase.awaitJoin:
-        color = AppColors.amber;
+        color = tokens.amber;
         icon = Icons.wifi_rounded;
       default:
-        color = AppColors.accent;
+        color = tokens.accent;
         icon = Icons.cloud_download_rounded;
     }
 
     return SurfaceCard(
-      borderColor: color.withValues(alpha: 0.45),
+      borderColor: color.withValues(alpha: 0.4),
       padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              Icon(icon, color: color, size: 20),
+              Icon(icon, color: color, size: 19),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   p.message.isNotEmpty ? p.message : p.phase.name,
                   style: TextStyle(
-                    color: AppColors.textPrimary,
+                    color: tokens.textPrimary,
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
                   ),
@@ -843,7 +879,7 @@ class _ExportBanner extends StatelessWidget {
                   tooltip: '关闭',
                   onPressed: controller.clearExportState,
                   icon: const Icon(Icons.close, size: 18),
-                  color: AppColors.textMuted,
+                  color: tokens.textMuted,
                 )
               else if (p.phase != ExportPhase.idle)
                 TextButton(
@@ -856,13 +892,13 @@ class _ExportBanner extends StatelessWidget {
               p.phase == ExportPhase.connectingWs) ...[
             const SizedBox(height: 10),
             ClipRRect(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(AppRadii.pill),
               child: LinearProgressIndicator(
                 value: p.phase == ExportPhase.transferring
                     ? p.batchFraction
                     : null,
-                minHeight: 6,
-                backgroundColor: AppColors.border,
+                minHeight: 5,
+                backgroundColor: tokens.bgSubtle,
                 color: color,
               ),
             ),
@@ -872,9 +908,10 @@ class _ExportBanner extends StatelessWidget {
                   ? '文件 ${p.currentFileIndex.clamp(0, p.totalFiles) + (p.phase == ExportPhase.transferring && p.currentFileIndex < p.totalFiles ? 1 : 0)} / ${p.totalFiles}'
                         '${p.bytesExpected > 0 ? ' · ${(p.bytesReceived / 1024).toStringAsFixed(1)} / ${(p.bytesExpected / 1024).toStringAsFixed(1)} KB' : ''}'
                   : '',
-              style: const TextStyle(
-                color: AppColors.textSecondary,
+              style: TextStyle(
+                color: tokens.textSecondary,
                 fontSize: 11,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ],
@@ -883,8 +920,8 @@ class _ExportBanner extends StatelessWidget {
             Text(
               '已保存到应用 Documents/AnkerRecorder/exports\n'
               '${p.savedPaths.map((e) => e.split('/').last).join(', ')}',
-              style: const TextStyle(
-                color: AppColors.textSecondary,
+              style: TextStyle(
+                color: tokens.textSecondary,
                 fontSize: 11,
               ),
             ),
@@ -893,7 +930,7 @@ class _ExportBanner extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               p.error!,
-              style: const TextStyle(color: AppColors.coral, fontSize: 12),
+              style: TextStyle(color: tokens.coral, fontSize: 12),
             ),
           ],
         ],
@@ -968,12 +1005,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
         ),
       );
     } else {
-      // Leave _autoStarted set: only the explicit "开始导出" button retries
-      // from here, so the error message below doesn't get silently cleared
-      // by another background auto-attempt every 2s.
       setState(() => _running = false);
-      // The inline error card below is easy to miss (esp. on an auto-fired
-      // attempt the user didn't watch) — a toast makes the failure obvious.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(c.exportProgress.error ?? c.errorMessage ?? '导出失败'),
@@ -987,7 +1019,6 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
   Future<void> _openWifiSettings() async {
     if (Platform.isMacOS) {
       try {
-        // Opens System Settings → Wi‑Fi on modern macOS.
         await Process.run('open', [
           'x-apple.systempreferences:com.apple.wifi-settings-extension',
         ]);
@@ -1001,10 +1032,6 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
       return;
     }
     if (Platform.isIOS) {
-      // App-Prefs:root=WIFI is a private, undocumented scheme (not usable
-      // for App Store review) but works for sideloaded/dev-signed installs
-      // like this one and jumps straight to the Wi‑Fi pane. If it's ever
-      // blocked by the OS, fall back to this app's own Settings page.
       final opened = await launchUrl(
         Uri.parse('App-Prefs:root=WIFI'),
         mode: LaunchMode.externalApplication,
@@ -1038,6 +1065,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final p = c.exportProgress;
     final ssid = p.ssid ?? '—';
     final password = p.password ?? '—';
@@ -1051,7 +1079,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
       padding: EdgeInsets.only(
         left: 20,
         right: 20,
-        top: 16,
+        top: 14,
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       child: SingleChildScrollView(
@@ -1061,11 +1089,11 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
           children: [
             Center(
               child: Container(
-                width: 40,
+                width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
+                  color: tokens.border,
+                  borderRadius: BorderRadius.circular(AppRadii.pill),
                 ),
               ),
             ),
@@ -1076,7 +1104,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
             ),
             const SizedBox(height: 12),
             // Step checklist
-            _ExportStep(index: 1, title: '设备已应答热点（IP 已就绪）', done: true),
+            const _ExportStep(index: 1, title: '设备已应答热点（IP 已就绪）', done: true),
             _ExportStep(
               index: 2,
               title: _reachable ? '已连接到设备 Wi‑Fi' : '手动加入热点（可能隐藏）',
@@ -1094,14 +1122,15 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
             ),
             const SizedBox(height: 12),
             SurfaceCard(
-              borderColor: AppColors.amber.withValues(alpha: 0.45),
+              borderColor: tokens.amberBorder,
+              backgroundColor: tokens.amberSoft,
               padding: const EdgeInsets.all(12),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.visibility_off_outlined,
-                    color: AppColors.amber,
+                    color: tokens.amber,
                     size: 18,
                   ),
                   const SizedBox(width: 8),
@@ -1111,8 +1140,8 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                       '列表里经常看不到它——多为隐藏网络，请用系统「其他…」手动输入加入，'
                       '不要只在「其他网络」列表里找。\n'
                       '录音豆请保持开机并打开充电盒；热点为 2.4GHz，约需几秒才就绪。',
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
+                      style: TextStyle(
+                        color: tokens.textSecondary,
                         fontSize: 12,
                         height: 1.45,
                       ),
@@ -1131,7 +1160,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                     value: ssid,
                     onCopy: () => Clipboard.setData(ClipboardData(text: ssid)),
                   ),
-                  const Divider(height: 18, color: AppColors.border),
+                  Divider(height: 16, color: tokens.borderSoft),
                   _CredRow(
                     label: '密码',
                     value: password,
@@ -1139,7 +1168,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                         Clipboard.setData(ClipboardData(text: password)),
                   ),
                   if (ep != null) ...[
-                    const Divider(height: 18, color: AppColors.border),
+                    Divider(height: 16, color: tokens.borderSoft),
                     _CredRow(
                       label: '端点',
                       value: ep.displayEndpoint,
@@ -1176,28 +1205,24 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
               ],
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               '加入成功后会自动开始导出；也可手动点下方按钮。'
               '检测仅检查本机网络，不会提前占用设备的 WebSocket 端口。',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+              style: TextStyle(color: tokens.textSecondary, fontSize: 11),
             ),
-            // Only shown before the first (automatic) attempt — once that's
-            // resolved (success navigates away; failure shows p.error below
-            // instead), this must not linger next to an idle "开始导出"
-            // button implying a start that already stalled.
             if (_reachable && !transferring && !_autoStarted) ...[
               const SizedBox(height: 8),
-              const Row(
+              Row(
                 children: [
                   Icon(
                     Icons.check_circle_rounded,
-                    color: AppColors.mint,
+                    color: tokens.mint,
                     size: 16,
                   ),
-                  SizedBox(width: 6),
+                  const SizedBox(width: 6),
                   Text(
                     '已检测到设备网络，正在开始导出…',
-                    style: TextStyle(color: AppColors.mint, fontSize: 12),
+                    style: TextStyle(color: tokens.mint, fontSize: 12),
                   ),
                 ],
               ),
@@ -1205,14 +1230,14 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
             if (transferring) ...[
               const SizedBox(height: 12),
               ClipRRect(
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(AppRadii.pill),
                 child: LinearProgressIndicator(
                   value: p.phase == ExportPhase.transferring
                       ? p.batchFraction
                       : null,
-                  minHeight: 6,
-                  backgroundColor: AppColors.border,
-                  color: AppColors.mint,
+                  minHeight: 5,
+                  backgroundColor: tokens.bgSubtle,
+                  color: tokens.mint,
                 ),
               ),
               if (p.totalFiles > 0) ...[
@@ -1220,9 +1245,10 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                 Text(
                   '文件 ${p.currentFileIndex.clamp(0, p.totalFiles) + (p.phase == ExportPhase.transferring && p.currentFileIndex < p.totalFiles ? 1 : 0)} / ${p.totalFiles}'
                   '${p.bytesExpected > 0 ? ' · ${(p.bytesReceived / 1024).toStringAsFixed(1)} / ${(p.bytesExpected / 1024).toStringAsFixed(1)} KB' : ''}',
-                  style: const TextStyle(
-                    color: AppColors.textMuted,
+                  style: TextStyle(
+                    color: tokens.textMuted,
                     fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
               ],
@@ -1231,7 +1257,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
               const SizedBox(height: 8),
               Text(
                 p.error!,
-                style: const TextStyle(color: AppColors.coral, fontSize: 12),
+                style: TextStyle(color: tokens.coral, fontSize: 12),
               ),
             ],
             const SizedBox(height: 16),
@@ -1242,14 +1268,14 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                   ? '开始导出'
                   : '我已加入 Wi‑Fi — 继续',
               icon: Icons.download_done_rounded,
-              color: AppColors.mint,
+              color: tokens.mint,
               onPressed: transferring ? null : _continueExport,
             ),
             const SizedBox(height: 10),
             AccentButton(
               label: '取消导出',
               filled: false,
-              color: AppColors.textMuted,
+              color: tokens.textSecondary,
               onPressed: () async {
                 await c.cancelWifiExport();
                 if (context.mounted) Navigator.of(context).pop();
@@ -1279,11 +1305,12 @@ class _ExportStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final color = done
-        ? AppColors.mint
+        ? tokens.mint
         : active
-        ? AppColors.accent
-        : AppColors.textMuted;
+        ? tokens.accent
+        : tokens.textMuted;
     return Padding(
       padding: EdgeInsets.only(bottom: last ? 0 : 8),
       child: Row(
@@ -1294,18 +1321,18 @@ class _ExportStep extends StatelessWidget {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: done
-                  ? AppColors.mint.withValues(alpha: 0.15)
+                  ? tokens.mintSoft
                   : active
-                  ? AppColors.accent.withValues(alpha: 0.12)
-                  : AppColors.bgElevated,
+                  ? tokens.accentSoft
+                  : tokens.bgPanel,
               shape: BoxShape.circle,
-              border: Border.all(color: color.withValues(alpha: 0.5)),
+              border: Border.all(color: color.withValues(alpha: 0.45)),
             ),
             child: done
-                ? const Icon(
+                ? Icon(
                     Icons.check_rounded,
                     size: 14,
-                    color: AppColors.mint,
+                    color: tokens.mint,
                   )
                 : Text(
                     '$index',
@@ -1323,19 +1350,17 @@ class _ExportStep extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: active || done ? FontWeight.w600 : FontWeight.w500,
-                color: done || active
-                    ? AppColors.textPrimary
-                    : AppColors.textMuted,
+                color: done || active ? tokens.textPrimary : tokens.textMuted,
               ),
             ),
           ),
           if (active && !done)
-            const SizedBox(
+            SizedBox(
               width: 14,
               height: 14,
               child: CircularProgressIndicator(
                 strokeWidth: 1.8,
-                color: AppColors.accent,
+                color: tokens.accent,
               ),
             ),
         ],
@@ -1357,25 +1382,27 @@ class _CredRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Row(
       children: [
         SizedBox(
           width: 72,
           child: Text(
             label,
-            style: const TextStyle(
-              color: AppColors.textSecondary,
+            style: TextStyle(
+              color: tokens.textSecondary,
               fontSize: 12,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
+            style: TextStyle(
+              color: tokens.textPrimary,
               fontWeight: FontWeight.w600,
-              fontFeatures: [FontFeature.tabularFigures()],
+              fontFeatures: const [FontFeature.tabularFigures()],
               fontSize: 13,
             ),
           ),
@@ -1383,8 +1410,8 @@ class _CredRow extends StatelessWidget {
         IconButton(
           tooltip: '复制',
           onPressed: onCopy,
-          icon: const Icon(Icons.copy_rounded, size: 18),
-          color: AppColors.accent,
+          icon: const Icon(Icons.copy_rounded, size: 17),
+          color: tokens.accent,
         ),
       ],
     );
@@ -1418,39 +1445,38 @@ class _DeviceFileTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Material(
       color: selected
-          ? AppColors.mint.withValues(alpha: 0.08)
+          ? tokens.accent.withValues(alpha: 0.08)
           : Colors.transparent,
       child: InkWell(
         key: ValueKey('device-recording-row-${file.fileId}'),
+        borderRadius: BorderRadius.circular(AppRadii.sm),
         onLongPress: onLongPress,
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
           child: Row(
             children: [
               if (selecting) ...[
                 Icon(
                   selected ? Icons.check_circle_rounded : Icons.circle_outlined,
-                  color: selected ? AppColors.mint : AppColors.textMuted,
+                  color: selected ? tokens.accent : tokens.textMuted,
                   size: 22,
                 ),
                 const SizedBox(width: 10),
               ],
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: AppColors.violet.withValues(alpha: 0.15),
-                ),
-                child: Icon(
-                  hasLocal
-                      ? Icons.audiotrack_rounded
-                      : Icons.audiotrack_outlined,
-                  color: AppColors.violet,
-                ),
+              IconBadge(
+                icon: hasLocal
+                    ? Icons.audiotrack_rounded
+                    : Icons.audiotrack_outlined,
+                size: 40,
+                iconSize: 19,
+                radius: 10,
+                color: hasLocal ? tokens.mint : tokens.textSecondary,
+                backgroundColor: hasLocal ? tokens.mintSoft : tokens.bgPanel,
+                borderColor: hasLocal ? tokens.mintBorder : tokens.border,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1461,18 +1487,19 @@ class _DeviceFileTile extends StatelessWidget {
                       file.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                        fontSize: 14.5,
+                        color: tokens.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       '${file.sizeLabel}${hasLocal ? ' · 已下载' : ''}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: AppColors.textSecondary,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                        color: tokens.textSecondary,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                   ],
@@ -1487,11 +1514,11 @@ class _DeviceFileTile extends StatelessWidget {
                       : '通过蓝牙下载',
                   onPressed: onExport,
                   icon: downloading
-                      ? const SizedBox.square(
+                      ? SizedBox.square(
                           dimension: 20,
                           child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: AppColors.mint,
+                            strokeWidth: 2.2,
+                            color: tokens.mint,
                           ),
                         )
                       : Icon(
@@ -1499,16 +1526,16 @@ class _DeviceFileTile extends StatelessWidget {
                               ? Icons.download_done_rounded
                               : Icons.download_rounded,
                           color: hasLocal || onExport == null
-                              ? AppColors.textMuted
-                              : AppColors.mint,
+                              ? tokens.textMuted
+                              : tokens.mint,
                         ),
                 ),
                 IconButton(
                   tooltip: '在设备上删除',
                   onPressed: onDelete,
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.delete_outline_rounded,
-                    color: AppColors.coral,
+                    color: tokens.coral,
                   ),
                 ),
               ],
@@ -1547,32 +1574,55 @@ class _Hint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (productImage != null)
-            Image.asset(
-              productImage!,
-              height: 88,
-              fit: BoxFit.contain,
-              errorBuilder: (_, _, _) =>
-                  Icon(icon, size: 44, color: AppColors.textMuted),
-            )
-          else
-            Icon(icon, size: 44, color: AppColors.textMuted),
-          const SizedBox(height: 12),
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 6),
-          Text(
-            body,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: AppColors.textSecondary,
-              fontSize: 13,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (productImage != null)
+              Image.asset(
+                productImage!,
+                height: 84,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) => IconBadge(
+                  icon: icon,
+                  size: 48,
+                  iconSize: 24,
+                  radius: 12,
+                  color: tokens.textSecondary,
+                  backgroundColor: tokens.bgPanel,
+                  borderColor: tokens.border,
+                ),
+              )
+            else
+              IconBadge(
+                icon: icon,
+                size: 48,
+                iconSize: 24,
+                radius: 12,
+                color: tokens.textSecondary,
+                backgroundColor: tokens.bgPanel,
+                borderColor: tokens.border,
+              ),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium,
             ),
-          ),
-        ],
+            const SizedBox(height: 6),
+            Text(
+              body,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: tokens.textSecondary,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

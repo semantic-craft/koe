@@ -13,6 +13,7 @@ import 'widgets.dart';
 /// one. Persisted bound devices may still reconnect through the controller.
 Future<void> showScanDevicesSheet(BuildContext context) {
   final c = context.read<RecorderController>();
+  final tokens = KoeTokens.of(context);
   if (c.phase != AppPhase.scanning && c.phase != AppPhase.connecting) {
     unawaited(c.startScan());
   }
@@ -20,9 +21,9 @@ Future<void> showScanDevicesSheet(BuildContext context) {
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    backgroundColor: AppColors.bgElevated,
+    backgroundColor: tokens.bgCard,
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.xl)),
     ),
     builder: (ctx) => const ScanDevicesSheet(),
   );
@@ -104,6 +105,7 @@ class _ScanDevicesSheetState extends State<ScanDevicesSheet> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final scanning = c.phase == AppPhase.scanning;
     final connecting = c.phase == AppPhase.connecting;
     final height = MediaQuery.sizeOf(context).height * 0.82;
@@ -119,11 +121,11 @@ class _ScanDevicesSheetState extends State<ScanDevicesSheet> {
           const SizedBox(height: 10),
           Center(
             child: Container(
-              width: 40,
+              width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: AppColors.border,
-                borderRadius: BorderRadius.circular(99),
+                color: tokens.border,
+                borderRadius: BorderRadius.circular(AppRadii.pill),
               ),
             ),
           ),
@@ -141,13 +143,14 @@ class _ScanDevicesSheetState extends State<ScanDevicesSheet> {
                 ],
               ),
             ),
-            const Text(
+            Text(
               '扫描设备',
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 20,
+                fontSize: 19,
                 fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
+                color: tokens.textPrimary,
+                letterSpacing: -0.3,
               ),
             ),
             const SizedBox(height: 8),
@@ -231,6 +234,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 12, 28, 32),
       child: Column(
@@ -251,8 +255,8 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                       height: 120 + 40 * t,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: AppColors.accent.withValues(
-                          alpha: 0.08 + 0.06 * t,
+                        color: tokens.accent.withValues(
+                          alpha: 0.07 + 0.05 * t,
                         ),
                       ),
                     );
@@ -266,10 +270,10 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                     'assets/product/d3200_chargebox_white.webp',
                     height: 180,
                     fit: BoxFit.contain,
-                    errorBuilder: (_, _, _) => const Icon(
+                    errorBuilder: (_, _, _) => Icon(
                       Icons.headphones_battery_rounded,
                       size: 96,
-                      color: AppColors.textMuted,
+                      color: tokens.textMuted,
                     ),
                   ),
                 ),
@@ -286,11 +290,11 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                         height: 18 + 6 * t,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: AppColors.accent.withValues(
+                          color: tokens.accent.withValues(
                             alpha: 0.35 + 0.25 * t,
                           ),
                           border: Border.all(
-                            color: AppColors.accent.withValues(alpha: 0.6),
+                            color: tokens.accent.withValues(alpha: 0.6),
                             width: 2,
                           ),
                         ),
@@ -302,23 +306,23 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
             ),
           ),
           const SizedBox(height: 28),
-          const Text(
+          Text(
             '将麦克风放入充电仓',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
+              color: tokens.textPrimary,
               height: 1.4,
             ),
           ),
-          const SizedBox(height: 8),
-          const Text(
+          const SizedBox(height: 6),
+          Text(
             '短按充电仓下方按钮完成连接',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 15,
-              color: AppColors.textSecondary,
+              fontSize: 14,
+              color: tokens.textSecondary,
               height: 1.4,
             ),
           ),
@@ -332,9 +336,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: widget.connecting
-                        ? AppColors.mint
-                        : AppColors.accent,
+                    color: widget.connecting ? tokens.mint : tokens.accent,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -342,9 +344,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                   widget.connecting ? '正在连接设备…' : '正在等待设备广播…',
                   style: TextStyle(
                     fontSize: 13,
-                    color: widget.connecting
-                        ? AppColors.mint
-                        : AppColors.textMuted,
+                    color: widget.connecting ? tokens.mint : tokens.textMuted,
                   ),
                 ),
               ],
@@ -352,10 +352,10 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
           else
             TextButton.icon(
               onPressed: widget.onRescan,
-              icon: const Icon(
+              icon: Icon(
                 Icons.radar_rounded,
-                size: 22,
-                color: AppColors.accent,
+                size: 20,
+                color: tokens.accent,
               ),
               label: const Text('重新扫描'),
             ),
@@ -363,7 +363,11 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
             const SizedBox(height: 10),
             Text(
               '已见 ${widget.adsSeen} 条 BLE 广播',
-              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+              style: TextStyle(
+                fontSize: 11,
+                color: tokens.textMuted,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           ],
           if (widget.error != null) ...[
@@ -371,8 +375,8 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
             Text(
               widget.error!,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.coral,
+              style: TextStyle(
+                color: tokens.coral,
                 fontSize: 12,
                 height: 1.35,
               ),
@@ -407,6 +411,7 @@ class _FoundDevicesPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Column(
       children: [
         Padding(
@@ -415,7 +420,7 @@ class _FoundDevicesPanel extends StatelessWidget {
             children: [
               Image.asset(
                 'assets/product/white_03_device_connect.webp',
-                height: 100,
+                height: 96,
                 fit: BoxFit.contain,
                 errorBuilder: (_, _, _) => Image.asset(
                   'assets/product/d3200_device_white.webp',
@@ -428,15 +433,15 @@ class _FoundDevicesPanel extends StatelessWidget {
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
-                  color: connecting ? AppColors.accent : AppColors.textPrimary,
+                  color: connecting ? tokens.accent : tokens.textPrimary,
                 ),
               ),
               if (scanning)
-                const Padding(
-                  padding: EdgeInsets.only(top: 6),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     '继续扫描中…',
-                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                    style: TextStyle(fontSize: 12, color: tokens.textMuted),
                   ),
                 ),
             ],
@@ -447,7 +452,7 @@ class _FoundDevicesPanel extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
               error!,
-              style: const TextStyle(color: AppColors.coral, fontSize: 12),
+              style: TextStyle(color: tokens.coral, fontSize: 12),
             ),
           ),
         Expanded(
@@ -494,47 +499,49 @@ class _SheetDeviceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final match = device.looksLikeSoundcore;
     return SurfaceCard(
       onTap: busy ? null : onTap,
       borderColor: connecting
-          ? AppColors.accent.withValues(alpha: 0.7)
+          ? tokens.accent
           : match
-          ? AppColors.accent.withValues(alpha: 0.3)
-          : null,
+          ? tokens.accentBorder
+          : tokens.border,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
-              color: match
-                  ? AppColors.accent.withValues(alpha: 0.12)
-                  : AppColors.bg,
-              borderRadius: BorderRadius.circular(12),
+              color: match ? tokens.accentSoft : tokens.bgPanel,
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              border: Border.all(
+                color: match ? tokens.accentBorder : tokens.borderSoft,
+              ),
             ),
             clipBehavior: Clip.antiAlias,
             child: connecting
-                ? const Padding(
-                    padding: EdgeInsets.all(11),
+                ? Padding(
+                    padding: const EdgeInsets.all(11),
                     child: CircularProgressIndicator(
                       strokeWidth: 2.2,
-                      color: AppColors.accent,
+                      color: tokens.accent,
                     ),
                   )
                 : match
                 ? Image.asset(
                     'assets/product/d3200_device_white.webp',
                     fit: BoxFit.contain,
-                    errorBuilder: (_, _, _) => const Icon(
+                    errorBuilder: (_, _, _) => Icon(
                       Icons.mic_external_on_rounded,
-                      color: AppColors.accent,
+                      color: tokens.accent,
                     ),
                   )
-                : const Icon(
+                : Icon(
                     Icons.bluetooth_rounded,
-                    color: AppColors.textMuted,
+                    color: tokens.textMuted,
                   ),
           ),
           const SizedBox(width: 12),
@@ -544,30 +551,31 @@ class _SheetDeviceTile extends StatelessWidget {
               children: [
                 Text(
                   device.displayName,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 15,
+                    fontSize: 14.5,
+                    color: tokens.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   connecting ? '正在连接…' : device.subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
-                    color: connecting ? AppColors.accent : AppColors.textMuted,
+                    fontSize: 11.5,
+                    color: connecting ? tokens.accent : tokens.textMuted,
                   ),
                 ),
               ],
             ),
           ),
           if (connecting)
-            const StatusPill(label: '连接中', color: AppColors.accent)
+            StatusPill(label: '连接中', color: tokens.accent)
           else if (device.isD3200)
-            const StatusPill(label: 'D3200', color: AppColors.mint)
+            StatusPill(label: 'D3200', color: tokens.mint)
           else
-            StatusPill(label: '${device.rssi} dBm', color: AppColors.textMuted),
+            StatusPill(label: '${device.rssi} dBm', color: tokens.textMuted),
         ],
       ),
     );

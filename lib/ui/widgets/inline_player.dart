@@ -26,6 +26,7 @@ class InlinePlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final loaded = c.playingPath == path;
     final playing = loaded && c.isPlaying;
     final canSeek =
@@ -41,13 +42,13 @@ class InlinePlayer extends StatelessWidget {
             trackHeight: 3,
             thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
             overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-            activeTrackColor: AppColors.accent,
-            inactiveTrackColor: AppColors.border,
-            thumbColor: AppColors.accent,
-            overlayColor: AppColors.accent.withValues(alpha: 0.12),
+            activeTrackColor: tokens.inkAccent,
+            inactiveTrackColor: tokens.border,
+            thumbColor: tokens.inkAccent,
+            overlayColor: tokens.inkAccent.withValues(alpha: 0.12),
           ),
           child: Slider(
-            padding: const EdgeInsets.symmetric(vertical: 18),
+            padding: const EdgeInsets.symmetric(vertical: 16),
             value: progress,
             onChanged: canSeek
                 ? (v) {
@@ -63,20 +64,22 @@ class InlinePlayer extends StatelessWidget {
           children: [
             Text(
               loaded ? _fmt(c.position) : '00:00',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
-                color: AppColors.textSecondary,
-                fontFeatures: [FontFeature.tabularFigures()],
+                color: tokens.textSecondary,
+                fontWeight: FontWeight.w500,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
             if (loaded) ...[
               const Spacer(),
               Text(
                 _fmt(c.duration),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
-                  color: AppColors.textSecondary,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: tokens.textSecondary,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
@@ -98,24 +101,31 @@ class InlinePlayer extends StatelessWidget {
                   PopupMenuItem(value: speed, child: Text(_speedLabel(speed))),
               ],
               child: Container(
-                constraints: const BoxConstraints(minWidth: 72, minHeight: 48),
+                constraints: const BoxConstraints(minWidth: 72, minHeight: 46),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
-                  color: AppColors.bgElevated,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.border),
+                  color: tokens.bgPanel,
+                  borderRadius: BorderRadius.circular(AppRadii.sm),
+                  border: Border.all(color: tokens.border),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       _speedLabel(c.playbackSpeed),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w600,
-                        fontSize: 14,
+                        fontSize: 13.5,
+                        color: tokens.textPrimary,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
-                    const Icon(Icons.expand_more_rounded, size: 20),
+                    const SizedBox(width: 2),
+                    Icon(
+                      Icons.expand_more_rounded,
+                      size: 18,
+                      color: tokens.textSecondary,
+                    ),
                   ],
                 ),
               ),
@@ -131,30 +141,30 @@ class InlinePlayer extends StatelessWidget {
                       ? () => c.seekBy(const Duration(seconds: -5))
                       : null,
                 ),
-                const SizedBox(width: 2),
+                const SizedBox(width: 4),
                 Material(
-                  color: AppColors.accent,
+                  color: tokens.inkAccent,
                   shape: const CircleBorder(),
                   child: InkWell(
                     customBorder: const CircleBorder(),
                     onTap: () => c.playExported(path, fileId: fileId),
                     child: SizedBox(
-                      width: 52,
-                      height: 52,
+                      width: 50,
+                      height: 50,
                       child: Tooltip(
                         message: playing ? '暂停播放' : '播放录音',
                         child: Icon(
                           playing
                               ? Icons.pause_rounded
                               : Icons.play_arrow_rounded,
-                          color: Colors.white,
-                          size: 28,
+                          color: tokens.onInkAccent,
+                          size: 27,
                         ),
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 2),
+                const SizedBox(width: 4),
                 _IconBtn(
                   icon: Icons.forward_5_rounded,
                   tooltip: '前进 5 秒',
@@ -180,13 +190,14 @@ class _IconBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Tooltip(
       message: tooltip,
       child: IconButton(
         onPressed: onPressed,
-        icon: Icon(icon, size: 30),
-        color: onPressed == null ? AppColors.textMuted : AppColors.textPrimary,
-        constraints: const BoxConstraints(minWidth: 52, minHeight: 52),
+        icon: Icon(icon, size: 26),
+        color: onPressed == null ? tokens.textFaint : tokens.textPrimary,
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
       ),
     );
   }

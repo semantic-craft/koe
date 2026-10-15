@@ -29,22 +29,22 @@ class PlaybackBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     if (!c.hasLoadedTrack) return const SizedBox.shrink();
+    final tokens = KoeTokens.of(context);
 
     final canSeek = c.duration > Duration.zero || c.position > Duration.zero;
 
     return SurfaceCard(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      borderColor: AppColors.accent.withValues(alpha: 0.35),
-      glow: true,
+      borderColor: tokens.border,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.graphic_eq_rounded,
-                color: AppColors.accent,
+                color: tokens.accent,
                 size: 18,
               ),
               const SizedBox(width: 8),
@@ -53,10 +53,10 @@ class PlaybackBar extends StatelessWidget {
                   c.playingTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
-                    color: AppColors.textPrimary,
+                    color: tokens.textPrimary,
                   ),
                 ),
               ),
@@ -65,7 +65,7 @@ class PlaybackBar extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 onPressed: c.stopPlayback,
                 icon: const Icon(Icons.close_rounded, size: 18),
-                color: AppColors.textMuted,
+                color: tokens.textMuted,
               ),
             ],
           ),
@@ -74,12 +74,12 @@ class PlaybackBar extends StatelessWidget {
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
               trackHeight: 3,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-              activeTrackColor: AppColors.accent,
-              inactiveTrackColor: AppColors.border,
-              thumbColor: AppColors.accent,
-              overlayColor: AppColors.accent.withValues(alpha: 0.15),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: tokens.inkAccent,
+              inactiveTrackColor: tokens.border,
+              thumbColor: tokens.inkAccent,
+              overlayColor: tokens.inkAccent.withValues(alpha: 0.12),
             ),
             child: Slider(
               value: c.playbackProgress,
@@ -99,19 +99,19 @@ class PlaybackBar extends StatelessWidget {
               children: [
                 Text(
                   _fmt(c.position),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: AppColors.textMuted,
-                    fontFeatures: [FontFeature.tabularFigures()],
+                    color: tokens.textMuted,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
                 const Spacer(),
                 Text(
                   _fmt(c.duration),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: AppColors.textMuted,
-                    fontFeatures: [FontFeature.tabularFigures()],
+                    color: tokens.textMuted,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
               ],
@@ -124,9 +124,9 @@ class PlaybackBar extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: BoxDecoration(
-                  color: AppColors.bgElevated,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.border),
+                  color: tokens.bgPanel,
+                  borderRadius: BorderRadius.circular(AppRadii.sm),
+                  border: Border.all(color: tokens.border),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<double>(
@@ -137,16 +137,17 @@ class PlaybackBar extends StatelessWidget {
                         ? c.playbackSpeed
                         : 1.0,
                     isDense: true,
-                    dropdownColor: AppColors.bgCard,
-                    icon: const Icon(
+                    dropdownColor: tokens.bgCard,
+                    icon: Icon(
                       Icons.arrow_drop_down_rounded,
-                      color: AppColors.textMuted,
+                      color: tokens.textMuted,
                       size: 20,
                     ),
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
+                    style: TextStyle(
+                      color: tokens.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                     items: [
                       for (final s in RecorderController.playbackSpeeds)
@@ -203,20 +204,20 @@ class _PlayPauseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Material(
-      color: AppColors.accent,
+      color: tokens.inkAccent,
       shape: const CircleBorder(),
-      elevation: 2,
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onPressed,
         child: SizedBox(
-          width: 52,
-          height: 52,
+          width: 50,
+          height: 50,
           child: Icon(
             playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-            color: Colors.white,
-            size: 30,
+            color: tokens.onInkAccent,
+            size: 28,
           ),
         ),
       ),
@@ -237,23 +238,22 @@ class _RoundControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: AppColors.bgElevated,
+        color: tokens.bgPanel,
         shape: const CircleBorder(),
         child: InkWell(
           customBorder: const CircleBorder(),
           onTap: onPressed,
           child: SizedBox(
-            width: 42,
-            height: 42,
+            width: 44,
+            height: 44,
             child: Icon(
               icon,
-              size: 24,
-              color: onPressed == null
-                  ? AppColors.textMuted.withValues(alpha: 0.4)
-                  : AppColors.textPrimary,
+              size: 23,
+              color: onPressed == null ? tokens.textFaint : tokens.textPrimary,
             ),
           ),
         ),

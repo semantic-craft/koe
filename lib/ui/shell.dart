@@ -5,8 +5,8 @@ import '../ai/stt_types.dart';
 import '../state/recorder_controller.dart';
 import '../theme/app_theme.dart';
 import 'recording_navigation.dart';
-import 'screens/device_screen.dart';
 import 'screens/communication_screen.dart';
+import 'screens/device_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
@@ -227,12 +227,17 @@ class _ActiveRecordingBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
+    final activeColor = c.recording ? tokens.coral : tokens.amber;
     return Material(
-      color: AppColors.bgCard,
+      color: tokens.bgCard,
       child: Container(
         key: const ValueKey('active-recording-bar'),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border)),
+        decoration: BoxDecoration(
+          color: c.recording
+              ? tokens.coralSoft.withValues(alpha: 0.65)
+              : tokens.amberSoft.withValues(alpha: 0.65),
+          border: Border(top: BorderSide(color: tokens.border)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: Row(
@@ -242,19 +247,31 @@ class _ActiveRecordingBar extends StatelessWidget {
                 onPressed: onOpen,
                 icon: Icon(
                   Icons.mic_rounded,
-                  color: c.recording ? AppColors.coral : AppColors.textMuted,
+                  color: activeColor,
+                  size: 18,
                 ),
                 label: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(c.recording ? '录音中 · 打开' : '录音已暂停 · 打开'),
+                  child: Text(
+                    c.recording ? '录音中 · 打开' : '录音已暂停 · 打开',
+                    style: TextStyle(
+                      color: tokens.textPrimary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13.5,
+                    ),
+                  ),
                 ),
               ),
             ),
             if (c.recording)
               IconButton(
                 tooltip: '暂停录音',
+                style: IconButton.styleFrom(
+                  foregroundColor: tokens.coral,
+                  minimumSize: const Size(44, 44),
+                ),
                 onPressed: c.phase == AppPhase.busy ? null : c.pauseRecord,
-                icon: const Icon(Icons.pause_rounded),
+                icon: const Icon(Icons.pause_rounded, size: 20),
               ),
           ],
         ),
@@ -269,6 +286,7 @@ class _CompactPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final path = c.playingPath;
     final title = path == null
         ? '录音'
@@ -278,25 +296,37 @@ class _CompactPlayer extends StatelessWidget {
               )
               .title;
     return Material(
-      color: AppColors.bgCard,
+      color: tokens.bgCard,
       child: Container(
         key: const ValueKey('compact-player'),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border)),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: tokens.border)),
         ),
         child: Row(
           children: [
-            const SizedBox(width: 12),
+            const SizedBox(width: 14),
+            Icon(
+              c.isPlaying
+                  ? Icons.graphic_eq_rounded
+                  : Icons.audiotrack_outlined,
+              size: 17,
+              color: c.isPlaying ? tokens.accent : tokens.textSecondary,
+            ),
+            const SizedBox(width: 10),
             Expanded(
               child: InkWell(
                 onTap: onOpen,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                   child: Text(
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13.5,
+                      color: tokens.textPrimary,
+                    ),
                   ),
                 ),
               ),
@@ -306,12 +336,17 @@ class _CompactPlayer extends StatelessWidget {
               onPressed: c.togglePlayPause,
               icon: Icon(
                 c.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: tokens.textPrimary,
               ),
             ),
             IconButton(
               tooltip: '关闭播放器',
               onPressed: c.stopPlayback,
-              icon: const Icon(Icons.close_rounded),
+              icon: Icon(
+                Icons.close_rounded,
+                size: 19,
+                color: tokens.textSecondary,
+              ),
             ),
           ],
         ),
@@ -328,15 +363,16 @@ class _NavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Material(
-      color: AppColors.bgCard,
+      color: tokens.bgCard,
       child: SafeArea(
         top: false,
         child: Container(
           key: const ValueKey('bottom-navigation-bar'),
           padding: const EdgeInsets.fromLTRB(12, 5, 12, 3),
-          decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: AppColors.border)),
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: tokens.border)),
           ),
           child: Row(
             children: [
@@ -385,12 +421,15 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? AppColors.accent : AppColors.textSecondary;
+    final tokens = KoeTokens.of(context);
+    final color = selected ? tokens.inkAccent : tokens.textMuted;
     return Expanded(
       child: InkWell(
         onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.sm),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
+          duration: AppMotion.fast,
+          curve: AppMotion.easeOut,
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -401,17 +440,18 @@ class _NavItem extends StatelessWidget {
                 label,
                 style: TextStyle(
                   color: color,
-                  fontSize: 10,
+                  fontSize: 10.5,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 ),
               ),
               const SizedBox(height: 3),
               AnimatedContainer(
                 key: selected ? const ValueKey('active-tab-indicator') : null,
-                duration: const Duration(milliseconds: 180),
-                width: selected ? 22 : 0,
+                duration: AppMotion.fast,
+                curve: AppMotion.easeOut,
+                width: selected ? 20 : 0,
                 height: 2,
-                color: selected ? AppColors.accent : Colors.transparent,
+                color: selected ? tokens.inkAccent : Colors.transparent,
               ),
             ],
           ),
