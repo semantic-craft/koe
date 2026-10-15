@@ -13,6 +13,7 @@ class MainFlutterWindow: NSWindow {
     self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    CredentialBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
   }

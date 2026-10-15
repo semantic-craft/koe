@@ -1,3 +1,4 @@
+import 'support/settings_completion.dart';
 import 'package:anker_recorder/ai/engine_config.dart';
 import 'dart:async';
 import 'dart:io';
@@ -11,7 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-void main() {
+void main() async {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Finder iconButton(String tooltip) => find.byWidgetPredicate(
@@ -234,6 +235,7 @@ void main() {
         ..exportedPaths = [path]
         ..transcriptsByPath[path] = '说话人 1：测试';
       controller.setQwenConfig(const EngineConfig(apiKey: 'test-key'));
+      await waitForSettings(tester, controller);
       addTearDown(controller.dispose);
       await pumpFiles(tester, controller);
       await tester.tap(find.byKey(const ValueKey('recording-row-$path')));
@@ -393,7 +395,7 @@ class _AutoTransferController extends RecorderController {
     notifyListeners();
   }
 
-  void finishDownload() {
+  void finishDownload() async {
     final id = downloadingFileId!;
     final path = '/tmp/$id.wav';
     exportedPaths.add(path);
@@ -410,13 +412,13 @@ class _RefreshRecorderController extends RecorderController {
   int deviceRefreshes = 0;
 
   @override
-  Future<void> refreshLocalFiles() {
+  Future<void> refreshLocalFiles() async {
     localRefreshes++;
     return finished.future;
   }
 
   @override
-  Future<void> refreshDeviceFiles() {
+  Future<void> refreshDeviceFiles() async {
     deviceRefreshes++;
     return finished.future;
   }

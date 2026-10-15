@@ -2,6 +2,7 @@ import 'package:anker_recorder/ai/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('constructs with the credential trio', () {
     const config = EngineConfig(
       apiKey: ' key ',
@@ -37,10 +38,10 @@ void main() {
     const config = EngineConfig(apiKey: 'key', model: 'model-a');
 
     final json = config.toJson();
-    expect(json, {'apiKey': 'key', 'model': 'model-a'});
+    expect(json, {'model': 'model-a'});
 
     final restored = EngineConfig.fromJson(json);
-    expect(restored.apiKey, 'key');
+    expect(restored.apiKey, isNull);
     expect(restored.baseUrl, isNull);
     expect(restored.model, 'model-a');
   });

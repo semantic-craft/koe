@@ -12,6 +12,7 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    CredentialBridge.configure(binaryMessenger: engineBridge.applicationRegistrar.messenger())
     AppleSpeechBridge.shared.configure(
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )

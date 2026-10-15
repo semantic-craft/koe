@@ -21,7 +21,7 @@ import 'package:anker_recorder/state/recorder_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-void main() {
+void main() async {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   RecorderController controller(_Apple apple, {_Ble? ble, _Cloud? cloud}) {
@@ -43,14 +43,13 @@ void main() {
 
   test('journal write failure prevents a cloud request', () async {
     final qwen = _Qwen();
-    final c =
-        RecorderController(
-            loadPersistedState: false,
-            qwenSpeech: qwen,
-            fileJobJournal: _UnwritableJournal(),
-          )
-          ..setQwenConfig(const EngineConfig(apiKey: 'key'))
-          ..setSpeechProvider(SttProvider.qwen);
+    final c = RecorderController(
+      loadPersistedState: false,
+      qwenSpeech: qwen,
+      fileJobJournal: _UnwritableJournal(),
+    );
+    await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
+    c.setSpeechProvider(SttProvider.qwen);
     addTearDown(c.dispose);
     await c.transcribeLocalFile('/not-submitted.wav');
     expect(qwen.calls, 0);
@@ -101,15 +100,17 @@ void main() {
         }
         await journal.save();
         final reopened = FileJobJournal(file: file);
-        final qwen = _Qwen();
-        final c =
-            RecorderController(
-              loadPersistedState: false,
-              qwenSpeech: qwen,
-              fileJobJournal: reopened,
-            )..setQwenConfig(
-              const EngineConfig(apiKey: 'current-key', model: 'new-model'),
-            );
+        final qwen = _Qwen()
+          ..apiKeyOverride = 'current-key'
+          ..modelOverride = 'new-model';
+        final c = RecorderController(
+          loadPersistedState: false,
+          qwenSpeech: qwen,
+          fileJobJournal: reopened,
+        );
+        await c.setQwenConfig(
+          const EngineConfig(apiKey: 'current-key', model: 'new-model'),
+        );
         addTearDown(c.dispose);
         if (stage == 'running') {
           await settleUntil(() => reopened.jobs.isNotEmpty);
@@ -141,15 +142,14 @@ void main() {
       await File(path).writeAsBytes([1, 2, 3]);
       final qwen = _Qwen();
       final journal = FileJobJournal(inMemory: true);
-      final c =
-          RecorderController(
-              loadPersistedState: false,
-              qwenSpeech: qwen,
-              fileJobJournal: journal,
-            )
-            ..setQwenConfig(const EngineConfig(apiKey: 'key'))
-            ..setSpeechProvider(SttProvider.qwen)
-            ..setAutoTranscribe(false);
+      final c = RecorderController(
+        loadPersistedState: false,
+        qwenSpeech: qwen,
+        fileJobJournal: journal,
+      );
+      await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
+      c.setSpeechProvider(SttProvider.qwen);
+      c.setAutoTranscribe(false);
       addTearDown(c.dispose);
       await c.processRetrievedRecording(path);
       expect(qwen.calls, 0);
@@ -225,7 +225,7 @@ void main() {
       expect(qwen.calls, 0);
       expect(c.pcmFramesDecoded, 0);
       expect(c.streamingSttActive, isFalse);
-      c.setQwenConfig(const EngineConfig(apiKey: 'changed-key'));
+      await c.setQwenConfig(const EngineConfig(apiKey: 'changed-key'));
       c.setSpeechProvider(SttProvider.apple);
       ble.stopRecording();
       await Future<void>.delayed(Duration.zero);
@@ -271,7 +271,7 @@ void main() {
       );
       c.handleRealtimeOpusFrameForTesting(Uint8List(160));
       expect(doubao.calls, 0);
-      c.setDoubaoConfig(const EngineConfig(apiKey: 'changed-key'));
+      await c.setDoubaoConfig(const EngineConfig(apiKey: 'changed-key'));
       c.setSpeechProvider(SttProvider.apple);
       ble.stopRecording();
       await Future<void>.delayed(Duration.zero);
@@ -510,15 +510,14 @@ void main() {
       );
       final service = DoubaoSttService(client: client);
       final ble = _Ble();
-      final c =
-          RecorderController(
-              loadPersistedState: false,
-              ble: ble,
-              doubaoSpeech: service,
-              appleSpeech: _Apple(),
-            )
-            ..setSpeechProvider(SttProvider.doubao)
-            ..setDoubaoConfig(const EngineConfig(apiKey: 'doubao-key'));
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        doubaoSpeech: service,
+        appleSpeech: _Apple(),
+      );
+      c.setSpeechProvider(SttProvider.doubao);
+      await c.setDoubaoConfig(const EngineConfig(apiKey: 'doubao-key'));
       addTearDown(c.dispose);
       c.setTranscriptLanguage('zh');
 
@@ -657,40 +656,43 @@ void main() {
     expect(doubao.calls, 1);
   });
 
-  test('provider defaults preserve explicit choices and configured cloud', () {
-    expect(
-      initialSpeechProvider(
-        saved: null,
-        appleSupported: true,
-        qwenConfigured: false,
-      ),
-      SttProvider.apple,
-    );
-    expect(
-      initialSpeechProvider(
-        saved: null,
-        appleSupported: true,
-        qwenConfigured: true,
-      ),
-      SttProvider.qwen,
-    );
-    expect(
-      initialSpeechProvider(
-        saved: SttProvider.doubao,
-        appleSupported: true,
-        qwenConfigured: false,
-      ),
-      SttProvider.doubao,
-    );
-    expect(
-      initialSpeechProvider(
-        saved: SttProvider.apple,
-        appleSupported: false,
-        qwenConfigured: true,
-      ),
-      SttProvider.apple,
-    );
-  });
+  test(
+    'provider defaults preserve explicit choices and configured cloud',
+    () async {
+      expect(
+        initialSpeechProvider(
+          saved: null,
+          appleSupported: true,
+          qwenConfigured: false,
+        ),
+        SttProvider.apple,
+      );
+      expect(
+        initialSpeechProvider(
+          saved: null,
+          appleSupported: true,
+          qwenConfigured: true,
+        ),
+        SttProvider.qwen,
+      );
+      expect(
+        initialSpeechProvider(
+          saved: SttProvider.doubao,
+          appleSupported: true,
+          qwenConfigured: false,
+        ),
+        SttProvider.doubao,
+      );
+      expect(
+        initialSpeechProvider(
+          saved: SttProvider.apple,
+          appleSupported: false,
+          qwenConfigured: true,
+        ),
+        SttProvider.apple,
+      );
+    },
+  );
 
   test(
     'device refresh waits for the final inventory page and coalesces pulls',
@@ -1373,7 +1375,7 @@ class _Stream implements SttStreamSession {
   @override
   void sendPcm(Uint8List pcm16le) {}
   @override
-  void finalizeUtterance() {}
+  void finalizeUtterance() async {}
   @override
   Future<SttStreamEvent?> finish({
     Duration timeout = const Duration(seconds: 20),

@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test(
     'retired credentials are removed while old provider identity is readable',
     () {
@@ -103,7 +104,7 @@ void main() {
     final doubaoRestored = AppSettings.fromJson(withDoubao.toJson());
     expect(doubaoRestored.speechProvider, SttProvider.doubao);
     final doubao = doubaoRestored.engineConfig(SttProvider.doubao);
-    expect(doubao.apiKey, 'doubao-key');
+    expect(doubao.apiKey, isNull);
     expect(doubao.baseUrl, 'https://openspeech.bytedance.com');
     expect(doubao.model, 'volc.bigasr.auc_turbo');
 
@@ -173,7 +174,7 @@ void main() {
     final json = settings.toJson();
     expect(json['engines'], {
       'qwen': {
-        'apiKey': 'qwen-key',
+        'credentialRef': 'qwen',
         'baseUrl': 'https://dashscope-intl.aliyuncs.com',
         'model': 'qwen-audio-3.1-asr-flash-filetrans',
       },
@@ -187,7 +188,7 @@ void main() {
     // Round-trip: new format reloads without losing fields.
     final restored = AppSettings.fromJson(json);
     final qwen = restored.engineConfig(SttProvider.qwen);
-    expect(qwen.apiKey, 'qwen-key');
+    expect(qwen.apiKey, isNull);
     expect(qwen.baseUrl, 'https://dashscope-intl.aliyuncs.com');
     expect(qwen.model, 'qwen-audio-3.1-asr-flash-filetrans');
   });
@@ -256,7 +257,7 @@ void main() {
         jsonDecode(await legacyFile.readAsString()) as Map<String, dynamic>;
     expect(upgraded['engines'], {
       'qwen': {
-        'apiKey': 'qwen-key',
+        'credentialRef': 'qwen',
         'baseUrl': 'https://dashscope-intl.aliyuncs.com',
         'model': 'qwen-audio-3.1-asr-flash-filetrans',
       },

@@ -6,6 +6,7 @@ import '../../ai/cloud_stt_service.dart';
 import '../../ai/stt_types.dart';
 import '../../ai/apple_speech.dart';
 import '../../state/recorder_controller.dart';
+import '../../platform/credential_store.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 
@@ -29,6 +30,16 @@ class SettingsScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600),
               ),
             ),
+            if (c.settingsStorageError != null)
+              Text(
+                c.settingsStorageError!,
+                style: const TextStyle(color: AppColors.coral),
+              ),
+            if (c.settingsStorageError != null)
+              TextButton(
+                onPressed: c.reloadSettings,
+                child: const Text('重试读取安全配置'),
+              ),
             const SectionLabel('传输'),
             _SettingsGroup(
               key: const ValueKey('settings-transfer-group'),
@@ -713,6 +724,8 @@ class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
   String? _error;
   EngineConfig? _lastSaved;
   bool _saved = false;
+  bool _saving = false;
+  bool _cleared = false;
 
   @override
   void initState() {
@@ -738,7 +751,8 @@ class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_saving) return;
     if (_key.text.trim().isEmpty) {
       setState(() => _error = '请输入 API Key');
       return;
@@ -767,18 +781,53 @@ class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
             ? 'https://dashscope-intl.aliyuncs.com'
             : null;
       }
-      widget.controller.setEngineConfig(
+      setState(() {
+        _saving = true;
+        _error = null;
+      });
+      await widget.controller.setEngineConfig(
         widget.provider,
         EngineConfig(apiKey: _key.text, baseUrl: baseUrl, model: current.model),
       );
+      if (!mounted) return;
       setState(() {
         _error = null;
         _saved = true;
+        _cleared = false;
       });
       FocusScope.of(context).unfocus();
       widget.onSaved?.call();
     } on CloudSttException catch (error) {
-      setState(() => _error = error.message);
+      if (mounted) setState(() => _error = error.message);
+    } on CredentialStorageException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _clear() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final current = widget.controller.engineConfig(widget.provider);
+      await widget.controller.setEngineConfig(
+        widget.provider,
+        EngineConfig(baseUrl: current.baseUrl, model: current.model),
+      );
+      if (!mounted) return;
+      setState(() {
+        _key.clear();
+        _cleared = true;
+        _saved = false;
+      });
+    } on CredentialStorageException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -820,8 +869,17 @@ class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
         const SizedBox(height: 12),
         Align(
           alignment: Alignment.centerRight,
-          child: FilledButton(onPressed: _save, child: const Text('保存')),
+          child: FilledButton(
+            onPressed: _saving ? null : _save,
+            child: Text(_saving ? '正在保存…' : '保存'),
+          ),
         ),
+        if (widget.controller.engineConfig(widget.provider).isConfigured)
+          TextButton(
+            onPressed: _saving ? null : _clear,
+            child: const Text('清除已保存的 API Key'),
+          ),
+        if (_cleared) const Text('已清除已保存的 API Key；开发环境注入不受影响'),
         if (_saved) const Text('已保存'),
         if (_error != null) ...[
           const SizedBox(height: 8),

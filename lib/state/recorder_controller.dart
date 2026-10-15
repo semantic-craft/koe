@@ -333,8 +333,14 @@ class RecorderController extends ChangeNotifier {
     }
   }
 
+  String? settingsStorageError;
+  Future<void> _settingsWriting = SynchronousFuture<void>(null);
+
+  Future<void> reloadSettings() => _loadPersistedSettings();
+
   Future<void> _loadPersistedSettings() async {
     final s = await AppSettingsStore.load();
+    settingsStorageError = s.storageError;
     for (final entry in _engineAdapters.entries) {
       entry.value.applySaved(entry.value.load(s));
     }
@@ -366,26 +372,51 @@ class RecorderController extends ChangeNotifier {
             sttMode == SttDisplayMode.conversation)) {
       sttMode = SttDisplayMode.transcription;
     }
-    if (s.speechProvider == null) unawaited(_persistSettings());
+    if (s.speechProvider == null && s.storageError == null) {
+      unawaited(_persistSettings());
+    }
     notifyListeners();
   }
 
-  Future<void> _persistSettings({bool strict = false}) async {
-    await AppSettingsStore.save(
-      AppSettings(
-        speechProvider: speechProvider,
-        appleSourceLanguage: appleSourceLanguage,
-        engines: _persistedEngines(),
-        autoTranscribe: autoTranscribe,
-        autoRealtime: autoRealtime,
-        transcriptLanguage: transcriptLanguage,
-        sttMode: sttMode,
-        translationTargetLanguage: translationTargetLanguage,
-        ownerLanguage: ownerLanguage,
-        guestLanguage: guestLanguage,
-      ),
-      strict: strict,
-    );
+  @visibleForTesting
+  Future<void> get settingsSaved => _settingsWriting;
+
+  Future<void> _persistSettings({
+    bool strict = false,
+    SttProvider? provider,
+    EngineConfig? config,
+  }) {
+    final operation = _settingsWriting.then((_) async {
+      try {
+        await AppSettingsStore.save(
+          AppSettings(
+            speechProvider: speechProvider,
+            appleSourceLanguage: appleSourceLanguage,
+            engines: {
+              ..._persistedEngines(),
+              if (provider != null) provider.name: config!,
+            },
+            autoTranscribe: autoTranscribe,
+            autoRealtime: autoRealtime,
+            transcriptLanguage: transcriptLanguage,
+            sttMode: sttMode,
+            translationTargetLanguage: translationTargetLanguage,
+            ownerLanguage: ownerLanguage,
+            guestLanguage: guestLanguage,
+          ),
+          strict: true,
+        );
+        if (provider != null) _engineAdapters[provider]!.applySaved(config!);
+        settingsStorageError = null;
+        if (!_disposed) notifyListeners();
+      } catch (_) {
+        settingsStorageError = '无法保存配置，请解锁设备并重试读取安全配置';
+        if (!_disposed) notifyListeners();
+        if (strict) rethrow;
+      }
+    });
+    _settingsWriting = operation.catchError((Object _) {});
+    return operation;
   }
 
   Map<String, EngineConfig> _persistedEngines() => {
@@ -1665,7 +1696,7 @@ class RecorderController extends ChangeNotifier {
   /// normalized on save; an invalid one throws the engine's exception and
   /// leaves the current configuration untouched. Key-only engines keep
   /// their dedicated setters.
-  void setEngineConfig(SttProvider provider, EngineConfig config) {
+  Future<void> setEngineConfig(SttProvider provider, EngineConfig config) {
     final adapter = _engineAdapters[provider];
     if (adapter == null || !adapter.grouped) {
       throw ArgumentError.value(provider, 'provider', 'has no engine trio');
@@ -1676,23 +1707,23 @@ class RecorderController extends ChangeNotifier {
     final baseUrl = rawBaseUrl == null
         ? null
         : adapter.normalizeBaseUrl(rawBaseUrl);
-    adapter.applySaved(
-      EngineConfig(apiKey: apiKey, baseUrl: baseUrl, model: model),
+    return _persistSettings(
+      strict: true,
+      provider: provider,
+      config: EngineConfig(apiKey: apiKey, baseUrl: baseUrl, model: model),
     );
-    notifyListeners();
-    unawaited(_persistSettings());
   }
 
   /// Saves the whole Qwen credential trio at once. The base URL is
   /// normalized on save; an invalid one throws [QwenSttException] and leaves
   /// the current configuration untouched.
-  void setQwenConfig(EngineConfig config) =>
+  Future<void> setQwenConfig(EngineConfig config) =>
       setEngineConfig(SttProvider.qwen, config);
 
   /// Saves the whole Doubao credential trio at once. The base URL is
   /// normalized on save; an invalid one throws [DoubaoSttException] and
   /// leaves the current configuration untouched.
-  void setDoubaoConfig(EngineConfig config) =>
+  Future<void> setDoubaoConfig(EngineConfig config) =>
       setEngineConfig(SttProvider.doubao, config);
 
   static String? _blankToNull(String? value) {

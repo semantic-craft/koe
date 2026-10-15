@@ -29,7 +29,6 @@ class EngineConfig {
   }
 
   Map<String, dynamic> toJson() => {
-    if ((apiKey ?? '').trim().isNotEmpty) 'apiKey': apiKey!.trim(),
     if ((baseUrl ?? '').trim().isNotEmpty) 'baseUrl': baseUrl!.trim(),
     if ((model ?? '').trim().isNotEmpty) 'model': model!.trim(),
   };
