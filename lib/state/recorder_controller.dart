@@ -1,3 +1,4 @@
+import '../platform/credential_store.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -336,7 +337,16 @@ class RecorderController extends ChangeNotifier {
   String? settingsStorageError;
   Future<void> _settingsWriting = SynchronousFuture<void>(null);
 
-  Future<void> reloadSettings() => _loadPersistedSettings();
+  Future<void> reloadSettings() async {
+    try {
+      await CredentialStore().authorize();
+    } catch (_) {
+      settingsStorageError = const CredentialStorageException().message;
+      notifyListeners();
+      return;
+    }
+    await _loadPersistedSettings();
+  }
 
   Future<void> _loadPersistedSettings() async {
     final s = await AppSettingsStore.load();

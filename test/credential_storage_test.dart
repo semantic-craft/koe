@@ -26,6 +26,32 @@ void main() {
     expect(encoded, isNot(contains('fake-private')));
     expect(encoded, isNot(contains('apiKey')));
   });
+  test('isolated startup never migrates or changes personal settings', () async {
+    final base = await getApplicationDocumentsDirectory();
+    final personal = File('${base.path}/AnkerRecorder/app_settings.json');
+    await personal.parent.create(recursive: true);
+    const original = '{"qwenApiKey":"synthetic-personal-do-not-migrate"}';
+    await personal.writeAsString(original);
+    String? memory;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(CredentialStore.channel, (call) async {
+          if (call.method == 'mode') return 'isolated';
+          if (call.method == 'read') return memory;
+          if (call.method == 'write') { memory = call.arguments as String; return null; }
+          throw StateError('Unexpected operation');
+        });
+    final loaded = await AppSettingsStore.load();
+    expect(loaded.engineConfig(SttProvider.qwen).apiKey, isNull);
+    await AppSettingsStore.save(loaded.copyWith(engines: {
+      'qwen': const EngineConfig(apiKey: 'synthetic-process-only'),
+    }), strict: true);
+    expect(await personal.readAsString(), original);
+    final development = File('${base.path}/AnkerRecorderDevelopment/app_settings.json');
+    expect(await development.readAsString(), isNot(contains('synthetic-')));
+    memory = null; // New process: metadata persists, developer credentials do not.
+    expect((await AppSettingsStore.load()).engineConfig(SttProvider.qwen).apiKey, isNull);
+  });
+
   Future<File> legacy(Map<String, dynamic> data) async {
     final directory = await getApplicationDocumentsDirectory();
     final f = File('${directory.path}/AnkerRecorder/app_settings.json');
@@ -65,6 +91,8 @@ void main() {
       final original = await file.readAsString();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(CredentialStore.channel, (call) async {
+            if (call.method == 'mode') return 'system';
+            if (call.method == 'authorize') return null;
             if (call.method == 'read') return null;
             throw PlatformException(code: 'locked');
           });
@@ -89,6 +117,8 @@ void main() {
     var writes = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(CredentialStore.channel, (call) async {
+            if (call.method == 'mode') return 'system';
+            if (call.method == 'authorize') return null;
           if (call.method == 'write') writes++;
           throw PlatformException(code: 'locked');
         });
@@ -177,6 +207,8 @@ void main() {
       var firstWrite = true;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(CredentialStore.channel, (call) async {
+            if (call.method == 'mode') return 'system';
+            if (call.method == 'authorize') return null;
             if (call.method == 'read') {
               if (failNextRead) {
                 failNextRead = false;
