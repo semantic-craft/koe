@@ -153,7 +153,6 @@ class RecorderController extends ChangeNotifier {
             _resetBoundReconnectBackoff();
             unawaited(startScan());
           }
-          _explicitDisconnect = false;
         } else {
           _resetBoundReconnectBackoff();
           // Connected (or reconnected) — keep battery fresh while linked.
@@ -972,7 +971,8 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<void> _tryAutoConnectBoundDevice(List<ScannedDevice> scanned) async {
-    if (!bound ||
+    if (_explicitDisconnect ||
+        !bound ||
         connected ||
         phase == AppPhase.connecting ||
         _ble.isConnecting) {
@@ -2702,8 +2702,8 @@ class RecorderController extends ChangeNotifier {
   int _boundReconnectAttempt = 0;
   bool get recordingShortcutPending => _recordingShortcutPending;
 
-  /// Set right before a user-initiated disconnect() so the connection-state
-  /// listener doesn't immediately try to auto-reconnect a bound device.
+  /// User intent survives duplicate/late disconnect events and scan results.
+  /// Explicit scan/connect resumes automatic reconnection for this session.
   bool _explicitDisconnect = false;
 
   /// Survives disconnect so the Device tab can still show a known/bound unit.
@@ -2865,6 +2865,7 @@ class RecorderController extends ChangeNotifier {
       selectedFiles.where((f) => localPathFor(f.fileId) == null).toList();
 
   Future<void> startScan() async {
+    _explicitDisconnect = false;
     _boundReconnectTimer?.cancel();
     _boundReconnectTimer = null;
     _scanTimeoutTimer?.cancel();
@@ -2930,6 +2931,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   bool get _canRetryBoundConnection =>
+      !_explicitDisconnect &&
       bound &&
       lastKnownDevice != null &&
       !connected &&
@@ -2970,6 +2972,7 @@ class RecorderController extends ChangeNotifier {
       return;
     }
 
+    _explicitDisconnect = false;
     if (_recordingShortcutPending) {
       _recordingShortcutConnecting = true;
       _recordingShortcutTimer?.cancel();
@@ -3060,6 +3063,7 @@ class RecorderController extends ChangeNotifier {
     _scanTimeoutTimer?.cancel();
     _postBindFileRefreshTimer?.cancel();
     _stopBatteryPoll();
+    await _ble.stopScan();
     await _wifi.cancel();
     await stopPlayback();
     if (info != null) lastKnownInfo = info;

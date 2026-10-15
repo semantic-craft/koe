@@ -52,6 +52,52 @@ void main() {
     await controller.stopScan();
   });
 
+  test(
+    'manual disconnect survives duplicate notifications and stale scans',
+    () async {
+      final ble = _FakeBleService()..ready = true;
+      final controller = _controller(ble)
+        ..bound = true
+        ..lastKnownDevice = _device
+        ..activeDevice = _device
+        ..connected = true
+        ..phase = AppPhase.ready;
+      _disposeAfterSettling(controller);
+
+      await controller.disconnect();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        ble.startScanCalls,
+        0,
+        reason: 'explicit disconnect must not start reconnect',
+      );
+      ble.emitScan([_device]);
+      ble.emitConnection(false);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(ble.connectCalls, 0);
+      expect(ble.startScanCalls, 0);
+      expect(controller.connected, isFalse);
+
+      await controller.startScan();
+      expect(ble.startScanCalls, 1, reason: 'user can explicitly reconnect');
+      await controller.stopScan();
+    },
+  );
+
+  test('unexpected disconnect still reconnects a bound recorder', () async {
+    final ble = _FakeBleService()..ready = true;
+    final controller = _controller(ble)
+      ..bound = true
+      ..lastKnownDevice = _device
+      ..connected = true
+      ..phase = AppPhase.ready;
+    _disposeAfterSettling(controller);
+    ble.emitConnection(false);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(ble.startScanCalls, 1);
+    await controller.stopScan();
+  });
+
   group('recording shortcut', () {
     test('connected recorder starts exactly once', () async {
       final ble = _FakeBleService()..ready = true;
@@ -343,6 +389,14 @@ class _FakeBleService extends BleService {
   void emitScan(List<ScannedDevice> devices) => _scanResults.add(devices);
 
   void emitConnection(bool connected) => _connectionState.add(connected);
+
+  @override
+  Future<void> disconnect() async {
+    ready = false;
+    // Mirrors the two down notifications previously emitted by BleService.
+    _connectionState.add(false);
+    _connectionState.add(false);
+  }
 
   @override
   Future<void> dispose() async {
