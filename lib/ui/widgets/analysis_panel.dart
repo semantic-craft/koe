@@ -5,6 +5,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../state/recorder_controller.dart';
 import '../../state/recording_analysis.dart';
+import 'minutes_panel.dart';
 
 class AnalysisPanel extends StatefulWidget {
   const AnalysisPanel({
@@ -85,7 +86,22 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
           result != null &&
           result.sourceHash != analysisFingerprint(recording.text);
       return Scaffold(
-        appBar: AppBar(title: const Text('摘要与分析')),
+        appBar: AppBar(
+          title: const Text('摘要与分析'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => MinutesPanel(
+                    controller: widget.controller,
+                    reference: widget.reference,
+                  ),
+                ),
+              ),
+              child: const Text('结构化纪要'),
+            ),
+          ],
+        ),
         body: SafeArea(
           child: ListView(
             padding: const EdgeInsets.all(20),

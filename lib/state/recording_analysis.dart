@@ -32,10 +32,12 @@ class AnalysisResult {
     required this.instruction,
     required this.sources,
     required this.createdAt,
+    this.editedAt,
   });
   final String text, sourceHash, model, instruction;
   final List<String> sources;
   final DateTime createdAt;
+  final DateTime? editedAt;
   Map<String, dynamic> toJson() => {
     'text': text,
     'sourceHash': sourceHash,
@@ -44,6 +46,7 @@ class AnalysisResult {
     'instruction': instruction,
     'sources': sources,
     'createdAt': createdAt.toIso8601String(),
+    'editedAt': editedAt?.toIso8601String(),
     'promptVersion': 1,
   };
   factory AnalysisResult.fromJson(Map<String, dynamic> j) => AnalysisResult(
@@ -53,6 +56,7 @@ class AnalysisResult {
     instruction: j['instruction'] as String,
     sources: List<String>.from(j['sources'] as List),
     createdAt: DateTime.parse(j['createdAt'] as String),
+    editedAt: DateTime.tryParse(j['editedAt'] as String? ?? ''),
   );
   String get exportText =>
       '$text\n\n模型：$model\n生成时间：${createdAt.toIso8601String()}\n要求：$instruction\n\n原文依据\n${sources.indexed.map((s) => '[S${s.$1 + 1}] ${s.$2}').join('\n\n')}';
@@ -213,6 +217,35 @@ class RecordingAnalysis extends ChangeNotifier {
   }
 
   bool busy(String k) => _running.containsKey(k);
+
+  Future<void> editResult(
+    String k,
+    AnalysisResult expected,
+    String text,
+  ) async {
+    if (busy(k) || !identical(results[k], expected)) {
+      throw StateError('结果已更新，请重新打开后编辑');
+    }
+    final replacement = AnalysisResult(
+      text: text,
+      sourceHash: expected.sourceHash,
+      model: expected.model,
+      instruction: expected.instruction,
+      sources: expected.sources,
+      createdAt: expected.createdAt,
+      editedAt: DateTime.now(),
+    );
+    results[k] = replacement;
+    try {
+      await save();
+    } catch (_) {
+      if (identical(results[k], replacement)) results[k] = expected;
+      rethrow;
+    } finally {
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   void cancel(String k) {
     final abort = _running.remove(k);
     if (abort != null && !abort.isCompleted) abort.complete();
@@ -228,10 +261,14 @@ class RecordingAnalysis extends ChangeNotifier {
     required String apiKey,
     required bool custom,
     String? instruction,
+    String? resultSlot,
+    String Function(String text, List<String> sources)? validateResult,
     required String Function() currentSource,
   }) async {
     await load();
-    final k = key(recording, custom);
+    final k = resultSlot == null
+        ? key(recording, custom)
+        : '$recording/$resultSlot';
     if (busy(k)) return;
     if (model == null || apiKey.isEmpty || source.trim().isEmpty) {
       errors[k] = '请先选择分析模型、配置千问 Key，并完成转写';
@@ -318,8 +355,16 @@ class RecordingAnalysis extends ChangeNotifier {
         }
       }
       check();
+      String output;
+      try {
+        output = validateResult?.call(level.single, sources) ?? level.single;
+      } catch (_) {
+        // Invalid final output must not become an endlessly reused checkpoint.
+        checkpoint.clear();
+        rethrow;
+      }
       final result = AnalysisResult(
-        text: level.single,
+        text: output,
         sourceHash: sourceHash,
         model: selected,
         instruction: prompt,
