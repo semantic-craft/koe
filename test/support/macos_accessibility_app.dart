@@ -6,11 +6,11 @@
 // test/support/macos_accessibility_app.dart --dart-define=AX_SMOKE_AUTORUN=false
 import 'dart:async';
 import 'dart:io';
-import 'package:anker_recorder/ui/recording_navigation.dart';
-import 'package:anker_recorder/ui/screens/recording_detail_screen.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/theme/app_theme.dart';
-import 'package:anker_recorder/ui/shell.dart';
+import 'package:koe/ui/recording_navigation.dart';
+import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/theme/app_theme.dart';
+import 'package:koe/ui/shell.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 

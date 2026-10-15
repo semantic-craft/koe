@@ -1,4 +1,4 @@
-import 'package:anker_recorder/state/recorder_controller.dart';
+import 'package:koe/state/recorder_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Native calls and file IO need real async time; pump their continuations

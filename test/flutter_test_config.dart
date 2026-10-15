@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:anker_recorder/platform/credential_store.dart';
-import 'package:anker_recorder/state/app_settings_store.dart';
+import 'package:koe/platform/credential_store.dart';
+import 'package:koe/state/app_settings_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 

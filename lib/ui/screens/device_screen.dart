@@ -43,7 +43,7 @@ class DeviceScreen extends StatelessWidget {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                info?.hasIdentity == true ? 'soundcore Work' : '已连接',
+                info?.hasIdentity == true ? '安克录音豆' : '已连接',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -466,7 +466,7 @@ class _OfflineDeviceView extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      '扫描附近的 soundcore Work（D3200）并连接。',
+                      '扫描附近的安克录音豆（D3200）并连接。',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: AppColors.textMuted,

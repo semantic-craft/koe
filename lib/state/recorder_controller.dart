@@ -2705,7 +2705,7 @@ class RecorderController extends ChangeNotifier {
         notifyListeners();
       }
       await _ble.startScan(timeout: _bleScanTimeout);
-      statusMessage = '正在扫描 soundcore Work（D3200）…';
+      statusMessage = '正在扫描安克录音豆（D3200）…';
       notifyListeners();
       if (!connected && phase == AppPhase.scanning) {
         // FlutterBluePlus stops its native scan when the timeout elapses, but

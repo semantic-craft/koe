@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:anker_recorder/ble/ble_service.dart';
-import 'package:anker_recorder/protocol/frame.dart';
-import 'package:anker_recorder/protocol/models.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
+import 'package:koe/ble/ble_service.dart';
+import 'package:koe/protocol/frame.dart';
+import 'package:koe/protocol/models.dart';
+import 'package:koe/state/recorder_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 

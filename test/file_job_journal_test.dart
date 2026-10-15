@@ -1,9 +1,9 @@
 import 'dart:io';
-import 'package:anker_recorder/ai/engine_config.dart';
-import 'package:anker_recorder/ai/speech_provider.dart';
-import 'package:anker_recorder/ai/stt_types.dart';
-import 'package:anker_recorder/state/file_job_journal.dart';
-import 'package:anker_recorder/state/speech_configuration.dart';
+import 'package:koe/ai/engine_config.dart';
+import 'package:koe/ai/speech_provider.dart';
+import 'package:koe/ai/stt_types.dart';
+import 'package:koe/state/file_job_journal.dart';
+import 'package:koe/state/speech_configuration.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 SpeechConfiguration config({

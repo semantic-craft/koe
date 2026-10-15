@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:anker_recorder/state/recording_analysis.dart';
+import 'package:koe/state/recording_analysis.dart';
 
 class FakeAnalysis implements AnalysisService {
   int calls = 0;

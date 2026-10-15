@@ -153,7 +153,7 @@ class _ConnectionHeader extends StatelessWidget {
                                     ? c.statusMessage!
                                     : '正在播放')
                               : _idleStatus(c))
-                        : '点「扫描」查找 soundcore Work',
+                        : '点「扫描」查找安克录音豆',
                     style: TextStyle(
                       fontSize: 12,
                       color: c.isPlaying
