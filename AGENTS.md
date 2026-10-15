@@ -27,3 +27,5 @@
 
 ### Domain docs
 采用单一领域文档布局。见 [docs/agents/domain.md](docs/agents/domain.md)。
+
+- main 已启用分支保护、只许 squash，2026-10-15
