@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../ai/engine_config.dart';
 import '../../ai/qwen_stt.dart';
+import '../../ai/doubao_stt.dart';
 import '../../ai/stt_types.dart';
 import '../../ai/moss_stt.dart';
 import '../../ai/apple_speech.dart';
@@ -76,6 +77,10 @@ class SettingsScreen extends StatelessWidget {
                     _QwenSettings(controller: c),
                     const SizedBox(height: 14),
                     _TranscriptLanguageSelector(controller: c),
+                  ] else if (c.speechProvider == SttProvider.doubao) ...[
+                    _DoubaoSettings(controller: c),
+                    const SizedBox(height: 14),
+                    _TranscriptLanguageSelector(controller: c),
                   ] else
                     _AppleLanguageSettings(controller: c),
                   if (c.isLiveSession) ...[
@@ -137,6 +142,10 @@ class _ProviderSelector extends StatelessWidget {
     'qwen': (
       icon: Icons.auto_awesome_rounded,
       description: '通义千问语音识别模型，录音完成后文件转写',
+    ),
+    'doubao': (
+      icon: Icons.bolt_rounded,
+      description: '火山引擎豆包语音识别，录音完成后极速版整段转写',
     ),
   };
 
@@ -1211,6 +1220,109 @@ class _QwenSettingsState extends State<_QwenSettings> {
             labelText: '模型',
             hintText: QwenSttService.defaultModel,
             helperText: '默认 ${QwenSttService.defaultModel}。只支持文件转写',
+          ),
+          onSubmitted: (_) => _save(),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton(onPressed: _save, child: const Text('保存')),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: const TextStyle(color: AppColors.coral)),
+        ],
+      ],
+    );
+  }
+}
+
+/// Doubao credential trio, grouped like [_QwenSettings].
+class _DoubaoSettings extends StatefulWidget {
+  const _DoubaoSettings({required this.controller});
+  final RecorderController controller;
+
+  @override
+  State<_DoubaoSettings> createState() => _DoubaoSettingsState();
+}
+
+class _DoubaoSettingsState extends State<_DoubaoSettings> {
+  late final TextEditingController _key = TextEditingController(
+    text: widget.controller.engineConfig(SttProvider.doubao).apiKey ?? '',
+  );
+  late final TextEditingController _base = TextEditingController(
+    text: widget.controller.engineConfig(SttProvider.doubao).baseUrl ?? '',
+  );
+  late final TextEditingController _model = TextEditingController(
+    text: widget.controller.engineConfig(SttProvider.doubao).model ?? '',
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _key.dispose();
+    _base.dispose();
+    _model.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    try {
+      widget.controller.setDoubaoConfig(
+        EngineConfig(
+          apiKey: _key.text,
+          baseUrl: _base.text,
+          model: _model.text,
+        ),
+      );
+      final stored = widget.controller.engineConfig(
+        SttProvider.doubao,
+      ).baseUrl;
+      if (stored != null) _base.text = stored;
+      setState(() => _error = null);
+    } on DoubaoSttException catch (error) {
+      setState(() => _error = error.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          key: const ValueKey('apikey-doubao'),
+          controller: _key,
+          obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: const InputDecoration(labelText: '豆包 API Key'),
+          onSubmitted: (_) => _save(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const ValueKey('doubao-base-url'),
+          controller: _base,
+          autocorrect: false,
+          enableSuggestions: false,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: '服务地址',
+            hintText: DoubaoSttService.defaultBaseUrl,
+            helperText: '留空使用 ${DoubaoSttService.defaultBaseUrl}',
+          ),
+          onSubmitted: (_) => _save(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const ValueKey('doubao-model'),
+          controller: _model,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: const InputDecoration(
+            labelText: '模型',
+            hintText: DoubaoSttService.defaultModel,
+            helperText: '默认 ${DoubaoSttService.defaultModel}。只支持极速版文件转写',
           ),
           onSubmitted: (_) => _save(),
         ),

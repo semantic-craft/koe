@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'support/moss_fakes.dart';
 import 'package:anker_recorder/ai/moss_stt.dart';
 import 'package:anker_recorder/state/moss_jobs.dart';
 import 'dart:io';
 import 'dart:typed_data' show Endian;
 
+import 'package:http/http.dart' as http;
+
 import 'package:anker_recorder/ai/apple_speech.dart';
+import 'package:anker_recorder/ai/doubao_stt.dart';
 import 'package:anker_recorder/ai/engine_config.dart';
 import 'package:anker_recorder/ai/qwen_stt.dart';
 import 'package:anker_recorder/ai/soniox_stt.dart';
@@ -166,6 +170,314 @@ void main() {
       final view = c.recordingView(RecordingReference(path: file.path));
       expect(view.text, '通义文本');
       expect(view.provider, SttProvider.qwen);
+    },
+  );
+
+  test(
+    'Doubao file transcription starts after stop and keeps the take settings',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('doubao-stop-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/401.wav');
+      await file.writeAsBytes([1, 2, 3]);
+      final doubao = _Doubao()..apiKeyOverride = 'doubao-key';
+      final ble = _Ble();
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        doubaoSpeech: doubao,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.doubao);
+      addTearDown(c.dispose);
+      c.setTranscriptLanguage('zh');
+      await c.startRecord();
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          active: true,
+          fileId: 401,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+      c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+      expect(doubao.calls, 0);
+      c.setDoubaoConfig(const EngineConfig(apiKey: 'changed-key'));
+      c.setSpeechProvider(SttProvider.apple);
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(fileId: 401, path: file.path, bytesReceived: 320),
+      );
+      await settleUntil(() => doubao.calls == 1);
+      expect(doubao.seenKey, 'doubao-key');
+      expect(doubao.seenLanguage, 'zh');
+      expect(doubao.seenModel, DoubaoSttService.defaultModel);
+      expect(doubao.seenBase, DoubaoSttService.defaultBaseUrl);
+      final view = c.recordingView(RecordingReference(path: file.path));
+      expect(view.text, '豆包文本');
+      expect(view.provider, SttProvider.doubao);
+    },
+  );
+
+  test(
+    'Doubao failure shows a readable error and one manual retry succeeds',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('doubao-retry-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/403.wav');
+      await file.writeAsBytes([1, 2, 3]);
+      final doubao = _Doubao()
+        ..apiKeyOverride = 'doubao-key'
+        ..failure = const DoubaoSttException('豆包请求过多，请稍后重试');
+      final ble = _Ble();
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        doubaoSpeech: doubao,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.doubao);
+      addTearDown(c.dispose);
+      await c.startRecord();
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          active: true,
+          fileId: 403,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+      c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(fileId: 403, path: file.path, bytesReceived: 320),
+      );
+
+      // The automatic attempt failed once and surfaced the readable cause.
+      await settleUntil(() => doubao.calls == 1);
+      final failed = c.recordingView(RecordingReference(path: file.path));
+      expect(failed.error, '豆包请求过多，请稍后重试');
+      expect(failed.text, isEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(doubao.calls, 1, reason: '失败后不自动重试');
+
+      // The manual retry from the detail screen succeeds with current
+      // settings and replaces the error with the transcript.
+      doubao.failure = null;
+      await c.transcribeLocalFile(file.path);
+      expect(doubao.calls, 2);
+      final recovered = c.recordingView(RecordingReference(path: file.path));
+      expect(recovered.text, '豆包文本');
+      expect(recovered.error, isNull);
+    },
+  );
+
+  test('Doubao model rejection reaches the detail as a readable error', () async {
+    final directory = await Directory.systemTemp.createTemp('doubao-model-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/404.wav');
+    await file.writeAsBytes([1, 2, 3]);
+    final doubao = _Doubao()
+      ..apiKeyOverride = 'doubao-key'
+      ..failure = DoubaoSttException(
+        doubaoModelRejection('volc.seedasr.auc')!,
+      );
+    final c = RecorderController(
+      loadPersistedState: false,
+      doubaoSpeech: doubao,
+      appleSpeech: _Apple(),
+    )..setSpeechProvider(SttProvider.doubao);
+    addTearDown(c.dispose);
+
+    await c.transcribeLocalFile(file.path);
+
+    final view = c.recordingView(RecordingReference(path: file.path));
+    expect(view.error, contains('标准版'));
+    expect(view.error, contains('volc.bigasr.auc_turbo'));
+    expect(view.text, isEmpty);
+  });
+
+  test('Doubao manual trigger without a key prompts to configure first', () async {
+    final directory = await Directory.systemTemp.createTemp('doubao-nokey-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/405.wav');
+    await file.writeAsBytes([1, 2, 3]);
+    final doubao = _Doubao();
+    final c = RecorderController(
+      loadPersistedState: false,
+      doubaoSpeech: doubao,
+      appleSpeech: _Apple(),
+    )..setSpeechProvider(SttProvider.doubao);
+    addTearDown(c.dispose);
+
+    await c.transcribeLocalFile(file.path);
+
+    expect(doubao.calls, 0);
+    expect(
+      c.recordingView(RecordingReference(path: file.path)).error,
+      '请在设置中配置 豆包',
+    );
+  });
+
+  test(
+    'Doubao demo path: record a take, stop, and read the Chinese transcript',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('doubao-demo-');
+      addTearDown(() => directory.delete(recursive: true));
+      final audio = Uint8List(80);
+      audio.setRange(0, 4, const [0x4F, 0x67, 0x67, 0x53]);
+      final file = File('${directory.path}/406.wav');
+      await file.writeAsBytes(audio);
+
+      final client = _ScriptedClient();
+      client.enqueue(
+        200,
+        {
+          'audio_info': {'duration': 6312},
+          'result': {'text': '你好，世界。'},
+        },
+        headers: {'x-api-status-code': '20000000'},
+      );
+      final service = DoubaoSttService(client: client);
+      final ble = _Ble();
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        doubaoSpeech: service,
+        appleSpeech: _Apple(),
+      )
+        ..setSpeechProvider(SttProvider.doubao)
+        ..setDoubaoConfig(const EngineConfig(apiKey: 'doubao-key'));
+      addTearDown(c.dispose);
+      c.setTranscriptLanguage('zh');
+
+      // 录一段（假传输）。
+      await c.startRecord();
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          active: true,
+          fileId: 406,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+      c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(fileId: 406, path: file.path, bytesReceived: 320),
+      );
+
+      await settleUntil(() => client.requests.length == 1);
+      final request = client.requests.single as http.Request;
+      expect(
+        request.url.toString(),
+        'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
+      );
+      expect(request.headers['x-api-key'], 'doubao-key');
+      expect(request.headers['x-api-resource-id'], 'volc.bigasr.auc_turbo');
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect((body['audio'] as Map)['data'], base64Encode(audio));
+      expect((body['audio'] as Map)['language'], 'zh-CN');
+
+      // 详情出中文文稿。
+      final view = c.recordingView(RecordingReference(path: file.path));
+      expect(view.text, '你好，世界。');
+      expect(view.provider, SttProvider.doubao);
+      expect(view.error, isNull);
+    },
+  );
+
+  test(
+    'Doubao job reports in-flight progress to the recording detail',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('doubao-prog-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/407.wav');
+      await file.writeAsBytes([1, 2, 3]);
+      final doubao = _Doubao()
+        ..apiKeyOverride = 'doubao-key'
+        ..pending = Completer<void>();
+      final c = RecorderController(
+        loadPersistedState: false,
+        doubaoSpeech: doubao,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.doubao);
+      addTearDown(c.dispose);
+
+      final work = c.transcribeLocalFile(file.path);
+      await settleUntil(() => doubao.calls == 1);
+
+      // In flight: the detail shows processing with the live stage.
+      final view = c.recordingView(RecordingReference(path: file.path));
+      expect(view.processing, isTrue);
+      expect(view.progress?.stage, SttFileStage.uploading);
+
+      doubao.pending!.complete();
+      await work;
+      final done = c.recordingView(RecordingReference(path: file.path));
+      expect(done.processing, isFalse);
+      expect(done.text, '豆包文本');
+    },
+  );
+
+  test(
+    'Qwen and Doubao transcripts coexist across engine switches',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('mixed-eng-');
+      addTearDown(() => directory.delete(recursive: true));
+      final qwenFile = File('${directory.path}/501.wav');
+      await qwenFile.writeAsBytes([1, 2, 3]);
+      final doubaoFile = File('${directory.path}/502.wav');
+      await doubaoFile.writeAsBytes([1, 2, 3]);
+      final qwen = _Qwen()..apiKeyOverride = 'qwen-key';
+      final doubao = _Doubao()..apiKeyOverride = 'doubao-key';
+      final ble = _Ble();
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        qwenSpeech: qwen,
+        doubaoSpeech: doubao,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.qwen);
+      addTearDown(c.dispose);
+
+      Future<void> recordTake(int fileId, File file) async {
+        await c.startRecord();
+        c.handleRealtimeStateForTesting(
+          RealtimeStreamState(
+            active: true,
+            fileId: fileId,
+            path: file.path,
+            bytesReceived: 320,
+          ),
+        );
+        c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+        ble.stopRecording();
+        await Future<void>.delayed(Duration.zero);
+        c.handleRealtimeStateForTesting(
+          RealtimeStreamState(fileId: fileId, path: file.path, bytesReceived: 320),
+        );
+      }
+
+      // Take 1 on Qwen.
+      await recordTake(501, qwenFile);
+      await settleUntil(() => qwen.calls == 1);
+      // Take 2 on Doubao after switching the default engine.
+      c.setSpeechProvider(SttProvider.doubao);
+      await recordTake(502, doubaoFile);
+      await settleUntil(() => doubao.calls == 1);
+
+      // Switching the default engine again changes neither stored result.
+      c.setSpeechProvider(SttProvider.apple);
+      final first = c.recordingView(RecordingReference(path: qwenFile.path));
+      final second = c.recordingView(RecordingReference(path: doubaoFile.path));
+      expect(first.text, '通义文本');
+      expect(first.provider, SttProvider.qwen);
+      expect(second.text, '豆包文本');
+      expect(second.provider, SttProvider.doubao);
+      expect(qwen.calls, 1);
+      expect(doubao.calls, 1);
     },
   );
 
@@ -761,6 +1073,71 @@ class _Qwen extends QwenSttService {
       sourcePath: path,
       language: language ?? 'auto',
     );
+  }
+}
+
+class _Doubao extends DoubaoSttService {
+  Object? failure;
+  Completer<void>? pending;
+  int calls = 0;
+  String? seenKey;
+  String? seenModel;
+  String? seenBase;
+  String? seenLanguage;
+  final progressStages = <SttFileStage>[];
+
+  @override
+  Future<SttResult> transcribePath(
+    String path, {
+    String? apiKey,
+    String? baseUrl,
+    String? model,
+    String? language,
+    SttFileProgressCallback? onProgress,
+    bool Function()? isCurrent,
+  }) async {
+    calls++;
+    seenKey = apiKey;
+    seenBase = baseUrl;
+    seenModel = model;
+    seenLanguage = language;
+    onProgress?.call(const SttFileProgress(SttFileStage.preparing));
+    onProgress?.call(
+      const SttFileProgress(SttFileStage.uploading, uploadedBytes: 1),
+    );
+    if (pending != null) await pending!.future;
+    onProgress?.call(const SttFileProgress(SttFileStage.fetching));
+    if (failure != null) throw failure!;
+    return SttResult(
+      text: '豆包文本',
+      sourcePath: path,
+      language: language ?? 'auto',
+    );
+  }
+}
+
+class _ScriptedClient extends http.BaseClient {
+  final requests = <http.BaseRequest>[];
+  final _responses = <http.StreamedResponse>[];
+
+  void enqueue(int status, Object body, {Map<String, String>? headers}) {
+    final encoded = body is String ? body : jsonEncode(body);
+    _responses.add(
+      http.StreamedResponse(
+        Stream<List<int>>.value(utf8.encode(encoded)),
+        status,
+        headers: headers ?? const {},
+      ),
+    );
+  }
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    if (_responses.isEmpty) {
+      throw StateError('unexpected ${request.method} ${request.url}');
+    }
+    return _responses.removeAt(0);
   }
 }
 
