@@ -46,17 +46,24 @@ class InlinePlayer extends StatelessWidget {
             thumbColor: AppColors.accent,
             overlayColor: AppColors.accent.withValues(alpha: 0.12),
           ),
-          child: Slider(
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            value: progress,
-            onChanged: canSeek
-                ? (v) {
-                    final totalMs = c.duration.inMilliseconds > 0
-                        ? c.duration.inMilliseconds
-                        : 1;
-                    c.seekTo(Duration(milliseconds: (v * totalMs).round()));
-                  }
-                : null,
+          // Keep Slider's value-indicator portal in this subtree. Otherwise a
+          // pushed route can serialize an orphan node and freeze macOS AXTree.
+          // https://github.com/flutter/flutter/issues/190357
+          child: Overlay.wrap(
+            alwaysSizeToContent: true,
+            clipBehavior: Clip.none,
+            child: Slider(
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              value: progress,
+              onChanged: canSeek
+                  ? (v) {
+                      final totalMs = c.duration.inMilliseconds > 0
+                          ? c.duration.inMilliseconds
+                          : 1;
+                      c.seekTo(Duration(milliseconds: (v * totalMs).round()));
+                    }
+                  : null,
+            ),
           ),
         ),
         Row(
@@ -64,7 +71,7 @@ class InlinePlayer extends StatelessWidget {
             Text(
               loaded ? _fmt(c.position) : '00:00',
               style: const TextStyle(
-                fontSize: 11,
+                fontSize: 12,
                 color: AppColors.textSecondary,
                 fontFeatures: [FontFeature.tabularFigures()],
               ),
@@ -74,7 +81,7 @@ class InlinePlayer extends StatelessWidget {
               Text(
                 _fmt(c.duration),
                 style: const TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: AppColors.textSecondary,
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
@@ -101,9 +108,8 @@ class InlinePlayer extends StatelessWidget {
                 constraints: const BoxConstraints(minWidth: 72, minHeight: 48),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
-                  color: AppColors.bgElevated,
+                  color: AppColors.bgCardHover,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.border),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/scan_sheet.dart';
+import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
 
@@ -36,6 +37,34 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _ConnectionHeader(onScan: () => showScanDevicesSheet(context)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 12, 8),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '录音库',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                if (RecordingNavigation.of(context)?.wide ?? false)
+                  Consumer<RecorderController>(
+                    builder: (_, c, _) => IconButton(
+                      tooltip: '刷新录音库',
+                      onPressed:
+                          c.isLiveSession ||
+                              c.isExporting ||
+                              c.needsWifiJoin ||
+                              c.phase == AppPhase.busy ||
+                              c.downloadingFileId != null
+                          ? null
+                          : c.refreshFilesOnTabEnter,
+                      icon: const Icon(Icons.refresh_rounded),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           const Expanded(
             child: FilesBody(
               key: ValueKey('files'),
@@ -147,7 +176,7 @@ class _ConnectionHeader extends StatelessWidget {
                 minimumSize: const Size(48, 48),
                 padding: EdgeInsets.zero,
               ),
-              icon: const Icon(Icons.radar_rounded, size: 44),
+              icon: const Icon(Icons.radar_rounded, size: 24),
             ),
         ],
       ),

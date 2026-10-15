@@ -6,10 +6,10 @@ class MainFlutterWindow: NSWindow {
     let flutterViewController = FlutterViewController()
     self.contentViewController = flutterViewController
 
-    // Match the recorder's phone-like layout on first launch while keeping the
-    // native macOS window fully resizable.
+    // Open the recording workspace with room for the library and reader.
+    // Narrow windows retain the compact navigation layout.
     self.contentMinSize = NSSize(width: 520, height: 720)
-    self.setContentSize(NSSize(width: 625, height: 1000))
+    self.setContentSize(NSSize(width: 1240, height: 820))
     self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)

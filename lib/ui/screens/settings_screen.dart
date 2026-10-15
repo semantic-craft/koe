@@ -23,6 +23,13 @@ class SettingsScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 16, bottom: 24),
+              child: Text(
+                '处理与偏好',
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600),
+              ),
+            ),
             const SectionLabel('传输'),
             _SettingsGroup(
               key: const ValueKey('settings-transfer-group'),
