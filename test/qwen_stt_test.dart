@@ -8,10 +8,63 @@ import 'package:anker_recorder/ui/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'recovered task polls its saved ID without uploading or submitting',
+    () async {
+      final requests = <String>[];
+      final service =
+          QwenSttService(
+              client: MockClient((request) async {
+                requests.add('${request.method} ${request.url.path}');
+                if (request.url.path == '/api/v1/tasks/saved-task') {
+                  return http.Response(
+                    jsonEncode({
+                      'output': {
+                        'task_status': 'SUCCEEDED',
+                        'results': [
+                          {
+                            'subtask_status': 'SUCCEEDED',
+                            'transcription_url':
+                                'https://result.example/result.json',
+                          },
+                        ],
+                      },
+                    }),
+                    200,
+                  );
+                }
+                if (request.url.path == '/result.json') {
+                  return http.Response(
+                    jsonEncode({
+                      'transcripts': [
+                        {'text': 'Recovered text'},
+                      ],
+                    }),
+                    200,
+                  );
+                }
+                throw StateError('Unexpected request');
+              }),
+            )
+            ..recovery = QwenTaskRecovery(
+              taskId: 'saved-task',
+              onSubmitted: (_) async => fail('must not submit'),
+            );
+      addTearDown(service.dispose);
+      final result = await service.transcribePath(
+        '/not-needed-for-poll.wav',
+        apiKey: 'test-key',
+      );
+      expect(result.text, 'Recovered text');
+      expect(requests, ['GET /api/v1/tasks/saved-task', 'GET /result.json']);
+    },
+  );
 
   test('default file body is Qwen-Audio 3.1 with file_urls', () {
     final body = qwenTranscriptionBody(
@@ -175,10 +228,19 @@ void main() {
         ],
       });
 
-      final service = QwenSttService(
-        client: client,
-        pollInterval: Duration.zero,
-      );
+      var checkpointed = false;
+      client.beforeSend = (request) {
+        if (request.url.path.contains('/tasks/')) expect(checkpointed, isTrue);
+      };
+      final service =
+          QwenSttService(client: client, pollInterval: Duration.zero)
+            ..recovery = QwenTaskRecovery(
+              onSubmitted: (id) async {
+                expect(id, 'task-1');
+                await Future<void>.delayed(Duration.zero);
+                checkpointed = true;
+              },
+            );
       addTearDown(service.dispose);
       final result = await service.transcribePath(
         file.path,
@@ -311,6 +373,7 @@ void main() {
 }
 
 class _ScriptedClient extends http.BaseClient {
+  void Function(http.BaseRequest)? beforeSend;
   final requests = <http.BaseRequest>[];
   final _responses = <http.StreamedResponse>[];
 
@@ -326,6 +389,7 @@ class _ScriptedClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    beforeSend?.call(request);
     requests.add(request);
     if (_responses.isEmpty) {
       throw StateError('unexpected ${request.method} ${request.url}');

@@ -40,6 +40,7 @@ import 'recording.dart';
 import 'moss_jobs.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
+import 'file_job_journal.dart';
 
 export 'recording.dart';
 export '../ai/speech_provider.dart';
@@ -65,6 +66,7 @@ class RecorderController extends ChangeNotifier {
     QwenSttService? qwenSpeech,
     DoubaoSttService? doubaoSpeech,
     MossJobStore? mossJobStore,
+    FileJobJournal? fileJobJournal,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
   }) : _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
@@ -201,7 +203,11 @@ class RecorderController extends ChangeNotifier {
       service: _mossStt,
       store: mossJobStore ?? MossJobStore(inMemory: !loadPersistedState),
       apiKey: () => _mossStt.apiKey,
-      canStart: () => !_disposed && _fileJobKey == null && !_liveProcessing,
+      canStart: () =>
+          !_disposed &&
+          _fileJobKey == null &&
+          !_fileJobPreparing &&
+          !_liveProcessing,
       onChanged: notifyListeners,
       onResult: (job, result) async {
         await _transcriptsLoaded;
@@ -226,17 +232,22 @@ class RecorderController extends ChangeNotifier {
     );
     // The single deferred file-job mechanism. Moss accepts jobs into its
     // journal (stage persistence and duplicate-billing protection stay
-    // adapter-internal); Qwen and Doubao share the in-memory queue pumped
-    // through the shared file-transcription executor.
+    // adapter-internal); other file engines persist in FileJobJournal, with
+    // this queue providing single-flight scheduling for the shared executor.
+    _fileJobs = fileJobJournal ?? FileJobJournal(inMemory: !loadPersistedState);
     _deferredJobs = DeferredFileJobs<SpeechConfiguration>(
       canStart: () =>
           !_disposed &&
           _fileJobKey == null &&
+          !_fileJobPreparing &&
           !_liveProcessing &&
           !_mossJobs.busy,
       engine: (config) => config.provider,
       accept: (recordingKey, path, config) async {
-        if (config.provider != SttProvider.moss) return false;
+        if (config.provider != SttProvider.moss) {
+          final job = await _fileJobs.enqueue(recordingKey, path, config);
+          return !job.recoverable;
+        }
         await _mossJobs.enqueue(
           recordingKey,
           path,
@@ -261,12 +272,65 @@ class RecorderController extends ChangeNotifier {
         ]).then((_) => _mossJobs.load()),
       );
     }
+    _fileJobsLoaded = _restoreFileJobs();
     if (loadPersistedState || persistedDeviceLoader != null) {
       _persistedDeviceLoaded = _loadPersistedDevice();
       unawaited(_persistedDeviceLoaded);
     } else {
       _persistedDeviceLoaded = Future<void>.value();
     }
+  }
+
+  bool _fileJobPreparing = false;
+  late final FileJobJournal _fileJobs;
+  late final Future<void> _fileJobsLoaded;
+  String? fileJobRecoveryError;
+
+  Future<void> _restoreFileJobs() async {
+    try {
+      await Future.wait([_settingsLoaded, _transcriptsLoaded]);
+      await _fileJobs.load();
+      for (final job in _fileJobs.jobs.values.toList()) {
+        if (_disposed) return;
+        if (job.recoverable) {
+          await _deferredJobs.enqueue(
+            job.key,
+            job.path,
+            job.resolve(_settingsConfiguration),
+          );
+        }
+      }
+    } catch (_) {
+      fileJobRecoveryError = '无法读取转写任务记录；请保留数据并检查存储空间';
+    }
+    notifyListeners();
+  }
+
+  /// Only called after a device transfer has produced a playable local file.
+  /// Startup scans and renames deliberately do not schedule paid work.
+  Future<void> processRetrievedRecording(String path) async {
+    await Future.wait([_settingsLoaded, _transcriptsLoaded, _fileJobsLoaded]);
+    if (_disposed || !autoTranscribe || !path.toLowerCase().endsWith('.wav')) {
+      return;
+    }
+    final key = _recordingKey(path: path);
+    if ((transcriptForPath(path) ?? '').trim().isNotEmpty ||
+        _fileJobs.jobs.containsKey(key) ||
+        _mossJobs.forRecording(key) != null) {
+      return;
+    }
+    final config = _settingsConfiguration;
+    if (!_isConfigured(config)) {
+      _recordingErrors[key] = '录音已保存，请先配置语音服务后重试转写';
+      notifyListeners();
+      return;
+    }
+    try {
+      await _deferredJobs.enqueue(key, path, config);
+    } catch (_) {
+      _recordingErrors[key] = '录音已保存，但无法保存转写任务，请重试';
+    }
+    notifyListeners();
   }
 
   String? get mossApiKeyStored => _mossStt.apiKeyOverride;
@@ -636,11 +700,15 @@ class RecorderController extends ChangeNotifier {
           _isRecordingAudioLocked(id, path),
       processing:
           _fileJobKey == key ||
+          (_fileJobs.jobs[key]?.stage == 'queued' &&
+              _fileJobs.jobs[key]?.error == null &&
+              _recordingErrors[key] == null) ||
           session?.finalizing == true ||
           (_mossJobs.forRecording(key)?.pending ?? false) ||
           _mossJobs.active?.recordingKey == key,
       error:
           _recordingErrors[key] ??
+          _fileJobs.jobs[key]?.error ??
           _mossJobs.forRecording(key)?.error ??
           session?.error,
       progress: _fileJobKey == key
@@ -674,7 +742,10 @@ class RecorderController extends ChangeNotifier {
   }
 
   bool get fileProcessingBusy =>
-      _fileJobKey != null || _mossJobs.busy || _liveProcessing;
+      _fileJobKey != null ||
+      _fileJobPreparing ||
+      _mossJobs.busy ||
+      _liveProcessing;
 
   void _bindCurrentRecording({int? fileId, String? path}) {
     final session = _currentRecording;
@@ -1938,6 +2009,7 @@ class RecorderController extends ChangeNotifier {
         settings.provider == SttProvider.apple && sourceLanguage != null
         ? settings.withSourceLanguage(sourceLanguage.trim())
         : settings;
+    await _fileJobsLoaded;
     // Manual retry runs straight through the deferred mechanism's executor so
     // the engine answers a busy start with its own readable error.
     await _deferredJobs.runNow(
@@ -1964,12 +2036,21 @@ class RecorderController extends ChangeNotifier {
       }
       return !fromQueue;
     }
-    if (config.provider == SttProvider.apple
-        ? config.sourceLanguage.isEmpty
-        : !_isConfigured(config)) {
+    if (_fileJobs.jobs[key]?.stage != 'result' &&
+        (config.provider == SttProvider.apple
+            ? config.sourceLanguage.isEmpty
+            : !_isConfigured(config))) {
       _recordingErrors[key] = config.provider == SttProvider.apple
           ? '请选择录音语言'
           : '请在设置中配置 ${config.provider.label}';
+      final pending = _fileJobs.jobs[key];
+      if (pending != null) {
+        pending.error = _recordingErrors[key];
+        if (pending.taskId == null) pending.stage = 'failed';
+        try {
+          await _fileJobs.save();
+        } catch (_) {}
+      }
       notifyListeners();
       return true;
     }
@@ -1988,6 +2069,33 @@ class RecorderController extends ChangeNotifier {
       notifyListeners();
       return true;
     }
+    _fileJobPreparing = true;
+    FileJob job;
+    try {
+      job = await _fileJobs.enqueue(key, path, config, retry: !fromQueue);
+      if (fromQueue && !job.recoverable) {
+        _fileJobPreparing = false;
+        return true;
+      }
+      config = job.resolve(config);
+      if (job.stage != 'result' &&
+          config.provider != SttProvider.apple &&
+          !_isConfigured(config)) {
+        _fileJobPreparing = false;
+        job.error = '任务使用的服务地址已变更，请恢复原配置后重试';
+        _recordingErrors[key] = job.error!;
+        await _fileJobs.save();
+        notifyListeners();
+        return true;
+      }
+    } catch (_) {
+      _fileJobPreparing = false;
+      _recordingErrors[key] = '无法保存转写任务，请检查存储空间后重试';
+      notifyListeners();
+      return true;
+    }
+    _fileJobPreparing = false;
+    if (_disposed) return true;
     final revision = ++_fileJobRevision;
     _fileJobKey = key;
     _fileJobProvider = config.provider;
@@ -1997,7 +2105,24 @@ class RecorderController extends ChangeNotifier {
     _recordingErrors.remove(key);
     notifyListeners();
     try {
-      if (config.provider == SttProvider.apple) {
+      if (fromQueue && !await File(path).exists()) {
+        throw StateError('录音文件不存在');
+      }
+      if (job.stage != 'result') {
+        job.stage = 'running';
+        job.error = null;
+        await _fileJobs.save();
+      }
+      if (config.provider == SttProvider.qwen) {
+        _qwenStt.recovery = QwenTaskRecovery(
+          taskId: job.taskId,
+          onSubmitted: (id) async {
+            job.taskId = id;
+            await _fileJobs.save();
+          },
+        );
+      }
+      if (config.provider == SttProvider.apple && job.stage != 'result') {
         final capabilities = await _appleSpeech.capabilities(
           sourceLanguage: config.sourceLanguage,
         );
@@ -2018,30 +2143,46 @@ class RecorderController extends ChangeNotifier {
           if (_disposed || revision != _fileJobRevision) return true;
         }
       }
-      final result = await _transcribePath(
-        path,
-        configuration: config,
-        isCurrent: () => !_disposed && revision == _fileJobRevision,
-        onProgress: (progress) {
-          if (_disposed || revision != _fileJobRevision) return;
-          fileTranscriptionProgress = progress;
-          notifyListeners();
-        },
-      );
+      final result = job.stage == 'result'
+          ? SttResult(text: job.text!, sourcePath: path, language: job.language)
+          : await _transcribePath(
+              path,
+              configuration: config,
+              isCurrent: () => !_disposed && revision == _fileJobRevision,
+              onProgress: (progress) {
+                if (_disposed || revision != _fileJobRevision) return;
+                fileTranscriptionProgress = progress;
+                notifyListeners();
+              },
+            );
       if (_disposed || revision != _fileJobRevision) return true;
       if (result.text.trim().isEmpty) {
         _recordingErrors[key] = '未识别到语音，可重试';
+        job.stage = 'failed';
+        job.error = _recordingErrors[key];
+        await _fileJobs.save();
       } else {
+        job.stage = 'result';
+        job.text = result.text;
+        job.language = result.language;
+        await _fileJobs.save();
         final currentPath =
             recordingView(RecordingReference(path: path)).path ?? path;
-        rememberTranscript(
-          currentPath,
-          result.text,
-          provider: config.provider,
-          sourceLanguage: config.provider == SttProvider.apple
-              ? config.sourceLanguage
-              : result.language ?? config.sourceLanguage,
-        );
+        if (transcriptForPath(currentPath) != result.text ||
+            _transcriptMetadata[key]?.provider != config.provider) {
+          rememberTranscript(
+            currentPath,
+            result.text,
+            provider: config.provider,
+            sourceLanguage: config.provider == SttProvider.apple
+                ? config.sourceLanguage
+                : result.language ?? config.sourceLanguage,
+          );
+        }
+        await _persistTranscripts(strict: !_fileJobs.inMemory);
+        job.stage = 'complete';
+        job.error = null;
+        await _fileJobs.save();
         statusMessage = '转写已保存';
         // Refresh a closed live route without retaining an obsolete error.
         final session = _sessionForReference(
@@ -2055,8 +2196,23 @@ class RecorderController extends ChangeNotifier {
             error is PlatformException && error.code == 'resources_missing'
             ? '请下载所选录音语言后重试'
             : _speechErrorMessage(error);
+        job.error = _recordingErrors[key];
+        if (job.text != null && job.stage == 'complete') job.stage = 'result';
+        if (error is QwenTaskFailedException) {
+          job.taskId = null;
+          job.stage = 'failed';
+        }
+        // Known task IDs and saved results remain resumable; uncertain requests
+        // require an explicit retry and never automatically resubmit.
+        if (job.stage != 'result' && job.taskId == null) job.stage = 'failed';
+        try {
+          await _fileJobs.save();
+        } catch (_) {
+          _recordingErrors[key] = '无法保存任务状态；请检查存储空间后重试';
+        }
       }
     } finally {
+      _qwenStt.recovery = null;
       if (!_disposed && revision == _fileJobRevision) {
         _fileJobKey = null;
         _fileJobProvider = null;
@@ -2392,8 +2548,7 @@ class RecorderController extends ChangeNotifier {
       isReady: () => _sonioxStt.isConfigured,
       snapshot: () => EngineConfig(apiKey: _sonioxStt.apiKey),
       grouped: false,
-      normalizeBaseUrl: (raw) =>
-          throw StateError('Soniox saves no base URL'),
+      normalizeBaseUrl: (raw) => throw StateError('Soniox saves no base URL'),
       transcribe: (path, engine, {language, onProgress, isCurrent}) =>
           _sonioxStt.transcribePath(
             path,
@@ -3507,6 +3662,7 @@ class RecorderController extends ChangeNotifier {
           );
           final path = await _convertExportToWav(rawPath, register: false);
           _registerExportedPaths([path]);
+          await processRetrievedRecording(path);
           completeIds.add(file.fileId);
           exported++;
           if (!_shouldYieldAutoTransfer) statusMessage = progressMessage();
@@ -3612,6 +3768,7 @@ class RecorderController extends ChangeNotifier {
       );
       final path = await _convertExportToWav(rawPath, register: false);
       _registerExportedPaths([path]);
+      await processRetrievedRecording(path);
       statusMessage = '已下载 ${file.title}';
     } on BleFilePullCancelled {
       statusMessage = '已取消下载';
@@ -3824,6 +3981,8 @@ class RecorderController extends ChangeNotifier {
         }
         final key = _recordingKey(path: path);
         await _mossJobs.discard(key);
+        await _fileJobs.discard(key);
+        _deferredJobs.discard(key);
         _transcriptMetadata.remove(key);
         _recordingTranslations.remove(key);
         _recordingErrors.remove(key);
@@ -3880,7 +4039,15 @@ class RecorderController extends ChangeNotifier {
       await stopPlayback();
     }
 
+    if (_fileJobs.jobs[_recordingKey(path: path)]?.recoverable == true) {
+      throw StateError('转写完成后再重命名');
+    }
     await source.rename(targetPath);
+    await _fileJobs.rename(
+      _recordingKey(path: path),
+      _recordingKey(path: targetPath),
+      targetPath,
+    );
     await _mossJobs.rename(
       _recordingKey(path: path),
       _recordingKey(path: targetPath),
@@ -4179,6 +4346,11 @@ class RecorderController extends ChangeNotifier {
         );
       }
       _registerExportedPaths(paths);
+      if (encryptReady) {
+        for (final path in paths) {
+          await processRetrievedRecording(path);
+        }
+      }
       _pendingExportTargets = [];
       phase = connected ? AppPhase.ready : AppPhase.idle;
       statusMessage = paths.isEmpty
@@ -4720,4 +4892,3 @@ class _EngineAdapter {
   })
   transcribe;
 }
-

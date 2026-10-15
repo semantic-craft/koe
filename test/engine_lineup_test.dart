@@ -15,6 +15,48 @@ void main() {
     child: const MaterialApp(home: SettingsScreen()),
   );
 
+  testWidgets(
+    'first setup saves then selects; switching engines rebuilds the correct form',
+    (tester) async {
+      final c = RecorderController(loadPersistedState: false);
+      addTearDown(c.dispose);
+      await tester.pumpWidget(wrap(c));
+      for (final name in ['qwen', 'doubao']) {
+        final card = find.byKey(ValueKey('speech-provider-option-$name'));
+        await tester.ensureVisible(card);
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await tester.enterText(
+          find.byKey(ValueKey('apikey-$name')),
+          '$name-key',
+        );
+        await tester.enterText(
+          find.byKey(ValueKey('$name-model')),
+          '$name-model',
+        );
+        final save = find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('保存'),
+        );
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await tester.pump();
+        expect(c.speechProvider.name, name == 'qwen' ? 'soniox' : 'qwen');
+        await tester.tap(find.text('完成'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(card);
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        expect(c.speechProvider.name, name);
+        final field = tester.widget<TextField>(
+          find.byKey(ValueKey('$name-model')),
+        );
+        expect(field.controller!.text, '$name-model');
+      }
+    },
+  );
+
   test('setQwenConfig saves the credential trio as one group', () {
     final controller = RecorderController(loadPersistedState: false);
     addTearDown(controller.dispose);
@@ -127,9 +169,7 @@ void main() {
     expect(controller.engineConfig(SttProvider.qwen), const EngineConfig());
   });
 
-  testWidgets('engine lineup renders every provider from data', (
-    tester,
-  ) async {
+  testWidgets('engine lineup renders every provider from data', (tester) async {
     final controller = RecorderController(loadPersistedState: false);
     addTearDown(controller.dispose);
     await tester.pumpWidget(wrap(controller));
@@ -144,22 +184,23 @@ void main() {
     }
   });
 
-  testWidgets('unconfigured cloud engine is visible but not selectable', (
-    tester,
-  ) async {
-    final controller = RecorderController(loadPersistedState: false);
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(wrap(controller));
+  testWidgets(
+    'unconfigured Qwen opens configuration without changing active provider',
+    (tester) async {
+      final controller = RecorderController(loadPersistedState: false);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(wrap(controller));
 
-    expect(controller.engineConfigured(SttProvider.qwen), isFalse);
-    await tester.tap(
-      find.byKey(const ValueKey('speech-provider-option-qwen')),
-    );
-    await tester.pump();
+      expect(controller.engineConfigured(SttProvider.qwen), isFalse);
+      await tester.tap(
+        find.byKey(const ValueKey('speech-provider-option-qwen')),
+      );
+      await tester.pump();
 
-    expect(controller.speechProvider, SttProvider.soniox);
-    expect(find.text('请先配置 通义 Qwen 的访问密钥'), findsOneWidget);
-  });
+      expect(controller.speechProvider, SttProvider.soniox);
+      expect(find.byKey(const ValueKey('qwen-model')), findsOneWidget);
+    },
+  );
 
   testWidgets('tapping a configured engine card selects it', (tester) async {
     final controller = RecorderController(loadPersistedState: false)
@@ -167,9 +208,7 @@ void main() {
     addTearDown(controller.dispose);
     await tester.pumpWidget(wrap(controller));
 
-    await tester.tap(
-      find.byKey(const ValueKey('speech-provider-option-qwen')),
-    );
+    await tester.tap(find.byKey(const ValueKey('speech-provider-option-qwen')));
     await tester.pump();
 
     expect(controller.speechProvider, SttProvider.qwen);
@@ -242,29 +281,30 @@ void main() {
     expect(controller.engineConfig(SttProvider.qwen).apiKey, 'old-key');
   });
 
-  testWidgets('unconfigured Doubao card is visible but not selectable', (
-    tester,
-  ) async {
-    final controller = RecorderController(loadPersistedState: false);
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(wrap(controller));
+  testWidgets(
+    'unconfigured Doubao opens configuration without changing active provider',
+    (tester) async {
+      final controller = RecorderController(loadPersistedState: false);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(wrap(controller));
 
-    expect(controller.engineConfigured(SttProvider.doubao), isFalse);
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('speech-provider-option-doubao')),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
-    await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('speech-provider-option-doubao')),
-    );
-    await tester.pump();
+      expect(controller.engineConfigured(SttProvider.doubao), isFalse);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('speech-provider-option-doubao')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('speech-provider-option-doubao')),
+      );
+      await tester.pump();
 
-    expect(controller.speechProvider, SttProvider.soniox);
-    expect(find.text('请先配置 豆包 的访问密钥'), findsOneWidget);
-  });
+      expect(controller.speechProvider, SttProvider.soniox);
+      expect(find.byKey(const ValueKey('doubao-model')), findsOneWidget);
+    },
+  );
 
   testWidgets('a configured Doubao card selects it', (tester) async {
     final controller = RecorderController(loadPersistedState: false)

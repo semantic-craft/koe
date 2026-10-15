@@ -76,6 +76,7 @@ class SettingsScreen extends StatelessWidget {
                     _MossKeyField(controller: c)
                   else if (c.speechProvider.usesEngineTrio) ...[
                     _CloudEngineSettings(
+                      key: ValueKey(c.speechProvider),
                       controller: c,
                       provider: c.speechProvider,
                     ),
@@ -98,6 +99,8 @@ class SettingsScreen extends StatelessWidget {
                     _SttModeSelector(controller: c),
                   ],
                   if (c.mossRecoveryError != null) Text(c.mossRecoveryError!),
+                  if (c.fileJobRecoveryError != null)
+                    Text(c.fileJobRecoveryError!),
                   if (c.sttMode == SttDisplayMode.translation &&
                       c.speechProvider == SttProvider.soniox) ...[
                     const SizedBox(height: 14),
@@ -151,11 +154,9 @@ class _ProviderSelector extends StatelessWidget {
 
   ({IconData icon, String description, String statusLabel, Color statusColor})
   _metaFor(SttProvider provider, KoeTokens tokens) {
-    final meta = _metadata[provider] ??
-        (
-          icon: Icons.mic_none_rounded,
-          description: '${provider.label} 语音识别引擎',
-        );
+    final meta =
+        _metadata[provider] ??
+        (icon: Icons.mic_none_rounded, description: '${provider.label} 语音识别引擎');
     final selected = controller.speechProvider == provider;
     if (provider == SttProvider.apple) {
       final caps = controller.appleCapabilities;
@@ -181,7 +182,9 @@ class _ProviderSelector extends StatelessWidget {
       icon: meta.icon,
       description: meta.description,
       statusLabel: !configured ? '需密钥' : (selected ? '使用中' : '已配置'),
-      statusColor: !configured ? tokens.amber : (selected ? tokens.accent : tokens.mint),
+      statusColor: !configured
+          ? tokens.amber
+          : (selected ? tokens.accent : tokens.mint),
     );
   }
 
@@ -221,7 +224,8 @@ class _ProviderSelector extends StatelessWidget {
             provider: SttProvider.values[i],
             selected: controller.speechProvider == SttProvider.values[i],
             meta: _metaFor(SttProvider.values[i], tokens),
-            enabled: SttProvider.values[i] == SttProvider.apple ||
+            enabled:
+                SttProvider.values[i] == SttProvider.apple ||
                 controller.engineConfigured(SttProvider.values[i]),
             onTap: () => _tap(context, SttProvider.values[i]),
           ),
@@ -231,12 +235,39 @@ class _ProviderSelector extends StatelessWidget {
   }
 
   void _tap(BuildContext context, SttProvider provider) {
-    if (provider == SttProvider.apple || controller.engineConfigured(provider)) {
+    if (provider == SttProvider.apple ||
+        controller.engineConfigured(provider)) {
       controller.setSpeechProvider(provider);
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('请先配置 ${provider.label} 的访问密钥')),
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('配置 ${provider.label}'),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: provider.usesEngineTrio
+                ? _CloudEngineSettings(
+                    controller: controller,
+                    provider: provider,
+                  )
+                : provider == SttProvider.moss
+                ? _MossKeyField(controller: controller)
+                : _ApiKeyField(
+                    label: 'Soniox API Key',
+                    initialValue: controller.sonioxApiKeyStored ?? '',
+                    onSave: controller.setSonioxApiKey,
+                  ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('完成'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -323,7 +354,9 @@ class _EngineOptionCard extends StatelessWidget {
                             ),
                             decoration: BoxDecoration(
                               color: meta.statusColor.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(AppRadii.pill),
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.pill,
+                              ),
                               border: Border.all(
                                 color: meta.statusColor.withValues(alpha: 0.28),
                               ),
@@ -1144,7 +1177,11 @@ class _MossKeyFieldState extends State<_MossKeyField> {
 /// Widget keys (`apikey-qwen`, `qwen-base-url`, …) derive from the
 /// provider name and stay stable per engine.
 class _CloudEngineSettings extends StatefulWidget {
-  const _CloudEngineSettings({required this.controller, required this.provider});
+  const _CloudEngineSettings({
+    super.key,
+    required this.controller,
+    required this.provider,
+  });
 
   final RecorderController controller;
   final SttProvider provider;
