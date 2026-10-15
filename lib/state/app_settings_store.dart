@@ -63,6 +63,9 @@ class AppSettings {
     this.appleSourceLanguage = '',
     this.sonioxApiKey,
     this.mossApiKey,
+    this.qwenApiKey,
+    this.qwenBaseUrl,
+    this.qwenModel,
     this.autoTranscribe = true,
     this.autoRealtime = true,
     this.transcriptLanguage = 'auto',
@@ -74,6 +77,9 @@ class AppSettings {
 
   final String? sonioxApiKey;
   final String? mossApiKey;
+  final String? qwenApiKey;
+  final String? qwenBaseUrl;
+  final String? qwenModel;
 
   /// Null means an existing install has not selected a provider yet.
   final SttProvider? speechProvider;
@@ -91,6 +97,9 @@ class AppSettings {
     String? appleSourceLanguage,
     String? sonioxApiKey,
     String? mossApiKey,
+    String? qwenApiKey,
+    String? qwenBaseUrl,
+    String? qwenModel,
     bool? autoTranscribe,
     bool? autoRealtime,
     String? transcriptLanguage,
@@ -100,12 +109,20 @@ class AppSettings {
     String? guestLanguage,
     bool clearSoniox = false,
     bool clearMoss = false,
+    bool clearQwenKey = false,
+    bool clearQwenBaseUrl = false,
+    bool clearQwenModel = false,
   }) {
     return AppSettings(
       speechProvider: speechProvider ?? this.speechProvider,
       appleSourceLanguage: appleSourceLanguage ?? this.appleSourceLanguage,
       mossApiKey: clearMoss ? null : (mossApiKey ?? this.mossApiKey),
       sonioxApiKey: clearSoniox ? null : (sonioxApiKey ?? this.sonioxApiKey),
+      qwenApiKey: clearQwenKey ? null : (qwenApiKey ?? this.qwenApiKey),
+      qwenBaseUrl: clearQwenBaseUrl
+          ? null
+          : (qwenBaseUrl ?? this.qwenBaseUrl),
+      qwenModel: clearQwenModel ? null : (qwenModel ?? this.qwenModel),
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
       transcriptLanguage: transcriptLanguage ?? this.transcriptLanguage,
@@ -123,6 +140,10 @@ class AppSettings {
     if (sonioxApiKey != null && sonioxApiKey!.isNotEmpty)
       'sonioxApiKey': sonioxApiKey,
     if (mossApiKey != null && mossApiKey!.isNotEmpty) 'mossApiKey': mossApiKey,
+    if (qwenApiKey != null && qwenApiKey!.isNotEmpty) 'qwenApiKey': qwenApiKey,
+    if (qwenBaseUrl != null && qwenBaseUrl!.isNotEmpty)
+      'qwenBaseUrl': qwenBaseUrl,
+    if (qwenModel != null && qwenModel!.isNotEmpty) 'qwenModel': qwenModel,
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
     'transcriptLanguage': transcriptLanguage,
