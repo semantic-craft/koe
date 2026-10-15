@@ -105,7 +105,7 @@ class DoubaoSttService extends CloudFileSttService {
       throw const DoubaoSttException('音频太短或无效，无法转写');
     }
     if (length > maxDirectUploadBytes) {
-      throw const DoubaoSttException('音频超过 20 MB，无法直传豆包极速版；请压缩音频或改用标准版');
+      throw const DoubaoSttException('音频超过 20 MB，无法直传豆包极速版；请压缩音频，或在配置千问后手动选择千问转写');
     }
 
     final bytes = await file.readAsBytes();

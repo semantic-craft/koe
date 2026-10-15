@@ -51,7 +51,9 @@ Mac 当前使用开发启动脚本注入运行时凭据；这不等同于密钥�
 
 最终 `flutter test --concurrency=1` 全量 238 项通过，`flutter analyze --no-pub` 无问题。并行编译期间的一次普通全量运行曾有 BLE 活跃传输超时测试失败（StreamSink 已关闭）；该测试单独复跑及随后全量串行运行均通过，保留这一时序波动记录。新增本地 WebSocket 协议测试覆盖握手、开始前不发音频、二遍缩短修订、分块和尾包、最终完成、异常断开。迁移测试覆盖停用旧提供商、清除旧凭据读写和保留已有结果。队列恢复、重复通知、暂停和文件处理继续由现有回归覆盖。
 
-## 标准版上传调查
+## 标准版上传调查（历史记录，已取消接入）
+
+2026-10-15 用户决定不使用豆包标准版，停止标准版上传接入调查。豆包保留极速版文件转写与实时二遍识别；长录音继续围绕千问和豆包极速版的实际能力验证。以下保留历史实测依据，不作为待办。
 
 [火山标准版文档](https://docs.volcengine.com/docs/DoubaoVoice/LargemodelrecordingfilerecognitionstandardversionAPI?lang=zh) 要求 `audio.url`，采用异步提交和查询；不能把极速版的 `audio.data` 原样搬过去。[极速版文档](https://docs.volcengine.com/docs/DoubaoVoice/LargemodelrecordingfileLiterecognitionAPI?lang=zh) 支持直接传 Base64，因而本轮先完成极速版。
 

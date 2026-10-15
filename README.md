@@ -91,7 +91,7 @@ flutter test
 
 - **Apple 设备端处理**（iOS 26+，取决于设备和语言）：D3200 实时音频与已保存录音可在 iPhone 上转写；支持实时单向翻译及已有转写文本的翻译。实时录音语言在设置中选择；已有录音可在转写或重新转写时选择语言，并按提示下载资源。Apple 处理失败不会自动切换到云端。云端 ASR 当前不提供翻译或双向交流。
 - **配置**：豆包只填写 API Key；千问填写 API Key 和可选 Workspace ID。程序自动选择服务地址与模型，首次保存后自动启用并关闭配置窗口。
-- **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，App 当前限制直传 20 MB。标准版仍需解决可下载链接的接入，不能只替换模型名。
+- **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，App 当前限制直传 20 MB。按当前产品决定，不接入豆包标准版；超过豆包当前直传限制时提示压缩音频或手动选择已配置的千问，不自动切换供应商。
 - **实时转写**：BLE Opus → PCM16 → 服务商 WebSocket。千问使用 `qwen-audio-3.1-asr-flash-streaming`；豆包使用 `volc.seedasr.sauc.duration`，优化双向流式接口开启 `enable_nonstream` 二遍识别。成功的实时结果不再自动重复提交文件；实时未完成时由同一服务的文件任务补齐。
 - **配置与验收**：在设置中保存服务商 Key。Helios 开发可参考 `.envrc.example`，通过 `direnv exec . python3 scripts/run-with-secrets.py macos` 给已安装 Mac App 注入凭据；凭据不会编入产物。iPhone 普通使用仍通过设置保存 Key。真实样本、接口限制与双端验收见 [语音服务替换验证](docs/speech-provider-validation.md)。
 - **Wi‑Fi SoftAP 批量导出 + 解密**：BLE 连接后先做 ECDH 握手（`0x2E/0x01`）生成会话密钥；导出时打开设备 SoftAP → 加入 → WebSocket 拉取，每 160 字节分片用 `1A07` 头（`soundcored3200` magic）中的单文件密钥做 AES‑CTR 解密。导出文件保存在 `Documents/AnkerRecorder/exports` 下，命名为 `{fileId}.opus`（握手失败则为 `.opus.bin`）。本地**播放**使用 `just_audio` 播放已导出文件。
