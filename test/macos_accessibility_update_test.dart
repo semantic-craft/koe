@@ -73,12 +73,22 @@ class _AXUpdate implements ui.SemanticsUpdateBuilder {
 
 void main() {
   final binding = _AXUpdateBinding();
-  testWidgets('recording route serializes no orphan accessibility nodes', (
-    tester,
-  ) async {
+
+  // The warm shell switches tiers at 1100 logical px (lib/ui/shell.dart):
+  // at or above that width the desktop sidebar sits beside the reader;
+  // below it the pages stack over a bottom navigation bar and detail pushes
+  // as a full route with its own back button. Both tiers must serialize
+  // only nodes the native root can reach.
+  Future<void> exerciseShell(
+    WidgetTester tester, {
+    required Size window,
+    required bool wide,
+  }) async {
     final semantics = tester.ensureSemantics();
     final controller = PreviewController();
-    tester.view.physicalSize = const Size(1280, 900);
+    binding.nodes.clear();
+    binding.orphans.clear();
+    tester.view.physicalSize = window;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -92,14 +102,34 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    // Tier sanity: the shell must actually have switched layout, not just
+    // resized by a few pixels.
+    expect(
+      find.byKey(ValueKey(wide ? 'desktop-navigation' : 'bottom-navigation-bar')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(ValueKey(wide ? 'bottom-navigation-bar' : 'desktop-navigation')),
+      findsNothing,
+    );
+    Future<void> transitionFrames() async {
+      // Inspect each transition frame: the settled tree alone stays clean
+      // even when the native bridge has already rejected an earlier update.
+      for (var frame = 0; frame < 30; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    }
+
     for (final id in [100, 101, 102]) {
       await tester.tap(
         find.byKey(ValueKey('recording-row-/tmp/ui-preview-$id.wav')),
       );
-      // Inspect each transition frame: the settled tree alone is clean even
-      // when the native bridge has already rejected an earlier update.
-      for (var frame = 0; frame < 30; frame++) {
-        await tester.pump(const Duration(milliseconds: 16));
+      await transitionFrames();
+      // Narrow tier: the detail route covers the rows, so walk back to the
+      // library before opening the next recording.
+      if (!wide) {
+        await tester.pageBack();
+        await transitionFrames();
       }
     }
     for (final tab in ['settings', 'device', 'home']) {
@@ -115,5 +145,17 @@ void main() {
       isEmpty,
       reason: 'Every serialized node must be reachable in the native AXTree.',
     );
+  }
+
+  testWidgets('wide window serializes no orphan accessibility nodes', (
+    tester,
+  ) async {
+    await exerciseShell(tester, window: const Size(1280, 900), wide: true);
+  });
+
+  testWidgets('narrow window serializes no orphan accessibility nodes', (
+    tester,
+  ) async {
+    await exerciseShell(tester, window: const Size(390, 844), wide: false);
   });
 }
