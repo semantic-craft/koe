@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../audio/ogg_opus.dart';
+import 'cloud_stt_service.dart';
 import 'stt_types.dart';
 
 /// Doubao (Volcano Engine) recorded-file transcription via the
@@ -35,7 +36,7 @@ import 'stt_types.dart';
 ///
 /// https://docs.volcengine.com/docs/DoubaoVoice/LargemodelrecordingfileLiterecognitionAPI
 /// https://docs.volcengine.com/docs/DoubaoVoice/error-code-query
-class DoubaoSttService {
+class DoubaoSttService extends CloudFileSttService {
   DoubaoSttService({
     http.Client? client,
     this.requestTimeout = const Duration(minutes: 10),
@@ -51,63 +52,29 @@ class DoubaoSttService {
   /// cap is 100 MB). Keep the conservative limit as the pre-flight check.
   static const maxDirectUploadBytes = 20 * 1024 * 1024;
 
-  String? apiKeyOverride;
-  String? baseUrlOverride;
-  String? modelOverride;
+  @override
+  String get engineLabel => '豆包';
 
-  String? get apiKey {
-    final override = apiKeyOverride?.trim();
-    if (override != null && override.isNotEmpty) return override;
-    final env = Platform.environment['DOUBAO_API_KEY']?.trim();
-    if (env != null && env.isNotEmpty) return env;
-    return null;
-  }
+  @override
+  String get apiKeyEnvVar => 'DOUBAO_API_KEY';
 
-  /// Resolved HTTPS origin. Settings win, then `DOUBAO_HTTP_BASE_URL`.
-  String get baseUrl => resolveDoubaoBaseUrl(
-    baseUrlOverride,
-    environment: Platform.environment['DOUBAO_HTTP_BASE_URL'],
-  );
+  @override
+  String get baseUrlEnvVar => 'DOUBAO_HTTP_BASE_URL';
 
-  String get model {
-    final override = modelOverride?.trim();
-    if (override != null && override.isNotEmpty) return override;
-    return defaultModel;
-  }
+  @override
+  String get fallbackBaseUrl => defaultBaseUrl;
 
-  bool get isConfigured => apiKey != null;
+  @override
+  String get fallbackModel => defaultModel;
 
-  Future<SttResult> transcribePath(
-    String path, {
-    String? apiKey,
-    String? baseUrl,
-    String? model,
-    String? language,
-    SttFileProgressCallback? onProgress,
-    bool Function()? isCurrent,
-  }) async {
-    try {
-      return await _transcribe(
-        path,
-        apiKey: apiKey,
-        baseUrl: baseUrl,
-        model: model,
-        language: language,
-        onProgress: onProgress,
-        isCurrent: isCurrent,
-      );
-    } on DoubaoSttException {
-      rethrow;
-    } on TimeoutException {
-      throw const DoubaoSttException('豆包转写超时，请稍后重试');
-    } on SocketException {
-      throw const DoubaoSttException('无法连接豆包服务，请检查网络后重试');
-    } on http.ClientException {
-      throw const DoubaoSttException('无法连接豆包服务，请检查网络后重试');
-    }
-  }
+  @override
+  String get apiSuffix => '/api/v3';
 
-  Future<SttResult> _transcribe(
+  @override
+  CloudSttException fail(String message) => DoubaoSttException(message);
+
+  @override
+  Future<SttResult> run(
     String path, {
     String? apiKey,
     String? baseUrl,
@@ -120,10 +87,7 @@ class DoubaoSttService {
     if (key == null || key.isEmpty) {
       throw const DoubaoSttException('请在设置中配置豆包');
     }
-    final origin = resolveDoubaoBaseUrl(
-      (baseUrl == null || baseUrl.trim().isEmpty) ? baseUrlOverride : baseUrl,
-      environment: Platform.environment['DOUBAO_HTTP_BASE_URL'],
-    );
+    final origin = resolvedBaseUrl(baseUrl);
     final resolvedModel = (model == null || model.trim().isEmpty)
         ? this.model
         : model.trim();
@@ -220,7 +184,7 @@ class DoubaoSttService {
     return switch (response.statusCode) {
       401 || 403 => '豆包 API Key 无效，请在设置中更新',
       429 => '豆包请求过多，请稍后重试',
-      _ => message == null ? '豆包转写失败，请重试' : '豆包转写失败：${_clip(message)}',
+      _ => message == null ? '豆包转写失败，请重试' : '豆包转写失败：${clipSttMessage(message)}',
     };
   }
 
@@ -244,14 +208,15 @@ class DoubaoSttService {
     }
   }
 
+  @override
   void dispose() {
     _client.close();
   }
 }
 
-class DoubaoSttException implements Exception {
-  const DoubaoSttException(this.message);
-  final String message;
+class DoubaoSttException extends CloudSttException {
+  const DoubaoSttException(super.message);
+
   @override
   String toString() => 'DoubaoSttException($message)';
 }
@@ -366,32 +331,20 @@ Map<String, dynamic> doubaoTranscriptionBody({
   };
 }
 
-String resolveDoubaoBaseUrl(String? configured, {String? environment}) {
-  final raw = configured?.trim();
-  final candidate = (raw == null || raw.isEmpty) ? environment?.trim() : raw;
-  if (candidate == null || candidate.isEmpty) {
-    return DoubaoSttService.defaultBaseUrl;
-  }
-  return normalizeDoubaoBaseUrl(candidate);
-}
+String resolveDoubaoBaseUrl(String? configured, {String? environment}) =>
+    resolveCloudBaseUrl(
+      configured,
+      environment: environment,
+      fallback: DoubaoSttService.defaultBaseUrl,
+      normalize: normalizeDoubaoBaseUrl,
+    );
 
-String normalizeDoubaoBaseUrl(String raw) {
-  var value = raw.trim();
-  if (value.isEmpty) return DoubaoSttService.defaultBaseUrl;
-  if (!value.contains('://')) value = 'https://$value';
-  while (value.endsWith('/')) {
-    value = value.substring(0, value.length - 1);
-  }
-  const apiSuffix = '/api/v3';
-  if (value.endsWith(apiSuffix)) {
-    value = value.substring(0, value.length - apiSuffix.length);
-  }
-  final uri = Uri.tryParse(value);
-  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
-    throw const DoubaoSttException('豆包服务地址需要 HTTPS');
-  }
-  return uri.origin;
-}
+String normalizeDoubaoBaseUrl(String raw) => normalizeCloudHttpsOrigin(
+  raw,
+  fallback: DoubaoSttService.defaultBaseUrl,
+  apiSuffix: '/api/v3',
+  fail: (message) => DoubaoSttException('豆包$message'),
+);
 
 /// Map an `X-Api-Status-Code` / `X-Api-Message` pair to readable Chinese.
 ///
@@ -409,14 +362,14 @@ String? doubaoStatusMessage(String? code, String? message) {
     '20000001' || '20000002' => '豆包转写未同步完成，请重试',
     '20000003' => '未识别到语音，可重试',
     '45000001' when credential => '豆包 API Key 无效，请在设置中更新',
-    '45000001' => text.isEmpty ? '豆包请求参数无效，请重试' : '豆包请求参数无效：${_clip(text)}',
+    '45000001' => text.isEmpty ? '豆包请求参数无效，请重试' : '豆包请求参数无效：${clipSttMessage(text)}',
     '45000002' => '音频太短或无效，无法转写',
     '45000131' => '豆包请求过多，请稍后重试',
     '45000132' => '音频超过大小限制，无法转写',
     '45000151' => '音频格式不支持，请更换格式',
     '55000031' => '豆包服务繁忙，请稍后重试',
     _ when status.startsWith('550') => '豆包转写失败，请重试',
-    _ => text.isEmpty ? '豆包转写失败，请重试' : '豆包转写失败：${_clip(text)}',
+    _ => text.isEmpty ? '豆包转写失败，请重试' : '豆包转写失败：${clipSttMessage(text)}',
   };
 }
 
@@ -520,9 +473,3 @@ int _requestCounter = 0;
 
 String _requestId() =>
     'ank-${DateTime.now().microsecondsSinceEpoch}-${_requestCounter++}';
-
-String _clip(String value) {
-  final trimmed = value.trim();
-  if (trimmed.length <= 180) return trimmed;
-  return '${trimmed.substring(0, 180)}…';
-}
