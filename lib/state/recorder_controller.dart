@@ -12,6 +12,7 @@ import '../ai/soniox_stt.dart';
 import '../ai/moss_stt.dart';
 import '../ai/qwen_stt.dart';
 import '../ai/doubao_stt.dart';
+import '../ai/cloud_stt_service.dart';
 import '../ai/engine_config.dart';
 import '../ai/soniox_stt_stream.dart';
 import '../ai/soniox_languages.dart';
@@ -236,7 +237,11 @@ class RecorderController extends ChangeNotifier {
       engine: (config) => config.provider,
       accept: (recordingKey, path, config) async {
         if (config.provider != SttProvider.moss) return false;
-        await _mossJobs.enqueue(recordingKey, path, key: config.mossKey);
+        await _mossJobs.enqueue(
+          recordingKey,
+          path,
+          key: config.engineKey(SttProvider.moss),
+        );
         return true;
       },
       run: _runFileTranscription,
@@ -321,16 +326,9 @@ class RecorderController extends ChangeNotifier {
 
   Future<void> _loadPersistedSettings() async {
     final s = await AppSettingsStore.load();
-    if (s.sonioxApiKey != null) _sonioxStt.apiKeyOverride = s.sonioxApiKey;
-    _mossStt.apiKeyOverride = s.mossApiKey;
-    final qwenConfig = s.engineConfig(SttProvider.qwen);
-    _qwenStt.apiKeyOverride = qwenConfig.apiKey;
-    _qwenStt.baseUrlOverride = qwenConfig.baseUrl;
-    _qwenStt.modelOverride = qwenConfig.model;
-    final doubaoConfig = s.engineConfig(SttProvider.doubao);
-    _doubaoStt.apiKeyOverride = doubaoConfig.apiKey;
-    _doubaoStt.baseUrlOverride = doubaoConfig.baseUrl;
-    _doubaoStt.modelOverride = doubaoConfig.model;
+    for (final entry in _engineAdapters.entries) {
+      entry.value.applySaved(entry.value.load(s));
+    }
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
     transcriptLanguage = s.transcriptLanguage;
@@ -353,7 +351,7 @@ class RecorderController extends ChangeNotifier {
       saved: s.speechProvider,
       appleSupported: appleCapabilities.supported,
       sonioxConfigured: _sonioxStt.isConfigured,
-      qwenConfigured: _qwenStt.isConfigured,
+      qwenConfigured: _engineAdapters[SttProvider.qwen]!.isReady(),
     );
     if (speechProvider.defersTranscription ||
         (speechProvider == SttProvider.apple &&
@@ -385,16 +383,8 @@ class RecorderController extends ChangeNotifier {
   }
 
   Map<String, EngineConfig> _persistedEngines() => {
-    SttProvider.qwen.name: EngineConfig(
-      apiKey: _qwenStt.apiKeyOverride,
-      baseUrl: _qwenStt.baseUrlOverride,
-      model: _qwenStt.modelOverride,
-    ),
-    SttProvider.doubao.name: EngineConfig(
-      apiKey: _doubaoStt.apiKeyOverride,
-      baseUrl: _doubaoStt.baseUrlOverride,
-      model: _doubaoStt.modelOverride,
-    ),
+    for (final entry in _engineAdapters.entries)
+      if (entry.value.grouped) entry.key.name: entry.value.readSaved(),
   };
 
   bool get appleSpeechReady =>
@@ -514,14 +504,10 @@ class RecorderController extends ChangeNotifier {
     enabled: autoTranscribe,
     appleReady: appleSpeechReady,
     appleTranslationReady: appleTranslationAvailable,
-    sonioxKey: _sonioxStt.apiKey,
-    mossKey: _mossStt.apiKey,
-    qwenKey: _qwenStt.apiKey,
-    qwenBaseUrl: _resolvedQwenBaseUrl(),
-    qwenModel: _qwenStt.model,
-    doubaoKey: _doubaoStt.apiKey,
-    doubaoBaseUrl: _resolvedDoubaoBaseUrl(),
-    doubaoModel: _doubaoStt.model,
+    engines: {
+      for (final entry in _engineAdapters.entries)
+        entry.key: entry.value.snapshot(),
+    },
   );
 
   _RecordingSession? get _currentRecording =>
@@ -536,28 +522,11 @@ class RecorderController extends ChangeNotifier {
   // They still belong to this take and must never adopt the next provider.
   SpeechConfiguration get _activeConfiguration =>
       _liveConfiguration ?? _settingsConfiguration;
-  bool _isConfigured(SpeechConfiguration config) => switch (config.provider) {
-    SttProvider.apple => config.appleReady && config.sourceLanguage.isNotEmpty,
-    SttProvider.moss => config.mossKey?.isNotEmpty == true,
-    SttProvider.qwen => config.qwenKey?.isNotEmpty == true,
-    SttProvider.doubao => config.doubaoKey?.isNotEmpty == true,
-    SttProvider.soniox => config.sonioxKey?.isNotEmpty == true,
-  };
-
-  String _resolvedQwenBaseUrl() {
-    try {
-      return _qwenStt.baseUrl;
-    } on QwenSttException {
-      return QwenSttService.defaultBaseUrl;
+  bool _isConfigured(SpeechConfiguration config) {
+    if (config.provider == SttProvider.apple) {
+      return config.appleReady && config.sourceLanguage.isNotEmpty;
     }
-  }
-
-  String _resolvedDoubaoBaseUrl() {
-    try {
-      return _doubaoStt.baseUrl;
-    } on DoubaoSttException {
-      return DoubaoSttService.defaultBaseUrl;
-    }
+    return config.engineKey(config.provider)?.isNotEmpty == true;
   }
 
   bool get _activeSttConfigured => _isConfigured(_activeConfiguration);
@@ -765,8 +734,7 @@ class RecorderController extends ChangeNotifier {
 
   String _speechErrorMessage(Object error) {
     if (error is MossException) return error.message;
-    if (error is QwenSttException) return error.message;
-    if (error is DoubaoSttException) return error.message;
+    if (error is CloudSttException) return error.message;
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
       'unsupported' => '此设备不支持设备端处理，请在设置中选择云端语音服务',
@@ -1409,7 +1377,7 @@ class RecorderController extends ChangeNotifier {
       ),
     };
     return SonioxSttStreamSession(
-      apiKey: config.sonioxKey!,
+      apiKey: config.engineKey(SttProvider.soniox)!,
       sampleRate: 16000,
       languageHints: communication
           ? [config.ownerLanguage, config.guestLanguage]
@@ -1713,81 +1681,52 @@ class RecorderController extends ChangeNotifier {
   String? get sonioxApiKeyStored => _sonioxStt.apiKeyOverride;
 
   /// The saved credential trio for [provider] (key-only engines expose just
-  /// their key). This is the data source the engine lineup renders from.
-  EngineConfig engineConfig(SttProvider provider) {
-    switch (provider) {
-      case SttProvider.apple:
-        return const EngineConfig();
-      case SttProvider.soniox:
-        return EngineConfig(apiKey: _sonioxStt.apiKeyOverride);
-      case SttProvider.moss:
-        return EngineConfig(apiKey: _mossStt.apiKeyOverride);
-      case SttProvider.qwen:
-        return EngineConfig(
-          apiKey: _qwenStt.apiKeyOverride,
-          baseUrl: _qwenStt.baseUrlOverride,
-          model: _qwenStt.modelOverride,
-        );
-      case SttProvider.doubao:
-        return EngineConfig(
-          apiKey: _doubaoStt.apiKeyOverride,
-          baseUrl: _doubaoStt.baseUrlOverride,
-          model: _doubaoStt.modelOverride,
-        );
-    }
-  }
+  /// their key; Apple has none). This is the data source the engine lineup
+  /// renders from.
+  EngineConfig engineConfig(SttProvider provider) => switch (provider) {
+    SttProvider.apple => const EngineConfig(),
+    _ => _engineAdapters[provider]!.readSaved(),
+  };
 
   /// Whether [provider] is ready to be selected and used.
-  bool engineConfigured(SttProvider provider) {
-    switch (provider) {
-      case SttProvider.apple:
-        return appleCapabilities.supported;
-      case SttProvider.soniox:
-        return _sonioxStt.isConfigured;
-      case SttProvider.moss:
-        return _mossStt.apiKey != null;
-      case SttProvider.qwen:
-        return _qwenStt.isConfigured;
-      case SttProvider.doubao:
-        return _doubaoStt.isConfigured;
+  bool engineConfigured(SttProvider provider) => switch (provider) {
+    SttProvider.apple => appleCapabilities.supported,
+    _ => _engineAdapters[provider]!.isReady(),
+  };
+
+  /// Saves a cloud engine's whole credential group at once. The base URL is
+  /// normalized on save; an invalid one throws the engine's exception and
+  /// leaves the current configuration untouched. Key-only engines keep
+  /// their dedicated setters.
+  void setEngineConfig(SttProvider provider, EngineConfig config) {
+    final adapter = _engineAdapters[provider];
+    if (adapter == null || !adapter.grouped) {
+      throw ArgumentError.value(provider, 'provider', 'has no engine trio');
     }
+    final apiKey = _blankToNull(config.apiKey);
+    final model = _blankToNull(config.model);
+    final rawBaseUrl = _blankToNull(config.baseUrl);
+    final baseUrl = rawBaseUrl == null
+        ? null
+        : adapter.normalizeBaseUrl(rawBaseUrl);
+    adapter.applySaved(
+      EngineConfig(apiKey: apiKey, baseUrl: baseUrl, model: model),
+    );
+    notifyListeners();
+    unawaited(_persistSettings());
   }
 
   /// Saves the whole Qwen credential trio at once. The base URL is
   /// normalized on save; an invalid one throws [QwenSttException] and leaves
   /// the current configuration untouched.
-  void setQwenConfig(EngineConfig config) {
-    final apiKey = _blankToNull(config.apiKey);
-    final model = _blankToNull(config.model);
-    final rawBaseUrl = _blankToNull(config.baseUrl);
-    final baseUrl = rawBaseUrl == null
-        ? null
-        : normalizeDashScopeBaseUrl(rawBaseUrl);
-    _qwenStt
-      ..apiKeyOverride = apiKey
-      ..baseUrlOverride = baseUrl
-      ..modelOverride = model;
-    notifyListeners();
-    unawaited(_persistSettings());
-  }
+  void setQwenConfig(EngineConfig config) =>
+      setEngineConfig(SttProvider.qwen, config);
 
   /// Saves the whole Doubao credential trio at once. The base URL is
   /// normalized on save; an invalid one throws [DoubaoSttException] and
   /// leaves the current configuration untouched.
-  void setDoubaoConfig(EngineConfig config) {
-    final apiKey = _blankToNull(config.apiKey);
-    final model = _blankToNull(config.model);
-    final rawBaseUrl = _blankToNull(config.baseUrl);
-    final baseUrl = rawBaseUrl == null
-        ? null
-        : normalizeDoubaoBaseUrl(rawBaseUrl);
-    _doubaoStt
-      ..apiKeyOverride = apiKey
-      ..baseUrlOverride = baseUrl
-      ..modelOverride = model;
-    notifyListeners();
-    unawaited(_persistSettings());
-  }
+  void setDoubaoConfig(EngineConfig config) =>
+      setEngineConfig(SttProvider.doubao, config);
 
   static String? _blankToNull(String? value) {
     final trimmed = value?.trim();
@@ -2037,7 +1976,12 @@ class RecorderController extends ChangeNotifier {
     if (config.provider == SttProvider.moss) {
       _recordingErrors.remove(key);
       try {
-        await _mossJobs.enqueue(key, path, key: config.mossKey, retry: true);
+        await _mossJobs.enqueue(
+          key,
+          path,
+          key: config.engineKey(SttProvider.moss),
+          retry: true,
+        );
       } catch (_) {
         _recordingErrors[key] = '无法保存转写任务，请检查存储空间后重试';
       }
@@ -2240,37 +2184,12 @@ class RecorderController extends ChangeNotifier {
         onProgress: onProgress,
       );
     }
-    if (config.provider == SttProvider.qwen) {
-      return _qwenStt.transcribePath(
-        path,
-        apiKey: config.qwenKey,
-        baseUrl: config.qwenBaseUrl,
-        model: config.qwenModel,
-        language: config.sourceLanguage == 'auto'
-            ? null
-            : config.sourceLanguage,
-        onProgress: onProgress,
-        isCurrent: isCurrent,
-      );
-    }
-    if (config.provider == SttProvider.doubao) {
-      // The service maps ISO short codes (`zh`) to Volcano BCP-47 (`zh-CN`).
-      return _doubaoStt.transcribePath(
-        path,
-        apiKey: config.doubaoKey,
-        baseUrl: config.doubaoBaseUrl,
-        model: config.doubaoModel,
-        language: config.sourceLanguage == 'auto'
-            ? null
-            : config.sourceLanguage,
-        onProgress: onProgress,
-        isCurrent: isCurrent,
-      );
-    }
-    return _sonioxStt.transcribePath(
+    return _engineAdapters[config.provider]!.transcribe(
       path,
+      config.engineConfig(config.provider),
       language: config.sourceLanguage == 'auto' ? null : config.sourceLanguage,
       onProgress: onProgress,
+      isCurrent: isCurrent,
     );
   }
 
@@ -2459,6 +2378,115 @@ class RecorderController extends ChangeNotifier {
   final MossSttService _mossStt;
   final QwenSttService _qwenStt;
   final DoubaoSttService _doubaoStt;
+
+  /// How every non-Apple engine plugs into this controller: loading and
+  /// saving its credentials, readiness, the resolved snapshot a take
+  /// freezes, and its file-transcription dispatch. The provider switches
+  /// elsewhere collapse to one lookup here; adding a cloud engine is a
+  /// service plus one entry in this map.
+  late final Map<SttProvider, _EngineAdapter> _engineAdapters = {
+    SttProvider.soniox: _EngineAdapter(
+      load: (settings) => EngineConfig(apiKey: settings.sonioxApiKey),
+      readSaved: () => EngineConfig(apiKey: _sonioxStt.apiKeyOverride),
+      applySaved: (config) => _sonioxStt.apiKeyOverride = config.apiKey,
+      isReady: () => _sonioxStt.isConfigured,
+      snapshot: () => EngineConfig(apiKey: _sonioxStt.apiKey),
+      grouped: false,
+      normalizeBaseUrl: (raw) =>
+          throw StateError('Soniox saves no base URL'),
+      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
+          _sonioxStt.transcribePath(
+            path,
+            language: language,
+            onProgress: onProgress,
+          ),
+    ),
+    SttProvider.moss: _EngineAdapter(
+      load: (settings) => EngineConfig(apiKey: settings.mossApiKey),
+      readSaved: () => EngineConfig(apiKey: _mossStt.apiKeyOverride),
+      applySaved: (config) => _mossStt.apiKeyOverride = config.apiKey,
+      isReady: () => _mossStt.apiKey != null,
+      snapshot: () => EngineConfig(apiKey: _mossStt.apiKey),
+      grouped: false,
+      normalizeBaseUrl: (raw) => throw StateError('MOSS saves no base URL'),
+      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
+          throw StateError('MOSS file jobs run through the job queue'),
+    ),
+    SttProvider.qwen: _EngineAdapter(
+      load: (settings) => settings.engineConfig(SttProvider.qwen),
+      readSaved: () => EngineConfig(
+        apiKey: _qwenStt.apiKeyOverride,
+        baseUrl: _qwenStt.baseUrlOverride,
+        model: _qwenStt.modelOverride,
+      ),
+      applySaved: (config) {
+        _qwenStt.apiKeyOverride = config.apiKey;
+        _qwenStt.baseUrlOverride = config.baseUrl;
+        _qwenStt.modelOverride = config.model;
+      },
+      isReady: () => _qwenStt.isConfigured,
+      snapshot: () => EngineConfig(
+        apiKey: _qwenStt.apiKey,
+        baseUrl: _resolveSnapshotBaseUrl(_qwenStt),
+        model: _qwenStt.model,
+      ),
+      grouped: true,
+      normalizeBaseUrl: normalizeDashScopeBaseUrl,
+      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
+          _qwenStt.transcribePath(
+            path,
+            apiKey: engine.apiKey,
+            baseUrl: engine.baseUrl,
+            model: engine.model,
+            language: language,
+            onProgress: onProgress,
+            isCurrent: isCurrent,
+          ),
+    ),
+    SttProvider.doubao: _EngineAdapter(
+      load: (settings) => settings.engineConfig(SttProvider.doubao),
+      readSaved: () => EngineConfig(
+        apiKey: _doubaoStt.apiKeyOverride,
+        baseUrl: _doubaoStt.baseUrlOverride,
+        model: _doubaoStt.modelOverride,
+      ),
+      applySaved: (config) {
+        _doubaoStt.apiKeyOverride = config.apiKey;
+        _doubaoStt.baseUrlOverride = config.baseUrl;
+        _doubaoStt.modelOverride = config.model;
+      },
+      isReady: () => _doubaoStt.isConfigured,
+      snapshot: () => EngineConfig(
+        apiKey: _doubaoStt.apiKey,
+        baseUrl: _resolveSnapshotBaseUrl(_doubaoStt),
+        model: _doubaoStt.model,
+      ),
+      grouped: true,
+      normalizeBaseUrl: normalizeDoubaoBaseUrl,
+      // The service maps ISO short codes (`zh`) to Volcano BCP-47 (`zh-CN`).
+      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
+          _doubaoStt.transcribePath(
+            path,
+            apiKey: engine.apiKey,
+            baseUrl: engine.baseUrl,
+            model: engine.model,
+            language: language,
+            onProgress: onProgress,
+            isCurrent: isCurrent,
+          ),
+    ),
+  };
+
+  /// The engine's resolved origin, or its default when the saved value is
+  /// invalid (snapshots must never throw on bad settings).
+  static String _resolveSnapshotBaseUrl(CloudFileSttService service) {
+    try {
+      return service.baseUrl;
+    } on CloudSttException {
+      return service.fallbackBaseUrl;
+    }
+  }
+
   late final MossJobQueue _mossJobs;
   late final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   final AppleSpeechService _appleSpeech;
@@ -4653,3 +4681,43 @@ class _RecordingSession {
   bool paused = false;
   bool finalizing = false;
 }
+
+/// One cloud engine's wiring into [RecorderController]. [load] reads the
+/// engine's credentials from the persisted settings store (engines with a
+/// legacy key field read that; grouped engines read the shared trio map),
+/// [readSaved]/[applySaved] move the saved overrides in and out of the
+/// engine service, [isReady] reports readiness, [snapshot] resolves the
+/// credentials a take freezes, [normalizeBaseUrl] validates a pasted
+/// origin, and [transcribe] dispatches one file transcription. [grouped]
+/// marks engines persisted through the shared `engines` trio map rather
+/// than a legacy key field.
+class _EngineAdapter {
+  const _EngineAdapter({
+    required this.load,
+    required this.readSaved,
+    required this.applySaved,
+    required this.isReady,
+    required this.snapshot,
+    required this.grouped,
+    required this.normalizeBaseUrl,
+    required this.transcribe,
+  });
+
+  final EngineConfig Function(AppSettings settings) load;
+  final EngineConfig Function() readSaved;
+  final void Function(EngineConfig config) applySaved;
+  final bool Function() isReady;
+  final EngineConfig Function() snapshot;
+  final bool grouped;
+  final String Function(String raw) normalizeBaseUrl;
+
+  final Future<SttResult> Function(
+    String path,
+    EngineConfig engine, {
+    String? language,
+    SttFileProgressCallback? onProgress,
+    bool Function()? isCurrent,
+  })
+  transcribe;
+}
+

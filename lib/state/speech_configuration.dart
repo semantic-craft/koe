@@ -1,9 +1,10 @@
+import '../ai/engine_config.dart';
 import '../ai/speech_provider.dart';
 import '../ai/stt_types.dart';
 
-/// Immutable snapshot of the speech settings one recording take was captured
-/// with. Deferred engines replay this snapshot when the take stops, so later
-/// setting changes never rewrite history.
+/// Immutable snapshot of the speech settings a recording was captured
+/// with. Deferred engines replay this snapshot when the take stops, so
+/// later settings changes never rewrite a taken recording.
 class SpeechConfiguration {
   const SpeechConfiguration({
     required this.provider,
@@ -15,15 +16,9 @@ class SpeechConfiguration {
     required this.enabled,
     required this.appleReady,
     required this.appleTranslationReady,
-    this.sonioxKey,
-    this.mossKey,
-    this.qwenKey,
-    this.qwenBaseUrl,
-    this.qwenModel,
-    this.doubaoKey,
-    this.doubaoBaseUrl,
-    this.doubaoModel,
+    this.engines = const {},
   });
+
   final SttProvider provider;
   final String sourceLanguage;
   final String targetLanguage;
@@ -33,14 +28,19 @@ class SpeechConfiguration {
   final bool enabled;
   final bool appleReady;
   final bool appleTranslationReady;
-  final String? sonioxKey;
-  final String? mossKey;
-  final String? qwenKey;
-  final String? qwenBaseUrl;
-  final String? qwenModel;
-  final String? doubaoKey;
-  final String? doubaoBaseUrl;
-  final String? doubaoModel;
+
+  /// Credentials resolved at capture time, keyed by engine: the settings
+  /// or environment API key, a base URL already normalized to its default
+  /// when unset, and a defaulted model. Key-only engines carry only the
+  /// key; Apple is absent.
+  final Map<SttProvider, EngineConfig> engines;
+
+  /// The resolved credentials for [provider] (empty when never configured).
+  EngineConfig engineConfig(SttProvider provider) =>
+      engines[provider] ?? const EngineConfig();
+
+  /// The resolved API key for [provider], or null.
+  String? engineKey(SttProvider provider) => engineConfig(provider).apiKey;
 
   SpeechConfiguration withSourceLanguage(String source) => SpeechConfiguration(
     provider: provider,
@@ -52,13 +52,6 @@ class SpeechConfiguration {
     enabled: enabled,
     appleReady: appleReady,
     appleTranslationReady: appleTranslationReady,
-    sonioxKey: sonioxKey,
-    mossKey: mossKey,
-    qwenKey: qwenKey,
-    qwenBaseUrl: qwenBaseUrl,
-    qwenModel: qwenModel,
-    doubaoKey: doubaoKey,
-    doubaoBaseUrl: doubaoBaseUrl,
-    doubaoModel: doubaoModel,
+    engines: engines,
   );
 }
