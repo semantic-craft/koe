@@ -221,6 +221,28 @@ void main() {
   );
 
   test(
+    'enqueue persists the job before the start gate opens',
+    () async {
+      allowed = false;
+      queue = makeQueue();
+      // enqueue returns the job's waiter; while the gate is closed it never
+      // completes, so callers fire and forget just like the controller does.
+      unawaited(queue.enqueue('r', '/a.wav', key: 'snapshot-key'));
+      await Future<void>.delayed(Duration.zero);
+      expect(service.uploads, 0);
+      // The journal must already hold the queued job: a crash before the
+      // gate opens still recovers the take instead of losing it.
+      final restored = await store.load();
+      expect(restored, hasLength(1));
+      expect(restored.single.stage, MossJobStage.queued);
+      expect(restored.single.recordingKey, 'r');
+      allowed = true;
+      queue.wake();
+      await settleUntil(() => service.uploads == 1);
+    },
+  );
+
+  test(
     'journal writes atomically and restores entries without secrets',
     () async {
       final directory = await Directory.systemTemp.createTemp('moss-journal-');

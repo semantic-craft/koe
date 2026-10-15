@@ -37,6 +37,8 @@ import 'export_catalog.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
 import 'moss_jobs.dart';
+import 'speech_configuration.dart';
+import 'deferred_file_jobs.dart';
 
 export 'recording.dart';
 export '../ai/speech_provider.dart';
@@ -221,6 +223,24 @@ class RecorderController extends ChangeNotifier {
         }
       },
     );
+    // The single deferred file-job mechanism. Moss accepts jobs into its
+    // journal (stage persistence and duplicate-billing protection stay
+    // adapter-internal); Qwen and Doubao share the in-memory queue pumped
+    // through the shared file-transcription executor.
+    _deferredJobs = DeferredFileJobs<SpeechConfiguration>(
+      canStart: () =>
+          !_disposed &&
+          _fileJobKey == null &&
+          !_liveProcessing &&
+          !_mossJobs.busy,
+      engine: (config) => config.provider,
+      accept: (recordingKey, path, config) async {
+        if (config.provider != SttProvider.moss) return false;
+        await _mossJobs.enqueue(recordingKey, path, key: config.mossKey);
+        return true;
+      },
+      run: _runFileTranscription,
+    );
     _settingsReady = !loadPersistedState;
     _settingsLoaded = loadPersistedState
         ? _loadPersistedSettings().whenComplete(() => _settingsReady = true)
@@ -284,78 +304,15 @@ class RecorderController extends ChangeNotifier {
         !_isConfigured(owner.configuration)) {
       return;
     }
-    if (owner.configuration.provider == SttProvider.qwen) {
-      final key = _recordingKey(path: path);
-      if (_qwenStarted.contains(key)) return;
-      _pendingQwen[key] = (path: path, config: owner.configuration);
-      unawaited(_pumpQwenJobs());
-      return;
-    }
-    if (owner.configuration.provider == SttProvider.doubao) {
-      final key = _recordingKey(path: path);
-      if (_doubaoStarted.contains(key)) return;
-      _pendingDoubao[key] = (path: path, config: owner.configuration);
-      unawaited(_pumpDoubaoJobs());
-      return;
-    }
     try {
-      await _mossJobs.enqueue(
+      await _deferredJobs.enqueue(
         _recordingKey(path: path),
         path,
-        key: owner.configuration.mossKey,
+        owner.configuration,
       );
     } catch (_) {
       owner.error = '无法保存转写任务，请在录音详情中重试';
       notifyListeners();
-    }
-  }
-
-  /// Qwen has no durable job store. Wait until the live take is idle, then
-  /// run the file transcription captured with that take's settings.
-  Future<void> _pumpQwenJobs() async {
-    if (_qwenPumping || _disposed || _pendingQwen.isEmpty) return;
-    if (_liveProcessing || _fileJobKey != null || _mossJobs.busy) return;
-    final entry = _pendingQwen.entries.first;
-    _qwenPumping = true;
-    var accepted = false;
-    try {
-      accepted = await _runFileTranscription(
-        entry.value.path,
-        entry.value.config,
-        fromQueue: true,
-      );
-    } finally {
-      if (accepted) {
-        _pendingQwen.remove(entry.key);
-        _qwenStarted.add(entry.key);
-      }
-      _qwenPumping = false;
-      if (accepted && _pendingQwen.isNotEmpty) unawaited(_pumpQwenJobs());
-    }
-  }
-
-  /// Doubao shares the Qwen shape: an in-memory queue with no durable job
-  /// store. Wait until the live take is idle, then run the file
-  /// transcription captured with that take's settings.
-  Future<void> _pumpDoubaoJobs() async {
-    if (_doubaoPumping || _disposed || _pendingDoubao.isEmpty) return;
-    if (_liveProcessing || _fileJobKey != null || _mossJobs.busy) return;
-    final entry = _pendingDoubao.entries.first;
-    _doubaoPumping = true;
-    var accepted = false;
-    try {
-      accepted = await _runFileTranscription(
-        entry.value.path,
-        entry.value.config,
-        fromQueue: true,
-      );
-    } finally {
-      if (accepted) {
-        _pendingDoubao.remove(entry.key);
-        _doubaoStarted.add(entry.key);
-      }
-      _doubaoPumping = false;
-      if (accepted && _pendingDoubao.isNotEmpty) unawaited(_pumpDoubaoJobs());
     }
   }
 
@@ -540,7 +497,7 @@ class RecorderController extends ChangeNotifier {
     unawaited(_persistSettings());
   }
 
-  _SpeechConfiguration get _settingsConfiguration => _SpeechConfiguration(
+  SpeechConfiguration get _settingsConfiguration => SpeechConfiguration(
     provider: speechProvider,
     sourceLanguage: speechProvider == SttProvider.apple
         ? appleSourceLanguage
@@ -574,9 +531,9 @@ class RecorderController extends ChangeNotifier {
       (_currentRecording?.finalizing ?? false);
   // Final BLE/file callbacks can arrive after capture and stream flags clear.
   // They still belong to this take and must never adopt the next provider.
-  _SpeechConfiguration get _activeConfiguration =>
+  SpeechConfiguration get _activeConfiguration =>
       _liveConfiguration ?? _settingsConfiguration;
-  bool _isConfigured(_SpeechConfiguration config) => switch (config.provider) {
+  bool _isConfigured(SpeechConfiguration config) => switch (config.provider) {
     SttProvider.apple => config.appleReady && config.sourceLanguage.isNotEmpty,
     SttProvider.moss => config.mossKey?.isNotEmpty == true,
     SttProvider.qwen => config.qwenKey?.isNotEmpty == true,
@@ -1426,7 +1383,7 @@ class RecorderController extends ChangeNotifier {
     }
   }
 
-  SttStreamSession _createStreamSession(_SpeechConfiguration config) {
+  SttStreamSession _createStreamSession(SpeechConfiguration config) {
     if (config.provider == SttProvider.apple) {
       return _appleSpeech.createStreamSession(
         sourceLanguage: config.sourceLanguage,
@@ -2039,17 +1996,19 @@ class RecorderController extends ChangeNotifier {
         settings.provider == SttProvider.apple && sourceLanguage != null
         ? settings.withSourceLanguage(sourceLanguage.trim())
         : settings;
-    await _runFileTranscription(
+    // Manual retry runs straight through the deferred mechanism's executor so
+    // the engine answers a busy start with its own readable error.
+    await _deferredJobs.runNow(
       path,
       config,
       prepareLanguages: prepareLanguages,
     );
   }
 
-  /// Returns false when a queued Qwen job should wait and try again.
+  /// Returns false when a queued deferred job should wait and try again.
   Future<bool> _runFileTranscription(
     String path,
-    _SpeechConfiguration config, {
+    SpeechConfiguration config, {
     bool prepareLanguages = false,
     bool fromQueue = false,
   }) async {
@@ -2259,7 +2218,7 @@ class RecorderController extends ChangeNotifier {
 
   Future<SttResult> _transcribePath(
     String path, {
-    _SpeechConfiguration? configuration,
+    SpeechConfiguration? configuration,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
@@ -2498,6 +2457,7 @@ class RecorderController extends ChangeNotifier {
   final QwenSttService _qwenStt;
   final DoubaoSttService _doubaoStt;
   late final MossJobQueue _mossJobs;
+  late final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   final AppleSpeechService _appleSpeech;
   SttProvider speechProvider = SttProvider.soniox;
   String appleSourceLanguage = '';
@@ -2511,24 +2471,13 @@ class RecorderController extends ChangeNotifier {
   int liveSessionRevision = 0;
   String? _currentSessionId;
   final Map<String, _RecordingSession> _recordingSessions = {};
-  _SpeechConfiguration? _liveConfiguration;
+  SpeechConfiguration? _liveConfiguration;
   final Map<String, TranscriptMetadata> _transcriptMetadata = {};
   final Map<String, RecordingTranslation> _recordingTranslations = {};
   final Map<String, String> _recordingErrors = {};
   final Set<String> _finalizingRecordings = {};
   int _fileJobRevision = 0;
   String? _fileJobKey;
-  final Map<String, ({String path, _SpeechConfiguration config})> _pendingQwen =
-      {};
-  final Set<String> _qwenStarted = {};
-  bool _qwenPumping = false;
-
-  /// Doubao queue: same shape as Qwen's, independent of it so the two
-  /// engines can hold jobs for different takes at the same time.
-  final Map<String, ({String path, _SpeechConfiguration config})>
-  _pendingDoubao = {};
-  final Set<String> _doubaoStarted = {};
-  bool _doubaoPumping = false;
   SttProvider? _fileJobProvider;
   Future<void> _fileCancellation = Future<void>.value();
   final OpusPcmDecoder _opusPcm = OpusPcmDecoder(outputSampleRate: 16000);
@@ -4650,8 +4599,7 @@ class RecorderController extends ChangeNotifier {
     if (!_disposed) {
       super.notifyListeners();
       _mossJobs.wake();
-      unawaited(_pumpQwenJobs());
-      unawaited(_pumpDoubaoJobs());
+      unawaited(_deferredJobs.pump());
     }
   }
 
@@ -4680,6 +4628,7 @@ class RecorderController extends ChangeNotifier {
     _qwenStt.dispose();
     _doubaoStt.dispose();
     _mossJobs.dispose();
+    _deferredJobs.dispose();
     unawaited(_appleSpeech.dispose());
     _wifi.dispose();
     _ble.dispose();
@@ -4687,70 +4636,10 @@ class RecorderController extends ChangeNotifier {
   }
 }
 
-class _SpeechConfiguration {
-  const _SpeechConfiguration({
-    required this.provider,
-    required this.sourceLanguage,
-    required this.targetLanguage,
-    required this.ownerLanguage,
-    required this.guestLanguage,
-    required this.mode,
-    required this.enabled,
-    required this.appleReady,
-    required this.appleTranslationReady,
-    this.sonioxKey,
-    this.mossKey,
-    this.qwenKey,
-    this.qwenBaseUrl,
-    this.qwenModel,
-    this.doubaoKey,
-    this.doubaoBaseUrl,
-    this.doubaoModel,
-  });
-  final SttProvider provider;
-  final String sourceLanguage;
-  final String targetLanguage;
-  final String ownerLanguage;
-  final String guestLanguage;
-  final SttDisplayMode mode;
-  final bool enabled;
-  final bool appleReady;
-  final bool appleTranslationReady;
-  final String? sonioxKey;
-  final String? mossKey;
-  final String? qwenKey;
-  final String? qwenBaseUrl;
-  final String? qwenModel;
-  final String? doubaoKey;
-  final String? doubaoBaseUrl;
-  final String? doubaoModel;
-
-  _SpeechConfiguration withSourceLanguage(String source) =>
-      _SpeechConfiguration(
-        provider: provider,
-        sourceLanguage: source,
-        targetLanguage: targetLanguage,
-        ownerLanguage: ownerLanguage,
-        guestLanguage: guestLanguage,
-        mode: mode,
-        enabled: enabled,
-        appleReady: appleReady,
-        appleTranslationReady: appleTranslationReady,
-        sonioxKey: sonioxKey,
-        mossKey: mossKey,
-        qwenKey: qwenKey,
-        qwenBaseUrl: qwenBaseUrl,
-        qwenModel: qwenModel,
-        doubaoKey: doubaoKey,
-        doubaoBaseUrl: doubaoBaseUrl,
-        doubaoModel: doubaoModel,
-      );
-}
-
 class _RecordingSession {
   _RecordingSession(this.id, this.configuration);
   final String id;
-  final _SpeechConfiguration configuration;
+  final SpeechConfiguration configuration;
   int? fileId;
   String? path;
   String text = '';
