@@ -30,6 +30,15 @@ Preconditions:
   `open /Applications/Soundcore Manager.app`.
 - `check.py doctor` recorded the installed requirement and CDHash for this session.
 
+Reaching 设置: the Flutter window exposes no accessibility children while
+accessibility is off, so `System Events` sees only the window controls. Take a
+screenshot first, click the 设置 item in the left rail (about 40 points from the
+window's left edge, 263 points below its top), then take a second screenshot: only
+the 处理与偏好 page is proof that the click landed. With VoiceOver running the AX
+tree is populated and the rail can be addressed by name instead. Launching the app
+also proves startup behavior on its own — screenshot and `pgrep -x SecurityAgent`
+are enough for the no-dialog check.
+
 - **Startup.** Launch the app and watch for a system dialog. None may appear; the
   security layer only reads silently at startup (`_loadPersistedSettings`), and any
   stored item that predates this build fails fast instead.
