@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:anker_recorder/ai/doubao_stt.dart';
+import 'package:anker_recorder/audio/ogg_opus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
@@ -11,10 +12,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('default flash body embeds base64 audio with mapped language', () {
-    final body = doubaoTranscriptionBody(
-      data: 'aGVsbG8=',
-      language: 'zh',
-    );
+    final body = doubaoTranscriptionBody(data: 'aGVsbG8=', language: 'zh');
 
     expect(body['user'], {'uid': 'anker-recorder'});
     expect(body['audio'], {
@@ -172,64 +170,67 @@ void main() {
     );
   });
 
-  test('flash transcription posts base64 audio once and parses the reply', () async {
-    final directory = await Directory.systemTemp.createTemp('doubao-http-');
-    addTearDown(() => directory.delete(recursive: true));
-    final audio = Uint8List(80);
-    audio.setRange(0, 4, const [0x4F, 0x67, 0x67, 0x53]);
-    final file = File('${directory.path}/clip.ogg');
-    await file.writeAsBytes(audio);
+  test(
+    'flash transcription posts base64 audio once and parses the reply',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('doubao-http-');
+      addTearDown(() => directory.delete(recursive: true));
+      final audio = OggOpus.muxRawFrames(
+        Uint8List.fromList(List.filled(160, 1)),
+      );
+      final file = File('${directory.path}/clip.ogg');
+      await file.writeAsBytes(audio);
 
-    final client = _ScriptedClient();
-    client.enqueue(
-      200,
-      {
-        'audio_info': {'duration': 6312},
-        'result': {
-          'text': '你好',
-          'utterances': [
-            {
-              'additions': {'speaker': '0'},
-              'text': '你好',
-            },
-          ],
+      final client = _ScriptedClient();
+      client.enqueue(
+        200,
+        {
+          'audio_info': {'duration': 6312},
+          'result': {
+            'text': '你好',
+            'utterances': [
+              {
+                'additions': {'speaker': '0'},
+                'text': '你好',
+              },
+            ],
+          },
         },
-      },
-      headers: {'x-api-status-code': '20000000', 'x-api-message': 'OK'},
-    );
+        headers: {'x-api-status-code': '20000000', 'x-api-message': 'OK'},
+      );
 
-    final service = DoubaoSttService(client: client);
-    addTearDown(service.dispose);
-    final result = await service.transcribePath(
-      file.path,
-      apiKey: 'test-key',
-      language: 'zh',
-    );
+      final service = DoubaoSttService(client: client);
+      addTearDown(service.dispose);
+      final result = await service.transcribePath(
+        file.path,
+        apiKey: 'test-key',
+        language: 'zh',
+      );
 
-    expect(result.text, '说话人 0：你好');
-    expect(result.language, 'zh');
-    expect(result.durationSec, 6.312);
-    expect(result.sourcePath, file.path);
+      expect(result.text, '说话人 0：你好');
+      expect(result.language, 'zh');
+      expect(result.durationSec, 6.312);
+      expect(result.sourcePath, file.path);
 
-    final request = client.requests.single as http.Request;
-    expect(request.method, 'POST');
-    expect(
-      request.url.toString(),
-      'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
-    );
-    expect(request.headers['x-api-key'], 'test-key');
-    expect(request.headers['x-api-resource-id'], 'volc.bigasr.auc_turbo');
-    expect(request.headers['x-api-request-id'], isNotEmpty);
-    final body = jsonDecode(request.body) as Map<String, dynamic>;
-    expect((body['audio'] as Map)['data'], base64Encode(audio));
-    expect((body['audio'] as Map)['language'], 'zh-CN');
-  });
+      final request = client.requests.single;
+      expect(request.method, 'POST');
+      expect(
+        request.url.toString(),
+        'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
+      );
+      expect(request.headers['x-api-key'], 'test-key');
+      expect(request.headers['x-api-resource-id'], 'volc.bigasr.auc_turbo');
+      expect(request.headers['x-api-request-id'], isNotEmpty);
+      final body = jsonDecode(client.bodies.single) as Map<String, dynamic>;
+      expect((body['audio'] as Map)['data'], base64Encode(audio));
+      expect((body['audio'] as Map)['language'], 'zh-CN');
+    },
+  );
 
   test('flash error status becomes a readable message', () async {
     final directory = await Directory.systemTemp.createTemp('doubao-http-');
     addTearDown(() => directory.delete(recursive: true));
-    final audio = Uint8List(80);
-    audio.setRange(0, 4, const [0x4F, 0x67, 0x67, 0x53]);
+    final audio = OggOpus.muxRawFrames(Uint8List.fromList(List.filled(160, 1)));
     final file = File('${directory.path}/clip.ogg');
     await file.writeAsBytes(audio);
 
@@ -317,10 +318,11 @@ void main() {
   test('oversized audio is rejected before the network', () async {
     final directory = await Directory.systemTemp.createTemp('doubao-big-');
     addTearDown(() => directory.delete(recursive: true));
-    final audio = Uint8List(DoubaoSttService.maxDirectUploadBytes + 1);
-    audio.setRange(0, 4, const [0x4F, 0x67, 0x67, 0x53]);
     final file = File('${directory.path}/clip.ogg');
-    await file.writeAsBytes(audio);
+    final sparse = await file.open(mode: FileMode.write);
+    await sparse.writeFrom([0x4F, 0x67, 0x67, 0x53]);
+    await sparse.truncate(DoubaoSttService.maxDirectUploadBytes + 1);
+    await sparse.close();
 
     final client = _ScriptedClient();
     final service = DoubaoSttService(client: client);
@@ -331,7 +333,7 @@ void main() {
         isA<DoubaoSttException>().having(
           (error) => error.message,
           'message',
-          contains('音频超过 20 MB'),
+          contains('音频超过 100 MB'),
         ),
       ),
     );
@@ -350,7 +352,7 @@ void main() {
         isA<DoubaoSttException>().having(
           (error) => error.message,
           'message',
-          '豆包转写超时，请稍后重试',
+          contains('豆包转写超时'),
         ),
       ),
     );
@@ -368,7 +370,7 @@ void main() {
         isA<DoubaoSttException>().having(
           (error) => error.message,
           'message',
-          '无法连接豆包服务，请检查网络后重试',
+          contains('结果未确认'),
         ),
       ),
     );
@@ -378,8 +380,7 @@ void main() {
 Future<File> _tinyOgg() async {
   final directory = await Directory.systemTemp.createTemp('doubao-tiny-');
   addTearDown(() => directory.delete(recursive: true));
-  final audio = Uint8List(80);
-  audio.setRange(0, 4, const [0x4F, 0x67, 0x67, 0x53]);
+  final audio = OggOpus.muxRawFrames(Uint8List.fromList(List.filled(160, 1)));
   final file = File('${directory.path}/clip.ogg');
   await file.writeAsBytes(audio);
   return file;
@@ -387,9 +388,14 @@ Future<File> _tinyOgg() async {
 
 class _ScriptedClient extends http.BaseClient {
   final requests = <http.BaseRequest>[];
+  final bodies = <String>[];
   final _responses = <http.StreamedResponse>[];
 
-  void enqueue(int status, Object body, {Map<String, String> headers = const {}}) {
+  void enqueue(
+    int status,
+    Object body, {
+    Map<String, String> headers = const {},
+  }) {
     final encoded = body is String ? body : jsonEncode(body);
     _responses.add(
       http.StreamedResponse(
@@ -403,6 +409,7 @@ class _ScriptedClient extends http.BaseClient {
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     requests.add(request);
+    bodies.add(await request.finalize().bytesToString());
     if (_responses.isEmpty) {
       throw StateError('unexpected ${request.method} ${request.url}');
     }

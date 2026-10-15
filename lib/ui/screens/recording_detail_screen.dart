@@ -525,6 +525,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                                   onPressed: c.cancelQwenFileProcessing,
                                   child: const Text('停止等待（保留已提交任务）'),
                                 ),
+                              if (recording.processing &&
+                                  c.doubaoFileProcessing)
+                                TextButton(
+                                  onPressed: c.cancelDoubaoFileProcessing,
+                                  child: const Text('停止等待（重试将重新上传）'),
+                                ),
                               if (recording.error != null)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 16),
