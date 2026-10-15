@@ -6,7 +6,7 @@
 
 ## 开发状态
 
-开发计划与验收以 [GitHub 总工单 #6](https://github.com/semantic-craft/koe/issues/6) 为入口。当前包含多引擎转写和暖色双端布局；已接入千问长录音上传及 Qwen3.8-Flash 摘要/自定义分析，双端数据交接仍在规划。代码、自动测试、真实服务和真机验收分别记录，平台目录存在不代表整条使用流程已经验收。
+开发计划与验收以 [GitHub 总工单 #6](https://github.com/semantic-craft/koe/issues/6) 为入口。当前包含多引擎转写和暖色双端布局；已接入千问长录音上传及 Qwen3.8-Flash 摘要/自定义分析，摘要、结构化纪要和思维导图已有双端短录音验收；剩余范围见 [当前进度](docs/product-progress.md)。双端同步和跨录音问答暂不实施。代码、自动测试、真实服务和真机验收分别记录，平台目录存在不代表整条使用流程已经验收。
 
 ## 支持平台
 
@@ -96,7 +96,7 @@ flutter test
 - **思维导图**：从结构化纪要直接生成，可缩放、折叠、查看原文并导出完整 PNG；不再次调用模型。大图限制与验证见 [交付记录](docs/mind-map-validation.md)。
 - **豆包极速版上传**：按 100 MB / 2 小时分别检查，优先使用匹配的压缩录音；分块 Base64 上传，可停止等待，结果未知时不自动重发。范围及验证见 [交付记录](docs/doubao-upload-validation.md)。
 - **千问长录音**：支持范围以模型规格与当前临时上传限制共同约束；分块封装与上传，保留已提交任务供重启后查询。短录音链路验收及长时使用边界见 [交付记录](docs/qwen-long-recording-analysis.md)。
-- **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，App 当前限制直传 20 MB。按当前产品决定，不接入豆包标准版；超过豆包当前直传限制时提示压缩音频或手动选择已配置的千问，不自动切换供应商。
+- **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，上限为 100,000,000 字节及 2 小时，优先选择匹配的压缩录音。按当前产品决定，不接入豆包标准版；超过豆包支持范围时明确提示，用户可手动选择已配置的千问，不自动切换供应商。
 - **实时转写**：BLE Opus → PCM16 → 服务商 WebSocket。千问使用 `qwen-audio-3.1-asr-flash-streaming`；豆包使用 `volc.seedasr.sauc.duration`，优化双向流式接口开启 `enable_nonstream` 二遍识别。成功的实时结果不再自动重复提交文件；实时未完成时由同一服务的文件任务补齐。
 - **配置与验收**：在设置中保存服务商 Key。Helios 开发可参考 `.envrc.example`，通过 `direnv exec . python3 scripts/run-with-secrets.py macos` 给已安装 Mac App 注入凭据；凭据不会编入产物。iPhone 普通使用仍通过设置保存 Key。真实样本、接口限制与双端验收见 [语音服务替换验证](docs/speech-provider-validation.md)。
 - **Wi‑Fi SoftAP 批量导出 + 解密**：BLE 连接后先做 ECDH 握手（`0x2E/0x01`）生成会话密钥；导出时打开设备 SoftAP → 加入 → WebSocket 拉取，每 160 字节分片用 `1A07` 头（`soundcored3200` magic）中的单文件密钥做 AES‑CTR 解密。导出文件保存在 `Documents/AnkerRecorder/exports` 下，命名为 `{fileId}.opus`（握手失败则为 `.opus.bin`）。本地**播放**使用 `just_audio` 播放已导出文件。
