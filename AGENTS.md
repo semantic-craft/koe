@@ -10,3 +10,14 @@
 
 在根目录运行 `flutter test`，现有用例在 [test](test/)。构建和真机运行按 README；设备连接、音频接收和真实转写需另留证据。安装脚本在 [scripts](scripts/)，运行前核对其目标设备和副作用。
 实现、评审或验收前读相关 [lessons](lessons.md)；出现可复用的纠正或漏验时更新原条目。
+
+## Agent skills
+
+### Issue tracker
+工单统一使用 semantic-craft/koe 的 GitHub Issues。见 [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md)。
+
+### Triage labels
+使用默认五种分流标签。见 [docs/agents/triage-labels.md](docs/agents/triage-labels.md)。
+
+### Domain docs
+采用单一领域文档布局。见 [docs/agents/domain.md](docs/agents/domain.md)。
