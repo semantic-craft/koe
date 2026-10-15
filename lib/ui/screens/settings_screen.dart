@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../ai/engine_config.dart';
 import '../../ai/qwen_stt.dart';
 import '../../ai/stt_types.dart';
 import '../../ai/moss_stt.dart';
@@ -112,23 +113,254 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+/// Data-driven ASR engine lineup. Iterates over [SttProvider.values] and
+/// derives each card from per-engine metadata plus the controller's
+/// configuration state, so adding an engine is a data change (enum value plus
+/// a [_metadata] entry) — no engine-specific widget code.
 class _ProviderSelector extends StatelessWidget {
   const _ProviderSelector({required this.controller});
   final RecorderController controller;
+
+  static const _metadata = <String, ({IconData icon, String description})>{
+    'apple': (
+      icon: Icons.phone_iphone_rounded,
+      description: 'iOS 本地神经网络语音引擎，离线可用、隐私优先',
+    ),
+    'soniox': (
+      icon: Icons.cloud_outlined,
+      description: '云端低延迟流式转写，支持多语种同传与双人对话',
+    ),
+    'moss': (
+      icon: Icons.graphic_eq_rounded,
+      description: '录音完成后整段精细转写，自动切分说话人段落',
+    ),
+    'qwen': (
+      icon: Icons.auto_awesome_rounded,
+      description: '通义千问语音识别模型，录音完成后文件转写',
+    ),
+  };
+
+  ({IconData icon, String description, String statusLabel, Color statusColor})
+  _metaFor(SttProvider provider, KoeTokens tokens) {
+    final meta = _metadata[provider.name] ??
+        (
+          icon: Icons.mic_none_rounded,
+          description: '${provider.label} 语音识别引擎',
+        );
+    final selected = controller.speechProvider == provider;
+    if (provider == SttProvider.apple) {
+      final caps = controller.appleCapabilities;
+      final ready =
+          caps.supported && caps.speechStatus == SpeechResourceStatus.ready;
+      return (
+        icon: meta.icon,
+        description: meta.description,
+        statusLabel: !caps.supported
+            ? '设备受限'
+            : ready
+            ? (selected ? '使用中' : '已就绪')
+            : '待准备',
+        statusColor: !caps.supported
+            ? tokens.textMuted
+            : ready
+            ? (selected ? tokens.accent : tokens.mint)
+            : tokens.amber,
+      );
+    }
+    final configured = controller.engineConfigured(provider);
+    return (
+      icon: meta.icon,
+      description: meta.description,
+      statusLabel: !configured ? '需密钥' : (selected ? '使用中' : '已配置'),
+      statusColor: !configured ? tokens.amber : (selected ? tokens.accent : tokens.mint),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => DropdownButtonFormField<SttProvider>(
-    key: ValueKey('speech-provider-${controller.speechProvider.name}'),
-    initialValue: controller.speechProvider,
-    decoration: const InputDecoration(labelText: '语音服务'),
-    isExpanded: true,
-    items: [
-      for (final provider in SttProvider.values)
-        DropdownMenuItem(value: provider, child: Text(provider.label)),
-    ],
-    onChanged: (provider) {
-      if (provider != null) controller.setSpeechProvider(provider);
-    },
-  );
+  Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    return Column(
+      key: ValueKey('speech-provider-${controller.speechProvider.name}'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '语音服务',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: tokens.textPrimary,
+                ),
+              ),
+            ),
+            Text(
+              '共 ${SttProvider.values.length} 个引擎',
+              style: TextStyle(
+                fontSize: 12,
+                color: tokens.textMuted,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        for (var i = 0; i < SttProvider.values.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _EngineOptionCard(
+            provider: SttProvider.values[i],
+            selected: controller.speechProvider == SttProvider.values[i],
+            meta: _metaFor(SttProvider.values[i], tokens),
+            enabled: SttProvider.values[i] == SttProvider.apple ||
+                controller.engineConfigured(SttProvider.values[i]),
+            onTap: () => _tap(context, SttProvider.values[i]),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _tap(BuildContext context, SttProvider provider) {
+    if (provider == SttProvider.apple || controller.engineConfigured(provider)) {
+      controller.setSpeechProvider(provider);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('请先配置 ${provider.label} 的访问密钥')),
+    );
+  }
+}
+
+class _EngineOptionCard extends StatelessWidget {
+  const _EngineOptionCard({
+    required this.provider,
+    required this.selected,
+    required this.meta,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final SttProvider provider;
+  final bool selected;
+  final bool enabled;
+  final ({
+    IconData icon,
+    String description,
+    String statusLabel,
+    Color statusColor,
+  })
+  meta;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: ValueKey('speech-provider-option-${provider.name}'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        child: AnimatedContainer(
+          duration: AppMotion.fast,
+          curve: AppMotion.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            color: selected ? tokens.bgCard : tokens.bgPanel,
+            borderRadius: BorderRadius.circular(AppRadii.md),
+            border: Border.all(
+              color: selected ? tokens.inkAccent : tokens.border,
+              width: selected ? 1.4 : 1,
+            ),
+            boxShadow: selected ? tokens.cardShadow : const [],
+          ),
+          child: Opacity(
+            opacity: enabled ? 1 : 0.55,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                IconBadge(
+                  icon: meta.icon,
+                  size: 32,
+                  iconSize: 16,
+                  radius: 8,
+                  color: selected ? tokens.onInkAccent : tokens.textSecondary,
+                  backgroundColor: selected ? tokens.inkAccent : tokens.bgCard,
+                  borderColor: selected ? tokens.inkAccent : tokens.borderSoft,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            provider.label,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: tokens.textPrimary,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: meta.statusColor.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(AppRadii.pill),
+                              border: Border.all(
+                                color: meta.statusColor.withValues(alpha: 0.28),
+                              ),
+                            ),
+                            child: Text(
+                              meta.statusLabel,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: meta.statusColor,
+                                height: 1.2,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        meta.description,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: tokens.textSecondary,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Icon(
+                    selected
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.radio_button_off_rounded,
+                    size: 18,
+                    color: selected ? tokens.inkAccent : tokens.textFaint,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AppleLanguageSettings extends StatelessWidget {
@@ -906,13 +1138,13 @@ class _QwenSettings extends StatefulWidget {
 
 class _QwenSettingsState extends State<_QwenSettings> {
   late final TextEditingController _key = TextEditingController(
-    text: widget.controller.qwenApiKeyStored ?? '',
+    text: widget.controller.engineConfig(SttProvider.qwen).apiKey ?? '',
   );
   late final TextEditingController _base = TextEditingController(
-    text: widget.controller.qwenBaseUrlStored ?? '',
+    text: widget.controller.engineConfig(SttProvider.qwen).baseUrl ?? '',
   );
   late final TextEditingController _model = TextEditingController(
-    text: widget.controller.qwenModelStored ?? '',
+    text: widget.controller.engineConfig(SttProvider.qwen).model ?? '',
   );
   String? _error;
 
@@ -926,10 +1158,14 @@ class _QwenSettingsState extends State<_QwenSettings> {
 
   void _save() {
     try {
-      widget.controller.setQwenBaseUrl(_base.text);
-      widget.controller.setQwenModel(_model.text);
-      widget.controller.setQwenApiKey(_key.text);
-      final stored = widget.controller.qwenBaseUrlStored;
+      widget.controller.setQwenConfig(
+        EngineConfig(
+          apiKey: _key.text,
+          baseUrl: _base.text,
+          model: _model.text,
+        ),
+      );
+      final stored = widget.controller.engineConfig(SttProvider.qwen).baseUrl;
       if (stored != null) _base.text = stored;
       setState(() => _error = null);
     } on QwenSttException catch (error) {
