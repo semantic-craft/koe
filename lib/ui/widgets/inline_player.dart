@@ -46,17 +46,24 @@ class InlinePlayer extends StatelessWidget {
             thumbColor: AppColors.accent,
             overlayColor: AppColors.accent.withValues(alpha: 0.12),
           ),
-          child: Slider(
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            value: progress,
-            onChanged: canSeek
-                ? (v) {
-                    final totalMs = c.duration.inMilliseconds > 0
-                        ? c.duration.inMilliseconds
-                        : 1;
-                    c.seekTo(Duration(milliseconds: (v * totalMs).round()));
-                  }
-                : null,
+          // Keep Slider's value-indicator portal in this subtree. Otherwise a
+          // pushed route can serialize an orphan node and freeze macOS AXTree.
+          // https://github.com/flutter/flutter/issues/190357
+          child: Overlay.wrap(
+            alwaysSizeToContent: true,
+            clipBehavior: Clip.none,
+            child: Slider(
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              value: progress,
+              onChanged: canSeek
+                  ? (v) {
+                      final totalMs = c.duration.inMilliseconds > 0
+                          ? c.duration.inMilliseconds
+                          : 1;
+                      c.seekTo(Duration(milliseconds: (v * totalMs).round()));
+                    }
+                  : null,
+            ),
           ),
         ),
         Row(
