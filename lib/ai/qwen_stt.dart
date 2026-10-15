@@ -47,6 +47,8 @@ class QwenSttService extends CloudFileSttService {
     this.taskTimeout = const Duration(minutes: 15),
   }) : _client = client ?? http.Client();
 
+  /// Scoped to the single file execution owned by RecorderController.
+  QwenTaskRecovery? recovery;
   final http.Client _client;
   final Duration pollInterval;
   final Duration taskTimeout;
@@ -105,41 +107,46 @@ class QwenSttService extends CloudFileSttService {
       );
     }
 
-    onProgress?.call(const SttFileProgress(SttFileStage.preparing));
-    _ensureCurrent(isCurrent);
-    final audioPath = await OggOpus.ensurePlayable(path);
-    final file = File(audioPath);
-    final length = await file.length();
-    if (!await file.exists() || length < 64) {
-      throw const QwenSttException('音频太短或无效，无法转写');
-    }
-    if (length > maxUploadBytes) {
-      throw const QwenSttException('音频超过 1 GB，无法上传');
-    }
+    final checkpoint = recovery;
+    var taskId = checkpoint?.taskId;
+    if (taskId == null) {
+      onProgress?.call(const SttFileProgress(SttFileStage.preparing));
+      _ensureCurrent(isCurrent);
+      final audioPath = await OggOpus.ensurePlayable(path);
+      final file = File(audioPath);
+      final length = await file.length();
+      if (!await file.exists() || length < 64) {
+        throw const QwenSttException('音频太短或无效，无法转写');
+      }
+      if (length > maxUploadBytes) {
+        throw const QwenSttException('音频超过 1 GB，无法上传');
+      }
 
-    final filename = _uploadFilename(audioPath);
-    debugPrint(
-      '[Qwen] upload ${p.basename(audioPath)} ${length}B '
-      'model=$resolvedModel host=${Uri.parse(origin).host}',
-    );
-    final ossUrl = await _upload(
-      origin: origin,
-      apiKey: key,
-      model: resolvedModel,
-      bytes: await file.readAsBytes(),
-      filename: filename,
-      onProgress: onProgress,
-      isCurrent: isCurrent,
-    );
-    _ensureCurrent(isCurrent);
-    onProgress?.call(const SttFileProgress(SttFileStage.queued));
-    final taskId = await _submit(
-      origin: origin,
-      apiKey: key,
-      model: resolvedModel,
-      ossUrl: ossUrl,
-      language: language,
-    );
+      final filename = _uploadFilename(audioPath);
+      debugPrint(
+        '[Qwen] upload ${p.basename(audioPath)} ${length}B '
+        'model=$resolvedModel host=${Uri.parse(origin).host}',
+      );
+      final ossUrl = await _upload(
+        origin: origin,
+        apiKey: key,
+        model: resolvedModel,
+        bytes: await file.readAsBytes(),
+        filename: filename,
+        onProgress: onProgress,
+        isCurrent: isCurrent,
+      );
+      _ensureCurrent(isCurrent);
+      onProgress?.call(const SttFileProgress(SttFileStage.queued));
+      taskId = await _submit(
+        origin: origin,
+        apiKey: key,
+        model: resolvedModel,
+        ossUrl: ossUrl,
+        language: language,
+      );
+      await checkpoint?.onSubmitted(taskId);
+    }
     final task = await _wait(
       origin: origin,
       apiKey: key,
@@ -325,7 +332,7 @@ class QwenSttService extends CloudFileSttService {
       final status = task.status.toUpperCase();
       if (status == 'SUCCEEDED') {
         if (task.transcriptionUrls.isEmpty) {
-          throw QwenSttException(
+          throw QwenTaskFailedException(
             task.failureMessage == null || task.failureMessage!.isEmpty
                 ? '通义转写失败，请重试'
                 : '通义转写失败：${clipSttMessage(task.failureMessage!)}',
@@ -334,7 +341,7 @@ class QwenSttService extends CloudFileSttService {
         return task;
       }
       if (status != 'PENDING' && status != 'RUNNING') {
-        throw QwenSttException(
+        throw QwenTaskFailedException(
           task.failureMessage == null || task.failureMessage!.isEmpty
               ? '通义转写失败，请重试'
               : '通义转写失败：${clipSttMessage(task.failureMessage!)}',
@@ -732,3 +739,14 @@ String _uploadFilename(String path) {
 }
 
 String _utf8Body(http.Response response) => utf8.decode(response.bodyBytes);
+
+/// The checkpoint callback must be durable before polling starts.
+class QwenTaskRecovery {
+  const QwenTaskRecovery({this.taskId, required this.onSubmitted});
+  final String? taskId;
+  final Future<void> Function(String taskId) onSubmitted;
+}
+
+class QwenTaskFailedException extends QwenSttException {
+  const QwenTaskFailedException(super.message);
+}

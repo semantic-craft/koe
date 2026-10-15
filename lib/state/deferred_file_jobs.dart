@@ -13,8 +13,8 @@ import 'dart:async';
 ///   instead of billing twice. Once an adapter accepts, it owns the job's
 ///   whole lifecycle — stage persistence, polling, cleanup — and this queue
 ///   never sees the job again.
-/// - [run] executes one queued in-memory job. Qwen and Doubao share this
-///   path: the file transcription runs with the take's configuration
+/// - [run] executes one queued job. Qwen and Doubao persist through the
+///   controller's file journal before entering this scheduling queue: the file transcription runs with the take's configuration
 ///   snapshot and reports its own progress, errors, and state changes
 ///   through the shared file-transcription executor. It returns whether the
 ///   job was accepted; a busy engine leaves the entry queued for the next
@@ -98,6 +98,11 @@ class DeferredFileJobs<C> {
       _pumping = false;
       if (accepted && _pending.isNotEmpty) unawaited(pump());
     }
+  }
+
+  void discard(String recordingKey) {
+    _pending.removeWhere((tag, _) => tag.$2 == recordingKey);
+    _started.removeWhere((tag) => tag.$2 == recordingKey);
   }
 
   /// Drops every queued job; later enqueues and pumps are ignored.

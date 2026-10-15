@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:anker_recorder/state/file_job_journal.dart';
+import 'package:anker_recorder/state/speech_configuration.dart';
 import 'dart:convert';
 import 'support/moss_fakes.dart';
 import 'package:anker_recorder/ai/moss_stt.dart';
@@ -41,6 +43,160 @@ void main() {
     });
     return result;
   }
+
+  test('journal write failure prevents a cloud request', () async {
+    final qwen = _Qwen();
+    final c =
+        RecorderController(
+            loadPersistedState: false,
+            qwenSpeech: qwen,
+            fileJobJournal: _UnwritableJournal(),
+          )
+          ..setQwenConfig(const EngineConfig(apiKey: 'key'))
+          ..setSpeechProvider(SttProvider.qwen);
+    addTearDown(c.dispose);
+    await c.transcribeLocalFile('/not-submitted.wav');
+    expect(qwen.calls, 0);
+    expect(
+      c
+          .recordingView(const RecordingReference(path: '/not-submitted.wav'))
+          .error,
+      contains('存储空间'),
+    );
+  });
+
+  for (final stage in ['queued', 'result', 'running', 'submitted']) {
+    test(
+      'controller restart recovers $stage without duplicate submission',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('restart-test-');
+        addTearDown(() => dir.delete(recursive: true));
+        final audio = File('${dir.path}/998877.wav');
+        await audio.writeAsBytes([1, 2, 3]);
+        final file = File('${dir.path}/jobs.json');
+        final journal = FileJobJournal(file: file);
+        final job = await journal.enqueue(
+          'file:998877',
+          audio.path,
+          const SpeechConfiguration(
+            provider: SttProvider.qwen,
+            sourceLanguage: 'zh',
+            targetLanguage: 'en',
+            ownerLanguage: 'zh',
+            guestLanguage: 'en',
+            mode: SttDisplayMode.transcription,
+            enabled: true,
+            appleReady: false,
+            appleTranslationReady: false,
+            engines: {
+              SttProvider.qwen: EngineConfig(
+                baseUrl: QwenSttService.defaultBaseUrl,
+                model: 'saved-model',
+              ),
+            },
+          ),
+        );
+        job.stage = stage == 'submitted' ? 'running' : stage;
+        if (stage == 'submitted') job.taskId = 'saved-task-id';
+        if (stage == 'result') {
+          job.text = 'Recovered result';
+          job.language = 'zh';
+        }
+        await journal.save();
+        final reopened = FileJobJournal(file: file);
+        final qwen = _Qwen();
+        final c =
+            RecorderController(
+              loadPersistedState: false,
+              qwenSpeech: qwen,
+              fileJobJournal: reopened,
+            )..setQwenConfig(
+              const EngineConfig(apiKey: 'current-key', model: 'new-model'),
+            );
+        addTearDown(c.dispose);
+        if (stage == 'running') {
+          await settleUntil(() => reopened.jobs.isNotEmpty);
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          expect(qwen.calls, 0);
+          expect(reopened.jobs.values.single.error, contains('重复计费'));
+        } else {
+          await settleUntil(
+            () => reopened.jobs.values.any((j) => j.stage == 'complete'),
+          );
+          expect(qwen.calls, stage == 'result' ? 0 : 1);
+          if (stage == 'submitted') expect(qwen.seenTaskId, 'saved-task-id');
+          expect(
+            c.transcriptForPath(audio.path),
+            stage == 'result' ? 'Recovered result' : '通义文本',
+          );
+          if (stage == 'queued') expect(qwen.seenModel, 'saved-model');
+        }
+      },
+    );
+  }
+
+  test(
+    'retrieved audio obeys auto switch and deduplicates repeated completion',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('retrieved-test-');
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}/987654.wav';
+      await File(path).writeAsBytes([1, 2, 3]);
+      final qwen = _Qwen();
+      final journal = FileJobJournal(inMemory: true);
+      final c =
+          RecorderController(
+              loadPersistedState: false,
+              qwenSpeech: qwen,
+              fileJobJournal: journal,
+            )
+            ..setQwenConfig(const EngineConfig(apiKey: 'key'))
+            ..setSpeechProvider(SttProvider.qwen)
+            ..setAutoTranscribe(false);
+      addTearDown(c.dispose);
+      await c.processRetrievedRecording(path);
+      expect(qwen.calls, 0);
+      c.setAutoTranscribe(true);
+      await Future.wait([
+        c.processRetrievedRecording(path),
+        c.processRetrievedRecording(path),
+      ]);
+      for (
+        var i = 0;
+        i < 100 && journal.jobs.values.first.stage != 'complete';
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(qwen.calls, 1);
+      expect(c.transcriptForPath(path), '通义文本');
+      expect(journal.jobs.values.single.stage, 'complete');
+      await c.processRetrievedRecording(path);
+      expect(qwen.calls, 1);
+    },
+  );
+
+  test(
+    'retrieved raw audio and missing configuration do not make requests',
+    () async {
+      final qwen = _Qwen();
+      final c = RecorderController(loadPersistedState: false, qwenSpeech: qwen)
+        ..setSpeechProvider(SttProvider.qwen)
+        ..setAutoTranscribe(true);
+      addTearDown(c.dispose);
+      await c.processRetrievedRecording('/not-decoded.opus.bin');
+      await c.processRetrievedRecording('/not-configured.wav');
+      expect(qwen.calls, 0);
+      expect(
+        c
+            .recordingView(
+              const RecordingReference(path: '/not-configured.wav'),
+            )
+            .error,
+        contains('配置'),
+      );
+    },
+  );
 
   test(
     'MOSS manual transcription retains provider and permits Apple translation',
@@ -219,80 +375,31 @@ void main() {
     },
   );
 
-  test(
-    'queued deferred jobs run one at a time in FIFO order',
-    () async {
-      final directory = await Directory.systemTemp.createTemp('qwen-fifo-');
-      addTearDown(() => directory.delete(recursive: true));
-      final first = File('${directory.path}/311.wav');
-      await first.writeAsBytes([1, 2, 3]);
-      final second = File('${directory.path}/312.wav');
-      await second.writeAsBytes([1, 2, 3]);
-      final qwen = _Qwen()
-        ..apiKeyOverride = 'qwen-key'
-        ..pending = Completer<void>();
-      final ble = _Ble();
-      final c = RecorderController(
-        loadPersistedState: false,
-        ble: ble,
-        qwenSpeech: qwen,
-        appleSpeech: _Apple(),
-      )..setSpeechProvider(SttProvider.qwen);
-      addTearDown(c.dispose);
+  test('queued deferred jobs run one at a time in FIFO order', () async {
+    final directory = await Directory.systemTemp.createTemp('qwen-fifo-');
+    addTearDown(() => directory.delete(recursive: true));
+    final first = File('${directory.path}/311.wav');
+    await first.writeAsBytes([1, 2, 3]);
+    final second = File('${directory.path}/312.wav');
+    await second.writeAsBytes([1, 2, 3]);
+    final qwen = _Qwen()
+      ..apiKeyOverride = 'qwen-key'
+      ..pending = Completer<void>();
+    final ble = _Ble();
+    final c = RecorderController(
+      loadPersistedState: false,
+      ble: ble,
+      qwenSpeech: qwen,
+      appleSpeech: _Apple(),
+    )..setSpeechProvider(SttProvider.qwen);
+    addTearDown(c.dispose);
 
-      Future<void> recordTake(int fileId, File file) async {
-        await c.startRecord();
-        c.handleRealtimeStateForTesting(
-          RealtimeStreamState(
-            active: true,
-            fileId: fileId,
-            path: file.path,
-            bytesReceived: 320,
-          ),
-        );
-        c.handleRealtimeOpusFrameForTesting(Uint8List(160));
-        ble.stopRecording();
-        await Future<void>.delayed(Duration.zero);
-        c.handleRealtimeStateForTesting(
-          RealtimeStreamState(fileId: fileId, path: file.path, bytesReceived: 320),
-        );
-        await Future<void>.delayed(Duration.zero);
-      }
-
-      await recordTake(311, first);
-      await settleUntil(() => qwen.calls == 1);
-      // The first job is still in flight; record and stop a second take so it
-      // queues behind it.
-      await recordTake(312, second);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(qwen.calls, 1, reason: '单并发：第二个任务必须等第一个完成');
-      qwen.pending!.complete();
-      await settleUntil(() => qwen.calls == 2);
-      expect(qwen.paths, [first.path, second.path]);
-    },
-  );
-
-  test(
-    'a repeated stop event does not rerun a started deferred job',
-    () async {
-      final directory = await Directory.systemTemp.createTemp('qwen-redo-');
-      addTearDown(() => directory.delete(recursive: true));
-      final file = File('${directory.path}/313.wav');
-      await file.writeAsBytes([1, 2, 3]);
-      final qwen = _Qwen()..apiKeyOverride = 'qwen-key';
-      final ble = _Ble();
-      final c = RecorderController(
-        loadPersistedState: false,
-        ble: ble,
-        qwenSpeech: qwen,
-        appleSpeech: _Apple(),
-      )..setSpeechProvider(SttProvider.qwen);
-      addTearDown(c.dispose);
+    Future<void> recordTake(int fileId, File file) async {
       await c.startRecord();
       c.handleRealtimeStateForTesting(
         RealtimeStreamState(
           active: true,
-          fileId: 313,
+          fileId: fileId,
           path: file.path,
           bytesReceived: 320,
         ),
@@ -300,19 +407,66 @@ void main() {
       c.handleRealtimeOpusFrameForTesting(Uint8List(160));
       ble.stopRecording();
       await Future<void>.delayed(Duration.zero);
-      final stopped = RealtimeStreamState(
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          fileId: fileId,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    await recordTake(311, first);
+    await settleUntil(() => qwen.calls == 1);
+    // The first job is still in flight; record and stop a second take so it
+    // queues behind it.
+    await recordTake(312, second);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(qwen.calls, 1, reason: '单并发：第二个任务必须等第一个完成');
+    qwen.pending!.complete();
+    await settleUntil(() => qwen.calls == 2);
+    expect(qwen.paths, [first.path, second.path]);
+  });
+
+  test('a repeated stop event does not rerun a started deferred job', () async {
+    final directory = await Directory.systemTemp.createTemp('qwen-redo-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/313.wav');
+    await file.writeAsBytes([1, 2, 3]);
+    final qwen = _Qwen()..apiKeyOverride = 'qwen-key';
+    final ble = _Ble();
+    final c = RecorderController(
+      loadPersistedState: false,
+      ble: ble,
+      qwenSpeech: qwen,
+      appleSpeech: _Apple(),
+    )..setSpeechProvider(SttProvider.qwen);
+    addTearDown(c.dispose);
+    await c.startRecord();
+    c.handleRealtimeStateForTesting(
+      RealtimeStreamState(
+        active: true,
         fileId: 313,
         path: file.path,
         bytesReceived: 320,
-      );
-      c.handleRealtimeStateForTesting(stopped);
-      await settleUntil(() => qwen.calls == 1);
-      // A duplicated stop notification must not transcribe the take again.
-      c.handleRealtimeStateForTesting(stopped);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(qwen.calls, 1);
-    },
-  );
+      ),
+    );
+    c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+    ble.stopRecording();
+    await Future<void>.delayed(Duration.zero);
+    final stopped = RealtimeStreamState(
+      fileId: 313,
+      path: file.path,
+      bytesReceived: 320,
+    );
+    c.handleRealtimeStateForTesting(stopped);
+    await settleUntil(() => qwen.calls == 1);
+    // A duplicated stop notification must not transcribe the take again.
+    c.handleRealtimeStateForTesting(stopped);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(qwen.calls, 1);
+  });
 
   test(
     'Doubao failure shows a readable error and one manual retry succeeds',
@@ -367,52 +521,58 @@ void main() {
     },
   );
 
-  test('Doubao model rejection reaches the detail as a readable error', () async {
-    final directory = await Directory.systemTemp.createTemp('doubao-model-');
-    addTearDown(() => directory.delete(recursive: true));
-    final file = File('${directory.path}/404.wav');
-    await file.writeAsBytes([1, 2, 3]);
-    final doubao = _Doubao()
-      ..apiKeyOverride = 'doubao-key'
-      ..failure = DoubaoSttException(
-        doubaoModelRejection('volc.seedasr.auc')!,
+  test(
+    'Doubao model rejection reaches the detail as a readable error',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('doubao-model-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/404.wav');
+      await file.writeAsBytes([1, 2, 3]);
+      final doubao = _Doubao()
+        ..apiKeyOverride = 'doubao-key'
+        ..failure = DoubaoSttException(
+          doubaoModelRejection('volc.seedasr.auc')!,
+        );
+      final c = RecorderController(
+        loadPersistedState: false,
+        doubaoSpeech: doubao,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.doubao);
+      addTearDown(c.dispose);
+
+      await c.transcribeLocalFile(file.path);
+
+      final view = c.recordingView(RecordingReference(path: file.path));
+      expect(view.error, contains('标准版'));
+      expect(view.error, contains('volc.bigasr.auc_turbo'));
+      expect(view.text, isEmpty);
+    },
+  );
+
+  test(
+    'Doubao manual trigger without a key prompts to configure first',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('doubao-nokey-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/405.wav');
+      await file.writeAsBytes([1, 2, 3]);
+      final doubao = _Doubao();
+      final c = RecorderController(
+        loadPersistedState: false,
+        doubaoSpeech: doubao,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.doubao);
+      addTearDown(c.dispose);
+
+      await c.transcribeLocalFile(file.path);
+
+      expect(doubao.calls, 0);
+      expect(
+        c.recordingView(RecordingReference(path: file.path)).error,
+        '请在设置中配置 豆包',
       );
-    final c = RecorderController(
-      loadPersistedState: false,
-      doubaoSpeech: doubao,
-      appleSpeech: _Apple(),
-    )..setSpeechProvider(SttProvider.doubao);
-    addTearDown(c.dispose);
-
-    await c.transcribeLocalFile(file.path);
-
-    final view = c.recordingView(RecordingReference(path: file.path));
-    expect(view.error, contains('标准版'));
-    expect(view.error, contains('volc.bigasr.auc_turbo'));
-    expect(view.text, isEmpty);
-  });
-
-  test('Doubao manual trigger without a key prompts to configure first', () async {
-    final directory = await Directory.systemTemp.createTemp('doubao-nokey-');
-    addTearDown(() => directory.delete(recursive: true));
-    final file = File('${directory.path}/405.wav');
-    await file.writeAsBytes([1, 2, 3]);
-    final doubao = _Doubao();
-    final c = RecorderController(
-      loadPersistedState: false,
-      doubaoSpeech: doubao,
-      appleSpeech: _Apple(),
-    )..setSpeechProvider(SttProvider.doubao);
-    addTearDown(c.dispose);
-
-    await c.transcribeLocalFile(file.path);
-
-    expect(doubao.calls, 0);
-    expect(
-      c.recordingView(RecordingReference(path: file.path)).error,
-      '请在设置中配置 豆包',
-    );
-  });
+    },
+  );
 
   test(
     'Doubao demo path: record a take, stop, and read the Chinese transcript',
@@ -435,14 +595,15 @@ void main() {
       );
       final service = DoubaoSttService(client: client);
       final ble = _Ble();
-      final c = RecorderController(
-        loadPersistedState: false,
-        ble: ble,
-        doubaoSpeech: service,
-        appleSpeech: _Apple(),
-      )
-        ..setSpeechProvider(SttProvider.doubao)
-        ..setDoubaoConfig(const EngineConfig(apiKey: 'doubao-key'));
+      final c =
+          RecorderController(
+              loadPersistedState: false,
+              ble: ble,
+              doubaoSpeech: service,
+              appleSpeech: _Apple(),
+            )
+            ..setSpeechProvider(SttProvider.doubao)
+            ..setDoubaoConfig(const EngineConfig(apiKey: 'doubao-key'));
       addTearDown(c.dispose);
       c.setTranscriptLanguage('zh');
 
@@ -516,65 +677,66 @@ void main() {
     },
   );
 
-  test(
-    'Qwen and Doubao transcripts coexist across engine switches',
-    () async {
-      final directory = await Directory.systemTemp.createTemp('mixed-eng-');
-      addTearDown(() => directory.delete(recursive: true));
-      final qwenFile = File('${directory.path}/501.wav');
-      await qwenFile.writeAsBytes([1, 2, 3]);
-      final doubaoFile = File('${directory.path}/502.wav');
-      await doubaoFile.writeAsBytes([1, 2, 3]);
-      final qwen = _Qwen()..apiKeyOverride = 'qwen-key';
-      final doubao = _Doubao()..apiKeyOverride = 'doubao-key';
-      final ble = _Ble();
-      final c = RecorderController(
-        loadPersistedState: false,
-        ble: ble,
-        qwenSpeech: qwen,
-        doubaoSpeech: doubao,
-        appleSpeech: _Apple(),
-      )..setSpeechProvider(SttProvider.qwen);
-      addTearDown(c.dispose);
+  test('Qwen and Doubao transcripts coexist across engine switches', () async {
+    final directory = await Directory.systemTemp.createTemp('mixed-eng-');
+    addTearDown(() => directory.delete(recursive: true));
+    final qwenFile = File('${directory.path}/501.wav');
+    await qwenFile.writeAsBytes([1, 2, 3]);
+    final doubaoFile = File('${directory.path}/502.wav');
+    await doubaoFile.writeAsBytes([1, 2, 3]);
+    final qwen = _Qwen()..apiKeyOverride = 'qwen-key';
+    final doubao = _Doubao()..apiKeyOverride = 'doubao-key';
+    final ble = _Ble();
+    final c = RecorderController(
+      loadPersistedState: false,
+      ble: ble,
+      qwenSpeech: qwen,
+      doubaoSpeech: doubao,
+      appleSpeech: _Apple(),
+    )..setSpeechProvider(SttProvider.qwen);
+    addTearDown(c.dispose);
 
-      Future<void> recordTake(int fileId, File file) async {
-        await c.startRecord();
-        c.handleRealtimeStateForTesting(
-          RealtimeStreamState(
-            active: true,
-            fileId: fileId,
-            path: file.path,
-            bytesReceived: 320,
-          ),
-        );
-        c.handleRealtimeOpusFrameForTesting(Uint8List(160));
-        ble.stopRecording();
-        await Future<void>.delayed(Duration.zero);
-        c.handleRealtimeStateForTesting(
-          RealtimeStreamState(fileId: fileId, path: file.path, bytesReceived: 320),
-        );
-      }
+    Future<void> recordTake(int fileId, File file) async {
+      await c.startRecord();
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          active: true,
+          fileId: fileId,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+      c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          fileId: fileId,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+    }
 
-      // Take 1 on Qwen.
-      await recordTake(501, qwenFile);
-      await settleUntil(() => qwen.calls == 1);
-      // Take 2 on Doubao after switching the default engine.
-      c.setSpeechProvider(SttProvider.doubao);
-      await recordTake(502, doubaoFile);
-      await settleUntil(() => doubao.calls == 1);
+    // Take 1 on Qwen.
+    await recordTake(501, qwenFile);
+    await settleUntil(() => qwen.calls == 1);
+    // Take 2 on Doubao after switching the default engine.
+    c.setSpeechProvider(SttProvider.doubao);
+    await recordTake(502, doubaoFile);
+    await settleUntil(() => doubao.calls == 1);
 
-      // Switching the default engine again changes neither stored result.
-      c.setSpeechProvider(SttProvider.apple);
-      final first = c.recordingView(RecordingReference(path: qwenFile.path));
-      final second = c.recordingView(RecordingReference(path: doubaoFile.path));
-      expect(first.text, '通义文本');
-      expect(first.provider, SttProvider.qwen);
-      expect(second.text, '豆包文本');
-      expect(second.provider, SttProvider.doubao);
-      expect(qwen.calls, 1);
-      expect(doubao.calls, 1);
-    },
-  );
+    // Switching the default engine again changes neither stored result.
+    c.setSpeechProvider(SttProvider.apple);
+    final first = c.recordingView(RecordingReference(path: qwenFile.path));
+    final second = c.recordingView(RecordingReference(path: doubaoFile.path));
+    expect(first.text, '通义文本');
+    expect(first.provider, SttProvider.qwen);
+    expect(second.text, '豆包文本');
+    expect(second.provider, SttProvider.doubao);
+    expect(qwen.calls, 1);
+    expect(doubao.calls, 1);
+  });
 
   test('MOSS paused take is not submitted until a full stop', () async {
     final directory = await Directory.systemTemp.createTemp('moss-pause-');
@@ -1142,6 +1304,7 @@ class _Apple extends AppleSpeechService {
 }
 
 class _Qwen extends QwenSttService {
+  String? seenTaskId;
   int calls = 0;
   final paths = <String>[];
   Completer<void>? pending;
@@ -1161,6 +1324,7 @@ class _Qwen extends QwenSttService {
     bool Function()? isCurrent,
   }) async {
     calls++;
+    seenTaskId = recovery?.taskId;
     paths.add(path);
     if (pending != null) await pending!.future;
     seenKey = apiKey;
@@ -1333,4 +1497,10 @@ class _Stream implements SttStreamSession {
   Future<void> dispose() async {
     await _events.close();
   }
+}
+
+class _UnwritableJournal extends FileJobJournal {
+  _UnwritableJournal() : super(inMemory: true);
+  @override
+  Future<void> save() async => throw const FileSystemException('disk full');
 }

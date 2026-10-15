@@ -55,3 +55,21 @@
 - 修复与证据：`lib/ui/widgets/inline_player.dart` 用 `Overlay.wrap` 把滑块浮层限制在自身子树，导航与动画保留。`test/macos_accessibility_update_test.dart` 重载 `createSemanticsUpdateBuilder` 记录每批 updateNode 边并做根可达检查：撤销修复时失败（孤儿 id 60/84/108），恢复后通过；`scripts/check-macos-accessibility.py` 实测 9 步 0 错误（`build/ui-evidence/ax-native.log`）。
 - 正确做法（Done right）：涉语义的改动至少覆盖宽/窄窗口、settle 树、逐帧序列化更新与原生读屏四层；前两层通过不代表后两层通过。
 - 复发记录：Seen 1x (2026-10-15)。
+
+### 首次配置必须从未配置状态走通
+
+**配置入口不能依赖引擎已启用；组件测试应从没有密钥的用户状态点击进入。**
+
+- 起因与后果：引擎列表阻止选择无密钥服务，而配置表单只显示当前服务，形成首次配置循环（#8）。原测试直接调用控制器选择引擎，绕过了真实入口。
+- 修复与证据：未配置卡片打开独立配置窗口；`test/engine_lineup_test.dart` 从空配置点击、填写、保存、启用，再切换另一个引擎。Qwen/豆包入口回归修复前均失败。
+- 正确做法（Done right）：覆盖真实导航入口与配置后的启用路径；同类 StatefulWidget 切换实体时使用实体 key，避免表单沿用旧引擎状态。
+- 复发记录：Seen 1x (2026-10-15)。
+
+### 内存去重不等于跨进程恢复
+
+**付费任务必须在请求前记录状态，在结果持久保存后再确认完成。**
+
+- 起因与后果：统一 DeferredFileJobs 后 Qwen/豆包的队列与去重集仍仅在内存，重启会丢失任务；设备取回也没有进入同一自动处理入口（#10/#13）。
+- 修复与证据：FileJobJournal 保留配置和任务阶段，Qwen 提交编号在查询前落盘；真实临时文件重开、模拟 HTTP、控制器恢复和重复完成通知测试见 `docs/recording-processing-validation.md`。
+- 正确做法（Done right）：已知任务编号继续查询；未知提交不自动重做；结果先保存再确认；配置凭据不进入任务文件。单元测试与编译不能替代系统休眠和真实设备验收。
+- 复发记录：Seen 1x (2026-10-15)。
