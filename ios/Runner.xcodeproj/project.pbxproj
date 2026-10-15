@@ -21,6 +21,8 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		A90C71012F40000000A71002 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000000A71001 /* KeychainStore.swift */; };
+		A90C71012F40000100A71002 /* CredentialBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000100A71001 /* CredentialBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +77,8 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F02E455CAB446D82596D3461 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		F9204CEE42B106B3AC78734C /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
+		A90C71012F40000000A71001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KeychainStore.swift; path = ../../darwin/KeychainStore.swift; sourceTree = "<group>"; };
+		A90C71012F40000100A71001 /* CredentialBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CredentialBridge.swift; path = ../../darwin/CredentialBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -173,6 +177,8 @@
 				1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */,
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
+				A90C71012F40000100A71001 /* CredentialBridge.swift */,
+				A90C71012F40000000A71001 /* KeychainStore.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				A10C71012F40000100A71001 /* RecordingShortcut.swift */,
 				A11271012F40000100A71001 /* AppleSpeechBridge.swift */,
@@ -401,6 +407,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
+				A90C71012F40000100A71002 /* CredentialBridge.swift in Sources */,
+				A90C71012F40000000A71002 /* KeychainStore.swift in Sources */,
 				A10C71002F40000100A71001 /* RecordingShortcut.swift in Sources */,
 				A11271002F40000100A71001 /* AppleSpeechBridge.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,

@@ -6,60 +6,125 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../ai/stt_types.dart';
+import '../platform/credential_store.dart';
 import '../ai/speech_provider.dart';
 import '../ai/engine_config.dart';
 
-/// Lightweight JSON settings for speech providers and recording preferences.
+/// Settings metadata on disk; user credentials live only in system Keychain.
 class AppSettingsStore {
   AppSettingsStore._();
-
   static const _fileName = 'app_settings.json';
-  static Future<void> _pendingSave = Future.value();
+  static Future<void> _pending = Future.value();
+  static bool _loadFailed = false;
+  static final _credentials = CredentialStore();
+  static const _providers = ['qwen', 'doubao'];
 
-  static Future<File> _file() async {
-    Directory base;
-    try {
-      base = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory(p.join(base.path, 'AnkerRecorder'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return File(p.join(dir.path, _fileName));
+  @visibleForTesting
+  static void resetForTesting() {
+    _pending = Future.value();
+    _loadFailed = false;
   }
 
-  static Future<AppSettings> load() async {
-    try {
-      final f = await _file();
-      if (!await f.exists()) return const AppSettings();
-      final map = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
-      return AppSettings.fromJson(map);
-    } catch (e) {
-      debugPrint('[AppSettings] load failed: $e');
-      return const AppSettings();
-    }
-  }
-
-  static Future<void> save(AppSettings s, {bool strict = false}) {
-    final encoded = const JsonEncoder.withIndent('  ').convert(s.toJson());
-    final operation = _pendingSave.then((_) async {
-      try {
-        final file = await _file();
-        final temporary = File('${file.path}.tmp');
-        await temporary.writeAsString(encoded, flush: true);
-        await temporary.rename(file.path);
-      } catch (error) {
-        debugPrint('[AppSettings] save failed: $error');
-        if (strict) rethrow;
-      }
-    });
-    _pendingSave = operation.catchError((Object _) {});
+  static Future<T> _serial<T>(Future<T> Function() work) {
+    final operation = _pending.then((_) => work());
+    _pending = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
     return operation;
   }
+
+  static Future<File> _file() async {
+    final base = await getApplicationDocumentsDirectory();
+    return File(p.join(base.path, 'AnkerRecorder', _fileName));
+  }
+
+  static Future<void> _write(File file, AppSettings settings) async {
+    await file.parent.create(recursive: true);
+    final temporary = File('${file.path}.tmp');
+    await temporary.writeAsString(jsonEncode(settings.toJson()), flush: true);
+    await temporary.rename(file.path);
+  }
+
+  static Future<AppSettings> load() => _serial(() async {
+    AppSettings settings = const AppSettings();
+    try {
+      final file = await _file();
+      final raw = await file.exists() ? await file.readAsString() : '{}';
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      settings = AppSettings.fromJson(map);
+      final stored = await _credentials.read();
+      final migrated = Map<String, String?>.from(stored);
+      for (final provider in _providers) {
+        final legacy = settings.engines[provider]?.apiKey;
+        if (!migrated.containsKey(provider) && legacy != null) {
+          migrated[provider] = legacy;
+        }
+      }
+      if (!mapEquals(stored, migrated)) await _credentials.write(migrated);
+      settings = settings.copyWith(
+        engines: {
+          for (final provider in _providers)
+            if (settings.engines.containsKey(provider) ||
+                migrated[provider] != null)
+              provider: EngineConfig(
+                apiKey: migrated[provider],
+                baseUrl: settings.engines[provider]?.baseUrl,
+                model: settings.engines[provider]?.model,
+              ),
+        },
+      );
+      // Strip both nested and old flat keys only after successful Keychain
+      // read/write verification. A failed migration leaves the original intact.
+      if (raw.contains('apiKey') || map.keys.any((k) => k.endsWith('ApiKey'))) {
+        await _write(file, settings);
+      }
+      final temporary = File('${file.path}.tmp');
+      if (await file.exists() && await temporary.exists()) {
+        await temporary.delete();
+      }
+      _loadFailed = false;
+      return settings;
+    } catch (_) {
+      _loadFailed = true;
+      return settings.copyWith(
+        storageError: const CredentialStorageException().message,
+      );
+    }
+  });
+
+  static Future<void> save(AppSettings settings, {bool strict = false}) =>
+      _serial(() async {
+        try {
+          if (_loadFailed) throw const CredentialStorageException();
+          final previous = await _credentials.read();
+          final desired = {
+            for (final provider in _providers)
+              provider: settings.engines[provider]?.apiKey,
+          };
+          final changed = !mapEquals(previous, desired);
+          try {
+            if (changed) await _credentials.write(desired);
+            await _write(await _file(), settings);
+          } catch (_) {
+            if (changed) {
+              try {
+                await _credentials.write(previous);
+              } catch (_) {
+                _loadFailed = true;
+              }
+            }
+            rethrow;
+          }
+        } catch (_) {
+          if (strict) throw const CredentialStorageException();
+        }
+      });
 }
 
 class AppSettings {
   const AppSettings({
+    this.storageError,
     this.speechProvider,
     this.appleSourceLanguage = '',
     this.engines = const {},
@@ -71,6 +136,8 @@ class AppSettings {
     this.ownerLanguage = 'zh',
     this.guestLanguage = 'en',
   });
+
+  final String? storageError;
 
   /// Grouped cloud-engine credentials keyed by [SttProvider.name].
   final Map<String, EngineConfig> engines;
@@ -91,6 +158,7 @@ class AppSettings {
       engines[provider.name] ?? const EngineConfig();
 
   AppSettings copyWith({
+    String? storageError,
     SttProvider? speechProvider,
     String? appleSourceLanguage,
     Map<String, EngineConfig>? engines,
@@ -103,6 +171,7 @@ class AppSettings {
     String? guestLanguage,
   }) {
     return AppSettings(
+      storageError: storageError ?? this.storageError,
       speechProvider: speechProvider ?? this.speechProvider,
       appleSourceLanguage: appleSourceLanguage ?? this.appleSourceLanguage,
       engines: engines ?? this.engines,
@@ -132,7 +201,11 @@ class AppSettings {
 
   Map<String, dynamic> get _engineJson => {
     for (final entry in engines.entries)
-      if (!entry.value.isEmpty) entry.key: entry.value.toJson(),
+      if (!entry.value.isEmpty)
+        entry.key: {
+          ...entry.value.toJson(),
+          if (entry.value.isConfigured) 'credentialRef': entry.key,
+        },
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> map) {
