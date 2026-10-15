@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:anker_recorder/state/recorder_controller.dart';
+import 'package:koe/state/recorder_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

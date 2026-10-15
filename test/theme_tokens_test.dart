@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:anker_recorder/theme/app_theme.dart';
+import 'package:koe/theme/app_theme.dart';
 
 void main() {
   testWidgets('light and dark themes register KoeTokens', (tester) async {

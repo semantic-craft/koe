@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:anker_recorder/state/meeting_minutes.dart';
-import 'package:anker_recorder/state/recording_analysis.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/ui/widgets/minutes_panel.dart';
+import 'package:koe/state/meeting_minutes.dart';
+import 'package:koe/state/recording_analysis.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/widgets/minutes_panel.dart';
 
 String fixture({String source = 'S1'}) => jsonEncode({
   'title': '项目会议',

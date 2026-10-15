@@ -2,10 +2,10 @@ import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:anker_recorder/state/meeting_minutes.dart';
-import 'package:anker_recorder/state/recording_analysis.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/ui/widgets/minutes_mind_map.dart';
+import 'package:koe/state/meeting_minutes.dart';
+import 'package:koe/state/recording_analysis.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/widgets/minutes_mind_map.dart';
 import 'meeting_minutes_test.dart' as fixtures;
 
 void main() {

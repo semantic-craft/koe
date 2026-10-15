@@ -1,4 +1,4 @@
-import 'package:anker_recorder/ai/stt_types.dart';
+import 'package:koe/ai/stt_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

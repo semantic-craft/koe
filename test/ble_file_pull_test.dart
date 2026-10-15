@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:anker_recorder/ble/ble_file_pull.dart';
-import 'package:anker_recorder/crypto/device_crypto.dart';
-import 'package:anker_recorder/protocol/commands.dart';
-import 'package:anker_recorder/protocol/frame.dart';
-import 'package:anker_recorder/protocol/models.dart';
+import 'package:koe/ble/ble_file_pull.dart';
+import 'package:koe/crypto/device_crypto.dart';
+import 'package:koe/protocol/commands.dart';
+import 'package:koe/protocol/frame.dart';
+import 'package:koe/protocol/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

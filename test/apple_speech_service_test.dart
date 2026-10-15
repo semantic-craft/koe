@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:anker_recorder/ai/apple_speech.dart';
-import 'package:anker_recorder/ai/stt_types.dart';
+import 'package:koe/ai/apple_speech.dart';
+import 'package:koe/ai/stt_types.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

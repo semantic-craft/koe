@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import 'package:anker_recorder/ai/progress_multipart.dart';
-import 'package:anker_recorder/ai/stt_types.dart';
+import 'package:koe/ai/progress_multipart.dart';
+import 'package:koe/ai/stt_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

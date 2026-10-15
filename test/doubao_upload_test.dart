@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:anker_recorder/ai/doubao_stt.dart';
-import 'package:anker_recorder/ai/streaming_audio_json.dart';
-import 'package:anker_recorder/audio/upload_source.dart';
+import 'package:koe/ai/doubao_stt.dart';
+import 'package:koe/ai/streaming_audio_json.dart';
+import 'package:koe/audio/upload_source.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 

@@ -1,6 +1,6 @@
-import 'package:anker_recorder/state/transcript_store.dart';
-import 'package:anker_recorder/state/recording.dart';
-import 'package:anker_recorder/ai/speech_provider.dart';
+import 'package:koe/state/transcript_store.dart';
+import 'package:koe/state/recording.dart';
+import 'package:koe/ai/speech_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

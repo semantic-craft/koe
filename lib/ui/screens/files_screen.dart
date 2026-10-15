@@ -600,7 +600,7 @@ class _DeviceFilesTab extends StatelessWidget {
                     hint: _Hint(
                       icon: Icons.link_off_rounded,
                       title: '未连接设备',
-                      body: '点右上角「扫描」连接 soundcore Work，即可列出设备端录音。',
+                      body: '点右上角「扫描」连接安克录音豆，即可列出设备端录音。',
                     ),
                   )
                 : c.files.isEmpty

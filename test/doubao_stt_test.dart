@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:anker_recorder/ai/doubao_stt.dart';
-import 'package:anker_recorder/audio/ogg_opus.dart';
+import 'package:koe/ai/doubao_stt.dart';
+import 'package:koe/audio/ogg_opus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 

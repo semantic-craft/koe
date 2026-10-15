@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:anker_recorder/audio/ogg_opus.dart';
-import 'package:anker_recorder/ai/qwen_stt.dart';
+import 'package:koe/audio/ogg_opus.dart';
+import 'package:koe/ai/qwen_stt.dart';
 
 void main() {
   late Directory dir;

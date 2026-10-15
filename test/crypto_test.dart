@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:anker_recorder/crypto/device_crypto.dart';
+import 'package:koe/crypto/device_crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

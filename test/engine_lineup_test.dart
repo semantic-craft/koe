@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
-import 'package:anker_recorder/platform/credential_store.dart';
+import 'package:koe/platform/credential_store.dart';
 import 'support/settings_completion.dart';
-import 'package:anker_recorder/ai/doubao_stt.dart';
-import 'package:anker_recorder/ai/engine_config.dart';
-import 'package:anker_recorder/ai/qwen_stt.dart';
-import 'package:anker_recorder/state/recorder_controller.dart';
-import 'package:anker_recorder/ui/screens/settings_screen.dart';
+import 'package:koe/ai/doubao_stt.dart';
+import 'package:koe/ai/engine_config.dart';
+import 'package:koe/ai/qwen_stt.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -328,8 +328,7 @@ void main() async {
         200,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
-      await tester.pump();
+      await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('speech-provider-option-doubao')),
       );
@@ -352,8 +351,7 @@ void main() async {
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, -80));
-    await tester.pump();
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey('speech-provider-option-doubao')),
     );
