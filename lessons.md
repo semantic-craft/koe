@@ -20,6 +20,15 @@
 - 复发记录：Seen <N>x (<YYYY-MM-DD, ...>)；<每次独立发生的证据；修复提交数与重试次数不计入。>
 ```
 
+### 逐像素对照才能抓住主题构造形态差异
+
+**重构主题时"字段值相同"不等于"ThemeData 相同"；视觉回归必须逐像素对照。**
+
+- 起因与后果：2026-10-15 挑回 87d5d8c token 层时，把 `const ColorScheme.light(...)` 换成 `ColorScheme.light().copyWith(...)`，抽查字段（surface/primary/onSurface/outline）全等，但无参 `ColorScheme.light()` 在当前 Flutter 版本会留下一批 NULL 字段，设置页文字变纯黑、下拉与分隔线偏色；字节级对比 9/14 张截图全同的假象下 5 张已偏。
+- 修复与证据：改回全参构造、经 token 取值；`build/ui-evidence/spec-06/` 下 14 张 before/after 截图逐像素全同（`flutter test --dart-define=RECORDING_PREVIEW_DIR` 抓图 + 逐字节 RGBA 对照）。
+- 正确做法（Done right）：主题重构以截图基线先行；对照要像素级而非抽查字段，构造器形态（无参 vs 全参、const 与否）本身是行为面。
+- 复发记录：Seen 1x (2026-10-15)。
+
 ### 并排工作区需要独立的导航语义边界
 
 **嵌套 Navigator 与可交互侧栏并排时，必须验证路由外的控件仍在语义树中。**
