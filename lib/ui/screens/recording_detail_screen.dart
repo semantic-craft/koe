@@ -14,6 +14,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/inline_player.dart';
 import '../widgets/scan_sheet.dart';
+import '../widgets/widgets.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({super.key, required this.reference});
@@ -187,6 +188,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final path = recording.path;
     if (path == null || recording.audioLocked) return;
     final controller = context.read<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final speaker = await showModalBottomSheet<TranscriptSpeaker>(
       context: context,
       showDragHandle: true,
@@ -199,17 +201,36 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           child: ListView(
             shrinkWrap: true,
             children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
                 child: Text(
                   '说话人姓名',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: tokens.textPrimary,
+                  ),
                 ),
               ),
               for (final speaker in controller.transcriptSpeakersForPath(path))
                 ListTile(
-                  title: Text(speaker.displayLabel),
-                  trailing: const Icon(Icons.edit_outlined),
+                  leading: IconBadge(
+                    icon: Icons.person_outline_rounded,
+                    size: 32,
+                    iconSize: 16,
+                    color: tokens.accent,
+                    backgroundColor: tokens.accentSoft,
+                    borderColor: tokens.accentBorder,
+                  ),
+                  title: Text(
+                    speaker.displayLabel,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  trailing: Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: tokens.textSecondary,
+                  ),
                   onTap: () => Navigator.pop(context, speaker),
                 ),
             ],
@@ -294,6 +315,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final recording = c.recordingView(widget.reference);
     if (!_selectionInitialized) {
       _selectionInitialized = true;
@@ -317,26 +339,37 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         recording.path != null &&
         c.transcriptSpeakersForPath(recording.path!).isNotEmpty;
 
+    final statusDotColor = recording.paused
+        ? tokens.amber
+        : recording.live
+        ? tokens.coral
+        : tokens.textMuted;
+
     return Scaffold(
       key: ValueKey('recording-detail-${widget.reference.key}'),
-      backgroundColor: AppColors.bg,
+      backgroundColor: tokens.bg,
       appBar: AppBar(
-        backgroundColor: AppColors.bgCard,
+        backgroundColor: tokens.bgCard,
         title: Text(
           recording.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         titleTextStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
-          color: AppColors.textPrimary,
-          fontSize: 18,
+          color: tokens.textPrimary,
+          fontSize: 17,
           fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(height: 1, color: tokens.borderSoft),
         ),
         actions: [
           IconButton(
             tooltip: '分享录音',
             onPressed: fileReady ? () => _share(recording) : null,
-            icon: const Icon(Icons.ios_share_rounded),
+            icon: const Icon(Icons.ios_share_rounded, size: 20),
           ),
           PopupMenuButton<String>(
             tooltip: '更多操作',
@@ -385,95 +418,121 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Align(
-            alignment: Alignment.center,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 4,
-                ),
-                child: Row(
-                  children: [
-                    if (hasTranslation)
-                      Expanded(
-                        child: SegmentedButton<bool>(
-                          segments: const [
-                            ButtonSegment(value: false, label: Text('原文')),
-                            ButtonSegment(value: true, label: Text('译文')),
-                          ],
-                          selected: {_showTranslation},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (value) =>
-                              setState(() => _showTranslation = value.first),
-                        ),
-                      )
-                    else
-                      Expanded(
-                        child: Text(
-                          recording.paused
-                              ? '已暂停'
-                              : recording.live
-                              ? (recording.provider == SttProvider.moss
-                                    ? '录音中'
-                                    : '实时转写')
-                              : '转写文本',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                    if (recording.processing) ...[
-                      const SizedBox(width: 8),
-                      const Tooltip(
-                        message: '正在处理',
-                        child: SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    ],
-                    if (canOfferTranslation) ...[
-                      const SizedBox(width: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: tokens.bgCard,
+              border: Border(bottom: BorderSide(color: tokens.borderSoft)),
+            ),
+            child: Align(
+              alignment: Alignment.center,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    children: [
                       if (hasTranslation)
-                        IconButton(
-                          tooltip: '翻译为其他语言',
-                          onPressed: canProcess
-                              ? () => _translate(recording)
-                              : null,
-                          icon: const Icon(Icons.translate_rounded),
+                        Expanded(
+                          child: SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: false, label: Text('原文')),
+                              ButtonSegment(value: true, label: Text('译文')),
+                            ],
+                            selected: {_showTranslation},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (value) =>
+                                setState(() => _showTranslation = value.first),
+                          ),
                         )
                       else
-                        TextButton.icon(
-                          onPressed: canProcess
-                              ? () => _translate(recording)
-                              : null,
-                          icon: const Icon(Icons.translate_rounded),
-                          label: const Text('翻译'),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 7,
+                                height: 7,
+                                decoration: BoxDecoration(
+                                  color: statusDotColor,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  recording.paused
+                                      ? '已暂停'
+                                      : recording.live
+                                      ? (recording.provider == SttProvider.moss
+                                            ? '录音中'
+                                            : '实时转写')
+                                      : '转写文本',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: tokens.textSecondary,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
+                      if (recording.processing) ...[
+                        const SizedBox(width: 8),
+                        Tooltip(
+                          message: '正在处理',
+                          child: SizedBox.square(
+                            dimension: 15,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: tokens.accent,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (canOfferTranslation) ...[
+                        const SizedBox(width: 8),
+                        if (hasTranslation)
+                          IconButton(
+                            tooltip: '翻译为其他语言',
+                            onPressed: canProcess
+                                ? () => _translate(recording)
+                                : null,
+                            icon: const Icon(Icons.translate_rounded, size: 19),
+                          )
+                        else
+                          TextButton.icon(
+                            onPressed: canProcess
+                                ? () => _translate(recording)
+                                : null,
+                            icon: const Icon(Icons.translate_rounded, size: 17),
+                            label: const Text('翻译'),
+                          ),
+                      ],
+                      IconButton(
+                        tooltip: _showTranslation && hasTranslation
+                            ? '复制译文'
+                            : '复制原文',
+                        onPressed: text.isEmpty
+                            ? null
+                            : () async {
+                                await Clipboard.setData(
+                                  ClipboardData(text: text),
+                                );
+                                _notice(
+                                  _showTranslation && hasTranslation
+                                      ? '已复制译文'
+                                      : '已复制原文',
+                                );
+                              },
+                        icon: const Icon(Icons.copy_outlined, size: 19),
+                      ),
                     ],
-                    IconButton(
-                      tooltip: _showTranslation && hasTranslation
-                          ? '复制译文'
-                          : '复制原文',
-                      onPressed: text.isEmpty
-                          ? null
-                          : () async {
-                              await Clipboard.setData(
-                                ClipboardData(text: text),
-                              );
-                              _notice(
-                                _showTranslation && hasTranslation
-                                    ? '已复制译文'
-                                    : '已复制原文',
-                              );
-                            },
-                      icon: const Icon(Icons.copy_outlined),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -501,11 +560,46 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                               if (recording.error != null)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 16),
-                                  child: Text(
-                                    recording.error!,
-                                    style: const TextStyle(
-                                      color: AppColors.coral,
-                                      height: 1.4,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: tokens.coralSoft,
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadii.md,
+                                      ),
+                                      border: Border.all(
+                                        color: tokens.coralBorder,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 2,
+                                          ),
+                                          child: Icon(
+                                            Icons.error_outline_rounded,
+                                            size: 16,
+                                            color: tokens.coral,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            recording.error!,
+                                            style: TextStyle(
+                                              color: tokens.coral,
+                                              fontSize: 13,
+                                              height: 1.4,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -555,7 +649,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           ? _LiveControls(recording: recording)
           : fileReady
           ? Material(
-              color: AppColors.bgCard,
+              color: tokens.bgCard,
               child: SafeArea(
                 top: false,
                 child: Padding(
@@ -662,8 +756,30 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
     super.dispose();
   }
 
+  static TextSpan _buildParagraphSpan(String paragraph, KoeTokens tokens) {
+    final speakerMatch = RegExp(r'^([^:：\n]{1,24}[：:])(.*)$').firstMatch(
+      paragraph,
+    );
+    if (speakerMatch != null) {
+      return TextSpan(
+        children: [
+          TextSpan(
+            text: speakerMatch.group(1),
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: tokens.accent,
+            ),
+          ),
+          TextSpan(text: speakerMatch.group(2)),
+        ],
+      );
+    }
+    return TextSpan(text: paragraph);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Stack(
       children: [
         NotificationListener<UserScrollNotification>(
@@ -685,40 +801,67 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
               child: ListView.builder(
                 key: ValueKey('recording-text-scroll-${widget.key}'),
                 controller: _scroll,
-                padding: EdgeInsets.fromLTRB(20, 12, 20, widget.live ? 80 : 20),
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  16,
+                  20,
+                  widget.live ? 84 : 24,
+                ),
                 itemCount: _paragraphs.length + (widget.header == null ? 0 : 1),
-                itemBuilder: (context, index) => Align(
-                  alignment: Alignment.topCenter,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 720),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                          bottom:
-                              (widget.header != null && index == 0) ||
-                                  index ==
-                                      _paragraphs.length +
-                                          (widget.header == null ? 0 : 1) -
-                                          1
-                              ? 0
-                              : 16,
-                        ),
-                        child: widget.header != null && index == 0
-                            ? widget.header!
-                            : Text(
-                                _paragraphs[index -
-                                    (widget.header == null ? 0 : 1)],
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  height: 1.65,
-                                  color: AppColors.textPrimary,
+                itemBuilder: (context, index) {
+                  final isHeader = widget.header != null && index == 0;
+                  final isLast =
+                      index ==
+                      _paragraphs.length + (widget.header == null ? 0 : 1) - 1;
+                  final paragraph = isHeader
+                      ? ''
+                      : _paragraphs[index - (widget.header == null ? 0 : 1)];
+                  final hasSpeaker =
+                      !isHeader &&
+                      RegExp(r'^[^:：\n]{1,24}[：:]').hasMatch(paragraph);
+                  return Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 720),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            bottom: isHeader || isLast ? 0 : 16,
+                          ),
+                          child: isHeader
+                              ? widget.header!
+                              : DecoratedBox(
+                                  decoration: hasSpeaker
+                                      ? BoxDecoration(
+                                          border: Border(
+                                            left: BorderSide(
+                                              color: tokens.accentBorder,
+                                              width: 2.5,
+                                            ),
+                                          ),
+                                        )
+                                      : const BoxDecoration(),
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      left: hasSpeaker ? 12 : 0,
+                                    ),
+                                    child: Text.rich(
+                                      _buildParagraphSpan(paragraph, tokens),
+                                      style: TextStyle(
+                                        fontSize: 17.5,
+                                        height: 1.68,
+                                        letterSpacing: -0.1,
+                                        color: tokens.textPrimary,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             ),
           ),
@@ -729,11 +872,18 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
             bottom: 16,
             child: FilledButton.icon(
               key: const ValueKey('follow-latest'),
+              style: FilledButton.styleFrom(
+                shape: const StadiumBorder(),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+              ),
               onPressed: () {
                 setState(() => _following = true);
                 _follow();
               },
-              icon: const Icon(Icons.arrow_downward_rounded),
+              icon: const Icon(Icons.arrow_downward_rounded, size: 17),
               label: const Text('最新内容'),
             ),
           ),
@@ -748,26 +898,51 @@ class _LiveControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
-    return Material(
-      color: AppColors.bgCard,
+    final tokens = KoeTokens.of(context);
+    final isPaused = recording.live && recording.paused;
+    final isRecording = recording.live && !recording.paused;
+    final statusColor = isRecording
+        ? tokens.coral
+        : isPaused
+        ? tokens.amber
+        : tokens.accent;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.bgCard,
+        border: Border(top: BorderSide(color: tokens.border)),
+      ),
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           child: Row(
             children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: statusColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   recording.live
                       ? (recording.paused ? '已暂停' : '录音中')
                       : '正在保存录音',
-                  style: const TextStyle(color: AppColors.textSecondary),
+                  style: TextStyle(
+                    color: tokens.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
                 ),
               ),
               if (recording.error != null)
                 IconButton(
                   tooltip: '查看处理错误',
-                  color: AppColors.coral,
+                  color: tokens.coral,
                   icon: const Icon(Icons.error_outline_rounded),
                   onPressed: () => showDialog<void>(
                     context: context,
@@ -787,8 +962,16 @@ class _LiveControls extends StatelessWidget {
               if (recording.live && c.recording)
                 FilledButton.icon(
                   key: const ValueKey('pause-recording'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: tokens.coral,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(96, 48),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadii.pill),
+                    ),
+                  ),
                   onPressed: c.phase == AppPhase.busy ? null : c.pauseRecord,
-                  icon: const Icon(Icons.pause_rounded),
+                  icon: const Icon(Icons.pause_rounded, size: 19),
                   label: const Text('暂停'),
                 ),
             ],
@@ -815,6 +998,7 @@ class _EmptyRecording extends StatelessWidget {
   final Widget? appleForm;
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final local = recording.path != null;
     final message = recording.processing
         ? '正在生成转写文本'
@@ -833,31 +1017,65 @@ class _EmptyRecording extends StatelessWidget {
         : !configured && appleForm == null
         ? '在设置中准备语音服务后即可转写'
         : '这段录音还没有转写文本';
+
+    final icon = recording.processing
+        ? Icons.hourglass_top_rounded
+        : recording.live
+        ? Icons.graphic_eq_rounded
+        : !local
+        ? Icons.cloud_download_outlined
+        : Icons.subtitles_outlined;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 32),
+      padding: const EdgeInsets.symmetric(vertical: 28),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          IconBadge(
+            icon: icon,
+            size: 44,
+            iconSize: 22,
+            radius: 12,
+            color: recording.live ? tokens.accent : tokens.textSecondary,
+            backgroundColor: recording.live
+                ? tokens.accentSoft
+                : tokens.bgPanel,
+            borderColor: recording.live ? tokens.accentBorder : tokens.border,
+          ),
+          const SizedBox(height: 14),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 16,
+            style: TextStyle(
+              fontSize: 15.5,
+              fontWeight: FontWeight.w500,
               height: 1.5,
-              color: AppColors.textSecondary,
+              color: tokens.textSecondary,
             ),
           ),
           if (local && !recording.live && appleForm != null) ...[
             const SizedBox(height: 20),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
-              child: appleForm!,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: tokens.bgCard,
+                  borderRadius: BorderRadius.circular(AppRadii.lg),
+                  border: Border.all(color: tokens.border),
+                  boxShadow: tokens.cardShadow,
+                ),
+                child: appleForm!,
+              ),
             ),
           ] else if (local && !recording.live && !recording.processing) ...[
             const SizedBox(height: 20),
             FilledButton.icon(
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(140, 46),
+              ),
               onPressed: canTranscribe ? onTranscribe : null,
-              icon: const Icon(Icons.subtitles_outlined),
+              icon: const Icon(Icons.subtitles_outlined, size: 18),
               label: const Text('转写录音'),
             ),
           ],
@@ -1009,6 +1227,7 @@ class _AppleTranscriptionFormState extends State<_AppleTranscriptionForm> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final languages = c.appleCapabilities.speechLanguages;
     final selected = _supportedLanguage(_language);
     final enabled =
@@ -1053,24 +1272,24 @@ class _AppleTranscriptionFormState extends State<_AppleTranscriptionForm> {
         ),
         if (_checking) ...[
           const SizedBox(height: 12),
-          const Row(
+          Row(
             children: [
-              SizedBox.square(
+              const SizedBox.square(
                 dimension: 16,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '正在检查语言…',
-                  style: TextStyle(color: AppColors.textSecondary),
+                  style: TextStyle(color: tokens.textSecondary),
                 ),
               ),
             ],
           ),
         ] else if (_error != null) ...[
           const SizedBox(height: 8),
-          Text(_error!, style: const TextStyle(color: AppColors.coral)),
+          Text(_error!, style: TextStyle(color: tokens.coral)),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
@@ -1080,9 +1299,9 @@ class _AppleTranscriptionFormState extends State<_AppleTranscriptionForm> {
           ),
         ] else if (_status == SpeechResourceStatus.unsupported) ...[
           const SizedBox(height: 12),
-          const Text(
+          Text(
             '不支持此录音语言，请选择其他语言',
-            style: TextStyle(color: AppColors.textSecondary),
+            style: TextStyle(color: tokens.textSecondary),
           ),
         ] else if (languages.isEmpty) ...[
           const SizedBox(height: 12),
@@ -1090,7 +1309,7 @@ class _AppleTranscriptionFormState extends State<_AppleTranscriptionForm> {
             c.appleCapabilitiesLoading
                 ? '正在获取支持的语言…'
                 : c.appleSetupError ?? '当前无法使用 Apple 设备端转写',
-            style: const TextStyle(color: AppColors.textSecondary),
+            style: TextStyle(color: tokens.textSecondary),
           ),
           if (!c.appleCapabilitiesLoading)
             Align(
@@ -1101,7 +1320,7 @@ class _AppleTranscriptionFormState extends State<_AppleTranscriptionForm> {
               ),
             ),
         ],
-        const SizedBox(height: 20),
+        const SizedBox(height: 18),
         FilledButton.icon(
           key: ValueKey(
             'apple-${widget.retranscribing ? 'retranscribe' : 'transcribe'}',
@@ -1135,6 +1354,7 @@ class _DeviceDownload extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final id = recording.reference.fileId;
     if (id == null) return const SizedBox.shrink();
     final file = c.files.where((file) => file.fileId == id).firstOrNull;
@@ -1144,6 +1364,7 @@ class _DeviceDownload extends StatelessWidget {
       child: Column(
         children: [
           FilledButton.icon(
+            style: FilledButton.styleFrom(minimumSize: const Size(148, 46)),
             onPressed: c.connected
                 ? (file != null && c.canDownloadOverBle && !downloading
                       ? () => c.downloadFileOverBle(file)
@@ -1151,6 +1372,7 @@ class _DeviceDownload extends StatelessWidget {
                 : () => showScanDevicesSheet(context),
             icon: Icon(
               c.connected ? Icons.download_rounded : Icons.radar_rounded,
+              size: 18,
             ),
             label: Text(
               !c.connected
@@ -1162,7 +1384,14 @@ class _DeviceDownload extends StatelessWidget {
           ),
           if (downloading) ...[
             const SizedBox(height: 12),
-            const LinearProgressIndicator(minHeight: 3),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadii.pill),
+              child: LinearProgressIndicator(
+                minHeight: 4,
+                backgroundColor: tokens.bgSubtle,
+                color: tokens.accent,
+              ),
+            ),
           ],
         ],
       ),
@@ -1175,6 +1404,7 @@ class _ProcessingStatus extends StatelessWidget {
   final SttFileProgress? progress;
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final stage = progress?.stage;
     final label = switch (stage) {
       SttFileStage.preparing => '正在准备音频…',
@@ -1184,14 +1414,51 @@ class _ProcessingStatus extends StatelessWidget {
       _ => '正在处理…',
     };
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(label, style: const TextStyle(color: AppColors.textSecondary)),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: progress?.fraction, minHeight: 3),
-        ],
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: tokens.bgCard,
+          borderRadius: BorderRadius.circular(AppRadii.lg),
+          border: Border.all(color: tokens.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: tokens.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadii.pill),
+              child: LinearProgressIndicator(
+                value: progress?.fraction,
+                minHeight: 4,
+                backgroundColor: tokens.bgSubtle,
+                color: tokens.accent,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1344,9 +1611,9 @@ class _TranslationDialogState extends State<_TranslationDialog> {
           const SizedBox(height: 12),
           Text(
             _needsPreparation ? '下载所选语言后，在设备端翻译。' : '使用已下载的语言在设备端翻译。',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
-              color: AppColors.textSecondary,
+              color: KoeTokens.of(context).textSecondary,
             ),
           ),
         ],

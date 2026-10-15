@@ -17,6 +17,7 @@ class TranscriptPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final hasText =
         c.transcript.isNotEmpty || (c.transcriptPartial?.isNotEmpty ?? false);
     final show =
@@ -35,15 +36,31 @@ class TranscriptPanel extends StatelessWidget {
     if (compact) {
       if (!hasText && c.sttConfigured) return const SizedBox.shrink();
       return SurfaceCard(
-        borderColor: AppColors.violet.withValues(alpha: 0.25),
+        borderColor: tokens.border,
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (!c.sttConfigured)
-              Text(
-                '请在设置中配置语音服务',
-                style: const TextStyle(color: AppColors.amber, fontSize: 12),
+              Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: 15,
+                    color: tokens.amber,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '请在设置中配置语音服务',
+                      style: TextStyle(
+                        color: tokens.amber,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               )
             else if (hasText)
               Row(
@@ -51,9 +68,10 @@ class TranscriptPanel extends StatelessWidget {
                   Expanded(
                     child: Text(
                       '转写',
-                      style: const TextStyle(
-                        color: AppColors.textMuted,
+                      style: TextStyle(
+                        color: tokens.textMuted,
                         fontSize: 12,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
@@ -64,7 +82,7 @@ class TranscriptPanel extends StatelessWidget {
                         context,
                       ).showSnackBar(const SnackBar(content: Text('转写已复制')));
                     },
-                    icon: const Icon(Icons.copy_rounded, size: 16),
+                    icon: const Icon(Icons.copy_rounded, size: 15),
                     label: const Text('复制'),
                   ),
                 ],
@@ -74,20 +92,25 @@ class TranscriptPanel extends StatelessWidget {
       );
     }
 
+    final active = c.streamingSttActive || c.transcribing;
     return SurfaceCard(
-      borderColor: AppColors.violet.withValues(alpha: 0.35),
+      borderColor: active ? tokens.accentBorder : tokens.border,
       padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.subtitles_outlined,
-                color: AppColors.violet,
-                size: 18,
+              IconBadge(
+                icon: Icons.subtitles_outlined,
+                size: 30,
+                iconSize: 16,
+                radius: 8,
+                color: active ? tokens.accent : tokens.textSecondary,
+                backgroundColor: active ? tokens.accentSoft : tokens.bgPanel,
+                borderColor: active ? tokens.accentBorder : tokens.borderSoft,
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   c.streamingSttActive
@@ -95,74 +118,125 @@ class TranscriptPanel extends StatelessWidget {
                       : c.transcribing
                       ? '正在转写…'
                       : '转写',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
+                    color: tokens.textPrimary,
                   ),
                 ),
               ),
-              if (c.streamingSttActive || c.transcribing)
-                const SizedBox(
+              if (active) ...[
+                SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: AppColors.violet,
+                    color: tokens.accent,
                   ),
                 ),
-              const SizedBox(width: 6),
+                const SizedBox(width: 8),
+              ],
               Switch.adaptive(
                 value: c.autoTranscribe,
-                activeTrackColor: AppColors.violet.withValues(alpha: 0.45),
-                activeThumbColor: AppColors.violet,
+                activeTrackColor: tokens.accent.withValues(alpha: 0.45),
+                activeThumbColor: tokens.accent,
                 onChanged: c.setAutoTranscribe,
               ),
             ],
           ),
           if (!c.sttConfigured) ...[
-            const SizedBox(height: 8),
-            Text(
-              '请在设置中配置语音服务',
-              style: const TextStyle(
-                color: AppColors.amber,
-                fontSize: 12,
-                height: 1.35,
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: tokens.amberSoft,
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+                border: Border.all(color: tokens.amberBorder),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    size: 15,
+                    color: tokens.amber,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '请在设置中配置语音服务',
+                      style: TextStyle(
+                        color: tokens.amber,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
           if (c.transcriptError != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              c.transcriptError!,
-              style: const TextStyle(
-                color: AppColors.coral,
-                fontSize: 11,
-                height: 1.35,
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: tokens.coralSoft,
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+                border: Border.all(color: tokens.coralBorder),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Icon(
+                      Icons.error_outline_rounded,
+                      size: 15,
+                      color: tokens.coral,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      c.transcriptError!,
+                      style: TextStyle(
+                        color: tokens.coral,
+                        fontSize: 11.5,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
           if (draft.isNotEmpty) ...[
             const SizedBox(height: 10),
             Container(
-              constraints: const BoxConstraints(maxHeight: 160),
-              padding: const EdgeInsets.all(10),
+              constraints: const BoxConstraints(maxHeight: 180),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.bgElevated,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.border),
+                color: tokens.bgPanel,
+                borderRadius: BorderRadius.circular(AppRadii.md),
+                border: Border.all(color: tokens.borderSoft),
               ),
-              child: SingleChildScrollView(
-                child: Text(
-                  draft,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    height: 1.45,
-                    color: AppColors.textPrimary,
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  child: SelectionArea(
+                    child: Text.rich(
+                      _formatTranscriptSpan(draft, tokens),
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        height: 1.55,
+                        color: tokens.textPrimary,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Row(
               children: [
                 TextButton.icon(
@@ -172,7 +246,7 @@ class TranscriptPanel extends StatelessWidget {
                       context,
                     ).showSnackBar(const SnackBar(content: Text('转写已复制')));
                   },
-                  icon: const Icon(Icons.copy_rounded, size: 16),
+                  icon: const Icon(Icons.copy_rounded, size: 15),
                   label: const Text('复制'),
                 ),
                 TextButton(
@@ -182,22 +256,64 @@ class TranscriptPanel extends StatelessWidget {
               ],
             ),
           ] else if (c.sttConfigured && c.autoTranscribe) ...[
-            const SizedBox(height: 8),
-            Text(
-              c.streamingSttActive
-                  ? '正在转写…'
-                  : c.speechProvider == SttProvider.moss
-                  ? '录音结束后生成文字'
-                  : '等待语音',
-              style: const TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 12,
-                height: 1.35,
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: tokens.bgPanel,
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+                border: Border.all(color: tokens.borderSoft),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    c.streamingSttActive
+                        ? Icons.graphic_eq_rounded
+                        : Icons.mic_none_rounded,
+                    size: 15,
+                    color: tokens.textMuted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      c.streamingSttActive
+                          ? '正在转写…'
+                          : c.speechProvider == SttProvider.moss
+                          ? '录音结束后生成文字'
+                          : '等待语音',
+                      style: TextStyle(
+                        color: tokens.textMuted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  static TextSpan _formatTranscriptSpan(String text, KoeTokens tokens) {
+    final speakerPattern = RegExp(r'^([^:：\n]{1,24}[：:])(.*)$');
+    final match = speakerPattern.firstMatch(text);
+    if (match == null) {
+      return TextSpan(text: text);
+    }
+    return TextSpan(
+      children: [
+        TextSpan(
+          text: match.group(1),
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: tokens.accent,
+          ),
+        ),
+        TextSpan(text: match.group(2)),
+      ],
     );
   }
 }

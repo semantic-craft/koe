@@ -25,6 +25,7 @@ class _CommunicationScreenState extends State<CommunicationScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
     final currentReference = c.currentRecordingReference;
     final displayed = widget.reference == null
         ? null
@@ -48,8 +49,15 @@ class _CommunicationScreenState extends State<CommunicationScreen> {
       _error = c.transcriptError;
     }
     return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('双向交流')),
+      backgroundColor: tokens.bg,
+      appBar: AppBar(
+        backgroundColor: tokens.bgCard,
+        title: const Text('双向交流'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(height: 1, color: tokens.borderSoft),
+        ),
+      ),
       body: SafeArea(
         child: Stack(
           fit: StackFit.expand,
@@ -61,10 +69,11 @@ class _CommunicationScreenState extends State<CommunicationScreen> {
                     key: const ValueKey('communication-owner-panel'),
                     languageCode: _owner,
                     turns: _ownerTurns,
-                    backgroundColor: const Color(0xFFF0F4FF),
-                    accentColor: AppColors.accent,
+                    backgroundColor: tokens.accentSoft.withValues(alpha: 0.55),
+                    accentColor: tokens.accent,
                   ),
                 ),
+                Divider(height: 1, thickness: 1, color: tokens.border),
                 Expanded(
                   child: RotatedBox(
                     key: const ValueKey('communication-guest-rotation'),
@@ -73,8 +82,8 @@ class _CommunicationScreenState extends State<CommunicationScreen> {
                       key: const ValueKey('communication-guest-panel'),
                       languageCode: _guest,
                       turns: _guestTurns,
-                      backgroundColor: const Color(0xFFECFAF5),
-                      accentColor: AppColors.mint,
+                      backgroundColor: tokens.mintSoft.withValues(alpha: 0.65),
+                      accentColor: tokens.mint,
                     ),
                   ),
                 ),
@@ -111,6 +120,7 @@ class _TranslationPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final visibleTurns = turns
         .where((turn) => turn.text.trim().isNotEmpty)
         .toList(growable: false);
@@ -133,27 +143,45 @@ class _TranslationPanel extends StatelessWidget {
       child: ColoredBox(
         color: backgroundColor,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 22, 24, 34),
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 34),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 children: [
                   Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: accentColor,
-                      shape: BoxShape.circle,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    language.label,
-                    style: TextStyle(
-                      color: accentColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                    decoration: BoxDecoration(
+                      color: accentColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(AppRadii.pill),
+                      border: Border.all(
+                        color: accentColor.withValues(alpha: 0.28),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: accentColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          language.label,
+                          style: TextStyle(
+                            color: accentColor,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -165,8 +193,8 @@ class _TranslationPanel extends StatelessWidget {
                         child: Text(
                           '…',
                           style: TextStyle(
-                            color: accentColor.withValues(alpha: 0.55),
-                            fontSize: 44,
+                            color: accentColor.withValues(alpha: 0.45),
+                            fontSize: 42,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -180,10 +208,10 @@ class _TranslationPanel extends StatelessWidget {
                             for (final turn in contextTurns) ...[
                               Text(
                                 turn.text,
-                                style: const TextStyle(
-                                  color: AppColors.textMuted,
+                                style: TextStyle(
+                                  color: tokens.textSecondary,
                                   fontSize: 16,
-                                  height: 1.35,
+                                  height: 1.4,
                                 ),
                               ),
                               const SizedBox(height: 10),
@@ -193,12 +221,12 @@ class _TranslationPanel extends StatelessWidget {
                               key: ValueKey(
                                 'communication-latest-$languageCode',
                               ),
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 30,
+                              style: TextStyle(
+                                color: tokens.textPrimary,
+                                fontSize: 28,
                                 fontWeight: FontWeight.w700,
-                                height: 1.2,
-                                letterSpacing: -0.5,
+                                height: 1.25,
+                                letterSpacing: -0.4,
                               ),
                             ),
                           ],
@@ -227,17 +255,19 @@ class _CenterControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+    final tokens = KoeTokens.of(context);
+    final active = current && c.recording;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 360),
       child: Container(
         key: const ValueKey('communication-center-controls'),
         margin: const EdgeInsets.symmetric(horizontal: 18),
-        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
         decoration: BoxDecoration(
-          color: AppColors.bgCard.withValues(alpha: 0.97),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: AppColors.border),
-          boxShadow: AppColors.cardShadow,
+          color: tokens.bgCard.withValues(alpha: 0.98),
+          borderRadius: BorderRadius.circular(AppRadii.pill),
+          border: Border.all(color: tokens.border),
+          boxShadow: tokens.floatingShadow,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -245,27 +275,34 @@ class _CenterControls extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  width: 9,
-                  height: 9,
+                  width: 8,
+                  height: 8,
                   decoration: BoxDecoration(
-                    color: current && c.recording
-                        ? AppColors.coral
-                        : AppColors.textMuted,
+                    color: active ? tokens.coral : tokens.textMuted,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    current && c.recording ? '交流 · Soniox' : '已暂停',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    active ? '交流 · Soniox' : '已暂停',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: tokens.textPrimary,
+                    ),
                   ),
                 ),
                 IconButton.filledTonal(
                   key: const ValueKey('communication-pause'),
                   tooltip: '暂停录音',
-
-                  onPressed: current && c.recording && c.phase != AppPhase.busy
+                  style: IconButton.styleFrom(
+                    backgroundColor: active
+                        ? tokens.coralSoft
+                        : tokens.bgSubtle,
+                    foregroundColor: active ? tokens.coral : tokens.textMuted,
+                  ),
+                  onPressed: active && c.phase != AppPhase.busy
                       ? c.pauseRecord
                       : null,
                   icon: const Icon(Icons.pause_rounded, size: 20),
@@ -274,16 +311,19 @@ class _CenterControls extends StatelessWidget {
             ),
             if (error != null) ...[
               const SizedBox(height: 4),
-              Text(
-                error!,
-                key: const ValueKey('communication-error'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppColors.coral,
-                  fontSize: 11,
-                  height: 1.25,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  error!,
+                  key: const ValueKey('communication-error'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: tokens.coral,
+                    fontSize: 11,
+                    height: 1.25,
+                  ),
                 ),
               ),
             ],
