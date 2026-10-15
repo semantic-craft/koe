@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../ai/stt_types.dart';
-import '../../ai/moss_stt.dart';
 import '../../ai/apple_speech.dart';
+import '../../ai/moss_stt.dart';
 import '../../ai/soniox_languages.dart';
+import '../../ai/stt_types.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
@@ -16,25 +16,27 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final tokens = KoeTokens.of(context);
 
     return GradientScaffold(
       child: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
           children: [
-            const SectionLabel('传输'),
+            const SectionLabel('传输与同步'),
             _SettingsGroup(
               key: const ValueKey('settings-transfer-group'),
               child: _SettingsSwitch(
+                icon: Icons.sync_rounded,
                 title: '自动传输',
                 subtitle: c.autoTransferActive
                     ? '正在传输设备端未导出录音…'
-                    : '自动下载设备上的历史录音',
+                    : '连接后自动下载设备上的历史录音',
                 value: c.autoRealtime,
                 onChanged: c.setAutoRealtime,
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
             const SectionLabel('语音与翻译'),
             _SettingsGroup(
               key: const ValueKey('settings-stt-group'),
@@ -42,6 +44,7 @@ class SettingsScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _SettingsSwitch(
+                    icon: Icons.auto_awesome_outlined,
                     title: '自动转写',
                     subtitle: c.speechProvider == SttProvider.moss
                         ? '录音结束后生成文字'
@@ -49,7 +52,10 @@ class SettingsScreen extends StatelessWidget {
                     value: c.autoTranscribe,
                     onChanged: c.setAutoTranscribe,
                   ),
-                  const Divider(height: 20),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Divider(height: 1),
+                  ),
                   _ProviderSelector(controller: c),
                   const SizedBox(height: 16),
                   if (c.speechProvider == SttProvider.soniox) ...[
@@ -63,23 +69,71 @@ class SettingsScreen extends StatelessWidget {
                     _TranscriptLanguageSelector(controller: c),
                   ] else if (c.speechProvider == SttProvider.moss)
                     _MossKeyField(controller: c)
-                  else
+                  else if (c.speechProvider == SttProvider.apple)
                     _AppleLanguageSettings(controller: c),
                   if (c.isLiveSession) ...[
                     const SizedBox(height: 12),
-                    const Text(
-                      '更改将用于下一段录音',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 13,
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: tokens.amberSoft,
+                        borderRadius: BorderRadius.circular(AppRadii.md),
+                        border: Border.all(color: tokens.amberBorder),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: 16,
+                            color: tokens.amber,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '更改将用于下一段录音',
+                              style: TextStyle(
+                                color: tokens.textPrimary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                   if (c.speechProvider != SttProvider.moss) ...[
-                    const Divider(height: 28),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 18),
+                      child: Divider(height: 1),
+                    ),
                     _SttModeSelector(controller: c),
                   ],
-                  if (c.mossRecoveryError != null) Text(c.mossRecoveryError!),
+                  if (c.mossRecoveryError != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: tokens.coralSoft,
+                        borderRadius: BorderRadius.circular(AppRadii.md),
+                        border: Border.all(color: tokens.coralBorder),
+                      ),
+                      child: Text(
+                        c.mossRecoveryError!,
+                        style: TextStyle(
+                          color: tokens.coral,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
                   if (c.sttMode == SttDisplayMode.translation &&
                       c.speechProvider == SttProvider.soniox) ...[
                     const SizedBox(height: 14),
@@ -100,23 +154,244 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+/// Data-driven ASR engine lineup selector inspired by open-design selectable
+/// workspace cards (`SettingsWorkspaceSection.module.css`).
+///
+/// Iterates over `SttProvider.values` dynamically and uses a non-exhaustive
+/// name-based metadata lookup so newly added engines (such as Qwen ASR) render
+/// automatically without merge conflicts.
 class _ProviderSelector extends StatelessWidget {
   const _ProviderSelector({required this.controller});
+
   final RecorderController controller;
+
+  ({
+    IconData icon,
+    String description,
+    String statusLabel,
+    Color statusColor,
+  })
+  _metaFor(SttProvider provider, KoeTokens tokens) {
+    switch (provider.name) {
+      case 'soniox':
+        final configured =
+            (controller.sonioxApiKeyStored ?? '').trim().isNotEmpty;
+        return (
+          icon: Icons.cloud_outlined,
+          description: '云端低延迟流式转写，支持多语种同传与双人对话',
+          statusLabel: configured ? '已配置' : '需密钥',
+          statusColor: configured ? tokens.mint : tokens.amber,
+        );
+      case 'apple':
+        final caps = controller.appleCapabilities;
+        final ready =
+            caps.supported && caps.speechStatus == SpeechResourceStatus.ready;
+        return (
+          icon: Icons.phone_iphone_rounded,
+          description: 'iOS 本地神经网络语音引擎，离线可用、隐私优先',
+          statusLabel: !caps.supported
+              ? '设备受限'
+              : ready
+              ? '已就绪'
+              : '待准备',
+          statusColor: !caps.supported
+              ? tokens.textMuted
+              : ready
+              ? tokens.mint
+              : tokens.amber,
+        );
+      case 'moss':
+        final configured =
+            (controller.mossApiKeyStored ?? '').trim().isNotEmpty;
+        return (
+          icon: Icons.graphic_eq_rounded,
+          description: '录音完成后整段精细转写，自动切分说话人段落',
+          statusLabel: configured ? '已配置' : '需密钥',
+          statusColor: configured ? tokens.mint : tokens.amber,
+        );
+      default:
+        final isQwen = provider.name.toLowerCase().contains('qwen');
+        return (
+          icon: isQwen ? Icons.auto_awesome_rounded : Icons.mic_none_rounded,
+          description: isQwen
+              ? '通义千问语音识别模型，支持中英多语种高准确度转写'
+              : '${provider.label} 语音识别引擎',
+          statusLabel: controller.speechProvider == provider ? '使用中' : '可用',
+          statusColor: controller.speechProvider == provider
+              ? tokens.accent
+              : tokens.textMuted,
+        );
+    }
+  }
+
   @override
-  Widget build(BuildContext context) => DropdownButtonFormField<SttProvider>(
-    key: ValueKey('speech-provider-${controller.speechProvider.name}'),
-    initialValue: controller.speechProvider,
-    decoration: const InputDecoration(labelText: '语音服务'),
-    isExpanded: true,
-    items: [
-      for (final provider in SttProvider.values)
-        DropdownMenuItem(value: provider, child: Text(provider.label)),
-    ],
-    onChanged: (provider) {
-      if (provider != null) controller.setSpeechProvider(provider);
-    },
-  );
+  Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    return Column(
+      key: ValueKey('speech-provider-${controller.speechProvider.name}'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '语音服务',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: tokens.textPrimary,
+                ),
+              ),
+            ),
+            Text(
+              '共 ${SttProvider.values.length} 个引擎',
+              style: TextStyle(
+                fontSize: 12,
+                color: tokens.textMuted,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        for (var i = 0; i < SttProvider.values.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          _EngineOptionCard(
+            provider: SttProvider.values[i],
+            selected: controller.speechProvider == SttProvider.values[i],
+            meta: _metaFor(SttProvider.values[i], tokens),
+            onTap: () => controller.setSpeechProvider(SttProvider.values[i]),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _EngineOptionCard extends StatelessWidget {
+  const _EngineOptionCard({
+    required this.provider,
+    required this.selected,
+    required this.meta,
+    required this.onTap,
+  });
+
+  final SttProvider provider;
+  final bool selected;
+  final ({
+    IconData icon,
+    String description,
+    String statusLabel,
+    Color statusColor,
+  })
+  meta;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: ValueKey('speech-provider-option-${provider.name}'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        child: AnimatedContainer(
+          duration: AppMotion.fast,
+          curve: AppMotion.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            color: selected ? tokens.bgCard : tokens.bgPanel,
+            borderRadius: BorderRadius.circular(AppRadii.md),
+            border: Border.all(
+              color: selected ? tokens.inkAccent : tokens.border,
+              width: selected ? 1.4 : 1,
+            ),
+            boxShadow: selected ? tokens.cardShadow : const [],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IconBadge(
+                icon: meta.icon,
+                size: 32,
+                iconSize: 16,
+                radius: 8,
+                color: selected ? tokens.onInkAccent : tokens.textSecondary,
+                backgroundColor: selected ? tokens.inkAccent : tokens.bgCard,
+                borderColor: selected ? tokens.inkAccent : tokens.borderSoft,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          provider.label,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            color: tokens.textPrimary,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: meta.statusColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(AppRadii.pill),
+                            border: Border.all(
+                              color: meta.statusColor.withValues(alpha: 0.28),
+                            ),
+                          ),
+                          child: Text(
+                            meta.statusLabel,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: meta.statusColor,
+                              height: 1.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      meta.description,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: tokens.textSecondary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Icon(
+                  selected
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_off_rounded,
+                  size: 18,
+                  color: selected ? tokens.inkAccent : tokens.textFaint,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AppleLanguageSettings extends StatelessWidget {
@@ -126,26 +401,41 @@ class _AppleLanguageSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+    final tokens = KoeTokens.of(context);
     final capabilities = c.appleCapabilities;
     final preparing = c.appleLanguagePreparationBusy;
     final loading = c.appleCapabilitiesLoading;
     if (!capabilities.supported) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            loading
-                ? '正在检查设备支持…'
-                : c.appleSetupError ?? 'Apple 设备端需要 iOS 26 和受支持的设备。',
-            style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
-          ),
-          if (!loading)
-            TextButton.icon(
-              onPressed: c.refreshAppleCapabilities,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('重新检查'),
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: tokens.bgPanel,
+          borderRadius: BorderRadius.circular(AppRadii.md),
+          border: Border.all(color: tokens.borderSoft),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              loading
+                  ? '正在检查设备支持…'
+                  : c.appleSetupError ?? 'Apple 设备端需要 iOS 26 和受支持的设备。',
+              style: TextStyle(
+                color: tokens.textSecondary,
+                fontSize: 13,
+                height: 1.4,
+              ),
             ),
-        ],
+            if (!loading) ...[
+              const SizedBox(height: 6),
+              TextButton.icon(
+                onPressed: c.refreshAppleCapabilities,
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('重新检查'),
+              ),
+            ],
+          ],
+        ),
       );
     }
     final speechReady = capabilities.speechStatus == SpeechResourceStatus.ready;
@@ -163,7 +453,7 @@ class _AppleLanguageSettings extends StatelessWidget {
           languages: capabilities.speechLanguages,
           onChanged: preparing ? null : c.setAppleSourceLanguage,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         _AppleLanguageField(
           label: '翻译目标语言',
           value: c.translationTargetLanguage,
@@ -171,34 +461,55 @@ class _AppleLanguageSettings extends StatelessWidget {
           onChanged: preparing ? null : c.setTranslationTargetLanguage,
         ),
         const SizedBox(height: 12),
-        Text(
-          preparing
-              ? '正在准备语言…'
-              : loading
-              ? '正在检查语言…'
-              : !speechReady
-              ? (capabilities.speechStatus == SpeechResourceStatus.unsupported
-                    ? '请选择受支持的原文语言'
-                    : '转写语言需要下载')
-              : !translationReady
-              ? (capabilities.translationStatus ==
-                        SpeechResourceStatus.unsupported
-                    ? '转写可用，请选择受支持的翻译语言组合'
-                    : '转写可用，翻译语言需要下载')
-              : '转写和翻译语言已就绪',
-          style: const TextStyle(
-            color: AppColors.textSecondary,
-            fontSize: 13,
-            height: 1.4,
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(
+                speechReady && translationReady
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.info_outline_rounded,
+                size: 15,
+                color: speechReady && translationReady
+                    ? tokens.mint
+                    : tokens.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                preparing
+                    ? '正在准备语言…'
+                    : loading
+                    ? '正在检查语言…'
+                    : !speechReady
+                    ? (capabilities.speechStatus ==
+                              SpeechResourceStatus.unsupported
+                          ? '请选择受支持的原文语言'
+                          : '转写语言需要下载')
+                    : !translationReady
+                    ? (capabilities.translationStatus ==
+                              SpeechResourceStatus.unsupported
+                          ? '转写可用，请选择受支持的翻译语言组合'
+                          : '转写可用，翻译语言需要下载')
+                    : '转写和翻译语言已就绪',
+                style: TextStyle(
+                  color: tokens.textSecondary,
+                  fontSize: 12.5,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
         ),
         if (c.appleSetupError != null) ...[
           const SizedBox(height: 8),
           Text(
             c.appleSetupError!,
-            style: const TextStyle(
-              color: AppColors.coral,
-              fontSize: 13,
+            style: TextStyle(
+              color: tokens.coral,
+              fontSize: 12.5,
               height: 1.4,
             ),
           ),
@@ -214,10 +525,10 @@ class _AppleLanguageSettings extends StatelessWidget {
                   : c.prepareAppleLanguages,
               icon: preparing
                   ? const SizedBox.square(
-                      dimension: 18,
+                      dimension: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.download_rounded),
+                  : const Icon(Icons.download_rounded, size: 17),
               label: Text(
                 preparing
                     ? '准备中…'
@@ -279,14 +590,16 @@ class _SettingsGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.border)),
+    final tokens = KoeTokens.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: tokens.bgCard,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        border: Border.all(color: tokens.border),
+        boxShadow: tokens.cardShadow,
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(0, 12, 0, 16),
-        child: child,
-      ),
+      child: child,
     );
   }
 }
@@ -336,6 +649,7 @@ class _SttModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+    final tokens = KoeTokens.of(context);
     final soniox = c.speechProvider == SttProvider.soniox;
     final subtitle = !c.autoTranscribe
         ? '请先开启自动转写'
@@ -345,18 +659,22 @@ class _SttModeSelector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
+        Text(
           '实时模式',
-          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            color: tokens.textPrimary,
+          ),
         ),
         if (subtitle != null) ...[
           const SizedBox(height: 3),
           Text(
             subtitle,
-            style: const TextStyle(
-              color: AppColors.textSecondary,
+            style: TextStyle(
+              color: tokens.textSecondary,
               fontSize: 12,
-              height: 1.3,
+              height: 1.35,
             ),
           ),
         ],
@@ -417,45 +735,62 @@ class _SettingsSwitch extends StatelessWidget {
     required this.subtitle,
     required this.value,
     required this.onChanged,
+    this.icon,
   });
 
   final String title;
   final String subtitle;
   final bool value;
   final ValueChanged<bool>? onChanged;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        if (icon != null) ...[
+          IconBadge(
+            icon: icon!,
+            size: 34,
+            iconSize: 17,
+            radius: 9,
+            color: value ? tokens.accent : tokens.textSecondary,
+            backgroundColor: value ? tokens.accentSoft : tokens.bgPanel,
+            borderColor: value ? tokens.accentBorder : tokens.borderSoft,
+          ),
+          const SizedBox(width: 12),
+        ],
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
+                  color: tokens.textPrimary,
                 ),
               ),
-              const SizedBox(height: 3),
+              const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
+                style: TextStyle(
+                  color: tokens.textSecondary,
                   fontSize: 12,
-                  height: 1.3,
+                  height: 1.35,
                 ),
               ),
             ],
           ),
         ),
+        const SizedBox(width: 8),
         Switch.adaptive(
           value: value,
-          activeTrackColor: AppColors.accent.withValues(alpha: 0.45),
-          activeThumbColor: AppColors.accent,
+          activeTrackColor: tokens.accent.withValues(alpha: 0.45),
+          activeThumbColor: tokens.accent,
           onChanged: onChanged,
         ),
       ],
@@ -471,6 +806,7 @@ class _CommunicationLanguageSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+    final tokens = KoeTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -488,9 +824,9 @@ class _CommunicationLanguageSettings extends StatelessWidget {
               tooltip: '交换语言',
               visualDensity: VisualDensity.compact,
               onPressed: c.swapCommunicationLanguages,
-              icon: const Icon(
+              icon: Icon(
                 Icons.swap_vert_rounded,
-                color: AppColors.violet,
+                color: tokens.textSecondary,
               ),
             ),
           ),
@@ -521,21 +857,25 @@ class _LanguageField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final language = sonioxLanguageFor(code);
     return OutlinedButton(
       key: ValueKey('communication-language-$label'),
       style: OutlinedButton.styleFrom(
-        foregroundColor: AppColors.textPrimary,
+        backgroundColor: tokens.bgPanel,
+        foregroundColor: tokens.textPrimary,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        side: const BorderSide(color: AppColors.border),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        side: BorderSide(color: tokens.border),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.md),
+        ),
       ),
       onPressed: () async {
         final selected = await showModalBottomSheet<String>(
           context: context,
           useSafeArea: true,
           isScrollControlled: true,
-          backgroundColor: AppColors.bgCard,
+          backgroundColor: tokens.bgCard,
           builder: (_) => _LanguagePickerSheet(
             title: label,
             selectedCode: code,
@@ -552,20 +892,28 @@ class _LanguageField extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
+                  style: TextStyle(
+                    color: tokens.textSecondary,
                     fontSize: 11,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   language.label,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: tokens.textPrimary,
+                  ),
                 ),
               ],
             ),
           ),
-          const Icon(Icons.search_rounded, size: 20),
+          Icon(
+            Icons.unfold_more_rounded,
+            size: 18,
+            color: tokens.textSecondary,
+          ),
         ],
       ),
     );
@@ -592,6 +940,7 @@ class _LanguagePickerSheetState extends State<_LanguagePickerSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     final query = _query.trim().toLowerCase();
     final languages = sonioxLanguages.where((language) {
       if (language.code == widget.excludedCode) return false;
@@ -605,27 +954,48 @@ class _LanguagePickerSheetState extends State<_LanguagePickerSheet> {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: tokens.border,
+                      borderRadius: BorderRadius.circular(AppRadii.pill),
+                    ),
+                  ),
+                ),
                 Text(
                   '选择${widget.title}',
-                  style: const TextStyle(
-                    fontSize: 18,
+                  style: TextStyle(
+                    fontSize: 17,
                     fontWeight: FontWeight.w700,
+                    color: tokens.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 12),
                 SearchBar(
                   hintText: '搜索语言或代码',
-                  leading: const Icon(Icons.search_rounded),
+                  leading: Icon(
+                    Icons.search_rounded,
+                    size: 18,
+                    color: tokens.textSecondary,
+                  ),
+                  elevation: const WidgetStatePropertyAll(0),
+                  backgroundColor: WidgetStatePropertyAll(tokens.bgPanel),
+                  side: WidgetStatePropertyAll(
+                    BorderSide(color: tokens.border),
+                  ),
                   onChanged: (value) => setState(() => _query = value),
                 ),
               ],
             ),
           ),
-          const Divider(),
+          const Divider(height: 1),
           Expanded(
             child: ListView.builder(
               itemCount: languages.length,
@@ -633,10 +1003,19 @@ class _LanguagePickerSheetState extends State<_LanguagePickerSheet> {
                 final language = languages[index];
                 final selected = language.code == widget.selectedCode;
                 return ListTile(
-                  title: Text(language.name),
-                  subtitle: Text(language.code),
+                  title: Text(
+                    language.name,
+                    style: TextStyle(
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                      color: tokens.textPrimary,
+                    ),
+                  ),
+                  subtitle: Text(
+                    language.code,
+                    style: TextStyle(fontSize: 12, color: tokens.textMuted),
+                  ),
                   trailing: selected
-                      ? const Icon(Icons.check_rounded, color: AppColors.accent)
+                      ? Icon(Icons.check_rounded, color: tokens.accent)
                       : null,
                   onTap: () => Navigator.of(context).pop(language.code),
                 );
@@ -707,17 +1086,21 @@ class _ApiKeyFieldState extends State<_ApiKeyField> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
+            Icon(Icons.key_rounded, size: 15, color: tokens.textSecondary),
+            const SizedBox(width: 6),
             Expanded(
               child: Text(
                 widget.label,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
                   fontSize: 13,
+                  color: tokens.textPrimary,
                 ),
               ),
             ),
@@ -730,35 +1113,35 @@ class _ApiKeyFieldState extends State<_ApiKeyField> {
           obscureText: true,
           autocorrect: false,
           enableSuggestions: false,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13,
             fontFamily: 'Menlo',
-            color: AppColors.textPrimary,
+            color: tokens.textPrimary,
           ),
           decoration: InputDecoration(
             isDense: true,
             hintText: '粘贴 API Key…',
-            hintStyle: const TextStyle(
+            hintStyle: TextStyle(
               fontSize: 12,
-              color: AppColors.textSecondary,
+              color: tokens.textMuted,
             ),
             filled: true,
-            fillColor: AppColors.bgElevated,
+            fillColor: tokens.bgPanel,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 12,
               vertical: 12,
             ),
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppColors.border),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              borderSide: BorderSide(color: tokens.border),
             ),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppColors.border),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              borderSide: BorderSide(color: tokens.border),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: AppColors.accent, width: 1.4),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+              borderSide: BorderSide(color: tokens.accent, width: 1.4),
             ),
             suffixIcon: Row(
               mainAxisSize: MainAxisSize.min,
@@ -772,10 +1155,10 @@ class _ApiKeyFieldState extends State<_ApiKeyField> {
                       widget.onSave(null);
                       setState(() => _dirty = false);
                     },
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.clear_rounded,
                       size: 18,
-                      color: AppColors.textSecondary,
+                      color: tokens.textSecondary,
                     ),
                   ),
               ],
@@ -792,7 +1175,7 @@ class _ApiKeyFieldState extends State<_ApiKeyField> {
             alignment: Alignment.centerRight,
             child: AccentButton(
               label: '保存',
-              icon: Icons.save_rounded,
+              icon: Icons.check_rounded,
               expand: false,
               onPressed: _commit,
             ),
@@ -843,43 +1226,59 @@ class _MossKeyFieldState extends State<_MossKeyField> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      TextField(
-        key: const ValueKey('apikey-moss'),
-        controller: _text,
-        enabled: !_busy,
-        obscureText: true,
-        autocorrect: false,
-        enableSuggestions: false,
-        decoration: InputDecoration(
-          labelText: 'MOSS API Key',
-          suffixIcon: widget.controller.mossApiKeyStored == null
-              ? null
-              : IconButton(
-                  tooltip: '清除',
-                  onPressed: _busy
-                      ? null
-                      : () {
-                          widget.controller.clearMossApiKey();
-                          _text.clear();
-                          setState(() => _message = 'MOSS API Key 已清除');
-                        },
-                  icon: const Icon(Icons.clear_rounded),
-                ),
+  Widget build(BuildContext context) {
+    final tokens = KoeTokens.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          key: const ValueKey('apikey-moss'),
+          controller: _text,
+          enabled: !_busy,
+          obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+          style: TextStyle(
+            fontSize: 13,
+            fontFamily: 'Menlo',
+            color: tokens.textPrimary,
+          ),
+          decoration: InputDecoration(
+            labelText: 'MOSS API Key',
+            filled: true,
+            fillColor: tokens.bgPanel,
+            suffixIcon: widget.controller.mossApiKeyStored == null
+                ? null
+                : IconButton(
+                    tooltip: '清除',
+                    onPressed: _busy
+                        ? null
+                        : () {
+                            widget.controller.clearMossApiKey();
+                            _text.clear();
+                            setState(() => _message = 'MOSS API Key 已清除');
+                          },
+                    icon: const Icon(Icons.clear_rounded, size: 18),
+                  ),
+          ),
+          onSubmitted: (_) => _save(),
         ),
-        onSubmitted: (_) => _save(),
-      ),
-      const SizedBox(height: 12),
-      Align(
-        alignment: Alignment.centerRight,
-        child: FilledButton(
-          onPressed: _busy ? null : _save,
-          child: Text(_busy ? '正在验证…' : '验证并保存'),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton(
+            onPressed: _busy ? null : _save,
+            child: Text(_busy ? '正在验证…' : '验证并保存'),
+          ),
         ),
-      ),
-      if (_message != null) ...[const SizedBox(height: 8), Text(_message!)],
-    ],
-  );
+        if (_message != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _message!,
+            style: TextStyle(fontSize: 12.5, color: tokens.textSecondary),
+          ),
+        ],
+      ],
+    );
+  }
 }
