@@ -25,6 +25,22 @@ SpeechConfiguration config({
   },
 );
 void main() {
+  test('retired pending jobs never resume while saved results retain provenance', () {
+    for (final provider in ['moss', 'soniox']) {
+      final original = FileJob(key: 'k', path: '/recording.wav', config: {...FileJob.snapshot(config()), 'provider': provider});
+      original.stage = 'running'; original.taskId = 'paid-remote-task';
+      final stopped = FileJob.fromJson(original.toJson());
+      expect(stopped.recoverable, isFalse);
+      expect(stopped.taskId, 'paid-remote-task');
+      expect(stopped.error, contains('已停用'));
+      original.stage = 'result'; original.text = 'Saved text';
+      final saved = FileJob.fromJson(original.toJson());
+      expect(saved.recoverable, isTrue);
+      expect(saved.text, 'Saved text');
+      expect(saved.config['provider'], provider);
+    }
+  });
+
   late Directory directory;
   late File file;
   setUp(() async {

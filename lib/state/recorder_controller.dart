@@ -8,14 +8,12 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../ai/soniox_stt.dart';
-import '../ai/moss_stt.dart';
 import '../ai/qwen_stt.dart';
+import '../ai/cloud_stt_stream.dart';
 import '../ai/doubao_stt.dart';
 import '../ai/cloud_stt_service.dart';
 import '../ai/engine_config.dart';
-import '../ai/soniox_stt_stream.dart';
-import '../ai/soniox_languages.dart';
+import '../ai/speech_languages.dart';
 import '../ai/stt_types.dart';
 import '../ai/apple_speech.dart';
 import '../ai/speech_provider.dart';
@@ -37,7 +35,6 @@ import 'device_store.dart';
 import 'export_catalog.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
-import 'moss_jobs.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
@@ -61,17 +58,12 @@ class RecorderController extends ChangeNotifier {
     bool loadPersistedState = true,
     PersistedDeviceLoader? persistedDeviceLoader,
     AppleSpeechService? appleSpeech,
-    SonioxSttService? sonioxSpeech,
-    MossSttService? mossSpeech,
     QwenSttService? qwenSpeech,
     DoubaoSttService? doubaoSpeech,
-    MossJobStore? mossJobStore,
     FileJobJournal? fileJobJournal,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
   }) : _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
-       _sonioxStt = sonioxSpeech ?? SonioxSttService(),
-       _mossStt = mossSpeech ?? MossSttService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load {
@@ -198,61 +190,17 @@ class RecorderController extends ChangeNotifier {
     );
     _subs.add(_realtime.stateStream.listen(_onRealtimeState));
     _wirePlayer();
-    _mossJobs = MossJobQueue(
-      service: _mossStt,
-      store: mossJobStore ?? MossJobStore(inMemory: !loadPersistedState),
-      apiKey: () => _mossStt.apiKey,
-      canStart: () =>
-          !_disposed &&
-          _fileJobKey == null &&
-          !_fileJobPreparing &&
-          !_liveProcessing,
-      onChanged: notifyListeners,
-      onResult: (job, result) async {
-        await _transcriptsLoaded;
-        if (_disposed || job.discarded) return;
-        if (!await File(job.path).exists()) throw const MossException('audio');
-        final path =
-            recordingView(RecordingReference(path: job.path)).path ?? job.path;
-        if (_disposed || job.discarded) return;
-        rememberTranscript(
-          path,
-          result.text,
-          provider: SttProvider.moss,
-          sourceLanguage: result.language ?? 'auto',
-        );
-        await _persistTranscripts(strict: true);
-        final session = _sessionForReference(RecordingReference(path: path));
-        if (session != null) {
-          session.error = null;
-          session.text = result.text;
-        }
-      },
-    );
-    // The single deferred file-job mechanism. Moss accepts jobs into its
-    // journal (stage persistence and duplicate-billing protection stay
-    // adapter-internal); other file engines persist in FileJobJournal, with
-    // this queue providing single-flight scheduling for the shared executor.
     _fileJobs = fileJobJournal ?? FileJobJournal(inMemory: !loadPersistedState);
     _deferredJobs = DeferredFileJobs<SpeechConfiguration>(
       canStart: () =>
           !_disposed &&
           _fileJobKey == null &&
           !_fileJobPreparing &&
-          !_liveProcessing &&
-          !_mossJobs.busy,
+          !_liveProcessing,
       engine: (config) => config.provider,
       accept: (recordingKey, path, config) async {
-        if (config.provider != SttProvider.moss) {
-          final job = await _fileJobs.enqueue(recordingKey, path, config);
-          return !job.recoverable;
-        }
-        await _mossJobs.enqueue(
-          recordingKey,
-          path,
-          key: config.engineKey(SttProvider.moss),
-        );
-        return true;
+        final job = await _fileJobs.enqueue(recordingKey, path, config);
+        return !job.recoverable;
       },
       run: _runFileTranscription,
     );
@@ -264,12 +212,6 @@ class RecorderController extends ChangeNotifier {
       unawaited(_settingsLoaded);
       unawaited(_loadLocalExports());
       _transcriptsLoaded = _loadPersistedTranscripts();
-      unawaited(
-        Future.wait([
-          _settingsLoaded,
-          _transcriptsLoaded,
-        ]).then((_) => _mossJobs.load()),
-      );
     }
     _fileJobsLoaded = _restoreFileJobs();
     if (loadPersistedState || persistedDeviceLoader != null) {
@@ -314,8 +256,7 @@ class RecorderController extends ChangeNotifier {
     }
     final key = _recordingKey(path: path);
     if ((transcriptForPath(path) ?? '').trim().isNotEmpty ||
-        _fileJobs.jobs.containsKey(key) ||
-        _mossJobs.forRecording(key) != null) {
+        _fileJobs.jobs.containsKey(key)) {
       return;
     }
     final config = _settingsConfiguration;
@@ -332,34 +273,8 @@ class RecorderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  String? get mossApiKeyStored => _mossStt.apiKeyOverride;
-  bool get mossConfigured => _mossStt.apiKey != null;
-  String? get mossRecoveryError => _mossJobs.loadError;
-
-  Future<void> validateAndSaveMossApiKey(String key) async {
-    final candidate = key.trim();
-    if (candidate.isEmpty) throw const MossException('credentials');
-    await _mossStt.validateKey(candidate);
-    if (_disposed) return;
-    final previous = _mossStt.apiKeyOverride;
-    _mossStt.apiKeyOverride = candidate;
-    try {
-      await _persistSettings(strict: true);
-    } catch (_) {
-      _mossStt.apiKeyOverride = previous;
-      rethrow;
-    }
-    notifyListeners();
-  }
-
-  void clearMossApiKey() {
-    _mossStt.apiKeyOverride = null;
-    unawaited(_persistSettings());
-    notifyListeners();
-  }
-
   /// Hands a finished take to the shared deferred-job mechanism, which serves
-  /// every engine that transcribes only after the take stops (Moss, Qwen,
+  /// every engine that transcribes only after the take stops (Qwen,
   /// Doubao); see [DeferredFileJobs].
   Future<void> _enqueueDeferredRecording(
     _RecordingSession owner,
@@ -367,6 +282,8 @@ class RecorderController extends ChangeNotifier {
   ) async {
     if (_disposed ||
         owner.active ||
+        owner.finalizing ||
+        owner.transcriptionComplete ||
         owner.paused ||
         !owner.ended ||
         _finalizingRecordings.contains(_recordingKey(path: path)) ||
@@ -397,10 +314,10 @@ class RecorderController extends ChangeNotifier {
     transcriptLanguage = s.transcriptLanguage;
     appleSourceLanguage = s.appleSourceLanguage;
     translationTargetLanguage = s.translationTargetLanguage;
-    ownerLanguage = isSonioxLanguage(s.ownerLanguage)
+    ownerLanguage = isSpeechLanguage(s.ownerLanguage)
         ? s.ownerLanguage.toLowerCase()
         : 'zh';
-    guestLanguage = isSonioxLanguage(s.guestLanguage)
+    guestLanguage = isSpeechLanguage(s.guestLanguage)
         ? s.guestLanguage.toLowerCase()
         : 'en';
     if (ownerLanguage == guestLanguage) {
@@ -413,7 +330,6 @@ class RecorderController extends ChangeNotifier {
     speechProvider = initialSpeechProvider(
       saved: s.speechProvider,
       appleSupported: appleCapabilities.supported,
-      sonioxConfigured: _sonioxStt.isConfigured,
       qwenConfigured: _engineAdapters[SttProvider.qwen]!.isReady(),
     );
     if (speechProvider.defersTranscription ||
@@ -430,8 +346,6 @@ class RecorderController extends ChangeNotifier {
       AppSettings(
         speechProvider: speechProvider,
         appleSourceLanguage: appleSourceLanguage,
-        sonioxApiKey: _sonioxStt.apiKeyOverride,
-        mossApiKey: _mossStt.apiKeyOverride,
         engines: _persistedEngines(),
         autoTranscribe: autoTranscribe,
         autoRealtime: autoRealtime,
@@ -462,8 +376,7 @@ class RecorderController extends ChangeNotifier {
       appleCapabilities.translationStatus == SpeechResourceStatus.ready &&
       !appleCapabilitiesLoading;
 
-  bool get conversationModeAvailable =>
-      autoTranscribe && speechProvider == SttProvider.soniox;
+  bool get conversationModeAvailable => false;
 
   Future<void> refreshAppleCapabilities() async {
     final revision = ++_capabilityRevision;
@@ -533,7 +446,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   void setSpeechProvider(SttProvider provider) {
-    if (provider == speechProvider) return;
+    if (provider.retired || provider == speechProvider) return;
     speechProvider = provider;
     if (provider.defersTranscription ||
         (provider == SttProvider.apple &&
@@ -586,6 +499,7 @@ class RecorderController extends ChangeNotifier {
   SpeechConfiguration get _activeConfiguration =>
       _liveConfiguration ?? _settingsConfiguration;
   bool _isConfigured(SpeechConfiguration config) {
+    if (config.provider.retired) return false;
     if (config.provider == SttProvider.apple) {
       return config.appleReady && config.sourceLanguage.isNotEmpty;
     }
@@ -693,7 +607,7 @@ class RecorderController extends ChangeNotifier {
         session?.configuration ?? _settingsConfiguration,
       ),
       live: current && recording,
-      paused: session?.paused ?? false,
+      paused: current && _recordWireStatus == 2 && session.paused,
       audioLocked:
           (current && (recording || session.finalizing)) ||
           _isRecordingAudioLocked(id, path),
@@ -702,17 +616,10 @@ class RecorderController extends ChangeNotifier {
           (_fileJobs.jobs[key]?.stage == 'queued' &&
               _fileJobs.jobs[key]?.error == null &&
               _recordingErrors[key] == null) ||
-          session?.finalizing == true ||
-          (_mossJobs.forRecording(key)?.pending ?? false) ||
-          _mossJobs.active?.recordingKey == key,
+          session?.finalizing == true,
       error:
-          _recordingErrors[key] ??
-          _fileJobs.jobs[key]?.error ??
-          _mossJobs.forRecording(key)?.error ??
-          session?.error,
-      progress: _fileJobKey == key
-          ? fileTranscriptionProgress
-          : _mossJobs.forRecording(key)?.progress,
+          _recordingErrors[key] ?? _fileJobs.jobs[key]?.error ?? session?.error,
+      progress: _fileJobKey == key ? fileTranscriptionProgress : null,
     );
   }
 
@@ -741,10 +648,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   bool get fileProcessingBusy =>
-      _fileJobKey != null ||
-      _fileJobPreparing ||
-      _mossJobs.busy ||
-      _liveProcessing;
+      _fileJobKey != null || _fileJobPreparing || _liveProcessing;
 
   void _bindCurrentRecording({int? fileId, String? path}) {
     final session = _currentRecording;
@@ -803,7 +707,6 @@ class RecorderController extends ChangeNotifier {
   }
 
   String _speechErrorMessage(Object error) {
-    if (error is MossException) return error.message;
     if (error is CloudSttException) return error.message;
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
@@ -1094,16 +997,6 @@ class RecorderController extends ChangeNotifier {
     if (s.path != null && s.bytesReceived > 0) {
       final path = s.path!;
       _registerExportedPaths([path]);
-      // Prefer low-latency PCM stream STT; fall back to rolling Ogg batch.
-      if (s.active &&
-          _activeAutoTranscribe &&
-          !_streamSttPreferred &&
-          _activeConfiguration.provider == SttProvider.soniox &&
-          !sonioxTranslationModeActive) {
-        unawaited(
-          _maybeTranscribeRolling(path, s.bytesReceived, finalPass: false),
-        );
-      }
     }
     // When a session finishes with data, keep path listed for playback + final STT.
     if (!s.active && s.path != null && s.bytesReceived > 0) {
@@ -1117,8 +1010,7 @@ class RecorderController extends ChangeNotifier {
             RecordingReference(path: finishedPath),
           );
           if (owner?.configuration.provider.defersTranscription == true) {
-            owner!.finalizing = false;
-            unawaited(_enqueueDeferredRecording(owner, finishedPath));
+            unawaited(_enqueueDeferredRecording(owner!, finishedPath));
           }
           notifyListeners();
         }),
@@ -1134,13 +1026,7 @@ class RecorderController extends ChangeNotifier {
         _saveLiveRecording(session, path: s.path);
       }
       if (_activeAutoTranscribe && _recordWireStatus != 2) {
-        if (_streamSttPreferred) {
-          unawaited(_finishStreamStt(bindPath: s.path));
-        } else if (_activeConfiguration.provider == SttProvider.soniox) {
-          unawaited(
-            _maybeTranscribeRolling(s.path!, s.bytesReceived, finalPass: true),
-          );
-        }
+        unawaited(_finishStreamStt(bindPath: s.path));
       }
     } else if (wasActive && !s.active) {
       unawaited(_finishStreamStt(bindPath: s.path));
@@ -1170,7 +1056,7 @@ class RecorderController extends ChangeNotifier {
       _recordingTranslations.remove(key);
     }
     _transcriptMetadata[key] = TranscriptMetadata(
-      provider: provider ?? metadata?.provider ?? SttProvider.soniox,
+      provider: provider ?? metadata?.provider ?? speechProvider,
       sourceLanguage: sourceLanguage ?? metadata?.sourceLanguage,
       revision: (metadata?.revision ?? 0) + (changed ? 1 : 0),
     );
@@ -1294,8 +1180,7 @@ class RecorderController extends ChangeNotifier {
 
   /// Live BLE Opus frame → PCM16 → provider WS STT (when auto-transcribe on).
   void _onRealtimeOpusFrame(Uint8List frame) {
-    if (_activeConfiguration.provider.defersTranscription ||
-        !_activeAutoTranscribe ||
+    if (!_activeAutoTranscribe ||
         !_activeSttConfigured ||
         _recordWireStatus == 2) {
       return;
@@ -1303,7 +1188,7 @@ class RecorderController extends ChangeNotifier {
     if (!_preferStreamStt) return;
     if (!_opusPcm.ensureStarted()) {
       _preferStreamStt = false;
-      if (sonioxTranslationModeActive) {
+      if (cloudTranslationModeActive) {
         transcriptError = '$_activeTranslationModeLabel无法启动实时音频解码';
         notifyListeners();
       }
@@ -1330,17 +1215,9 @@ class RecorderController extends ChangeNotifier {
   }
 
   /// Prefer PCM WS when decode works; false after hard stream failure → Ogg batch.
-  bool get _streamSttPreferred =>
-      !_activeConfiguration.provider.defersTranscription &&
-      _preferStreamStt &&
-      _opusPcm.isReady &&
-      _activeAutoTranscribe;
 
   Future<bool> _ensureStreamStt() async {
-    if (_activeConfiguration.provider.defersTranscription ||
-        !_activeAutoTranscribe ||
-        !_activeSttConfigured ||
-        !_preferStreamStt) {
+    if (!_activeAutoTranscribe || !_activeSttConfigured || !_preferStreamStt) {
       return false;
     }
     if (_sttStream != null && _sttStream!.isServerReady) {
@@ -1360,7 +1237,7 @@ class RecorderController extends ChangeNotifier {
     }
     if (!_opusPcm.ensureStarted()) {
       _preferStreamStt = false;
-      if (sonioxTranslationModeActive) {
+      if (cloudTranslationModeActive) {
         transcriptError = '$_activeTranslationModeLabel无法启动实时音频解码';
         notifyListeners();
       }
@@ -1386,6 +1263,8 @@ class RecorderController extends ChangeNotifier {
         if (revision != _sttLifecycleRevision) return false;
       }
 
+      _streamTranscriptPrefix = (transcriptPartial ?? transcript).trim();
+      _currentRecording?.transcriptionComplete = false;
       session = _createStreamSession(config);
       subscription = session.events.listen((event) {
         if (revision == _sttLifecycleRevision) {
@@ -1444,27 +1323,20 @@ class RecorderController extends ChangeNotifier {
             : null,
       );
     }
-    final communication = config.mode == SttDisplayMode.conversation;
-    final translationConfig = switch (config.mode) {
-      SttDisplayMode.transcription => const SonioxTranslationConfig.none(),
-      SttDisplayMode.translation => SonioxTranslationConfig.oneWay(
-        config.targetLanguage,
+    final engine = config.engineConfig(config.provider);
+    return switch (config.provider) {
+      SttProvider.qwen => QwenSttStreamSession(
+        apiKey: engine.apiKey!,
+        baseUrl: engine.baseUrl,
+        language: config.sourceLanguage,
       ),
-      SttDisplayMode.conversation => SonioxTranslationConfig.twoWay(
-        config.ownerLanguage,
-        config.guestLanguage,
+      SttProvider.doubao => DoubaoSttStreamSession(
+        apiKey: engine.apiKey!,
+        baseUrl: engine.baseUrl,
+        language: config.sourceLanguage,
       ),
+      _ => throw StateError('该语音服务已停用'),
     };
-    return SonioxSttStreamSession(
-      apiKey: config.engineKey(SttProvider.soniox)!,
-      sampleRate: 16000,
-      languageHints: communication
-          ? [config.ownerLanguage, config.guestLanguage]
-          : (config.sourceLanguage == 'auto'
-                ? const []
-                : [config.sourceLanguage]),
-      translation: translationConfig,
-    );
   }
 
   void _flushPendingPcm() {
@@ -1475,6 +1347,11 @@ class RecorderController extends ChangeNotifier {
     _pendingPcm.clear();
     session.sendPcm(buf);
   }
+
+  String _streamTranscriptPrefix = '';
+  String _streamText(String text) => _streamTranscriptPrefix.isEmpty
+      ? normalizeSttText(text)
+      : normalizeSttText('$_streamTranscriptPrefix\n$text');
 
   void _onSttStreamEvent(SttStreamEvent e) {
     final translationSnapshotUpdated =
@@ -1507,7 +1384,7 @@ class RecorderController extends ChangeNotifier {
           }
           return;
         }
-        final incoming = normalizeSttText(e.text);
+        final incoming = _streamText(e.text);
         if (incoming.isEmpty) return;
         if (_activeConfiguration.provider == SttProvider.apple) {
           if (e.speechFinal) {
@@ -1516,29 +1393,23 @@ class RecorderController extends ChangeNotifier {
           } else {
             transcriptPartial = incoming;
           }
-        } else if (e.speechFinal) {
-          final prev = transcript.trim();
-          // Cumulative drafts (Soniox) already include prior text.
-          if (prev.isNotEmpty && incoming.startsWith(prev)) {
-            transcript = incoming;
-          } else {
-            transcript = prev.isEmpty ? incoming : '$prev $incoming'.trim();
-          }
-          transcriptPartial = null;
         } else {
-          final base = transcript.trim();
-          if (base.isEmpty || incoming.startsWith(base)) {
-            transcriptPartial = incoming;
+          // Both cloud adapters emit cumulative snapshots; revisions may be
+          // shorter than a draft, so never append or prefer the longest text.
+          if (e.speechFinal) {
+            transcript = incoming;
+            transcriptPartial = null;
           } else {
-            transcriptPartial = '$base $incoming'.trim();
+            transcriptPartial = incoming;
           }
         }
         transcribing = true;
         _snapshotLiveText();
         notifyListeners();
       case 'done':
+        _currentRecording?.transcriptionComplete = true;
         if (e.text.isNotEmpty) {
-          transcript = normalizeSttText(e.text);
+          transcript = _streamText(e.text);
           transcriptPartial = null;
         }
         transcribing = false;
@@ -1614,9 +1485,8 @@ class RecorderController extends ChangeNotifier {
         if (revision != _sttLifecycleRevision) return;
         if (done != null && done.text.isNotEmpty) {
           // Prefer stitched session text when longer / complete.
-          if (done.text.length >= transcript.length) {
-            transcript = done.text;
-          }
+          transcript = _streamText(done.text);
+          recordingSession?.transcriptionComplete = true;
           transcriptPartial = null;
         }
       }
@@ -1635,7 +1505,13 @@ class RecorderController extends ChangeNotifier {
     } finally {
       await subscription?.cancel();
       await session?.dispose();
-      if (recordingSession != null) recordingSession.finalizing = false;
+      if (recordingSession != null) {
+        recordingSession.finalizing = false;
+        final path = bindPath ?? recordingSession.path;
+        if (path != null) {
+          unawaited(_enqueueDeferredRecording(recordingSession, path));
+        }
+      }
       if (revision == _sttLifecycleRevision) {
         _pendingPcm.clear();
         transcribing = _fileJobKey != null;
@@ -1666,7 +1542,7 @@ class RecorderController extends ChangeNotifier {
 
     Future<void>? closeFuture;
     try {
-      // Soniox marks the socket closed synchronously before its first await.
+      // Close synchronously marks the stream unavailable before awaiting I/O.
       closeFuture = session?.close();
     } catch (e) {
       debugPrint('[STT] pause close: $e');
@@ -1718,23 +1594,16 @@ class RecorderController extends ChangeNotifier {
   bool get isLiveSession =>
       connected && (recording || realtimeState.active || streamingSttActive);
 
-  bool get sonioxTranslationModeAvailable =>
+  bool get translationModeAvailable =>
       autoTranscribe &&
-      (speechProvider == SttProvider.soniox ||
-          (speechProvider == SttProvider.apple && appleTranslationAvailable));
+      (speechProvider == SttProvider.apple && appleTranslationAvailable);
 
   bool get translationModeActive =>
       _activeConfiguration.enabled &&
       _activeConfiguration.mode == SttDisplayMode.translation;
 
-  bool get communicationModeActive =>
-      _activeConfiguration.enabled &&
-      _activeConfiguration.provider == SttProvider.soniox &&
-      _activeConfiguration.mode == SttDisplayMode.conversation;
-
-  bool get sonioxTranslationModeActive =>
-      _activeConfiguration.provider == SttProvider.soniox &&
-      (translationModeActive || communicationModeActive);
+  bool get communicationModeActive => false;
+  bool get cloudTranslationModeActive => false;
 
   String get _activeTranslationModeLabel =>
       translationModeActive ? '翻译模式' : '交流模式';
@@ -1749,28 +1618,18 @@ class RecorderController extends ChangeNotifier {
     unawaited(_persistSettings());
   }
 
-  void setSonioxApiKey(String? key) {
-    final t = key?.trim();
-    _sonioxStt.apiKeyOverride = (t == null || t.isEmpty) ? null : t;
-    notifyListeners();
-    unawaited(_persistSettings());
-  }
-
-  /// Saved / override keys for Settings text fields (not env-only secrets).
-  String? get sonioxApiKeyStored => _sonioxStt.apiKeyOverride;
-
   /// The saved credential trio for [provider] (key-only engines expose just
   /// their key; Apple has none). This is the data source the engine lineup
   /// renders from.
   EngineConfig engineConfig(SttProvider provider) => switch (provider) {
     SttProvider.apple => const EngineConfig(),
-    _ => _engineAdapters[provider]!.readSaved(),
+    _ => _engineAdapters[provider]?.readSaved() ?? const EngineConfig(),
   };
 
   /// Whether [provider] is ready to be selected and used.
   bool engineConfigured(SttProvider provider) => switch (provider) {
     SttProvider.apple => appleCapabilities.supported,
-    _ => _engineAdapters[provider]!.isReady(),
+    _ => _engineAdapters[provider]?.isReady() ?? false,
   };
 
   /// Saves a cloud engine's whole credential group at once. The base URL is
@@ -1815,8 +1674,6 @@ class RecorderController extends ChangeNotifier {
   bool get sttConfigured =>
       _settingsReady && _isConfigured(_settingsConfiguration);
 
-  bool get sonioxConfigured => _sonioxStt.isConfigured;
-
   void clearTranscript() {
     transcript = '';
     transcriptPartial = null;
@@ -1835,7 +1692,7 @@ class RecorderController extends ChangeNotifier {
             (mode == SttDisplayMode.conversation &&
                 !conversationModeAvailable) ||
             (mode == SttDisplayMode.translation &&
-                !sonioxTranslationModeAvailable))) {
+                !translationModeAvailable))) {
       return;
     }
     if (sttMode == mode) return;
@@ -1862,7 +1719,7 @@ class RecorderController extends ChangeNotifier {
 
   void setOwnerLanguage(String code) {
     final normalized = code.trim().toLowerCase();
-    if (!isSonioxLanguage(normalized) || normalized == guestLanguage) return;
+    if (!isSpeechLanguage(normalized) || normalized == guestLanguage) return;
     if (ownerLanguage == normalized) return;
     ownerLanguage = normalized;
     if (!_liveProcessing) _resetTranslationTurns();
@@ -1872,7 +1729,7 @@ class RecorderController extends ChangeNotifier {
 
   void setGuestLanguage(String code) {
     final normalized = code.trim().toLowerCase();
-    if (!isSonioxLanguage(normalized) || normalized == ownerLanguage) return;
+    if (!isSpeechLanguage(normalized) || normalized == ownerLanguage) return;
     if (guestLanguage == normalized) return;
     guestLanguage = normalized;
     if (!_liveProcessing) _resetTranslationTurns();
@@ -1948,8 +1805,6 @@ class RecorderController extends ChangeNotifier {
       _currentRecording?.error = transcriptError;
     }
     _resetTranslationTurns();
-    _lastSttBytes = 0;
-    _lastSttAt = DateTime.fromMillisecondsSinceEpoch(0);
     pcmFramesDecoded = 0;
     streamingSttActive = false;
     _streamSttStarting = false;
@@ -2062,21 +1917,6 @@ class RecorderController extends ChangeNotifier {
       notifyListeners();
       return true;
     }
-    if (config.provider == SttProvider.moss) {
-      _recordingErrors.remove(key);
-      try {
-        await _mossJobs.enqueue(
-          key,
-          path,
-          key: config.engineKey(SttProvider.moss),
-          retry: true,
-        );
-      } catch (_) {
-        _recordingErrors[key] = '无法保存转写任务，请检查存储空间后重试';
-      }
-      notifyListeners();
-      return true;
-    }
     _fileJobPreparing = true;
     FileJob job;
     try {
@@ -2177,7 +2017,8 @@ class RecorderController extends ChangeNotifier {
         final currentPath =
             recordingView(RecordingReference(path: path)).path ?? path;
         if (transcriptForPath(currentPath) != result.text ||
-            _transcriptMetadata[key]?.provider != config.provider) {
+            _transcriptMetadata[key]?.provider != config.provider ||
+            _transcriptMetadata[key]?.sourceLanguage != config.sourceLanguage) {
           rememberTranscript(
             currentPath,
             result.text,
@@ -2357,73 +2198,6 @@ class RecorderController extends ChangeNotifier {
     );
   }
 
-  Future<void> _maybeTranscribeRolling(
-    String path,
-    int bytes, {
-    required bool finalPass,
-  }) async {
-    if (_activeConfiguration.provider != SttProvider.soniox ||
-        !_activeSttConfigured ||
-        !_activeAutoTranscribe) {
-      return;
-    }
-    if (_recordWireStatus == 2) return;
-    if (transcribing && !finalPass) return;
-    final revision = _sttLifecycleRevision;
-    final now = DateTime.now();
-    final minBytes = finalPass ? 1600 : 24 * 1024; // ~2.5s vs ~3s of frames
-    final minInterval = finalPass ? Duration.zero : const Duration(seconds: 8);
-    if (bytes < minBytes) return;
-    if (!finalPass) {
-      if (bytes - _lastSttBytes < 16 * 1024) return;
-      if (now.difference(_lastSttAt) < minInterval) return;
-    }
-    _lastSttAt = now;
-    _lastSttBytes = bytes;
-    transcribing = true;
-    transcriptError = null;
-    notifyListeners();
-    try {
-      final r = await _transcribePath(path);
-      if (revision != _sttLifecycleRevision || _recordWireStatus == 2) return;
-      if (r.text.isNotEmpty) {
-        if (finalPass) {
-          transcript = r.text;
-          transcriptPartial = null;
-          rememberTranscript(
-            path,
-            r.text,
-            provider: SttProvider.soniox,
-            sourceLanguage: _activeConfiguration.sourceLanguage,
-          );
-        } else {
-          // Keep growing draft; prefer longer / newer full-file STT.
-          transcriptPartial = r.text;
-          if (r.text.length >= transcript.length) {
-            transcript = r.text;
-          }
-          rememberTranscript(
-            path,
-            r.text,
-            provider: SttProvider.soniox,
-            sourceLanguage: _activeConfiguration.sourceLanguage,
-          );
-        }
-      }
-      _snapshotLiveText();
-    } catch (e) {
-      if (revision != _sttLifecycleRevision || _recordWireStatus == 2) return;
-      // Soft-fail during rolling; surface message.
-      transcriptError = _speechErrorMessage(e);
-      debugPrint('[STT] rolling failed: $e');
-    } finally {
-      if (revision == _sttLifecycleRevision) {
-        transcribing = false;
-        notifyListeners();
-      }
-    }
-  }
-
   DateTime _lastPositionNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _wirePlayer() {
@@ -2538,8 +2312,6 @@ class RecorderController extends ChangeNotifier {
 
   /// Decoded Opus frames in the current session (diagnostics).
   int pcmFramesDecoded = 0;
-  final SonioxSttService _sonioxStt;
-  final MossSttService _mossStt;
   final QwenSttService _qwenStt;
   final DoubaoSttService _doubaoStt;
 
@@ -2549,32 +2321,6 @@ class RecorderController extends ChangeNotifier {
   /// elsewhere collapse to one lookup here; adding a cloud engine is a
   /// service plus one entry in this map.
   late final Map<SttProvider, _EngineAdapter> _engineAdapters = {
-    SttProvider.soniox: _EngineAdapter(
-      load: (settings) => EngineConfig(apiKey: settings.sonioxApiKey),
-      readSaved: () => EngineConfig(apiKey: _sonioxStt.apiKeyOverride),
-      applySaved: (config) => _sonioxStt.apiKeyOverride = config.apiKey,
-      isReady: () => _sonioxStt.isConfigured,
-      snapshot: () => EngineConfig(apiKey: _sonioxStt.apiKey),
-      grouped: false,
-      normalizeBaseUrl: (raw) => throw StateError('Soniox saves no base URL'),
-      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
-          _sonioxStt.transcribePath(
-            path,
-            language: language,
-            onProgress: onProgress,
-          ),
-    ),
-    SttProvider.moss: _EngineAdapter(
-      load: (settings) => EngineConfig(apiKey: settings.mossApiKey),
-      readSaved: () => EngineConfig(apiKey: _mossStt.apiKeyOverride),
-      applySaved: (config) => _mossStt.apiKeyOverride = config.apiKey,
-      isReady: () => _mossStt.apiKey != null,
-      snapshot: () => EngineConfig(apiKey: _mossStt.apiKey),
-      grouped: false,
-      normalizeBaseUrl: (raw) => throw StateError('MOSS saves no base URL'),
-      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
-          throw StateError('MOSS file jobs run through the job queue'),
-    ),
     SttProvider.qwen: _EngineAdapter(
       load: (settings) => settings.engineConfig(SttProvider.qwen),
       readSaved: () => EngineConfig(
@@ -2650,10 +2396,9 @@ class RecorderController extends ChangeNotifier {
     }
   }
 
-  late final MossJobQueue _mossJobs;
   late final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   final AppleSpeechService _appleSpeech;
-  SttProvider speechProvider = SttProvider.soniox;
+  SttProvider speechProvider = SttProvider.qwen;
   String appleSourceLanguage = '';
   AppleSpeechCapabilities appleCapabilities =
       const AppleSpeechCapabilities.unsupported();
@@ -2683,8 +2428,6 @@ class RecorderController extends ChangeNotifier {
   /// When false, use rolling Ogg batch STT (stream failed or Opus unavailable).
   bool _preferStreamStt = true;
   final BytesBuilder _pendingPcm = BytesBuilder(copy: false);
-  DateTime _lastSttAt = DateTime.fromMillisecondsSinceEpoch(0);
-  int _lastSttBytes = 0;
 
   Completer<bool>? _encryptCompleter;
   AppPhase phase = AppPhase.idle;
@@ -3255,6 +2998,8 @@ class RecorderController extends ChangeNotifier {
   /// status `0` stop, `1` recording, `2` pause.
   /// Last wire status: 0=stop, 1=recording, 2=pause (for resume vs new take).
   int _recordWireStatus = 0;
+  bool get recordingPaused =>
+      _recordWireStatus == 2 && _currentRecording != null;
 
   void _applyRecordStatus(
     int status, {
@@ -3288,29 +3033,24 @@ class RecorderController extends ChangeNotifier {
     recording = active;
     _recordWireStatus = status;
     // Keep DeviceInfoModel bit aligned so later device-info packets don't re-stick UI.
-    if (info != null && info!.recording != active) {
-      info = info!.copyWith(recording: active);
+    if (info != null && info!.recordingStatus != status) {
+      info = info!.copyWith(recordingStatus: status);
       lastKnownInfo = info;
     }
 
     if (active) {
-      // New take after a full stop (not pause→resume): wipe live draft UI.
-      final fileOnly =
-          _currentRecording?.configuration.provider.defersTranscription == true;
-      final fileOnlyResume =
-          prevWire == 2 &&
-          fileOnly &&
-          (fileId == null ||
-              _currentRecording?.fileId == null ||
-              _currentRecording?.fileId == fileId);
-      final fileOnlyNewFile =
-          fileOnly &&
+      // Continue the existing take regardless of its speech provider. A
+      // different device file id is an explicit new take, never a continuation.
+      final current = _currentRecording;
+      final differentFile =
           fileId != null &&
-          _currentRecording?.fileId != null &&
-          _currentRecording?.fileId != fileId;
-      if (prevWire == 0 ||
-          fileOnlyNewFile ||
-          (source == 'app_start' && !fileOnlyResume)) {
+          current?.fileId != null &&
+          current!.fileId != fileId;
+      final resuming = prevWire == 2 && current != null && !differentFile;
+      if (current == null ||
+          differentFile ||
+          (prevWire == 0 && !wasRecording) ||
+          (source == 'app_start' && !wasRecording && !resuming)) {
         unawaited(_beginNewLiveTranscriptSession());
       }
       _bindCurrentRecording(fileId: fileId);
@@ -3326,6 +3066,8 @@ class RecorderController extends ChangeNotifier {
       if (!isWifiExportSession) {
         if (fileId != null && fileId > 0) {
           unawaited(_startCurrentRecordingTransfer(fileId));
+        } else if (resuming && current.fileId != null) {
+          unawaited(_startCurrentRecordingTransfer(current.fileId!));
         } else {
           unawaited(
             _maybeStartAutoRealtime(
@@ -3351,7 +3093,7 @@ class RecorderController extends ChangeNotifier {
         _realtime.onRecordingStopped();
       }
       if (status == 2) {
-        // Pause is a hard boundary: disconnect Soniox immediately and reject
+        // Pause is a hard boundary: disconnect the speech stream immediately and reject
         // queued callbacks or a batch fallback from the paused take.
         _cancelStreamSttAfterPause();
       } else {
@@ -3416,11 +3158,11 @@ class RecorderController extends ChangeNotifier {
     int? fileId;
     if (curr != null && curr > 0) {
       fileId = curr;
-    } else if (recording || info?.recording == true) {
-      // Fall back to newest offline entry (often the live file once listed).
-      if (list.files.isNotEmpty) {
-        fileId = list.files.first.fileId; // already sorted newest-first
-      }
+    } else {
+      // Inventory contains completed files, sometimes oldest first. Only an
+      // explicit current timestamp / 1A06 or this session's known identity can
+      // identify live audio. Guessing an entry briefly replays an old recording.
+      fileId = _currentRecording?.fileId;
     }
 
     if (fileId == null || fileId <= 0) {
@@ -4001,7 +3743,6 @@ class RecorderController extends ChangeNotifier {
           speakerAliasesByFileId.remove(id);
         }
         final key = _recordingKey(path: path);
-        await _mossJobs.discard(key);
         await _fileJobs.discard(key);
         _deferredJobs.discard(key);
         _transcriptMetadata.remove(key);
@@ -4040,12 +3781,6 @@ class RecorderController extends ChangeNotifier {
   Future<String> renameLocalExport(String path, String label) async {
     _requireFinishedRecording(path);
     if (_fileJobKey == _recordingKey(path: path)) throw StateError('处理完成后再重命名');
-    final mossJob = _mossJobs.active;
-    if (mossJob?.recordingKey == _recordingKey(path: path) &&
-        (mossJob?.stage == MossJobStage.queued ||
-            mossJob?.stage == MossJobStage.uploadUnknown)) {
-      throw StateError('上传完成后再重命名');
-    }
     final source = File(path);
     if (!await source.exists()) throw StateError('文件不存在');
 
@@ -4069,12 +3804,6 @@ class RecorderController extends ChangeNotifier {
       _recordingKey(path: targetPath),
       targetPath,
     );
-    await _mossJobs.rename(
-      _recordingKey(path: path),
-      _recordingKey(path: targetPath),
-      targetPath,
-    );
-
     final transcript = transcriptsByPath.remove(path);
     if (transcript != null) transcriptsByPath[targetPath] = transcript;
     final aliases = speakerAliasesByPath.remove(path);
@@ -4721,12 +4450,13 @@ class RecorderController extends ChangeNotifier {
       }
     }
 
-    // Device info recording bit (0/1/2; we store bool as status==1 only).
+    // Preserve device-info stopped/recording/paused states independently.
     // Always sync UI so hardware mic-off clears the sticky 「录音中」 pill.
     if (p.cmdType == RxCmd.deviceInfoType && p.cmdId == RxCmd.deviceInfoId) {
-      final deviceRecording = info?.recording == true;
-      if (deviceRecording != recording) {
-        _applyRecordStatus(deviceRecording ? 1 : 0, source: 'device_info');
+      final deviceStatus = info?.recordingStatus ?? 0;
+      final deviceRecording = deviceStatus == 1;
+      if (deviceStatus != _recordWireStatus && deviceStatus <= 2) {
+        _applyRecordStatus(deviceStatus, source: 'device_info');
       } else if (deviceRecording &&
           !realtimeState.active &&
           !isWifiExportSession) {
@@ -4822,7 +4552,6 @@ class RecorderController extends ChangeNotifier {
   void notifyListeners() {
     if (!_disposed) {
       super.notifyListeners();
-      _mossJobs.wake();
       unawaited(_deferredJobs.pump());
     }
   }
@@ -4848,10 +4577,8 @@ class RecorderController extends ChangeNotifier {
     _opusPcm.dispose();
     unawaited(_player.dispose());
     unawaited(_realtime.dispose());
-    _sonioxStt.dispose();
     _qwenStt.dispose();
     _doubaoStt.dispose();
-    _mossJobs.dispose();
     _deferredJobs.dispose();
     unawaited(_appleSpeech.dispose());
     _wifi.dispose();
@@ -4873,6 +4600,7 @@ class _RecordingSession {
   bool active = true;
   bool paused = false;
   bool finalizing = false;
+  bool transcriptionComplete = false;
 }
 
 /// One cloud engine's wiring into [RecorderController]. [load] reads the

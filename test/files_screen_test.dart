@@ -1,3 +1,4 @@
+import 'package:anker_recorder/ai/engine_config.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -110,10 +111,7 @@ void main() {
           ),
         ),
       );
-      expect(
-        tester.widget<IconButton>(iconButton('分享录音')).onPressed,
-        isNull,
-      );
+      expect(tester.widget<IconButton>(iconButton('分享录音')).onPressed, isNull);
       await tester.tap(find.text('下载录音'));
       await tester.pump();
       expect(c.downloadingFileId, 102);
@@ -235,7 +233,7 @@ void main() {
       final controller = _TrackingRecorderController()
         ..exportedPaths = [path]
         ..transcriptsByPath[path] = '说话人 1：测试';
-      controller.setSonioxApiKey('test-key');
+      controller.setQwenConfig(const EngineConfig(apiKey: 'test-key'));
       addTearDown(controller.dispose);
       await pumpFiles(tester, controller);
       await tester.tap(find.byKey(const ValueKey('recording-row-$path')));

@@ -14,7 +14,7 @@ import 'stt_types.dart';
 
 /// DashScope Qwen-Audio 3.1 file transcription.
 ///
-/// File jobs only. Live streaming is a follow-up and is not implemented.
+/// File adapter; realtime recognition is implemented in cloud_stt_stream.dart.
 ///
 /// Confirmed from current Model Studio docs (Beijing and Singapore legacy
 /// hosts still work; workspace domains are optional via [baseUrl]):

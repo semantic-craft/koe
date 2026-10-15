@@ -9,19 +9,19 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('MOSS credentials round-trip independently of Soniox', () {
-    final settings = AppSettings.fromJson({
-      'speechProvider': 'moss',
-      'mossApiKey': 'moss-key',
-      'sonioxApiKey': 'soniox-key',
-    });
-    expect(settings.speechProvider?.name, 'moss');
-    expect(settings.toJson()['mossApiKey'], 'moss-key');
-    final cleared = settings.copyWith(clearMoss: true);
-    expect(cleared.mossApiKey, isNull);
-    expect(cleared.sonioxApiKey, 'soniox-key');
-    expect(AppSettings.fromJson({}).mossApiKey, isNull);
-  });
+  test(
+    'retired credentials are removed while old provider identity is readable',
+    () {
+      final settings = AppSettings.fromJson({
+        'speechProvider': 'moss',
+        'mossApiKey': 'old',
+        'sonioxApiKey': 'old',
+      });
+      expect(settings.speechProvider, SttProvider.moss);
+      expect(settings.toJson().containsKey('mossApiKey'), isFalse);
+      expect(settings.toJson().containsKey('sonioxApiKey'), isFalse);
+    },
+  );
 
   test('translation settings use backward-compatible defaults', () {
     final settings = AppSettings.fromJson(const {});
@@ -137,7 +137,6 @@ void main() {
       restored.engineConfig(SttProvider.qwen).baseUrl,
       'https://dashscope-intl.aliyuncs.com',
     );
-    expect(restored.sonioxApiKey, 'soniox-key');
   });
 
   test('legacy flat Qwen keys migrate into the grouped engines map', () {
@@ -158,8 +157,6 @@ void main() {
     expect(qwen.model, 'qwen-audio-3.1-asr-flash-filetrans');
     expect(settings.speechProvider, SttProvider.qwen);
     // Neighbouring settings are untouched by the migration.
-    expect(settings.sonioxApiKey, 'soniox-key');
-    expect(settings.mossApiKey, 'moss-key');
     expect(settings.autoTranscribe, isFalse);
     expect(settings.transcriptLanguage, 'ja');
   });
@@ -185,7 +182,7 @@ void main() {
     expect(json, isNot(contains('qwenBaseUrl')));
     expect(json, isNot(contains('qwenModel')));
     // Soniox / Moss keep their existing flat keys.
-    expect(json['sonioxApiKey'], 'soniox-key');
+    expect(json['sonioxApiKey'], isNull);
 
     // Round-trip: new format reloads without losing fields.
     final restored = AppSettings.fromJson(json);
@@ -198,8 +195,10 @@ void main() {
   test('empty engine config omits the engines key entirely', () {
     const settings = AppSettings();
     expect(settings.toJson(), isNot(contains('engines')));
-    expect(AppSettings.fromJson(const {}).engineConfig(SttProvider.qwen),
-        const EngineConfig());
+    expect(
+      AppSettings.fromJson(const {}).engineConfig(SttProvider.qwen),
+      const EngineConfig(),
+    );
   });
 
   test('nested engines map wins over legacy flat keys', () {
@@ -263,8 +262,8 @@ void main() {
       },
     });
     expect(upgraded, isNot(contains('qwenApiKey')));
-    expect(upgraded['sonioxApiKey'], 'soniox-key');
-    expect(upgraded['mossApiKey'], 'moss-key');
+    expect(upgraded['sonioxApiKey'], isNull);
+    expect(upgraded['mossApiKey'], isNull);
     expect(upgraded['speechProvider'], 'qwen');
     expect(upgraded['autoTranscribe'], false);
     expect(upgraded['transcriptLanguage'], 'ja');

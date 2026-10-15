@@ -302,12 +302,12 @@ void main() {
     },
   );
 
-  test('Qwen is the fallback only when Apple and Soniox are unavailable', () {
+  test('Qwen is the configured cloud default', () {
     expect(
       initialSpeechProvider(
         saved: null,
         appleSupported: false,
-        sonioxConfigured: false,
+
         qwenConfigured: true,
       ),
       SttProvider.qwen,
@@ -316,17 +316,13 @@ void main() {
       initialSpeechProvider(
         saved: null,
         appleSupported: false,
-        sonioxConfigured: true,
+
         qwenConfigured: true,
       ),
-      SttProvider.soniox,
+      SttProvider.qwen,
     );
     expect(
-      initialSpeechProvider(
-        saved: SttProvider.qwen,
-        appleSupported: true,
-        sonioxConfigured: true,
-      ),
+      initialSpeechProvider(saved: SttProvider.qwen, appleSupported: true),
       SttProvider.qwen,
     );
   });
@@ -336,24 +332,20 @@ void main() {
     expect(SttProvider.doubao.defersTranscription, isTrue);
 
     // Doubao is never picked by default, even when it is the only engine
-    // configured: the chain stays saved -> Apple -> Soniox -> Qwen.
+    // configured: the chain stays saved -> configured Qwen -> Apple -> Qwen.
     expect(
       initialSpeechProvider(
         saved: null,
         appleSupported: false,
-        sonioxConfigured: false,
+
         qwenConfigured: false,
       ),
-      SttProvider.soniox,
+      SttProvider.qwen,
     );
 
     // An explicitly saved Doubao choice wins.
     expect(
-      initialSpeechProvider(
-        saved: SttProvider.doubao,
-        appleSupported: true,
-        sonioxConfigured: true,
-      ),
+      initialSpeechProvider(saved: SttProvider.doubao, appleSupported: true),
       SttProvider.doubao,
     );
 
@@ -361,7 +353,7 @@ void main() {
     expect(SttProvider.parse('unknown'), isNull);
   });
 
-  testWidgets('settings exposes the Qwen key, URL, and model', (tester) async {
+  testWidgets('settings only asks for the Qwen API key', (tester) async {
     final controller = RecorderController(loadPersistedState: false)
       ..setSpeechProvider(SttProvider.qwen);
     addTearDown(controller.dispose);
@@ -374,8 +366,8 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('apikey-qwen')), findsOneWidget);
-    expect(find.byKey(const ValueKey('qwen-base-url')), findsOneWidget);
-    expect(find.byKey(const ValueKey('qwen-model')), findsOneWidget);
+    expect(find.byKey(const ValueKey('qwen-base-url')), findsNothing);
+    expect(find.byKey(const ValueKey('qwen-model')), findsNothing);
     expect(find.text('通义 Qwen'), findsWidgets);
     expect(
       find.byKey(const ValueKey('stt-display-mode-selector')),

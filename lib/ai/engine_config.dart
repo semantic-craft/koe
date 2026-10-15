@@ -57,5 +57,6 @@ class EngineConfig {
   int get hashCode => Object.hash(apiKey, baseUrl, model);
 
   @override
-  String toString() => 'EngineConfig($apiKey, $baseUrl, $model)';
+  String toString() =>
+      'EngineConfig(keyConfigured: $isConfigured, $baseUrl, $model)';
 }

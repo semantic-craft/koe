@@ -8,12 +8,10 @@ enum SttProvider {
   const SttProvider(this.label);
   final String label;
 
-  /// Transcription starts after the recording is saved. There is no live
-  /// stream.
-  bool get defersTranscription =>
-      this == SttProvider.moss ||
-      this == SttProvider.qwen ||
-      this == SttProvider.doubao;
+  /// Retained only to read historical transcript provenance and task journals.
+  bool get retired => this == soniox || this == moss;
+  static const available = [apple, qwen, doubao];
+  bool get defersTranscription => this != apple;
 
   /// Cloud engines whose credentials are the grouped (API key, base URL,
   /// model) trio saved through [EngineConfig]; key-only engines are not.
@@ -28,19 +26,12 @@ enum SttProvider {
   }
 }
 
-/// A saved choice wins, including [SttProvider.qwen].
-///
-/// Otherwise Apple is used when it is supported and Soniox is not configured.
-/// Qwen is the fallback only when Apple is unavailable and Soniox is not
-/// configured either.
 SttProvider initialSpeechProvider({
   required SttProvider? saved,
   required bool appleSupported,
-  required bool sonioxConfigured,
   bool qwenConfigured = false,
 }) {
-  if (saved != null) return saved;
-  if (appleSupported && !sonioxConfigured) return SttProvider.apple;
-  if (sonioxConfigured || !qwenConfigured) return SttProvider.soniox;
-  return SttProvider.qwen;
+  if (saved != null && !saved.retired) return saved;
+  if (qwenConfigured) return SttProvider.qwen;
+  return appleSupported ? SttProvider.apple : SttProvider.qwen;
 }

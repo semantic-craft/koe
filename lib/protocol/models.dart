@@ -17,9 +17,10 @@ class DeviceInfoModel {
     this.boxMac = '',
     this.boxFirmware = '',
     this.wifiFirmware = '',
-    this.recording = false,
+    bool recording = false,
+    int? recordingStatus,
     this.rawHex = '',
-  });
+  }) : recordingStatus = recordingStatus ?? (recording ? 1 : 0);
 
   final int? connectStatus;
 
@@ -37,7 +38,10 @@ class DeviceInfoModel {
   final String boxMac;
   final String boxFirmware;
   final String wifiFirmware;
-  final bool recording;
+
+  /// Wire state: 0 stopped, 1 recording, 2 paused.
+  final int recordingStatus;
+  bool get recording => recordingStatus == 1;
   final String rawHex;
 
   bool get hasIdentity => serialNumber.isNotEmpty || firmwareVersion.isNotEmpty;
@@ -73,6 +77,7 @@ class DeviceInfoModel {
     String? boxFirmware,
     String? wifiFirmware,
     bool? recording,
+    int? recordingStatus,
     String? rawHex,
   }) {
     return DeviceInfoModel(
@@ -88,7 +93,9 @@ class DeviceInfoModel {
       boxMac: boxMac ?? this.boxMac,
       boxFirmware: boxFirmware ?? this.boxFirmware,
       wifiFirmware: wifiFirmware ?? this.wifiFirmware,
-      recording: recording ?? this.recording,
+      recordingStatus:
+          recordingStatus ??
+          (recording == null ? this.recordingStatus : (recording ? 1 : 0)),
       rawHex: rawHex ?? this.rawHex,
     );
   }
@@ -140,7 +147,7 @@ class DeviceInfoModel {
 
       // Optional trailing fields (color, auto-off, lights, recording, wifi FW…)
       String wifiFw = '';
-      var recording = false;
+      var recordingStatus = 0;
       if (o + 5 + 1 <= raw.length - 1) {
         u8(); // deviceColor
         u8(); // autoPowerOffSwitch
@@ -148,7 +155,7 @@ class DeviceInfoModel {
         u8(); // pickupIndicatorLight
         u8(); // box indicator light
         if (o < raw.length - 1) {
-          recording = u8() == 1;
+          recordingStatus = u8();
         }
         if (o + 5 <= raw.length - 1) {
           wifiFw = ascii(take(5));
@@ -168,7 +175,7 @@ class DeviceInfoModel {
         boxMac: boxMac,
         boxFirmware: boxFw,
         wifiFirmware: wifiFw,
-        recording: recording,
+        recordingStatus: recordingStatus,
         rawHex: hex,
       );
     } catch (_) {

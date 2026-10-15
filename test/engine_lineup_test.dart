@@ -15,47 +15,75 @@ void main() {
     child: const MaterialApp(home: SettingsScreen()),
   );
 
-  testWidgets(
-    'first setup saves then selects; switching engines rebuilds the correct form',
-    (tester) async {
-      final c = RecorderController(loadPersistedState: false);
-      addTearDown(c.dispose);
-      await tester.pumpWidget(wrap(c));
-      for (final name in ['qwen', 'doubao']) {
-        final card = find.byKey(ValueKey('speech-provider-option-$name'));
-        await tester.ensureVisible(card);
-        await tester.tap(card);
-        await tester.pumpAndSettle();
-        expect(find.byType(AlertDialog), findsOneWidget);
-        await tester.enterText(
-          find.byKey(ValueKey('apikey-$name')),
-          '$name-key',
-        );
-        await tester.enterText(
-          find.byKey(ValueKey('$name-model')),
-          '$name-model',
-        );
-        final save = find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.text('保存'),
-        );
-        await tester.ensureVisible(save);
-        await tester.tap(save);
-        await tester.pump();
-        expect(c.speechProvider.name, name == 'qwen' ? 'soniox' : 'qwen');
-        await tester.tap(find.text('完成'));
-        await tester.pumpAndSettle();
-        await tester.ensureVisible(card);
-        await tester.tap(card);
-        await tester.pumpAndSettle();
-        expect(c.speechProvider.name, name);
-        final field = tester.widget<TextField>(
-          find.byKey(ValueKey('$name-model')),
-        );
-        expect(field.controller!.text, '$name-model');
-      }
-    },
-  );
+  testWidgets('first setup only asks for key and save closes and selects', (
+    tester,
+  ) async {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    await tester.pumpWidget(wrap(c));
+    for (final name in ['qwen', 'doubao']) {
+      final card = find.byKey(ValueKey('speech-provider-option-$name'));
+      await tester.ensureVisible(card);
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      final dialog = find.byType(AlertDialog);
+      expect(dialog, findsOneWidget);
+      expect(
+        find.descendant(of: dialog, matching: find.byType(TextField)),
+        findsNWidgets(name == 'qwen' ? 2 : 1),
+      );
+      expect(find.text('服务地址'), findsNothing);
+      expect(find.text('模型'), findsNothing);
+      await tester.enterText(
+        find.descendant(
+          of: dialog,
+          matching: find.byKey(ValueKey('apikey-$name')),
+        ),
+        '$name-key',
+      );
+      await tester.tap(find.descendant(of: dialog, matching: find.text('保存')));
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(c.speechProvider.name, name);
+      expect(c.engineConfig(c.speechProvider).apiKey, '$name-key');
+    }
+  });
+
+  testWidgets('Qwen workspace derives endpoint without asking for a URL', (
+    tester,
+  ) async {
+    final c = RecorderController(loadPersistedState: false)
+      ..setQwenConfig(const EngineConfig(apiKey: 'test-key'));
+    addTearDown(c.dispose);
+    await tester.pumpWidget(wrap(c));
+    await tester.enterText(
+      find.byKey(const ValueKey('qwen-workspace')),
+      'llm-test',
+    );
+    await tester.scrollUntilVisible(
+      find.text('保存'),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pump();
+    expect(
+      c.engineConfig(SttProvider.qwen).baseUrl,
+      'https://llm-test.cn-beijing.maas.aliyuncs.com',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('qwen-workspace')),
+      'https://wrong.example',
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pump();
+    expect(find.text('请填写 Workspace ID，不需要填写网址'), findsOneWidget);
+    expect(
+      c.engineConfig(SttProvider.qwen).baseUrl,
+      'https://llm-test.cn-beijing.maas.aliyuncs.com',
+    );
+  });
 
   test('setQwenConfig saves the credential trio as one group', () {
     final controller = RecorderController(loadPersistedState: false);
@@ -158,13 +186,12 @@ void main() {
     expect(controller.engineConfigured(SttProvider.qwen), isTrue);
   });
 
-  test('engineConfig exposes the key-only engines', () {
-    final controller = RecorderController(loadPersistedState: false)
-      ..setSonioxApiKey('soniox-key');
+  test('retired engines have no credentials and cannot be selected', () {
+    final controller = RecorderController(loadPersistedState: false);
     addTearDown(controller.dispose);
 
-    expect(controller.engineConfig(SttProvider.soniox).apiKey, 'soniox-key');
-    expect(controller.engineConfigured(SttProvider.soniox), isTrue);
+    expect(controller.engineConfig(SttProvider.soniox).apiKey, isNull);
+    expect(controller.engineConfigured(SttProvider.soniox), isFalse);
     expect(controller.engineConfigured(SttProvider.moss), isFalse);
     expect(controller.engineConfig(SttProvider.qwen), const EngineConfig());
   });
@@ -174,8 +201,8 @@ void main() {
     addTearDown(controller.dispose);
     await tester.pumpWidget(wrap(controller));
 
-    expect(find.text('共 ${SttProvider.values.length} 个引擎'), findsOneWidget);
-    for (final provider in SttProvider.values) {
+    expect(find.text('共 ${SttProvider.available.length} 个引擎'), findsOneWidget);
+    for (final provider in SttProvider.available) {
       expect(
         find.byKey(ValueKey('speech-provider-option-${provider.name}')),
         findsOneWidget,
@@ -197,8 +224,14 @@ void main() {
       );
       await tester.pump();
 
-      expect(controller.speechProvider, SttProvider.soniox);
-      expect(find.byKey(const ValueKey('qwen-model')), findsOneWidget);
+      expect(controller.speechProvider, SttProvider.qwen);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byKey(const ValueKey('apikey-qwen')),
+        ),
+        findsOneWidget,
+      );
     },
   );
 
@@ -215,69 +248,48 @@ void main() {
     expect(find.text('使用中'), findsOneWidget);
   });
 
-  testWidgets('Qwen trio saves as a group from the settings form', (
-    tester,
-  ) async {
+  testWidgets('Qwen settings only edit API key', (tester) async {
     final controller = RecorderController(loadPersistedState: false)
-      ..setSpeechProvider(SttProvider.qwen)
-      ..setQwenConfig(const EngineConfig(apiKey: 'old-key'));
+      ..setQwenConfig(const EngineConfig(apiKey: 'old-key'))
+      ..setSpeechProvider(SttProvider.qwen);
     addTearDown(controller.dispose);
     await tester.pumpWidget(wrap(controller));
-
+    expect(find.text('服务地址'), findsNothing);
+    expect(find.text('模型'), findsNothing);
     await tester.enterText(
       find.byKey(const ValueKey('apikey-qwen')),
       'new-key',
     );
-    await tester.enterText(
-      find.byKey(const ValueKey('qwen-base-url')),
-      'dashscope-intl.aliyuncs.com/api/v1/',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('qwen-model')),
-      'qwen-audio-3.1-asr-flash-filetrans',
-    );
     await tester.scrollUntilVisible(
       find.text('保存'),
-      200,
+      180,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存'));
     await tester.pump();
-
-    final config = controller.engineConfig(SttProvider.qwen);
-    expect(config.apiKey, 'new-key');
-    expect(config.baseUrl, 'https://dashscope-intl.aliyuncs.com');
-    expect(config.model, 'qwen-audio-3.1-asr-flash-filetrans');
+    expect(controller.engineConfig(SttProvider.qwen).apiKey, 'new-key');
+    expect(find.text('已保存'), findsOneWidget);
   });
 
-  testWidgets('invalid trio is rejected with a readable message', (
+  testWidgets('Qwen empty key is rejected without losing saved key', (
     tester,
   ) async {
     final controller = RecorderController(loadPersistedState: false)
-      ..setSpeechProvider(SttProvider.qwen)
-      ..setQwenConfig(const EngineConfig(apiKey: 'old-key'));
+      ..setQwenConfig(const EngineConfig(apiKey: 'old-key'))
+      ..setSpeechProvider(SttProvider.qwen);
     addTearDown(controller.dispose);
     await tester.pumpWidget(wrap(controller));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('apikey-qwen')),
-      'new-key',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('qwen-base-url')),
-      'http://bad',
-    );
+    await tester.enterText(find.byKey(const ValueKey('apikey-qwen')), '');
     await tester.scrollUntilVisible(
       find.text('保存'),
-      200,
+      180,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存'));
     await tester.pump();
-
-    expect(find.text('通义服务地址需要 HTTPS'), findsOneWidget);
+    expect(find.text('请输入 API Key'), findsOneWidget);
     expect(controller.engineConfig(SttProvider.qwen).apiKey, 'old-key');
   });
 
@@ -301,8 +313,8 @@ void main() {
       );
       await tester.pump();
 
-      expect(controller.speechProvider, SttProvider.soniox);
-      expect(find.byKey(const ValueKey('doubao-model')), findsOneWidget);
+      expect(controller.speechProvider, SttProvider.qwen);
+      expect(find.byKey(const ValueKey('apikey-doubao')), findsOneWidget);
     },
   );
 
@@ -328,65 +340,48 @@ void main() {
     expect(find.text('使用中'), findsOneWidget);
   });
 
-  testWidgets('Doubao trio saves as a group from the settings form', (
-    tester,
-  ) async {
+  testWidgets('Doubao settings only edit API key', (tester) async {
     final controller = RecorderController(loadPersistedState: false)
-      ..setSpeechProvider(SttProvider.doubao)
-      ..setDoubaoConfig(const EngineConfig(apiKey: 'old-key'));
+      ..setDoubaoConfig(const EngineConfig(apiKey: 'old-key'))
+      ..setSpeechProvider(SttProvider.doubao);
     addTearDown(controller.dispose);
     await tester.pumpWidget(wrap(controller));
-
+    expect(find.text('服务地址'), findsNothing);
+    expect(find.text('模型'), findsNothing);
     await tester.enterText(
       find.byKey(const ValueKey('apikey-doubao')),
       'new-key',
     );
-    await tester.enterText(
-      find.byKey(const ValueKey('doubao-base-url')),
-      'openspeech.bytedance.com/api/v3/',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('doubao-model')),
-      'volc.bigasr.auc_turbo',
-    );
     await tester.scrollUntilVisible(
       find.text('保存'),
-      200,
+      180,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存'));
     await tester.pump();
-
-    final config = controller.engineConfig(SttProvider.doubao);
-    expect(config.apiKey, 'new-key');
-    expect(config.baseUrl, 'https://openspeech.bytedance.com');
-    expect(config.model, 'volc.bigasr.auc_turbo');
+    expect(controller.engineConfig(SttProvider.doubao).apiKey, 'new-key');
+    expect(find.text('已保存'), findsOneWidget);
   });
 
-  testWidgets('invalid Doubao trio is rejected with a readable message', (
+  testWidgets('Doubao empty key is rejected without losing saved key', (
     tester,
   ) async {
     final controller = RecorderController(loadPersistedState: false)
-      ..setSpeechProvider(SttProvider.doubao)
-      ..setDoubaoConfig(const EngineConfig(apiKey: 'old-key'));
+      ..setDoubaoConfig(const EngineConfig(apiKey: 'old-key'))
+      ..setSpeechProvider(SttProvider.doubao);
     addTearDown(controller.dispose);
     await tester.pumpWidget(wrap(controller));
-
-    await tester.enterText(
-      find.byKey(const ValueKey('doubao-base-url')),
-      'http://bad',
-    );
+    await tester.enterText(find.byKey(const ValueKey('apikey-doubao')), '');
     await tester.scrollUntilVisible(
       find.text('保存'),
-      200,
+      180,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存'));
     await tester.pump();
-
-    expect(find.text('豆包服务地址需要 HTTPS'), findsOneWidget);
+    expect(find.text('请输入 API Key'), findsOneWidget);
     expect(controller.engineConfig(SttProvider.doubao).apiKey, 'old-key');
   });
 }

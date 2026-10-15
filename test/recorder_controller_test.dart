@@ -2,7 +2,6 @@ import 'package:anker_recorder/ai/stt_types.dart';
 import 'package:anker_recorder/state/recorder_controller.dart';
 import 'package:anker_recorder/ui/screens/device_screen.dart';
 import 'package:anker_recorder/ui/screens/home_screen.dart';
-import 'package:anker_recorder/ui/screens/settings_screen.dart';
 import 'package:anker_recorder/ui/screens/communication_screen.dart';
 import 'package:anker_recorder/ui/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -54,95 +53,16 @@ void main() {
     expect(find.text('设备端'), findsOneWidget);
   });
 
-  test('Soniox translation modes enforce distinct languages', () {
-    final controller = RecorderController(loadPersistedState: false);
-    addTearDown(controller.dispose);
-
-    controller.autoTranscribe = true;
-    controller.setSttMode(SttDisplayMode.translation);
-    expect(controller.translationModeActive, isTrue);
-
-    controller.translationTurns = const [
-      SttTranslationTurn(
-        targetLanguage: 'zh',
-        sourceLanguage: 'en',
-        text: '你好',
-        isFinal: true,
-      ),
-    ];
-    controller.setTranslationTargetLanguage('ja');
-    expect(controller.translationTargetLanguage, 'ja');
-    expect(controller.translationTurns, isEmpty);
-
-    controller.setSttMode(SttDisplayMode.conversation);
-    expect(controller.communicationModeActive, isTrue);
-
-    controller.setGuestLanguage('zh');
-    expect(controller.guestLanguage, 'en');
-
-    controller.swapCommunicationLanguages();
-    expect(controller.ownerLanguage, 'en');
-    expect(controller.guestLanguage, 'zh');
-
-    controller.setAutoTranscribe(false);
-    expect(controller.sttMode, SttDisplayMode.transcription);
-    expect(controller.sonioxTranslationModeAvailable, isFalse);
-  });
-
-  testWidgets('settings selector enables Soniox translation mode', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 1600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final controller = RecorderController(loadPersistedState: false)
-      ..autoTranscribe = true;
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: controller,
-        child: const MaterialApp(home: SettingsScreen()),
-      ),
-    );
-    expect(find.text('设置'), findsNothing);
-    expect(find.text('服务商'), findsNothing);
-    expect(find.textContaining('xAI'), findsNothing);
-    expect(find.byKey(const ValueKey('apikey-soniox')), findsOneWidget);
-    final languageSelector = tester.widget<DropdownButton<String>>(
-      find.descendant(
-        of: find.byKey(const ValueKey('transcript-language-selector')),
-        matching: find.byType(DropdownButton<String>),
-      ),
-    );
-    expect(languageSelector.items!.first.value, 'auto');
-    expect(languageSelector.items!.first.child, isA<Text>());
-    expect((languageSelector.items!.first.child as Text).data, '自动');
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('stt-display-mode-selector')),
-    );
-    await tester.pump();
-
-    final selector = tester.widget<SegmentedButton<SttDisplayMode>>(
-      find.byKey(const ValueKey('stt-display-mode-selector')),
-    );
-    selector.onSelectionChanged?.call({SttDisplayMode.translation});
-    await tester.pump();
-
-    expect(controller.sttMode, SttDisplayMode.translation);
-    expect(find.text('目标语言'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('settings-transfer-group')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('settings-stt-group')), findsOneWidget);
-    expect(find.byType(SurfaceCard), findsNothing);
-
-    languageSelector.onChanged?.call('en');
-    await tester.pump();
-    expect(controller.transcriptLanguage, 'en');
+  test('cloud ASR does not offer unsupported translation or conversation', () {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    for (final provider in [SttProvider.qwen, SttProvider.doubao]) {
+      c.setSpeechProvider(provider);
+      c.setSttMode(SttDisplayMode.translation);
+      expect(c.sttMode, SttDisplayMode.transcription);
+      c.setSttMode(SttDisplayMode.conversation);
+      expect(c.communicationModeActive, isFalse);
+    }
   });
 
   testWidgets('connected Device uses flat management sections', (tester) async {

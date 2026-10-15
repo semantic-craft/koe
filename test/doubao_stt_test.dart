@@ -33,6 +33,7 @@ void main() {
       'enable_punc': true,
       'enable_speaker_info': true,
       'show_utterances': true,
+      'ssd_version': '200',
     });
 
     // Language mapping: ISO short codes -> BCP-47; auto/unknown -> omitted.

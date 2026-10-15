@@ -62,8 +62,6 @@ class AppSettings {
   const AppSettings({
     this.speechProvider,
     this.appleSourceLanguage = '',
-    this.sonioxApiKey,
-    this.mossApiKey,
     this.engines = const {},
     this.autoTranscribe = true,
     this.autoRealtime = true,
@@ -73,9 +71,6 @@ class AppSettings {
     this.ownerLanguage = 'zh',
     this.guestLanguage = 'en',
   });
-
-  final String? sonioxApiKey;
-  final String? mossApiKey;
 
   /// Grouped cloud-engine credentials keyed by [SttProvider.name].
   final Map<String, EngineConfig> engines;
@@ -98,8 +93,6 @@ class AppSettings {
   AppSettings copyWith({
     SttProvider? speechProvider,
     String? appleSourceLanguage,
-    String? sonioxApiKey,
-    String? mossApiKey,
     Map<String, EngineConfig>? engines,
     bool? autoTranscribe,
     bool? autoRealtime,
@@ -108,14 +101,10 @@ class AppSettings {
     String? translationTargetLanguage,
     String? ownerLanguage,
     String? guestLanguage,
-    bool clearSoniox = false,
-    bool clearMoss = false,
   }) {
     return AppSettings(
       speechProvider: speechProvider ?? this.speechProvider,
       appleSourceLanguage: appleSourceLanguage ?? this.appleSourceLanguage,
-      mossApiKey: clearMoss ? null : (mossApiKey ?? this.mossApiKey),
-      sonioxApiKey: clearSoniox ? null : (sonioxApiKey ?? this.sonioxApiKey),
       engines: engines ?? this.engines,
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
@@ -131,9 +120,6 @@ class AppSettings {
   Map<String, dynamic> toJson() => {
     if (speechProvider != null) 'speechProvider': speechProvider!.name,
     'appleSourceLanguage': appleSourceLanguage,
-    if (sonioxApiKey != null && sonioxApiKey!.isNotEmpty)
-      'sonioxApiKey': sonioxApiKey,
-    if (mossApiKey != null && mossApiKey!.isNotEmpty) 'mossApiKey': mossApiKey,
     if (_engineJson.isNotEmpty) 'engines': _engineJson,
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
@@ -167,8 +153,6 @@ class AppSettings {
     return AppSettings(
       speechProvider: SttProvider.parse(map['speechProvider']),
       appleSourceLanguage: _str(map['appleSourceLanguage']) ?? '',
-      sonioxApiKey: _str(map['sonioxApiKey']),
-      mossApiKey: _str(map['mossApiKey']),
       engines: engines,
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,
@@ -193,14 +177,15 @@ class AppSettings {
     final nested = map['engines'];
     if (nested is Map) {
       for (final entry in nested.entries) {
-        if (entry.value is Map) {
+        if (SttProvider.available.any((p) => p.name == entry.key) &&
+            entry.value is Map) {
           engines['${entry.key}'] = EngineConfig.fromJson(
             Map<String, dynamic>.from(entry.value as Map),
           );
         }
       }
     }
-    for (final provider in SttProvider.values) {
+    for (final provider in SttProvider.available) {
       if (_legacyKeyFields.contains(provider.name)) continue;
       final legacy = EngineConfig.fromJson({
         'apiKey': map['${provider.name}ApiKey'],
