@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:typed_data' show Endian;
 
 import 'package:anker_recorder/ai/apple_speech.dart';
+import 'package:anker_recorder/ai/engine_config.dart';
 import 'package:anker_recorder/ai/qwen_stt.dart';
 import 'package:anker_recorder/ai/soniox_stt.dart';
 import 'package:anker_recorder/ai/stt_types.dart';
@@ -150,7 +151,7 @@ void main() {
       expect(qwen.calls, 0);
       expect(c.pcmFramesDecoded, 0);
       expect(c.streamingSttActive, isFalse);
-      c.setQwenApiKey('changed-key');
+      c.setQwenConfig(const EngineConfig(apiKey: 'changed-key'));
       c.setSpeechProvider(SttProvider.apple);
       ble.stopRecording();
       await Future<void>.delayed(Duration.zero);

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../ai/stt_types.dart';
 import '../ai/speech_provider.dart';
+import '../ai/engine_config.dart';
 
 /// Lightweight JSON settings for speech providers and recording preferences.
 class AppSettingsStore {
@@ -63,9 +64,7 @@ class AppSettings {
     this.appleSourceLanguage = '',
     this.sonioxApiKey,
     this.mossApiKey,
-    this.qwenApiKey,
-    this.qwenBaseUrl,
-    this.qwenModel,
+    this.engines = const {},
     this.autoTranscribe = true,
     this.autoRealtime = true,
     this.transcriptLanguage = 'auto',
@@ -77,9 +76,9 @@ class AppSettings {
 
   final String? sonioxApiKey;
   final String? mossApiKey;
-  final String? qwenApiKey;
-  final String? qwenBaseUrl;
-  final String? qwenModel;
+
+  /// Grouped cloud-engine credentials keyed by [SttProvider.name].
+  final Map<String, EngineConfig> engines;
 
   /// Null means an existing install has not selected a provider yet.
   final SttProvider? speechProvider;
@@ -92,14 +91,16 @@ class AppSettings {
   final String ownerLanguage;
   final String guestLanguage;
 
+  /// The credential trio saved for [provider] (empty when never configured).
+  EngineConfig engineConfig(SttProvider provider) =>
+      engines[provider.name] ?? const EngineConfig();
+
   AppSettings copyWith({
     SttProvider? speechProvider,
     String? appleSourceLanguage,
     String? sonioxApiKey,
     String? mossApiKey,
-    String? qwenApiKey,
-    String? qwenBaseUrl,
-    String? qwenModel,
+    Map<String, EngineConfig>? engines,
     bool? autoTranscribe,
     bool? autoRealtime,
     String? transcriptLanguage,
@@ -109,18 +110,13 @@ class AppSettings {
     String? guestLanguage,
     bool clearSoniox = false,
     bool clearMoss = false,
-    bool clearQwenKey = false,
-    bool clearQwenBaseUrl = false,
-    bool clearQwenModel = false,
   }) {
     return AppSettings(
       speechProvider: speechProvider ?? this.speechProvider,
       appleSourceLanguage: appleSourceLanguage ?? this.appleSourceLanguage,
       mossApiKey: clearMoss ? null : (mossApiKey ?? this.mossApiKey),
       sonioxApiKey: clearSoniox ? null : (sonioxApiKey ?? this.sonioxApiKey),
-      qwenApiKey: clearQwenKey ? null : (qwenApiKey ?? this.qwenApiKey),
-      qwenBaseUrl: clearQwenBaseUrl ? null : (qwenBaseUrl ?? this.qwenBaseUrl),
-      qwenModel: clearQwenModel ? null : (qwenModel ?? this.qwenModel),
+      engines: engines ?? this.engines,
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
       transcriptLanguage: transcriptLanguage ?? this.transcriptLanguage,
@@ -138,10 +134,7 @@ class AppSettings {
     if (sonioxApiKey != null && sonioxApiKey!.isNotEmpty)
       'sonioxApiKey': sonioxApiKey,
     if (mossApiKey != null && mossApiKey!.isNotEmpty) 'mossApiKey': mossApiKey,
-    if (qwenApiKey != null && qwenApiKey!.isNotEmpty) 'qwenApiKey': qwenApiKey,
-    if (qwenBaseUrl != null && qwenBaseUrl!.isNotEmpty)
-      'qwenBaseUrl': qwenBaseUrl,
-    if (qwenModel != null && qwenModel!.isNotEmpty) 'qwenModel': qwenModel,
+    if (_engineJson.isNotEmpty) 'engines': _engineJson,
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
     'transcriptLanguage': transcriptLanguage,
@@ -149,6 +142,11 @@ class AppSettings {
     'translationTargetLanguage': translationTargetLanguage,
     'ownerLanguage': ownerLanguage,
     'guestLanguage': guestLanguage,
+  };
+
+  Map<String, dynamic> get _engineJson => {
+    for (final entry in engines.entries)
+      if (!entry.value.isEmpty) entry.key: entry.value.toJson(),
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> map) {
@@ -165,14 +163,13 @@ class AppSettings {
       ownerLanguage = 'zh';
       guestLanguage = 'en';
     }
+    final engines = _enginesFrom(map);
     return AppSettings(
       speechProvider: SttProvider.parse(map['speechProvider']),
       appleSourceLanguage: _str(map['appleSourceLanguage']) ?? '',
       sonioxApiKey: _str(map['sonioxApiKey']),
       mossApiKey: _str(map['mossApiKey']),
-      qwenApiKey: _str(map['qwenApiKey']),
-      qwenBaseUrl: _str(map['qwenBaseUrl']),
-      qwenModel: _str(map['qwenModel']),
+      engines: engines,
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,
       transcriptLanguage: _str(map['transcriptLanguage']) ?? 'auto',
@@ -181,6 +178,40 @@ class AppSettings {
       ownerLanguage: ownerLanguage,
       guestLanguage: guestLanguage,
     );
+  }
+
+  /// Providers whose API key lives in a dedicated legacy field rather than
+  /// the grouped trio map.
+  static const _legacyKeyFields = {'soniox', 'moss'};
+
+  /// Reads the grouped `engines` map, then migrates legacy flat
+  /// `{name}ApiKey` / `{name}BaseUrl` / `{name}Model` keys for every trio
+  /// engine. Nested entries win; legacy keys only fill engines not yet
+  /// present.
+  static Map<String, EngineConfig> _enginesFrom(Map<String, dynamic> map) {
+    final engines = <String, EngineConfig>{};
+    final nested = map['engines'];
+    if (nested is Map) {
+      for (final entry in nested.entries) {
+        if (entry.value is Map) {
+          engines['${entry.key}'] = EngineConfig.fromJson(
+            Map<String, dynamic>.from(entry.value as Map),
+          );
+        }
+      }
+    }
+    for (final provider in SttProvider.values) {
+      if (_legacyKeyFields.contains(provider.name)) continue;
+      final legacy = EngineConfig.fromJson({
+        'apiKey': map['${provider.name}ApiKey'],
+        'baseUrl': map['${provider.name}BaseUrl'],
+        'model': map['${provider.name}Model'],
+      });
+      if (!legacy.isEmpty) {
+        engines.putIfAbsent(provider.name, () => legacy);
+      }
+    }
+    return engines;
   }
 
   static String? _str(dynamic v) {

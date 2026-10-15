@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../ai/soniox_stt.dart';
 import '../ai/moss_stt.dart';
 import '../ai/qwen_stt.dart';
+import '../ai/engine_config.dart';
 import '../ai/soniox_stt_stream.dart';
 import '../ai/soniox_languages.dart';
 import '../ai/stt_types.dart';
@@ -327,9 +328,10 @@ class RecorderController extends ChangeNotifier {
     final s = await AppSettingsStore.load();
     if (s.sonioxApiKey != null) _sonioxStt.apiKeyOverride = s.sonioxApiKey;
     _mossStt.apiKeyOverride = s.mossApiKey;
-    _qwenStt.apiKeyOverride = s.qwenApiKey;
-    _qwenStt.baseUrlOverride = s.qwenBaseUrl;
-    _qwenStt.modelOverride = s.qwenModel;
+    final qwenConfig = s.engineConfig(SttProvider.qwen);
+    _qwenStt.apiKeyOverride = qwenConfig.apiKey;
+    _qwenStt.baseUrlOverride = qwenConfig.baseUrl;
+    _qwenStt.modelOverride = qwenConfig.model;
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
     transcriptLanguage = s.transcriptLanguage;
@@ -370,9 +372,7 @@ class RecorderController extends ChangeNotifier {
         appleSourceLanguage: appleSourceLanguage,
         sonioxApiKey: _sonioxStt.apiKeyOverride,
         mossApiKey: _mossStt.apiKeyOverride,
-        qwenApiKey: _qwenStt.apiKeyOverride,
-        qwenBaseUrl: _qwenStt.baseUrlOverride,
-        qwenModel: _qwenStt.modelOverride,
+        engines: _persistedEngines(),
         autoTranscribe: autoTranscribe,
         autoRealtime: autoRealtime,
         transcriptLanguage: transcriptLanguage,
@@ -384,6 +384,14 @@ class RecorderController extends ChangeNotifier {
       strict: strict,
     );
   }
+
+  Map<String, EngineConfig> _persistedEngines() => {
+    SttProvider.qwen.name: EngineConfig(
+      apiKey: _qwenStt.apiKeyOverride,
+      baseUrl: _qwenStt.baseUrlOverride,
+      model: _qwenStt.modelOverride,
+    ),
+  };
 
   bool get appleSpeechReady =>
       appleSourceLanguage.isNotEmpty &&
@@ -1687,38 +1695,60 @@ class RecorderController extends ChangeNotifier {
   /// Saved / override keys for Settings text fields (not env-only secrets).
   String? get sonioxApiKeyStored => _sonioxStt.apiKeyOverride;
 
-  String? get qwenApiKeyStored => _qwenStt.apiKeyOverride;
-  String? get qwenBaseUrlStored => _qwenStt.baseUrlOverride;
-  String? get qwenModelStored => _qwenStt.modelOverride;
-  bool get qwenConfigured => _qwenStt.isConfigured;
-
-  void setQwenApiKey(String? key) {
-    final trimmed = key?.trim();
-    _qwenStt.apiKeyOverride = (trimmed == null || trimmed.isEmpty)
-        ? null
-        : trimmed;
-    notifyListeners();
-    unawaited(_persistSettings());
-  }
-
-  void setQwenBaseUrl(String? url) {
-    final trimmed = url?.trim();
-    if (trimmed == null || trimmed.isEmpty) {
-      _qwenStt.baseUrlOverride = null;
-    } else {
-      _qwenStt.baseUrlOverride = normalizeDashScopeBaseUrl(trimmed);
+  /// The saved credential trio for [provider] (key-only engines expose just
+  /// their key). This is the data source the engine lineup renders from.
+  EngineConfig engineConfig(SttProvider provider) {
+    switch (provider) {
+      case SttProvider.apple:
+        return const EngineConfig();
+      case SttProvider.soniox:
+        return EngineConfig(apiKey: _sonioxStt.apiKeyOverride);
+      case SttProvider.moss:
+        return EngineConfig(apiKey: _mossStt.apiKeyOverride);
+      case SttProvider.qwen:
+        return EngineConfig(
+          apiKey: _qwenStt.apiKeyOverride,
+          baseUrl: _qwenStt.baseUrlOverride,
+          model: _qwenStt.modelOverride,
+        );
     }
+  }
+
+  /// Whether [provider] is ready to be selected and used.
+  bool engineConfigured(SttProvider provider) {
+    switch (provider) {
+      case SttProvider.apple:
+        return appleCapabilities.supported;
+      case SttProvider.soniox:
+        return _sonioxStt.isConfigured;
+      case SttProvider.moss:
+        return _mossStt.apiKey != null;
+      case SttProvider.qwen:
+        return _qwenStt.isConfigured;
+    }
+  }
+
+  /// Saves the whole Qwen credential trio at once. The base URL is
+  /// normalized on save; an invalid one throws [QwenSttException] and leaves
+  /// the current configuration untouched.
+  void setQwenConfig(EngineConfig config) {
+    final apiKey = _blankToNull(config.apiKey);
+    final model = _blankToNull(config.model);
+    final rawBaseUrl = _blankToNull(config.baseUrl);
+    final baseUrl = rawBaseUrl == null
+        ? null
+        : normalizeDashScopeBaseUrl(rawBaseUrl);
+    _qwenStt
+      ..apiKeyOverride = apiKey
+      ..baseUrlOverride = baseUrl
+      ..modelOverride = model;
     notifyListeners();
     unawaited(_persistSettings());
   }
 
-  void setQwenModel(String? model) {
-    final trimmed = model?.trim();
-    _qwenStt.modelOverride = (trimmed == null || trimmed.isEmpty)
-        ? null
-        : trimmed;
-    notifyListeners();
-    unawaited(_persistSettings());
+  static String? _blankToNull(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 
   bool get sttConfigured =>
