@@ -109,3 +109,13 @@
 - 修复与证据：保留 recordingStatus，暂停继续沿用会话、文件和配置；`test/recording_processing_test.dart` 的身份回归先失败后通过。真实 D3200 控制器探针确认同一文件从 38,400 增至 85,440 字节；Mac 千问与 iPhone 豆包双端真实界面均在同一条记录保存两段语音，见 `docs/speech-provider-validation.md`。
 - 正确做法：先核对命令、状态通知与文件身份；单元测试不以乐观 UI 状态代替设备语义。停止后新建与暂停后继续分别覆盖。
 - 复发记录：Seen 1x (2026-10-15)。
+
+### 只经分支和 PR 交付，只用 squash 合并；不推 main，不把 WIP 带进主线
+
+**所有改动走功能分支 → PR（正文写回退测试、真实使用、没跑到的项目）→ squash 合并；中断的 agent 运行留在分支上，不进 main。**
+
+- 起因与后果：2026-10-15 上午偏离用户「GitHub 只用 squash merge」的规定：#3（7b7c033）和 #17–#20 用 merge commit 合并，把 headless cursor-agent 中断留下的 `c10c5d2 wip(qwen-asr): partial work…` 带进 main 历史；05:24–06:38 的多个本地 `merge:` 提交（2437e61、ccf1147、28da98f、6d1a3b1、b59d365、70f648d 等）和 `ed9ae3f chore` 直接推到 main，没有 PR、评审和验收记录可查。
+- 修复与证据：下午 #21、#26、#29 恢复为 squash 合并，PR 正文带 Evidence。历史不改写。同时在 AGENTS.md 加入交付与验收硬规则。
+- 正确做法（Done right）：#29（00cdd1b）：功能分支 → PR 列出 261 项全量测试、生产 Qwen3.8-Flash 调用、Mac 与 iPhone 安装版验收和未覆盖项 → squash。
+- 复发记录：Seen 1x (2026-10-15)；同日 Remora 出现同类问题，在该仓库单独记录。
+
