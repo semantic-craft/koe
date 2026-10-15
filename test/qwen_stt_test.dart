@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:anker_recorder/ai/oss_upload_request.dart';
+
 import 'package:anker_recorder/ai/qwen_stt.dart';
 import 'package:anker_recorder/state/recorder_controller.dart';
 import 'package:anker_recorder/ui/screens/settings_screen.dart';
@@ -262,11 +264,21 @@ void main() {
       );
       expect(policy.headers['authorization'], 'Bearer test-key');
 
-      final upload = client.requests[1] as http.MultipartRequest;
+      final upload = client.requests[1] as OssUploadRequest;
       expect(upload.method, 'POST');
       expect(upload.url.toString(), 'https://oss.example.com/bucket');
       expect(upload.fields['key'], 'dashscope-instant/x/audio.ogg');
       expect(upload.fields['OSSAccessKeyId'], 'access');
+      final wire = await upload.finalize().toBytes();
+      final encoded = latin1.decode(wire);
+      expect(
+        encoded,
+        contains(
+          'content-disposition: form-data; name="file"; filename="audio.ogg"\r\ncontent-type: application/octet-stream\r\n\r\n',
+        ),
+      );
+      expect(wire.length, upload.contentLength);
+      expect(encoded, contains(latin1.decode(audio)));
 
       final submit = client.requests[2] as http.Request;
       expect(submit.method, 'POST');

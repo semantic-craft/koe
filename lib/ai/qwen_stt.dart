@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../audio/ogg_opus.dart';
 import 'cloud_stt_service.dart';
+import 'oss_upload_request.dart';
 import 'progress_multipart.dart';
 import 'stt_types.dart';
 
@@ -238,28 +239,30 @@ class QwenSttService extends CloudFileSttService {
     SttFileProgressCallback? onProgress,
   }) async {
     final key = '${policy.uploadDir}/$filename';
-    final request = http.MultipartRequest('POST', Uri.parse(policy.uploadHost))
-      ..fields['OSSAccessKeyId'] = policy.accessKeyId
-      ..fields['Signature'] = policy.signature
-      ..fields['policy'] = policy.policy
-      ..fields['x-oss-object-acl'] = policy.objectAcl
-      ..fields['x-oss-forbid-overwrite'] = policy.forbidOverwrite
-      ..fields['key'] = key
-      ..fields['success_action_status'] = '200'
-      ..files.add(
-        multipartFileWithProgress(
-          field: 'file',
-          bytes: bytes,
-          filename: filename,
-          onProgress: (sent, total) => onProgress?.call(
-            SttFileProgress(
-              SttFileStage.uploading,
-              uploadedBytes: sent,
-              totalBytes: total,
-            ),
+    final request = OssUploadRequest(
+      Uri.parse(policy.uploadHost),
+      fields: {
+        'OSSAccessKeyId': policy.accessKeyId,
+        'Signature': policy.signature,
+        'policy': policy.policy,
+        'x-oss-object-acl': policy.objectAcl,
+        'x-oss-forbid-overwrite': policy.forbidOverwrite,
+        'key': key,
+        'success_action_status': '200',
+      },
+      file: multipartFileWithProgress(
+        field: 'file',
+        bytes: bytes,
+        filename: filename,
+        onProgress: (sent, total) => onProgress?.call(
+          SttFileProgress(
+            SttFileStage.uploading,
+            uploadedBytes: sent,
+            totalBytes: total,
           ),
         ),
-      );
+      ),
+    );
     final streamed = await _client
         .send(request)
         .timeout(const Duration(minutes: 10));
