@@ -15,6 +15,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
   const previewDirectory = String.fromEnvironment('RECORDING_PREVIEW_DIR');
@@ -126,6 +127,33 @@ void main() {
         matching: find.byType(Scrollable),
       )
       .first;
+
+  testWidgets('Koe about is readable in the phone preview', (tester) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'legacy name',
+      packageName: 'legacy.identity',
+      version: '1.0.0',
+      buildNumber: '1',
+      buildSignature: '',
+    );
+    final c = _RecordingController();
+    addTearDown(c.dispose);
+    await pump(tester, c, const SettingsScreen());
+    await tester.scrollUntilVisible(
+      find.text('关于 Koe'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('关于 Koe'));
+    await tester.pumpAndSettle();
+    expect(find.text('Koe'), findsOneWidget);
+    expect(find.text('适配设备：安克录音豆（soundcore Work / D3200）'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await savePreview(tester, 'koe-about-phone');
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+  });
 
   testWidgets('detail playback stays above the iPhone gesture safe area', (
     tester,

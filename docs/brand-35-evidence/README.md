@@ -5,7 +5,7 @@
 
 ## 自动验证
 
-- `flutter test --no-pub`：275 项通过。
+- `flutter test --no-pub`：276 项通过。
 - `flutter analyze --no-pub`：无问题。
 - `flutter build macos --debug --no-pub`：正式入口构建通过。
 - `flutter build ios --debug --no-codesign --no-pub`：正式入口的设备架构构建通过，
@@ -33,6 +33,7 @@ flutter build macos --debug --no-pub \
 核对关闭操作能够返回设置。截图和 AX 文本见本目录：
 
 - [宽屏关于窗口](about-wide.png)
+- [390×844 窄屏组件渲染](koe-about-phone.png)
 - [关于窗口的可访问性文本](about-wide-ax.txt)
 
 原生检查发现系统 `AboutDialog` 的默认标题样式在现有主题下不可见；
@@ -51,3 +52,5 @@ flutter build macos --debug --no-pub \
 - 未在 iPhone、Android 真机验证；本工单不执行安装或图标替换。
 - 未把原生 AX 文本检查等同于完整 VoiceOver 人工验收。
 - 未部署、发布或覆盖安装到 Applications。
+
+审查补验：复用现有字体与截图夹具生成窄屏图片，人工核对标题、版本、说明换行和关闭按钮；图片为组件渲染，不是真机截图。
