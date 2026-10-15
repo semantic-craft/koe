@@ -1,3 +1,4 @@
+import 'package:anker_recorder/ai/speech_provider.dart';
 import 'package:anker_recorder/ai/stt_types.dart';
 import 'package:anker_recorder/state/app_settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,5 +80,36 @@ void main() {
 
     expect(settings.toJson(), isNot(contains('sttProvider')));
     expect(settings.toJson(), isNot(contains('xaiApiKey')));
+  });
+
+  test('Qwen key, base URL, and model round-trip independently', () {
+    final settings = AppSettings.fromJson({
+      'speechProvider': 'qwen',
+      'qwenApiKey': 'qwen-key',
+      'qwenBaseUrl': 'https://dashscope-intl.aliyuncs.com',
+      'qwenModel': 'qwen-audio-3.1-asr-flash-filetrans',
+      'sonioxApiKey': 'soniox-key',
+    });
+
+    expect(settings.speechProvider, SttProvider.qwen);
+    expect(settings.toJson()['qwenApiKey'], 'qwen-key');
+    expect(
+      settings.toJson()['qwenBaseUrl'],
+      'https://dashscope-intl.aliyuncs.com',
+    );
+    expect(
+      settings.toJson()['qwenModel'],
+      'qwen-audio-3.1-asr-flash-filetrans',
+    );
+    final cleared = settings.copyWith(clearQwenKey: true, clearQwenModel: true);
+    expect(cleared.qwenApiKey, isNull);
+    expect(cleared.qwenModel, isNull);
+    expect(cleared.qwenBaseUrl, 'https://dashscope-intl.aliyuncs.com');
+    expect(cleared.sonioxApiKey, 'soniox-key');
+    expect(AppSettings.fromJson(cleared.toJson()).qwenApiKey, isNull);
+    expect(
+      AppSettings.fromJson(cleared.toJson()).qwenBaseUrl,
+      'https://dashscope-intl.aliyuncs.com',
+    );
   });
 }

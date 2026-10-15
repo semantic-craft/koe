@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:typed_data' show Endian;
 
 import 'package:anker_recorder/ai/apple_speech.dart';
+import 'package:anker_recorder/ai/qwen_stt.dart';
 import 'package:anker_recorder/ai/soniox_stt.dart';
 import 'package:anker_recorder/ai/stt_types.dart';
 import 'package:anker_recorder/ble/ble_service.dart';
@@ -116,6 +117,54 @@ void main() {
         c.recordingView(RecordingReference(path: file.path)).provider,
         SttProvider.moss,
       );
+    },
+  );
+
+  test(
+    'Qwen file transcription starts after stop and keeps the take settings',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('qwen-stop-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/301.wav');
+      await file.writeAsBytes([1, 2, 3]);
+      final qwen = _Qwen()..apiKeyOverride = 'qwen-key';
+      final ble = _Ble();
+      final c = RecorderController(
+        loadPersistedState: false,
+        ble: ble,
+        qwenSpeech: qwen,
+        appleSpeech: _Apple(),
+      )..setSpeechProvider(SttProvider.qwen);
+      addTearDown(c.dispose);
+      c.setTranscriptLanguage('zh');
+      await c.startRecord();
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(
+          active: true,
+          fileId: 301,
+          path: file.path,
+          bytesReceived: 320,
+        ),
+      );
+      c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+      expect(qwen.calls, 0);
+      expect(c.pcmFramesDecoded, 0);
+      expect(c.streamingSttActive, isFalse);
+      c.setQwenApiKey('changed-key');
+      c.setSpeechProvider(SttProvider.apple);
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(fileId: 301, path: file.path, bytesReceived: 320),
+      );
+      await settleUntil(() => qwen.calls == 1);
+      expect(qwen.seenKey, 'qwen-key');
+      expect(qwen.seenLanguage, 'zh');
+      expect(qwen.seenModel, QwenSttService.defaultModel);
+      expect(qwen.seenBase, QwenSttService.defaultBaseUrl);
+      final view = c.recordingView(RecordingReference(path: file.path));
+      expect(view.text, '通义文本');
+      expect(view.provider, SttProvider.qwen);
     },
   );
 
@@ -681,6 +730,36 @@ class _Apple extends AppleSpeechService {
   @override
   Future<void> cancelFileProcessing() async {
     cancelCalls++;
+  }
+}
+
+class _Qwen extends QwenSttService {
+  int calls = 0;
+  String? seenKey;
+  String? seenModel;
+  String? seenBase;
+  String? seenLanguage;
+
+  @override
+  Future<SttResult> transcribePath(
+    String path, {
+    String? apiKey,
+    String? baseUrl,
+    String? model,
+    String? language,
+    SttFileProgressCallback? onProgress,
+    bool Function()? isCurrent,
+  }) async {
+    calls++;
+    seenKey = apiKey;
+    seenBase = baseUrl;
+    seenModel = model;
+    seenLanguage = language;
+    return SttResult(
+      text: '通义文本',
+      sourcePath: path,
+      language: language ?? 'auto',
+    );
   }
 }
 

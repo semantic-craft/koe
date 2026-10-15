@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../ai/soniox_stt.dart';
 import '../ai/moss_stt.dart';
+import '../ai/qwen_stt.dart';
 import '../ai/soniox_stt_stream.dart';
 import '../ai/soniox_languages.dart';
 import '../ai/stt_types.dart';
@@ -56,12 +57,14 @@ class RecorderController extends ChangeNotifier {
     AppleSpeechService? appleSpeech,
     SonioxSttService? sonioxSpeech,
     MossSttService? mossSpeech,
+    QwenSttService? qwenSpeech,
     MossJobStore? mossJobStore,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
   }) : _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _sonioxStt = sonioxSpeech ?? SonioxSttService(),
        _mossStt = mossSpeech ?? MossSttService(),
+       _qwenStt = qwenSpeech ?? QwenSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load {
     _subs.add(
       _ble.scanResults.listen((list) {
@@ -272,9 +275,16 @@ class RecorderController extends ChangeNotifier {
         owner.paused ||
         !owner.ended ||
         _finalizingRecordings.contains(_recordingKey(path: path)) ||
-        owner.configuration.provider != SttProvider.moss ||
+        !owner.configuration.provider.defersTranscription ||
         !owner.configuration.enabled ||
         !_isConfigured(owner.configuration)) {
+      return;
+    }
+    if (owner.configuration.provider == SttProvider.qwen) {
+      final key = _recordingKey(path: path);
+      if (_qwenStarted.contains(key)) return;
+      _pendingQwen[key] = (path: path, config: owner.configuration);
+      unawaited(_pumpQwenJobs());
       return;
     }
     try {
@@ -289,10 +299,37 @@ class RecorderController extends ChangeNotifier {
     }
   }
 
+  /// Qwen has no durable job store. Wait until the live take is idle, then
+  /// run the file transcription captured with that take's settings.
+  Future<void> _pumpQwenJobs() async {
+    if (_qwenPumping || _disposed || _pendingQwen.isEmpty) return;
+    if (_liveProcessing || _fileJobKey != null || _mossJobs.busy) return;
+    final entry = _pendingQwen.entries.first;
+    _qwenPumping = true;
+    var accepted = false;
+    try {
+      accepted = await _runFileTranscription(
+        entry.value.path,
+        entry.value.config,
+        fromQueue: true,
+      );
+    } finally {
+      if (accepted) {
+        _pendingQwen.remove(entry.key);
+        _qwenStarted.add(entry.key);
+      }
+      _qwenPumping = false;
+      if (accepted && _pendingQwen.isNotEmpty) unawaited(_pumpQwenJobs());
+    }
+  }
+
   Future<void> _loadPersistedSettings() async {
     final s = await AppSettingsStore.load();
     if (s.sonioxApiKey != null) _sonioxStt.apiKeyOverride = s.sonioxApiKey;
     _mossStt.apiKeyOverride = s.mossApiKey;
+    _qwenStt.apiKeyOverride = s.qwenApiKey;
+    _qwenStt.baseUrlOverride = s.qwenBaseUrl;
+    _qwenStt.modelOverride = s.qwenModel;
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
     transcriptLanguage = s.transcriptLanguage;
@@ -315,8 +352,9 @@ class RecorderController extends ChangeNotifier {
       saved: s.speechProvider,
       appleSupported: appleCapabilities.supported,
       sonioxConfigured: _sonioxStt.isConfigured,
+      qwenConfigured: _qwenStt.isConfigured,
     );
-    if (speechProvider == SttProvider.moss ||
+    if (speechProvider.defersTranscription ||
         (speechProvider == SttProvider.apple &&
             sttMode == SttDisplayMode.conversation)) {
       sttMode = SttDisplayMode.transcription;
@@ -332,6 +370,9 @@ class RecorderController extends ChangeNotifier {
         appleSourceLanguage: appleSourceLanguage,
         sonioxApiKey: _sonioxStt.apiKeyOverride,
         mossApiKey: _mossStt.apiKeyOverride,
+        qwenApiKey: _qwenStt.apiKeyOverride,
+        qwenBaseUrl: _qwenStt.baseUrlOverride,
+        qwenModel: _qwenStt.modelOverride,
         autoTranscribe: autoTranscribe,
         autoRealtime: autoRealtime,
         transcriptLanguage: transcriptLanguage,
@@ -429,7 +470,7 @@ class RecorderController extends ChangeNotifier {
   void setSpeechProvider(SttProvider provider) {
     if (provider == speechProvider) return;
     speechProvider = provider;
-    if (provider == SttProvider.moss ||
+    if (provider.defersTranscription ||
         (provider == SttProvider.apple &&
             sttMode == SttDisplayMode.conversation)) {
       sttMode = SttDisplayMode.transcription;
@@ -455,7 +496,7 @@ class RecorderController extends ChangeNotifier {
     targetLanguage: translationTargetLanguage,
     ownerLanguage: ownerLanguage,
     guestLanguage: guestLanguage,
-    mode: speechProvider == SttProvider.moss
+    mode: speechProvider.defersTranscription
         ? SttDisplayMode.transcription
         : sttMode,
     enabled: autoTranscribe,
@@ -463,6 +504,9 @@ class RecorderController extends ChangeNotifier {
     appleTranslationReady: appleTranslationAvailable,
     sonioxKey: _sonioxStt.apiKey,
     mossKey: _mossStt.apiKey,
+    qwenKey: _qwenStt.apiKey,
+    qwenBaseUrl: _resolvedQwenBaseUrl(),
+    qwenModel: _qwenStt.model,
   );
 
   _RecordingSession? get _currentRecording =>
@@ -477,12 +521,21 @@ class RecorderController extends ChangeNotifier {
   // They still belong to this take and must never adopt the next provider.
   _SpeechConfiguration get _activeConfiguration =>
       _liveConfiguration ?? _settingsConfiguration;
-  bool _isConfigured(_SpeechConfiguration config) =>
-      config.provider == SttProvider.apple
-      ? config.appleReady && config.sourceLanguage.isNotEmpty
-      : config.provider == SttProvider.moss
-      ? config.mossKey?.isNotEmpty == true
-      : config.sonioxKey?.isNotEmpty == true;
+  bool _isConfigured(_SpeechConfiguration config) => switch (config.provider) {
+    SttProvider.apple => config.appleReady && config.sourceLanguage.isNotEmpty,
+    SttProvider.moss => config.mossKey?.isNotEmpty == true,
+    SttProvider.qwen => config.qwenKey?.isNotEmpty == true,
+    SttProvider.soniox => config.sonioxKey?.isNotEmpty == true,
+  };
+
+  String _resolvedQwenBaseUrl() {
+    try {
+      return _qwenStt.baseUrl;
+    } on QwenSttException {
+      return QwenSttService.defaultBaseUrl;
+    }
+  }
+
   bool get _activeSttConfigured => _isConfigured(_activeConfiguration);
   bool get _activeAutoTranscribe => _activeConfiguration.enabled;
   String get activeTranslationTargetLanguage =>
@@ -688,6 +741,7 @@ class RecorderController extends ChangeNotifier {
 
   String _speechErrorMessage(Object error) {
     if (error is MossException) return error.message;
+    if (error is QwenSttException) return error.message;
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
       'unsupported' => '此设备不支持设备端处理，请在设置中选择云端语音服务',
@@ -990,7 +1044,7 @@ class RecorderController extends ChangeNotifier {
           final owner = _sessionForReference(
             RecordingReference(path: finishedPath),
           );
-          if (owner?.configuration.provider == SttProvider.moss) {
+          if (owner?.configuration.provider.defersTranscription == true) {
             owner!.finalizing = false;
             unawaited(_enqueueMossRecording(owner, finishedPath));
           }
@@ -1168,7 +1222,7 @@ class RecorderController extends ChangeNotifier {
 
   /// Live BLE Opus frame → PCM16 → provider WS STT (when auto-transcribe on).
   void _onRealtimeOpusFrame(Uint8List frame) {
-    if (_activeConfiguration.provider == SttProvider.moss ||
+    if (_activeConfiguration.provider.defersTranscription ||
         !_activeAutoTranscribe ||
         !_activeSttConfigured ||
         _recordWireStatus == 2) {
@@ -1205,13 +1259,13 @@ class RecorderController extends ChangeNotifier {
 
   /// Prefer PCM WS when decode works; false after hard stream failure → Ogg batch.
   bool get _streamSttPreferred =>
-      _activeConfiguration.provider != SttProvider.moss &&
+      !_activeConfiguration.provider.defersTranscription &&
       _preferStreamStt &&
       _opusPcm.isReady &&
       _activeAutoTranscribe;
 
   Future<bool> _ensureStreamStt() async {
-    if (_activeConfiguration.provider == SttProvider.moss ||
+    if (_activeConfiguration.provider.defersTranscription ||
         !_activeAutoTranscribe ||
         !_activeSttConfigured ||
         !_preferStreamStt) {
@@ -1633,6 +1687,40 @@ class RecorderController extends ChangeNotifier {
   /// Saved / override keys for Settings text fields (not env-only secrets).
   String? get sonioxApiKeyStored => _sonioxStt.apiKeyOverride;
 
+  String? get qwenApiKeyStored => _qwenStt.apiKeyOverride;
+  String? get qwenBaseUrlStored => _qwenStt.baseUrlOverride;
+  String? get qwenModelStored => _qwenStt.modelOverride;
+  bool get qwenConfigured => _qwenStt.isConfigured;
+
+  void setQwenApiKey(String? key) {
+    final trimmed = key?.trim();
+    _qwenStt.apiKeyOverride = (trimmed == null || trimmed.isEmpty)
+        ? null
+        : trimmed;
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
+  void setQwenBaseUrl(String? url) {
+    final trimmed = url?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      _qwenStt.baseUrlOverride = null;
+    } else {
+      _qwenStt.baseUrlOverride = normalizeDashScopeBaseUrl(trimmed);
+    }
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
+  void setQwenModel(String? model) {
+    final trimmed = model?.trim();
+    _qwenStt.modelOverride = (trimmed == null || trimmed.isEmpty)
+        ? null
+        : trimmed;
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
   bool get sttConfigured =>
       _settingsReady && _isConfigured(_settingsConfiguration);
 
@@ -1647,7 +1735,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   void setSttMode(SttDisplayMode mode) {
-    if (speechProvider == SttProvider.moss &&
+    if (speechProvider.defersTranscription &&
         mode != SttDisplayMode.transcription) {
       return;
     }
@@ -1723,7 +1811,7 @@ class RecorderController extends ChangeNotifier {
     if (previous != null) {
       _snapshotLiveText();
       previous.active = false;
-      if (previous.configuration.provider == SttProvider.moss) {
+      if (previous.configuration.provider.defersTranscription) {
         previous.paused = false;
         previous.ended = true;
       }
@@ -1838,12 +1926,29 @@ class RecorderController extends ChangeNotifier {
         settings.provider == SttProvider.apple && sourceLanguage != null
         ? settings.withSourceLanguage(sourceLanguage.trim())
         : settings;
+    await _runFileTranscription(
+      path,
+      config,
+      prepareLanguages: prepareLanguages,
+    );
+  }
+
+  /// Returns false when a queued Qwen job should wait and try again.
+  Future<bool> _runFileTranscription(
+    String path,
+    _SpeechConfiguration config, {
+    bool prepareLanguages = false,
+    bool fromQueue = false,
+  }) async {
+    if (_disposed) return true;
     final key = _recordingKey(path: path);
     if (fileProcessingBusy ||
         _isRecordingAudioLocked(fileIdFromPath(path), path)) {
-      _recordingErrors[key] = '请在当前录音或处理结束后重试';
-      notifyListeners();
-      return;
+      if (!fromQueue) {
+        _recordingErrors[key] = '请在当前录音或处理结束后重试';
+        notifyListeners();
+      }
+      return !fromQueue;
     }
     if (config.provider == SttProvider.apple
         ? config.sourceLanguage.isEmpty
@@ -1852,7 +1957,7 @@ class RecorderController extends ChangeNotifier {
           ? '请选择录音语言'
           : '请在设置中配置 ${config.provider.label}';
       notifyListeners();
-      return;
+      return true;
     }
     if (config.provider == SttProvider.moss) {
       _recordingErrors.remove(key);
@@ -1862,7 +1967,7 @@ class RecorderController extends ChangeNotifier {
         _recordingErrors[key] = '无法保存转写任务，请检查存储空间后重试';
       }
       notifyListeners();
-      return;
+      return true;
     }
     final revision = ++_fileJobRevision;
     _fileJobKey = key;
@@ -1877,7 +1982,7 @@ class RecorderController extends ChangeNotifier {
         final capabilities = await _appleSpeech.capabilities(
           sourceLanguage: config.sourceLanguage,
         );
-        if (_disposed || revision != _fileJobRevision) return;
+        if (_disposed || revision != _fileJobRevision) return true;
         if (!capabilities.supported) {
           throw PlatformException(code: 'unsupported');
         }
@@ -1891,7 +1996,7 @@ class RecorderController extends ChangeNotifier {
           await _appleSpeech.prepareLanguages(
             sourceLanguage: config.sourceLanguage,
           );
-          if (_disposed || revision != _fileJobRevision) return;
+          if (_disposed || revision != _fileJobRevision) return true;
         }
       }
       final result = await _transcribePath(
@@ -1904,7 +2009,7 @@ class RecorderController extends ChangeNotifier {
           notifyListeners();
         },
       );
-      if (_disposed || revision != _fileJobRevision) return;
+      if (_disposed || revision != _fileJobRevision) return true;
       if (result.text.trim().isEmpty) {
         _recordingErrors[key] = '未识别到语音，可重试';
       } else {
@@ -1942,6 +2047,7 @@ class RecorderController extends ChangeNotifier {
         notifyListeners();
       }
     }
+    return true;
   }
 
   Future<void> prepareRecordingTranslation(
@@ -2057,6 +2163,19 @@ class RecorderController extends ChangeNotifier {
         wavPath,
         sourceLanguage: config.sourceLanguage,
         onProgress: onProgress,
+      );
+    }
+    if (config.provider == SttProvider.qwen) {
+      return _qwenStt.transcribePath(
+        path,
+        apiKey: config.qwenKey,
+        baseUrl: config.qwenBaseUrl,
+        model: config.qwenModel,
+        language: config.sourceLanguage == 'auto'
+            ? null
+            : config.sourceLanguage,
+        onProgress: onProgress,
+        isCurrent: isCurrent,
       );
     }
     return _sonioxStt.transcribePath(
@@ -2249,6 +2368,7 @@ class RecorderController extends ChangeNotifier {
   int pcmFramesDecoded = 0;
   final SonioxSttService _sonioxStt;
   final MossSttService _mossStt;
+  final QwenSttService _qwenStt;
   late final MossJobQueue _mossJobs;
   final AppleSpeechService _appleSpeech;
   SttProvider speechProvider = SttProvider.soniox;
@@ -2270,6 +2390,10 @@ class RecorderController extends ChangeNotifier {
   final Set<String> _finalizingRecordings = {};
   int _fileJobRevision = 0;
   String? _fileJobKey;
+  final Map<String, ({String path, _SpeechConfiguration config})> _pendingQwen =
+      {};
+  final Set<String> _qwenStarted = {};
+  bool _qwenPumping = false;
   SttProvider? _fileJobProvider;
   Future<void> _fileCancellation = Future<void>.value();
   final OpusPcmDecoder _opusPcm = OpusPcmDecoder(outputSampleRate: 16000);
@@ -2880,20 +3004,22 @@ class RecorderController extends ChangeNotifier {
 
     if (active) {
       // New take after a full stop (not pause→resume): wipe live draft UI.
-      final mossResume =
+      final fileOnly =
+          _currentRecording?.configuration.provider.defersTranscription == true;
+      final fileOnlyResume =
           prevWire == 2 &&
-          _currentRecording?.configuration.provider == SttProvider.moss &&
+          fileOnly &&
           (fileId == null ||
               _currentRecording?.fileId == null ||
               _currentRecording?.fileId == fileId);
-      final mossNewFile =
-          _currentRecording?.configuration.provider == SttProvider.moss &&
+      final fileOnlyNewFile =
+          fileOnly &&
           fileId != null &&
           _currentRecording?.fileId != null &&
           _currentRecording?.fileId != fileId;
       if (prevWire == 0 ||
-          mossNewFile ||
-          (source == 'app_start' && !mossResume)) {
+          fileOnlyNewFile ||
+          (source == 'app_start' && !fileOnlyResume)) {
         unawaited(_beginNewLiveTranscriptSession());
       }
       _bindCurrentRecording(fileId: fileId);
@@ -4389,6 +4515,7 @@ class RecorderController extends ChangeNotifier {
     if (!_disposed) {
       super.notifyListeners();
       _mossJobs.wake();
+      unawaited(_pumpQwenJobs());
     }
   }
 
@@ -4414,6 +4541,7 @@ class RecorderController extends ChangeNotifier {
     unawaited(_player.dispose());
     unawaited(_realtime.dispose());
     _sonioxStt.dispose();
+    _qwenStt.dispose();
     _mossJobs.dispose();
     unawaited(_appleSpeech.dispose());
     _wifi.dispose();
@@ -4435,6 +4563,9 @@ class _SpeechConfiguration {
     required this.appleTranslationReady,
     this.sonioxKey,
     this.mossKey,
+    this.qwenKey,
+    this.qwenBaseUrl,
+    this.qwenModel,
   });
   final SttProvider provider;
   final String sourceLanguage;
@@ -4447,6 +4578,9 @@ class _SpeechConfiguration {
   final bool appleTranslationReady;
   final String? sonioxKey;
   final String? mossKey;
+  final String? qwenKey;
+  final String? qwenBaseUrl;
+  final String? qwenModel;
 
   _SpeechConfiguration withSourceLanguage(String source) =>
       _SpeechConfiguration(
@@ -4461,6 +4595,9 @@ class _SpeechConfiguration {
         appleTranslationReady: appleTranslationReady,
         sonioxKey: sonioxKey,
         mossKey: mossKey,
+        qwenKey: qwenKey,
+        qwenBaseUrl: qwenBaseUrl,
+        qwenModel: qwenModel,
       );
 }
 
