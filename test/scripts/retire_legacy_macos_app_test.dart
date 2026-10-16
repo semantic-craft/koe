@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 // #59: scripts/retire-legacy-macos-app.sh must never retire the bundle that is
-// being installed, and must keep the old bundle unless its archive restores
-// byte-identical content. Runs headless; the archive cases need macOS ditto.
+// being installed (same path, or one bundle inside the other), and must keep
+// the old bundle unless its archive restores byte-identical content. Runs headless; the archive cases need macOS ditto.
 
 const script = 'scripts/retire-legacy-macos-app.sh';
 const binary = 'Contents/MacOS/Soundcore Manager';
@@ -105,6 +105,57 @@ void main() {
         'MACOS_INSTALL_PATH="\$TARGET" "\$ROOT/$script"'.allMatches(install),
         hasLength(2),
       );
+    });
+  });
+
+  group('refuses when the install target and the old bundle are nested', () {
+    // Deleting the old bundle would delete (or gut) the bundle being installed.
+    late String nested;
+    setUp(() {
+      nested = '$legacy/Contents/Koe.app';
+      Directory('$nested/Contents').createSync(recursive: true);
+      File('$nested/Contents/Info.plist').writeAsStringSync('new');
+    });
+
+    void expectBothUntouched(ProcessResult result, String target) {
+      expectLegacyUntouched(result);
+      expect(result.stderr, contains('refusing to retire'), reason: target);
+      expect(File('$nested/Contents/Info.plist').readAsStringSync(), 'new');
+      expect(Directory(backups).existsSync(), isFalse, reason: target);
+    }
+
+    test('target inside the old bundle', () async {
+      final link = Link('$apps/Koe.app')..createSync(nested);
+      for (final target in [
+        nested,
+        '$nested/',
+        link.path,
+        '$legacy/Contents/Not Yet/Koe.app',
+      ]) {
+        expectBothUntouched(await retire(target: target), target);
+      }
+    });
+
+    test('old bundle inside the target', () async {
+      final alias = Link('${root.path}/AppsAlias')..createSync(apps);
+      for (final target in [apps, '$apps/', alias.path]) {
+        expectBothUntouched(await retire(target: target), target);
+      }
+    });
+
+    test('--check-running also refuses a nested target', () async {
+      final result = await retire(target: nested, args: ['--check-running']);
+      expectBothUntouched(result, nested);
+    });
+
+    test('differently cased path on a case-insensitive volume', () async {
+      final cased = '$apps/soundcore manager.app';
+      if (!File('$cased/Contents/Info.plist').existsSync()) {
+        markTestSkipped('volume is case-sensitive');
+        return;
+      }
+      final target = '$cased/Contents/Koe.app';
+      expectBothUntouched(await retire(target: target), target);
     });
   });
 
