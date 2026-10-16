@@ -6,6 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'topic_recommendation.dart';
+
+export 'topic_recommendation.dart';
+
 /// 书籍主题（书名、作者）或普通主题。术语见 GLOSSARY.md。
 enum TopicKind { book, general }
 
@@ -105,6 +109,9 @@ class TopicStore extends ChangeNotifier {
 
   final List<Topic> _topics = [];
   final Map<String, TopicPlacement> _placements = {};
+  final Map<String, TopicRecommendation> _recommendations = {};
+  final Map<String, TopicDriftHint> _driftHints = {};
+  final Map<String, String> _evaluatedAssist = {};
   String? _currentTopicId;
   String? _currentDay;
   Timer? _dayTimer;
@@ -172,6 +179,156 @@ class TopicStore extends ChangeNotifier {
       if (entry.value is PendingPlacement) entry.key,
   ];
 
+  TopicRecommendation? recommendationFor(String recordingKey) {
+    if (!isPending(recordingKey)) return null;
+    final rec = _recommendations[recordingKey];
+    if (rec == null) return null;
+    if (rec.kind == TopicRecommendationKind.existingTopic) {
+      final topic = topicById(rec.topicId);
+      if (topic == null || topic.closed) return null;
+    }
+    return rec;
+  }
+
+  TopicDriftHint? driftHintFor(String recordingKey) {
+    final placement = _placements[recordingKey];
+    if (placement is! InTopicPlacement) return null;
+    final hint = _driftHints[recordingKey];
+    if (hint == null || hint.topicId != placement.topicId) return null;
+    final topic = topicById(placement.topicId);
+    if (topic == null || topic.closed) return null;
+    if (hint.suggestedTopicId != null) {
+      final suggested = topicById(hint.suggestedTopicId);
+      if (suggested == null ||
+          suggested.closed ||
+          suggested.id == placement.topicId) {
+        return TopicDriftHint(
+          topicId: hint.topicId,
+          sourceHash: hint.sourceHash,
+        );
+      }
+    }
+    return hint;
+  }
+
+  String? driftPromptFor(String recordingKey) {
+    final hint = driftHintFor(recordingKey);
+    if (hint == null) return null;
+    final topic = topicById(hint.topicId);
+    return topic == null ? null : '这条好像不属于《${topic.title}》';
+  }
+
+  bool hasEvaluatedAssist(String recordingKey, String token) =>
+      _evaluatedAssist[recordingKey] == token;
+
+  Future<void> markAssistEvaluated(String recordingKey, String token) async {
+    await load();
+    _evaluatedAssist[recordingKey] = token;
+    await save();
+  }
+
+  /// Removes [token] when it is still the mark for [recordingKey]. An attempt
+  /// that was superseded, or that finished after the recording left 待归类 or
+  /// its original topic, must not block a later evaluation of that excerpt.
+  Future<void> clearAssistEvaluated(String recordingKey, String token) async {
+    await load();
+    if (_evaluatedAssist[recordingKey] != token) return;
+    _evaluatedAssist.remove(recordingKey);
+    await save();
+  }
+
+  Future<void> setRecommendation(
+    String recordingKey,
+    TopicRecommendation recommendation,
+  ) async {
+    await load();
+    if (!isPending(recordingKey)) return;
+    if (recommendation.kind == TopicRecommendationKind.existingTopic) {
+      final topic = topicById(recommendation.topicId);
+      if (topic == null || topic.closed) return;
+    }
+    _recommendations[recordingKey] = recommendation;
+    await _commit();
+  }
+
+  Future<Topic?> confirmRecommendation(String recordingKey) async {
+    await load();
+    final rec = recommendationFor(recordingKey);
+    _recommendations.remove(recordingKey);
+    if (rec == null) {
+      await _commit();
+      return null;
+    }
+    if (rec.kind == TopicRecommendationKind.existingTopic) {
+      final topic = topicById(rec.topicId);
+      if (topic == null || topic.closed) {
+        await _commit();
+        return null;
+      }
+      _placements[recordingKey] = InTopicPlacement(topic.id);
+      _driftHints.remove(recordingKey);
+      _carryEvaluatedHashToTopic(recordingKey, topic.id);
+      await _commit();
+      return topic;
+    }
+    final name = _requireTitle(rec.suggestedTitle);
+    final created = _now();
+    var id = 't${created.microsecondsSinceEpoch}';
+    while (topicById(id) != null) {
+      id = '${id}x';
+    }
+    final topic = Topic(
+      id: id,
+      kind: rec.suggestedKind,
+      title: name,
+      author: rec.suggestedKind == TopicKind.book
+          ? rec.suggestedAuthor.trim()
+          : '',
+      createdAt: created,
+    );
+    _topics.add(topic);
+    _placements[recordingKey] = InTopicPlacement(topic.id);
+    _driftHints.remove(recordingKey);
+    _carryEvaluatedHashToTopic(recordingKey, topic.id);
+    await _commit();
+    return topic;
+  }
+
+  void _carryEvaluatedHashToTopic(String recordingKey, String topicId) {
+    final prev = _evaluatedAssist[recordingKey];
+    if (prev == null) return;
+    final colon = prev.lastIndexOf(':');
+    if (colon < 0 || colon + 1 >= prev.length) return;
+    _evaluatedAssist[recordingKey] = 'drift:$topicId:${prev.substring(colon + 1)}';
+  }
+
+  Future<void> dismissRecommendation(String recordingKey) async {
+    await load();
+    if (_recommendations.remove(recordingKey) != null) await _commit();
+  }
+
+  Future<void> setDriftHint(String recordingKey, TopicDriftHint hint) async {
+    await load();
+    if (topicOf(recordingKey)?.id != hint.topicId) return;
+    final topic = topicById(hint.topicId);
+    if (topic == null || topic.closed) return;
+    final suggested = topicById(hint.suggestedTopicId);
+    _driftHints[recordingKey] = TopicDriftHint(
+      topicId: hint.topicId,
+      suggestedTopicId:
+          suggested != null && !suggested.closed && suggested.id != hint.topicId
+          ? suggested.id
+          : null,
+      sourceHash: hint.sourceHash,
+    );
+    await _commit();
+  }
+
+  Future<void> dismissDriftHint(String recordingKey) async {
+    await load();
+    if (_driftHints.remove(recordingKey) != null) await _commit();
+  }
+
   Future<void> load() => _loading ??= _load();
 
   Future<void> _load() async {
@@ -187,6 +344,9 @@ class TopicStore extends ChangeNotifier {
         // and never overwrite them with the empty state.
         _topics.clear();
         _placements.clear();
+        _recommendations.clear();
+        _driftHints.clear();
+        _evaluatedAssist.clear();
         _currentTopicId = null;
         _currentDay = null;
         await _preserveCorrupt(target);
@@ -203,6 +363,9 @@ class TopicStore extends ChangeNotifier {
     if (json is! Map) throw const FormatException('Topic record is not a map');
     _topics.clear();
     _placements.clear();
+    _recommendations.clear();
+    _driftHints.clear();
+    _evaluatedAssist.clear();
     _currentTopicId = null;
     _currentDay = null;
     var partial = false;
@@ -244,6 +407,42 @@ class TopicStore extends ChangeNotifier {
       }
     } else if (placements != null) {
       partial = true;
+    }
+    final recommendations = json['recommendations'];
+    if (recommendations is Map) {
+      for (final entry in recommendations.entries) {
+        final key = entry.key;
+        if (key is! String || key.isEmpty || !isPending(key)) continue;
+        final decoded = TopicRecommendation.decode(
+          entry.value,
+          lookupTopic: topicById,
+        );
+        if (decoded != null) _recommendations[key] = decoded;
+      }
+    }
+    final driftHints = json['driftHints'];
+    if (driftHints is Map) {
+      for (final entry in driftHints.entries) {
+        final key = entry.key;
+        if (key is! String || key.isEmpty) continue;
+        final decoded = TopicDriftHint.decode(
+          entry.value,
+          lookupTopic: topicById,
+        );
+        if (decoded != null && topicOf(key)?.id == decoded.topicId) {
+          _driftHints[key] = decoded;
+        }
+      }
+    }
+    final evaluated = json['evaluatedAssist'];
+    if (evaluated is Map) {
+      for (final entry in evaluated.entries) {
+        final key = entry.key;
+        final value = entry.value;
+        if (key is String && key.isNotEmpty && value is String) {
+          _evaluatedAssist[key] = value;
+        }
+      }
     }
     final current = json['current'];
     if (current is Map &&
@@ -292,6 +491,19 @@ class TopicStore extends ChangeNotifier {
           InTopicPlacement(:final topicId) => 'topic:$topicId',
         },
     },
+    if (_recommendations.isNotEmpty)
+      'recommendations': {
+        for (final entry in _recommendations.entries)
+          if (recommendationFor(entry.key) != null)
+            entry.key: entry.value.toJson(),
+      },
+    if (_driftHints.isNotEmpty)
+      'driftHints': {
+        for (final entry in _driftHints.entries)
+          if (driftHintFor(entry.key) != null)
+            entry.key: driftHintFor(entry.key)!.toJson(),
+      },
+    if (_evaluatedAssist.isNotEmpty) 'evaluatedAssist': _evaluatedAssist,
     if (_currentTopicId != null)
       'current': {'topicId': _currentTopicId, 'day': _currentDay},
   };
@@ -402,6 +614,11 @@ class TopicStore extends ChangeNotifier {
       _currentDay = null;
       _dayTimer?.cancel();
     }
+    _recommendations.removeWhere(
+      (_, r) =>
+          r.kind == TopicRecommendationKind.existingTopic && r.topicId == id,
+    );
+    _driftHints.removeWhere((_, h) => h.topicId == id);
     await _commit();
   }
 
@@ -446,6 +663,9 @@ class TopicStore extends ChangeNotifier {
     await load();
     _require(topicId);
     _placements[recordingKey] = InTopicPlacement(topicId);
+    _recommendations.remove(recordingKey);
+    _driftHints.remove(recordingKey);
+    _carryEvaluatedHashToTopic(recordingKey, topicId);
     await _commit();
   }
 
@@ -454,13 +674,21 @@ class TopicStore extends ChangeNotifier {
     await load();
     if (!_placements.containsKey(recordingKey)) return;
     _placements[recordingKey] = const NoTopicPlacement();
+    _recommendations.remove(recordingKey);
+    _driftHints.remove(recordingKey);
     await _commit();
   }
 
   /// The recording itself was deleted.
   Future<void> forgetRecording(String recordingKey) async {
     await load();
-    if (_placements.remove(recordingKey) != null) await _commit();
+    final removed = _placements.remove(recordingKey) != null;
+    final recRemoved = _recommendations.remove(recordingKey) != null;
+    final driftRemoved = _driftHints.remove(recordingKey) != null;
+    final evalRemoved = _evaluatedAssist.remove(recordingKey) != null;
+    if (removed || recRemoved || driftRemoved || evalRemoved) {
+      await _commit();
+    }
   }
 
   Future<void> renameRecordingKey(String from, String to) async {
@@ -469,6 +697,12 @@ class TopicStore extends ChangeNotifier {
     final placement = _placements.remove(from);
     if (placement == null) return;
     _placements[to] = placement;
+    final rec = _recommendations.remove(from);
+    if (rec != null) _recommendations[to] = rec;
+    final drift = _driftHints.remove(from);
+    if (drift != null) _driftHints[to] = drift;
+    final eval = _evaluatedAssist.remove(from);
+    if (eval != null) _evaluatedAssist[to] = eval;
     await _commit();
   }
 

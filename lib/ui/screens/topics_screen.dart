@@ -399,6 +399,7 @@ Future<Topic?> pickOpenTopic(
   BuildContext context,
   TopicStore store, {
   String? exclude,
+  String? suggestedTopicId,
 }) => showModalBottomSheet<Topic>(
   context: context,
   builder: (sheetContext) {
@@ -406,6 +407,13 @@ Future<Topic?> pickOpenTopic(
       for (final t in store.openTopics)
         if (t.id != exclude) t,
     ];
+    if (suggestedTopicId != null) {
+      choices.sort((a, b) {
+        final aMatch = a.id == suggestedTopicId ? 0 : 1;
+        final bMatch = b.id == suggestedTopicId ? 0 : 1;
+        return aMatch.compareTo(bMatch);
+      });
+    }
     return SafeArea(
       child: ListView(
         shrinkWrap: true,
@@ -414,8 +422,12 @@ Future<Topic?> pickOpenTopic(
           if (choices.isEmpty) const ListTile(title: Text('没有可选的进行中主题')),
           for (final topic in choices)
             ListTile(
+              selected: topic.id == suggestedTopicId,
               title: Text(topic.title),
               subtitle: Text(_subtitle(topic)),
+              trailing: topic.id == suggestedTopicId
+                  ? const Icon(Icons.check_rounded)
+                  : null,
               onTap: () => Navigator.pop(sheetContext, topic),
             ),
         ],
@@ -429,10 +441,12 @@ class _RecordingRow extends StatelessWidget {
     required this.recordingKey,
     required this.path,
     required this.actions,
+    this.banner,
   });
   final String recordingKey;
   final String path;
   final List<(String, Future<void> Function())> actions;
+  final Widget? banner;
 
   @override
   Widget build(BuildContext context) {
@@ -442,18 +456,137 @@ class _RecordingRow extends StatelessWidget {
       path: path,
     );
     final title = c.recordingView(reference).title;
-    return ListTile(
-      leading: const Icon(Icons.graphic_eq_rounded),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      onTap: () => RecordingNavigation.open(context, reference),
-      trailing: PopupMenuButton<int>(
-        tooltip: '更多',
-        onSelected: (index) => actions[index].$2(),
-        itemBuilder: (_) => [
-          for (var i = 0; i < actions.length; i++)
-            PopupMenuItem(value: i, child: Text(actions[i].$1)),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          leading: const Icon(Icons.graphic_eq_rounded),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          onTap: () => RecordingNavigation.open(context, reference),
+          trailing: PopupMenuButton<int>(
+            tooltip: '更多',
+            onSelected: (index) => actions[index].$2(),
+            itemBuilder: (_) => [
+              for (var i = 0; i < actions.length; i++)
+                PopupMenuItem(value: i, child: Text(actions[i].$1)),
+            ],
+          ),
+        ),
+        if (banner != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(56, 0, 16, 8),
+            child: banner!,
+          ),
+      ],
+    );
+  }
+}
+
+class _RecommendationBanner extends StatelessWidget {
+  const _RecommendationBanner({
+    required this.recordingKey,
+    required this.recommendation,
+  });
+  final String recordingKey;
+  final TopicRecommendation recommendation;
+
+  @override
+  Widget build(BuildContext context) {
+    final store = context.read<RecorderController>().topics;
+    final String label;
+    if (recommendation.kind == TopicRecommendationKind.existingTopic) {
+      final topic = store.topicById(recommendation.topicId);
+      if (topic == null || topic.closed) return const SizedBox.shrink();
+      label = '推荐归入《${topic.title}》';
+    } else {
+      final author =
+          recommendation.suggestedKind == TopicKind.book &&
+              recommendation.suggestedAuthor.isNotEmpty
+          ? ' · ${recommendation.suggestedAuthor}'
+          : '';
+      label = '建议新建主题《${recommendation.suggestedTitle}》$author';
+    }
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+        TextButton(
+          key: ValueKey('confirm-recommend-$recordingKey'),
+          onPressed: () => store.confirmRecommendation(recordingKey),
+          child: const Text('确认'),
+        ),
+        TextButton(
+          key: ValueKey('change-recommend-$recordingKey'),
+          onPressed: () async {
+            final topic = await pickOpenTopic(
+              context,
+              store,
+              suggestedTopicId: recommendation.topicId,
+            );
+            if (topic != null) {
+              await store.moveRecording(recordingKey, topic.id);
+            }
+          },
+          child: const Text('改选'),
+        ),
+        TextButton(
+          key: ValueKey('dismiss-recommend-$recordingKey'),
+          onPressed: () => store.dismissRecommendation(recordingKey),
+          child: const Text('忽略'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DriftBanner extends StatelessWidget {
+  const _DriftBanner({
+    required this.recordingKey,
+    required this.topicId,
+    required this.prompt,
+  });
+  final String recordingKey;
+  final String topicId;
+  final String prompt;
+
+  @override
+  Widget build(BuildContext context) {
+    final store = context.read<RecorderController>().topics;
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        Text(
+          prompt,
+          style: const TextStyle(fontSize: 13, color: AppColors.coral),
+        ),
+        TextButton(
+          key: ValueKey('drift-move-$recordingKey'),
+          onPressed: () async {
+            final target = await pickOpenTopic(
+              context,
+              store,
+              exclude: topicId,
+              suggestedTopicId: store.driftHintFor(recordingKey)?.suggestedTopicId,
+            );
+            if (target != null) {
+              await store.moveRecording(recordingKey, target.id);
+            }
+          },
+          child: const Text('移到…'),
+        ),
+        TextButton(
+          key: ValueKey('drift-keep-$recordingKey'),
+          onPressed: () => store.dismissDriftHint(recordingKey),
+          child: const Text('保留'),
+        ),
+      ],
     );
   }
 }
@@ -480,6 +613,13 @@ class PendingRecordingsScreen extends StatelessWidget {
                       _RecordingRow(
                         recordingKey: key,
                         path: library[key]!,
+                        banner: switch (store.recommendationFor(key)) {
+                          final rec? => _RecommendationBanner(
+                            recordingKey: key,
+                            recommendation: rec,
+                          ),
+                          null => null,
+                        },
                         actions: [
                           (
                             '归入主题…',
@@ -604,6 +744,14 @@ class TopicDetailScreen extends StatelessWidget {
                 _RecordingRow(
                   recordingKey: key,
                   path: library[key]!,
+                  banner: switch (store.driftPromptFor(key)) {
+                    final prompt? => _DriftBanner(
+                      recordingKey: key,
+                      topicId: topicId,
+                      prompt: prompt,
+                    ),
+                    null => null,
+                  },
                   actions: [
                     (
                       '移到其他主题…',
