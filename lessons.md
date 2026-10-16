@@ -33,10 +33,10 @@
 
 **判断哪些测试文件执行过，用 expanded 或 json reporter 的输出，不用终端里 compact reporter 留下的日志。**
 
-- 起因与后果：2026-10-16 PR #61（2e33029）本机全量 `flutter test` 日志里，44 个测试文件只看得到 20 个，被当成 25 个文件漏跑（#66）。实际是显示问题：在终端（pty）里默认用 compact reporter，它每条进度都用 `\r` 原地重画同一行，只有测试 `print` 了内容时当前行才被换行保留；`ios_koe_identity_test.dart` 等不打印的文件，进度行全被后面的行盖掉。最后的 `+314` 是全部文件的累计数，正好等于 json reporter 统计的 44 个文件用例之和（Linux 上 macOS 专属的 2 条为跳过，Helios 上会执行）。
+- 起因与后果：2026-10-16 PR #61（2e33029）本机全量 `flutter test` 日志里，当时 44 个文件只看得到 20 个，24 个被当成漏跑（#66 按现在的 45 个算，写成 25 个）。实际是显示问题：在终端（pty）里默认用 compact reporter，它每条进度都用 `\r` 原地重画同一行，只有测试 `print` 了内容时当前行才被换行保留；`ios_koe_identity_test.dart` 等不打印的文件，进度行全被后面的行盖掉。最后的 `+314` 是全部文件的累计数，正好等于 json reporter 统计的 44 个文件用例之和（Linux 上 macOS 专属的 2 条为跳过，Helios 上会执行）。
 - 修复与证据：未改测试与配置（dart_test.yaml 不存在，pubspec.yaml 无测试配置，文件命名、位置、`main()` 均正常）。在 Linux 沙箱用 Flutter 3.47.7 于 2e33029 复现：`script -qfc "flutter test"` 按终端语义渲染后正好剩 20 个文件，原始字节里 44 个都在；`--reporter expanded` 不用 `\r`，45 个文件（当前 main）逐行可见；json reporter 核对 45 / 45、缺失为空。
 - 正确做法（Done right）：需要逐文件证据时用 `flutter test --reporter expanded`；核对执行到的文件集合与 `test/**/*_test.dart` 是否一致，用：
-  `flutter test --reporter json > /tmp/koe-test.json; python3 -c "import json,glob;s={json.loads(l)['suite']['path'].split('test/',1)[-1] for l in open('/tmp/koe-test.json') if '\"type\":\"suite\"' in l};a={p[5:] for p in glob.glob('test/**/*_test.dart',recursive=True)};m=sorted(a-s);print(len(s),'/',len(a),'missing:',m);exit(1 if m else 0)"`
+  `flutter test --reporter json > /tmp/koe-test.json; python3 -c "import json,glob,os;s={os.path.relpath(json.loads(l)['suite']['path'],os.getcwd())[5:] for l in open('/tmp/koe-test.json') if '\"type\":\"suite\"' in l};a={p[5:] for p in glob.glob('test/**/*_test.dart',recursive=True)};m=sorted(a-s);print(len(s),'/',len(a),'missing:',m);exit(1 if m else 0)"`
   （缺失时非零退出。）截取日志末尾作证据时，同样只能证明末尾那几个文件。
 - 复发记录：Seen 1x (2026-10-16)。
 
