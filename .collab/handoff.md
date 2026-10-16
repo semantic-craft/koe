@@ -1,3 +1,2 @@
 # 交接
-（≤20 行，覆盖写）
-- 2026-10-17 06:05 +08:00 bridge-bot：.collab/ 骨架与标签集已建；首个试点任务 #53（owner DOTS；ZCode 经 needs-device-test 承接真机步骤，见 tasks/topic-notes-summary.md），#54 第二。
+本文件不存交接内容。交接以 PR 评论为准：`## 本机待办 <head7>` / `## 本机结果 <head7>` 等，格式见 [dev-kanban-notion-sync PROTOCOL.md](https://github.com/semantic-craft/dev-kanban-notion-sync/blob/main/PROTOCOL.md) 与本仓 AGENTS.md。
