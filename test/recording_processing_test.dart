@@ -329,6 +329,44 @@ void main() async {
     });
 
     test(
+      'batch Wi-Fi export does not wait one settle window per converted file',
+      () async {
+        final slow = RecorderController(
+          loadPersistedState: false,
+          qwenSpeech: qwen,
+          fileJobJournal: journal,
+          // Long enough that three serial windows would exceed the bound.
+          retrievedAudioSettleTime: const Duration(seconds: 3),
+          rawExportConverter: (raw) async {
+            final wav = raw.replaceFirst(RegExp(r'\.opus$'), '.wav');
+            await File(wav).writeAsBytes(await File(raw).readAsBytes());
+            return wav;
+          },
+        );
+        addTearDown(slow.dispose);
+        await slow.setQwenConfig(const EngineConfig(apiKey: 'key'));
+        slow.setSpeechProvider(SttProvider.qwen);
+        slow.setAutoTranscribe(true);
+        final raws = [
+          for (final id in [1700000011, 1700000012, 1700000013])
+            '${dir.path}/$id.opus',
+        ];
+        for (final (i, raw) in raws.indexed) {
+          await File(raw).writeAsBytes(wavBytes([i + 1, 2, 3, 4]));
+        }
+        final clock = Stopwatch()..start();
+        await slow.completeWifiTransfer(raws, decrypted: true);
+        expect(clock.elapsed, lessThan(const Duration(seconds: 2)));
+        await settleUntil(
+          () =>
+              journal.jobs.values.where((j) => j.stage == 'complete').length ==
+              3,
+        );
+        expect(qwen.calls, 3);
+      },
+    );
+
+    test(
       'Wi-Fi export without decryption registers but never submits',
       () async {
         final raw = '${dir.path}/1700000007.opus';

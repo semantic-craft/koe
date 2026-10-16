@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 /// Default window used to confirm a retrieved file is no longer growing.
+///
+/// Only needed for files this app did not just finish writing itself; a WAV
+/// returned by an awaited `OpusWave.convertRawFile` is already final.
 const retrievedAudioSettle = Duration(milliseconds: 300);
 
 /// The single transport-level completeness rule for device transfers (BLE

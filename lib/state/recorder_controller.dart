@@ -321,13 +321,18 @@ class RecorderController extends ChangeNotifier {
   /// [WifiExportService.incompletePaths], both via
   /// [retrievedTransferComplete]) or without decrypting every chunk; such
   /// audio is kept for playback but never submitted automatically.
+  ///
+  /// A WAV this call just produced through an awaited conversion is already
+  /// final, so it skips the growth window; only files handed over as-is wait
+  /// [retrievedAudioSettleTime]. Batch Wi-Fi exports therefore do not
+  /// accumulate one window per file.
   Future<List<String>> _completeRetrievedRecordings(
     Iterable<String> rawPaths, {
     required bool decrypted,
     bool Function(String rawPath)? transferComplete,
     List<String>? conversionFailures,
   }) async {
-    final converted = <({String path, bool complete})>[];
+    final converted = <({String path, bool complete, bool written})>[];
     for (final rawPath in rawPaths) {
       final path = await _convertExportToWav(
         rawPath,
@@ -343,7 +348,7 @@ class RecorderController extends ChangeNotifier {
           _incompleteRetrievalIds.add(fileId);
         }
       }
-      converted.add((path: path, complete: complete));
+      converted.add((path: path, complete: complete, written: path != rawPath));
     }
     final paths = [for (final c in converted) c.path];
     _registerExportedPaths(paths);
@@ -352,7 +357,7 @@ class RecorderController extends ChangeNotifier {
         await _processRetrievedRecording(
           c.path,
           transferComplete: c.complete,
-          settle: retrievedAudioSettleTime,
+          settle: c.written ? Duration.zero : retrievedAudioSettleTime,
         );
       }
     }
