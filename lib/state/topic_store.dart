@@ -199,6 +199,10 @@ class TopicStore extends ChangeNotifier {
 
   void _decode(Object? json) {
     if (json is! Map) throw const FormatException('Topic record is not a map');
+    _topics.clear();
+    _placements.clear();
+    _currentTopicId = null;
+    _currentDay = null;
     var partial = false;
     final topics = json['topics'];
     if (topics is List) {
@@ -352,6 +356,7 @@ class TopicStore extends ChangeNotifier {
     required String title,
     String author = '',
   }) async {
+    await load();
     final name = _requireTitle(title);
     final created = _now();
     var id = 't${created.microsecondsSinceEpoch}';
@@ -371,11 +376,13 @@ class TopicStore extends ChangeNotifier {
   }
 
   Future<void> renameTopic(String id, String title) async {
+    await load();
     _require(id).title = _requireTitle(title);
     await _commit();
   }
 
   Future<void> setAuthor(String id, String author) async {
+    await load();
     final topic = _require(id);
     if (topic.kind != TopicKind.book) {
       throw StateError('只有书籍主题有作者');
@@ -386,6 +393,7 @@ class TopicStore extends ChangeNotifier {
 
   /// 读完（书籍）/ 归档（普通主题）。A closed topic stops being current.
   Future<void> closeTopic(String id) async {
+    await load();
     _require(id).closed = true;
     if (_currentTopicId == id) {
       _currentTopicId = null;
@@ -396,11 +404,13 @@ class TopicStore extends ChangeNotifier {
   }
 
   Future<void> reopenTopic(String id) async {
+    await load();
     _require(id).closed = false;
     await _commit();
   }
 
   Future<void> setCurrentTopic(String? id) async {
+    await load();
     if (id == null) {
       _currentTopicId = null;
       _currentDay = null;
@@ -420,6 +430,7 @@ class TopicStore extends ChangeNotifier {
   /// placement keeps it (re-retrieval never moves it); otherwise it goes to
   /// today's current topic, or to 待归类 when there is none.
   Future<void> placeRetrieved(String recordingKey) async {
+    await load();
     if (_placements.containsKey(recordingKey)) return;
     final current = currentTopic;
     _placements[recordingKey] = current == null
@@ -430,6 +441,7 @@ class TopicStore extends ChangeNotifier {
 
   /// Manual move into [topicId]; replaces any previous placement.
   Future<void> moveRecording(String recordingKey, String topicId) async {
+    await load();
     _require(topicId);
     _placements[recordingKey] = InTopicPlacement(topicId);
     await _commit();
@@ -437,6 +449,7 @@ class TopicStore extends ChangeNotifier {
 
   /// 移出主题: the recording no longer belongs to any topic.
   Future<void> removeFromTopic(String recordingKey) async {
+    await load();
     if (!_placements.containsKey(recordingKey)) return;
     _placements[recordingKey] = const NoTopicPlacement();
     await _commit();
@@ -444,10 +457,12 @@ class TopicStore extends ChangeNotifier {
 
   /// The recording itself was deleted.
   Future<void> forgetRecording(String recordingKey) async {
+    await load();
     if (_placements.remove(recordingKey) != null) await _commit();
   }
 
   Future<void> renameRecordingKey(String from, String to) async {
+    await load();
     if (from == to) return;
     final placement = _placements.remove(from);
     if (placement == null) return;

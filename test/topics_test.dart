@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -274,6 +275,89 @@ void main() {
     expect(c.analysisKey(reference), 'file:1760000040');
     expect(analysisService.calls, 0);
   });
+
+  test('writes started before load finishes wait for the disk read instead of '
+      'overwriting existing topics or reviving forgotten placements', () async {
+    final file = File('${dir.path}/topics.json');
+    final now = DateTime(2026, 10, 16, 10);
+    final seeded = TopicStore(file: file, now: () => now);
+    await seeded.load();
+    final existing = await seeded.createTopic(
+      kind: TopicKind.book,
+      title: '法学方法论',
+    );
+    await seeded.placeRetrieved('file:1760000050');
+    seeded.dispose();
+
+    final delayedFile = _DelayedReadFile(file);
+    final store = TopicStore(file: delayedFile, now: () => now);
+    addTearDown(store.dispose);
+    final loadFuture = store.load();
+    await delayedFile.readingStarted.future;
+
+    final createFuture = store.createTopic(
+      kind: TopicKind.general,
+      title: '职业规划',
+    );
+    final forgetFuture = store.forgetRecording('file:1760000050');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    delayedFile.allowRead.complete();
+    final created = await createFuture;
+    await Future.wait([loadFuture, forgetFuture]);
+
+    expect(
+      store.topics.map((t) => t.title),
+      unorderedEquals(['法学方法论', '职业规划']),
+    );
+    expect(store.topics.map((t) => t.id).toSet().length, 2);
+    expect(created.id, isNot(existing.id));
+    expect(store.placementOf('file:1760000050'), isNull);
+    expect(store.pendingRecordings, isEmpty);
+
+    final reopened = TopicStore(file: file, now: () => now);
+    addTearDown(reopened.dispose);
+    await reopened.load();
+    expect(
+      reopened.topics.map((t) => t.title),
+      unorderedEquals(['法学方法论', '职业规划']),
+    );
+    expect(reopened.topics.map((t) => t.id).toSet().length, 2);
+    expect(reopened.topicById(existing.id)?.title, '法学方法论');
+    expect(reopened.topicById(created.id)?.title, '职业规划');
+    expect(reopened.placementOf('file:1760000050'), isNull);
+    expect(reopened.pendingRecordings, isEmpty);
+  });
+}
+
+class _DelayedReadFile implements File {
+  _DelayedReadFile(this._inner);
+
+  final File _inner;
+  final Completer<void> readingStarted = Completer<void>();
+  final Completer<void> allowRead = Completer<void>();
+
+  @override
+  String get path => _inner.path;
+
+  @override
+  Directory get parent => _inner.parent;
+
+  @override
+  Future<bool> exists() => _inner.exists();
+
+  @override
+  Future<String> readAsString({Encoding encoding = utf8}) async {
+    final content = await _inner.readAsString(encoding: encoding);
+    if (!readingStarted.isCompleted) readingStarted.complete();
+    await allowRead.future;
+    return content;
+  }
+
+  @override
+  Future<File> rename(String newPath) => _inner.rename(newPath);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _Qwen extends QwenSttService {
