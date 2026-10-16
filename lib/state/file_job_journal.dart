@@ -125,11 +125,18 @@ class FileJob {
 
 /// Atomic, ordered snapshots. A corrupt journal fails closed instead of
 /// becoming an empty queue and silently resubmitting previously billed work.
+///
+/// Device file ids whose latest retrieval was kept without the done signal /
+/// every byte live in [incompleteRetrievals], saved next to the journal as
+/// `incomplete_retrievals.json` (a plain list of ids, no credentials). They
+/// survive a restart so a partial file that passes the 95% size check is
+/// pulled again instead of counting as exported.
 class FileJobJournal {
   FileJobJournal({this.file, this.inMemory = false});
   final File? file;
   final bool inMemory;
   final Map<String, FileJob> jobs = {};
+  final Set<int> incompleteRetrievals = {};
   Future<void>? _loading;
   Future<void> _writing = Future.value();
   Future<File> _file() async =>
@@ -141,9 +148,23 @@ class FileJobJournal {
           'file_jobs.json',
         ),
       );
+  Future<File> _incompleteFile() async =>
+      File(p.join((await _file()).parent.path, 'incomplete_retrievals.json'));
+
   Future<void> load() => _loading ??= _load();
   Future<void> _load() async {
     if (inMemory) return;
+    // Read before the journal so a corrupt journal cannot hide these ids.
+    // An unreadable list only loses the re-pull hint, never billed work.
+    try {
+      final incomplete = await _incompleteFile();
+      if (await incomplete.exists()) {
+        incompleteRetrievals.addAll(
+          (jsonDecode(await incomplete.readAsString()) as List)
+              .whereType<int>(),
+        );
+      }
+    } catch (_) {}
     final source = await _file();
     if (!await source.exists()) return;
     final parsed = (jsonDecode(await source.readAsString()) as List)
@@ -160,6 +181,30 @@ class FileJobJournal {
     final operation = _writing.then((_) async {
       if (inMemory) return;
       final destination = await _file();
+      await destination.parent.create(recursive: true);
+      final temporary = File('${destination.path}.tmp');
+      await temporary.writeAsString(snapshot, flush: true);
+      await temporary.rename(destination.path);
+    });
+    _writing = operation.catchError((Object _) {});
+    await operation;
+  }
+
+  /// Records whether the latest retrieval of device file [fileId] was
+  /// complete; persists only when the set changes.
+  Future<void> markRetrieval(int fileId, {required bool complete}) async {
+    try {
+      await load();
+    } catch (_) {
+      // A corrupt journal is reported elsewhere; the id list is separate.
+    }
+    final changed = complete
+        ? incompleteRetrievals.remove(fileId)
+        : incompleteRetrievals.add(fileId);
+    if (!changed || inMemory) return;
+    final snapshot = jsonEncode(incompleteRetrievals.toList()..sort());
+    final operation = _writing.then((_) async {
+      final destination = await _incompleteFile();
       await destination.parent.create(recursive: true);
       final temporary = File('${destination.path}.tmp');
       await temporary.writeAsString(snapshot, flush: true);

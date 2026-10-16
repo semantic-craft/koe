@@ -300,11 +300,11 @@ class RecorderController extends ChangeNotifier {
   /// [BleFilePull.pullFile].
   final Duration blePullInactivityTimeout;
 
-  /// Device file ids whose latest transfer in this session was kept without
-  /// the done signal / every byte. They do not count as exported, so a manual
-  /// or automatic retrieval pulls them again instead of reusing the partial
-  /// file.
-  final Set<int> _incompleteRetrievalIds = {};
+  /// Device file ids whose latest transfer was kept without the done signal /
+  /// every byte. They do not count as exported, so a manual or automatic
+  /// retrieval pulls them again instead of reusing the partial file. Kept in
+  /// the file-job journal directory so this survives a restart.
+  Set<int> get _incompleteRetrievalIds => _fileJobs.incompleteRetrievals;
 
   /// Recording keys whose current error was set by the completeness gate, so
   /// a later complete retrieval can clear exactly that message.
@@ -342,10 +342,14 @@ class RecorderController extends ChangeNotifier {
       final complete = transferComplete?.call(rawPath) ?? true;
       final fileId = ExportCatalog.fileIdFromPath(path);
       if (fileId != null) {
-        if (complete) {
-          _incompleteRetrievalIds.remove(fileId);
-        } else {
-          _incompleteRetrievalIds.add(fileId);
+        try {
+          await _fileJobs.markRetrieval(fileId, complete: complete);
+        } catch (error) {
+          // The in-memory mark still holds for this session.
+          logs = [
+            'INCOMPLETE MARK $fileId not saved: $error',
+            ...logs,
+          ].take(80).toList();
         }
       }
       converted.add((path: path, complete: complete, written: path != rawPath));
@@ -423,7 +427,7 @@ class RecorderController extends ChangeNotifier {
     }
 
     if (!transferComplete) {
-      blockIncomplete('录音未完整取回，已保留已收到的部分；请重新取回后再转写');
+      await _flagIncompleteOverwrite(key, path, config, blockIncomplete);
       return;
     }
     try {
@@ -451,6 +455,15 @@ class RecorderController extends ChangeNotifier {
           _recordingErrors[key] = previous.error!;
           await _fileJobs.save();
           notifyListeners();
+        } else if (previous.audioChanged &&
+            previous.audioHash == version &&
+            previous.error == _staleAfterPartialRetrieval) {
+          // A complete pull restored exactly the audio the text came from;
+          // only the mark left by the partial overwrite is withdrawn.
+          previous.audioChanged = false;
+          previous.error = null;
+          await _fileJobs.save();
+          notifyListeners();
         } else if (previous.audioHash == null) {
           // Legacy records lack a prior digest. Establish a baseline without
           // replaying a paid request or claiming historical content equality.
@@ -476,6 +489,49 @@ class RecorderController extends ChangeNotifier {
       _recordingErrors[key] = '录音已保存，但无法保存转写任务，请重试';
     }
     notifyListeners();
+  }
+
+  static const _staleAfterPartialRetrieval =
+      '录音未完整取回，已有文字对应之前的音频，已标为过期；请重新取回后手动重新转写';
+
+  /// A transfer without the done signal / every byte replaced the local file.
+  /// It is never submitted. When this recording already has a task or text,
+  /// the partial audio is compared with the recorded version first: anything
+  /// but identical content marks the existing text stale (persisted with the
+  /// journal) so it is not shown or analysed as the result of this audio. The
+  /// old text and task id stay; nothing is resubmitted or billed.
+  Future<void> _flagIncompleteOverwrite(
+    String key,
+    String path,
+    SpeechConfiguration config,
+    void Function(String reason) block,
+  ) async {
+    const partial = '录音未完整取回，已保留已收到的部分；请重新取回后再转写';
+    const stale = _staleAfterPartialRetrieval;
+    final previous = _fileJobs.jobs[key];
+    final text = (transcriptForPath(path) ?? '').trim();
+    if (previous == null && text.isEmpty) return block(partial);
+    try {
+      final version = await audioVersion(path);
+      if (version == null) return block(partial);
+      if (previous != null && previous.audioHash == version) {
+        return block(partial);
+      }
+      // No baseline (legacy record or text without a task) cannot prove the
+      // partial file equals the transcribed audio, so it is treated as stale.
+      final job =
+          previous ??
+          (FileJob(key: key, path: path, config: FileJob.snapshot(config))
+            ..stage = 'complete'
+            ..text = text);
+      _fileJobs.jobs[key] = job;
+      job.audioChanged = true;
+      job.error = stale;
+      await _fileJobs.save();
+      block(stale);
+    } catch (_) {
+      block('录音未完整取回，且无法核对已有文字对应的音频；请重新取回后再转写');
+    }
   }
 
   /// Hands a finished take to the shared deferred-job mechanism, which serves
@@ -3850,6 +3906,10 @@ class RecorderController extends ChangeNotifier {
     Iterable<OfflineFileEntry> deviceFiles,
   ) async {
     final complete = <int>{};
+    try {
+      // Restores the persisted incomplete-retrieval ids after a restart.
+      await _fileJobs.load();
+    } catch (_) {}
     for (final file in deviceFiles) {
       // A partial transfer converts to a full-size WAV header, so its size
       // alone would pass the threshold below; retrieve it again instead.

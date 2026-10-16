@@ -258,12 +258,29 @@ void main() async {
       expect(File(path).existsSync(), isTrue);
     });
 
-    test('transport-reported partial transfer is not submitted', () async {
+    test('incomplete overwrite of a transcribed recording marks its text '
+        'stale without a new request', () async {
       final path = '${dir.path}/1700000002.wav';
       await File(path).writeAsBytes(wavBytes([1, 2, 3, 4]));
+      await c.processRetrievedRecording(path);
+      await settleUntil(
+        () => journal.jobs.values.any((j) => j.stage == 'complete'),
+      );
+      final job = journal.jobs.values.single..taskId = 'paid-task';
+      qwen.calls = 0;
+
+      // The same file id comes back cut off at >= 95% without the done
+      // signal; the converted WAV header is finished, the audio is not.
+      await File(path).writeAsBytes(wavBytes([1, 2, 3]));
       await c.processRetrievedRecording(path, transferComplete: false);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
       expect(qwen.calls, 0);
-      expect(journal.jobs, isEmpty);
+      expect(c.transcriptForPath(path), '通义文本');
+      expect(journal.jobs.values.single, same(job));
+      expect(job.audioChanged, isTrue);
+      expect(job.taskId, 'paid-task');
+      expect(c.recordingAudioChanged(RecordingReference(path: path)), isTrue);
       expect(errorFor(path), contains('未完整取回'));
     });
 

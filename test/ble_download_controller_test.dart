@@ -234,6 +234,67 @@ void main() {
       expect(journal.jobs.values.where((j) => j.audioChanged), isEmpty);
     });
 
+    test('a partial pull stays unexported after a restart and is pulled '
+        'again', () async {
+      // Same storage directory for the journal and the exports across both
+      // controller lifetimes.
+      final journalFile = File(
+        '${directory.path}/AnkerRecorder/file_jobs.json',
+      );
+      RecorderController open(_Ble link) =>
+          RecorderController(
+              loadPersistedState: false,
+              ble: link,
+              qwenSpeech: qwen,
+              fileJobJournal: FileJobJournal(file: journalFile),
+              retrievedAudioSettleTime: Duration.zero,
+              blePullInactivityTimeout: const Duration(milliseconds: 200),
+              rawExportConverter: (raw) async {
+                final wav = '${raw.substring(0, raw.lastIndexOf('.'))}.wav';
+                await File(wav).writeAsBytes(
+                  wavBytes([...await File(raw).readAsBytes(), 0, 0]),
+                );
+                return wav;
+              },
+            )
+            ..connected = true
+            ..encryptReady = true
+            ..phase = AppPhase.ready;
+
+      controller.dispose();
+      ble = _Ble();
+      controller = open(ble);
+      // 160 of 168 bytes (95.2%), no done signal.
+      final cut = controller.downloadFileOverBle(
+        OfflineFileEntry(fileId: 102, sizeBytes: 168),
+      );
+      await _until(() => ble.downloads.contains(102));
+      ble.slice();
+      await cut;
+      expect(controller.localPathFor(102), isNotNull);
+      controller.autoRealtime = false;
+      controller.dispose();
+      await Future<void>.delayed(Duration.zero);
+
+      // Restart: the device lists 102 at a size the partial WAV exceeds 95%
+      // of, so only the persisted incomplete mark makes it pull again.
+      ble = _Ble();
+      controller = open(ble);
+      await controller.setQwenConfig(const EngineConfig(apiKey: 'key'));
+      controller.setSpeechProvider(SttProvider.qwen);
+      controller.setAutoTranscribe(true);
+      await controller.listFiles();
+      ble.filePage([102]);
+      await _until(() => ble.downloads.contains(102));
+      ble.finish();
+      await _until(
+        () =>
+            controller.transcriptForPath(controller.localPathFor(102)!) ==
+            '通义文本',
+      );
+      expect(qwen.calls, 1);
+    });
+
     test('BLE automatic download submits through the shared entry', () async {
       await controller.listFiles();
       ble.filePage([103]);
