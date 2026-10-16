@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:koe/ai/engine_config.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
@@ -30,7 +32,7 @@ void main() {
   RecorderController buildController(
     TopicStore store, {
     _FakeQwenStt? qwen,
-    _FakeRecommendService? recommender,
+    AnalysisService? recommender,
     RecordingAnalysis? analysis,
   }) {
     final c = RecorderController(
@@ -211,11 +213,11 @@ void main() {
           suggestedAuthor: '罗尔斯',
         ),
       );
+      await store.setDriftHint(k3, TopicDriftHint(topicId: book.id));
       await store.setDriftHint(
-        k3,
+        k4,
         TopicDriftHint(topicId: book.id, suggestedTopicId: career.id),
       );
-      await store.setDriftHint(k4, TopicDriftHint(topicId: book.id));
 
       final c = buildController(store);
       c.exportedPaths = [p1, p2, p3, p4];
@@ -235,6 +237,10 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('change-recommend-$k1')));
       await tester.pumpAndSettle();
+      expect(
+        tester.widget<ListTile>(find.widgetWithText(ListTile, '法学方法论')).selected,
+        isTrue,
+      );
       await tester.tap(find.text('职业规划'));
       await tester.pumpAndSettle();
       expect(store.topicOf(k1)?.id, career.id);
@@ -263,9 +269,13 @@ void main() {
       expect(store.driftHintFor(k3), isNull);
       expect(find.text('这条好像不属于《法学方法论》'), findsOneWidget);
 
-      // Move k4 to career
+      // Move k4 to career (with suggestedTopicId pre-selected in picker)
       await tester.tap(find.byKey(const ValueKey('drift-move-$k4')));
       await tester.pumpAndSettle();
+      expect(
+        tester.widget<ListTile>(find.widgetWithText(ListTile, '职业规划')).selected,
+        isTrue,
+      );
       await tester.tap(find.text('职业规划'));
       await tester.pumpAndSettle();
       expect(store.topicOf(k4)?.id, career.id);
@@ -420,7 +430,8 @@ void main() {
 
   test(
     'recommendation reads only a short transcript excerpt (no history), '
-    'deduplicates repeated triggers, and silently falls back on failure or offline',
+    'deduplicates after success, and silently falls back on failure/offline '
+    'while allowing retry on a later trigger',
     () async {
       final dir = await makeTempDir();
       addTearDown(() async {
@@ -471,8 +482,8 @@ void main() {
       expect(recommender.lastSource, isNot(contains('历史录音独有标记')));
       expect(recommender.lastInstruction, isNot(contains('历史录音独有标记')));
 
-      // Duplicate triggers: re-retrieving, re-saving same transcript, or
-      // dismissing and re-triggering must not call the model again.
+      // Duplicate triggers after success: re-retrieving, re-saving same
+      // transcript, or dismissing and re-triggering must not call the model again.
       await c.processRetrievedRecording(path1);
       c.rememberTranscript(path1, longText, provider: SttProvider.qwen);
       await c.waitForTopicAssist();
@@ -483,7 +494,8 @@ void main() {
       await c.waitForTopicAssist();
       expect(recommender.calls, 2);
 
-      // Offline failure (SocketException) -> silent fallback to manual
+      // Offline failure (SocketException) -> silent fallback to manual,
+      // NOT marked evaluated yet so a later trigger can retry.
       recommender.nextError = const SocketException('Network is unreachable');
       qwen.nextText = '离线时的转写内容';
       final offlinePath = await recording(dir, 1760000402);
@@ -505,16 +517,20 @@ void main() {
       expect(c.errorMessage, isNull);
       expect(store.saveError, isNull);
 
-      // Repeated trigger after offline failure does not auto-resubmit
+      // When network recovers, a later trigger retries and succeeds, and only
+      // then marks the recording evaluated.
+      recommender.nextError = null;
+      recommender.nextOutput = '{"action":"existing","topicId":"${topic.id}"}';
       c.rememberTranscript(offlinePath, '离线时的转写内容', provider: SttProvider.qwen);
       await c.waitForTopicAssist();
-      expect(recommender.calls, 3);
+      expect(recommender.calls, 4);
+      expect(store.recommendationFor(offlineKey)?.topicId, topic.id);
 
-      // Manual classification still works offline
+      // Manual classification still works
       await store.moveRecording(offlineKey, topic.id);
       expect(store.topicOf(offlineKey)?.id, topic.id);
 
-      // Malformed model output -> silent fallback to manual
+      // Malformed model output -> silent fallback to manual, then retryable
       recommender.nextError = null;
       recommender.nextOutput = 'not valid json';
       qwen.nextText = '模型返回格式异常时的转写内容';
@@ -523,7 +539,7 @@ void main() {
       await c.waitForTopicAssist();
 
       const badOutputKey = 'file:1760000403';
-      expect(recommender.calls, 4);
+      expect(recommender.calls, 5);
       expect(store.isPending(badOutputKey), isTrue);
       expect(store.recommendationFor(badOutputKey), isNull);
       expect(
@@ -534,6 +550,115 @@ void main() {
             .error,
         isNull,
       );
+
+      // Subsequent trigger retries after malformed output and succeeds
+      recommender.nextOutput =
+          '{"action":"new","kind":"general","title":"恢复后的新主题"}';
+      c.rememberTranscript(
+        badOutputPath,
+        '模型返回格式异常时的转写内容',
+        provider: SttProvider.qwen,
+      );
+      await c.waitForTopicAssist();
+      expect(recommender.calls, 6);
+      expect(store.recommendationFor(badOutputKey)?.suggestedTitle, '恢复后的新主题');
+    },
+  );
+
+  test(
+    'real QwenAnalysisService request wrapper uses dedicated topic-assist '
+    'prompt (not note-taking [S1] wrapper) and extracts the first JSON object '
+    'when the model wraps JSON in prose or code fences',
+    () async {
+      final dir = await makeTempDir();
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final store = TopicStore(
+        inMemory: true,
+        now: () => DateTime(2026, 10, 16, 10),
+      );
+      await store.load();
+      final book = await store.createTopic(
+        kind: TopicKind.book,
+        title: '法学方法论',
+        author: '拉伦茨',
+      );
+      final career = await store.createTopic(
+        kind: TopicKind.general,
+        title: '职业规划',
+      );
+
+      final capturedMessages = <List<Map<String, Object?>>>[];
+      var nextContent = '';
+      final realService = QwenAnalysisService(
+        client: MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          final msgs = (body['messages'] as List)
+              .map((m) => Map<String, Object?>.from(m as Map))
+              .toList();
+          capturedMessages.add(msgs);
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'finish_reason': 'stop',
+                  'message': {'content': nextContent},
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+
+      final qwen = _FakeQwenStt();
+      final c = buildController(store, qwen: qwen, recommender: realService);
+      await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
+      c.setSpeechProvider(SttProvider.qwen);
+      c.setAutoTranscribe(true);
+
+      // 1. Pending recommendation: model replies with prose + fenced JSON + trailing JSON
+      nextContent =
+          '根据转写片段 [S1]，推荐归入现有主题：\n'
+          '```json\n'
+          '{"action":"existing","topicId":"${book.id}"}\n'
+          '```\n'
+          '备选：{"action":"new","kind":"general","title":"干扰主题"}';
+      qwen.nextText = '今天读拉伦茨关于法律解释与法的续造的章节';
+      final path1 = await recording(dir, 1760000501);
+      await c.processRetrievedRecording(path1);
+      await c.waitForTopicAssist();
+
+      expect(capturedMessages, hasLength(1));
+      final sysPrompt1 = capturedMessages.first[0]['content'] as String;
+      final userPrompt1 = capturedMessages.first[1]['content'] as String;
+      expect(sysPrompt1, isNot(contains('你是录音整理助手')));
+      expect(sysPrompt1, isNot(contains('[S1]')));
+      expect(sysPrompt1, contains('JSON'));
+      expect(userPrompt1, isNot(contains('原文或分段笔记')));
+
+      final rec = store.recommendationFor('file:1760000501');
+      expect(rec, isNotNull);
+      expect(rec!.kind, TopicRecommendationKind.existingTopic);
+      expect(rec.topicId, book.id);
+
+      // 2. Drift check in current topic: model replies with prose around JSON
+      await store.setCurrentTopic(book.id);
+      nextContent =
+          '分析说明：这段内容在谈换工作，明显偏离《法学方法论》 '
+          '{"drift":true,"suggestedTopicId":"${career.id}"} 建议移入职业规划。';
+      qwen.nextText = '下周准备投递简历并约面试';
+      final path2 = await recording(dir, 1760000502);
+      await c.processRetrievedRecording(path2);
+      await c.waitForTopicAssist();
+
+      expect(capturedMessages, hasLength(2));
+      final hint = store.driftHintFor('file:1760000502');
+      expect(hint, isNotNull);
+      expect(hint!.topicId, book.id);
+      expect(hint.suggestedTopicId, career.id);
     },
   );
 }

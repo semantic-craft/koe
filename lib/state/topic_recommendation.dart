@@ -213,16 +213,45 @@ String buildTopicDriftInstruction({
 }
 
 Map<String, Object?>? _decodeJsonObject(String raw) {
-  var text = raw.trim();
-  if (text.startsWith('```')) {
-    text = text
-        .replaceFirst(RegExp(r'^```[a-zA-Z0-9_-]*\s*'), '')
-        .replaceFirst(RegExp(r'\s*```$'), '')
-        .trim();
+  for (
+    var start = raw.indexOf('{');
+    start != -1;
+    start = raw.indexOf('{', start + 1)
+  ) {
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var i = start; i < raw.length; i++) {
+      final ch = raw.codeUnitAt(i);
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch == 0x5C) {
+          escaped = true;
+        } else if (ch == 0x22) {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch == 0x22) {
+        inString = true;
+      } else if (ch == 0x7B) {
+        depth++;
+      } else if (ch == 0x7D) {
+        depth--;
+        if (depth == 0) {
+          try {
+            final decoded = jsonDecode(raw.substring(start, i + 1));
+            if (decoded is Map) {
+              return Map<String, Object?>.from(decoded);
+            }
+          } catch (_) {}
+          break;
+        }
+      }
+    }
   }
-  final decoded = jsonDecode(text);
-  if (decoded is! Map) return null;
-  return Map<String, Object?>.from(decoded);
+  return null;
 }
 
 TopicRecommendation? parseTopicRecommendation(
@@ -267,7 +296,7 @@ TopicRecommendation? parseTopicRecommendation(
   return null;
 }
 
-TopicDriftHint? parseTopicDriftHint(
+({TopicDriftHint? hint})? parseTopicDriftDecision(
   String raw, {
   required Topic currentTopic,
   required List<Topic> openTopics,
@@ -276,8 +305,9 @@ TopicDriftHint? parseTopicDriftHint(
   if (currentTopic.closed) return null;
   final map = _decodeJsonObject(raw);
   if (map == null) return null;
-  final drifted = map['drift'] == true || map['drifted'] == true;
-  if (!drifted) return null;
+  final driftValue = map.containsKey('drift') ? map['drift'] : map['drifted'];
+  if (driftValue is! bool) return null;
+  if (!driftValue) return (hint: null);
   final rawSuggested = (map['suggestedTopicId'] ?? map['topicId']) as String?;
   String? suggestedId;
   if (rawSuggested != null && rawSuggested.trim().isNotEmpty) {
@@ -288,9 +318,23 @@ TopicDriftHint? parseTopicDriftHint(
       suggestedId = target.id;
     }
   }
-  return TopicDriftHint(
-    topicId: currentTopic.id,
-    suggestedTopicId: suggestedId,
-    sourceHash: sourceHash,
+  return (
+    hint: TopicDriftHint(
+      topicId: currentTopic.id,
+      suggestedTopicId: suggestedId,
+      sourceHash: sourceHash,
+    ),
   );
 }
+
+TopicDriftHint? parseTopicDriftHint(
+  String raw, {
+  required Topic currentTopic,
+  required List<Topic> openTopics,
+  String sourceHash = '',
+}) => parseTopicDriftDecision(
+  raw,
+  currentTopic: currentTopic,
+  openTopics: openTopics,
+  sourceHash: sourceHash,
+)?.hint;

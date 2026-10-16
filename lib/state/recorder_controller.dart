@@ -59,8 +59,12 @@ class RecorderController extends ChangeNotifier {
       );
   final RecordingAnalysis? _analysisOverride;
   late final AnalysisService _topicRecommender =
-      _topicRecommendationOverride ??
-      QwenAnalysisService(origin: () => _qwenStt.baseUrl);
+      switch (_topicRecommendationOverride) {
+        final QwenAnalysisService qwen when !qwen.isTopicAssist =>
+          qwen.asTopicAssist(),
+        final AnalysisService service => service,
+        null => QwenAnalysisService.topicAssist(origin: () => _qwenStt.baseUrl),
+      };
   final AnalysisService? _topicRecommendationOverride;
   final Map<String, Future<void>> _topicAssistTasks = {};
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
@@ -345,7 +349,6 @@ class RecorderController extends ChangeNotifier {
       if (topics.isPending(recordingKey)) {
         final token = 'pending:$excerptHash';
         if (topics.hasEvaluatedAssist(recordingKey, token)) return;
-        await topics.markAssistEvaluated(recordingKey, token);
         final instruction = buildTopicRecommendationInstruction(
           openTopics: topics.openTopics,
           transcript: transcript,
@@ -363,9 +366,9 @@ class RecorderController extends ChangeNotifier {
           topics.openTopics,
           sourceHash: excerptHash,
         );
-        if (rec != null) {
-          await topics.setRecommendation(recordingKey, rec);
-        }
+        if (rec == null) return;
+        await topics.setRecommendation(recordingKey, rec);
+        await topics.markAssistEvaluated(recordingKey, token);
         return;
       }
 
@@ -373,7 +376,6 @@ class RecorderController extends ChangeNotifier {
       if (assigned != null && !assigned.closed) {
         final token = 'drift:${assigned.id}:$excerptHash';
         if (topics.hasEvaluatedAssist(recordingKey, token)) return;
-        await topics.markAssistEvaluated(recordingKey, token);
         final instruction = buildTopicDriftInstruction(
           currentTopic: assigned,
           openTopics: topics.openTopics,
@@ -391,15 +393,17 @@ class RecorderController extends ChangeNotifier {
         }
         final currentAssigned = topics.topicById(assigned.id);
         if (currentAssigned == null || currentAssigned.closed) return;
-        final hint = parseTopicDriftHint(
+        final decision = parseTopicDriftDecision(
           raw,
           currentTopic: currentAssigned,
           openTopics: topics.openTopics,
           sourceHash: excerptHash,
         );
-        if (hint != null) {
-          await topics.setDriftHint(recordingKey, hint);
+        if (decision == null) return;
+        if (decision.hint != null) {
+          await topics.setDriftHint(recordingKey, decision.hint!);
         }
+        await topics.markAssistEvaluated(recordingKey, token);
       }
     } catch (_) {
       // Silent fallback to manual classification (#52).
@@ -2526,9 +2530,11 @@ class RecorderController extends ChangeNotifier {
         await _fileJobs.save();
         final currentPath =
             recordingView(RecordingReference(path: path)).path ?? path;
-        if (transcriptForPath(currentPath) != result.text ||
+        final remembered =
+            transcriptForPath(currentPath) != result.text ||
             _transcriptMetadata[key]?.provider != config.provider ||
-            _transcriptMetadata[key]?.sourceLanguage != config.sourceLanguage) {
+            _transcriptMetadata[key]?.sourceLanguage != config.sourceLanguage;
+        if (remembered) {
           rememberTranscript(
             currentPath,
             result.text,
@@ -2548,7 +2554,7 @@ class RecorderController extends ChangeNotifier {
         job.error = null;
         job.audioChanged = false;
         await _fileJobs.save();
-        if (topicsEnabled) {
+        if (topicsEnabled && !remembered) {
           unawaited(_scheduleTopicAssist(key, result.text));
         }
         statusMessage = '转写已保存';

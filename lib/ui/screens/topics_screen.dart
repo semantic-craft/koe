@@ -399,6 +399,7 @@ Future<Topic?> pickOpenTopic(
   BuildContext context,
   TopicStore store, {
   String? exclude,
+  String? suggestedTopicId,
 }) => showModalBottomSheet<Topic>(
   context: context,
   builder: (sheetContext) {
@@ -406,6 +407,13 @@ Future<Topic?> pickOpenTopic(
       for (final t in store.openTopics)
         if (t.id != exclude) t,
     ];
+    if (suggestedTopicId != null) {
+      choices.sort((a, b) {
+        final aMatch = a.id == suggestedTopicId ? 0 : 1;
+        final bMatch = b.id == suggestedTopicId ? 0 : 1;
+        return aMatch.compareTo(bMatch);
+      });
+    }
     return SafeArea(
       child: ListView(
         shrinkWrap: true,
@@ -414,8 +422,12 @@ Future<Topic?> pickOpenTopic(
           if (choices.isEmpty) const ListTile(title: Text('没有可选的进行中主题')),
           for (final topic in choices)
             ListTile(
+              selected: topic.id == suggestedTopicId,
               title: Text(topic.title),
               subtitle: Text(_subtitle(topic)),
+              trailing: topic.id == suggestedTopicId
+                  ? const Icon(Icons.check_rounded)
+                  : null,
               onTap: () => Navigator.pop(sheetContext, topic),
             ),
         ],
@@ -511,7 +523,11 @@ class _RecommendationBanner extends StatelessWidget {
         TextButton(
           key: ValueKey('change-recommend-$recordingKey'),
           onPressed: () async {
-            final topic = await pickOpenTopic(context, store);
+            final topic = await pickOpenTopic(
+              context,
+              store,
+              suggestedTopicId: recommendation.topicId,
+            );
             if (topic != null) {
               await store.moveRecording(recordingKey, topic.id);
             }
@@ -557,6 +573,7 @@ class _DriftBanner extends StatelessWidget {
               context,
               store,
               exclude: topicId,
+              suggestedTopicId: store.driftHintFor(recordingKey)?.suggestedTopicId,
             );
             if (target != null) {
               await store.moveRecording(recordingKey, target.id);
