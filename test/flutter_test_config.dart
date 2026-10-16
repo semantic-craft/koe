@@ -31,6 +31,8 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
       (_) async => directory.path,
     );
     messenger.setMockMethodCallHandler(CredentialStore.channel, (call) async {
+      if (call.method == 'mode') return 'system';
+      if (call.method == 'authorize') return null;
       if (call.method == 'read') return credentialItem;
       if (call.method == 'write') {
         credentialItem = call.arguments as String;

@@ -12,6 +12,12 @@ enum CredentialBridge {
     channel.setMethodCallHandler { call, result in
       do {
         switch call.method {
+        case "mode": result(store.mode.rawValue)
+        case "diagnostics":
+          result(["mode": store.mode.rawValue, "securityCalls": store.securityCalls])
+        case "authorize":
+          try store.authorize()
+          result(nil)
         case "read": result(try store.read())
         case "write":
           guard let value = call.arguments as? String else {

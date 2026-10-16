@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Release-build Soundcore Manager for macOS and package a .dmg with hdiutil.
+# Release-build Soundcore Manager for macOS, sign it with the Developer ID
+# identity, and package a .dmg with hdiutil. An ad-hoc build would lose the
+# login keychain authorization that the signed upgrade path preserves.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -69,6 +71,8 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   flutter pub get
   echo "==> flutter build macos --release"
   flutter build macos --release
+  echo "==> scripts/sign-macos.sh"
+  "${ROOT}/scripts/sign-macos.sh" "$RELEASE_APP"
 else
   echo "==> Skipping build (--skip-build)"
 fi
@@ -78,6 +82,9 @@ if [[ ! -d "$RELEASE_APP" ]]; then
   echo "       run without --skip-build first" >&2
   exit 1
 fi
+
+echo "==> Verifying signature"
+"${ROOT}/scripts/sign-macos.sh" --verify-only "$RELEASE_APP"
 
 echo "==> Staging DMG contents"
 rm -rf "$STAGING" "$DMG_RW" "$DMG_OUT"

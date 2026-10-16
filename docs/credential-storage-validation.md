@@ -37,3 +37,25 @@ USB 自动控制不可用，手机点击由用户完成，Agent 核对持久记�
 #41 首次验证覆盖了同构建重启，继续安装下一构建后发现 ad-hoc 签名的 Keychain ACL 绑定旧 CDHash，读取被系统拒绝。原配置 JSON 保持无明文、Keychain 原项保留，没有自动清空或替换。
 
 已改用本机现有 Developer ID 证书；系统授权必须由用户本人完成，Computer Use 拒绝操作 SecurityAgent。用户完成“始终允许”后，App 重新显示千问使用中。安装脚本明确验证团队与 bundle 身份，找不到唯一证书就退出，不回退为 ad-hoc；安装前要求退出 App，先对临时副本签名并验证再覆盖安装。已用不同 Dart 构建执行两次 Developer ID 覆盖安装：第一次由用户授权，第二次通过新安装脚本覆盖后，未再要求填写 Key 或授权，原千问仍显示使用中。脚本签名前副本及安装后产物都通过严格签名和团队/bundle 要求校验。
+
+## 2026-10-16 开发隔离与稳定签名的验收
+
+上一节只覆盖了“安装脚本不再用 ad-hoc 签名”。本轮继续修掉两个仍然会向用户索取密码的路径：开发/验证构建默认读个人 Keychain，以及签名标识随构建变化导致的重复授权。
+
+### 行为变更
+
+- `darwin/KeychainStore.swift` 增加 `isolated` / `system` 两种模式。macOS Debug、任何带 `KOE_CREDENTIAL_SOURCE` 的进程（含拼错的值）一律隔离；Release 只有通过 `SecCodeCheckValidity` 校验团队 `LQAVR62TK2` 与 bundle `com.anker.ankerRecorder` 后才使用系统存储，否则同样退回隔离。
+- 系统读写包裹在 `SecKeychainSetUserInteractionAllowed(false)` 内，旧条目的 ACL 无法满足时立即返回 `errSecAuthFailed`，不弹窗、不阻塞；交互式授权只保留在设置页“重试读取安全配置”这一条显式路径（`CredentialStore.authorize`）。实测 `kSecUseAuthenticationUIFail` 对这类旧条目的登录钥匙串弹窗无效（阻塞 ≥8 秒），这是本轮换用进程级开关的原因。
+- 隔离模式下设置在 `Documents/AnkerRecorderDevelopment/`，个人 `Documents/AnkerRecorder/app_settings.json` 不被迁移或改写。
+- 新增 `scripts/sign-macos.sh` 作为唯一签名入口（内外层依次签名、校验封条与指定要求、无 ad-hoc 回退、打印 CDHash 与指定要求）；`scripts/install-macos.sh` 复用它并在覆盖前比较升级前后的指定要求；`scripts/build-dmg.sh` 打包前先签名。
+
+### 本轮证据
+
+- `skills/verify-koe/scripts/check.py native`（2026-10-16，build/verify-koe/native-*）：两个内容不同（SHA-256 不同）的 Developer ID 构建共享一条合成条目，写入、读回、互相覆盖都通过；ad-hoc 对照的第二次读取 0.06 秒内以 `-25293` 失败，且 `SecurityAgent` 未被拉起（`security_agent_before/after=false`），说明不再弹密码框。所有 `debug-*` 与 `release-adhoc-*` 隔离用例通过，Security 调用计数为 0。
+- `skills/verify-koe/scripts/check.py isolated-app`：真实 App 两次运行均打印 `KOE_CREDENTIAL_ISOLATION_PASS: load/save/readback/authorize; Security calls=0`，运行后临时 App 与 Debug 产物均已删除。
+- 真实安装升级：升级前安装 `CDHash 68f30bf6…`，`scripts/install-macos.sh` 重新构建并签名后为 `6179d37c…`，指定要求不变（install-macos.sh 打印“Existing install shares this code requirement”）。启动后设置页显示“通义 Qwen 使用中”，API Key 仍为已保存状态，全程没有系统授权窗口（无 SecurityAgent），即上一轮用户“始终允许”的授权在换构建后继续有效。
+- `flutter test` 287 项通过（须在未加载 `DASHSCOPE_API_KEY` 的非 login shell 运行，否则千问会被环境变量判为已配置而导致 4 项失败）。
+
+### 没跑到的项目
+
+同树 Release 重建是逐字节可复现的（带 `--dart-define` 也一样），所以本轮“不同构建”的升级对照用的是上一轮安装的中间构建，而不是另写一份源码；iPhone 端共享同一份 `KeychainStore.swift` 但未重新安装验证。未做：重置系统钥匙串、吊销证书、删除用户条目；也未在用户设备上触发需要重新授权的全新信任边界（那需要用户本人完成一次“始终允许”）。

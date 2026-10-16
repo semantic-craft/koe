@@ -36,7 +36,10 @@ class AppSettingsStore {
 
   static Future<File> _file() async {
     final base = await getApplicationDocumentsDirectory();
-    return File(p.join(base.path, 'AnkerRecorder', _fileName));
+    final folder = await _credentials.isIsolated
+        ? 'AnkerRecorderDevelopment'
+        : 'AnkerRecorder';
+    return File(p.join(base.path, folder, _fileName));
   }
 
   static Future<void> _write(File file, AppSettings settings) async {
