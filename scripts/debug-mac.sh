@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Build and run Soundcore Manager for macOS in debug mode.
+# Build and run Koe for macOS in debug mode.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-APP_NAME="Soundcore Manager"
+APP_NAME="Koe"
 DEBUG_APP="build/macos/Build/Products/Debug/${APP_NAME}.app"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/debug-mac.sh [options]
 
-  Debug build of Soundcore Manager for macOS.
+  Debug build of Koe for macOS.
 
 Options:
   --build-only   Compile debug .app without launching

@@ -29,13 +29,13 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Soundcore Manager uses Bluetooth to find and manage your soundcore Work device.</string>
+	<string>Koe 使用蓝牙查找并连接已适配的安克录音豆（soundcore Work / D3200），管理录音。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Soundcore Manager uses Bluetooth to find and manage your soundcore Work device.</string>
+	<string>Koe 使用蓝牙查找并连接已适配的安克录音豆（soundcore Work / D3200），管理录音。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Soundcore Manager connects directly to your recorder's Wi-Fi hotspot to export recordings.</string>
+	<string>Koe 需要直连安克录音豆的 Wi-Fi 热点来导出录音。</string>
 	<key>CFBundleDisplayName</key>
-	<string>安克录音豆</string>
+	<string>Koe</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

@@ -7,8 +7,11 @@ screen still shows the configured provider as 使用中.
 ## Sub-features
 
 - `install-build` builds Release and signs it with the team's Developer ID identity.
-- `install-replace` replaces `/Applications/Soundcore Manager.app` after staging and
+- `install-replace` replaces `/Applications/Koe.app` after staging and
   verifying a signed copy, refusing to overwrite a running app.
+- `install-retire-legacy` archives the pre-rename `/Applications/Soundcore Manager.app`
+  to a verified zip, then removes and unregisters it, so Spotlight, Launch Services
+  and `soundcore://` URLs can only open Koe.
 - `install-requirement` keeps the designated requirement identical across installs so
   an existing authorization keeps working.
 - `install-refuse-adhoc` stops instead of producing an unsigned or ad-hoc build.
@@ -32,7 +35,7 @@ Preconditions:
   `requirement` and `cdhash`. The requirement is what the Keychain access control list
   stores for this app.
 - **Install.** Run `scripts/install-macos.sh`. The output ends with
-  `Verified: /Applications/Soundcore Manager.app` and
+  `Verified: /Applications/Koe.app` and
   `Installed signed macOS Release; existing app data retained.`, and prints
   `Existing install shares this code requirement; saved Keychain access stays valid.`
   when the requirement did not change.

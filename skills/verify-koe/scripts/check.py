@@ -22,9 +22,10 @@ import uuid
 ROOT = Path(__file__).resolve().parents[3]
 LSREGISTER = ('/System/Library/Frameworks/CoreServices.framework/Frameworks/'
               'LaunchServices.framework/Support/lsregister')
-INSTALLED = Path('/Applications/Soundcore Manager.app')
-RELEASE = ROOT / 'build/macos/Build/Products/Release/Soundcore Manager.app'
-DEBUG = ROOT / 'build/macos/Build/Products/Debug/Soundcore Manager.app'
+INSTALLED = Path('/Applications/Koe.app')
+LEGACY_INSTALLED = Path('/Applications/Soundcore Manager.app')
+RELEASE = ROOT / 'build/macos/Build/Products/Release/Koe.app'
+DEBUG = ROOT / 'build/macos/Build/Products/Debug/Koe.app'
 
 
 def run(args, log=None, env=None, timeout=300):
@@ -120,7 +121,9 @@ def doctor(args):
             report['identity'] = identity(args.team)
         except RuntimeError as error:
             report['identity_error'] = str(error)
-    report['running'] = running('Soundcore Manager|koe-credentials')
+    # A leftover pre-rename bundle shares the Bundle ID and can be launched instead.
+    report['legacy_installed'] = LEGACY_INSTALLED.exists()
+    report['running'] = running('MacOS/Koe$|Soundcore Manager|koe-credentials')
     report['keychain_services'] = subprocess.run(
         ['security', 'find-generic-password', '-s', 'com.semanticcraft.soundcore.credentials'],
         capture_output=True, text=True).returncode == 0
@@ -211,7 +214,7 @@ def isolated_app(evidence):
              'test/support/credential_isolation_app.dart'], evidence / 'build.log', clean_env(), 900)
         app = scratch / 'KoeCredentialVerification.app'
         shutil.copytree(DEBUG, app, symlinks=True)
-        binary = app / 'Contents/MacOS/Soundcore Manager'
+        binary = app / 'Contents/MacOS/Koe'
         for index in range(2):
             output = run([binary], evidence / f'run-{index}.log', clean_env(), 60)
             if b'KOE_CREDENTIAL_ISOLATION_PASS' not in output:

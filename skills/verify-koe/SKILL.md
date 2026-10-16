@@ -1,6 +1,6 @@
 ---
 name: verify-koe
-description: Verify the Koe / Soundcore Manager macOS app: development credential isolation, Developer ID signing, and Keychain access that survives install upgrades. Use before delivering signing, Keychain, credential or macOS install changes.
+description: Verify the Koe macOS app (installed as /Applications/Koe.app; formerly Soundcore Manager.app): development credential isolation, Developer ID signing, and Keychain access that survives install upgrades. Use before delivering signing, Keychain, credential or macOS install changes.
 ---
 
 # Verify Koe macOS credentials and install
@@ -25,8 +25,12 @@ Do not `direnv exec` for the checks below.
 - **Daily install (delivery artifact).** `scripts/install-macos.sh` builds Release,
   signs it with the unique Developer ID Application certificate of team
   `LQAVR62TK2`, stages a copy, and replaces
-  `/Applications/Soundcore Manager.app`. It refuses to install while that app is
-  running and refuses to fall back to ad-hoc signing. `scripts/sign-macos.sh` is the
+  `/Applications/Koe.app`. It refuses to install while Koe or the pre-rename
+  `Soundcore Manager.app` is running and refuses to fall back to ad-hoc signing. After
+  installing it archives the pre-rename bundle to
+  `~/Library/Application Support/Koe Install Backups/*.zip`, verifies the archive,
+  then removes and unregisters the old bundle (`scripts/retire-legacy-macos-app.sh`;
+  `--keep-legacy` skips this). Bundle ID and data container are unchanged. `scripts/sign-macos.sh` is the
   shared signer; `scripts/build-dmg.sh` reuses it before packaging.
 - **Isolated verification app.** `skills/verify-koe/scripts/check.py isolated-app`
   builds a fixture entrypoint into the shared Debug product and copies it to a
@@ -78,7 +82,7 @@ For install/upgrade acceptance run the real thing, in this order:
 
 1. Record the installed requirement and CDHash (`check.py doctor`).
 2. Quit the installed app; `scripts/install-macos.sh`.
-3. Launch `/Applications/Soundcore Manager.app`, open Settings, and confirm the
+3. Launch `/Applications/Koe.app`, open Settings, and confirm the
    configured provider shows 使用中 with no password dialog.
 4. Rebuild and install again (a different Dart/Flutter build), relaunch, and confirm
    no authorization was requested a second time.
@@ -121,7 +125,7 @@ After an `isolated-app` or `native` run:
   `flutter build macos --debug -t lib/main.dart` if you need it (the check deletes it
   on purpose, so no verification fixture stays behind);
 - quit any installed app you launched yourself
-  (`pkill -f '^/Applications/Soundcore Manager.app/Contents/MacOS/Soundcore Manager$'`);
+  (`pkill -f '^/Applications/Koe.app/Contents/MacOS/Koe$'`);
 - never kill by process name alone, never delete the personal
   `com.semanticcraft.soundcore.credentials` item, and never touch the user's Keychain
   authorizations.
