@@ -23,6 +23,8 @@ import 'package:koe/audio/audio_version.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/wav_fixture.dart';
+
 void main() async {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -141,7 +143,7 @@ void main() async {
       final dir = await Directory.systemTemp.createTemp('retrieved-test-');
       addTearDown(() => dir.delete(recursive: true));
       final path = '${dir.path}/987654.wav';
-      await File(path).writeAsBytes([1, 2, 3]);
+      await File(path).writeAsBytes(wavBytes([1, 2, 3, 4]));
       final qwen = _Qwen();
       final journal = FileJobJournal(inMemory: true);
       final c = RecorderController(
@@ -181,7 +183,7 @@ void main() async {
       final directory = await Directory.systemTemp.createTemp('audio-version-');
       addTearDown(() => directory.delete(recursive: true));
       final audio = File('${directory.path}/987654.wav');
-      await audio.writeAsBytes([1, 2, 3]);
+      await audio.writeAsBytes(wavBytes([1, 2, 3, 4]));
       final qwen = _Qwen()..apiKeyOverride = 'key';
       final journal = FileJobJournal(inMemory: true);
       final c = RecorderController(
@@ -194,7 +196,7 @@ void main() async {
       await settleUntil(
         () => journal.jobs.values.any((j) => j.stage == 'complete'),
       );
-      await audio.writeAsBytes([4, 5, 6]);
+      await audio.writeAsBytes(wavBytes([4, 5, 6, 7]));
       await c.processRetrievedRecording(audio.path);
       expect(qwen.calls, 1);
       expect(c.transcriptForPath(audio.path), '通义文本');
@@ -211,6 +213,183 @@ void main() async {
     },
   );
 
+  group('retrieved recording completeness (#13)', () {
+    late Directory dir;
+    late _Qwen qwen;
+    late FileJobJournal journal;
+    late RecorderController c;
+
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('retrieved-13-');
+      qwen = _Qwen();
+      journal = FileJobJournal(inMemory: true);
+      c = RecorderController(
+        loadPersistedState: false,
+        qwenSpeech: qwen,
+        fileJobJournal: journal,
+        retrievedAudioSettleTime: const Duration(milliseconds: 150),
+        rawExportConverter: (raw) async {
+          final wav = raw.replaceFirst(RegExp(r'\.opus$'), '.wav');
+          await File(wav).writeAsBytes(await File(raw).readAsBytes());
+          return wav;
+        },
+      );
+      await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
+      c.setSpeechProvider(SttProvider.qwen);
+      c.setAutoTranscribe(true);
+    });
+    tearDown(() async {
+      c.dispose();
+      await dir.delete(recursive: true);
+    });
+
+    String errorFor(String path) =>
+        c.recordingView(RecordingReference(path: path)).error ?? '';
+
+    test('truncated WAV is kept, reported, and never submitted', () async {
+      final path = '${dir.path}/1700000001.wav';
+      await File(path).writeAsBytes(
+        wavBytes([1, 2], declaredDataSize: 64000, riffSize: 64036),
+      );
+      await c.processRetrievedRecording(path);
+      expect(qwen.calls, 0);
+      expect(journal.jobs, isEmpty);
+      expect(errorFor(path), contains('未完整取回'));
+      expect(File(path).existsSync(), isTrue);
+    });
+
+    test('transport-reported partial transfer is not submitted', () async {
+      final path = '${dir.path}/1700000002.wav';
+      await File(path).writeAsBytes(wavBytes([1, 2, 3, 4]));
+      await c.processRetrievedRecording(path, transferComplete: false);
+      expect(qwen.calls, 0);
+      expect(journal.jobs, isEmpty);
+      expect(errorFor(path), contains('未完整取回'));
+    });
+
+    test(
+      'WAV still growing during the settle window is not submitted',
+      () async {
+        final path = '${dir.path}/1700000003.wav';
+        await File(path).writeAsBytes(wavBytes([1, 2, 3, 4]), flush: true);
+        final run = c.processRetrievedRecording(path);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        await File(
+          path,
+        ).writeAsBytes([5, 6], mode: FileMode.append, flush: true);
+        await run;
+        expect(qwen.calls, 0);
+        expect(journal.jobs, isEmpty);
+        expect(errorFor(path), contains('仍在写入'));
+      },
+    );
+
+    test(
+      're-retrieved complete audio after a partial one is submitted once',
+      () async {
+        final path = '${dir.path}/1700000004.wav';
+        await File(
+          path,
+        ).writeAsBytes(wavBytes([1, 2], declaredDataSize: 640, riffSize: 676));
+        await c.processRetrievedRecording(path);
+        expect(qwen.calls, 0);
+        await File(path).writeAsBytes(wavBytes([1, 2, 3, 4]));
+        await c.processRetrievedRecording(path);
+        await settleUntil(
+          () => journal.jobs.values.any((j) => j.stage == 'complete'),
+        );
+        await c.processRetrievedRecording(path);
+        expect(qwen.calls, 1);
+        expect(errorFor(path), isEmpty);
+        expect(c.transcriptForPath(path), '通义文本');
+      },
+    );
+
+    test('Wi-Fi export submits only complete decrypted files', () async {
+      final full = '${dir.path}/1700000005.opus';
+      final partial = '${dir.path}/1700000006.opus';
+      await File(full).writeAsBytes(wavBytes([1, 2, 3, 4]));
+      await File(partial).writeAsBytes(wavBytes([5, 6, 7, 8]));
+      final paths = await c.completeWifiTransfer(
+        [full, partial],
+        decrypted: true,
+        incompleteRawPaths: {partial},
+      );
+      expect(paths, [
+        '${dir.path}/1700000005.wav',
+        '${dir.path}/1700000006.wav',
+      ]);
+      await settleUntil(
+        () => journal.jobs.values.any((j) => j.stage == 'complete'),
+      );
+      expect(qwen.calls, 1);
+      expect(qwen.paths.single, '${dir.path}/1700000005.wav');
+      expect(errorFor('${dir.path}/1700000006.wav'), contains('未完整取回'));
+      expect(File('${dir.path}/1700000006.wav').existsSync(), isTrue);
+    });
+
+    test(
+      'batch Wi-Fi export does not wait one settle window per converted file',
+      () async {
+        final slow = RecorderController(
+          loadPersistedState: false,
+          qwenSpeech: qwen,
+          fileJobJournal: journal,
+          // Long enough that three serial windows would exceed the bound.
+          retrievedAudioSettleTime: const Duration(seconds: 3),
+          rawExportConverter: (raw) async {
+            final wav = raw.replaceFirst(RegExp(r'\.opus$'), '.wav');
+            await File(wav).writeAsBytes(await File(raw).readAsBytes());
+            return wav;
+          },
+        );
+        addTearDown(slow.dispose);
+        await slow.setQwenConfig(const EngineConfig(apiKey: 'key'));
+        slow.setSpeechProvider(SttProvider.qwen);
+        slow.setAutoTranscribe(true);
+        final raws = [
+          for (final id in [1700000011, 1700000012, 1700000013])
+            '${dir.path}/$id.opus',
+        ];
+        for (final (i, raw) in raws.indexed) {
+          await File(raw).writeAsBytes(wavBytes([i + 1, 2, 3, 4]));
+        }
+        final clock = Stopwatch()..start();
+        await slow.completeWifiTransfer(raws, decrypted: true);
+        expect(clock.elapsed, lessThan(const Duration(seconds: 2)));
+        await settleUntil(
+          () =>
+              journal.jobs.values.where((j) => j.stage == 'complete').length ==
+              3,
+        );
+        expect(qwen.calls, 3);
+      },
+    );
+
+    test(
+      'Wi-Fi export without decryption registers but never submits',
+      () async {
+        final raw = '${dir.path}/1700000007.opus';
+        await File(raw).writeAsBytes(wavBytes([1, 2, 3, 4]));
+        final paths = await c.completeWifiTransfer([raw], decrypted: false);
+        expect(paths.single, '${dir.path}/1700000007.wav');
+        expect(qwen.calls, 0);
+        expect(journal.jobs, isEmpty);
+      },
+    );
+
+    test(
+      'auto-transcribe off: complete Wi-Fi file is kept without a job',
+      () async {
+        c.setAutoTranscribe(false);
+        final raw = '${dir.path}/1700000008.opus';
+        await File(raw).writeAsBytes(wavBytes([1, 2, 3, 4]));
+        await c.completeWifiTransfer([raw], decrypted: true);
+        expect(qwen.calls, 0);
+        expect(journal.jobs, isEmpty);
+      },
+    );
+  });
   test(
     'changed audio during request cannot overwrite existing transcription',
     () async {

@@ -20,6 +20,7 @@ import '../ai/apple_speech.dart';
 import '../ai/speech_provider.dart';
 import '../audio/audio_duration.dart';
 import '../audio/audio_version.dart';
+import '../audio/retrieved_audio.dart';
 import '../audio/ogg_opus.dart';
 import '../audio/opus_pcm_decoder.dart';
 import '../audio/opus_wave.dart';
@@ -95,7 +96,11 @@ class RecorderController extends ChangeNotifier {
     FileJobJournal? fileJobJournal,
     RecordingAnalysis? analysisController,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
+    this.retrievedAudioSettleTime = retrievedAudioSettle,
+    Future<String> Function(String rawPath)? rawExportConverter,
+    this.blePullInactivityTimeout = const Duration(seconds: 90),
   }) : _analysisOverride = analysisController,
+       _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
        _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
@@ -286,9 +291,114 @@ class RecorderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// How long a retrieved WAV must keep the same size and modification time
+  /// before it can be submitted; see [incompleteRetrievedAudioReason].
+  final Duration retrievedAudioSettleTime;
+  final Future<String> Function(String rawPath) _rawExportConverter;
+
+  /// Longest gap without a BLE file packet before a pull stops waiting; see
+  /// [BleFilePull.pullFile].
+  final Duration blePullInactivityTimeout;
+
+  /// Device file ids whose latest transfer in this session was kept without
+  /// the done signal / every byte. They do not count as exported, so a manual
+  /// or automatic retrieval pulls them again instead of reusing the partial
+  /// file.
+  final Set<int> _incompleteRetrievalIds = {};
+
+  /// Recording keys whose current error was set by the completeness gate, so
+  /// a later complete retrieval can clear exactly that message.
+  final Map<String, String> _completenessErrors = {};
+
+  /// The single completion point for every device transfer (BLE automatic,
+  /// BLE manual, Wi-Fi export). Converts the raw transfer to WAV, registers it
+  /// in the local catalog, and — only for decrypted transfers — hands it to
+  /// [processRetrievedRecording], which owns auto-switch, configuration,
+  /// completeness and audio-version de-duplication.
+  ///
+  /// [transferComplete] is false when the transport saved a file without
+  /// the done signal / every byte (BLE: [BleFilePull.isIncomplete], Wi-Fi:
+  /// [WifiExportService.incompletePaths], both via
+  /// [retrievedTransferComplete]) or without decrypting every chunk; such
+  /// audio is kept for playback but never submitted automatically.
+  ///
+  /// A WAV this call just produced through an awaited conversion is already
+  /// final, so it skips the growth window; only files handed over as-is wait
+  /// [retrievedAudioSettleTime]. Batch Wi-Fi exports therefore do not
+  /// accumulate one window per file.
+  Future<List<String>> _completeRetrievedRecordings(
+    Iterable<String> rawPaths, {
+    required bool decrypted,
+    bool Function(String rawPath)? transferComplete,
+    List<String>? conversionFailures,
+  }) async {
+    final converted = <({String path, bool complete, bool written})>[];
+    for (final rawPath in rawPaths) {
+      final path = await _convertExportToWav(
+        rawPath,
+        register: false,
+        conversionFailures: conversionFailures,
+      );
+      final complete = transferComplete?.call(rawPath) ?? true;
+      final fileId = ExportCatalog.fileIdFromPath(path);
+      if (fileId != null) {
+        if (complete) {
+          _incompleteRetrievalIds.remove(fileId);
+        } else {
+          _incompleteRetrievalIds.add(fileId);
+        }
+      }
+      converted.add((path: path, complete: complete, written: path != rawPath));
+    }
+    final paths = [for (final c in converted) c.path];
+    _registerExportedPaths(paths);
+    if (decrypted) {
+      for (final c in converted) {
+        await _processRetrievedRecording(
+          c.path,
+          transferComplete: c.complete,
+          settle: c.written ? Duration.zero : retrievedAudioSettleTime,
+        );
+      }
+    }
+    return paths;
+  }
+
+  /// Wi-Fi export post-processing, split out so the shared completion entry
+  /// can be exercised without a SoftAP. [incompleteRawPaths] lists transfers
+  /// the transport saved without the done marker / all bytes, or with chunks
+  /// it could not decrypt.
+  @visibleForTesting
+  Future<List<String>> completeWifiTransfer(
+    List<String> rawPaths, {
+    required bool decrypted,
+    Set<String> incompleteRawPaths = const {},
+    List<String>? conversionFailures,
+  }) => _completeRetrievedRecordings(
+    rawPaths,
+    decrypted: decrypted,
+    transferComplete: (raw) => !incompleteRawPaths.contains(raw),
+    conversionFailures: conversionFailures,
+  );
+
   /// Only called after a device transfer has produced a playable local file.
   /// Startup scans and renames deliberately do not schedule paid work.
-  Future<void> processRetrievedRecording(String path) async {
+  /// Partial transfers and WAVs that are unfinished or still growing are kept
+  /// but not submitted; see [incompleteRetrievedAudioReason].
+  Future<void> processRetrievedRecording(
+    String path, {
+    bool transferComplete = true,
+  }) => _processRetrievedRecording(
+    path,
+    transferComplete: transferComplete,
+    settle: retrievedAudioSettleTime,
+  );
+
+  Future<void> _processRetrievedRecording(
+    String path, {
+    required bool transferComplete,
+    required Duration settle,
+  }) async {
     await Future.wait([_settingsLoaded, _transcriptsLoaded, _fileJobsLoaded]);
     if (_disposed || !autoTranscribe || !path.toLowerCase().endsWith('.wav')) {
       return;
@@ -303,7 +413,34 @@ class RecorderController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    // Completeness comes before the version comparison: a truncated or
+    // still-growing file must neither be submitted nor be mistaken for a
+    // changed recording that invalidates existing text.
+    void blockIncomplete(String reason) {
+      _recordingErrors[key] = reason;
+      _completenessErrors[key] = reason;
+      notifyListeners();
+    }
+
+    if (!transferComplete) {
+      blockIncomplete('录音未完整取回，已保留已收到的部分；请重新取回后再转写');
+      return;
+    }
     try {
+      final incomplete = await incompleteRetrievedAudioReason(
+        path,
+        settle: settle,
+      );
+      if (incomplete != null) {
+        blockIncomplete(incomplete);
+        return;
+      }
+      // A complete retrieval clears only a message the gate itself left.
+      final stale = _completenessErrors.remove(key);
+      if (stale != null && _recordingErrors[key] == stale) {
+        _recordingErrors.remove(key);
+        notifyListeners();
+      }
       final version = await audioVersion(path);
       if (version == null) return;
       final previous = _fileJobs.jobs[key];
@@ -2031,7 +2168,10 @@ class RecorderController extends ChangeNotifier {
     try {
       final version = await audioVersion(path);
       final previous = _fileJobs.jobs[key];
-      if (previous?.audioHash != null &&
+      // A missing file has no version; it is not "changed" audio and must
+      // reach the readable missing-recording failure below instead.
+      if (version != null &&
+          previous?.audioHash != null &&
           previous!.audioHash != version &&
           (fromQueue ||
               previous.stage == 'result' ||
@@ -2045,7 +2185,9 @@ class RecorderController extends ChangeNotifier {
         return true;
       }
       job = await _fileJobs.enqueue(key, path, config, retry: !fromQueue);
-      if (previous?.audioHash != null && previous!.audioHash != version) {
+      if (version != null &&
+          previous?.audioHash != null &&
+          previous!.audioHash != version) {
         job.audioChanged = true;
       }
       if (version != null && job.audioHash == null) {
@@ -2170,7 +2312,12 @@ class RecorderController extends ChangeNotifier {
                 : result.language ?? config.sourceLanguage,
           );
         }
-        await _persistTranscripts(strict: !_fileJobs.inMemory);
+        try {
+          await _persistTranscripts(strict: !_fileJobs.inMemory);
+        } catch (error, stack) {
+          // The paid result is kept in the job; only local storage failed.
+          Error.throwWithStackTrace(_TranscriptSaveFailure(error), stack);
+        }
         job.stage = 'complete';
         job.error = null;
         job.audioChanged = false;
@@ -2187,6 +2334,8 @@ class RecorderController extends ChangeNotifier {
         _recordingErrors[key] =
             error is PlatformException && error.code == 'resources_missing'
             ? '请下载所选录音语言后重试'
+            : error is _TranscriptSaveFailure
+            ? '转写结果未能保存；请检查存储空间后重试'
             : _speechErrorMessage(error);
         job.error = _recordingErrors[key];
         if (job.text != null && job.stage == 'complete') job.stage = 'result';
@@ -3551,6 +3700,7 @@ class RecorderController extends ChangeNotifier {
           notifyListeners();
           final rawPath = await _blePull.pullFile(
             file,
+            timeout: blePullInactivityTimeout,
             onProgress: (received, expected) {
               if (_shouldYieldAutoTransfer) return;
               final now = DateTime.now();
@@ -3566,10 +3716,14 @@ class RecorderController extends ChangeNotifier {
               notifyListeners();
             },
           );
-          final path = await _convertExportToWav(rawPath, register: false);
-          _registerExportedPaths([path]);
-          await processRetrievedRecording(path);
-          completeIds.add(file.fileId);
+          await _completeRetrievedRecordings(
+            [rawPath],
+            decrypted: true,
+            transferComplete: (raw) => !_blePull.isIncomplete(raw),
+          );
+          if (!_incompleteRetrievalIds.contains(file.fileId)) {
+            completeIds.add(file.fileId);
+          }
           exported++;
           if (!_shouldYieldAutoTransfer) statusMessage = progressMessage();
           notifyListeners();
@@ -3658,6 +3812,7 @@ class RecorderController extends ChangeNotifier {
       notifyListeners();
       final rawPath = await _blePull.pullFile(
         file,
+        timeout: blePullInactivityTimeout,
         onProgress: (received, expected) {
           final now = DateTime.now();
           if (now.difference(lastProgressAt) <
@@ -3672,9 +3827,11 @@ class RecorderController extends ChangeNotifier {
           notifyListeners();
         },
       );
-      final path = await _convertExportToWav(rawPath, register: false);
-      _registerExportedPaths([path]);
-      await processRetrievedRecording(path);
+      await _completeRetrievedRecordings(
+        [rawPath],
+        decrypted: true,
+        transferComplete: (raw) => !_blePull.isIncomplete(raw),
+      );
       statusMessage = '已下载 ${file.title}';
     } on BleFilePullCancelled {
       statusMessage = '已取消下载';
@@ -3694,6 +3851,9 @@ class RecorderController extends ChangeNotifier {
   ) async {
     final complete = <int>{};
     for (final file in deviceFiles) {
+      // A partial transfer converts to a full-size WAV header, so its size
+      // alone would pass the threshold below; retrieve it again instead.
+      if (_incompleteRetrievalIds.contains(file.fileId)) continue;
       final path = localPathsByFileId[file.fileId];
       if (path == null) continue;
       try {
@@ -4010,7 +4170,7 @@ class RecorderController extends ChangeNotifier {
     if (!path.endsWith('.opus')) return path;
     final existing = _wavConversions[path];
     final ownsConversion = existing == null;
-    final conversion = existing ?? OpusWave.convertRawFile(path);
+    final conversion = existing ?? _rawExportConverter(path);
     if (ownsConversion) {
       _wavConversions[path] = conversion;
     }
@@ -4227,23 +4387,13 @@ class RecorderController extends ChangeNotifier {
     try {
       final rawPaths = await _wifi.transferFiles(endpoint: ep, files: targets);
       if (run != _wifiExportRun) return const [];
-      final paths = <String>[];
       final conversionFailures = <String>[];
-      for (final path in rawPaths) {
-        paths.add(
-          await _convertExportToWav(
-            path,
-            register: false,
-            conversionFailures: conversionFailures,
-          ),
-        );
-      }
-      _registerExportedPaths(paths);
-      if (encryptReady) {
-        for (final path in paths) {
-          await processRetrievedRecording(path);
-        }
-      }
+      final paths = await completeWifiTransfer(
+        rawPaths,
+        decrypted: encryptReady,
+        incompleteRawPaths: _wifi.incompletePaths,
+        conversionFailures: conversionFailures,
+      );
       _pendingExportTargets = [];
       phase = connected ? AppPhase.ready : AppPhase.idle;
       statusMessage = paths.isEmpty
@@ -4784,4 +4934,13 @@ class _EngineAdapter {
     bool Function()? isCurrent,
   })
   transcribe;
+}
+
+/// Local transcript persistence failed after the cloud result was received.
+class _TranscriptSaveFailure implements Exception {
+  const _TranscriptSaveFailure(this.cause);
+  final Object cause;
+
+  @override
+  String toString() => 'Transcript save failed: $cause';
 }

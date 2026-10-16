@@ -10,6 +10,7 @@ import 'package:pointycastle/export.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../audio/retrieved_audio.dart';
 import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
@@ -287,6 +288,14 @@ class WifiExportService {
   bool _decryptEnabled = false;
   int _decryptedChunks = 0;
   int _rawFallbackChunks = 0;
+  final Set<String> _incompletePaths = {};
+
+  /// Paths from the latest [transferFiles] that were saved without the
+  /// device's done marker and below the announced size (see
+  /// [retrievedTransferComplete]), or that mix
+  /// decrypted and undecryptable chunks. They stay on disk for playback and
+  /// manual handling but must not be treated as a complete recording.
+  Set<String> get incompletePaths => Set.unmodifiable(_incompletePaths);
 
   void _emit(ExportProgress p) {
     _progress = p;
@@ -405,6 +414,7 @@ class WifiExportService {
     required List<OfflineFileEntry> files,
     bool useSsl = true,
   }) async {
+    _incompletePaths.clear();
     if (files.isEmpty) return const [];
     if (_cancelled) throw StateError('已取消 Wi-Fi 导出');
     final saved = <String>[];
@@ -774,6 +784,7 @@ class WifiExportService {
     final pathRaw = p.join(outDir.path, '$baseName.opus.bin');
     // Start as opus; rename if we never decrypted.
     var path = pathOpus;
+    var partial = false;
     final ioFile = File(path);
     _fileSink = ioFile.openWrite();
     _sliceBytes = 0;
@@ -824,7 +835,8 @@ class WifiExportService {
         await Future<void>.delayed(const Duration(milliseconds: 120));
       }
 
-      if (_fileDone?.isCompleted != true &&
+      final doneSignal = _fileDone?.isCompleted == true;
+      if (!doneSignal &&
           !(_expectedSize > 0 && _sliceBytes >= _expectedSize * 0.95)) {
         if (_sliceBytes == 0) {
           throw StateError(
@@ -834,6 +846,13 @@ class WifiExportService {
         }
         _log('Partial receive $_sliceBytes/$_expectedSize — saving anyway');
       }
+      // Same rule as the BLE pull: kept for playback, but without the done
+      // marker or every announced byte it is not a complete recording.
+      partial = !retrievedTransferComplete(
+        doneSignal: doneSignal,
+        received: _sliceBytes,
+        expected: _expectedSize,
+      );
 
       await _fileSink?.flush();
       await _fileSink?.close();
@@ -861,6 +880,9 @@ class WifiExportService {
           'Saved decrypted $_decryptedChunks chunks'
           '${_rawFallbackChunks > 0 ? " (+$_rawFallbackChunks raw)" : ""} → $path',
         );
+      }
+      if (partial || (_decryptedChunks > 0 && _rawFallbackChunks > 0)) {
+        _incompletePaths.add(path);
       }
       if (_activeFileId != null) crypto.clearFile(_activeFileId!);
       return path;

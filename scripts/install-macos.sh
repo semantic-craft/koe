@@ -3,14 +3,17 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEAM_ID="${TEAM_ID:-LQAVR62TK2}"
-TARGET="${MACOS_INSTALL_PATH:-/Applications/Soundcore Manager.app}"
+TARGET="${MACOS_INSTALL_PATH:-/Applications/Koe.app}"
+APP_NAME="Koe"
+KEEP_LEGACY=0
 SKIP_BUILD=0
 IDENTITY="${MACOS_SIGN_IDENTITY:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1 ;;
+    --keep-legacy) KEEP_LEGACY=1 ;;
     --identity) IDENTITY="${2:?--identity requires a certificate name}"; shift ;;
-    -h|--help) echo 'Usage: scripts/install-macos.sh [--skip-build] [--identity NAME]'; exit 0 ;;
+    -h|--help) echo 'Usage: scripts/install-macos.sh [--skip-build] [--identity NAME] [--keep-legacy]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
@@ -22,16 +25,18 @@ designated_requirement() {
 }
 
 # Do not replace files while the installed process is still running.
-if pgrep -f "^${TARGET}/Contents/MacOS/Soundcore Manager$" >/dev/null; then
-  echo 'Quit Soundcore Manager before installing.' >&2
+if pgrep -f "^${TARGET}/Contents/MacOS/${APP_NAME}$" >/dev/null; then
+  echo "Quit ${APP_NAME} before installing." >&2
   exit 1
 fi
+# The pre-rename bundle shares the Bundle ID; it must not be running either.
+"$ROOT/scripts/retire-legacy-macos-app.sh" --check-running
 if [[ "$SKIP_BUILD" -eq 0 ]]; then flutter build macos --release; fi
-SOURCE="$ROOT/build/macos/Build/Products/Release/Soundcore Manager.app"
+SOURCE="$ROOT/build/macos/Build/Products/Release/${APP_NAME}.app"
 [[ -d "$SOURCE" ]] || { echo 'Release build missing.' >&2; exit 1; }
 STAGING="$(mktemp -d "${TMPDIR:-/tmp}/koe-install.XXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT
-APP="$STAGING/Soundcore Manager.app"
+APP="$STAGING/${APP_NAME}.app"
 ditto "$SOURCE" "$APP"
 if [[ -n "$IDENTITY" ]]; then
   "$ROOT/scripts/sign-macos.sh" --identity "$IDENTITY" "$APP"
@@ -56,4 +61,11 @@ fi
 
 ditto "$APP" "$TARGET"
 "$ROOT/scripts/sign-macos.sh" --verify-only "$TARGET"
+
+# Keep a single launchable copy: archive, then remove the pre-rename bundle.
+if [[ "$KEEP_LEGACY" -eq 1 ]]; then
+  echo 'NOTE: --keep-legacy left the old Soundcore Manager.app in place; it shares the Bundle ID and may still be launched.'
+else
+  "$ROOT/scripts/retire-legacy-macos-app.sh"
+fi
 echo 'Installed signed macOS Release; existing app data retained.'

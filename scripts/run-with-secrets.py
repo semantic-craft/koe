@@ -14,7 +14,7 @@ if len(sys.argv) == 2 and sys.argv[1] == 'macos':
     environment = {k: v for k, v in os.environ.items() if not any(x in k for x in ('KEY', 'TOKEN', 'SECRET'))}
     environment.update(speech)
     environment["KOE_CREDENTIAL_SOURCE"] = "environment"
-    process = subprocess.Popen(['/Applications/Soundcore Manager.app/Contents/MacOS/Soundcore Manager'], env=environment,
+    process = subprocess.Popen(['/Applications/Koe.app/Contents/MacOS/Koe'], env=environment,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     print(f'Launched installed macOS app, PID {process.pid}; {len(speech)} provider credentials injected.')
 

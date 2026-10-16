@@ -27,7 +27,7 @@ authorization.
 Preconditions:
 
 - Installed app quit, then launched again by the user or by
-  `open /Applications/Soundcore Manager.app`.
+  `open /Applications/Koe.app`.
 - `check.py doctor` recorded the installed requirement and CDHash for this session.
 
 Reaching 设置: the Flutter window exposes no accessibility children while

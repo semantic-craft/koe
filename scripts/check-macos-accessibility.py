@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = ROOT / 'build/macos/Build/Products/Debug/Soundcore Manager.app/Contents/MacOS/Soundcore Manager'
+APP = ROOT / 'build/macos/Build/Products/Debug/Koe.app/Contents/MacOS/Koe'
 EVIDENCE = ROOT / 'build/ui-evidence'
 ENV = {k: v for k, v in os.environ.items()
        if k not in ('SONIOX_API_KEY', 'MOSS_API_KEY', 'DASHSCOPE_API_KEY')}
