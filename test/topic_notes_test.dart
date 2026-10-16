@@ -172,8 +172,9 @@ void main() {
       raw,
       1,
       fallbackKind: TopicKind.general,
-      fallbackTopicId: 'caller-topic',
-      fallbackAudioSignature: 'caller-sig',
+      forcedTopicId: 'caller-topic',
+      forcedAudioSignature: 'caller-sig',
+      forceAudioSignature: true,
     );
     expect(note.topicId, 'caller-topic');
     expect(note.audioSignature, 'caller-sig');
@@ -182,8 +183,9 @@ void main() {
       raw,
       1,
       fallbackKind: TopicKind.general,
-      fallbackTopicId: 'caller-topic',
-      fallbackAudioSignature: null,
+      forcedTopicId: 'caller-topic',
+      forcedAudioSignature: null,
+      forceAudioSignature: true,
     );
     expect(cleared.topicId, 'caller-topic');
     expect(cleared.audioSignature, isNull);
@@ -191,6 +193,31 @@ void main() {
     final stored = TopicNote.parse(note.encode(), 1);
     expect(stored.topicId, 'caller-topic');
     expect(stored.audioSignature, 'caller-sig');
+  });
+
+  test('读取已存笔记时 fallbackTopicId 不覆盖 JSON 里的主题编号', () {
+    final stored = jsonEncode({
+      'kind': 'general',
+      'topicId': 'topic-old',
+      'audioSignature': 'sig-old',
+      'overview': '迁移前写下的概要',
+      'ideas': [
+        {
+          'text': '旧想法',
+          'reason': '旧理由',
+          'sources': ['S1'],
+        },
+      ],
+    });
+
+    final parsed = TopicNote.parse(
+      stored,
+      1,
+      fallbackKind: TopicKind.general,
+      fallbackTopicId: 'topic-new',
+    );
+    expect(parsed.topicId, 'topic-old');
+    expect(parsed.audioSignature, 'sig-old');
   });
 
   test('一般主题模板解析主要想法、与此前笔记的变化、疑问、联想、待办与仅明确表达的结论', () {
@@ -736,6 +763,98 @@ void main() {
     );
     await tester.pump();
     expect(find.textContaining('原文或所属主题已变化，当前笔记可能已过期'), findsOneWidget);
+  });
+
+  testWidgets('迁移后编辑概要仍保留原主题编号，过期标记不消失', (tester) async {
+    const ref = RecordingReference(fileId: 1760008101, path: '/1760008101.wav');
+    const transcript = '迁移前写下的录音转写，讨论旧主题里的想法。';
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      return _generalNoteJson('不应在编辑概要时重新生成');
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+
+    final oldTopic = await store.createTopic(
+      title: '旧主题',
+      kind: TopicKind.general,
+    );
+    final newTopic = await store.createTopic(
+      title: '新主题',
+      kind: TopicKind.general,
+    );
+    final key = controller.analysisKey(ref);
+    await store.moveRecording(key, oldTopic.id);
+    await controller.settleTopicNoteWork();
+
+    controller.transcriptsByPath[ref.path!] = transcript;
+    controller.transcriptsByFileId[ref.fileId!] = transcript;
+    final note = TopicNote(
+      kind: TopicKind.general,
+      topicId: oldTopic.id,
+      overview: '迁移前写下的概要',
+      audioSignature: 'sig-before-move',
+      ideas: const [
+        TopicIdea(text: '旧想法', reason: '旧理由', sources: ['S1']),
+      ],
+    );
+    analysis.results[TopicNote.slotKey(key)] = AnalysisResult(
+      text: note.encode(),
+      sourceHash: analysisFingerprint(transcript),
+      model: TopicNote.defaultModel,
+      instruction: '已保存',
+      sources: const ['s1'],
+      createdAt: DateTime(2026, 10, 16),
+    );
+    await store.moveRecording(key, newTopic.id);
+    await controller.settleTopicNoteWork();
+    expect(controller.isTopicNoteStale(ref), isTrue);
+    expect(
+      jsonDecode(analysis.results[TopicNote.slotKey(key)]!.text)['topicId'],
+      oldTopic.id,
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: MaterialApp(
+          home: Scaffold(
+            body: TopicNotePanel(controller: controller, reference: ref),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining('可能已过期'), findsOneWidget);
+
+    await tester.tap(find.text('编辑'));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-overview')),
+      '迁到新主题后修订的概要',
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pump();
+
+    final saved = jsonDecode(analysis.results[TopicNote.slotKey(key)]!.text)
+        as Map<String, dynamic>;
+    expect(saved['overview'], '迁到新主题后修订的概要');
+    expect(saved['topicId'], oldTopic.id);
+    expect(saved['audioSignature'], 'sig-before-move');
+    expect(controller.isTopicNoteStale(ref), isTrue);
+    expect(find.textContaining('可能已过期'), findsOneWidget);
   });
 
   testWidgets('已有笔记且出错时重试会先确认覆盖，取消则不生成', (tester) async {

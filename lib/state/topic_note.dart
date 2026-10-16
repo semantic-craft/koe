@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'recording_analysis.dart';
 import 'topic_store.dart';
 
-const _omittedAudioSignature = Object();
-
 class TopicExcerpt {
   const TopicExcerpt({required this.text, required this.sources, this.page});
 
@@ -134,7 +132,9 @@ class TopicNote {
     TopicKind? fallbackKind,
     String? fallbackTopicId,
     bool? hasPriorNotes,
-    Object? fallbackAudioSignature = _omittedAudioSignature,
+    String? forcedTopicId,
+    String? forcedAudioSignature,
+    bool forceAudioSignature = false,
   }) {
     final cleaned = _stripCodeFence(text);
     final dynamic value = jsonDecode(cleaned);
@@ -205,17 +205,22 @@ class TopicNote {
     }
 
     final rawTopicId = value['topicId'];
-    final resolvedTopicId = fallbackTopicId != null
-        ? fallbackTopicId.trim()
-        : (rawTopicId is String ? rawTopicId.trim() : '');
-    final String? resolvedAudioSignature;
-    if (identical(fallbackAudioSignature, _omittedAudioSignature)) {
-      resolvedAudioSignature = optionalText(value['audioSignature']);
-    } else if (fallbackAudioSignature is String &&
-        fallbackAudioSignature.trim().isNotEmpty) {
-      resolvedAudioSignature = fallbackAudioSignature.trim();
+    final jsonTopicId = rawTopicId is String ? rawTopicId.trim() : '';
+    // fallback 只补 JSON 缺省；forced 只在校验模型输出时覆盖。
+    final String resolvedTopicId;
+    if (forcedTopicId != null) {
+      resolvedTopicId = forcedTopicId.trim();
+    } else if (jsonTopicId.isNotEmpty) {
+      resolvedTopicId = jsonTopicId;
     } else {
-      resolvedAudioSignature = null;
+      resolvedTopicId = fallbackTopicId?.trim() ?? '';
+    }
+    final String? resolvedAudioSignature;
+    if (forceAudioSignature) {
+      final forced = forcedAudioSignature?.trim() ?? '';
+      resolvedAudioSignature = forced.isEmpty ? null : forced;
+    } else {
+      resolvedAudioSignature = optionalText(value['audioSignature']);
     }
 
     final overview = requiredText(value['overview']);
@@ -502,9 +507,10 @@ String Function(String text, List<String> sources) validateTopicNote(
       text,
       sources.length,
       fallbackKind: topic.kind,
-      fallbackTopicId: topic.id,
+      forcedTopicId: topic.id,
+      forcedAudioSignature: audioSignature,
+      forceAudioSignature: true,
       hasPriorNotes: hasPriorNotes,
-      fallbackAudioSignature: audioSignature,
     ).encode();
 
 List<String> splitTranscriptParagraphs(String text) {
