@@ -45,9 +45,11 @@ final class RecordingShortcutBridge {
 
 @available(iOS 17.0, *)
 struct StartRecordingIntent: AppIntent {
-  static let title: LocalizedStringResource = "Start Recording"
+  // Display text only. The intent type name, the shortcuts provider type name,
+  // the channel name and the pending-start key keep existing shortcuts working.
+  static let title: LocalizedStringResource = "用 Koe 开始录音"
   static let description = IntentDescription(
-    "Open Soundcore Manager and start a recording on the paired D3200."
+    "打开 Koe — 安克录音豆录音与转写工具，在已绑定的安克录音豆（soundcore Work / D3200）上开始录音。"
   )
   static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
@@ -74,7 +76,7 @@ struct SoundcoreAppShortcuts: AppShortcutsProvider {
         "Start recording with \(.applicationName)",
         "Start a recording with \(.applicationName)",
       ],
-      shortTitle: "Start Recording",
+      shortTitle: "开始录音",
       systemImageName: "record.circle"
     )
   }

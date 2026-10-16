@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and install Soundcore Manager on an iOS device using Xcode-managed signing.
+# Build and install Koe on an iOS device using Xcode-managed signing.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,7 +14,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/install-ios.sh [options]
 
-Build Soundcore Manager using Xcode-managed iOS signing, then install it on a
+Build Koe using Xcode-managed iOS signing, then install it on a
 connected physical iOS device.
 
 Options:
@@ -146,7 +146,7 @@ xcodebuild \
 APP_PATH="${DERIVED_DATA}/Build/Products/${CONFIGURATION}-iphoneos/Runner.app"
 [[ -d "$APP_PATH" ]] || die "built app not found: $APP_PATH"
 
-printf '==> Installing Soundcore Manager\n'
+printf '==> Installing Koe\n'
 xcrun devicectl device install app --device "$DEVICE_ID" "$APP_PATH"
 
 if [[ "$LAUNCH" -eq 1 ]]; then
