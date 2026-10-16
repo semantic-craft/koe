@@ -58,7 +58,10 @@ String topicExportFileName(Topic topic, Iterable<Topic> allTopics) {
   return '${_fileStem(topic)}.md';
 }
 
-String _oneLine(String value) => value.trim().replaceAll(RegExp(r'\s+'), ' ');
+String _oneLine(String value) => value
+    .replaceAll(RegExp(r'\[(?:N|S)[1-9]\d*\]'), '')
+    .trim()
+    .replaceAll(RegExp(r'\s+'), ' ');
 
 String _date(DateTime time) {
   final local = time.toLocal();

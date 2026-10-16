@@ -28,7 +28,7 @@ void main() {
       sections: {
         for (final key in TopicSummary.sectionKeys(TopicKind.book))
           key: key == 'coreIdeas'
-              ? [const TopicSummaryItem(text: '先理解再判断', sources: ['N1'])]
+              ? [const TopicSummaryItem(text: '先理解再判断 [N1]', sources: ['N1'])]
               : <TopicSummaryItem>[],
       },
     );
@@ -39,7 +39,7 @@ void main() {
       note: TopicNote(
         kind: TopicKind.book,
         topicId: book.id,
-        overview: '本次概要 $title',
+        overview: '本次概要 $title [S1]',
         excerpts: [TopicExcerpt(text: '虚构摘录', page: '第$page页',
             sources: const ['S1'])],
         comments: const [TopicComment(text: '我的评论', sources: ['S1'])],
