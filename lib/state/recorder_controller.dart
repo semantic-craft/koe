@@ -45,10 +45,12 @@ import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
 import 'topic_store.dart';
 import 'topic_note.dart';
+import 'topic_summary.dart';
 
 export 'recording.dart';
 export 'topic_store.dart';
 export 'topic_note.dart';
+export 'topic_summary.dart';
 export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
@@ -164,6 +166,92 @@ class RecorderController extends ChangeNotifier {
       return true;
     }
     return false;
+  }
+
+  TopicSummaryInput topicSummaryInput(String topicId) {
+    final topic = topics.topicById(topicId);
+    if (topic == null) throw StateError('主题不存在');
+    final notes = <TopicSummaryNote>[];
+    final noteKeys = <String>[];
+    final invalidKeys = <String>[];
+    for (final key in topics.recordingsIn(topicId)) {
+      final result = analysis.results[TopicNote.slotKey(key)];
+      if (result == null) continue;
+      noteKeys.add(key);
+      final note = TopicNote.tryParse(
+        result.text,
+        result.sources.isEmpty ? 1 : result.sources.length,
+        fallbackTopicId: topicId,
+      );
+      if (note == null || note.kind != topic.kind ||
+          (note.topicId.isNotEmpty && note.topicId != topicId)) {
+        invalidKeys.add(key);
+        continue;
+      }
+      final ref = _referenceFromKey(key);
+      final seconds = key.startsWith('file:') ? int.tryParse(key.substring(5)) : null;
+      notes.add(TopicSummaryNote(
+        recordingKey: key,
+        title: recordingView(ref).title,
+        recordedAt: seconds == null
+            ? result.createdAt
+            : DateTime.fromMillisecondsSinceEpoch(seconds * 1000),
+        note: note,
+      ));
+    }
+    return buildTopicSummaryInput(
+      topic,
+      notes,
+      recordingKeys: noteKeys,
+      invalidKeys: invalidKeys,
+    );
+  }
+
+  bool isTopicSummaryStale(String topicId) {
+    final topic = topics.topicById(topicId);
+    if (topic == null || topic.closed) return false;
+    final result = analysis.results[TopicSummary.slotKey(topicId)];
+    if (result == null) return false;
+    return result.staleFor(topicSummaryInput(topicId).source);
+  }
+
+  Future<void> generateTopicSummary(String topicId, {bool overwrite = false}) async {
+    if (!topicsEnabled) return;
+    await Future.wait([
+      _settingsLoaded,
+      _transcriptsLoaded,
+      _topicsLoaded,
+      analysis.load(),
+    ]);
+    if (_disposed || !topicsEnabled) return;
+    final topic = topics.topicById(topicId);
+    if (topic == null) return;
+    final input = topicSummaryInput(topicId);
+    final slotKey = TopicSummary.slotKey(topicId);
+    if (input.invalidKeys.isNotEmpty) {
+      throw StateError('有 ${input.invalidKeys.length} 条笔记已过期或无法解析，请先重生成对应笔记');
+    }
+    if (input.sources.isEmpty) {
+      throw StateError('这个主题还没有可汇总的笔记');
+    }
+    if (analysis.results.containsKey(slotKey) && !overwrite) {
+      throw StateError('重新生成会覆盖已有汇总，请先确认');
+    }
+    if (overwrite) await analysis.restartSlot(slotKey);
+    await analysis.run(
+      recording: 'topic:$topicId',
+      source: input.source,
+      sourceBlocks: input.blocks,
+      apiKey: analysisApiKey,
+      custom: true,
+      resultSlot: TopicSummary.slot,
+      modelOverride: TopicSummary.model,
+      instruction: topicSummaryInstruction(topic),
+      validateResult: validateTopicSummary(topic, input.sources),
+      avoidDuplicateCharges: true,
+      preserveInputCitations: true,
+      currentSource: () => topicSummaryInput(topicId).source,
+    );
   }
 
   Future<void> generateTopicNote(RecordingReference ref) {
@@ -5618,3 +5706,4 @@ class _TranscriptSaveFailure implements Exception {
   @override
   String toString() => 'Transcript save failed: $cause';
 }
+
