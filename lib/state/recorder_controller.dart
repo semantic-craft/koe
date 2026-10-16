@@ -2113,7 +2113,10 @@ class RecorderController extends ChangeNotifier {
     try {
       final version = await audioVersion(path);
       final previous = _fileJobs.jobs[key];
-      if (previous?.audioHash != null &&
+      // A missing file has no version; it is not "changed" audio and must
+      // reach the readable missing-recording failure below instead.
+      if (version != null &&
+          previous?.audioHash != null &&
           previous!.audioHash != version &&
           (fromQueue ||
               previous.stage == 'result' ||
@@ -2127,7 +2130,9 @@ class RecorderController extends ChangeNotifier {
         return true;
       }
       job = await _fileJobs.enqueue(key, path, config, retry: !fromQueue);
-      if (previous?.audioHash != null && previous!.audioHash != version) {
+      if (version != null &&
+          previous?.audioHash != null &&
+          previous!.audioHash != version) {
         job.audioChanged = true;
       }
       if (version != null && job.audioHash == null) {
