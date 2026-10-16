@@ -10,6 +10,7 @@ import 'package:pointycastle/export.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../audio/retrieved_audio.dart';
 import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
@@ -290,7 +291,8 @@ class WifiExportService {
   final Set<String> _incompletePaths = {};
 
   /// Paths from the latest [transferFiles] that were saved without the
-  /// device's done marker and below the byte threshold, or that mix
+  /// device's done marker and below the announced size (see
+  /// [retrievedTransferComplete]), or that mix
   /// decrypted and undecryptable chunks. They stay on disk for playback and
   /// manual handling but must not be treated as a complete recording.
   Set<String> get incompletePaths => Set.unmodifiable(_incompletePaths);
@@ -833,7 +835,8 @@ class WifiExportService {
         await Future<void>.delayed(const Duration(milliseconds: 120));
       }
 
-      if (_fileDone?.isCompleted != true &&
+      final doneSignal = _fileDone?.isCompleted == true;
+      if (!doneSignal &&
           !(_expectedSize > 0 && _sliceBytes >= _expectedSize * 0.95)) {
         if (_sliceBytes == 0) {
           throw StateError(
@@ -842,8 +845,14 @@ class WifiExportService {
           );
         }
         _log('Partial receive $_sliceBytes/$_expectedSize — saving anyway');
-        partial = true;
       }
+      // Same rule as the BLE pull: kept for playback, but without the done
+      // marker or every announced byte it is not a complete recording.
+      partial = !retrievedTransferComplete(
+        doneSignal: doneSignal,
+        received: _sliceBytes,
+        expected: _expectedSize,
+      );
 
       await _fileSink?.flush();
       await _fileSink?.close();

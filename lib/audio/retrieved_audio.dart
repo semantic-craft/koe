@@ -4,6 +4,20 @@ import 'dart:typed_data';
 /// Default window used to confirm a retrieved file is no longer growing.
 const retrievedAudioSettle = Duration(milliseconds: 300);
 
+/// The single transport-level completeness rule for device transfers (BLE
+/// pull and Wi-Fi export).
+///
+/// Both transports keep a file that stopped at >= 95% of the announced size
+/// for playback, but only the device's done signal or every announced byte
+/// makes it a complete recording. Anything else is reported to
+/// `processRetrievedRecording` as `transferComplete: false`, so it is never
+/// submitted automatically and never compared as a new audio version.
+bool retrievedTransferComplete({
+  required bool doneSignal,
+  required int received,
+  required int expected,
+}) => doneSignal || (expected > 0 && received >= expected);
+
 /// Checks that [path] is a finished WAV before any paid transcription.
 ///
 /// Returns `null` when the RIFF/WAVE header is finalized, the declared audio

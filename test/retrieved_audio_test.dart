@@ -106,4 +106,46 @@ void main() {
     await File(path).writeAsBytes([9, 9], mode: FileMode.append, flush: true);
     expect(await check, contains('仍在写入'));
   });
+
+  group('retrievedTransferComplete (shared BLE/Wi-Fi rule)', () {
+    test('done signal is complete even below the announced size', () {
+      expect(
+        retrievedTransferComplete(
+          doneSignal: true,
+          received: 10,
+          expected: 100,
+        ),
+        isTrue,
+      );
+    });
+
+    test('every announced byte is complete without a done signal', () {
+      expect(
+        retrievedTransferComplete(
+          doneSignal: false,
+          received: 100,
+          expected: 100,
+        ),
+        isTrue,
+      );
+    });
+
+    test('>= 95% without a done signal is incomplete', () {
+      expect(
+        retrievedTransferComplete(
+          doneSignal: false,
+          received: 96,
+          expected: 100,
+        ),
+        isFalse,
+      );
+    });
+
+    test('unknown size without a done signal is incomplete', () {
+      expect(
+        retrievedTransferComplete(doneSignal: false, received: 96, expected: 0),
+        isFalse,
+      );
+    });
+  });
 }
