@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/ai/engine_config.dart';
+import 'package:koe/audio/audio_version.dart';
 import 'package:koe/state/file_job_journal.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
@@ -83,10 +85,7 @@ void main() {
     expect(note.excerpts.first.sources, ['S1']);
     expect(note.excerpts.last.page, isNull);
     expect(note.comments, hasLength(2));
-    expect(
-      note.comments.first.excerpt,
-      '锚定效应会在人们做数量估计时悄悄拉偏起点。',
-    );
+    expect(note.comments.first.excerpt, '锚定效应会在人们做数量估计时悄悄拉偏起点。');
     expect(note.comments.last.excerpt, isNull);
     expect(note.questions.single.text, contains('规避第一报价锚定'));
     expect(note.associations.single.text, contains('上季度预算讨论'));
@@ -131,12 +130,67 @@ void main() {
         '第三段：最后记一下待查卡尼曼原始实验。';
     final paragraphs = splitTranscriptParagraphs(transcript);
     expect(paragraphs, hasLength(3));
-    final paragraphIndex = locateTranscriptParagraph(
-      transcript,
-      const ['S2'],
-      itemText: '锚定效应会在人们做数量估计时悄悄拉偏起点。',
-    );
+    final paragraphIndex = locateTranscriptParagraph(transcript, const [
+      'S2',
+    ], itemText: '锚定效应会在人们做数量估计时悄悄拉偏起点。');
     expect(paragraphIndex, 1);
+  });
+
+  test('定位不到原文时返回 null，不回退到第一段或首个候选', () {
+    expect(
+      locateTranscriptParagraph('第一段无关内容。\n\n第二段也无关。', const [
+        'S1',
+      ], itemText: '完全不存在的句子xyz'),
+      isNull,
+    );
+    expect(
+      locateTranscriptParagraph(
+        '第一段无关内容。\n\n第二段也无关。',
+        const ['S1'],
+        itemText: '完全不存在的句子xyz',
+        sourceBlocks: const ['第一段无关内容。'],
+      ),
+      isNull,
+    );
+  });
+
+  test('解析模型输出时主题编号和音频版本只用调用方传入的值', () {
+    const raw = '''
+{
+  "topicId": "model-topic",
+  "audioSignature": "model-sig",
+  "overview": "调用方才是这份笔记的主题。",
+  "ideas": [
+    {"text": "想法", "reason": "理由", "sources": ["S1"]}
+  ],
+  "changes": [],
+  "questions": [],
+  "associations": [],
+  "todos": []
+}''';
+    final note = TopicNote.parse(
+      raw,
+      1,
+      fallbackKind: TopicKind.general,
+      fallbackTopicId: 'caller-topic',
+      fallbackAudioSignature: 'caller-sig',
+    );
+    expect(note.topicId, 'caller-topic');
+    expect(note.audioSignature, 'caller-sig');
+
+    final cleared = TopicNote.parse(
+      raw,
+      1,
+      fallbackKind: TopicKind.general,
+      fallbackTopicId: 'caller-topic',
+      fallbackAudioSignature: null,
+    );
+    expect(cleared.topicId, 'caller-topic');
+    expect(cleared.audioSignature, isNull);
+
+    final stored = TopicNote.parse(note.encode(), 1);
+    expect(stored.topicId, 'caller-topic');
+    expect(stored.audioSignature, 'caller-sig');
   });
 
   test('一般主题模板解析主要想法、与此前笔记的变化、疑问、联想、待办与仅明确表达的结论', () {
@@ -250,7 +304,11 @@ void main() {
       ..writeAsBytesSync(wavBytes([9, 10, 11, 12]));
 
     final calls = <({String model, String instruction, String source})>[];
-    final service = _CallbackAnalysisService((model, instruction, source) async {
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
       calls.add((model: model, instruction: instruction, source: source));
       if (instruction.contains('《思考，快与慢》')) {
         return jsonEncode({
@@ -321,19 +379,19 @@ void main() {
     await store.placeRetrieved(keyB);
     expect(store.isPending(keyB), isTrue);
     controller.rememberTranscript(fileB.path, '待归类录音的转写内容，讨论产品核心观点A与理由A。');
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    await controller.settleTopicNoteWork();
     expect(calls, isEmpty);
 
     // 2. 不归主题录音完成转写：不自动触发
     await store.removeFromTopic(keyC);
     controller.rememberTranscript(fileC.path, '不归主题的普通录音转写。');
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    await controller.settleTopicNoteWork();
     expect(calls, isEmpty);
 
     // 3. 已归入主题的录音完成转写：自动用 qwen3.8-flash 生成一次笔记
     await store.moveRecording(keyA, bookTopic.id);
     controller.rememberTranscript(fileA.path, '今天读到第18页讲到直觉偏差。');
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await controller.settleTopicNoteWork();
     expect(calls, hasLength(1));
     expect(calls.single.model, 'qwen3.8-flash');
     final noteResultA = analysis.results[TopicNote.slotKey(keyA)];
@@ -345,7 +403,7 @@ void main() {
 
     // 4. 待归类且已有转写的录音被归入主题：自动触发一次生成
     await store.moveRecording(keyB, generalTopic.id);
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await controller.settleTopicNoteWork();
     expect(calls, hasLength(2));
     final noteResultB = analysis.results[TopicNote.slotKey(keyB)];
     expect(noteResultB, isNotNull);
@@ -353,7 +411,7 @@ void main() {
 
     // 5. 从主题 A 移到主题 B：只标过期，不自动重跑计费
     await store.moveRecording(keyA, generalTopic.id);
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await controller.settleTopicNoteWork();
     expect(calls, hasLength(2));
     expect(controller.isTopicNoteStale(refA), isTrue);
   });
@@ -369,7 +427,11 @@ void main() {
 
     var calls = 0;
     var failChunk2 = false;
-    final service = _CallbackAnalysisService((model, instruction, source) async {
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
       calls++;
       if (failChunk2 && source.startsWith('[S2] ')) {
         throw const HttpException('网络波动');
@@ -413,13 +475,13 @@ void main() {
     );
     await store.moveRecording(key, topic.id);
     controller.rememberTranscript(audioFile.path, '第一版研究录音转写内容。');
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await controller.settleTopicNoteWork();
     expect(calls, 1);
 
     // 重复收到相同转写完成通知或再次 assign 同一主题：不重复计费
     controller.rememberTranscript(audioFile.path, '第一版研究录音转写内容。');
     await store.moveRecording(key, topic.id);
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await controller.settleTopicNoteWork();
     expect(calls, 1);
 
     // 模拟应用重启恢复：已有最新笔记时启动不重跑
@@ -447,13 +509,14 @@ void main() {
       const EngineConfig(apiKey: 'sk-test'),
     );
     controllerRestarted.rememberTranscript(audioFile.path, '第一版研究录音转写内容。');
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await controllerRestarted.settleTopicNoteWork();
     expect(calls, 1);
 
     // 录音音频变化后：仅标过期，不自动重跑
     audioFile.writeAsBytesSync(wavBytes([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    await controllerRestarted.refreshCachedAudioVersion(ref, force: true);
     expect(controllerRestarted.isTopicNoteStale(ref), isTrue);
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    await controllerRestarted.settleTopicNoteWork();
     expect(calls, 1);
 
     // 长转写分段断点续跑：第 2 段失败后重试复用第 1 段结果
@@ -462,19 +525,394 @@ void main() {
         '${List.filled(350, '乙段内容讨论验证路径。').join()}';
     failChunk2 = true;
     controllerRestarted.rememberTranscript(audioFile.path, longText);
-    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await controllerRestarted.settleTopicNoteWork();
     // chunk 1 成功 (calls=2)，chunk 2 失败 (calls=3)
     expect(calls, 3);
-    expect(
-      analysisRestarted.errors[TopicNote.slotKey(key)],
-      isNotNull,
-    );
+    expect(analysisRestarted.errors[TopicNote.slotKey(key)], isNotNull);
 
     failChunk2 = false;
     await controllerRestarted.generateTopicNote(ref);
     // 仅重跑 chunk 2 (calls=4) + merge (calls=5)，不重跑 chunk 1
     expect(calls, 5);
     expect(analysisRestarted.errors[TopicNote.slotKey(key)], isNull);
+  });
+
+  test('启动时加载已有主题归属不会把迁移笔记或尚无笔记的录音重新生成', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-cold-');
+    addTearDown(() => dir.delete(recursive: true));
+    final topicsFile = File('${dir.path}/topics.json');
+    const migratedId = 1760004101;
+    const plainId = 1760004102;
+    const migratedKey = 'file:$migratedId';
+    const plainKey = 'file:$plainId';
+    const textMigrated = '迁移前已经归入旧主题的录音转写。';
+    const textPlain = '已经归入主题但还没有笔记的录音转写。';
+
+    final bootstrap = TopicStore(
+      file: topicsFile,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await bootstrap.load();
+    final oldTopic = await bootstrap.createTopic(
+      title: '旧主题',
+      kind: TopicKind.general,
+    );
+    final newTopic = await bootstrap.createTopic(
+      title: '新主题',
+      kind: TopicKind.general,
+    );
+    final plainTopic = await bootstrap.createTopic(
+      title: '已归主题',
+      kind: TopicKind.general,
+    );
+    await bootstrap.moveRecording(migratedKey, oldTopic.id);
+    await bootstrap.moveRecording(migratedKey, newTopic.id);
+    await bootstrap.moveRecording(plainKey, plainTopic.id);
+    bootstrap.dispose();
+
+    var calls = 0;
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      calls++;
+      return _generalNoteJson('不应在启动时生成');
+    });
+    final migratedNote = TopicNote(
+      kind: TopicKind.general,
+      topicId: oldTopic.id,
+      overview: '迁移前写下的笔记',
+      ideas: const [
+        TopicIdea(text: '旧想法', reason: '旧理由', sources: ['S1']),
+      ],
+    );
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    analysis.results[TopicNote.slotKey(migratedKey)] = AnalysisResult(
+      text: migratedNote.encode(),
+      sourceHash: analysisFingerprint(textMigrated),
+      model: TopicNote.defaultModel,
+      instruction: '已保存',
+      sources: const ['s1'],
+      createdAt: DateTime(2026, 10, 16),
+    );
+
+    final coldStore = TopicStore(
+      file: topicsFile,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    final controller = _InMemoryUiController(
+      topicStore: coldStore,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    controller.transcriptsByFileId[migratedId] = textMigrated;
+    controller.transcriptsByFileId[plainId] = textPlain;
+    await controller.settleTopicNoteWork();
+    expect(calls, 0);
+    expect(
+      TopicNote.parse(
+        analysis.results[TopicNote.slotKey(migratedKey)]!.text,
+        1,
+      ).topicId,
+      oldTopic.id,
+    );
+    expect(analysis.results[TopicNote.slotKey(plainKey)], isNull);
+  });
+
+  test('生成主题笔记时写入的音频版本等于 audioVersion', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-ver-');
+    addTearDown(() => dir.delete(recursive: true));
+    final audioFile = File('${dir.path}/1760004201.wav')
+      ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    final ref = RecordingReference(fileId: 1760004201, path: audioFile.path);
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      return _generalNoteJson('带音频版本的笔记');
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    final topic = await store.createTopic(title: '版本', kind: TopicKind.general);
+    await store.moveRecording(controller.analysisKey(ref), topic.id);
+    controller.rememberTranscript(audioFile.path, '这段转写用来生成带音频版本的笔记。');
+    await controller.settleTopicNoteWork();
+    final parsed = TopicNote.parse(
+      analysis.results[TopicNote.slotKey(controller.analysisKey(ref))]!.text,
+      1,
+    );
+    expect(parsed.audioSignature, await audioVersion(audioFile.path));
+  });
+
+  testWidgets('重建主题笔记面板不读取音频文件，版本变化后才标过期', (tester) async {
+    final dir = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('koe-topic-notes-stale-'),
+    ))!;
+    addTearDown(() => dir.delete(recursive: true));
+    final audioFile = File('${dir.path}/1760004202.wav')
+      ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    final ref = RecordingReference(fileId: 1760004202, path: audioFile.path);
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      return _generalNoteJson('面板里的笔记');
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    final topic = await store.createTopic(title: '面板', kind: TopicKind.general);
+    const transcript = '这段转写显示在主题笔记面板里。';
+    final version = (await tester.runAsync(() => audioVersion(audioFile.path)))!;
+    controller.transcriptsByPath[audioFile.path] = transcript;
+    controller.transcriptsByFileId[ref.fileId!] = transcript;
+    controller.localPathsByFileId[ref.fileId!] = audioFile.path;
+    final note = TopicNote(
+      kind: TopicKind.general,
+      topicId: topic.id,
+      overview: '面板里的笔记',
+      audioSignature: version,
+      ideas: const [
+        TopicIdea(text: '核心观点', reason: '因为如此', sources: ['S1']),
+      ],
+    );
+    analysis.results[TopicNote.slotKey(controller.analysisKey(ref))] =
+        AnalysisResult(
+          text: note.encode(),
+          sourceHash: analysisFingerprint(transcript),
+          model: TopicNote.defaultModel,
+          instruction: '已保存',
+          sources: const ['s1'],
+          createdAt: DateTime(2026, 10, 16),
+        );
+    await tester.runAsync(
+      () => controller.refreshCachedAudioVersion(ref, force: true),
+    );
+
+    Future<void> showPanel() {
+      return tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: controller,
+          child: MaterialApp(
+            home: Scaffold(
+              body: TopicNotePanel(controller: controller, reference: ref),
+            ),
+          ),
+        ),
+      );
+    }
+
+    await showPanel();
+    await tester.pump();
+    expect(find.textContaining('可能已过期'), findsNothing);
+
+    audioFile.writeAsBytesSync(wavBytes([9, 8, 7, 6, 5]));
+    await showPanel();
+    await tester.pump();
+    expect(find.textContaining('可能已过期'), findsNothing);
+
+    await tester.runAsync(
+      () => controller.refreshCachedAudioVersion(ref, force: true),
+    );
+    await tester.pump();
+    expect(find.textContaining('原文或所属主题已变化，当前笔记可能已过期'), findsOneWidget);
+  });
+
+  testWidgets('已有笔记且出错时重试会先确认覆盖，取消则不生成', (tester) async {
+    const ref = RecordingReference(fileId: 1760006101, path: '/1760006101.wav');
+    var calls = 0;
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      calls++;
+      return _generalNoteJson('重试生成的笔记');
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    final key = controller.analysisKey(ref);
+    final topic = await store.createTopic(
+      title: '产品思考',
+      kind: TopicKind.general,
+    );
+    await store.moveRecording(key, topic.id);
+    await _pumpUntilTopicNotesIdle(tester, controller);
+    const transcript = '已有笔记的录音转写，讨论定价策略。';
+    controller.transcriptsByPath[ref.path!] = transcript;
+    controller.transcriptsByFileId[ref.fileId!] = transcript;
+    final note = TopicNote(
+      kind: TopicKind.general,
+      topicId: topic.id,
+      overview: '用户改过的概要',
+      ideas: const [
+        TopicIdea(text: '保留这条', reason: '手动留下的', sources: ['S1']),
+      ],
+    );
+    analysis.results[TopicNote.slotKey(key)] = AnalysisResult(
+      text: note.encode(),
+      sourceHash: analysisFingerprint(transcript),
+      model: TopicNote.defaultModel,
+      instruction: '已保存',
+      sources: const ['s1'],
+      createdAt: DateTime(2026, 10, 16),
+    );
+    analysis.errors[TopicNote.slotKey(key)] = '生成失败';
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: MaterialApp(
+          home: Scaffold(
+            body: TopicNotePanel(controller: controller, reference: ref),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('用户改过的概要'), findsOneWidget);
+    await tester.tap(find.text('重试'));
+    await tester.pump();
+    expect(find.text('重新生成会覆盖当前内容（包括手动修改）。'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await _pumpUntilTopicNotesIdle(tester, controller);
+    expect(calls, 0);
+    expect(find.text('用户改过的概要'), findsOneWidget);
+  });
+
+  testWidgets('引用匹配不到原文时不跳转并提示未能定位原文', (tester) async {
+    const ref = RecordingReference(fileId: 1760005101, path: '/1760005101.wav');
+    var jumps = 0;
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(
+      inMemory: true,
+      service: _CallbackAnalysisService((model, instruction, source) async {
+        return _generalNoteJson('不会用到');
+      }),
+    );
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    const transcript = '第一段无关内容。\n\n第二段也无关。';
+    controller.transcriptsByPath[ref.path!] = transcript;
+    controller.transcriptsByFileId[ref.fileId!] = transcript;
+    final note = TopicNote(
+      kind: TopicKind.general,
+      topicId: 'topic-missing',
+      overview: '无法对上原文的笔记',
+      ideas: const [
+        TopicIdea(text: '完全不存在的句子xyz', reason: '对不上', sources: ['S1']),
+      ],
+    );
+    analysis.results[TopicNote.slotKey(
+      controller.analysisKey(ref),
+    )] = AnalysisResult(
+      text: note.encode(),
+      sourceHash: analysisFingerprint(transcript),
+      model: TopicNote.defaultModel,
+      instruction: '已保存',
+      sources: const ['s1'],
+      createdAt: DateTime(2026, 10, 16),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: MaterialApp(
+          home: Scaffold(
+            body: TopicNotePanel(
+              controller: controller,
+              reference: ref,
+              onSelectParagraph: (_) => jumps++,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('topic-note-source-S1')));
+    await tester.pump();
+    expect(jumps, 0);
+    expect(find.text('未能定位原文'), findsOneWidget);
+    expect(find.byKey(const ValueKey('highlighted-paragraph-0')), findsNothing);
+  });
+
+  test('生成是否写完要等在途任务空闲，而不是固定等待几十毫秒', () async {
+    final release = Completer<void>();
+    addTearDown(() {
+      if (!release.isCompleted) release.complete();
+    });
+    var calls = 0;
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      calls++;
+      await release.future;
+      return _generalNoteJson('慢生成');
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    const ref = RecordingReference(fileId: 1760007101, path: '/1760007101.wav');
+    final topic = await store.createTopic(title: '慢', kind: TopicKind.general);
+    await store.moveRecording(controller.analysisKey(ref), topic.id);
+    controller.rememberTranscript(ref.path!, '慢生成用的转写内容。');
+    expect(
+      analysis.results[TopicNote.slotKey(controller.analysisKey(ref))],
+      isNull,
+    );
+    release.complete();
+    await controller.settleTopicNoteWork();
+    expect(calls, 1);
+    expect(
+      analysis.results[TopicNote.slotKey(controller.analysisKey(ref))],
+      isNotNull,
+    );
   });
 
   testWidgets('笔记面板支持编辑、重生成覆盖确认，并可点击引用跳回录音详情对应原段高亮', (tester) async {
@@ -486,7 +924,11 @@ void main() {
         '第三段：后面还要再去查一下原书附录里的实验数据。';
 
     var completionCalls = 0;
-    final service = _CallbackAnalysisService((model, instruction, source) async {
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
       completionCalls++;
       return jsonEncode({
         'overview': '第 $completionCalls 次生成的读书笔记',
@@ -534,8 +976,7 @@ void main() {
     );
     await store.moveRecording(key, bookTopic.id);
     controller.rememberTranscript(ref.path!, transcript);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await _pumpUntilTopicNotesIdle(tester, controller);
     expect(completionCalls, 1);
 
     await tester.pumpWidget(
@@ -543,10 +984,7 @@ void main() {
         value: controller,
         child: MaterialApp(
           home: Scaffold(
-            body: TopicNotePanel(
-              controller: controller,
-              reference: ref,
-            ),
+            body: TopicNotePanel(controller: controller, reference: ref),
           ),
         ),
       ),
@@ -560,25 +998,21 @@ void main() {
     // 编辑并保存笔记
     await tester.tap(find.text('编辑'));
     await tester.pump();
-    final overviewField = find.byKey(const ValueKey('topic-note-edit-overview'));
+    final overviewField = find.byKey(
+      const ValueKey('topic-note-edit-overview'),
+    );
     expect(overviewField, findsOneWidget);
     await tester.enterText(overviewField, '手动修订后的读书笔记概要');
     await tester.tap(find.text('保存'));
     await tester.pump();
 
     expect(find.text('手动修订后的读书笔记概要'), findsOneWidget);
-    expect(
-      analysis.results[TopicNote.slotKey(key)]!.editedAt,
-      isNotNull,
-    );
+    expect(analysis.results[TopicNote.slotKey(key)]!.editedAt, isNotNull);
 
     // 点击重生成：弹出覆盖确认，取消不调用，确认才重新生成
     await tester.tap(find.text('重生成'));
     await tester.pump();
-    expect(
-      find.text('重新生成会覆盖当前内容（包括手动修改）。'),
-      findsOneWidget,
-    );
+    expect(find.text('重新生成会覆盖当前内容（包括手动修改）。'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await tester.pump();
     expect(completionCalls, 1);
@@ -586,8 +1020,7 @@ void main() {
     await tester.tap(find.text('重生成'));
     await tester.pump();
     await tester.tap(find.widgetWithText(TextButton, '重生成'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await _pumpUntilTopicNotesIdle(tester, controller);
     expect(completionCalls, 2);
     expect(find.textContaining('第 2 次生成的读书笔记'), findsOneWidget);
 
@@ -595,9 +1028,7 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider<RecorderController>.value(
         value: controller,
-        child: const MaterialApp(
-          home: RecordingDetailScreen(reference: ref),
-        ),
+        child: const MaterialApp(home: RecordingDetailScreen(reference: ref)),
       ),
     );
     await tester.pump();
@@ -620,6 +1051,32 @@ void main() {
   });
 }
 
+Future<void> _pumpUntilTopicNotesIdle(
+  WidgetTester tester,
+  RecorderController controller,
+) async {
+  for (var i = 0; i < 30; i++) {
+    await tester.pump();
+    if (!controller.topicNoteWorkPending) return;
+  }
+  expect(controller.topicNoteWorkPending, isFalse);
+}
+
+String _generalNoteJson(String overview) => jsonEncode({
+  'overview': overview,
+  'ideas': [
+    {
+      'text': '核心观点',
+      'reason': '因为如此',
+      'sources': ['S1'],
+    },
+  ],
+  'changes': [],
+  'questions': [],
+  'associations': [],
+  'todos': [],
+});
+
 class _InMemoryUiController extends RecorderController {
   _InMemoryUiController({
     required super.topicStore,
@@ -637,11 +1094,8 @@ class _InMemoryUiController extends RecorderController {
 class _CallbackAnalysisService implements AnalysisService {
   _CallbackAnalysisService(this._handler);
 
-  final Future<String> Function(
-    String model,
-    String instruction,
-    String source,
-  ) _handler;
+  final Future<String> Function(String model, String instruction, String source)
+  _handler;
 
   @override
   Future<String> generate({

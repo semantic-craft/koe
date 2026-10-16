@@ -1,6 +1,5 @@
 import '../platform/credential_store.dart';
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -70,6 +69,8 @@ class RecorderController extends ChangeNotifier {
   final RecordingAnalysis? _analysisOverride;
   final Map<String, String> _transcriptPathsByKey = {};
   Map<String, TopicPlacement> _observedPlacements = const {};
+  bool _topicsObserved = false;
+  final Map<String, String> _audioVersions = {};
   late final AnalysisService _topicRecommender =
       switch (_topicRecommendationOverride) {
         final QwenAnalysisService qwen when !qwen.isTopicAssist =>
@@ -80,37 +81,25 @@ class RecorderController extends ChangeNotifier {
   final AnalysisService? _topicRecommendationOverride;
   final Map<String, Future<void>> _topicAssistTasks = {};
   final Map<String, _TopicAssistLatest> _topicAssistLatest = {};
+  final Set<Future<void>> _topicNoteInflight = <Future<void>>{};
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
   String recordingKeyFor(RecordingReference ref) => _referenceKey(ref);
   bool recordingAudioChanged(RecordingReference ref) =>
       _fileJobs.jobs[_referenceKey(ref)]?.audioChanged == true;
 
-  String? _audioSignatureForKey(String key, {String? pathHint}) {
-    String? resolvedPath = pathHint ?? _transcriptPathsByKey[key];
-    if (resolvedPath == null) {
-      if (key.startsWith('file:')) {
-        final id = int.tryParse(key.substring(5));
-        if (id != null) {
-          resolvedPath = localPathsByFileId[id];
-          if (resolvedPath == null) {
-            for (final candidate in exportedPaths) {
-              if (fileIdFromPath(candidate) == id) {
-                resolvedPath = candidate;
-                break;
-              }
-            }
-          }
-        }
-      } else if (key.startsWith('path:')) {
-        resolvedPath = key.substring(5);
-      }
-    }
-    if (resolvedPath == null || resolvedPath.isEmpty) return null;
+  String? _audioPathFor(RecordingReference ref) {
+    final path = recordingView(ref).path ?? ref.path;
+    if (path == null || path.isEmpty) return null;
+    return path;
+  }
+
+  /// Chunked #13 digest. Missing files return null without reading bytes.
+  Future<String?> _topicNoteAudioVersion(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    if (!File(path).existsSync()) return null;
     try {
-      final file = File(resolvedPath);
-      if (!file.existsSync()) return null;
-      return analysisFingerprint(base64Encode(file.readAsBytesSync()));
-    } catch (_) {
+      return await audioVersion(path);
+    } on AudioVersionException {
       return null;
     }
   }
@@ -168,19 +157,75 @@ class RecorderController extends ChangeNotifier {
         parsed.topicId != topic.id) {
       return true;
     }
-    if (parsed.audioSignature != null) {
-      final currentSig = _audioSignatureForKey(
-        key,
-        pathHint: ref.path ?? view.path,
-      );
-      if (currentSig != null && currentSig != parsed.audioSignature) {
-        return true;
-      }
+    final cachedVersion = _audioVersions[key];
+    if (parsed.audioSignature != null &&
+        cachedVersion != null &&
+        cachedVersion != parsed.audioSignature) {
+      return true;
     }
     return false;
   }
 
-  Future<void> generateTopicNote(RecordingReference ref) async {
+  Future<void> generateTopicNote(RecordingReference ref) {
+    final task = _runGenerateTopicNote(ref);
+    _trackTopicNote(task);
+    return task;
+  }
+
+  /// Recomputes the cached #13 audio version. Build paths must not call this.
+  /// When [force] is false, a version already stored for this recording is kept.
+  Future<void> refreshCachedAudioVersion(
+    RecordingReference ref, {
+    bool force = false,
+  }) {
+    final task = _refreshCachedAudioVersion(ref, force: force);
+    _trackTopicNote(task);
+    return task;
+  }
+
+  Future<void> _refreshCachedAudioVersion(
+    RecordingReference ref, {
+    required bool force,
+  }) async {
+    final key = _referenceKey(ref);
+    if (!force && _audioVersions.containsKey(key)) return;
+    final version = await _topicNoteAudioVersion(_audioPathFor(ref));
+    if (version == null || _audioVersions[key] == version) return;
+    _audioVersions[key] = version;
+    if (!_disposed) notifyListeners();
+  }
+
+  void _trackTopicNote(Future<void> task) {
+    _topicNoteInflight.add(task);
+    task.whenComplete(() => _topicNoteInflight.remove(task));
+  }
+
+  /// True while a topic-note generation or refresh started by the controller
+  /// is still running. Widget tests pump until this is false.
+  @visibleForTesting
+  bool get topicNoteWorkPending => _topicNoteInflight.isNotEmpty;
+
+  /// Waits until startup loads and every in-flight topic-note task has
+  /// finished. "Must not call" assertions have to use this, not a fixed delay.
+  @visibleForTesting
+  Future<void> settleTopicNoteWork() async {
+    await Future.wait([_settingsLoaded, _transcriptsLoaded, _topicsLoaded]);
+    await Future<void>.value();
+    var spins = 0;
+    while (_topicNoteInflight.isNotEmpty) {
+      if (++spins > 30) {
+        throw StateError('主题笔记任务没有结束');
+      }
+      final pending = List<Future<void>>.of(_topicNoteInflight);
+      try {
+        await Future.wait(pending);
+      } finally {
+        _topicNoteInflight.removeAll(pending);
+      }
+    }
+  }
+
+  Future<void> _runGenerateTopicNote(RecordingReference ref) async {
     if (!topicsEnabled) return;
     await Future.wait([
       _settingsLoaded,
@@ -196,10 +241,8 @@ class RecorderController extends ChangeNotifier {
     final source = view.text.trim();
     if (source.isEmpty) return;
     final priorNotes = _priorTopicNotes(topic.id, key);
-    final audioSig = _audioSignatureForKey(
-      key,
-      pathHint: view.path ?? ref.path,
-    );
+    final audioSig = await _topicNoteAudioVersion(_audioPathFor(ref));
+    if (audioSig != null) _audioVersions[key] = audioSig;
     await analysis.run(
       recording: key,
       source: source,
@@ -218,6 +261,15 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<void> _maybeAutoGenerateTopicNoteForKey(
+    String key, {
+    String? pathHint,
+  }) {
+    final task = _runMaybeAutoGenerateTopicNote(key, pathHint: pathHint);
+    _trackTopicNote(task);
+    return task;
+  }
+
+  Future<void> _runMaybeAutoGenerateTopicNote(
     String key, {
     String? pathHint,
   }) async {
@@ -253,7 +305,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   void _onTopicsChanged() {
-    if (_disposed || !topicsEnabled) return;
+    if (_disposed || !topicsEnabled || !_topicsObserved) return;
     final current = topics.placements;
     final keys = <String>{..._observedPlacements.keys, ...current.keys};
     final newlyAssigned = <String>[];
@@ -484,17 +536,23 @@ class RecorderController extends ChangeNotifier {
         TopicStore(inMemory: !loadPersistedState || !this.topicsEnabled);
     _topicsLoaded = this.topicsEnabled ? topics.load() : Future<void>.value();
     if (this.topicsEnabled) {
-      _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
       topics.addListener(_onTopicsChanged);
-      unawaited(
-        _topicsLoaded.then((_) {
-          if (!_disposed) {
+      if (topics.loaded) {
+        _observedPlacements = Map<String, TopicPlacement>.from(
+          topics.placements,
+        );
+        _topicsObserved = true;
+      } else {
+        unawaited(
+          _topicsLoaded.then((_) {
+            if (_disposed) return;
             _observedPlacements = Map<String, TopicPlacement>.from(
               topics.placements,
             );
-          }
-        }),
-      );
+            _topicsObserved = true;
+          }),
+        );
+      }
     }
     if (this.topicsEnabled && loadPersistedState) {
       _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
@@ -2746,6 +2804,7 @@ class RecorderController extends ChangeNotifier {
         _activeFileJobCompleter = null;
       }
     }
+
     FileJob job;
     try {
       final version = await audioVersion(path);
@@ -4711,15 +4770,8 @@ class RecorderController extends ChangeNotifier {
     await source.rename(targetPath);
     final oldKey = _recordingKey(path: path);
     final newKey = _recordingKey(path: targetPath);
-    await _fileJobs.rename(
-      oldKey,
-      newKey,
-      targetPath,
-    );
-    await topics.renameRecordingKey(
-      oldKey,
-      newKey,
-    );
+    await _fileJobs.rename(oldKey, newKey, targetPath);
+    await topics.renameRecordingKey(oldKey, newKey);
     await analysis.renameRecordingKey(oldKey, newKey);
     if (_transcriptPathsByKey.remove(oldKey) != null) {
       _transcriptPathsByKey[newKey] = targetPath;

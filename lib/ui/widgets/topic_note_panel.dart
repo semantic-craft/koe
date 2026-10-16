@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -27,6 +28,20 @@ class TopicNotePanel extends StatefulWidget {
 class _TopicNotePanelState extends State<TopicNotePanel> {
   final _overviewController = TextEditingController();
   bool _editing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(widget.controller.refreshCachedAudioVersion(widget.reference));
+  }
+
+  @override
+  void didUpdateWidget(TopicNotePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reference.key != widget.reference.key) {
+      unawaited(widget.controller.refreshCachedAudioVersion(widget.reference));
+    }
+  }
 
   @override
   void dispose() {
@@ -121,9 +136,13 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                 itemText: itemText,
                 sourceBlocks: result.sources,
               );
-              if (index >= 0) {
-                widget.onSelectParagraph?.call(index);
+              if (index == null) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('未能定位原文')));
+                return;
               }
+              widget.onSelectParagraph?.call(index);
             },
           ),
       ],
@@ -232,9 +251,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                       tooltip: '复制笔记',
                       icon: const Icon(Icons.copy_outlined),
                       onPressed: () => Clipboard.setData(
-                        ClipboardData(
-                          text: note.export(result!, topic: topic),
-                        ),
+                        ClipboardData(text: note.export(result!, topic: topic)),
                       ),
                     ),
                     IconButton(
@@ -286,9 +303,11 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                       TextButton(
                         onPressed: busy
                             ? null
-                            : () => widget.controller.generateTopicNote(
-                                widget.reference,
-                              ),
+                            : () => note != null
+                                  ? _confirmRegenerate(context)
+                                  : widget.controller.generateTopicNote(
+                                      widget.reference,
+                                    ),
                         child: const Text('重试'),
                       ),
                     ],
@@ -438,11 +457,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                   _buildSimpleSection('联想', note.associations, result),
                   _buildSimpleSection('待办/待查', note.todos, result),
                   if (note.conclusion != null)
-                    _buildSimpleSection(
-                      '倾向的结论',
-                      [note.conclusion!],
-                      result,
-                    ),
+                    _buildSimpleSection('倾向的结论', [note.conclusion!], result),
                 ],
               ],
             ],

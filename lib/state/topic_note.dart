@@ -3,12 +3,10 @@ import 'dart:convert';
 import 'recording_analysis.dart';
 import 'topic_store.dart';
 
+const _omittedAudioSignature = Object();
+
 class TopicExcerpt {
-  const TopicExcerpt({
-    required this.text,
-    required this.sources,
-    this.page,
-  });
+  const TopicExcerpt({required this.text, required this.sources, this.page});
 
   final String text;
   final String? page;
@@ -22,11 +20,7 @@ class TopicExcerpt {
 }
 
 class TopicComment {
-  const TopicComment({
-    required this.text,
-    required this.sources,
-    this.excerpt,
-  });
+  const TopicComment({required this.text, required this.sources, this.excerpt});
 
   final String text;
   final String? excerpt;
@@ -41,11 +35,7 @@ class TopicComment {
 }
 
 class TopicIdea {
-  const TopicIdea({
-    required this.text,
-    required this.sources,
-    this.reason,
-  });
+  const TopicIdea({required this.text, required this.sources, this.reason});
 
   final String text;
   final String? reason;
@@ -144,7 +134,7 @@ class TopicNote {
     TopicKind? fallbackKind,
     String? fallbackTopicId,
     bool? hasPriorNotes,
-    String? fallbackAudioSignature,
+    Object? fallbackAudioSignature = _omittedAudioSignature,
   }) {
     final cleaned = _stripCodeFence(text);
     final dynamic value = jsonDecode(cleaned);
@@ -215,12 +205,18 @@ class TopicNote {
     }
 
     final rawTopicId = value['topicId'];
-    final resolvedTopicId =
-        rawTopicId is String && rawTopicId.trim().isNotEmpty
-            ? rawTopicId.trim()
-            : (fallbackTopicId ?? '');
-    final resolvedAudioSignature =
-        optionalText(value['audioSignature']) ?? fallbackAudioSignature;
+    final resolvedTopicId = fallbackTopicId != null
+        ? fallbackTopicId.trim()
+        : (rawTopicId is String ? rawTopicId.trim() : '');
+    final String? resolvedAudioSignature;
+    if (identical(fallbackAudioSignature, _omittedAudioSignature)) {
+      resolvedAudioSignature = optionalText(value['audioSignature']);
+    } else if (fallbackAudioSignature is String &&
+        fallbackAudioSignature.trim().isNotEmpty) {
+      resolvedAudioSignature = fallbackAudioSignature.trim();
+    } else {
+      resolvedAudioSignature = null;
+    }
 
     final overview = requiredText(value['overview']);
 
@@ -278,8 +274,9 @@ class TopicNote {
     }).toList();
 
     final parsedChanges = parseItems('changes');
-    final changes =
-        hasPriorNotes == false ? const <TopicNoteItem>[] : parsedChanges;
+    final changes = hasPriorNotes == false
+        ? const <TopicNoteItem>[]
+        : parsedChanges;
 
     TopicNoteItem? conclusion;
     final rawConclusion = value['conclusion'];
@@ -364,7 +361,9 @@ class TopicNote {
   }
 
   String export(AnalysisResult result, {Topic? topic}) {
-    final title = topic?.title.trim().isNotEmpty == true ? topic!.title : '主题笔记';
+    final title = topic?.title.trim().isNotEmpty == true
+        ? topic!.title
+        : '主题笔记';
     final lines = <String>['# $title', overview];
     String fmtSources(List<String> s) => s.map((id) => '[$id]').join(' ');
 
@@ -383,8 +382,7 @@ class TopicNote {
         lines.add('未提及');
       } else {
         for (final item in comments) {
-          final paired =
-              item.excerpt == null ? '' : '\n  对应摘录：${item.excerpt}';
+          final paired = item.excerpt == null ? '' : '\n  对应摘录：${item.excerpt}';
           lines.add('- ${item.text}$paired ${fmtSources(item.sources)}');
         }
       }
@@ -434,15 +432,11 @@ class TopicNote {
       }
       if (conclusion != null) {
         lines.add('## 倾向的结论');
-        lines.add(
-          '- ${conclusion!.text} ${fmtSources(conclusion!.sources)}',
-        );
+        lines.add('- ${conclusion!.text} ${fmtSources(conclusion!.sources)}');
       }
     }
 
-    lines.add(
-      '模型：${result.model} · 模板：topic-${kind.name}-v1',
-    );
+    lines.add('模型：${result.model} · 模板：topic-${kind.name}-v1');
     lines.add('生成时间：${result.createdAt.toIso8601String()}');
     if (result.editedAt != null) {
       lines.add('编辑时间：${result.editedAt!.toIso8601String()}');
@@ -471,8 +465,9 @@ String topicNoteInstruction(
   Topic topic, {
   List<TopicNote> priorNotes = const [],
 }) {
-  final authorPart =
-      topic.author.trim().isEmpty ? '' : '（作者：${topic.author.trim()}）';
+  final authorPart = topic.author.trim().isEmpty
+      ? ''
+      : '（作者：${topic.author.trim()}）';
   if (topic.kind == TopicKind.book) {
     return '''生成一本书的当次读书笔记（主题ID:${topic.id}，书名：${topic.title}$authorPart），仅输出 JSON，不要 Markdown 代码围栏。字段严格如下：
 {"overview":"本次概要","excerpts":[{"text":"录音里复述的书中内容","page":"第24页","sources":["S1"]}],"comments":[{"text":"我的评论","excerpt":"配对的摘录原文","sources":["S1"]}],"questions":[{"text":"疑问","sources":["S1"]}],"associations":[{"text":"联想","sources":["S1"]}],"toCheck":[{"text":"待查","sources":["S1"]}]}
@@ -526,14 +521,14 @@ List<String> splitTranscriptParagraphs(String text) {
   return out;
 }
 
-int locateTranscriptParagraph(
+int? locateTranscriptParagraph(
   String transcript,
   List<String> sources, {
   String? itemText,
   List<String>? sourceBlocks,
 }) {
   final paragraphs = splitTranscriptParagraphs(transcript);
-  if (paragraphs.isEmpty) return -1;
+  if (paragraphs.isEmpty) return null;
 
   final blocks = sourceBlocks ?? analysisSourceBlocks(transcript);
   final candidateIndices = <int>[];
@@ -552,34 +547,22 @@ int locateTranscriptParagraph(
   final searchPool = candidateIndices.isNotEmpty
       ? candidateIndices
       : List<int>.generate(paragraphs.length, (i) => i);
+  if (searchPool.isEmpty) return null;
 
   final needle = _normalizeForMatch(itemText ?? '');
-  if (needle.isNotEmpty) {
-    var bestIndex = searchPool.first;
-    var bestScore = -1;
-    for (final idx in searchPool) {
-      final hay = _normalizeForMatch(paragraphs[idx]);
-      final score = _matchScore(hay, needle);
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = idx;
-      }
-    }
-    if (bestScore > 0) return bestIndex;
-  }
-
-  if (candidateIndices.isNotEmpty) {
-    return candidateIndices.first;
-  }
-  // Fallback when source count exceeded actual blocks (e.g. synthetic test sources)
-  for (final id in sources) {
-    final match = RegExp(r'^S([1-9]\d*)$').firstMatch(id);
-    if (match != null) {
-      final idx = int.parse(match.group(1)!) - 1;
-      if (idx >= 0 && idx < paragraphs.length) return idx;
+  if (needle.isEmpty) return null;
+  var bestIndex = searchPool.first;
+  var bestScore = -1;
+  for (final idx in searchPool) {
+    final hay = _normalizeForMatch(paragraphs[idx]);
+    final score = _matchScore(hay, needle);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = idx;
     }
   }
-  return 0;
+  if (bestScore > 0) return bestIndex;
+  return null;
 }
 
 String _normalizeForMatch(String input) =>
