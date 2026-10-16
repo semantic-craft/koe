@@ -61,13 +61,15 @@ class _MinutesPanelState extends State<MinutesPanel> {
       if (confirmed != true || !mounted) return;
     }
     final source = widget.controller.recordingView(widget.reference).text;
+    final template = manager.requireTemplate(minutesTemplateId);
     await manager.run(
       recording: widget.controller.analysisKey(widget.reference),
       source: source,
       apiKey: widget.controller.analysisApiKey,
       custom: true,
+      templateId: template.id,
       resultSlot: 'minutes',
-      instruction: minutesInstruction,
+      instruction: template.prompt,
       validateResult: validateMinutes,
       currentSource: () =>
           widget.controller.recordingAudioChanged(widget.reference)

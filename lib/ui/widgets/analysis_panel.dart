@@ -21,6 +21,7 @@ class AnalysisPanel extends StatefulWidget {
 
 class _AnalysisPanelState extends State<AnalysisPanel> {
   final instruction = TextEditingController();
+  String selectedTemplateId = summaryTemplateId;
   bool custom = false;
   bool ready = false;
   String? loadError;
@@ -44,15 +45,55 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
     super.dispose();
   }
 
+  PromptTemplate get selectedTemplate =>
+      manager.templateById(selectedTemplateId) ??
+      manager.requireTemplate(summaryTemplateId);
+
+  Future<void> _openTemplateEditor({PromptTemplate? editing}) async {
+    final saved = await showDialog<(String, String)>(
+      context: context,
+      builder: (_) => _TemplateEditorDialog(editing: editing),
+    );
+    if (saved == null || !mounted) return;
+    try {
+      if (editing == null) {
+        final created = await manager.createTemplate(
+          name: saved.$1,
+          prompt: saved.$2,
+        );
+        if (mounted) {
+          setState(() {
+            custom = false;
+            selectedTemplateId = created.id;
+          });
+        }
+      } else {
+        await manager.updateTemplate(
+          editing.id,
+          name: saved.$1,
+          prompt: saved.$2,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
   Future<void> exportAnalysis(AnalysisResult result) async {
     try {
       final contents = result.exportText;
+      final isDefaultSummary =
+          !custom && selectedTemplate.id == summaryTemplateId;
       if (Platform.isIOS) {
         final box = context.findRenderObject() as RenderBox?;
         await SharePlus.instance.share(
           ShareParams(
             text: contents,
-            title: custom ? '录音分析' : '录音摘要',
+            title: isDefaultSummary ? '录音摘要' : '录音分析',
             sharePositionOrigin: box == null
                 ? null
                 : box.localToGlobal(Offset.zero) & box.size,
@@ -60,7 +101,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
         );
       } else {
         final location = await getSaveLocation(
-          suggestedName: custom ? '录音分析.md' : '录音摘要.md',
+          suggestedName: isDefaultSummary ? '录音摘要.md' : '录音分析.md',
         );
         if (location != null) await File(location.path).writeAsString(contents);
       }
@@ -79,16 +120,25 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
     builder: (context, _) {
       final recording = widget.controller.recordingView(widget.reference);
       final recordingKey = widget.controller.analysisKey(widget.reference);
-      final key = RecordingAnalysis.key(recordingKey, custom);
+      final activeTemplate = selectedTemplate;
+      final key = custom
+          ? RecordingAnalysis.key(recordingKey, true)
+          : RecordingAnalysis.slotKey(
+              recordingKey,
+              custom: false,
+              templateId: activeTemplate.id,
+            );
       final result = manager.results[key];
       final busy = manager.busy(key);
       final audioChanged = widget.controller.recordingAudioChanged(
         widget.reference,
       );
-      final stale =
+      final sourceStale =
           result != null &&
           (audioChanged ||
               result.sourceHash != analysisFingerprint(recording.text));
+      final templateStale = result != null && manager.isTemplateStale(result);
+      final stale = sourceStale || templateStale;
       return Scaffold(
         appBar: AppBar(
           title: const Text('摘要与分析'),
@@ -123,8 +173,124 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                   ButtonSegment(value: true, label: Text('自定义分析')),
                 ],
                 selected: {custom},
-                onSelectionChanged: (v) => setState(() => custom = v.first),
+                onSelectionChanged: (v) => setState(() {
+                  custom = v.first;
+                  if (custom && instruction.text.trim().isEmpty) {
+                    final saved =
+                        manager.customInstructions[recordingKey] ??
+                        manager
+                            .results[RecordingAnalysis.key(recordingKey, true)]
+                            ?.instruction;
+                    if (saved != null && saved.isNotEmpty) {
+                      instruction.text = saved;
+                    }
+                  }
+                }),
               ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '提示词模板库',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const ValueKey('create-template'),
+                    onPressed: () => _openTemplateEditor(),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('新建模板'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final tpl in manager.templates)
+                    ChoiceChip(
+                      key: ValueKey('template-chip-${tpl.id}'),
+                      label: Text(tpl.name),
+                      selected: !custom && activeTemplate.id == tpl.id,
+                      onSelected: (_) => setState(() {
+                        custom = false;
+                        selectedTemplateId = tpl.id;
+                      }),
+                    ),
+                ],
+              ),
+              if (!custom) ...[
+                const SizedBox(height: 12),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${activeTemplate.name} · '
+                                '${activeTemplate.builtIn ? '内置模板' : '自定义模板'} '
+                                'v${activeTemplate.version}',
+                                style: Theme.of(context).textTheme.labelLarge,
+                              ),
+                            ),
+                            TextButton(
+                              key: const ValueKey('duplicate-template'),
+                              onPressed: () async {
+                                final copy = await manager.duplicateTemplate(
+                                  activeTemplate.id,
+                                );
+                                if (mounted) {
+                                  setState(() {
+                                    custom = false;
+                                    selectedTemplateId = copy.id;
+                                  });
+                                }
+                              },
+                              child: const Text('复制为自定义'),
+                            ),
+                            if (!activeTemplate.builtIn) ...[
+                              TextButton(
+                                key: const ValueKey('edit-template'),
+                                onPressed: () =>
+                                    _openTemplateEditor(editing: activeTemplate),
+                                child: const Text('编辑模板'),
+                              ),
+                              TextButton(
+                                key: const ValueKey('delete-template'),
+                                onPressed: () async {
+                                  await manager.deleteTemplate(
+                                    activeTemplate.id,
+                                  );
+                                  if (mounted) {
+                                    setState(
+                                      () =>
+                                          selectedTemplateId =
+                                              summaryTemplateId,
+                                    );
+                                  }
+                                },
+                                child: const Text('删除模板'),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          activeTemplate.prompt,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               if (custom)
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
@@ -167,7 +333,8 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                           source: recording.text,
                           apiKey: widget.controller.analysisApiKey,
                           custom: custom,
-                          instruction: instruction.text,
+                          templateId: custom ? null : activeTemplate.id,
+                          instruction: custom ? instruction.text : null,
                           currentSource: () =>
                               widget.controller.recordingAudioChanged(
                                 widget.reference,
@@ -178,7 +345,11 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                                     .text,
                         ),
                   child: Text(
-                    result == null ? (custom ? '开始分析' : '生成摘要') : '重新生成',
+                    result == null
+                        ? (custom || activeTemplate.id != summaryTemplateId
+                              ? '开始分析'
+                              : '生成摘要')
+                        : '重新生成',
                   ),
                 ),
               if (manager.errors[key] != null)
@@ -189,15 +360,18 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
               if (result != null) ...[
                 const Divider(height: 32),
                 if (stale)
-                  const Text(
-                    '原文已更新，这份结果已过期，请重新生成。',
-                    style: TextStyle(color: Colors.orange),
+                  Text(
+                    sourceStale
+                        ? '原文已更新，这份结果已过期，请重新生成。'
+                        : '模板已更新，这份结果已过期，请重新生成。',
+                    style: const TextStyle(color: Colors.orange),
                   ),
                 Text(
                   '${result.model} · ${result.createdAt.toLocal().toString().split('.').first}',
                 ),
                 const SizedBox(height: 12),
-                if (custom) Text('分析要求：${result.instruction}'),
+                if (custom || result.templateId != summaryTemplateId)
+                  Text('分析要求：${result.instruction}'),
                 SelectableText(result.text),
                 Wrap(
                   spacing: 12,
@@ -234,5 +408,99 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
         ),
       );
     },
+  );
+}
+
+class _TemplateEditorDialog extends StatefulWidget {
+  const _TemplateEditorDialog({this.editing});
+  final PromptTemplate? editing;
+
+  @override
+  State<_TemplateEditorDialog> createState() => _TemplateEditorDialogState();
+}
+
+class _TemplateEditorDialogState extends State<_TemplateEditorDialog> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.editing?.name ?? '',
+  );
+  late final TextEditingController _prompt = TextEditingController(
+    text: widget.editing?.prompt ?? '',
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _prompt.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    final prompt = _prompt.text.trim();
+    if (name.isEmpty || name.runes.length > 100) {
+      setState(() => _error = '模板名称需为 1–100 字');
+      return;
+    }
+    if (prompt.isEmpty || prompt.runes.length > 2000) {
+      setState(() => _error = '提示词正文需为 1–2000 字');
+      return;
+    }
+    Navigator.of(context).pop((name, prompt));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.editing == null ? '新建模板' : '编辑模板'),
+    content: SizedBox(
+      width: 480,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              key: const ValueKey('template-name-input'),
+              controller: _name,
+              maxLength: 100,
+              decoration: const InputDecoration(
+                labelText: '模板名称',
+                hintText: '例如：提炼行动项',
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('template-prompt-input'),
+              controller: _prompt,
+              maxLines: 4,
+              maxLength: 2000,
+              decoration: const InputDecoration(
+                labelText: '提示词正文',
+                hintText: '输入希望 AI 执行的整理指令',
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        key: const ValueKey('save-template'),
+        onPressed: _submit,
+        child: const Text('保存'),
+      ),
+    ],
   );
 }
