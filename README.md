@@ -71,7 +71,7 @@ flutter run -d android
 ./scripts/install-macos.sh           # 先退出已安装 App，再构建并安装
 ./scripts/install-macos.sh --skip-build # 安装已有 Release 构建
 
-# macOS release + DMG → dist/soundcore-manager-<version>-macos.dmg
+# macOS release + DMG → dist/koe-<version>-macos.dmg
 ./scripts/build-dmg.sh
 ./scripts/build-dmg.sh --open       # 构建后在 Finder 中显示 DMG
 ./scripts/build-dmg.sh --skip-build # 打包已有的 Release .app
