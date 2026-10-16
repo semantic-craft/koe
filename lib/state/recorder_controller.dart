@@ -2252,7 +2252,12 @@ class RecorderController extends ChangeNotifier {
                 : result.language ?? config.sourceLanguage,
           );
         }
-        await _persistTranscripts(strict: !_fileJobs.inMemory);
+        try {
+          await _persistTranscripts(strict: !_fileJobs.inMemory);
+        } catch (error, stack) {
+          // The paid result is kept in the job; only local storage failed.
+          Error.throwWithStackTrace(_TranscriptSaveFailure(error), stack);
+        }
         job.stage = 'complete';
         job.error = null;
         job.audioChanged = false;
@@ -2269,6 +2274,8 @@ class RecorderController extends ChangeNotifier {
         _recordingErrors[key] =
             error is PlatformException && error.code == 'resources_missing'
             ? '请下载所选录音语言后重试'
+            : error is _TranscriptSaveFailure
+            ? '转写结果未能保存；请检查存储空间后重试'
             : _speechErrorMessage(error);
         job.error = _recordingErrors[key];
         if (job.text != null && job.stage == 'complete') job.stage = 'result';
@@ -4852,4 +4859,13 @@ class _EngineAdapter {
     bool Function()? isCurrent,
   })
   transcribe;
+}
+
+/// Local transcript persistence failed after the cloud result was received.
+class _TranscriptSaveFailure implements Exception {
+  const _TranscriptSaveFailure(this.cause);
+  final Object cause;
+
+  @override
+  String toString() => 'Transcript save failed: $cause';
 }
