@@ -39,7 +39,7 @@ void main() {
       'MACOS_LEGACY_INSTALL_PATH': legacy,
       'MACOS_LEGACY_BACKUP_DIR': backups,
       'MACOS_INSTALL_PATH': target,
-      if (path != null) 'PATH': path,
+      'PATH': ?path,
     },
   );
 
