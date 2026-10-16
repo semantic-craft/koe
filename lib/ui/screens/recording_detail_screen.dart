@@ -14,13 +14,19 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/inline_player.dart';
 import '../widgets/analysis_panel.dart';
+import '../widgets/topic_note_panel.dart';
 import '../recording_navigation.dart';
 import '../widgets/scan_sheet.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
-  const RecordingDetailScreen({super.key, required this.reference});
+  const RecordingDetailScreen({
+    super.key,
+    required this.reference,
+    this.initialHighlightedParagraph,
+  });
 
   final RecordingReference reference;
+  final int? initialHighlightedParagraph;
 
   @override
   State<RecordingDetailScreen> createState() => _RecordingDetailScreenState();
@@ -30,6 +36,22 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   bool _showTranslation = false;
   bool _selectionInitialized = false;
   String? _selectedRecordingLanguage;
+  int? _highlightedParagraph;
+
+  @override
+  void initState() {
+    super.initState();
+    _highlightedParagraph = widget.initialHighlightedParagraph;
+  }
+
+  @override
+  void didUpdateWidget(RecordingDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialHighlightedParagraph !=
+        widget.initialHighlightedParagraph) {
+      _highlightedParagraph = widget.initialHighlightedParagraph;
+    }
+  }
 
   void _notice(String message) {
     if (!mounted) return;
@@ -434,6 +456,38 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           ),
                         ),
                       ),
+                    if (c.topicsEnabled &&
+                        c.topics.topicOf(c.recordingKeyFor(widget.reference)) !=
+                            null &&
+                        source.isNotEmpty &&
+                        !recording.live)
+                      TextButton.icon(
+                        onPressed: () => showModalBottomSheet<void>(
+                          context: context,
+                          isScrollControlled: true,
+                          showDragHandle: true,
+                          builder: (sheetContext) => SafeArea(
+                            child: FractionallySizedBox(
+                              heightFactor: 0.85,
+                              child: TopicNotePanel(
+                                controller: c,
+                                reference: widget.reference,
+                                onSelectParagraph: (index) {
+                                  Navigator.pop(sheetContext);
+                                  if (mounted) {
+                                    setState(() {
+                                      _showTranslation = false;
+                                      _highlightedParagraph = index;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                        icon: const Icon(Icons.menu_book_outlined, size: 18),
+                        label: const Text('主题笔记'),
+                      ),
                     if (source.isNotEmpty && !recording.live)
                       IconButton(
                         tooltip: '摘要与分析',
@@ -512,6 +566,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     live: recording.live,
                     visible:
                         translation == (_showTranslation && hasTranslation),
+                    highlightedParagraph:
+                        translation ? null : _highlightedParagraph,
                     header: !hasReaderHeader || (translation && !hasTranslation)
                         ? null
                         : Column(
@@ -619,11 +675,13 @@ class RecordingTextReader extends StatefulWidget {
     required this.text,
     required this.live,
     this.visible = true,
+    this.highlightedParagraph,
     this.header,
   });
   final String text;
   final bool live;
   final bool visible;
+  final int? highlightedParagraph;
   final Widget? header;
 
   @override
@@ -674,6 +732,25 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
     } else if (!oldWidget.visible && widget.visible) {
       _follow();
     }
+    if (widget.highlightedParagraph != oldWidget.highlightedParagraph &&
+        widget.highlightedParagraph != null) {
+      _scrollToParagraph(widget.highlightedParagraph!);
+    }
+  }
+
+  void _scrollToParagraph(int paragraphIndex) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients || _paragraphs.isEmpty) return;
+      final clamped = paragraphIndex.clamp(0, _paragraphs.length - 1);
+      final maxExtent = _scroll.position.maxScrollExtent;
+      if (maxExtent <= 0 || _paragraphs.length <= 1) return;
+      final ratio = clamped / (_paragraphs.length - 1);
+      _scroll.animateTo(
+        (maxExtent * ratio).clamp(0.0, maxExtent),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _follow([int remaining = 6]) {
@@ -740,14 +817,42 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                         ),
                         child: widget.header != null && index == 0
                             ? widget.header!
-                            : Text(
-                                _paragraphs[index -
-                                    (widget.header == null ? 0 : 1)],
-                                style: const TextStyle(
-                                  fontSize: 17,
-                                  height: 1.85,
-                                  color: AppColors.textPrimary,
-                                ),
+                            : Builder(
+                                builder: (context) {
+                                  final paragraphIndex =
+                                      index - (widget.header == null ? 0 : 1);
+                                  final highlighted =
+                                      paragraphIndex ==
+                                      widget.highlightedParagraph;
+                                  return Container(
+                                    key: highlighted
+                                        ? ValueKey(
+                                            'highlighted-paragraph-$paragraphIndex',
+                                          )
+                                        : ValueKey('paragraph-$paragraphIndex'),
+                                    padding: highlighted
+                                        ? const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 8,
+                                          )
+                                        : EdgeInsets.zero,
+                                    decoration: highlighted
+                                        ? BoxDecoration(
+                                            color: AppColors.bgSubtle,
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                          )
+                                        : null,
+                                    child: Text(
+                                      _paragraphs[paragraphIndex],
+                                      style: const TextStyle(
+                                        fontSize: 17,
+                                        height: 1.85,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                       ),
                     ),

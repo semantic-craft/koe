@@ -1,5 +1,6 @@
 import '../platform/credential_store.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -44,9 +45,11 @@ import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
 import 'topic_store.dart';
+import 'topic_note.dart';
 
 export 'recording.dart';
 export 'topic_store.dart';
+export 'topic_note.dart';
 export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
@@ -58,9 +61,199 @@ class RecorderController extends ChangeNotifier {
         service: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
       );
   final RecordingAnalysis? _analysisOverride;
+  final Map<String, String> _transcriptPathsByKey = {};
+  Map<String, TopicPlacement> _observedPlacements = const {};
+
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
+  String recordingKeyFor(RecordingReference ref) => _referenceKey(ref);
   bool recordingAudioChanged(RecordingReference ref) =>
       _fileJobs.jobs[_referenceKey(ref)]?.audioChanged == true;
+
+  String? _audioSignatureForKey(String key, {String? pathHint}) {
+    String? resolvedPath = pathHint ?? _transcriptPathsByKey[key];
+    if (resolvedPath == null) {
+      if (key.startsWith('file:')) {
+        final id = int.tryParse(key.substring(5));
+        if (id != null) {
+          resolvedPath = localPathsByFileId[id];
+          if (resolvedPath == null) {
+            for (final candidate in exportedPaths) {
+              if (fileIdFromPath(candidate) == id) {
+                resolvedPath = candidate;
+                break;
+              }
+            }
+          }
+        }
+      } else if (key.startsWith('path:')) {
+        resolvedPath = key.substring(5);
+      }
+    }
+    if (resolvedPath == null || resolvedPath.isEmpty) return null;
+    try {
+      final file = File(resolvedPath);
+      if (!file.existsSync()) return null;
+      return analysisFingerprint(base64Encode(file.readAsBytesSync()));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  RecordingReference _referenceFromKey(String key, {String? pathHint}) {
+    final resolvedPath = pathHint ?? _transcriptPathsByKey[key];
+    if (key.startsWith('file:')) {
+      final id = int.tryParse(key.substring(5));
+      if (id != null) {
+        return RecordingReference(
+          fileId: id,
+          path: resolvedPath ?? localPathsByFileId[id],
+        );
+      }
+    }
+    if (key.startsWith('path:')) {
+      return RecordingReference(path: resolvedPath ?? key.substring(5));
+    }
+    return RecordingReference(path: resolvedPath);
+  }
+
+  List<TopicNote> _priorTopicNotes(String topicId, String excludeRecordingKey) {
+    final notes = <TopicNote>[];
+    for (final otherKey in topics.recordingsIn(topicId)) {
+      if (otherKey == excludeRecordingKey) continue;
+      final res = analysis.results[TopicNote.slotKey(otherKey)];
+      if (res == null) continue;
+      final parsed = TopicNote.tryParse(
+        res.text,
+        res.sources.isEmpty ? 1 : res.sources.length,
+        fallbackTopicId: topicId,
+      );
+      if (parsed != null) notes.add(parsed);
+    }
+    return notes;
+  }
+
+  bool isTopicNoteStale(RecordingReference ref) {
+    final key = _referenceKey(ref);
+    final slotKey = TopicNote.slotKey(key);
+    final result = analysis.results[slotKey];
+    if (result == null) return false;
+    if (recordingAudioChanged(ref)) return true;
+    final view = recordingView(ref);
+    final source = view.text.trim();
+    if (source.isNotEmpty && result.staleFor(source)) return true;
+    final parsed = TopicNote.tryParse(
+      result.text,
+      result.sources.isEmpty ? 1 : result.sources.length,
+    );
+    if (parsed == null) return true;
+    final topic = topics.topicOf(key);
+    if (topic != null &&
+        parsed.topicId.isNotEmpty &&
+        parsed.topicId != topic.id) {
+      return true;
+    }
+    if (parsed.audioSignature != null) {
+      final currentSig = _audioSignatureForKey(
+        key,
+        pathHint: ref.path ?? view.path,
+      );
+      if (currentSig != null && currentSig != parsed.audioSignature) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> generateTopicNote(RecordingReference ref) async {
+    if (!topicsEnabled) return;
+    await Future.wait([
+      _settingsLoaded,
+      _transcriptsLoaded,
+      _topicsLoaded,
+      analysis.load(),
+    ]);
+    if (_disposed || !topicsEnabled) return;
+    final key = _referenceKey(ref);
+    final topic = topics.topicOf(key);
+    if (topic == null) return;
+    final view = recordingView(ref);
+    final source = view.text.trim();
+    if (source.isEmpty) return;
+    final priorNotes = _priorTopicNotes(topic.id, key);
+    final audioSig = _audioSignatureForKey(
+      key,
+      pathHint: view.path ?? ref.path,
+    );
+    await analysis.run(
+      recording: key,
+      source: source,
+      apiKey: analysisApiKey,
+      custom: true,
+      resultSlot: TopicNote.slot,
+      modelOverride: TopicNote.defaultModel,
+      instruction: topicNoteInstruction(topic, priorNotes: priorNotes),
+      validateResult: validateTopicNote(
+        topic,
+        hasPriorNotes: priorNotes.isNotEmpty,
+        audioSignature: audioSig,
+      ),
+      currentSource: () => recordingView(ref).text,
+    );
+  }
+
+  Future<void> _maybeAutoGenerateTopicNoteForKey(
+    String key, {
+    String? pathHint,
+  }) async {
+    if (!topicsEnabled) return;
+    await Future.wait([
+      _settingsLoaded,
+      _transcriptsLoaded,
+      _topicsLoaded,
+      analysis.load(),
+    ]);
+    if (_disposed || !topicsEnabled) return;
+    final topic = topics.topicOf(key);
+    if (topic == null) return;
+    final ref = _referenceFromKey(key, pathHint: pathHint);
+    if (recordingAudioChanged(ref)) return;
+    final view = recordingView(ref);
+    final source = view.text.trim();
+    if (source.isEmpty || analysisApiKey.trim().isEmpty) return;
+    final slotKey = TopicNote.slotKey(key);
+    if (analysis.busy(slotKey)) return;
+    final existing = analysis.results[slotKey];
+    if (existing != null && !existing.staleFor(source)) {
+      final parsed = TopicNote.tryParse(
+        existing.text,
+        existing.sources.isEmpty ? 1 : existing.sources.length,
+      );
+      if (parsed != null &&
+          (parsed.topicId.isEmpty || parsed.topicId == topic.id)) {
+        return;
+      }
+    }
+    await generateTopicNote(ref);
+  }
+
+  void _onTopicsChanged() {
+    if (_disposed || !topicsEnabled) return;
+    final current = topics.placements;
+    final keys = <String>{..._observedPlacements.keys, ...current.keys};
+    final newlyAssigned = <String>[];
+    for (final key in keys) {
+      final prev = _observedPlacements[key];
+      final next = current[key];
+      if (prev is! InTopicPlacement && next is InTopicPlacement) {
+        newlyAssigned.add(key);
+      }
+    }
+    _observedPlacements = Map<String, TopicPlacement>.from(current);
+    for (final key in newlyAssigned) {
+      unawaited(_maybeAutoGenerateTopicNoteForKey(key));
+    }
+    notifyListeners();
+  }
 
   bool get doubaoFileProcessing => _fileJobProvider == SttProvider.doubao;
   void cancelDoubaoFileProcessing() {
@@ -272,6 +465,19 @@ class RecorderController extends ChangeNotifier {
         topicStore ??
         TopicStore(inMemory: !loadPersistedState || !this.topicsEnabled);
     _topicsLoaded = this.topicsEnabled ? topics.load() : Future<void>.value();
+    if (this.topicsEnabled) {
+      _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
+      topics.addListener(_onTopicsChanged);
+      unawaited(
+        _topicsLoaded.then((_) {
+          if (!_disposed) {
+            _observedPlacements = Map<String, TopicPlacement>.from(
+              topics.placements,
+            );
+          }
+        }),
+      );
+    }
     if (this.topicsEnabled && loadPersistedState) {
       _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
     }
@@ -1394,10 +1600,14 @@ class RecorderController extends ChangeNotifier {
       revision: (metadata?.revision ?? 0) + (changed ? 1 : 0),
     );
     transcriptsByPath[path] = t;
+    _transcriptPathsByKey[key] = path;
     // Also index by file id when known.
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
     unawaited(_persistTranscripts());
+    if (changed && topicsEnabled) {
+      unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
+    }
   }
 
   String? transcriptForPath(String path) {
@@ -4140,6 +4350,11 @@ class RecorderController extends ChangeNotifier {
         final key = _recordingKey(path: path);
         await _fileJobs.discard(key);
         await topics.forgetRecording(key);
+        await analysis.forgetRecording(key);
+        _transcriptPathsByKey.remove(key);
+        _observedPlacements = Map<String, TopicPlacement>.from(
+          topics.placements,
+        );
         _deferredJobs.discard(key);
         _transcriptMetadata.remove(key);
         _recordingTranslations.remove(key);
@@ -4195,15 +4410,22 @@ class RecorderController extends ChangeNotifier {
       throw StateError('转写完成后再重命名');
     }
     await source.rename(targetPath);
+    final oldKey = _recordingKey(path: path);
+    final newKey = _recordingKey(path: targetPath);
     await _fileJobs.rename(
-      _recordingKey(path: path),
-      _recordingKey(path: targetPath),
+      oldKey,
+      newKey,
       targetPath,
     );
     await topics.renameRecordingKey(
-      _recordingKey(path: path),
-      _recordingKey(path: targetPath),
+      oldKey,
+      newKey,
     );
+    await analysis.renameRecordingKey(oldKey, newKey);
+    if (_transcriptPathsByKey.remove(oldKey) != null) {
+      _transcriptPathsByKey[newKey] = targetPath;
+    }
+    _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
     final transcript = transcriptsByPath.remove(path);
     if (transcript != null) transcriptsByPath[targetPath] = transcript;
     final aliases = speakerAliasesByPath.remove(path);
@@ -4950,6 +5172,7 @@ class RecorderController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _lifecycle?.dispose();
+    if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();
     _completeFileRefresh();
     _fileJobRevision++;

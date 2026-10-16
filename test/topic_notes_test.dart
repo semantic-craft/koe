@@ -1,0 +1,657 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:koe/ai/engine_config.dart';
+import 'package:koe/state/file_job_journal.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/state/recording_analysis.dart';
+import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:koe/ui/widgets/topic_note_panel.dart';
+import 'package:provider/provider.dart';
+
+import 'support/wav_fixture.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('一本书模板解析摘录（含口述页码）、配对/独立评论、疑问、联想、待查并校验原文引用与段落定位', () {
+    final bookTopic = Topic(
+      id: 'topic-book-1',
+      title: '《思考，快与慢》',
+      author: '丹尼尔·卡尼曼',
+      kind: TopicKind.book,
+      createdAt: DateTime(2026, 4, 20),
+    );
+    final instruction = topicNoteInstruction(bookTopic);
+    expect(instruction, contains('《思考，快与慢》'));
+    expect(instruction, contains('excerpts'));
+    expect(instruction, contains('page'));
+
+    final raw = jsonEncode({
+      'overview': '梳理系统1与系统2的分工及锚定效应。',
+      'excerpts': [
+        {
+          'text': '系统1的运行是无意识且快速的，不怎么费脑力。',
+          'page': '第24页',
+          'sources': ['S1'],
+        },
+        {
+          'text': '锚定效应会在人们做数量估计时悄悄拉偏起点。',
+          'sources': ['S2'],
+        },
+      ],
+      'comments': [
+        {
+          'text': '日常开会拍脑袋定价很容易掉进这个坑。',
+          'excerpt': '锚定效应会在人们做数量估计时悄悄拉偏起点。',
+          'sources': ['S2'],
+        },
+        {
+          'text': '全书前半部分例子很扎实，适合做团队内部分享。',
+          'sources': ['S1', 'S2'],
+        },
+      ],
+      'questions': [
+        {
+          'text': '团队评审时怎么设计流程来规避第一报价锚定？',
+          'sources': ['S2'],
+        },
+      ],
+      'associations': [
+        {
+          'text': '联想到上季度预算讨论里先报高价再砍价的场景。',
+          'sources': ['S2'],
+        },
+      ],
+      'toCheck': [
+        {
+          'text': '查一下卡尼曼关于锚定效应原始实验的样本量。',
+          'sources': ['S2'],
+        },
+      ],
+    });
+
+    final validated = validateTopicNote(bookTopic)(raw, const ['p1', 'p2']);
+    final note = TopicNote.parse(validated, 2);
+    expect(note.kind, TopicKind.book);
+    expect(note.topicId, 'topic-book-1');
+    expect(note.overview, '梳理系统1与系统2的分工及锚定效应。');
+    expect(note.excerpts, hasLength(2));
+    expect(note.excerpts.first.page, '第24页');
+    expect(note.excerpts.first.sources, ['S1']);
+    expect(note.excerpts.last.page, isNull);
+    expect(note.comments, hasLength(2));
+    expect(
+      note.comments.first.excerpt,
+      '锚定效应会在人们做数量估计时悄悄拉偏起点。',
+    );
+    expect(note.comments.last.excerpt, isNull);
+    expect(note.questions.single.text, contains('规避第一报价锚定'));
+    expect(note.associations.single.text, contains('上季度预算讨论'));
+    expect(note.toCheck.single.text, contains('原始实验的样本量'));
+
+    final exported = note.export(
+      AnalysisResult(
+        text: validated,
+        sourceHash: 'h',
+        model: 'qwen3.8-flash',
+        instruction: instruction,
+        sources: const ['p1', 'p2'],
+        createdAt: DateTime(2026, 4, 20),
+      ),
+      topic: bookTopic,
+    );
+    expect(exported, contains('《思考，快与慢》'));
+    expect(exported, contains('第24页'));
+    expect(exported, contains('[S2]'));
+
+    expect(
+      () => TopicNote.parse(
+        jsonEncode({
+          'overview': '越界引用',
+          'excerpts': [
+            {
+              'text': '某段摘录',
+              'sources': ['S3'],
+            },
+          ],
+        }),
+        2,
+        fallbackKind: TopicKind.book,
+        fallbackTopicId: 'topic-book-1',
+      ),
+      throwsFormatException,
+    );
+
+    const transcript =
+        '第一段：第24页提到系统1的运行是无意识且快速的。\n\n'
+        '第二段：后面讲到锚定效应会在人们做数量估计时悄悄拉偏起点，我觉得开会定价常掉进这个坑。\n\n'
+        '第三段：最后记一下待查卡尼曼原始实验。';
+    final paragraphs = splitTranscriptParagraphs(transcript);
+    expect(paragraphs, hasLength(3));
+    final paragraphIndex = locateTranscriptParagraph(
+      transcript,
+      const ['S2'],
+      itemText: '锚定效应会在人们做数量估计时悄悄拉偏起点。',
+    );
+    expect(paragraphIndex, 1);
+  });
+
+  test('一般主题模板解析主要想法、与此前笔记的变化、疑问、联想、待办与仅明确表达的结论', () {
+    final generalTopic = Topic(
+      id: 'topic-gen-1',
+      title: '产品定价策略',
+      kind: TopicKind.general,
+      createdAt: DateTime(2026, 4, 20),
+    );
+
+    final firstRaw = jsonEncode({
+      'overview': '初次梳理订阅制与买断制的取舍。',
+      'ideas': [
+        {
+          'text': '优先采用按年订阅制',
+          'reason': '持续提供云端转写与摘要服务，有固定边际成本',
+          'sources': ['S1'],
+        },
+      ],
+      'changes': [
+        {
+          'text': '首条笔记不应保留虚构的变化',
+          'sources': ['S1'],
+        },
+      ],
+      'questions': [
+        {
+          'text': '老用户迁移要不要给首年折扣？',
+          'sources': ['S1'],
+        },
+      ],
+      'associations': [
+        {
+          'text': '参考同类效率工具的双档位设计。',
+          'sources': ['S1'],
+        },
+      ],
+      'todos': [
+        {
+          'text': '测算月均调用成本与免费额度上限',
+          'sources': ['S1'],
+        },
+      ],
+    });
+
+    final firstValidated = validateTopicNote(
+      generalTopic,
+      hasPriorNotes: false,
+    )(firstRaw, const ['s1']);
+    final firstNote = TopicNote.parse(firstValidated, 1);
+    expect(firstNote.kind, TopicKind.general);
+    expect(firstNote.ideas.single.text, '优先采用按年订阅制');
+    expect(firstNote.ideas.single.reason, contains('固定边际成本'));
+    expect(firstNote.changes, isEmpty);
+    expect(firstNote.conclusion, isNull);
+
+    final secondInstruction = topicNoteInstruction(
+      generalTopic,
+      priorNotes: [firstNote],
+    );
+    expect(secondInstruction, contains('初次梳理订阅制与买断制的取舍'));
+    expect(secondInstruction, contains('优先采用按年订阅制'));
+
+    final secondRaw = jsonEncode({
+      'overview': '补充免费试用与年付锚定方案。',
+      'ideas': [
+        {
+          'text': '提供 14 天全功能试用后转年付',
+          'reason': '降低首次付费门槛并保留年付现金流',
+          'sources': ['S1'],
+        },
+      ],
+      'changes': [
+        {
+          'text': '从单纯讨论年付改为“14天试用 + 年付”组合',
+          'sources': ['S1'],
+        },
+      ],
+      'questions': [],
+      'associations': [],
+      'todos': [
+        {
+          'text': '上线试用倒计时提示',
+          'sources': ['S1'],
+        },
+      ],
+      'conclusion': {
+        'text': '确定首版采用 14 天试用加按年订阅方案。',
+        'sources': ['S1'],
+      },
+    });
+
+    final secondValidated = validateTopicNote(
+      generalTopic,
+      hasPriorNotes: true,
+    )(secondRaw, const ['s1']);
+    final secondNote = TopicNote.parse(secondValidated, 1);
+    expect(secondNote.changes.single.text, contains('14天试用 + 年付'));
+    expect(secondNote.conclusion?.text, '确定首版采用 14 天试用加按年订阅方案。');
+    expect(secondNote.conclusion?.sources, ['S1']);
+  });
+
+  test('归到主题且转写完成后自动用 qwen3.8-flash 生成一次笔记；待归类、未归类及主题间移动不自动触发', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-auto-');
+    addTearDown(() => dir.delete(recursive: true));
+    final fileA = File('${dir.path}/1760001001.wav')
+      ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    final fileB = File('${dir.path}/1760001002.wav')
+      ..writeAsBytesSync(wavBytes([5, 6, 7, 8]));
+    final fileC = File('${dir.path}/1760001003.wav')
+      ..writeAsBytesSync(wavBytes([9, 10, 11, 12]));
+
+    final calls = <({String model, String instruction, String source})>[];
+    final service = _CallbackAnalysisService((model, instruction, source) async {
+      calls.add((model: model, instruction: instruction, source: source));
+      if (instruction.contains('《思考，快与慢》')) {
+        return jsonEncode({
+          'overview': '读书笔记自动生成',
+          'excerpts': [
+            {
+              'text': '第18页讲到直觉偏差。',
+              'page': '第18页',
+              'sources': ['S1'],
+            },
+          ],
+          'comments': [],
+          'questions': [],
+          'associations': [],
+          'toCheck': [],
+        });
+      }
+      return jsonEncode({
+        'overview': '一般主题笔记自动生成',
+        'ideas': [
+          {
+            'text': '核心观点A',
+            'reason': '理由A',
+            'sources': ['S1'],
+          },
+        ],
+        'changes': [],
+        'questions': [],
+        'associations': [],
+        'todos': [],
+      });
+    });
+
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: true,
+      topicStore: store,
+      analysisController: analysis,
+      fileJobJournal: FileJobJournal(inMemory: true),
+      retrievedAudioSettleTime: Duration.zero,
+    );
+    addTearDown(controller.dispose);
+    await controller.setQwenConfig(const EngineConfig(apiKey: 'sk-test'));
+
+    final bookTopic = await store.createTopic(
+      title: '《思考，快与慢》',
+      kind: TopicKind.book,
+    );
+    final generalTopic = await store.createTopic(
+      title: '产品思考',
+      kind: TopicKind.general,
+    );
+
+    final refA = RecordingReference(fileId: 1760001001, path: fileA.path);
+    final refB = RecordingReference(fileId: 1760001002, path: fileB.path);
+    final refC = RecordingReference(fileId: 1760001003, path: fileC.path);
+    final keyA = controller.analysisKey(refA);
+    final keyB = controller.analysisKey(refB);
+    final keyC = controller.analysisKey(refC);
+
+    // 1. 待归类录音完成转写：不自动触发
+    await store.placeRetrieved(keyB);
+    expect(store.isPending(keyB), isTrue);
+    controller.rememberTranscript(fileB.path, '待归类录音的转写内容，讨论产品核心观点A与理由A。');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(calls, isEmpty);
+
+    // 2. 不归主题录音完成转写：不自动触发
+    await store.removeFromTopic(keyC);
+    controller.rememberTranscript(fileC.path, '不归主题的普通录音转写。');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(calls, isEmpty);
+
+    // 3. 已归入主题的录音完成转写：自动用 qwen3.8-flash 生成一次笔记
+    await store.moveRecording(keyA, bookTopic.id);
+    controller.rememberTranscript(fileA.path, '今天读到第18页讲到直觉偏差。');
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(calls, hasLength(1));
+    expect(calls.single.model, 'qwen3.8-flash');
+    final noteResultA = analysis.results[TopicNote.slotKey(keyA)];
+    expect(noteResultA, isNotNull);
+    final parsedA = TopicNote.parse(noteResultA!.text, 1);
+    expect(parsedA.kind, TopicKind.book);
+    expect(parsedA.excerpts.single.page, '第18页');
+    expect(controller.isTopicNoteStale(refA), isFalse);
+
+    // 4. 待归类且已有转写的录音被归入主题：自动触发一次生成
+    await store.moveRecording(keyB, generalTopic.id);
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(calls, hasLength(2));
+    final noteResultB = analysis.results[TopicNote.slotKey(keyB)];
+    expect(noteResultB, isNotNull);
+    expect(TopicNote.parse(noteResultB!.text, 1).kind, TopicKind.general);
+
+    // 5. 从主题 A 移到主题 B：只标过期，不自动重跑计费
+    await store.moveRecording(keyA, generalTopic.id);
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(calls, hasLength(2));
+    expect(controller.isTopicNoteStale(refA), isTrue);
+  });
+
+  test('重复完成通知、重启恢复、长转写分段断点续跑与音频变更后不重复计费', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-dedup-');
+    addTearDown(() => dir.delete(recursive: true));
+    final audioFile = File('${dir.path}/1760002001.wav')
+      ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    final topicsFile = File('${dir.path}/topics.json');
+    final analysisFile = File('${dir.path}/analysis.json');
+    final ref = RecordingReference(fileId: 1760002001, path: audioFile.path);
+
+    var calls = 0;
+    var failChunk2 = false;
+    final service = _CallbackAnalysisService((model, instruction, source) async {
+      calls++;
+      if (failChunk2 && source.startsWith('[S2] ')) {
+        throw const HttpException('网络波动');
+      }
+      return jsonEncode({
+        'overview': '第 $calls 次调用结果',
+        'ideas': [
+          {
+            'text': '想法 $calls',
+            'reason': '理由 $calls',
+            'sources': ['S1'],
+          },
+        ],
+        'changes': [],
+        'questions': [],
+        'associations': [],
+        'todos': [],
+      });
+    });
+
+    final store = TopicStore(
+      file: topicsFile,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(file: analysisFile, service: service);
+    final controller = RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: true,
+      topicStore: store,
+      analysisController: analysis,
+      fileJobJournal: FileJobJournal(inMemory: true),
+      retrievedAudioSettleTime: Duration.zero,
+    );
+    await controller.setQwenConfig(const EngineConfig(apiKey: 'sk-test'));
+
+    final key = controller.analysisKey(ref);
+    final topic = await store.createTopic(
+      title: '长期研究',
+      kind: TopicKind.general,
+    );
+    await store.moveRecording(key, topic.id);
+    controller.rememberTranscript(audioFile.path, '第一版研究录音转写内容。');
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(calls, 1);
+
+    // 重复收到相同转写完成通知或再次 assign 同一主题：不重复计费
+    controller.rememberTranscript(audioFile.path, '第一版研究录音转写内容。');
+    await store.moveRecording(key, topic.id);
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(calls, 1);
+
+    // 模拟应用重启恢复：已有最新笔记时启动不重跑
+    controller.dispose();
+    final storeRestarted = TopicStore(
+      file: topicsFile,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await storeRestarted.load();
+    final analysisRestarted = RecordingAnalysis(
+      file: analysisFile,
+      service: service,
+    );
+    await analysisRestarted.load();
+    final controllerRestarted = RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: true,
+      topicStore: storeRestarted,
+      analysisController: analysisRestarted,
+      fileJobJournal: FileJobJournal(inMemory: true),
+      retrievedAudioSettleTime: Duration.zero,
+    );
+    addTearDown(controllerRestarted.dispose);
+    await controllerRestarted.setQwenConfig(
+      const EngineConfig(apiKey: 'sk-test'),
+    );
+    controllerRestarted.rememberTranscript(audioFile.path, '第一版研究录音转写内容。');
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(calls, 1);
+
+    // 录音音频变化后：仅标过期，不自动重跑
+    audioFile.writeAsBytesSync(wavBytes([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    expect(controllerRestarted.isTopicNoteStale(ref), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(calls, 1);
+
+    // 长转写分段断点续跑：第 2 段失败后重试复用第 1 段结果
+    final longText =
+        '${List.filled(350, '甲段内容讨论研究假设。').join()}\n\n'
+        '${List.filled(350, '乙段内容讨论验证路径。').join()}';
+    failChunk2 = true;
+    controllerRestarted.rememberTranscript(audioFile.path, longText);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    // chunk 1 成功 (calls=2)，chunk 2 失败 (calls=3)
+    expect(calls, 3);
+    expect(
+      analysisRestarted.errors[TopicNote.slotKey(key)],
+      isNotNull,
+    );
+
+    failChunk2 = false;
+    await controllerRestarted.generateTopicNote(ref);
+    // 仅重跑 chunk 2 (calls=4) + merge (calls=5)，不重跑 chunk 1
+    expect(calls, 5);
+    expect(analysisRestarted.errors[TopicNote.slotKey(key)], isNull);
+  });
+
+  testWidgets('笔记面板支持编辑、重生成覆盖确认，并可点击引用跳回录音详情对应原段高亮', (tester) async {
+    const ref = RecordingReference(fileId: 1760003001, path: '/1760003001.wav');
+
+    const transcript =
+        '第一段：今天开始读《思考，快与慢》第一章，先看系统1和系统2。\n\n'
+        '第二段：书里第42页写到锚定效应会显著影响谈判中的第一报价，我觉得我们采购谈判也常遇到。\n\n'
+        '第三段：后面还要再去查一下原书附录里的实验数据。';
+
+    var completionCalls = 0;
+    final service = _CallbackAnalysisService((model, instruction, source) async {
+      completionCalls++;
+      return jsonEncode({
+        'overview': '第 $completionCalls 次生成的读书笔记',
+        'excerpts': [
+          {
+            'text': '锚定效应会显著影响谈判中的第一报价。',
+            'page': '第42页',
+            'sources': ['S1'],
+          },
+        ],
+        'comments': [
+          {
+            'text': '采购谈判也常遇到第一报价锚定。',
+            'excerpt': '锚定效应会显著影响谈判中的第一报价。',
+            'sources': ['S1'],
+          },
+        ],
+        'questions': [],
+        'associations': [],
+        'toCheck': [
+          {
+            'text': '查原书附录里的实验数据。',
+            'sources': ['S1'],
+          },
+        ],
+      });
+    });
+
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+
+    final key = controller.analysisKey(ref);
+    final bookTopic = await store.createTopic(
+      title: '《思考，快与慢》',
+      kind: TopicKind.book,
+    );
+    await store.moveRecording(key, bookTopic.id);
+    controller.rememberTranscript(ref.path!, transcript);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(completionCalls, 1);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: MaterialApp(
+          home: Scaffold(
+            body: TopicNotePanel(
+              controller: controller,
+              reference: ref,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('第 1 次生成的读书笔记'), findsOneWidget);
+    expect(find.textContaining('第42页'), findsOneWidget);
+    expect(find.textContaining('采购谈判也常遇到第一报价锚定'), findsOneWidget);
+
+    // 编辑并保存笔记
+    await tester.tap(find.text('编辑'));
+    await tester.pump();
+    final overviewField = find.byKey(const ValueKey('topic-note-edit-overview'));
+    expect(overviewField, findsOneWidget);
+    await tester.enterText(overviewField, '手动修订后的读书笔记概要');
+    await tester.tap(find.text('保存'));
+    await tester.pump();
+
+    expect(find.text('手动修订后的读书笔记概要'), findsOneWidget);
+    expect(
+      analysis.results[TopicNote.slotKey(key)]!.editedAt,
+      isNotNull,
+    );
+
+    // 点击重生成：弹出覆盖确认，取消不调用，确认才重新生成
+    await tester.tap(find.text('重生成'));
+    await tester.pump();
+    expect(
+      find.text('重新生成会覆盖当前内容（包括手动修改）。'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('取消'));
+    await tester.pump();
+    expect(completionCalls, 1);
+
+    await tester.tap(find.text('重生成'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, '重生成'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(completionCalls, 2);
+    expect(find.textContaining('第 2 次生成的读书笔记'), findsOneWidget);
+
+    // 在录音详情页中打开主题笔记并点击引用跳回对应原段高亮
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: const MaterialApp(
+          home: RecordingDetailScreen(reference: ref),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('主题笔记'), findsWidgets);
+    await tester.tap(find.text('主题笔记').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 点击摘录上的 S1 引用标签，跳回原录音第 2 段（index 1，匹配摘录文本“锚定效应会显著影响谈判中的第一报价。”）并高亮
+    final sourceChip = find.byKey(const ValueKey('topic-note-source-S1')).first;
+    await tester.tap(sourceChip);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(
+      find.byKey(const ValueKey('highlighted-paragraph-1')),
+      findsOneWidget,
+    );
+  });
+}
+
+class _InMemoryUiController extends RecorderController {
+  _InMemoryUiController({
+    required super.topicStore,
+    required super.analysisController,
+  }) : super(
+         loadPersistedState: false,
+         topicsEnabled: true,
+         fileJobJournal: FileJobJournal(inMemory: true),
+       );
+
+  @override
+  String get analysisApiKey => 'sk-test';
+}
+
+class _CallbackAnalysisService implements AnalysisService {
+  _CallbackAnalysisService(this._handler);
+
+  final Future<String> Function(
+    String model,
+    String instruction,
+    String source,
+  ) _handler;
+
+  @override
+  Future<String> generate({
+    required String model,
+    required String apiKey,
+    required String source,
+    required String instruction,
+    required Future<void> abort,
+  }) => _handler(model, instruction, source);
+
+  @override
+  void dispose() {}
+}

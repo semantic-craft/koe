@@ -58,6 +58,7 @@ class AnalysisResult {
     createdAt: DateTime.parse(j['createdAt'] as String),
     editedAt: DateTime.tryParse(j['editedAt'] as String? ?? ''),
   );
+  bool staleFor(String source) => sourceHash != analysisFingerprint(source);
   String get exportText =>
       '$text\n\n模型：$model\n生成时间：${createdAt.toIso8601String()}\n要求：$instruction\n\n原文依据\n${sources.indexed.map((s) => '[S${s.$1 + 1}] ${s.$2}').join('\n\n')}';
 }
@@ -255,6 +256,47 @@ class RecordingAnalysis extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  Future<void> forgetRecording(String recording) async {
+    await load();
+    final prefix = '$recording/';
+    bool matches(String k) => k.startsWith(prefix);
+    for (final k in _running.keys.where(matches).toList()) {
+      final abort = _running.remove(k);
+      if (abort != null && !abort.isCompleted) abort.complete();
+    }
+    results.removeWhere((k, _) => matches(k));
+    errors.removeWhere((k, _) => matches(k));
+    progress.removeWhere((k, _) => matches(k));
+    _checkpoints.removeWhere((k, _) => matches(k));
+    _jobHashes.removeWhere((k, _) => matches(k));
+    await save();
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> renameRecordingKey(String oldKey, String newKey) async {
+    if (oldKey == newKey) return;
+    await load();
+    final oldPrefix = '$oldKey/';
+    void moveMap<V>(Map<String, V> map) {
+      final entries = map.entries
+          .where((e) => e.key.startsWith(oldPrefix))
+          .toList();
+      for (final e in entries) {
+        map.remove(e.key);
+        map['$newKey/${e.key.substring(oldPrefix.length)}'] = e.value;
+      }
+    }
+
+    moveMap(results);
+    moveMap(errors);
+    moveMap(progress);
+    moveMap(_checkpoints);
+    moveMap(_jobHashes);
+    moveMap(_running);
+    await save();
+    if (!_disposed) notifyListeners();
+  }
+
   Future<void> run({
     required String recording,
     required String source,
@@ -262,6 +304,7 @@ class RecordingAnalysis extends ChangeNotifier {
     required bool custom,
     String? instruction,
     String? resultSlot,
+    String? modelOverride,
     String Function(String text, List<String> sources)? validateResult,
     required String Function() currentSource,
   }) async {
@@ -270,12 +313,12 @@ class RecordingAnalysis extends ChangeNotifier {
         ? key(recording, custom)
         : '$recording/$resultSlot';
     if (busy(k)) return;
-    if (model == null || apiKey.isEmpty || source.trim().isEmpty) {
+    final selected = modelOverride ?? model;
+    if (selected == null || apiKey.isEmpty || source.trim().isEmpty) {
       errors[k] = '请先选择分析模型、配置千问 Key，并完成转写';
       notifyListeners();
       return;
     }
-    final selected = model!;
     final prompt = custom
         ? (instruction ?? '').trim()
         : '生成忠实原文的摘要，列出主题、关键结论、待办和未决事项；没有的项目省略。';

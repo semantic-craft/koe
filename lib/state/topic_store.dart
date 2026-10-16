@@ -147,6 +147,8 @@ class TopicStore extends ChangeNotifier {
     return topicById(_currentTopicId);
   }
 
+  Map<String, TopicPlacement> get placements => Map.unmodifiable(_placements);
+
   TopicPlacement? placementOf(String recordingKey) => _placements[recordingKey];
 
   Topic? topicOf(String recordingKey) {
