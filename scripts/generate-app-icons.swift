@@ -2,6 +2,7 @@ import AppKit
 
 // Package the approved artwork without changing the illustration.
 // Run from the repository root: swift scripts/generate-app-icons.swift
+// Writes the iOS and macOS AppIcon sets and the Android launcher mipmaps.
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let source = root.appendingPathComponent("assets/artwork/koe-schoolgirl-b-cheerful.png")
 guard let image = NSImage(contentsOf: source) else {
@@ -42,4 +43,14 @@ for platform in ["ios", "macos"] {
         try render(pixels: pixels, mac: platform == "macos").write(to: directory.appendingPathComponent(name))
         print("\(platform): \(name) (\(pixels) px)")
     }
+}
+
+// Android launcher icons: full-bleed square like iOS, one file per density.
+let androidDensities: [(String, Int)] = [
+    ("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192),
+]
+for (density, pixels) in androidDensities {
+    let file = root.appendingPathComponent("android/app/src/main/res/mipmap-\(density)/ic_launcher.png")
+    try render(pixels: pixels, mac: false).write(to: file)
+    print("android: mipmap-\(density)/ic_launcher.png (\(pixels) px)")
 }
