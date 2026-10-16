@@ -8,9 +8,10 @@
 # checked, and only then the bundle is removed and unregistered. App data lives
 # in the sandbox container keyed by the Bundle ID and is not touched.
 #
-# The script refuses to run when the old bundle path resolves to the Koe install
-# target (same path after trailing slashes and symlinks, or same file), so it can
-# never archive and delete the bundle that is being installed. The archive is
+# The script refuses to run when the old bundle and the Koe install target
+# overlap: the same path after trailing slashes and symlinks, the same file, or
+# one inside the other. Deleting the old bundle then can never delete or damage
+# the bundle that is being installed. The archive is
 # accepted only when every restored file has the same SHA-256 content, symlink
 # target and type as the original, and, when the original carries a valid code
 # signature, the restored copy passes codesign --verify --deep --strict too.
@@ -37,7 +38,8 @@ Usage: scripts/retire-legacy-macos-app.sh [--check-running]
 Environment:
   MACOS_LEGACY_INSTALL_PATH  Old bundle (default /Applications/Soundcore Manager.app)
   MACOS_INSTALL_PATH         Koe install target (default /Applications/Koe.app);
-                             the script refuses to run if it is the old bundle
+                             the script refuses to run if it is, contains or
+                             lies inside the old bundle
   MACOS_LEGACY_BACKUP_DIR    Archive directory
                              (default ~/Library/Application Support/Koe Install Backups)
 EOF
@@ -53,9 +55,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Absolute path with trailing slashes removed and symlinks resolved, also for
-# paths that do not exist yet (the install target before the first install).
+# paths that do not exist yet (the install target before the first install):
+# the nearest existing ancestor is resolved and the rest appended.
 canonical_path() {
-  local p="$1" hops=0 target dir base
+  local p="$1" hops=0 target dir rest=""
   [[ "$p" == /* ]] || p="$PWD/$p"
   while [[ "$p" == */ && "$p" != / ]]; do p="${p%/}"; done
   while [[ -L "$p" ]]; do
@@ -70,20 +73,39 @@ canonical_path() {
     while [[ "$p" == */ && "$p" != / ]]; do p="${p%/}"; done
   done
   dir="$(dirname "$p")"
-  base="$(basename "$p")"
-  if [[ -d "$dir" ]]; then
-    dir="$(cd "$dir" && pwd -P)"
-  fi
-  printf '%s/%s\n' "${dir%/}" "$base"
+  rest="$(basename "$p")"
+  while [[ ! -d "$dir" && "$dir" != / ]]; do
+    rest="$(basename "$dir")/$rest"
+    dir="$(dirname "$dir")"
+  done
+  dir="$(cd "$dir" && pwd -P)"
+  printf '%s/%s\n' "${dir%/}" "$rest"
 }
 
-LEGACY_CANONICAL="$(canonical_path "$LEGACY")"
-TARGET_CANONICAL="$(canonical_path "$INSTALL_TARGET")"
-if [[ "$LEGACY_CANONICAL" == "$TARGET_CANONICAL" ]] \
-  || { [[ -e "$LEGACY" && -e "$INSTALL_TARGET" ]] && [[ "$LEGACY" -ef "$INSTALL_TARGET" ]]; }; then
-  echo "error: legacy bundle ${LEGACY} is the Koe install target ${INSTALL_TARGET}; refusing to retire it." >&2
-  exit 1
-fi
+# True when $1 is $2 or lies inside it: by resolved path, or because $1 or one
+# of its existing ancestors is the same file as $2 (which also catches a
+# differently cased path on a case-insensitive volume).
+path_within() {
+  local p c
+  p="$(canonical_path "$1")" || return 0
+  c="$(canonical_path "$2")" || return 0
+  [[ "$p" == "$c" || "$p" == "$c"/* ]] && return 0
+  [[ -e "$2" ]] || return 1
+  while :; do
+    [[ -e "$p" && "$p" -ef "$2" ]] && return 0
+    [[ "$p" == / ]] && return 1
+    p="$(dirname "$p")"
+  done
+}
+
+refuse_if_overlapping() {
+  if path_within "$INSTALL_TARGET" "$LEGACY" || path_within "$LEGACY" "$INSTALL_TARGET"; then
+    echo "error: legacy bundle ${LEGACY} overlaps the Koe install target ${INSTALL_TARGET} (same path, or one inside the other); refusing to retire it." >&2
+    exit 1
+  fi
+}
+
+refuse_if_overlapping
 
 if pgrep -f "^${LEGACY}/Contents/MacOS/${LEGACY_BINARY_NAME}$" >/dev/null; then
   echo "Quit the old ${LEGACY_BINARY_NAME} (${LEGACY}) before installing Koe." >&2
@@ -143,6 +165,9 @@ if command -v codesign >/dev/null 2>&1 \
   archive_failed "restores a bundle that fails codesign --verify --deep --strict"
 fi
 
+# The target may have appeared or been replaced while archiving; check again
+# right before deleting.
+refuse_if_overlapping
 if [[ -x "$LSREGISTER" ]]; then
   "$LSREGISTER" -u "$LEGACY" >/dev/null 2>&1 || true
 fi
