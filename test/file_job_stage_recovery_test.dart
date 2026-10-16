@@ -10,6 +10,8 @@ import 'package:koe/state/file_job_journal.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'support/wav_fixture.dart';
+
 /// #10: every file-job stage (queued / upload / submit / poll / save) must
 /// fail visibly, keep the recording, and recover after a controller restart
 /// without automatically resubmitting a request whose outcome is unknown.
@@ -26,7 +28,8 @@ void main() {
     dir = await Directory.systemTemp.createTemp('stage-recovery-');
     journalFile = File('${dir.path}/file_jobs.json');
     audio = File('${dir.path}/551100.wav');
-    await audio.writeAsBytes([1, 2, 3]);
+    // A finished WAV: retrieved audio must pass the #13 completeness check.
+    await audio.writeAsBytes(wavBytes([1, 2, 3, 4]));
   });
   tearDown(() async {
     if (await dir.exists()) await dir.delete(recursive: true);
@@ -48,6 +51,8 @@ void main() {
       qwenSpeech: qwen,
       doubaoSpeech: doubao,
       fileJobJournal: journal,
+      // Stage recovery is not about the #13 completeness window.
+      retrievedAudioSettleTime: Duration.zero,
     );
     if (disposeOnTearDown) addTearDown(c.dispose);
     if (qwen != null) await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
