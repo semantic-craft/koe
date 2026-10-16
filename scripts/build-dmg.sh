@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release-build Soundcore Manager for macOS, sign it with the Developer ID
+# Release-build Koe for macOS, sign it with the Developer ID
 # identity, and package a .dmg with hdiutil. An ad-hoc build would lose the
 # login keychain authorization that the signed upgrade path preserves.
 set -euo pipefail
@@ -7,8 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-APP_NAME="soundcore-manager"
-DISPLAY_NAME="Soundcore Manager"
+APP_NAME="koe"
+DISPLAY_NAME="Koe"
 RELEASE_APP="build/macos/Build/Products/Release/${DISPLAY_NAME}.app"
 DIST_DIR="${ROOT}/dist"
 VERSION="$(
@@ -25,7 +25,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/build-dmg.sh [options]
 
-  Release-build Soundcore Manager for macOS and create a compressed DMG.
+  Release-build Koe for macOS and create a compressed DMG.
 
 Options:
   --skip-build   Reuse existing Release .app (do not flutter build)
@@ -33,7 +33,7 @@ Options:
   -h, --help     Show this help
 
 Output:
-  dist/soundcore-manager-<version>-macos.dmg
+  dist/koe-<version>-macos.dmg
 EOF
 }
 
