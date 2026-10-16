@@ -64,7 +64,9 @@ flutter run -d ios
 flutter run -d android
 ```
 
-## 构建
+## 发布与安装
+
+当前首发版本为 **v1.0.0**（`1.0.0+2`），完整功能范围、安装方式与已知限制见 [Koe v1.0.0 发布说明](docs/releases/v1.0.0.md)。
 
 ```bash
 # macOS 本机安装到 /Applications/Koe.app（固定 Developer ID 签名，升级后保留 Keychain 访问）
