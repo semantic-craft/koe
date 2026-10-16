@@ -28,3 +28,21 @@
 
 ### Domain docs
 采用单一领域文档布局。见 [docs/agents/domain.md](docs/agents/domain.md)。
+
+## Perplexity × Helios ZCode 本机验证契约
+
+首次走通：PR #55 @ `54b4b6e`（2026-10-16，结论 PASS）。
+
+1. **交接只走 PR 评论。** Perplexity 开 PR 后在该 PR 评论写 `## 本机待办`，不使用 `~/AgentBridge/`、`~/Projects/.sonori-handoff/` 等文件信箱。内容：
+   - `repo: semantic-craft/koe`、`ref: <branch>@<完整 sha>`、可选 `cwd:`（默认仓库根 `~/Projects/koe`）
+   - `- [ ] <命令>` 清单，按顺序执行（如 `flutter pub get` / `flutter analyze` / `flutter test`）
+2. **派单。** 图灵在 Helios `~/Projects/koe` fetch 并切到该 sha（工作区须干净），然后**只经 zcode-dispatch**（Helios receiver `:7791`，项目名 `koe`）派给 ZCode；不得绕开 zcode-dispatch 直调 ZCode CLI。ZCode 不改文件、不提交。
+3. **回帖。** ZCode 在同一 PR 评论 `## 本机结果 (<短 sha>)`：
+   - 每项一行 `- ✅/❌ \`<命令>\` — 退出码 N`
+   - 其下 `<details>` 折叠该命令日志末尾 ≤50 行，原样
+   - 最后一行 `结论: PASS`（全部退出码 0）或 `结论: FAIL`
+4. **核对。** 图灵对照 dispatch 会话结果核对回帖真实性与格式后再推进；合并仍按上文硬规则（squash，由亚里士多德执行）。
+
+### 需要真机
+
+需要 iPhone/Mac 真机、安装包、GUI、硬件或录音的步骤，单列在 PR / issue 的 `## 需要真机` 小节，留给用户手动完成，不进入 `## 本机待办` 默认路径。
