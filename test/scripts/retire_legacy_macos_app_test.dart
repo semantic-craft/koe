@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import '../support/legacy_bundle.dart';
+
 // #59: scripts/retire-legacy-macos-app.sh must never retire the bundle that is
 // being installed (same path, or one bundle inside the other), and must keep
 // the old bundle unless its archive restores byte-identical content. Runs headless; the archive cases need macOS ditto.
@@ -23,7 +25,7 @@ void main() {
     legacy = '$apps/Soundcore Manager.app';
     backups = '${root.path}/backups';
     Directory('$legacy/Contents/MacOS').createSync(recursive: true);
-    File('$legacy/Contents/Info.plist').writeAsStringSync('<plist/>');
+    File('$legacy/Contents/Info.plist').writeAsStringSync(legacyInfoPlist());
     File('$legacy/$binary').writeAsStringSync('original');
   });
   tearDown(() => root.deleteSync(recursive: true));

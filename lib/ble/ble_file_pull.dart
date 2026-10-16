@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../audio/retrieved_audio.dart';
 import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
@@ -37,6 +38,13 @@ class BleFilePull {
   }
 
   void _log(String m) => debugPrint('[BlePull] $m');
+
+  final Set<String> _incompletePaths = {};
+
+  /// Whether the last pull that saved [path] ended without the device's done
+  /// signal and below the announced size (kept at >= 95% for playback); see
+  /// [retrievedTransferComplete].
+  bool isIncomplete(String path) => _incompletePaths.contains(path);
 
   Future<String> pullFile(
     OfflineFileEntry file, {
@@ -141,7 +149,22 @@ class BleFilePull {
           'Keep BLE connected and try again.',
         );
       }
-      _log('saved $path ($received bytes, decrypt=$decryptOn)');
+      // Saved files below 100% without the device's done signal are kept for
+      // playback but must not be treated as a finished recording.
+      final complete = retrievedTransferComplete(
+        doneSignal: done.isCompleted,
+        received: received,
+        expected: expected,
+      );
+      if (complete) {
+        _incompletePaths.remove(path);
+      } else {
+        _incompletePaths.add(path);
+      }
+      _log(
+        'saved $path ($received bytes, decrypt=$decryptOn'
+        '${complete ? '' : ', incomplete $received/$expected'})',
+      );
       return path;
     } catch (e) {
       try {

@@ -16,12 +16,31 @@
 # target and type as the original, and, when the original carries a valid code
 # signature, the restored copy passes codesign --verify --deep --strict too.
 #
+# Before archiving, and again right before deleting, the script reads the
+# target's Contents/Info.plist and requires all of: CFBundleIdentifier
+# com.anker.ankerRecorder, CFBundleExecutable "Soundcore Manager", a
+# CFBundleName / CFBundleDisplayName that is not Koe, a resolved path that is
+# not a Koe.app install path, and a version older than the current Koe build or
+# listed in LEGACY_VERSIONS. Koe.app shares the Bundle ID, so the identifier
+# alone cannot tell the two apart. Any mismatch prints the reason, exits
+# non-zero, and leaves the bundle registered and in place.
+#
 # Restore: ditto -x -k "<archive>.zip" /Applications
 set -euo pipefail
 
 LEGACY="${MACOS_LEGACY_INSTALL_PATH:-/Applications/Soundcore Manager.app}"
 INSTALL_TARGET="${MACOS_INSTALL_PATH:-/Applications/Koe.app}"
 LEGACY_BINARY_NAME="Soundcore Manager"
+LEGACY_BUNDLE_ID="com.anker.ankerRecorder"
+KOE_DEFAULT_INSTALL="/Applications/Koe.app"
+# Pre-rename Soundcore Manager builds, as CFBundleShortVersionString+CFBundleVersion.
+# The app version never moved off 1.0.0+1 before the rename, and the current
+# Koe build still carries that number, so it cannot be told apart by "older
+# than Koe" and is listed explicitly. The identity checks above it still keep
+# Koe.app from matching.
+LEGACY_VERSIONS=("1.0.0+1")
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+KOE_VERSION="$(sed -n 's/^version:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$SCRIPT_ROOT/pubspec.yaml" 2>/dev/null | head -n 1)"
 BACKUP_DIR="${MACOS_LEGACY_BACKUP_DIR:-$HOME/Library/Application Support/Koe Install Backups}"
 LSREGISTER='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 CHECK_ONLY=0
@@ -118,6 +137,87 @@ if [[ ! -e "$LEGACY" ]]; then
   exit 0
 fi
 
+# Prints one Info.plist value, or nothing when the key is absent.
+plist_value() {
+  local plist="$1" key="$2"
+  if [[ -x /usr/libexec/PlistBuddy ]]; then
+    /usr/libexec/PlistBuddy -c "Print :${key}" "$plist" 2>/dev/null || true
+  else
+    defaults read "${plist%.plist}" "$key" 2>/dev/null || true
+  fi
+}
+
+lowercase() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Prints -1, 0 or 1 comparing two dotted numbers; missing components are 0.
+compare_dotted() {
+  local -a as bs
+  local i x y
+  IFS=. read -r -a as <<<"$1"
+  IFS=. read -r -a bs <<<"$2"
+  for ((i = 0; i < ${#as[@]} || i < ${#bs[@]}; i++)); do
+    x="${as[i]:-0}" y="${bs[i]:-0}"
+    if ((10#$x < 10#$y)); then echo -1; return; fi
+    if ((10#$x > 10#$y)); then echo 1; return; fi
+  done
+  echo 0
+}
+
+# True when version $1 is strictly lower than $2. Both are name+build
+# (CFBundleShortVersionString+CFBundleVersion, pubspec x.y.z+n): names are
+# compared first, then builds. Anything non-numeric is never treated as lower.
+version_lower() {
+  local dotted='^[0-9]+(\.[0-9]+)*\+[0-9]+(\.[0-9]+)*$' names
+  [[ "$1" =~ $dotted && "$2" =~ $dotted ]] || return 1
+  names="$(compare_dotted "${1%%+*}" "${2%%+*}")"
+  [[ "$names" == -1 ]] && return 0
+  [[ "$names" == 0 && "$(compare_dotted "${1#*+}" "${2#*+}")" == -1 ]]
+}
+
+refuse_identity() {
+  echo "error: ${LEGACY} $1; refusing to retire it, left in place." >&2
+  exit 1
+}
+
+verify_legacy_identity() {
+  local plist="${LEGACY}/Contents/Info.plist" id exe name display short build version known=0 v
+  if ! command -v /usr/libexec/PlistBuddy >/dev/null 2>&1 && ! command -v defaults >/dev/null 2>&1; then
+    refuse_identity "cannot be identified: neither PlistBuddy nor defaults is available"
+  fi
+  [[ -f "$plist" ]] || refuse_identity "has no Contents/Info.plist, so it cannot be confirmed as the old ${LEGACY_BINARY_NAME}"
+  id="$(plist_value "$plist" CFBundleIdentifier)"
+  [[ "$id" == "$LEGACY_BUNDLE_ID" ]] \
+    || refuse_identity "has CFBundleIdentifier '${id}', expected ${LEGACY_BUNDLE_ID}"
+  exe="$(plist_value "$plist" CFBundleExecutable)"
+  [[ "$exe" == "$LEGACY_BINARY_NAME" ]] \
+    || refuse_identity "has CFBundleExecutable '${exe}', expected '${LEGACY_BINARY_NAME}'"
+  name="$(plist_value "$plist" CFBundleName)"
+  display="$(plist_value "$plist" CFBundleDisplayName)"
+  if [[ "$(lowercase "$name")" == koe || "$(lowercase "$display")" == koe ]]; then
+    refuse_identity "is named Koe (CFBundleName '${name}', CFBundleDisplayName '${display}')"
+  fi
+  local here
+  here="$(canonical_path "$LEGACY")" || refuse_identity "path cannot be resolved"
+  for v in "$INSTALL_TARGET" "$KOE_DEFAULT_INSTALL"; do
+    if [[ "$here" == "$(canonical_path "$v")" ]]; then
+      refuse_identity "resolves to the Koe install path ${v}"
+    fi
+  done
+  short="$(plist_value "$plist" CFBundleShortVersionString)"
+  build="$(plist_value "$plist" CFBundleVersion)"
+  [[ -n "$short" && -n "$build" ]] \
+    || refuse_identity "has no CFBundleShortVersionString/CFBundleVersion"
+  version="${short}+${build}"
+  for v in "${LEGACY_VERSIONS[@]}"; do
+    if [[ "$version" == "$v" ]]; then known=1; fi
+  done
+  if [[ "$known" -eq 0 ]] && ! { [[ -n "$KOE_VERSION" ]] && version_lower "$version" "$KOE_VERSION"; }; then
+    refuse_identity "has version ${version}, which is neither older than the Koe build (${KOE_VERSION:-unknown}) nor a listed legacy version (${LEGACY_VERSIONS[*]})"
+  fi
+}
+
+verify_legacy_identity
+
 mkdir -p "$BACKUP_DIR"
 ARCHIVE="${BACKUP_DIR}/$(basename "$LEGACY" .app)-$(date +%Y%m%d-%H%M%S).zip"
 ditto -c -k --sequesterRsrc --keepParent "$LEGACY" "$ARCHIVE"
@@ -168,6 +268,7 @@ fi
 # The target may have appeared or been replaced while archiving; check again
 # right before deleting.
 refuse_if_overlapping
+verify_legacy_identity
 if [[ -x "$LSREGISTER" ]]; then
   "$LSREGISTER" -u "$LEGACY" >/dev/null 2>&1 || true
 fi

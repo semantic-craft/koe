@@ -70,7 +70,9 @@ class _MinutesPanelState extends State<MinutesPanel> {
       instruction: minutesInstruction,
       validateResult: validateMinutes,
       currentSource: () =>
-          widget.controller.recordingView(widget.reference).text,
+          widget.controller.recordingAudioChanged(widget.reference)
+          ? ''
+          : widget.controller.recordingView(widget.reference).text,
     );
   }
 
@@ -282,6 +284,9 @@ class _MinutesPanelState extends State<MinutesPanel> {
                 FilledButton(
                   onPressed:
                       !ready ||
+                          widget.controller.recordingAudioChanged(
+                            widget.reference,
+                          ) ||
                           view.live ||
                           view.text.trim().isEmpty ||
                           widget.controller.analysisApiKey.isEmpty
@@ -291,7 +296,8 @@ class _MinutesPanelState extends State<MinutesPanel> {
                 ),
               if (manager.errors[key] != null) Text(manager.errors[key]!),
               if (result != null &&
-                  result.sourceHash != analysisFingerprint(view.text))
+                  (widget.controller.recordingAudioChanged(widget.reference) ||
+                      result.sourceHash != analysisFingerprint(view.text)))
                 const Text('原文已更新，这份纪要已过期，请重新生成。'),
               if (result != null && minutes == null)
                 const Text('纪要格式无效，请重新生成；原数据仍保留。'),

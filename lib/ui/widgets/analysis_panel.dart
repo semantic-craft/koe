@@ -82,9 +82,13 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
       final key = RecordingAnalysis.key(recordingKey, custom);
       final result = manager.results[key];
       final busy = manager.busy(key);
+      final audioChanged = widget.controller.recordingAudioChanged(
+        widget.reference,
+      );
       final stale =
           result != null &&
-          result.sourceHash != analysisFingerprint(recording.text);
+          (audioChanged ||
+              result.sourceHash != analysisFingerprint(recording.text));
       return Scaffold(
         appBar: AppBar(
           title: const Text('摘要与分析'),
@@ -137,6 +141,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                 ),
               const SizedBox(height: 16),
               if (loadError != null) Text(loadError!),
+              if (audioChanged) const Text('音频内容已变化，请先重新转写；已有分析仅对应旧音频。'),
               if (recording.text.trim().isEmpty) const Text('请先完成这段录音的转写。'),
               if (widget.controller.analysisApiKey.isEmpty)
                 const Text('请先在设置中配置千问 API Key。'),
@@ -152,6 +157,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                   key: const ValueKey('generate-analysis'),
                   onPressed:
                       !ready ||
+                          audioChanged ||
                           recording.live ||
                           recording.text.trim().isEmpty ||
                           widget.controller.analysisApiKey.isEmpty
@@ -162,9 +168,14 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                           apiKey: widget.controller.analysisApiKey,
                           custom: custom,
                           instruction: instruction.text,
-                          currentSource: () => widget.controller
-                              .recordingView(widget.reference)
-                              .text,
+                          currentSource: () =>
+                              widget.controller.recordingAudioChanged(
+                                widget.reference,
+                              )
+                              ? ''
+                              : widget.controller
+                                    .recordingView(widget.reference)
+                                    .text,
                         ),
                   child: Text(
                     result == null ? (custom ? '开始分析' : '生成摘要') : '重新生成',
