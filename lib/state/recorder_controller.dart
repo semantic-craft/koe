@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -42,8 +43,10 @@ import 'recording_analysis.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
+import 'topic_store.dart';
 
 export 'recording.dart';
+export 'topic_store.dart';
 export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
@@ -95,11 +98,15 @@ class RecorderController extends ChangeNotifier {
     DoubaoSttService? doubaoSpeech,
     FileJobJournal? fileJobJournal,
     RecordingAnalysis? analysisController,
+    TopicStore? topicStore,
+    bool? topicsEnabled,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
     this.retrievedAudioSettleTime = retrievedAudioSettle,
     Future<String> Function(String rawPath)? rawExportConverter,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
   }) : _analysisOverride = analysisController,
+       topicsEnabled =
+           topicsEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
        _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
@@ -258,6 +265,16 @@ class RecorderController extends ChangeNotifier {
       _transcriptsLoaded = _loadPersistedTranscripts();
     }
     _fileJobsLoaded = _restoreFileJobs();
+    // Topics are iPhone-only in the first version (#50); elsewhere the store
+    // stays empty in memory and nothing is placed.
+    _ownsTopics = topicStore == null;
+    topics =
+        topicStore ??
+        TopicStore(inMemory: !loadPersistedState || !this.topicsEnabled);
+    _topicsLoaded = this.topicsEnabled ? topics.load() : Future<void>.value();
+    if (this.topicsEnabled && loadPersistedState) {
+      _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
+    }
     if (loadPersistedState || persistedDeviceLoader != null) {
       _persistedDeviceLoaded = _loadPersistedDevice();
       unawaited(_persistedDeviceLoaded);
@@ -265,6 +282,13 @@ class RecorderController extends ChangeNotifier {
       _persistedDeviceLoaded = Future<void>.value();
     }
   }
+
+  /// Whether topic notes (#49) are active. First version: iPhone only.
+  final bool topicsEnabled;
+  late final TopicStore topics;
+  late final Future<void> _topicsLoaded;
+  AppLifecycleListener? _lifecycle;
+  late final bool _ownsTopics;
 
   bool _fileJobPreparing = false;
   late final FileJobJournal _fileJobs;
@@ -404,10 +428,17 @@ class RecorderController extends ChangeNotifier {
     required Duration settle,
   }) async {
     await Future.wait([_settingsLoaded, _transcriptsLoaded, _fileJobsLoaded]);
-    if (_disposed || !autoTranscribe || !path.toLowerCase().endsWith('.wav')) {
-      return;
-    }
+    if (_disposed || !path.toLowerCase().endsWith('.wav')) return;
     final key = _recordingKey(path: path);
+    if (topicsEnabled) {
+      // Placement is independent of the auto-transcribe switch and of
+      // completeness: the recording exists locally either way, and a later
+      // re-retrieval keeps whatever placement it already has.
+      await _topicsLoaded;
+      if (_disposed) return;
+      await topics.placeRetrieved(key);
+    }
+    if (!autoTranscribe) return;
     if (_isRecordingAudioLocked(fileIdFromPath(path), path)) return;
     final config = _settingsConfiguration;
     if (!_isConfigured(config) &&
@@ -4108,6 +4139,7 @@ class RecorderController extends ChangeNotifier {
         }
         final key = _recordingKey(path: path);
         await _fileJobs.discard(key);
+        await topics.forgetRecording(key);
         _deferredJobs.discard(key);
         _transcriptMetadata.remove(key);
         _recordingTranslations.remove(key);
@@ -4167,6 +4199,10 @@ class RecorderController extends ChangeNotifier {
       _recordingKey(path: path),
       _recordingKey(path: targetPath),
       targetPath,
+    );
+    await topics.renameRecordingKey(
+      _recordingKey(path: path),
+      _recordingKey(path: targetPath),
     );
     final transcript = transcriptsByPath.remove(path);
     if (transcript != null) transcriptsByPath[targetPath] = transcript;
@@ -4913,6 +4949,8 @@ class RecorderController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _lifecycle?.dispose();
+    if (_ownsTopics) topics.dispose();
     _completeFileRefresh();
     _fileJobRevision++;
     _capabilityRevision++;
