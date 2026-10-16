@@ -34,9 +34,9 @@ LEGACY_BINARY_NAME="Soundcore Manager"
 LEGACY_BUNDLE_ID="com.anker.ankerRecorder"
 KOE_DEFAULT_INSTALL="/Applications/Koe.app"
 # Pre-rename Soundcore Manager builds, as CFBundleShortVersionString+CFBundleVersion.
-# The app version never moved off 1.0.0+1 before the rename, and the current
-# Koe build still carries that number, so it cannot be told apart by "older
-# than Koe" and is listed explicitly. The identity checks above it still keep
+# The app version never moved off 1.0.0+1 before the rename, and early Koe
+# builds carried that same number, so it is listed explicitly rather than
+# relying only on "older than Koe". The identity checks above it still keep
 # Koe.app from matching.
 LEGACY_VERSIONS=("1.0.0+1")
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
