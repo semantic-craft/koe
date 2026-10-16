@@ -2,12 +2,18 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:koe/ai/engine_config.dart';
+import 'package:koe/ai/qwen_stt.dart';
+import 'package:koe/ai/stt_types.dart';
 import 'package:koe/ble/ble_service.dart';
+import 'package:koe/state/file_job_journal.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/wav_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -119,6 +125,85 @@ void main() {
       expect(ble.downloads, [102, 103]);
     },
   );
+
+  group('shared retrieval entry (#13)', () {
+    late _Qwen qwen;
+    late FileJobJournal journal;
+
+    setUp(() async {
+      controller.dispose();
+      ble = _Ble();
+      qwen = _Qwen();
+      journal = FileJobJournal(inMemory: true);
+      controller =
+          RecorderController(
+              loadPersistedState: false,
+              ble: ble,
+              qwenSpeech: qwen,
+              fileJobJournal: journal,
+              retrievedAudioSettleTime: Duration.zero,
+              rawExportConverter: (raw) async {
+                final wav = '${raw.substring(0, raw.lastIndexOf('.'))}.wav';
+                await File(wav).writeAsBytes(wavBytes([1, 2, 3, 4]));
+                return wav;
+              },
+            )
+            ..connected = true
+            ..encryptReady = true
+            ..phase = AppPhase.ready;
+      await controller.setQwenConfig(const EngineConfig(apiKey: 'key'));
+      controller.setSpeechProvider(SttProvider.qwen);
+      controller.setAutoTranscribe(true);
+    });
+
+    Future<void> completedJobs(int count) => _until(
+      () =>
+          journal.jobs.values.where((j) => j.stage == 'complete').length ==
+          count,
+    );
+
+    test('BLE manual download submits through the shared entry', () async {
+      final work = controller.downloadFileOverBle(
+        OfflineFileEntry(fileId: 102, sizeBytes: 160),
+      );
+      await _until(() => ble.downloads.contains(102));
+      ble.finish();
+      await work;
+      await completedJobs(1);
+      expect(qwen.paths.single, endsWith('/102.wav'));
+      expect(controller.transcriptForPath(qwen.paths.single), '通义文本');
+    });
+
+    test('BLE automatic download submits through the shared entry', () async {
+      await controller.listFiles();
+      ble.filePage([103]);
+      await _until(() => ble.downloads.contains(103));
+      ble.finish();
+      await completedJobs(1);
+      expect(qwen.paths.single, endsWith('/103.wav'));
+      expect(qwen.calls, 1);
+    });
+  });
+}
+
+class _Qwen extends QwenSttService {
+  int calls = 0;
+  final paths = <String>[];
+
+  @override
+  Future<SttResult> transcribePath(
+    String path, {
+    String? apiKey,
+    String? baseUrl,
+    String? model,
+    String? language,
+    SttFileProgressCallback? onProgress,
+    bool Function()? isCurrent,
+  }) async {
+    calls++;
+    paths.add(path);
+    return SttResult(text: '通义文本', sourcePath: path);
+  }
 }
 
 Future<void> _until(bool Function() ready) async {

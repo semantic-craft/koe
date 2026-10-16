@@ -287,6 +287,13 @@ class WifiExportService {
   bool _decryptEnabled = false;
   int _decryptedChunks = 0;
   int _rawFallbackChunks = 0;
+  final Set<String> _incompletePaths = {};
+
+  /// Paths from the latest [transferFiles] that were saved without the
+  /// device's done marker and below the byte threshold, or that mix
+  /// decrypted and undecryptable chunks. They stay on disk for playback and
+  /// manual handling but must not be treated as a complete recording.
+  Set<String> get incompletePaths => Set.unmodifiable(_incompletePaths);
 
   void _emit(ExportProgress p) {
     _progress = p;
@@ -405,6 +412,7 @@ class WifiExportService {
     required List<OfflineFileEntry> files,
     bool useSsl = true,
   }) async {
+    _incompletePaths.clear();
     if (files.isEmpty) return const [];
     if (_cancelled) throw StateError('已取消 Wi-Fi 导出');
     final saved = <String>[];
@@ -774,6 +782,7 @@ class WifiExportService {
     final pathRaw = p.join(outDir.path, '$baseName.opus.bin');
     // Start as opus; rename if we never decrypted.
     var path = pathOpus;
+    var partial = false;
     final ioFile = File(path);
     _fileSink = ioFile.openWrite();
     _sliceBytes = 0;
@@ -833,6 +842,7 @@ class WifiExportService {
           );
         }
         _log('Partial receive $_sliceBytes/$_expectedSize — saving anyway');
+        partial = true;
       }
 
       await _fileSink?.flush();
@@ -861,6 +871,9 @@ class WifiExportService {
           'Saved decrypted $_decryptedChunks chunks'
           '${_rawFallbackChunks > 0 ? " (+$_rawFallbackChunks raw)" : ""} → $path',
         );
+      }
+      if (partial || (_decryptedChunks > 0 && _rawFallbackChunks > 0)) {
+        _incompletePaths.add(path);
       }
       if (_activeFileId != null) crypto.clearFile(_activeFileId!);
       return path;
