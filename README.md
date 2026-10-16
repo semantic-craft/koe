@@ -1,8 +1,8 @@
 > **Private mirror — self-use only.** Source: https://github.com/tacshi/Soundcore (upstream author: [tacshi](https://github.com/tacshi)). Upstream has **no license**; all rights remain with the author. Private personal use only — **not for redistribution**; do not make this repository public.
 
-# Soundcore Manager（安克录音豆）
+# Koe — 安克录音豆录音与转写工具
 
-**soundcore Work**（安克 AI 录音豆 / **D3200**）本地管理 App，基于逆向出的设备协议（见 [`PROTOCOL.md`](PROTOCOL.md)）用 Flutter 实现，脱离飞书 App 独立使用：BLE 配对连接、录音管理、AI 实时/批量转写、Wi‑Fi SoftAP 批量导出。
+**Koe** 适配 **soundcore Work**（安克 AI 录音豆 / **D3200**）。基于逆向出的设备协议（见 [`PROTOCOL.md`](PROTOCOL.md)）用 Flutter 实现，脱离飞书 App 独立使用：BLE 配对连接、录音管理、AI 实时/批量转写、Wi‑Fi SoftAP 批量导出。产品身份以本标题和 [pubspec.yaml](pubspec.yaml) 的 `description` 为准。
 
 ## 开发状态
 
@@ -12,9 +12,9 @@
 
 | 平台 | 状态 |
 |------|------|
-| Android | BLE 扫描 / GATT |
-| iOS | BLE 扫描 / GATT |
-| macOS | BLE 扫描 / GATT（需 Bluetooth entitlement） |
+| Android | BLE 扫描 / GATT。启动器名称和后台同步通知仍是改名前的「安克录音豆」，本次未验收（[#38](https://github.com/semantic-craft/koe/issues/38) 未合并） |
+| iOS | BLE 扫描 / GATT。主屏幕、权限说明和快捷指令展示名为 Koe |
+| macOS | BLE 扫描 / GATT（需 Bluetooth entitlement）。应用包、菜单和权限说明为 Koe，安装到 `/Applications/Koe.app` |
 
 ## 功能
 
@@ -31,8 +31,8 @@
 安装并至少连接一次录音豆后，在支持操作按钮的 iPhone 上打开：
 
 1. **设置 → 操作按钮 → 快捷指令**。
-2. 选择 **安克录音豆 → Start Recording**。
-3. 长按操作按钮。App 会打开；如果录音豆暂时离线，会先自动重连再开始录音。
+2. 选择 **Koe → 开始录音**（快捷指令里的动作标题是「用 Koe 开始录音」）。
+3. 长按操作按钮。Koe 会打开；如果录音豆暂时离线，会先自动重连再开始录音。
 
 录音已经进行时再次运行快捷指令只会回到当前实时会话，不会重复发送开始命令。若 30 秒内找不到已绑定设备，请唤醒并靠近录音豆后重试。
 
@@ -67,7 +67,9 @@ flutter run -d android
 ## 构建
 
 ```bash
-# macOS 本机安装（固定 Developer ID 签名，升级后保留 Keychain 访问）
+# macOS 本机安装到 /Applications/Koe.app（固定 Developer ID 签名，升级后保留 Keychain 访问）
+# 若仍有改名前的 /Applications/Soundcore Manager.app，安装成功后会先打包再移除，避免误启动旧副本。
+# Bundle ID 与 Documents/AnkerRecorder 数据目录不变，已有录音和配置留在原处。
 ./scripts/install-macos.sh           # 先退出已安装 App，再构建并安装
 ./scripts/install-macos.sh --skip-build # 安装已有 Release 构建
 
