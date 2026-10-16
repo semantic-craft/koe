@@ -80,6 +80,13 @@ void main() {
   RecordingViewData view(RecorderController c) =>
       c.recordingView(RecordingReference(path: audio.path));
 
+  /// Waits until the failed first run has fully ended. Its error is set before
+  /// its last journal write, and the busy flag clears only after that write.
+  /// A restart opens a second journal on the same file, so reopening earlier
+  /// lets the two writers race on `file_jobs.json.tmp` (#64).
+  Future<void> failedRunEnded(RecorderController c) =>
+      settleUntil(() => view(c).error != null && !c.fileProcessingBusy);
+
   /// Lets the restored queue run; it must not make any call by itself.
   Future<void> idle() => Future<void>.delayed(const Duration(milliseconds: 60));
 
@@ -193,7 +200,7 @@ void main() {
       final journal = FileJobJournal(file: journalFile);
       final c = await open(journal, qwen: qwen);
       await c.processRetrievedRecording(audio.path);
-      await settleUntil(() => view(c).error != null);
+      await failedRunEnded(c);
       expect(qwen.uploads, 1);
       final saved = await onDisk('running');
       expect(saved.taskId, 'task-1');
@@ -245,7 +252,7 @@ void main() {
       final journal = FileJobJournal(file: journalFile);
       final c = await open(journal, qwen: qwen);
       await c.processRetrievedRecording(audio.path);
-      await settleUntil(() => view(c).error != null);
+      await failedRunEnded(c);
       expect(qwen.calls, 1);
       expect(c.statusMessage, isNot('转写已保存'));
       expect(view(c).error, contains('未能保存'));
