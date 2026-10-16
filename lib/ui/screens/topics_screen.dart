@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../state/recording_analysis.dart';
+import '../../state/topic_export.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
@@ -1023,6 +1029,83 @@ class TopicDetailScreen extends StatelessWidget {
   const TopicDetailScreen({super.key, required this.topicId});
   final String topicId;
 
+  String _markdown(RecorderController c, Topic topic) {
+    final input = c.topicSummaryInput(topicId);
+    final notes = <TopicExportNote>[];
+    var unavailable = input.invalidKeys.length;
+    for (final source in input.sources) {
+      final result = c.analysis.results[TopicNote.slotKey(source.recordingKey)];
+      if (result == null) {
+        unavailable++;
+        continue;
+      }
+      final note = TopicNote.tryParse(
+        result.text,
+        result.sources.isEmpty ? 1 : result.sources.length,
+        fallbackTopicId: topicId,
+      );
+      if (note == null || note.kind != topic.kind ||
+          (note.topicId.isNotEmpty && note.topicId != topicId)) {
+        unavailable++;
+        continue;
+      }
+      notes.add(TopicExportNote(
+        title: source.title,
+        recordedAt: source.recordedAt,
+        page: source.page,
+        note: note,
+      ));
+    }
+    final result = c.analysis.results[TopicSummary.slotKey(topicId)];
+    final summary = result == null ? null : TopicSummary.tryParse(result.text);
+    return buildTopicMarkdown(
+      topic: topic,
+      recordingCount: _existingKeys(c, c.topics.recordingsIn(topicId)).length,
+      exportedAt: DateTime.now(),
+      notes: notes,
+      summary: summary,
+      summaryStale: c.isTopicSummaryStale(topicId),
+      unavailableNoteCount: unavailable,
+    );
+  }
+
+  Future<void> _export(BuildContext context, RecorderController c,
+      Topic topic, {required bool share}) async {
+    try {
+      final markdown = _markdown(c, topic);
+      if (share) {
+        final filename = topicExportFileName(topic, c.topics.topics);
+        // Each handoff gets its own directory. Repeated exports and topics
+        // with the same title never replace an earlier in-flight share file.
+        final directory = await Directory.systemTemp.createTemp('koe-topic-');
+        final file = File('${directory.path}/$filename');
+        await file.writeAsString(markdown, encoding: utf8, flush: true);
+        if (!context.mounted) return;
+        final box = context.findRenderObject() as RenderBox?;
+        await SharePlus.instance.share(ShareParams(
+          files: [XFile(file.path, name: filename, mimeType: 'text/markdown')],
+          title: filename,
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(Offset.zero) & box.size,
+        ));
+      } else {
+        await Clipboard.setData(ClipboardData(text: markdown));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已复制主题 Markdown')),
+          );
+        }
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导出失败，请重试')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -1044,6 +1127,18 @@ class TopicDetailScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(topic.title),
             actions: [
+              IconButton(
+                key: const ValueKey('topic-export-copy'),
+                tooltip: '复制主题 Markdown',
+                onPressed: () => _export(context, c, topic, share: false),
+                icon: const Icon(Icons.copy_outlined),
+              ),
+              IconButton(
+                key: const ValueKey('topic-export-share'),
+                tooltip: '分享主题 Markdown 文件',
+                onPressed: () => _export(context, c, topic, share: true),
+                icon: const Icon(Icons.ios_share_rounded),
+              ),
               PopupMenuButton<String>(
                 tooltip: '编辑主题',
                 onSelected: (value) async {
