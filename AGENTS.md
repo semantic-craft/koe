@@ -9,7 +9,7 @@
 | 界面与平台接入 | [lib/ui](lib/ui/)、[lib/platform](lib/platform/)，再读对应平台目录 |
 | 签名、安装脚本、系统 Keychain 凭据 | [skills/verify-koe/SKILL.md](skills/verify-koe/SKILL.md)，验收含真实安装升级读取 |
 
-在根目录运行 `flutter test`，现有用例在 [test](test/)。构建和真机运行按 README；设备连接、音频接收和真实转写需另留证据。安装脚本在 [scripts](scripts/)，运行前核对其目标设备和副作用。
+在根目录运行 `flutter test`，现有用例在 [test](test/)。终端里默认的 compact 输出会原地覆盖进度行，日志只留下有 print 输出的文件，不能据此判断哪些文件跑过；要看到每个测试文件用 `flutter test --reporter expanded`，核对文件数见 [lessons](lessons.md)「compact 日志里缺文件不等于没跑」。构建和真机运行按 README；设备连接、音频接收和真实转写需另留证据。安装脚本在 [scripts](scripts/)，运行前核对其目标设备和副作用。
 实现、评审或验收前读相关 [lessons](lessons.md)；出现可复用的纠正或漏验时更新原条目。
 
 ## 交付与验收（硬规则）
