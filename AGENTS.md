@@ -37,6 +37,8 @@
    - `repo: semantic-craft/koe`、`ref: <branch>@<完整 sha>`、可选 `cwd:`（默认仓库根 `~/Projects/koe`）
    - `- [ ] <命令>` 清单，按顺序执行（如 `flutter pub get` / `flutter analyze` / `flutter test`）
 2. **派单。** 图灵在 Helios `~/Projects/koe` fetch 并切到该 sha（工作区须干净），然后**只经 zcode-dispatch**（Helios receiver `:7791`，项目名 `koe`）派给 ZCode；不得绕开 zcode-dispatch 直调 ZCode CLI。ZCode 不改文件、不提交。
+   - 主工作区正被另一单占用（多个 PR 同时有本机待办）时，不切主工作区分支，改用独立 worktree：`git worktree add --detach /tmp/koe-pr<N>-<短sha> <完整 sha>`，跑完 `git worktree remove --force` 清掉（首次用于 PR #56）。
+   - 派单提示词须原样抄入第 3 条的回帖格式，不另写模板（PR #56 因提示词自带模板，回帖少了标题短 sha、`<details>` 日志和 `结论:` 行）。
 3. **回帖。** ZCode 在同一 PR 评论 `## 本机结果 (<短 sha>)`：
    - 每项一行 `- ✅/❌ \`<命令>\` — 退出码 N`
    - 其下 `<details>` 折叠该命令日志末尾 ≤50 行，原样
