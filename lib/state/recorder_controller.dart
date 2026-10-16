@@ -3777,10 +3777,11 @@ class RecorderController extends ChangeNotifier {
             decrypted: true,
             transferComplete: (raw) => !_blePull.isIncomplete(raw),
           );
+          // A partial file is kept but not reported as transferred.
           if (!_incompleteRetrievalIds.contains(file.fileId)) {
             completeIds.add(file.fileId);
+            exported++;
           }
-          exported++;
           if (!_shouldYieldAutoTransfer) statusMessage = progressMessage();
           notifyListeners();
         } on BleFilePullCancelled {
