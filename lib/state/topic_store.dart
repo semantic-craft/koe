@@ -225,6 +225,16 @@ class TopicStore extends ChangeNotifier {
     await save();
   }
 
+  /// Removes [token] when it is still the mark for [recordingKey]. An attempt
+  /// that was superseded, or that finished after the recording left 待归类 or
+  /// its original topic, must not block a later evaluation of that excerpt.
+  Future<void> clearAssistEvaluated(String recordingKey, String token) async {
+    await load();
+    if (_evaluatedAssist[recordingKey] != token) return;
+    _evaluatedAssist.remove(recordingKey);
+    await save();
+  }
+
   Future<void> setRecommendation(
     String recordingKey,
     TopicRecommendation recommendation,

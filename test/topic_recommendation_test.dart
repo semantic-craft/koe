@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -661,6 +662,135 @@ void main() {
       expect(hint.suggestedTopicId, career.id);
     },
   );
+
+  test(
+    'a newer transcript supersedes an in-flight assist, and leaving 待归类 '
+    'does not stick a mark that blocks retrying the same text',
+    () async {
+      final dir = await makeTempDir();
+      addTearDown(() async {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final store = TopicStore(
+        inMemory: true,
+        now: () => DateTime(2026, 10, 16, 10),
+      );
+      await store.load();
+      final book = await store.createTopic(
+        kind: TopicKind.book,
+        title: '法学方法论',
+        author: '拉伦茨',
+      );
+      final career = await store.createTopic(
+        kind: TopicKind.general,
+        title: '职业规划',
+      );
+
+      final qwen = _FakeQwenStt();
+      final recommender = _FakeRecommendService();
+      final c = buildController(store, qwen: qwen, recommender: recommender);
+      await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
+      c.setSpeechProvider(SttProvider.qwen);
+      c.setAutoTranscribe(true);
+
+      Future<void> until(bool Function() done) async {
+        final started = DateTime.now();
+        while (!done()) {
+          expect(
+            DateTime.now().difference(started),
+            lessThan(const Duration(seconds: 5)),
+            reason: 'timed out waiting for topic assist',
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }
+
+      // A is in flight when a clearly different transcript B arrives.
+      // A's model result must not remain as the recommendation, and B must
+      // be evaluated.
+      final stallA = Completer<void>();
+      addTearDown(() {
+        if (!stallA.isCompleted) stallA.complete();
+      });
+      recommender.stall = stallA;
+      recommender.nextOutput = '{"action":"existing","topicId":"${book.id}"}';
+      const textA = '转写A独有：法学方法论里关于法律解释的讨论';
+      qwen.nextText = textA;
+      final pathA = await recording(dir, 1760000701);
+      await c.processRetrievedRecording(pathA);
+      await until(() => recommender.calls == 1);
+
+      const textB = '转写B独有：明年换城市并重新规划职业方向';
+      recommender.nextOutput =
+          '{"action":"existing","topicId":"${career.id}"}';
+      c.rememberTranscript(pathA, textB, provider: SttProvider.qwen);
+      stallA.complete();
+      await c.waitForTopicAssist();
+
+      const keyA = 'file:1760000701';
+      final hashB = analysisFingerprint(topicTranscriptExcerpt(textB));
+      expect(recommender.sources, contains(contains('转写B独有')));
+      expect(store.recommendationFor(keyA)?.topicId, career.id);
+      expect(store.recommendationFor(keyA)?.sourceHash, hashB);
+      expect(store.topicOf(keyA), isNull);
+      expect(store.isPending(keyA), isTrue);
+
+      // Leaving 待归类 while assist is in flight must not stick a mark that
+      // blocks evaluating the same text after the recording is pending again.
+      final stallC = Completer<void>();
+      addTearDown(() {
+        if (!stallC.isCompleted) stallC.complete();
+      });
+      recommender.stall = stallC;
+      recommender.nextOutput = '{"action":"existing","topicId":"${book.id}"}';
+      const textC = '移出待归类期间保持不变的同一段转写';
+      final callsBeforeC = recommender.calls;
+      qwen.nextText = textC;
+      final pathC = await recording(dir, 1760000702);
+      await c.processRetrievedRecording(pathC);
+      await until(() => recommender.calls == callsBeforeC + 1);
+
+      const keyC = 'file:1760000702';
+      await store.removeFromTopic(keyC);
+      stallC.complete();
+      await c.waitForTopicAssist();
+
+      final tokenC =
+          'pending:${analysisFingerprint(topicTranscriptExcerpt(textC))}';
+      expect(store.isPending(keyC), isFalse);
+      expect(store.recommendationFor(keyC), isNull);
+      expect(store.hasEvaluatedAssist(keyC, tokenC), isFalse);
+
+      final snapshot = store.toJson();
+      final placements = Map<String, Object?>.from(
+        snapshot['placements']! as Map,
+      );
+      placements[keyC] = 'pending';
+      snapshot['placements'] = placements;
+      final reopenFile = File('${dir.path}/reopen-topics.json');
+      await reopenFile.writeAsString(jsonEncode(snapshot));
+      final reloaded = TopicStore(
+        file: reopenFile,
+        now: () => DateTime(2026, 10, 16, 10),
+      );
+      addTearDown(reloaded.dispose);
+      await reloaded.load();
+      expect(reloaded.isPending(keyC), isTrue);
+      expect(reloaded.hasEvaluatedAssist(keyC, tokenC), isFalse);
+
+      final recommender2 = _FakeRecommendService();
+      recommender2.nextOutput = '{"action":"existing","topicId":"${book.id}"}';
+      final c2 = buildController(reloaded, recommender: recommender2);
+      await c2.setQwenConfig(const EngineConfig(apiKey: 'key'));
+      c2.rememberTranscript(pathC, textC, provider: SttProvider.qwen);
+      await c2.waitForTopicAssist();
+
+      expect(recommender2.calls, 1);
+      expect(reloaded.recommendationFor(keyC)?.topicId, book.id);
+      expect(reloaded.isPending(keyC), isTrue);
+      expect(reloaded.topicOf(keyC), isNull);
+    },
+  );
 }
 
 class _FakeQwenStt extends QwenSttService {
@@ -686,6 +816,11 @@ class _FakeRecommendService implements AnalysisService {
   Object? nextError;
   String? lastSource;
   String? lastInstruction;
+  final List<String> sources = [];
+
+  /// When set, the next generate call waits until this completer finishes,
+  /// using the output captured at the start of that call.
+  Completer<void>? stall;
 
   @override
   Future<String> generate({
@@ -698,8 +833,14 @@ class _FakeRecommendService implements AnalysisService {
     calls++;
     lastSource = source;
     lastInstruction = instruction;
-    if (nextError != null) throw nextError!;
-    return nextOutput;
+    sources.add(source);
+    final output = nextOutput;
+    final error = nextError;
+    final gate = stall;
+    stall = null;
+    if (gate != null) await gate.future;
+    if (error != null) throw error;
+    return output;
   }
 
   @override

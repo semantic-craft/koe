@@ -51,6 +51,13 @@ export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
+/// Latest transcript waiting on an in-flight topic-assist run.
+class _TopicAssistLatest {
+  _TopicAssistLatest(this.transcript);
+  String transcript;
+  bool dirty = false;
+}
+
 class RecorderController extends ChangeNotifier {
   late final analysis =
       _analysisOverride ??
@@ -67,6 +74,7 @@ class RecorderController extends ChangeNotifier {
       };
   final AnalysisService? _topicRecommendationOverride;
   final Map<String, Future<void>> _topicAssistTasks = {};
+  final Map<String, _TopicAssistLatest> _topicAssistLatest = {};
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
   bool recordingAudioChanged(RecordingReference ref) =>
       _fileJobs.jobs[_referenceKey(ref)]?.audioChanged == true;
@@ -319,16 +327,119 @@ class RecorderController extends ChangeNotifier {
     if (!topicsEnabled || _disposed) return Future<void>.value();
     final excerpt = topicTranscriptExcerpt(transcript);
     if (excerpt.isEmpty) return Future<void>.value();
+    final latest = _topicAssistLatest.putIfAbsent(
+      recordingKey,
+      () => _TopicAssistLatest(transcript),
+    );
+    latest.transcript = transcript;
     final existing = _topicAssistTasks[recordingKey];
-    if (existing != null) return existing;
+    if (existing != null) {
+      latest.dirty = true;
+      return existing;
+    }
+    latest.dirty = false;
+    final scheduledHash = analysisFingerprint(excerpt);
     late final Future<void> task;
     task = _runTopicAssist(recordingKey, transcript, excerpt).whenComplete(() {
-      if (identical(_topicAssistTasks[recordingKey], task)) {
-        _topicAssistTasks.remove(recordingKey);
+      if (!identical(_topicAssistTasks[recordingKey], task)) return;
+      _topicAssistTasks.remove(recordingKey);
+      if (_disposed || !topicsEnabled) return;
+      final pending = _topicAssistLatest[recordingKey];
+      if (pending == null) return;
+      final pendingExcerpt = topicTranscriptExcerpt(pending.transcript);
+      if (pendingExcerpt.isEmpty) {
+        pending.dirty = false;
+        return;
       }
+      final pendingHash = analysisFingerprint(pendingExcerpt);
+      if (!pending.dirty && pendingHash == scheduledHash) return;
+      _scheduleTopicAssist(recordingKey, pending.transcript);
     });
     _topicAssistTasks[recordingKey] = task;
     return task;
+  }
+
+  String? _pathForRecordingKey(String recordingKey) {
+    if (recordingKey.startsWith('path:')) {
+      final path = recordingKey.substring('path:'.length);
+      return path.isEmpty ? null : path;
+    }
+    if (!recordingKey.startsWith('file:')) return null;
+    final id = int.tryParse(recordingKey.substring('file:'.length));
+    if (id == null) return null;
+    for (final path in transcriptsByPath.keys) {
+      if (fileIdFromPath(path) == id) return path;
+    }
+    return null;
+  }
+
+  /// Transcript currently stored for [recordingKey], via [transcriptForPath]
+  /// when the path is known.
+  String? _transcriptForTopicAssist(String recordingKey) {
+    final path = _pathForRecordingKey(recordingKey);
+    if (path != null) {
+      final fromPath = transcriptForPath(path);
+      if (fromPath != null && fromPath.trim().isNotEmpty) return fromPath;
+    }
+    if (recordingKey.startsWith('file:')) {
+      final id = int.tryParse(recordingKey.substring('file:'.length));
+      final byId = id == null ? null : transcriptsByFileId[id];
+      if (byId != null && byId.isNotEmpty) return byId;
+    }
+    return null;
+  }
+
+  String? _currentTopicExcerptHash(String recordingKey) {
+    final text = _transcriptForTopicAssist(recordingKey);
+    if (text == null || text.trim().isEmpty) return null;
+    final excerpt = topicTranscriptExcerpt(text);
+    if (excerpt.isEmpty) return null;
+    return analysisFingerprint(excerpt);
+  }
+
+  bool _topicExcerptStill(String recordingKey, String excerptHash) =>
+      _currentTopicExcerptHash(recordingKey) == excerptHash;
+
+  bool _pendingAssistCurrent(String recordingKey, String excerptHash) =>
+      !_disposed &&
+      topics.isPending(recordingKey) &&
+      _topicExcerptStill(recordingKey, excerptHash);
+
+  bool _driftAssistCurrent(
+    String recordingKey,
+    String excerptHash,
+    String topicId,
+  ) {
+    if (_disposed || !_topicExcerptStill(recordingKey, excerptHash)) {
+      return false;
+    }
+    if (topics.topicOf(recordingKey)?.id != topicId) return false;
+    final topic = topics.topicById(topicId);
+    return topic != null && !topic.closed;
+  }
+
+  /// Drops a recommendation, drift hint, or evaluated-assist mark that belongs
+  /// to an excerpt the recording no longer has, or to a placement it has left.
+  Future<void> _rollbackSupersededTopicAssist(
+    String recordingKey,
+    String excerptHash,
+    String token, {
+    required bool pending,
+  }) async {
+    if (pending) {
+      final rec = topics.recommendationFor(recordingKey);
+      if (rec != null && rec.sourceHash == excerptHash) {
+        await topics.dismissRecommendation(recordingKey);
+      }
+    } else {
+      final hint = topics.driftHintFor(recordingKey);
+      if (hint != null && hint.sourceHash == excerptHash) {
+        await topics.dismissDriftHint(recordingKey);
+      }
+    }
+    if (topics.hasEvaluatedAssist(recordingKey, token)) {
+      await topics.clearAssistEvaluated(recordingKey, token);
+    }
   }
 
   Future<void> _runTopicAssist(
@@ -345,6 +456,7 @@ class RecorderController extends ChangeNotifier {
       final model = (analysis.model ?? 'qwen3.8-flash').trim();
       if (model.isEmpty) return;
       final excerptHash = analysisFingerprint(excerpt);
+      if (!_topicExcerptStill(recordingKey, excerptHash)) return;
 
       if (topics.isPending(recordingKey)) {
         final token = 'pending:$excerptHash';
@@ -360,15 +472,34 @@ class RecorderController extends ChangeNotifier {
           instruction: instruction,
           abort: Completer<void>().future,
         );
-        if (_disposed || !topics.isPending(recordingKey)) return;
+        if (!_pendingAssistCurrent(recordingKey, excerptHash)) return;
         final rec = parseTopicRecommendation(
           raw,
           topics.openTopics,
           sourceHash: excerptHash,
         );
+        // Unparseable output is not a finished "no recommendation" decision:
+        // leave the excerpt unmarked so a later trigger can retry (#52).
         if (rec == null) return;
         await topics.setRecommendation(recordingKey, rec);
+        if (!_pendingAssistCurrent(recordingKey, excerptHash)) {
+          await _rollbackSupersededTopicAssist(
+            recordingKey,
+            excerptHash,
+            token,
+            pending: true,
+          );
+          return;
+        }
         await topics.markAssistEvaluated(recordingKey, token);
+        if (!_pendingAssistCurrent(recordingKey, excerptHash)) {
+          await _rollbackSupersededTopicAssist(
+            recordingKey,
+            excerptHash,
+            token,
+            pending: true,
+          );
+        }
         return;
       }
 
@@ -376,6 +507,7 @@ class RecorderController extends ChangeNotifier {
       if (assigned != null && !assigned.closed) {
         final token = 'drift:${assigned.id}:$excerptHash';
         if (topics.hasEvaluatedAssist(recordingKey, token)) return;
+        if (!_topicExcerptStill(recordingKey, excerptHash)) return;
         final instruction = buildTopicDriftInstruction(
           currentTopic: assigned,
           openTopics: topics.openTopics,
@@ -388,25 +520,44 @@ class RecorderController extends ChangeNotifier {
           instruction: instruction,
           abort: Completer<void>().future,
         );
-        if (_disposed || topics.topicOf(recordingKey)?.id != assigned.id) {
+        if (!_driftAssistCurrent(recordingKey, excerptHash, assigned.id)) {
           return;
         }
-        final currentAssigned = topics.topicById(assigned.id);
-        if (currentAssigned == null || currentAssigned.closed) return;
         final decision = parseTopicDriftDecision(
           raw,
-          currentTopic: currentAssigned,
+          currentTopic: topics.topicById(assigned.id)!,
           openTopics: topics.openTopics,
           sourceHash: excerptHash,
         );
         if (decision == null) return;
         if (decision.hint != null) {
+          if (!_driftAssistCurrent(recordingKey, excerptHash, assigned.id)) {
+            return;
+          }
           await topics.setDriftHint(recordingKey, decision.hint!);
         }
+        if (!_driftAssistCurrent(recordingKey, excerptHash, assigned.id)) {
+          await _rollbackSupersededTopicAssist(
+            recordingKey,
+            excerptHash,
+            token,
+            pending: false,
+          );
+          return;
+        }
         await topics.markAssistEvaluated(recordingKey, token);
+        if (!_driftAssistCurrent(recordingKey, excerptHash, assigned.id)) {
+          await _rollbackSupersededTopicAssist(
+            recordingKey,
+            excerptHash,
+            token,
+            pending: false,
+          );
+        }
       }
     } catch (_) {
-      // Silent fallback to manual classification (#52).
+      // Silent fallback. Do not mark: a later trigger may retry the same
+      // excerpt, and a superseded excerpt must not block the latest text.
     }
   }
 
