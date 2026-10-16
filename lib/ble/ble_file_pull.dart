@@ -38,6 +38,12 @@ class BleFilePull {
 
   void _log(String m) => debugPrint('[BlePull] $m');
 
+  final Set<String> _incompletePaths = {};
+
+  /// Whether the last pull that saved [path] ended without the device's done
+  /// signal and below the announced size (accepted at >= 95% for playback).
+  bool isIncomplete(String path) => _incompletePaths.contains(path);
+
   Future<String> pullFile(
     OfflineFileEntry file, {
     // Maximum time without a file packet, not a cap on total transfer time.
@@ -141,7 +147,18 @@ class BleFilePull {
           'Keep BLE connected and try again.',
         );
       }
-      _log('saved $path ($received bytes, decrypt=$decryptOn)');
+      // Saved files below 100% without the device's done signal are kept for
+      // playback but must not be treated as a finished recording.
+      final complete = done.isCompleted || (expected > 0 && received >= expected);
+      if (complete) {
+        _incompletePaths.remove(path);
+      } else {
+        _incompletePaths.add(path);
+      }
+      _log(
+        'saved $path ($received bytes, decrypt=$decryptOn'
+        '${complete ? '' : ', incomplete $received/$expected'})',
+      );
       return path;
     } catch (e) {
       try {

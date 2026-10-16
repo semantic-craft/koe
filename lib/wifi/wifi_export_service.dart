@@ -400,6 +400,12 @@ class WifiExportService {
   }
 
   /// Step 4–6: after user joined SoftAP, pull [files] over WebSocket.
+  final Set<String> _incompletePaths = {};
+
+  /// Whether the last transfer that saved [path] ended without the device's
+  /// done signal and below the announced size ("saving anyway").
+  bool isIncomplete(String path) => _incompletePaths.contains(path);
+
   Future<List<String>> transferFiles({
     required WifiEndpoint endpoint,
     required List<OfflineFileEntry> files,
@@ -824,6 +830,9 @@ class WifiExportService {
         await Future<void>.delayed(const Duration(milliseconds: 120));
       }
 
+      final complete =
+          _fileDone?.isCompleted == true ||
+          (_expectedSize > 0 && _sliceBytes >= _expectedSize);
       if (_fileDone?.isCompleted != true &&
           !(_expectedSize > 0 && _sliceBytes >= _expectedSize * 0.95)) {
         if (_sliceBytes == 0) {
@@ -863,6 +872,13 @@ class WifiExportService {
         );
       }
       if (_activeFileId != null) crypto.clearFile(_activeFileId!);
+      // A partial receive is kept for playback but is not a finished recording.
+      if (complete) {
+        _incompletePaths.remove(path);
+      } else {
+        _incompletePaths.add(path);
+        _log('Marked incomplete $_sliceBytes/$_expectedSize → $path');
+      }
       return path;
     } catch (e) {
       try {

@@ -141,7 +141,8 @@ void main() async {
       final dir = await Directory.systemTemp.createTemp('retrieved-test-');
       addTearDown(() => dir.delete(recursive: true));
       final path = '${dir.path}/987654.wav';
-      await File(path).writeAsBytes([1, 2, 3]);
+      // Retrieved audio must be a complete WAV to be submitted (#13).
+      await File(path).writeAsBytes(_completeWav([1, 2, 3, 4]));
       final qwen = _Qwen();
       final journal = FileJobJournal(inMemory: true);
       final c = RecorderController(
@@ -181,7 +182,7 @@ void main() async {
       final directory = await Directory.systemTemp.createTemp('audio-version-');
       addTearDown(() => directory.delete(recursive: true));
       final audio = File('${directory.path}/987654.wav');
-      await audio.writeAsBytes([1, 2, 3]);
+      await audio.writeAsBytes(_completeWav([1, 2, 3, 4]));
       final qwen = _Qwen()..apiKeyOverride = 'key';
       final journal = FileJobJournal(inMemory: true);
       final c = RecorderController(
@@ -194,7 +195,7 @@ void main() async {
       await settleUntil(
         () => journal.jobs.values.any((j) => j.stage == 'complete'),
       );
-      await audio.writeAsBytes([4, 5, 6]);
+      await audio.writeAsBytes(_completeWav([4, 5, 6, 7]));
       await c.processRetrievedRecording(audio.path);
       expect(qwen.calls, 1);
       expect(c.transcriptForPath(audio.path), '通义文本');
@@ -1515,4 +1516,29 @@ Future<void> settleUntil(bool Function() predicate) async {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
   expect(predicate(), isTrue, reason: 'condition did not settle');
+}
+
+/// Minimal finished PCM16 WAV around [pcm].
+List<int> _completeWav(List<int> pcm) {
+  final header = ByteData(44);
+  void ascii(int offset, String value) {
+    for (var i = 0; i < 4; i++) {
+      header.setUint8(offset + i, value.codeUnitAt(i));
+    }
+  }
+
+  ascii(0, 'RIFF');
+  header.setUint32(4, 36 + pcm.length, Endian.little);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  header.setUint32(16, 16, Endian.little);
+  header.setUint16(20, 1, Endian.little);
+  header.setUint16(22, 1, Endian.little);
+  header.setUint32(24, 16000, Endian.little);
+  header.setUint32(28, 32000, Endian.little);
+  header.setUint16(32, 2, Endian.little);
+  header.setUint16(34, 16, Endian.little);
+  ascii(36, 'data');
+  header.setUint32(40, pcm.length, Endian.little);
+  return [...header.buffer.asUint8List(), ...pcm];
 }
