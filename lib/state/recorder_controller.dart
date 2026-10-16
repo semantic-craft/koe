@@ -44,9 +44,11 @@ import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
 import 'topic_store.dart';
+import 'topic_note.dart';
 
 export 'recording.dart';
 export 'topic_store.dart';
+export 'topic_note.dart';
 export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
@@ -65,6 +67,10 @@ class RecorderController extends ChangeNotifier {
         service: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
       );
   final RecordingAnalysis? _analysisOverride;
+  final Map<String, String> _transcriptPathsByKey = {};
+  Map<String, TopicPlacement> _observedPlacements = const {};
+  bool _topicsObserved = false;
+  final Map<String, String> _audioVersions = {};
   late final AnalysisService _topicRecommender =
       switch (_topicRecommendationOverride) {
         final QwenAnalysisService qwen when !qwen.isTopicAssist =>
@@ -75,9 +81,247 @@ class RecorderController extends ChangeNotifier {
   final AnalysisService? _topicRecommendationOverride;
   final Map<String, Future<void>> _topicAssistTasks = {};
   final Map<String, _TopicAssistLatest> _topicAssistLatest = {};
+  final Set<Future<void>> _topicNoteInflight = <Future<void>>{};
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
+  String recordingKeyFor(RecordingReference ref) => _referenceKey(ref);
   bool recordingAudioChanged(RecordingReference ref) =>
       _fileJobs.jobs[_referenceKey(ref)]?.audioChanged == true;
+
+  String? _audioPathFor(RecordingReference ref) {
+    final path = recordingView(ref).path ?? ref.path;
+    if (path == null || path.isEmpty) return null;
+    return path;
+  }
+
+  /// Chunked #13 digest. Missing files return null without reading bytes.
+  Future<String?> _topicNoteAudioVersion(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    if (!File(path).existsSync()) return null;
+    try {
+      return await audioVersion(path);
+    } on AudioVersionException {
+      return null;
+    }
+  }
+
+  RecordingReference _referenceFromKey(String key, {String? pathHint}) {
+    final resolvedPath = pathHint ?? _transcriptPathsByKey[key];
+    if (key.startsWith('file:')) {
+      final id = int.tryParse(key.substring(5));
+      if (id != null) {
+        return RecordingReference(
+          fileId: id,
+          path: resolvedPath ?? localPathsByFileId[id],
+        );
+      }
+    }
+    if (key.startsWith('path:')) {
+      return RecordingReference(path: resolvedPath ?? key.substring(5));
+    }
+    return RecordingReference(path: resolvedPath);
+  }
+
+  List<TopicNote> _priorTopicNotes(String topicId, String excludeRecordingKey) {
+    final notes = <TopicNote>[];
+    for (final otherKey in topics.recordingsIn(topicId)) {
+      if (otherKey == excludeRecordingKey) continue;
+      final res = analysis.results[TopicNote.slotKey(otherKey)];
+      if (res == null) continue;
+      final parsed = TopicNote.tryParse(
+        res.text,
+        res.sources.isEmpty ? 1 : res.sources.length,
+        fallbackTopicId: topicId,
+      );
+      if (parsed != null) notes.add(parsed);
+    }
+    return notes;
+  }
+
+  bool isTopicNoteStale(RecordingReference ref) {
+    final key = _referenceKey(ref);
+    final slotKey = TopicNote.slotKey(key);
+    final result = analysis.results[slotKey];
+    if (result == null) return false;
+    if (recordingAudioChanged(ref)) return true;
+    final view = recordingView(ref);
+    final source = view.text.trim();
+    if (source.isNotEmpty && result.staleFor(source)) return true;
+    final parsed = TopicNote.tryParse(
+      result.text,
+      result.sources.isEmpty ? 1 : result.sources.length,
+    );
+    if (parsed == null) return true;
+    final topic = topics.topicOf(key);
+    if (topic != null &&
+        parsed.topicId.isNotEmpty &&
+        parsed.topicId != topic.id) {
+      return true;
+    }
+    final cachedVersion = _audioVersions[key];
+    if (parsed.audioSignature != null &&
+        cachedVersion != null &&
+        cachedVersion != parsed.audioSignature) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> generateTopicNote(RecordingReference ref) {
+    final task = _runGenerateTopicNote(ref);
+    _trackTopicNote(task);
+    return task;
+  }
+
+  /// Recomputes the cached #13 audio version. Build paths must not call this.
+  /// When [force] is false, a version already stored for this recording is kept.
+  Future<void> refreshCachedAudioVersion(
+    RecordingReference ref, {
+    bool force = false,
+  }) {
+    final task = _refreshCachedAudioVersion(ref, force: force);
+    _trackTopicNote(task);
+    return task;
+  }
+
+  Future<void> _refreshCachedAudioVersion(
+    RecordingReference ref, {
+    required bool force,
+  }) async {
+    final key = _referenceKey(ref);
+    if (!force && _audioVersions.containsKey(key)) return;
+    final version = await _topicNoteAudioVersion(_audioPathFor(ref));
+    if (version == null || _audioVersions[key] == version) return;
+    _audioVersions[key] = version;
+    if (!_disposed) notifyListeners();
+  }
+
+  void _trackTopicNote(Future<void> task) {
+    _topicNoteInflight.add(task);
+    task.whenComplete(() => _topicNoteInflight.remove(task));
+  }
+
+  /// True while a topic-note generation or refresh started by the controller
+  /// is still running. Widget tests pump until this is false.
+  @visibleForTesting
+  bool get topicNoteWorkPending => _topicNoteInflight.isNotEmpty;
+
+  /// Waits until startup loads and every in-flight topic-note task has
+  /// finished. "Must not call" assertions have to use this, not a fixed delay.
+  @visibleForTesting
+  Future<void> settleTopicNoteWork() async {
+    await Future.wait([_settingsLoaded, _transcriptsLoaded, _topicsLoaded]);
+    await Future<void>.value();
+    var spins = 0;
+    while (_topicNoteInflight.isNotEmpty) {
+      if (++spins > 30) {
+        throw StateError('主题笔记任务没有结束');
+      }
+      final pending = List<Future<void>>.of(_topicNoteInflight);
+      try {
+        await Future.wait(pending);
+      } finally {
+        _topicNoteInflight.removeAll(pending);
+      }
+    }
+  }
+
+  Future<void> _runGenerateTopicNote(RecordingReference ref) async {
+    if (!topicsEnabled) return;
+    await Future.wait([
+      _settingsLoaded,
+      _transcriptsLoaded,
+      _topicsLoaded,
+      analysis.load(),
+    ]);
+    if (_disposed || !topicsEnabled) return;
+    final key = _referenceKey(ref);
+    final topic = topics.topicOf(key);
+    if (topic == null) return;
+    final view = recordingView(ref);
+    final source = view.text.trim();
+    if (source.isEmpty) return;
+    final priorNotes = _priorTopicNotes(topic.id, key);
+    final audioSig = await _topicNoteAudioVersion(_audioPathFor(ref));
+    if (audioSig != null) _audioVersions[key] = audioSig;
+    await analysis.run(
+      recording: key,
+      source: source,
+      apiKey: analysisApiKey,
+      custom: true,
+      resultSlot: TopicNote.slot,
+      modelOverride: TopicNote.defaultModel,
+      instruction: topicNoteInstruction(topic, priorNotes: priorNotes),
+      validateResult: validateTopicNote(
+        topic,
+        hasPriorNotes: priorNotes.isNotEmpty,
+        audioSignature: audioSig,
+      ),
+      currentSource: () => recordingView(ref).text,
+    );
+  }
+
+  Future<void> _maybeAutoGenerateTopicNoteForKey(
+    String key, {
+    String? pathHint,
+  }) {
+    final task = _runMaybeAutoGenerateTopicNote(key, pathHint: pathHint);
+    _trackTopicNote(task);
+    return task;
+  }
+
+  Future<void> _runMaybeAutoGenerateTopicNote(
+    String key, {
+    String? pathHint,
+  }) async {
+    if (!topicsEnabled) return;
+    await Future.wait([
+      _settingsLoaded,
+      _transcriptsLoaded,
+      _topicsLoaded,
+      analysis.load(),
+    ]);
+    if (_disposed || !topicsEnabled) return;
+    final topic = topics.topicOf(key);
+    if (topic == null) return;
+    final ref = _referenceFromKey(key, pathHint: pathHint);
+    if (recordingAudioChanged(ref)) return;
+    final view = recordingView(ref);
+    final source = view.text.trim();
+    if (source.isEmpty || analysisApiKey.trim().isEmpty) return;
+    final slotKey = TopicNote.slotKey(key);
+    if (analysis.busy(slotKey)) return;
+    final existing = analysis.results[slotKey];
+    if (existing != null && !existing.staleFor(source)) {
+      final parsed = TopicNote.tryParse(
+        existing.text,
+        existing.sources.isEmpty ? 1 : existing.sources.length,
+      );
+      if (parsed != null &&
+          (parsed.topicId.isEmpty || parsed.topicId == topic.id)) {
+        return;
+      }
+    }
+    await generateTopicNote(ref);
+  }
+
+  void _onTopicsChanged() {
+    if (_disposed || !topicsEnabled || !_topicsObserved) return;
+    final current = topics.placements;
+    final keys = <String>{..._observedPlacements.keys, ...current.keys};
+    final newlyAssigned = <String>[];
+    for (final key in keys) {
+      final prev = _observedPlacements[key];
+      final next = current[key];
+      if (prev is! InTopicPlacement && next is InTopicPlacement) {
+        newlyAssigned.add(key);
+      }
+    }
+    _observedPlacements = Map<String, TopicPlacement>.from(current);
+    for (final key in newlyAssigned) {
+      unawaited(_maybeAutoGenerateTopicNoteForKey(key));
+    }
+    notifyListeners();
+  }
 
   bool get doubaoFileProcessing => _fileJobProvider == SttProvider.doubao;
   void cancelDoubaoFileProcessing() {
@@ -291,6 +535,25 @@ class RecorderController extends ChangeNotifier {
         topicStore ??
         TopicStore(inMemory: !loadPersistedState || !this.topicsEnabled);
     _topicsLoaded = this.topicsEnabled ? topics.load() : Future<void>.value();
+    if (this.topicsEnabled) {
+      topics.addListener(_onTopicsChanged);
+      if (topics.loaded) {
+        _observedPlacements = Map<String, TopicPlacement>.from(
+          topics.placements,
+        );
+        _topicsObserved = true;
+      } else {
+        unawaited(
+          _topicsLoaded.then((_) {
+            if (_disposed) return;
+            _observedPlacements = Map<String, TopicPlacement>.from(
+              topics.placements,
+            );
+            _topicsObserved = true;
+          }),
+        );
+      }
+    }
     if (this.topicsEnabled && loadPersistedState) {
       _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
     }
@@ -1669,10 +1932,14 @@ class RecorderController extends ChangeNotifier {
       revision: (metadata?.revision ?? 0) + (changed ? 1 : 0),
     );
     transcriptsByPath[path] = t;
+    _transcriptPathsByKey[key] = path;
     // Also index by file id when known.
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
     unawaited(_persistTranscripts());
+    if (changed && topicsEnabled) {
+      unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
+    }
     if (topicsEnabled && !_isRecordingAudioLocked(id, path)) {
       unawaited(_scheduleTopicAssist(key, t));
     }
@@ -2537,6 +2804,7 @@ class RecorderController extends ChangeNotifier {
         _activeFileJobCompleter = null;
       }
     }
+
     FileJob job;
     try {
       final version = await audioVersion(path);
@@ -4440,6 +4708,11 @@ class RecorderController extends ChangeNotifier {
         final key = _recordingKey(path: path);
         await _fileJobs.discard(key);
         await topics.forgetRecording(key);
+        await analysis.forgetRecording(key);
+        _transcriptPathsByKey.remove(key);
+        _observedPlacements = Map<String, TopicPlacement>.from(
+          topics.placements,
+        );
         _deferredJobs.discard(key);
         _transcriptMetadata.remove(key);
         _recordingTranslations.remove(key);
@@ -4495,15 +4768,15 @@ class RecorderController extends ChangeNotifier {
       throw StateError('转写完成后再重命名');
     }
     await source.rename(targetPath);
-    await _fileJobs.rename(
-      _recordingKey(path: path),
-      _recordingKey(path: targetPath),
-      targetPath,
-    );
-    await topics.renameRecordingKey(
-      _recordingKey(path: path),
-      _recordingKey(path: targetPath),
-    );
+    final oldKey = _recordingKey(path: path);
+    final newKey = _recordingKey(path: targetPath);
+    await _fileJobs.rename(oldKey, newKey, targetPath);
+    await topics.renameRecordingKey(oldKey, newKey);
+    await analysis.renameRecordingKey(oldKey, newKey);
+    if (_transcriptPathsByKey.remove(oldKey) != null) {
+      _transcriptPathsByKey[newKey] = targetPath;
+    }
+    _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
     final transcript = transcriptsByPath.remove(path);
     if (transcript != null) transcriptsByPath[targetPath] = transcript;
     final aliases = speakerAliasesByPath.remove(path);
@@ -5250,6 +5523,7 @@ class RecorderController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _lifecycle?.dispose();
+    if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();
     _completeFileRefresh();
     _fileJobRevision++;

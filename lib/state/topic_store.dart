@@ -154,6 +154,8 @@ class TopicStore extends ChangeNotifier {
     return topicById(_currentTopicId);
   }
 
+  Map<String, TopicPlacement> get placements => Map.unmodifiable(_placements);
+
   TopicPlacement? placementOf(String recordingKey) => _placements[recordingKey];
 
   Topic? topicOf(String recordingKey) {
@@ -297,7 +299,8 @@ class TopicStore extends ChangeNotifier {
     if (prev == null) return;
     final colon = prev.lastIndexOf(':');
     if (colon < 0 || colon + 1 >= prev.length) return;
-    _evaluatedAssist[recordingKey] = 'drift:$topicId:${prev.substring(colon + 1)}';
+    _evaluatedAssist[recordingKey] =
+        'drift:$topicId:${prev.substring(colon + 1)}';
   }
 
   Future<void> dismissRecommendation(String recordingKey) async {
@@ -327,6 +330,11 @@ class TopicStore extends ChangeNotifier {
     if (_driftHints.remove(recordingKey) != null) await _commit();
   }
 
+  bool _loaded = false;
+
+  /// True after [load] has applied the saved record and notified listeners.
+  bool get loaded => _loaded;
+
   Future<void> load() => _loading ??= _load();
 
   Future<void> _load() async {
@@ -354,6 +362,7 @@ class TopicStore extends ChangeNotifier {
     }
     _expireIfNewDay(save: true);
     _scheduleDayBoundary();
+    _loaded = true;
     if (!_disposed) notifyListeners();
   }
 
