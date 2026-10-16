@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Service implements AnalysisService {
+  int calls = 0;
+  String? lastInstruction;
   @override
   Future<String> generate({
     required String model,
@@ -12,7 +14,12 @@ class _Service implements AnalysisService {
     required String source,
     required String instruction,
     required Future<void> abort,
-  }) async => '已完成的摘要 [S1]';
+  }) async {
+    calls++;
+    lastInstruction = instruction;
+    return '已完成的摘要 [S1]';
+  }
+
   @override
   void dispose() {}
 }
@@ -107,6 +114,62 @@ void main() {
       );
       expect(find.textContaining('已过期'), findsOneWidget);
       expect(manager.results.values.single.text, '已完成的摘要 [S1]');
+    },
+  );
+  testWidgets(
+    'creating a template, running it, and editing it marks the old result stale '
+    'without auto re-running',
+    (tester) async {
+      final service = _Service();
+      final manager = RecordingAnalysis(inMemory: true, service: service);
+      final c = _Controller(manager);
+      addTearDown(c.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AnalysisPanel(
+            controller: c,
+            reference: const RecordingReference(fileId: 123),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('默认摘要'), findsOneWidget);
+      expect(find.text('读书笔记'), findsOneWidget);
+      expect(find.text('思考笔记'), findsOneWidget);
+      expect(find.byKey(const ValueKey('delete-template')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('create-template')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('template-name-input')),
+        '问题清单',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('template-prompt-input')),
+        '只列出未决问题',
+      );
+      await tester.tap(find.byKey(const ValueKey('save-template')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('generate-analysis')));
+      await tester.pumpAndSettle();
+      expect(service.calls, 1);
+      expect(service.lastInstruction, '只列出未决问题');
+      expect(find.text('已完成的摘要 [S1]'), findsOneWidget);
+      expect(find.textContaining('已过期'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('edit-template')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('template-prompt-input')),
+        '只列出未决问题与负责人',
+      );
+      await tester.tap(find.byKey(const ValueKey('save-template')));
+      await tester.pumpAndSettle();
+
+      expect(service.calls, 1);
+      expect(find.text('已完成的摘要 [S1]'), findsOneWidget);
+      expect(find.textContaining('已过期'), findsOneWidget);
     },
   );
 }
