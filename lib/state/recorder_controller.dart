@@ -58,6 +58,11 @@ class RecorderController extends ChangeNotifier {
         service: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
       );
   final RecordingAnalysis? _analysisOverride;
+  late final AnalysisService _topicRecommender =
+      _topicRecommendationOverride ??
+      QwenAnalysisService(origin: () => _qwenStt.baseUrl);
+  final AnalysisService? _topicRecommendationOverride;
+  final Map<String, Future<void>> _topicAssistTasks = {};
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
   bool recordingAudioChanged(RecordingReference ref) =>
       _fileJobs.jobs[_referenceKey(ref)]?.audioChanged == true;
@@ -98,6 +103,7 @@ class RecorderController extends ChangeNotifier {
     DoubaoSttService? doubaoSpeech,
     FileJobJournal? fileJobJournal,
     RecordingAnalysis? analysisController,
+    AnalysisService? topicRecommendationService,
     TopicStore? topicStore,
     bool? topicsEnabled,
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
@@ -105,6 +111,7 @@ class RecorderController extends ChangeNotifier {
     Future<String> Function(String rawPath)? rawExportConverter,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
   }) : _analysisOverride = analysisController,
+       _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
            topicsEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
@@ -289,6 +296,115 @@ class RecorderController extends ChangeNotifier {
   late final Future<void> _topicsLoaded;
   AppLifecycleListener? _lifecycle;
   late final bool _ownsTopics;
+  Completer<void>? _activeFileJobCompleter;
+
+  @visibleForTesting
+  Future<void> waitForTopicAssist() async {
+    await _deferredJobs.pump();
+    while (_activeFileJobCompleter != null || _topicAssistTasks.isNotEmpty) {
+      final inflight = <Future<void>>[
+        if (_activeFileJobCompleter != null) _activeFileJobCompleter!.future,
+        ..._topicAssistTasks.values,
+      ];
+      if (inflight.isEmpty) break;
+      await Future.wait(inflight);
+    }
+  }
+
+  Future<void> _scheduleTopicAssist(String recordingKey, String transcript) {
+    if (!topicsEnabled || _disposed) return Future<void>.value();
+    final excerpt = topicTranscriptExcerpt(transcript);
+    if (excerpt.isEmpty) return Future<void>.value();
+    final existing = _topicAssistTasks[recordingKey];
+    if (existing != null) return existing;
+    late final Future<void> task;
+    task = _runTopicAssist(recordingKey, transcript, excerpt).whenComplete(() {
+      if (identical(_topicAssistTasks[recordingKey], task)) {
+        _topicAssistTasks.remove(recordingKey);
+      }
+    });
+    _topicAssistTasks[recordingKey] = task;
+    return task;
+  }
+
+  Future<void> _runTopicAssist(
+    String recordingKey,
+    String transcript,
+    String excerpt,
+  ) async {
+    try {
+      await Future.wait([_settingsLoaded, _topicsLoaded]);
+      await topics.load();
+      if (_disposed || !topicsEnabled) return;
+      final apiKey = analysisApiKey.trim();
+      if (apiKey.isEmpty) return;
+      final model = (analysis.model ?? 'qwen3.8-flash').trim();
+      if (model.isEmpty) return;
+      final excerptHash = analysisFingerprint(excerpt);
+
+      if (topics.isPending(recordingKey)) {
+        final token = 'pending:$excerptHash';
+        if (topics.hasEvaluatedAssist(recordingKey, token)) return;
+        await topics.markAssistEvaluated(recordingKey, token);
+        final instruction = buildTopicRecommendationInstruction(
+          openTopics: topics.openTopics,
+          transcript: transcript,
+        );
+        final raw = await _topicRecommender.generate(
+          model: model,
+          apiKey: apiKey,
+          source: excerpt,
+          instruction: instruction,
+          abort: Completer<void>().future,
+        );
+        if (_disposed || !topics.isPending(recordingKey)) return;
+        final rec = parseTopicRecommendation(
+          raw,
+          topics.openTopics,
+          sourceHash: excerptHash,
+        );
+        if (rec != null) {
+          await topics.setRecommendation(recordingKey, rec);
+        }
+        return;
+      }
+
+      final assigned = topics.topicOf(recordingKey);
+      if (assigned != null && !assigned.closed) {
+        final token = 'drift:${assigned.id}:$excerptHash';
+        if (topics.hasEvaluatedAssist(recordingKey, token)) return;
+        await topics.markAssistEvaluated(recordingKey, token);
+        final instruction = buildTopicDriftInstruction(
+          currentTopic: assigned,
+          openTopics: topics.openTopics,
+          transcript: transcript,
+        );
+        final raw = await _topicRecommender.generate(
+          model: model,
+          apiKey: apiKey,
+          source: excerpt,
+          instruction: instruction,
+          abort: Completer<void>().future,
+        );
+        if (_disposed || topics.topicOf(recordingKey)?.id != assigned.id) {
+          return;
+        }
+        final currentAssigned = topics.topicById(assigned.id);
+        if (currentAssigned == null || currentAssigned.closed) return;
+        final hint = parseTopicDriftHint(
+          raw,
+          currentTopic: currentAssigned,
+          openTopics: topics.openTopics,
+          sourceHash: excerptHash,
+        );
+        if (hint != null) {
+          await topics.setDriftHint(recordingKey, hint);
+        }
+      }
+    } catch (_) {
+      // Silent fallback to manual classification (#52).
+    }
+  }
 
   bool _fileJobPreparing = false;
   late final FileJobJournal _fileJobs;
@@ -437,6 +553,10 @@ class RecorderController extends ChangeNotifier {
       await _topicsLoaded;
       if (_disposed) return;
       await topics.placeRetrieved(key);
+      final existingText = (transcriptForPath(path) ?? '').trim();
+      if (existingText.isNotEmpty) {
+        unawaited(_scheduleTopicAssist(key, existingText));
+      }
     }
     if (!autoTranscribe) return;
     if (_isRecordingAudioLocked(fileIdFromPath(path), path)) return;
@@ -1398,6 +1518,9 @@ class RecorderController extends ChangeNotifier {
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
     unawaited(_persistTranscripts());
+    if (topicsEnabled && !_isRecordingAudioLocked(id, path)) {
+      unawaited(_scheduleTopicAssist(key, t));
+    }
   }
 
   String? transcriptForPath(String path) {
@@ -2251,6 +2374,14 @@ class RecorderController extends ChangeNotifier {
       return true;
     }
     _fileJobPreparing = true;
+    final jobCompleter = Completer<void>();
+    _activeFileJobCompleter = jobCompleter;
+    void finishJobCompleter() {
+      if (!jobCompleter.isCompleted) jobCompleter.complete();
+      if (identical(_activeFileJobCompleter, jobCompleter)) {
+        _activeFileJobCompleter = null;
+      }
+    }
     FileJob job;
     try {
       final version = await audioVersion(path);
@@ -2268,6 +2399,7 @@ class RecorderController extends ChangeNotifier {
         _recordingErrors[key] = previous.error!;
         await _fileJobs.save();
         _fileJobPreparing = false;
+        finishJobCompleter();
         notifyListeners();
         return true;
       }
@@ -2283,6 +2415,7 @@ class RecorderController extends ChangeNotifier {
       }
       if (fromQueue && !job.recoverable) {
         _fileJobPreparing = false;
+        finishJobCompleter();
         return true;
       }
       config = job.resolve(config);
@@ -2293,20 +2426,26 @@ class RecorderController extends ChangeNotifier {
         job.error = '任务使用的服务地址已变更，请恢复原配置后重试';
         _recordingErrors[key] = job.error!;
         await _fileJobs.save();
+        finishJobCompleter();
         notifyListeners();
         return true;
       }
     } catch (_) {
       _fileJobPreparing = false;
       _recordingErrors[key] = '无法保存转写任务，请检查存储空间后重试';
+      finishJobCompleter();
       notifyListeners();
       return true;
     }
     _fileJobPreparing = false;
-    if (_disposed) return true;
+    if (_disposed) {
+      finishJobCompleter();
+      return true;
+    }
     if (_isRecordingAudioLocked(fileIdFromPath(path), path) ||
         config.provider == SttProvider.apple && _liveProcessing) {
       _recordingErrors[key] = '处理因录音暂停，可在录音结束后重试';
+      finishJobCompleter();
       notifyListeners();
       return !fromQueue;
     }
@@ -2409,6 +2548,9 @@ class RecorderController extends ChangeNotifier {
         job.error = null;
         job.audioChanged = false;
         await _fileJobs.save();
+        if (topicsEnabled) {
+          unawaited(_scheduleTopicAssist(key, result.text));
+        }
         statusMessage = '转写已保存';
         // Refresh a closed live route without retaining an obsolete error.
         final session = _sessionForReference(
@@ -2441,6 +2583,7 @@ class RecorderController extends ChangeNotifier {
       }
     } finally {
       _qwenStt.recovery = null;
+      finishJobCompleter();
       if (!_disposed && revision == _fileJobRevision) {
         _fileJobKey = null;
         _fileJobProvider = null;
@@ -4970,6 +5113,7 @@ class RecorderController extends ChangeNotifier {
     unawaited(_player.dispose());
     unawaited(_realtime.dispose());
     analysis.dispose();
+    _topicRecommender.dispose();
     _qwenStt.dispose();
     _doubaoStt.dispose();
     _deferredJobs.dispose();
