@@ -7,6 +7,7 @@ import '../widgets/scan_sheet.dart';
 import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
+import 'topics_screen.dart';
 
 /// A stable recording library; live and saved reading happens in detail routes.
 class HomeScreen extends StatefulWidget {
@@ -65,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+          const TopicsEntry(),
           const Expanded(
             child: FilesBody(
               key: ValueKey('files'),
