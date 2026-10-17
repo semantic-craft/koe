@@ -251,8 +251,9 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
       await controller.generateTopicSummary(widget.topicId, retry: intent);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('$error')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -294,8 +295,9 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('$error')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -323,8 +325,9 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('$error')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -346,8 +349,9 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
     final c = context.read<RecorderController>();
     final path = _libraryByKey(c)[recordingKey];
     if (path == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('来源录音已不在资料库中')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('来源录音已不在资料库中')));
       return;
     }
     RecordingNavigation.open(
