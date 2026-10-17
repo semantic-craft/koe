@@ -248,7 +248,6 @@ void main() {
 
     final resumed = RecordingAnalysis(file: file, service: service);
     addTearDown(resumed.dispose);
-    resumed.clearUnconfirmedNode(TopicSummary.slotKey('long'));
     await resumed.run(
       recording: 'topic:long',
       source: 'two notes',
@@ -322,105 +321,106 @@ void main() {
     );
   });
 
-  test('确认重试只补失败片段，已完成片段不再发送给模型', () async {
-    final dir = await Directory.systemTemp.createTemp('topic-summary-retry-');
-    addTearDown(() => dir.delete(recursive: true));
-    final file = File('${dir.path}/analysis.json');
+  test('控制器确认重试只重发失败片段，已完成片段不再发送给模型', () async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '确认重试',
+    );
     final sent = <String>[];
+    var failSecond = true;
     final service = _SummaryService((source, instruction) async {
       sent.add(source);
-      if (source.contains('[N2]')) throw const HttpException('第二段失败');
-      return '[N1] 第一段笔记';
+      if (source.startsWith('[N2]') && failSecond) {
+        failSecond = false;
+        throw const HttpException('第二段失败');
+      }
+      if (instruction.contains('依据这些覆盖原文')) {
+        return _generalSummaryJson();
+      }
+      return source.startsWith('[N1]') ? '[N1] 第一段笔记' : '[N2] 第二段笔记';
     });
-    final topic = Topic(
-      id: 'retry',
-      kind: TopicKind.general,
-      title: '重试',
-      createdAt: DateTime(2026, 10, 17),
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    TopicNote longNote(String label) =>
+        generalNote(topic.id, '$label ${'长' * 3000}');
+    for (final key in ['file:1760000251', 'file:1760000252']) {
+      await store.moveRecording(key, topic.id);
+      analysis.results[TopicNote.slotKey(key)] = noteResult(longNote('笔记$key'));
+    }
+    final controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
     );
-    final retrySources = [
-      for (var i = 1; i <= 2; i++)
-        TopicSummarySource(
-          id: 'N$i',
-          recordingKey: 'file:$i',
-          title: '录音$i',
-          recordedAt: DateTime(2026, 10, 17),
-        ),
-    ];
-    final first = RecordingAnalysis(file: file, service: service);
-    await first.run(
-      recording: 'topic:retry',
-      source: 'two notes',
-      sourceBlocks: const ['[N1] 第一段笔记', '[N2] 第二段笔记'],
-      apiKey: 'synthetic-test-key',
-      custom: true,
-      resultSlot: TopicSummary.slot,
-      instruction: 'synthetic instruction',
-      validateResult: validateTopicSummary(topic, retrySources),
-      avoidDuplicateCharges: true,
-      preserveInputCitations: true,
-      currentSource: () => 'two notes',
-    );
-    expect(sent, hasLength(2));
+    addTearDown(controller.dispose);
+    await controller.settleTopicNoteWork();
+    final slot = TopicSummary.slotKey(topic.id);
+
+    await controller.generateTopicSummary(topic.id);
+    expect(sent, hasLength(2), reason: '两个片段，第二段失败');
     expect(sent.first, startsWith('[N1]'));
     expect(sent.last, startsWith('[N2]'));
-    expect(first.errors[TopicSummary.slotKey('retry')], contains('结果未确认'));
+    expect(analysis.results[slot], isNull);
+    expect(analysis.errors[slot], contains('结果未确认'));
 
-    final resumedSent = <String>[];
-    final resumedService = _SummaryService((source, instruction) async {
-      resumedSent.add(source);
-      return jsonEncode({
-        'thoughtTimeline': [
-          {
-            'text': '合并两条笔记',
-            'sources': ['N1', 'N2'],
-          },
-        ],
-        'currentConclusions': <Object>[],
-        'openQuestions': <Object>[],
-        'nextSteps': <Object>[],
-      });
-    });
-    final resumed = RecordingAnalysis(file: file, service: resumedService);
-    addTearDown(resumed.dispose);
-    await resumed.load();
-    expect(File(file.path).existsSync(), isTrue, reason: '失败前应先落盘检查点');
-    final resumedSlot = TopicSummary.slotKey('retry');
-    expect(resumed.errors[resumedSlot], contains('结果未确认'));
-    expect(resumed.errors[TopicSummary.slotKey('retry')], contains('结果未确认'));
-    await resumed.run(
-      recording: 'topic:retry',
-      source: 'two notes',
-      sourceBlocks: const ['[N1] 第一段笔记', '[N2] 第二段笔记'],
-      apiKey: 'synthetic-test-key',
-      custom: true,
-      resultSlot: TopicSummary.slot,
-      instruction: 'synthetic instruction',
-      validateResult: validateTopicSummary(topic, retrySources),
-      avoidDuplicateCharges: true,
-      preserveInputCitations: true,
-      confirmedRestart: true,
-      currentSource: () => 'two notes',
+    await controller.generateTopicSummary(
+      topic.id,
+      retry: TopicSummaryRetry.confirmedRetry,
     );
-    expect(resumedSent, hasLength(2));
+    expect(sent, hasLength(4), reason: '确认后只重发 N2 与合并节点');
+    expect(sent[2], startsWith('[N2]'));
+    expect(sent[3], contains('[N1] 第一段笔记'));
+    expect(sent[3], contains('[N2] 第二段笔记'));
     expect(
-      resumedSent.where((source) => source.startsWith('[N1]')),
+      sent.take(3).where((source) => source.startsWith('[N1]')),
       hasLength(1),
       reason: '合并节点复用已保存片段，但不重发原始 N1 请求',
     );
     expect(
-      resumedSent.where((source) => source.startsWith('[N2]')),
-      hasLength(1),
-      reason: '只重发失败片段一次，合并节点复用它',
+      sent.take(3).where((source) => source.startsWith('[N2]')),
+      hasLength(2),
+      reason: 'N2 首次失败后只重试一次，合并节点复用它',
     );
-    expect(
-      resumedSent
-          .where((source) => source.startsWith('[N1]'))
-          .single
-          .contains('{"thoughtTimeline"'),
-      isTrue,
-      reason: 'N1 只作为合并输入复用检查点',
+    expect(TopicSummary.tryParse(analysis.results[slot]!.text), isNotNull);
+  });
+
+  test('运行中撞上的确认重试不会清除第一条请求的未确认保护', () async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '保护标记',
     );
+    final key = 'file:1760000261';
+    await store.moveRecording(key, topic.id);
+    final service = _GatedFailingSummaryService();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    analysis.results[TopicNote.slotKey(key)] = noteResult(
+      generalNote(topic.id, '一条笔记'),
+    );
+    final RecorderController controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    await controller.settleTopicNoteWork();
+    final slot = TopicSummary.slotKey(topic.id);
+
+    final first = controller.generateTopicSummary(topic.id);
+    await service.started.future;
+    final collided = controller.generateTopicSummary(
+      topic.id,
+      retry: TopicSummaryRetry.confirmedRetry,
+    );
+    await collided;
+    service.release.complete();
+    await first;
+    expect(analysis.busy(slot), isFalse);
+    expect(analysis.errors[slot], contains('不能自动重试'));
+
+    await controller.generateTopicSummary(topic.id);
+    expect(service.calls, 1, reason: '第一条请求失败后普通重试仍须被拦截');
+    expect(analysis.errors[slot], contains('不能自动重试'));
   });
 
   test('确认重试只重跑校验失败的合并节点，成功片段不重发', () async {
@@ -547,6 +547,7 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.settleTopicNoteWork();
+    analysis.arm(skip: 1);
     final first = controller.generateTopicSummary(topic.id);
     await analysis.runLoadStarted.future;
     final second = controller.generateTopicSummary(topic.id);
@@ -681,6 +682,54 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+
+  testWidgets('加载期立即显示忙碌并隐藏生成按钮', (tester) async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '加载反馈',
+    );
+    const key = 'file:1760000401';
+    await store.moveRecording(key, topic.id);
+    final analysis = _RunLoadGatedAnalysis(
+      service: _SummaryService((source, instruction) async {
+        return _generalSummaryJson();
+      }),
+    );
+    analysis.results[TopicNote.slotKey(key)] = noteResult(
+      generalNote(topic.id, '一条笔记'),
+    );
+    final RecorderController controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    await controller.settleTopicNoteWork();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: TopicDetailScreen(topicId: topic.id),
+        ),
+      ),
+    );
+    await tester.pump();
+    final generate = find.byKey(const ValueKey('topic-summary-generate'));
+    expect(tester.widget<FilledButton>(generate).onPressed, isNotNull);
+    analysis.arm(skip: 1);
+    await tester.tap(generate);
+    await tester.pump();
+    await analysis.runLoadStarted.future;
+    await tester.pump();
+    expect(analysis.busy(TopicSummary.slotKey(topic.id)), isTrue);
+    expect(generate, findsNothing, reason: '加载期不得再显示生成按钮');
+    expect(find.text('正在生成…'), findsOneWidget);
+    analysis.releaseRunLoad.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('一条思路'), findsOneWidget);
   });
 
   testWidgets('转写变化使笔记过期时禁止生成汇总，重生成笔记后恢复', (tester) async {
@@ -936,6 +985,29 @@ class _GatedSummaryService implements AnalysisService {
   }
 }
 
+class _GatedFailingSummaryService implements AnalysisService {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  int calls = 0;
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> generate({
+    required String model,
+    required String apiKey,
+    required String source,
+    required String instruction,
+    required Future<void> abort,
+  }) async {
+    calls++;
+    if (!started.isCompleted) started.complete();
+    await release.future;
+    throw const HttpException('模拟回复丢失');
+  }
+}
+
 class _LoadGatedAnalysis extends RecordingAnalysis {
   _LoadGatedAnalysis({super.service}) : super(inMemory: true);
 
@@ -959,16 +1031,24 @@ class _RunLoadGatedAnalysis extends RecordingAnalysis {
 
   final runLoadStarted = Completer<void>();
   final releaseRunLoad = Completer<void>();
-  int _loads = 0;
+  bool _armed = false;
+  int _skip = 0;
+
+  void arm({required int skip}) {
+    _armed = true;
+    _skip = skip;
+  }
 
   @override
   Future<void> load() async {
-    _loads++;
-    // The controller's own pre-check is the first load; block only the load
-    // that run() performs after claiming the slot.
-    if (_loads == 2) {
-      runLoadStarted.complete();
-      await releaseRunLoad.future;
+    if (_armed) {
+      if (_skip > 0) {
+        _skip--;
+      } else {
+        _armed = false;
+        if (!runLoadStarted.isCompleted) runLoadStarted.complete();
+        await releaseRunLoad.future;
+      }
     }
     await super.load();
   }

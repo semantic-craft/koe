@@ -267,9 +267,9 @@ class RecorderController extends ChangeNotifier {
         !analysis.hasUnconfirmedNode(slotKey)) {
       retry = TopicSummaryRetry.overwrite;
     }
-    if (retry == TopicSummaryRetry.confirmedRetry) {
-      analysis.clearUnconfirmedNode(slotKey);
-    }
+    // run() clears the unconfirmed marker only after it owns the slot, so a
+    // confirmed retry that collides with an active request cannot erase the
+    // first request's protection marker.
     await analysis.run(
       recording: 'topic:$topicId',
       source: input.source,

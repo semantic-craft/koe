@@ -660,20 +660,14 @@ class RecordingAnalysis extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool busy(String k) => _running.containsKey(k);
+  /// True from the synchronous claim through completion. UI uses this to hide
+  /// paid actions while a request is still loading or validating.
+  bool busy(String k) => _running.containsKey(k) || _pendingClaims.contains(k);
 
-  @visibleForTesting
-  bool hasPendingClaim(String k) => _pendingClaims.contains(k);
-
-  @visibleForTesting
-  bool hasCheckpoint(String k) => _checkpoints.containsKey(k);
+  /// True only after the request has a cancellable abort handle.
+  bool running(String k) => _running.containsKey(k);
 
   bool hasUnconfirmedNode(String k) => _unconfirmedNodes.containsKey(k);
-
-  /// Allows the next safe run to resend the unconfirmed node. Completed
-  /// checkpoints remain untouched; the caller must have obtained explicit
-  /// user confirmation because the prior request may already have been billed.
-  void clearUnconfirmedNode(String k) => _unconfirmedNodes.remove(k);
 
   /// Synchronously claims a slot before any later asynchronous work. A second
   /// trigger cannot pass this gate while the first is loading or validating.
@@ -682,7 +676,11 @@ class RecordingAnalysis extends ChangeNotifier {
     return _pendingClaims.add(k);
   }
 
-  bool releaseClaim(String k) => _pendingClaims.remove(k);
+  bool releaseClaim(String k) {
+    final removed = _pendingClaims.remove(k);
+    if (removed && !_disposed) notifyListeners();
+    return removed;
+  }
 
   Future<void> editResult(
     String k,
@@ -718,7 +716,10 @@ class RecordingAnalysis extends ChangeNotifier {
 
   void cancel(String k) {
     final abort = _running.remove(k);
-    if (abort != null && !abort.isCompleted) abort.complete();
+    // A pending claim has no abort handle yet; the UI only offers cancel once
+    // running() is true.
+    if (abort == null) return;
+    if (!abort.isCompleted) abort.complete();
     progress.remove(k);
     errors[k] = '已取消；已完成片段保留，重试可能重新计费未确认的请求';
     unawaited(save().catchError((Object _) {}));
@@ -791,6 +792,7 @@ class RecordingAnalysis extends ChangeNotifier {
       resultSlot: resultSlot,
     );
     if (!claim(k)) return;
+    if (!_disposed) notifyListeners();
     try {
       await load();
     } catch (_) {
