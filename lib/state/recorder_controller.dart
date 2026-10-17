@@ -166,6 +166,11 @@ class RecorderController extends ChangeNotifier {
     );
     if (parsed == null) return true;
     final topic = topics.topicOf(key);
+    final noteKind = topic?.kind ?? parsed.kind;
+    final expectedTemplateId = noteKind == TopicKind.book
+        ? bookNoteTemplateId
+        : thinkingNoteTemplateId;
+    if (result.templateId != expectedTemplateId) return true;
     if (topic != null &&
         parsed.topicId.isNotEmpty &&
         parsed.topicId != topic.id) {
@@ -177,7 +182,7 @@ class RecorderController extends ChangeNotifier {
         cachedVersion != parsed.audioSignature) {
       return true;
     }
-    return false;
+    return analysis.isTemplateStale(result);
   }
 
   TopicSummaryInput topicSummaryInput(String topicId) {
@@ -370,14 +375,24 @@ class RecorderController extends ChangeNotifier {
     final priorNotes = _priorTopicNotes(topic.id, key);
     final audioSig = await _topicNoteAudioVersion(_audioPathFor(ref));
     if (audioSig != null) _audioVersions[key] = audioSig;
+    final template = analysis.requireTemplate(
+      topic.kind == TopicKind.book
+          ? bookNoteTemplateId
+          : thinkingNoteTemplateId,
+    );
     await analysis.run(
       recording: key,
       source: source,
       apiKey: analysisApiKey,
       custom: true,
+      templateId: template.id,
       resultSlot: TopicNote.slot,
       modelOverride: TopicNote.defaultModel,
-      instruction: topicNoteInstruction(topic, priorNotes: priorNotes),
+      instruction: topicNoteInstruction(
+        topic,
+        priorNotes: priorNotes,
+        template: template,
+      ),
       validateResult: validateTopicNote(
         topic,
         hasPriorNotes: priorNotes.isNotEmpty,
@@ -417,17 +432,9 @@ class RecorderController extends ChangeNotifier {
     if (source.isEmpty || analysisApiKey.trim().isEmpty) return;
     final slotKey = TopicNote.slotKey(key);
     if (analysis.busy(slotKey)) return;
-    final existing = analysis.results[slotKey];
-    if (existing != null && !existing.staleFor(source)) {
-      final parsed = TopicNote.tryParse(
-        existing.text,
-        existing.sources.isEmpty ? 1 : existing.sources.length,
-      );
-      if (parsed != null &&
-          (parsed.topicId.isEmpty || parsed.topicId == topic.id)) {
-        return;
-      }
-    }
+    // 已有笔记（包括原文或模板变化后的旧笔记）只标过期，等用户确认后
+    // 手动重生成，自动路径绝不重复收费。
+    if (analysis.results[slotKey] != null) return;
     await generateTopicNote(ref);
   }
 
