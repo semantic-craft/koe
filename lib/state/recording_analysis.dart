@@ -669,11 +669,14 @@ class RecordingAnalysis extends ChangeNotifier {
 
   bool hasUnconfirmedNode(String k) => _unconfirmedNodes.containsKey(k);
 
-  /// Synchronously claims a slot before any later asynchronous work. A second
-  /// trigger cannot pass this gate while the first is loading or validating.
+  /// Synchronously claims a slot before any later asynchronous work and
+  /// notifies listeners so the busy UI appears immediately. A second trigger
+  /// cannot pass this gate while the first is loading or validating.
   bool claim(String k) {
     if (busy(k)) return false;
-    return _pendingClaims.add(k);
+    final added = _pendingClaims.add(k);
+    if (added && !_disposed) notifyListeners();
+    return added;
   }
 
   bool releaseClaim(String k) {
@@ -769,6 +772,8 @@ class RecordingAnalysis extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// Set [slotClaimed] when the caller already holds [claim] for the computed
+  /// slot and wants [run] to consume it.
   Future<void> run({
     required String recording,
     required String source,
@@ -783,6 +788,7 @@ class RecordingAnalysis extends ChangeNotifier {
     bool avoidDuplicateCharges = false,
     bool preserveInputCitations = false,
     bool confirmedRestart = false,
+    bool slotClaimed = false,
     required String Function() currentSource,
   }) async {
     final k = slotKey(
@@ -791,8 +797,7 @@ class RecordingAnalysis extends ChangeNotifier {
       templateId: templateId,
       resultSlot: resultSlot,
     );
-    if (!claim(k)) return;
-    if (!_disposed) notifyListeners();
+    if (!slotClaimed && !claim(k)) return;
     try {
       await load();
     } catch (_) {
@@ -863,8 +868,14 @@ class RecordingAnalysis extends ChangeNotifier {
     if (avoidDuplicateCharges && unconfirmedNode != null && !confirmedRestart) {
       final completed = _checkpoints[k]?.containsKey(unconfirmedNode) == true;
       if (completed) {
-        _unconfirmedNodes.remove(k);
-        await save();
+        final marker = _unconfirmedNodes.remove(k);
+        try {
+          await save();
+        } catch (_) {
+          if (marker != null) _unconfirmedNodes[k] = marker;
+          releaseClaim(k);
+          rethrow;
+        }
       } else {
         errors[k] = '上次 $unconfirmedNode 请求结果未确认；为避免重复收费，不能自动重试该片段。已完成片段仍保留。';
         notifyListeners();

@@ -645,6 +645,69 @@ void main() {
     expect(service.calls, 1);
   });
 
+  test('恢复检查点时保存失败会释放占位并保留保护标记', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'analysis-recovery-save-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final dir = Directory('${root.path}/data');
+    await dir.create();
+    final file = File('${dir.path}/analysis.json');
+    final slot = TopicSummary.slotKey('recovery-save');
+    await file.writeAsString(
+      jsonEncode({
+        'version': 1,
+        'model': 'qwen3.8-flash',
+        'results': <String, Object>{},
+        'customInstructions': <String, Object>{},
+        'customTemplates': <Object>[],
+        'checkpoints': {
+          slot: {'final': '恢复的结果'},
+        },
+        'jobHashes': <String, Object>{},
+        'unconfirmedNodes': {slot: 'final'},
+        'pending': <String>[],
+        'errors': <String, Object>{},
+      }),
+    );
+    final service = _SummaryService((source, instruction) async => '新结果');
+    final analysis = RecordingAnalysis(file: file, service: service);
+    addTearDown(analysis.dispose);
+    await analysis.load();
+    await file.delete();
+    await dir.delete();
+    await File(dir.path).writeAsString('not a directory');
+    Future<void> run() => analysis.run(
+      recording: 'topic:recovery-save',
+      source: 'note snapshot',
+      sourceBlocks: const ['[N1] note snapshot'],
+      apiKey: 'synthetic-test-key',
+      custom: true,
+      resultSlot: TopicSummary.slot,
+      instruction: 'synthetic instruction',
+      avoidDuplicateCharges: true,
+      currentSource: () => 'note snapshot',
+    );
+
+    await expectLater(run(), throwsA(isA<FileSystemException>()));
+    expect(analysis.busy(slot), isFalse, reason: '保存失败后必须释放占位');
+    expect(
+      analysis.hasUnconfirmedNode(slot),
+      isTrue,
+      reason: '恢复失败不得丢失未确认保护标记',
+    );
+    expect(analysis.results[slot], isNull);
+    expect(service.calls, 0);
+
+    await File(dir.path).delete();
+    await dir.create();
+    await run();
+    expect(analysis.busy(slot), isFalse);
+    expect(analysis.hasUnconfirmedNode(slot), isFalse);
+    expect(analysis.results[slot]?.text, '恢复的结果');
+    expect(service.calls, 0);
+  });
+
   test('模型汇总只能引用存在的笔记；存储的来源指向录音键', () {
     final topic = Topic(
       id: 'book',
@@ -726,6 +789,58 @@ void main() {
     await tester.pump();
     expect(analysis.busy(TopicSummary.slotKey(topic.id)), isTrue);
     expect(generate, findsNothing, reason: '加载期不得再显示生成按钮');
+    expect(find.text('正在生成…'), findsOneWidget);
+    analysis.releaseRunLoad.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('一条思路'), findsOneWidget);
+  });
+
+  testWidgets('控制器预加载期立即显示忙碌并隐藏生成按钮', (tester) async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '预加载反馈',
+    );
+    const key = 'file:1760000402';
+    await store.moveRecording(key, topic.id);
+    final analysis = _RunLoadGatedAnalysis(
+      service: _SummaryService((source, instruction) async {
+        return _generalSummaryJson();
+      }),
+    );
+    analysis.results[TopicNote.slotKey(key)] = noteResult(
+      generalNote(topic.id, '一条笔记'),
+    );
+    final RecorderController controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    await controller.settleTopicNoteWork();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: TopicDetailScreen(topicId: topic.id),
+        ),
+      ),
+    );
+    await tester.pump();
+    final generate = find.byKey(const ValueKey('topic-summary-generate'));
+    expect(tester.widget<FilledButton>(generate).onPressed, isNotNull);
+    analysis.arm(skip: 0);
+    await tester.tap(generate);
+    await tester.pump();
+    await analysis.runLoadStarted.future;
+    await tester.pump();
+    expect(
+      analysis.busy(TopicSummary.slotKey(topic.id)),
+      isTrue,
+      reason: '控制器预加载期间也必须显示忙碌',
+    );
+    expect(generate, findsNothing, reason: '预加载期不得再显示生成按钮');
     expect(find.text('正在生成…'), findsOneWidget);
     analysis.releaseRunLoad.complete();
     await tester.pumpAndSettle();

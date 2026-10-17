@@ -241,50 +241,56 @@ class RecorderController extends ChangeNotifier {
     TopicSummaryRetry retry = TopicSummaryRetry.auto,
   }) async {
     if (!topicsEnabled) return;
-    await Future.wait([
-      _settingsLoaded,
-      _transcriptsLoaded,
-      _topicsLoaded,
-      analysis.load(),
-    ]);
-    if (_disposed || !topicsEnabled) return;
-    final topic = topics.topicById(topicId);
-    if (topic == null) return;
-    final input = topicSummaryInput(topicId);
     final slotKey = TopicSummary.slotKey(topicId);
-    if (input.invalidKeys.isNotEmpty) {
-      throw StateError('有 ${input.invalidKeys.length} 条笔记已过期或无法解析，请先重生成对应笔记');
+    if (!analysis.claim(slotKey)) return;
+    try {
+      await Future.wait([
+        _settingsLoaded,
+        _transcriptsLoaded,
+        _topicsLoaded,
+        analysis.load(),
+      ]);
+      if (_disposed || !topicsEnabled) return;
+      final topic = topics.topicById(topicId);
+      if (topic == null) return;
+      final input = topicSummaryInput(topicId);
+      if (input.invalidKeys.isNotEmpty) {
+        throw StateError('有 ${input.invalidKeys.length} 条笔记已过期或无法解析，请先重生成对应笔记');
+      }
+      if (input.sources.isEmpty) {
+        throw StateError('这个主题还没有可汇总的笔记');
+      }
+      if (analysis.results.containsKey(slotKey) &&
+          retry == TopicSummaryRetry.auto) {
+        throw StateError('重新生成会覆盖已有汇总，请先确认');
+      }
+      final confirmedRestart = retry != TopicSummaryRetry.auto;
+      if (retry == TopicSummaryRetry.confirmedRetry &&
+          !analysis.hasUnconfirmedNode(slotKey)) {
+        retry = TopicSummaryRetry.overwrite;
+      }
+      // run() clears the unconfirmed marker only after it owns the slot, so a
+      // confirmed retry that collides with an active request cannot erase the
+      // first request's protection marker.
+      await analysis.run(
+        recording: 'topic:$topicId',
+        source: input.source,
+        sourceBlocks: input.blocks,
+        apiKey: analysisApiKey,
+        custom: true,
+        resultSlot: TopicSummary.slot,
+        modelOverride: TopicSummary.model,
+        instruction: topicSummaryInstruction(topic),
+        validateResult: validateTopicSummary(topic, input.sources),
+        avoidDuplicateCharges: true,
+        preserveInputCitations: true,
+        confirmedRestart: confirmedRestart,
+        slotClaimed: true,
+        currentSource: () => topicSummaryInput(topicId).source,
+      );
+    } finally {
+      analysis.releaseClaim(slotKey);
     }
-    if (input.sources.isEmpty) {
-      throw StateError('这个主题还没有可汇总的笔记');
-    }
-    if (analysis.results.containsKey(slotKey) &&
-        retry == TopicSummaryRetry.auto) {
-      throw StateError('重新生成会覆盖已有汇总，请先确认');
-    }
-    final confirmedRestart = retry != TopicSummaryRetry.auto;
-    if (retry == TopicSummaryRetry.confirmedRetry &&
-        !analysis.hasUnconfirmedNode(slotKey)) {
-      retry = TopicSummaryRetry.overwrite;
-    }
-    // run() clears the unconfirmed marker only after it owns the slot, so a
-    // confirmed retry that collides with an active request cannot erase the
-    // first request's protection marker.
-    await analysis.run(
-      recording: 'topic:$topicId',
-      source: input.source,
-      sourceBlocks: input.blocks,
-      apiKey: analysisApiKey,
-      custom: true,
-      resultSlot: TopicSummary.slot,
-      modelOverride: TopicSummary.model,
-      instruction: topicSummaryInstruction(topic),
-      validateResult: validateTopicSummary(topic, input.sources),
-      avoidDuplicateCharges: true,
-      preserveInputCitations: true,
-      confirmedRestart: confirmedRestart,
-      currentSource: () => topicSummaryInput(topicId).source,
-    );
   }
 
   Future<void> generateTopicNote(RecordingReference ref) {
