@@ -492,12 +492,14 @@ class RecorderController extends ChangeNotifier {
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
     this.retrievedAudioSettleTime = retrievedAudioSettle,
     Future<String> Function(String rawPath)? rawExportConverter,
+    Future<Duration?> Function(String path)? localDurationReader,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
            topicsEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
+       _localDurationReader = localDurationReader ?? AudioDuration.read,
        _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
@@ -980,6 +982,7 @@ class RecorderController extends ChangeNotifier {
   /// before it can be submitted; see [incompleteRetrievedAudioReason].
   final Duration retrievedAudioSettleTime;
   final Future<String> Function(String rawPath) _rawExportConverter;
+  final Future<Duration?> Function(String path) _localDurationReader;
 
   /// Longest gap without a BLE file packet before a pull stops waiting; see
   /// [BleFilePull.pullFile].
@@ -3567,7 +3570,7 @@ class RecorderController extends ChangeNotifier {
   final Map<String, Future<String>> _wavConversions = {};
   bool _catalogConversionRunning = false;
   final Map<String, Duration> _localDurations = {};
-  final Set<String> _durationLoads = {};
+  final Map<String, Object> _durationLoads = {};
 
   /// fileId → local path after Wi‑Fi export.
   final Map<int, String> localPathsByFileId = {};
@@ -4963,19 +4966,32 @@ class RecorderController extends ChangeNotifier {
   Duration? localDurationForPath(String path) {
     final cached = _localDurations[path];
     if (cached != null) return cached;
-    if (_durationLoads.add(path)) unawaited(_loadLocalDuration(path));
+    if (!_durationLoads.containsKey(path)) {
+      final token = Object();
+      _durationLoads[path] = token;
+      unawaited(_loadLocalDuration(path, token));
+    }
     return null;
   }
 
-  Future<void> _loadLocalDuration(String path) async {
+  /// Drops a cached duration and invalidates any read already in flight.
+  /// A read that started before the audio changed must not write its old value
+  /// back after [AudioDuration.read] returns.
+  void _invalidateLocalDuration(String path) {
+    _localDurations.remove(path);
+    _durationLoads.remove(path);
+  }
+
+  Future<void> _loadLocalDuration(String path, Object token) async {
     try {
-      final value = await AudioDuration.read(path);
+      final value = await _localDurationReader(path);
+      if (!identical(_durationLoads[path], token)) return;
       if (value != null && exportedPaths.contains(path)) {
         _localDurations[path] = value;
         notifyListeners();
       }
     } finally {
-      _durationLoads.remove(path);
+      if (identical(_durationLoads[path], token)) _durationLoads.remove(path);
     }
   }
 
@@ -4993,6 +5009,11 @@ class RecorderController extends ChangeNotifier {
     }
     try {
       final wavPath = await conversion;
+      // Pause/resume and reconnect append to the raw file, then reconvert the
+      // same WAV path. Drop the old cached value before the list rebuilds so
+      // the row reflects the longer audio without waiting for a restart.
+      _invalidateLocalDuration(path);
+      _invalidateLocalDuration(wavPath);
       if (register) {
         _registerExportedPaths([wavPath]);
         if (errorMessage == '无法准备播放，录音已保留，请重试') {
