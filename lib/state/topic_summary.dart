@@ -55,8 +55,10 @@ class TopicSummaryItem {
   Map<String, Object> toJson() => {'text': text, 'sources': sources};
 
   static TopicSummaryItem fromJson(Object? value, Set<String> validSources) {
-    if (value is! Map || value['text'] is! String ||
-        (value['text'] as String).trim().isEmpty || value['sources'] is! List) {
+    if (value is! Map ||
+        value['text'] is! String ||
+        (value['text'] as String).trim().isEmpty ||
+        value['sources'] is! List) {
       throw const FormatException('无效主题汇总条目');
     }
     final sourceIds = <String>[];
@@ -99,7 +101,12 @@ class TopicSummary {
           'openQuestions',
           'reviewDraft',
         ]
-      : const ['thoughtTimeline', 'currentConclusions', 'openQuestions', 'nextSteps'];
+      : const [
+          'thoughtTimeline',
+          'currentConclusions',
+          'openQuestions',
+          'nextSteps',
+        ];
 
   static String sectionLabel(String key) => switch (key) {
     'commentaryTimeline' => '评论脉络',
@@ -119,7 +126,8 @@ class TopicSummary {
     'sources': sources.map((s) => s.toJson()).toList(),
     for (final key in sectionKeys(kind))
       key: (sections[key] ?? const <TopicSummaryItem>[])
-          .map((item) => item.toJson()).toList(),
+          .map((item) => item.toJson())
+          .toList(),
   };
 
   String encode() => const JsonEncoder.withIndent('  ').convert(toJson());
@@ -133,18 +141,23 @@ class TopicSummary {
   }
 
   factory TopicSummary.parse(String text) {
-    final cleaned = text.trim().replaceFirst(RegExp(r'^```(?:json)?\s*'), '')
+    final cleaned = text
+        .trim()
+        .replaceFirst(RegExp(r'^```(?:json)?\s*'), '')
         .replaceFirst(RegExp(r'\s*```$'), '');
     final value = jsonDecode(cleaned);
     if (value is! Map || value['topicId'] is! String) {
       throw const FormatException('主题汇总必须是 JSON 对象');
     }
-    final kind = TopicKind.values.where((k) => k.name == value['kind']).firstOrNull;
+    final kind = TopicKind.values
+        .where((k) => k.name == value['kind'])
+        .firstOrNull;
     if (kind == null || value['sources'] is! List) {
       throw const FormatException('主题汇总类型或来源无效');
     }
     final sources = (value['sources'] as List)
-        .map(TopicSummarySource.fromJson).toList();
+        .map(TopicSummarySource.fromJson)
+        .toList();
     final validIds = sources.map((s) => s.id).toSet();
     if (sources.isEmpty || validIds.length != sources.length) {
       throw const FormatException('主题汇总来源缺失或重复');
@@ -153,7 +166,9 @@ class TopicSummary {
     for (final key in sectionKeys(kind)) {
       final raw = value[key];
       if (raw is! List) throw FormatException('主题汇总缺少 $key');
-      sections[key] = raw.map((item) => TopicSummaryItem.fromJson(item, validIds)).toList();
+      sections[key] = raw
+          .map((item) => TopicSummaryItem.fromJson(item, validIds))
+          .toList();
     }
     return TopicSummary(
       kind: kind,
@@ -196,11 +211,14 @@ int? _pageNumber(TopicNote note) {
   for (final excerpt in note.excerpts) {
     final page = excerpt.page;
     if (page == null) continue;
-    final match = RegExp(r'第?\s*(\d+)\s*页').firstMatch(page) ??
+    final match =
+        RegExp(r'第?\s*(\d+)\s*页').firstMatch(page) ??
         RegExp(r'\d+').firstMatch(page);
-    if (match != null) return int.tryParse(match.groupCount == 0
-        ? match.group(0)!
-        : match.group(1)!);
+    if (match != null) {
+      return int.tryParse(
+        match.groupCount == 0 ? match.group(0)! : match.group(1)!,
+      );
+    }
     final chinese = RegExp(r'第?\s*([一二三四五六七八九十百千零两]+)\s*页').firstMatch(page);
     if (chinese != null) return _chinesePage(chinese.group(1)!);
   }
@@ -208,8 +226,19 @@ int? _pageNumber(TopicNote note) {
 }
 
 int? _chinesePage(String text) {
-  const digits = {'一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
-    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '零': 0};
+  const digits = {
+    '一': 1,
+    '二': 2,
+    '两': 2,
+    '三': 3,
+    '四': 4,
+    '五': 5,
+    '六': 6,
+    '七': 7,
+    '八': 8,
+    '九': 9,
+    '零': 0,
+  };
   const units = {'十': 10, '百': 100, '千': 1000};
   var total = 0;
   var current = 0;
@@ -250,17 +279,21 @@ TopicSummaryInput buildTopicSummaryInput(
   final pieces = <String>[];
   for (final note in ordered.indexed) {
     final id = 'N${note.$1 + 1}';
-    sources.add(TopicSummarySource(
-      id: id,
-      recordingKey: note.$2.recordingKey,
-      title: note.$2.title,
-      recordedAt: note.$2.recordedAt,
-      page: _pageNumber(note.$2.note),
-    ));
-    pieces.add('[$id] ${note.$2.title}\n'
-        '录音时间：${note.$2.recordedAt.toIso8601String()}\n'
-        '${_pageNumber(note.$2.note) == null ? '' : '口述页码：${_pageNumber(note.$2.note)}\n'}'
-        '${note.$2.note.encode()}');
+    sources.add(
+      TopicSummarySource(
+        id: id,
+        recordingKey: note.$2.recordingKey,
+        title: note.$2.title,
+        recordedAt: note.$2.recordedAt,
+        page: _pageNumber(note.$2.note),
+      ),
+    );
+    pieces.add(
+      '[$id] ${note.$2.title}\n'
+      '录音时间：${note.$2.recordedAt.toIso8601String()}\n'
+      '${_pageNumber(note.$2.note) == null ? '' : '口述页码：${_pageNumber(note.$2.note)}\n'}'
+      '${note.$2.note.encode()}',
+    );
   }
   final blocks = <String>[];
   var current = '';
@@ -272,7 +305,8 @@ TopicSummaryInput buildTopicSummaryInput(
       final part = offset == 0
           ? String.fromCharCodes(runes.sublist(offset, end))
           : '[$id] 续\n${String.fromCharCodes(runes.sublist(offset, end))}';
-      if (current.isNotEmpty && current.runes.length + part.runes.length > 5200) {
+      if (current.isNotEmpty &&
+          current.runes.length + part.runes.length > 5200) {
         blocks.add(current);
         current = '';
       }
@@ -280,8 +314,8 @@ TopicSummaryInput buildTopicSummaryInput(
     }
   }
   if (current.isNotEmpty) blocks.add(current);
-  final memberships = (recordingKeys ?? ordered.map((n) => n.recordingKey))
-      .toList()..sort();
+  final memberships =
+      (recordingKeys ?? ordered.map((n) => n.recordingKey)).toList()..sort();
   final source = [
     '主题：${topic.title}；类型：${topic.kind.name}；作者：${topic.author}',
     '归属录音：${jsonEncode(memberships)}',
@@ -300,7 +334,10 @@ String topicSummaryInstruction(Topic topic) {
   final example = {
     for (final key in TopicSummary.sectionKeys(topic.kind))
       key: [
-        {'text': '仅依据笔记的内容', 'sources': ['N1']},
+        {
+          'text': '仅依据笔记的内容',
+          'sources': ['N1'],
+        },
       ],
   };
   return '仅根据给出的主题笔记整理${book ? '书籍' : '普通'}主题「${topic.title}」。'
@@ -315,15 +352,21 @@ String Function(String, List<String>) validateTopicSummary(
   Topic topic,
   List<TopicSummarySource> sources,
 ) => (text, _) {
-  final value = jsonDecode(text.trim().replaceFirst(RegExp(r'^```(?:json)?\s*'), '')
-      .replaceFirst(RegExp(r'\s*```$'), ''));
+  final value = jsonDecode(
+    text
+        .trim()
+        .replaceFirst(RegExp(r'^```(?:json)?\s*'), '')
+        .replaceFirst(RegExp(r'\s*```$'), ''),
+  );
   if (value is! Map) throw const FormatException('主题汇总必须是 JSON 对象');
   final validIds = sources.map((s) => s.id).toSet();
   final sections = <String, List<TopicSummaryItem>>{};
   for (final key in TopicSummary.sectionKeys(topic.kind)) {
     final raw = value[key];
     if (raw is! List) throw FormatException('主题汇总缺少 $key');
-    sections[key] = raw.map((item) => TopicSummaryItem.fromJson(item, validIds)).toList();
+    sections[key] = raw
+        .map((item) => TopicSummaryItem.fromJson(item, validIds))
+        .toList();
   }
   return TopicSummary(
     kind: topic.kind,

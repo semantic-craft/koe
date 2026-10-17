@@ -18,8 +18,8 @@ class TopicExportNote {
   final int? page;
 }
 
-String _displayName(Topic topic) => topic.kind == TopicKind.book &&
-        topic.author.trim().isNotEmpty
+String _displayName(Topic topic) =>
+    topic.kind == TopicKind.book && topic.author.trim().isNotEmpty
     ? '${topic.title} - ${topic.author}'
     : topic.title;
 
@@ -31,8 +31,10 @@ String _fileStem(Topic topic) {
       .replaceAll(RegExp(r'^[. ]+|[. ]+$'), '')
       .trim();
   if (stem.isEmpty) stem = '主题';
-  if (RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$', caseSensitive: false)
-      .hasMatch(stem)) {
+  if (RegExp(
+    r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$',
+    caseSensitive: false,
+  ).hasMatch(stem)) {
     stem = '_$stem';
   }
   final runes = stem.runes.toList();
@@ -70,8 +72,12 @@ String _date(DateTime time) {
       '${two(local.hour)}:${two(local.minute)}';
 }
 
-void _items(List<String> lines, String label, Iterable<String> items,
-    {int headingLevel = 4}) {
+void _items(
+  List<String> lines,
+  String label,
+  Iterable<String> items, {
+  int headingLevel = 4,
+}) {
   lines.add('${''.padLeft(headingLevel, '#')} $label');
   final values = items.map(_oneLine).where((text) => text.isNotEmpty).toList();
   if (values.isEmpty) {
@@ -95,17 +101,18 @@ String buildTopicMarkdown({
   bool summaryStale = false,
   int unavailableNoteCount = 0,
 }) {
-  final orderedNotes = [...notes]..sort((a, b) {
-    if (topic.kind == TopicKind.book) {
-      if (a.page != null && b.page != null && a.page != b.page) {
-        return a.page!.compareTo(b.page!);
+  final orderedNotes = [...notes]
+    ..sort((a, b) {
+      if (topic.kind == TopicKind.book) {
+        if (a.page != null && b.page != null && a.page != b.page) {
+          return a.page!.compareTo(b.page!);
+        }
+        if (a.page != null && b.page == null) return -1;
+        if (a.page == null && b.page != null) return 1;
       }
-      if (a.page != null && b.page == null) return -1;
-      if (a.page == null && b.page != null) return 1;
-    }
-    final byTime = a.recordedAt.compareTo(b.recordedAt);
-    return byTime != 0 ? byTime : a.title.compareTo(b.title);
-  });
+      final byTime = a.recordedAt.compareTo(b.recordedAt);
+      return byTime != 0 ? byTime : a.title.compareTo(b.title);
+    });
   final lines = <String>[
     '# ${_oneLine(topic.title)}',
     '',
@@ -119,7 +126,8 @@ String buildTopicMarkdown({
     '## 汇总',
     '',
   ];
-  if (summary == null || summary.kind != topic.kind ||
+  if (summary == null ||
+      summary.kind != topic.kind ||
       summary.topicId != topic.id) {
     lines.add('尚无汇总。');
     lines.add('');
@@ -129,9 +137,14 @@ String buildTopicMarkdown({
       lines.add('');
     }
     for (final key in TopicSummary.sectionKeys(topic.kind)) {
-      _items(lines, TopicSummary.sectionLabel(key),
-          (summary.sections[key] ?? const <TopicSummaryItem>[])
-              .map((item) => item.text), headingLevel: 3);
+      _items(
+        lines,
+        TopicSummary.sectionLabel(key),
+        (summary.sections[key] ?? const <TopicSummaryItem>[]).map(
+          (item) => item.text,
+        ),
+        headingLevel: 3,
+      );
     }
   }
 
@@ -156,16 +169,31 @@ String buildTopicMarkdown({
     lines.add(_oneLine(note.overview));
     lines.add('');
     if (note.kind == TopicKind.book) {
-      _items(lines, '原文摘录', note.excerpts.map((e) =>
-          e.page == null ? e.text : '（${_oneLine(e.page!)}）${e.text}'));
-      _items(lines, '我的评论', note.comments.map((e) => e.excerpt == null
-          ? e.text : '${e.text}（对应摘录：${e.excerpt}）'));
+      _items(
+        lines,
+        '原文摘录',
+        note.excerpts.map(
+          (e) => e.page == null ? e.text : '（${_oneLine(e.page!)}）${e.text}',
+        ),
+      );
+      _items(
+        lines,
+        '我的评论',
+        note.comments.map(
+          (e) => e.excerpt == null ? e.text : '${e.text}（对应摘录：${e.excerpt}）',
+        ),
+      );
       _items(lines, '疑问', note.questions.map((e) => e.text));
       _items(lines, '联想', note.associations.map((e) => e.text));
       _items(lines, '待查', note.toCheck.map((e) => e.text));
     } else {
-      _items(lines, '主要想法', note.ideas.map((e) => e.reason == null
-          ? e.text : '${e.text}（理由：${e.reason}）'));
+      _items(
+        lines,
+        '主要想法',
+        note.ideas.map(
+          (e) => e.reason == null ? e.text : '${e.text}（理由：${e.reason}）',
+        ),
+      );
       if (note.changes.isNotEmpty) {
         _items(lines, '变化', note.changes.map((e) => e.text));
       }
