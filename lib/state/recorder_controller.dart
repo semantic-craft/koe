@@ -55,6 +55,18 @@ export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
+/// The user-visible intent behind a summary invocation.
+enum TopicSummaryRetry {
+  /// First run or a safe continuation; never discards an unconfirmed request.
+  auto,
+
+  /// User confirmed retry after an uncertain or invalid paid result.
+  confirmedRetry,
+
+  /// User confirmed replacement of an existing result with a fresh run.
+  overwrite,
+}
+
 /// Latest transcript waiting on an in-flight topic-assist run.
 class _TopicAssistLatest {
   _TopicAssistLatest(this.transcript);
@@ -183,21 +195,26 @@ class RecorderController extends ChangeNotifier {
         result.sources.isEmpty ? 1 : result.sources.length,
         fallbackTopicId: topicId,
       );
-      if (note == null || note.kind != topic.kind ||
+      if (note == null ||
+          note.kind != topic.kind ||
           (note.topicId.isNotEmpty && note.topicId != topicId)) {
         invalidKeys.add(key);
         continue;
       }
       final ref = _referenceFromKey(key);
-      final seconds = key.startsWith('file:') ? int.tryParse(key.substring(5)) : null;
-      notes.add(TopicSummaryNote(
-        recordingKey: key,
-        title: recordingView(ref).title,
-        recordedAt: seconds == null
-            ? result.createdAt
-            : DateTime.fromMillisecondsSinceEpoch(seconds * 1000),
-        note: note,
-      ));
+      final seconds = key.startsWith('file:')
+          ? int.tryParse(key.substring(5))
+          : null;
+      notes.add(
+        TopicSummaryNote(
+          recordingKey: key,
+          title: recordingView(ref).title,
+          recordedAt: seconds == null
+              ? result.createdAt
+              : DateTime.fromMillisecondsSinceEpoch(seconds * 1000),
+          note: note,
+        ),
+      );
     }
     return buildTopicSummaryInput(
       topic,
@@ -215,7 +232,10 @@ class RecorderController extends ChangeNotifier {
     return result.staleFor(topicSummaryInput(topicId).source);
   }
 
-  Future<void> generateTopicSummary(String topicId, {bool overwrite = false}) async {
+  Future<void> generateTopicSummary(
+    String topicId, {
+    TopicSummaryRetry retry = TopicSummaryRetry.auto,
+  }) async {
     if (!topicsEnabled) return;
     await Future.wait([
       _settingsLoaded,
@@ -234,10 +254,17 @@ class RecorderController extends ChangeNotifier {
     if (input.sources.isEmpty) {
       throw StateError('这个主题还没有可汇总的笔记');
     }
-    if (analysis.results.containsKey(slotKey) && !overwrite) {
+    if (analysis.results.containsKey(slotKey) &&
+        retry == TopicSummaryRetry.auto) {
       throw StateError('重新生成会覆盖已有汇总，请先确认');
     }
-    if (overwrite) await analysis.restartSlot(slotKey);
+    if (retry == TopicSummaryRetry.confirmedRetry &&
+        !analysis.hasUnconfirmedNode(slotKey)) {
+      retry = TopicSummaryRetry.overwrite;
+    }
+    if (retry == TopicSummaryRetry.confirmedRetry) {
+      analysis.clearUnconfirmedNode(slotKey);
+    }
     await analysis.run(
       recording: 'topic:$topicId',
       source: input.source,
@@ -2450,8 +2477,15 @@ class RecorderController extends ChangeNotifier {
         final done = await session.finish();
         if (revision != _sttLifecycleRevision) return;
         if (done != null && done.text.isNotEmpty) {
-          // Prefer stitched session text when longer / complete.
-          transcript = _streamText(done.text);
+          // A final callback can arrive after the realtime stream is gone and
+          // return only the tail. Replace saved content only when it is a
+          // stable superset of what the user already saw; otherwise preserve.
+          final finishedText = _streamText(done.text);
+          final savedLive = _currentRecording?.text ?? '';
+          if (savedLive.trim().isEmpty ||
+              finishedText.trim().contains(savedLive.trim())) {
+            transcript = finishedText;
+          }
           recordingSession?.transcriptionComplete = true;
           transcriptPartial = null;
         }
@@ -5706,4 +5740,3 @@ class _TranscriptSaveFailure implements Exception {
   @override
   String toString() => 'Transcript save failed: $cause';
 }
-

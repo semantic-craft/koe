@@ -206,17 +206,21 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
   Future<void> _generate({required bool replace}) async {
     final controller = context.read<RecorderController>();
     final slot = TopicSummary.slotKey(widget.topicId);
+    TopicSummaryRetry intent = TopicSummaryRetry.auto;
     if (replace) {
-      final unsafeRetry = controller.analysis.errors[slot]?.contains('未确认') == true ||
+      final unsafeRetry =
+          controller.analysis.errors[slot]?.contains('未确认') == true ||
           controller.analysis.errors[slot]?.contains('校验失败') == true ||
           controller.analysis.errors[slot]?.contains('旧检查点不能复用') == true;
       final accepted = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: Text(unsafeRetry ? '重新开始汇总？' : '重新生成汇总？'),
-          content: Text(unsafeRetry
-              ? '上次请求的结果未确认，可能已经计费。重新开始可能再次计费，并会覆盖已有汇总。'
-              : '重新生成会覆盖当前汇总，包括手动修改，并产生新的模型调用。'),
+          content: Text(
+            unsafeRetry
+                ? '上次请求的结果未确认，可能已经计费。重新开始可能再次计费，并会覆盖已有汇总。'
+                : '重新生成会覆盖当前汇总，包括手动修改，并产生新的模型调用。',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -230,14 +234,17 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
         ),
       );
       if (accepted != true || !mounted) return;
+      intent = unsafeRetry
+          ? TopicSummaryRetry.confirmedRetry
+          : TopicSummaryRetry.overwrite;
     }
     try {
-      await controller.generateTopicSummary(widget.topicId, overwrite: replace);
+      await controller.generateTopicSummary(widget.topicId, retry: intent);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -279,7 +286,9 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -307,7 +316,9 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -318,18 +329,20 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
   String _recordingTitle(RecorderController c, String key) {
     final path = _libraryByKey(c)[key];
     if (path == null) return key;
-    return c.recordingView(
-      RecordingReference(fileId: c.fileIdFromPath(path), path: path),
-    ).title;
+    return c
+        .recordingView(
+          RecordingReference(fileId: c.fileIdFromPath(path), path: path),
+        )
+        .title;
   }
 
   void _openRecordingKey(String recordingKey) {
     final c = context.read<RecorderController>();
     final path = _libraryByKey(c)[recordingKey];
     if (path == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('来源录音已不在资料库中')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('来源录音已不在资料库中')));
       return;
     }
     RecordingNavigation.open(
@@ -348,10 +361,13 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
         if (topic == null) return const SizedBox.shrink();
         final slot = TopicSummary.slotKey(widget.topicId);
         final result = c.analysis.results[slot];
-        final summary = result == null ? null : TopicSummary.tryParse(result.text);
+        final summary = result == null
+            ? null
+            : TopicSummary.tryParse(result.text);
         final busy = c.analysis.busy(slot);
         final error = c.analysis.errors[slot];
-        final unsafeRetry = error?.contains('未确认') == true ||
+        final unsafeRetry =
+            error?.contains('未确认') == true ||
             error?.contains('校验失败') == true ||
             error?.contains('旧检查点不能复用') == true;
         final stale = c.isTopicSummaryStale(widget.topicId);
@@ -366,8 +382,17 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
               children: [
                 Row(
                   children: [
-                    const Expanded(child: Text('汇总', style: TextStyle(fontWeight: FontWeight.w700))),
-                    if (stale) const Text('已过期', style: TextStyle(color: AppColors.coral)),
+                    const Expanded(
+                      child: Text(
+                        '汇总',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    if (stale)
+                      const Text(
+                        '已过期',
+                        style: TextStyle(color: AppColors.coral),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -375,12 +400,17 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                 if (error != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(error, style: const TextStyle(color: AppColors.coral)),
+                    child: Text(
+                      error,
+                      style: const TextStyle(color: AppColors.coral),
+                    ),
                   ),
                 if (summary == null && !busy) Text('已有 $noteCount 条笔记可汇总'),
                 if (input.invalidKeys.isNotEmpty) ...[
-                  Text('有 ${input.invalidKeys.length} 条笔记已过期或无法解析，请先打开录音重生成笔记。',
-                      style: const TextStyle(color: AppColors.coral)),
+                  Text(
+                    '有 ${input.invalidKeys.length} 条笔记已过期或无法解析，请先打开录音重生成笔记。',
+                    style: const TextStyle(color: AppColors.coral),
+                  ),
                   for (final key in input.invalidKeys)
                     TextButton(
                       onPressed: () => _openRecordingKey(key),
@@ -388,21 +418,33 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                     ),
                 ],
                 if (summary != null) ...[
-                  for (final section in TopicSummary.sectionKeys(summary.kind)) ...[
+                  for (final section in TopicSummary.sectionKeys(
+                    summary.kind,
+                  )) ...[
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        Expanded(child: Text(TopicSummary.sectionLabel(section),
-                            style: const TextStyle(fontWeight: FontWeight.w600))),
+                        Expanded(
+                          child: Text(
+                            TopicSummary.sectionLabel(section),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
                         IconButton(
                           tooltip: '添加${TopicSummary.sectionLabel(section)}',
-                          onPressed: busy ? null : () => _editItem(result!, summary, section, null),
+                          onPressed: busy
+                              ? null
+                              : () =>
+                                    _editItem(result!, summary, section, null),
                           icon: const Icon(Icons.add_rounded, size: 18),
                         ),
                       ],
                     ),
                     if (summary.sections[section]!.isEmpty)
-                      const Text('未提及', style: TextStyle(color: AppColors.textSecondary)),
+                      const Text(
+                        '未提及',
+                        style: TextStyle(color: AppColors.textSecondary),
+                      ),
                     for (final entry in summary.sections[section]!.indexed)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
@@ -427,13 +469,33 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                                   ),
                                 IconButton(
                                   tooltip: '编辑条目',
-                                  onPressed: busy ? null : () => _editItem(result!, summary, section, entry.$1),
-                                  icon: const Icon(Icons.edit_outlined, size: 18),
+                                  onPressed: busy
+                                      ? null
+                                      : () => _editItem(
+                                          result!,
+                                          summary,
+                                          section,
+                                          entry.$1,
+                                        ),
+                                  icon: const Icon(
+                                    Icons.edit_outlined,
+                                    size: 18,
+                                  ),
                                 ),
                                 IconButton(
                                   tooltip: '删除条目',
-                                  onPressed: busy ? null : () => _deleteItem(result!, summary, section, entry.$1),
-                                  icon: const Icon(Icons.delete_outline, size: 18),
+                                  onPressed: busy
+                                      ? null
+                                      : () => _deleteItem(
+                                          result!,
+                                          summary,
+                                          section,
+                                          entry.$1,
+                                        ),
+                                  icon: const Icon(
+                                    Icons.delete_outline,
+                                    size: 18,
+                                  ),
                                 ),
                               ],
                             ),
@@ -449,12 +511,17 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                     children: [
                       FilledButton(
                         key: const ValueKey('topic-summary-generate'),
-                        onPressed: noteCount == 0 || input.invalidKeys.isNotEmpty
+                        onPressed:
+                            noteCount == 0 || input.invalidKeys.isNotEmpty
                             ? null
-                            : () => _generate(replace: result != null || unsafeRetry),
+                            : () => _generate(
+                                replace: result != null || unsafeRetry,
+                              ),
                         child: Text(summary == null ? '生成汇总' : '重新生成'),
                       ),
-                      if (error != null && !unsafeRetry && result == null &&
+                      if (error != null &&
+                          !unsafeRetry &&
+                          result == null &&
                           input.invalidKeys.isEmpty)
                         TextButton(
                           onPressed: () => _generate(replace: false),
@@ -951,7 +1018,9 @@ class _DriftBanner extends StatelessWidget {
               context,
               store,
               exclude: topicId,
-              suggestedTopicId: store.driftHintFor(recordingKey)?.suggestedTopicId,
+              suggestedTopicId: store
+                  .driftHintFor(recordingKey)
+                  ?.suggestedTopicId,
             );
             if (target != null) {
               await store.moveRecording(recordingKey, target.id);
@@ -1200,4 +1269,3 @@ class TopicDetailScreen extends StatelessWidget {
     if (key != null) await store.moveRecording(key, topicId);
   }
 }
-

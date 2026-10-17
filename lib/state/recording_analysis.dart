@@ -17,8 +17,7 @@ const minutesTemplateId = 'minutes';
 const bookNoteTemplateId = 'book-note';
 const thinkingNoteTemplateId = 'thinking-note';
 
-const defaultSummaryPrompt =
-    '生成忠实原文的摘要，列出主题、关键结论、待办和未决事项；没有的项目省略。';
+const defaultSummaryPrompt = '生成忠实原文的摘要，列出主题、关键结论、待办和未决事项；没有的项目省略。';
 
 // Template adapted from Meetily and Ownscribe; see THIRD_PARTY_NOTICES.md.
 const defaultMinutesPrompt = '''生成结构化会议纪要，仅输出 JSON，不要 Markdown 代码围栏。字段严格如下：
@@ -55,11 +54,8 @@ class PromptTemplate {
   String get body => prompt;
   String get instruction => prompt;
 
-  String get fingerprint => promptTemplateFingerprint(
-    id: id,
-    version: version,
-    prompt: prompt,
-  );
+  String get fingerprint =>
+      promptTemplateFingerprint(id: id, version: version, prompt: prompt);
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -365,6 +361,7 @@ class RecordingAnalysis extends ChangeNotifier {
   // response is persisted. Safe-retry callers must never resubmit that node.
   final Map<String, String> _unconfirmedNodes = {};
   final Map<String, Completer<void>> _running = {};
+  final Set<String> _pendingClaims = {};
   final Map<String, String> progress = {};
   int _templateSequence = 0;
   Future<void>? _loading;
@@ -550,10 +547,7 @@ class RecordingAnalysis extends ChangeNotifier {
     try {
       await save();
     } catch (_) {
-      _customTemplates.insert(
-        index.clamp(0, _customTemplates.length),
-        removed,
-      );
+      _customTemplates.insert(index.clamp(0, _customTemplates.length), removed);
       rethrow;
     } finally {
       if (!_disposed) notifyListeners();
@@ -668,18 +662,30 @@ class RecordingAnalysis extends ChangeNotifier {
 
   bool busy(String k) => _running.containsKey(k);
 
-  /// Explicitly start a fresh paid generation after the caller has confirmed
-  /// replacement (or an earlier request with an unconfirmed response).
-  Future<void> restartSlot(String k) async {
-    await load();
-    if (busy(k)) throw StateError('分析仍在进行');
-    _checkpoints.remove(k);
-    _jobHashes.remove(k);
-    _unconfirmedNodes.remove(k);
-    errors.remove(k);
-    await save();
-    if (!_disposed) notifyListeners();
+  @visibleForTesting
+  bool hasPendingClaim(String k) => _pendingClaims.contains(k);
+
+  @visibleForTesting
+  bool hasCheckpoint(String k) => _checkpoints.containsKey(k);
+
+  bool hasUnconfirmedNode(String k) => _unconfirmedNodes.containsKey(k);
+
+  /// Allows the next safe run to resend the unconfirmed node. Completed
+  /// checkpoints remain untouched; the caller must have obtained explicit
+  /// user confirmation because the prior request may already have been billed.
+  /// Allows the next safe run to resend the unconfirmed node. Completed
+  /// checkpoints remain untouched; the caller must have obtained explicit
+  /// user confirmation because the prior request may already have been billed.
+  void clearUnconfirmedNode(String k) => _unconfirmedNodes.remove(k);
+
+  /// Synchronously claims a slot before any later asynchronous work. A second
+  /// trigger cannot pass this gate while the first is loading or validating.
+  void claim(String k) {
+    if (busy(k)) return;
+    _pendingClaims.add(k);
   }
+
+  bool releaseClaim(String k) => _pendingClaims.remove(k);
 
   Future<void> editResult(
     String k,
@@ -780,7 +786,19 @@ class RecordingAnalysis extends ChangeNotifier {
     bool preserveInputCitations = false,
     required String Function() currentSource,
   }) async {
-    await load();
+    final k = slotKey(
+      recording,
+      custom: custom,
+      templateId: templateId,
+      resultSlot: resultSlot,
+    );
+    claim(k);
+    try {
+      await load();
+    } catch (_) {
+      releaseClaim(k);
+      rethrow;
+    }
     final PromptTemplate? template;
     if (templateId != null) {
       template = templateById(templateId);
@@ -793,6 +811,7 @@ class RecordingAnalysis extends ChangeNotifier {
         );
         errors[missingKey] = '所选提示词模板不存在，请重新选择';
         notifyListeners();
+        releaseClaim(k);
         return;
       }
     } else if (!custom) {
@@ -800,21 +819,15 @@ class RecordingAnalysis extends ChangeNotifier {
     } else {
       template = null;
     }
-    final k = slotKey(
-      recording,
-      custom: custom,
-      templateId: template?.id,
-      resultSlot: resultSlot,
-    );
-    if (busy(k)) return;
     final selected = modelOverride ?? model;
     if (selected == null || apiKey.isEmpty || source.trim().isEmpty) {
       errors[k] = '请先选择分析模型、配置千问 Key，并完成转写';
       notifyListeners();
+      releaseClaim(k);
       return;
     }
-    final prompt = template != null &&
-            (instruction == null || instruction.trim().isEmpty)
+    final prompt =
+        template != null && (instruction == null || instruction.trim().isEmpty)
         ? template.prompt
         : custom
         ? (instruction ?? '').trim()
@@ -822,6 +835,7 @@ class RecordingAnalysis extends ChangeNotifier {
     if (prompt.isEmpty || prompt.runes.length > 2000) {
       errors[k] = '分析要求需为 1–2000 字';
       notifyListeners();
+      releaseClaim(k);
       return;
     }
     if (custom && template == null && resultSlot == null) {
@@ -841,6 +855,7 @@ class RecordingAnalysis extends ChangeNotifier {
         _jobHashes[k] != legacyJobHash) {
       errors[k] = '笔记已变动，旧检查点不能复用；请确认重新开始，避免意外重复收费。';
       notifyListeners();
+      releaseClaim(k);
       return;
     }
     final unconfirmedNode = _unconfirmedNodes[k];
@@ -852,6 +867,7 @@ class RecordingAnalysis extends ChangeNotifier {
       } else {
         errors[k] = '上次 $unconfirmedNode 请求结果未确认；为避免重复收费，不能自动重试该片段。已完成片段仍保留。';
         notifyListeners();
+        releaseClaim(k);
         return;
       }
     }
@@ -863,7 +879,9 @@ class RecordingAnalysis extends ChangeNotifier {
     final checkpoint = _checkpoints.putIfAbsent(k, () => {});
     final abort = Completer<void>();
     _running[k] = abort;
+    releaseClaim(k);
     errors.remove(k);
+    await save();
     var invalidOutput = false;
     bool current() =>
         !_disposed &&
@@ -882,9 +900,11 @@ class RecordingAnalysis extends ChangeNotifier {
         _unconfirmedNodes[k] = id;
         await save();
       }
-      final service = preserveInputCitations && _service is QwenAnalysisService
-          ? (_service as QwenAnalysisService).asTopicSummary()
-          : _service;
+      final service = switch (_service) {
+        final QwenAnalysisService qwen when preserveInputCitations =>
+          qwen.asTopicSummary(),
+        final AnalysisService service => service,
+      };
       final value = await service.generate(
         model: selected,
         apiKey: apiKey,
@@ -908,11 +928,13 @@ class RecordingAnalysis extends ChangeNotifier {
       final sources = sourceBlocks ?? analysisSourceBlocks(source);
       List<String> level;
       if (sources.length == 1) {
-        level = [await node(
-          'final',
-          preserveInputCitations ? sources.first : '[S1] ${sources.first}',
-          prompt,
-        )];
+        level = [
+          await node(
+            'final',
+            preserveInputCitations ? sources.first : '[S1] ${sources.first}',
+            prompt,
+          ),
+        ];
       } else {
         level = [];
         for (var i = 0; i < sources.length; i++) {
@@ -1020,4 +1042,3 @@ class RecordingAnalysis extends ChangeNotifier {
     super.dispose();
   }
 }
-
