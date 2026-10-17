@@ -2359,7 +2359,14 @@ class RecorderController extends ChangeNotifier {
     final partial = transcriptPartial?.trim() ?? '';
     final live = (partial.isNotEmpty ? partial : transcript).trim();
     final saved = (_currentRecording?.text ?? '').trim();
-    final known = live.length >= saved.length ? live : saved;
+    var known = live;
+    if (known.isEmpty) {
+      known = saved;
+    } else if (saved.isNotEmpty &&
+        !known.contains(saved) &&
+        saved.contains(known)) {
+      known = saved;
+    }
     final stable =
         incoming.isNotEmpty &&
         (live.isEmpty || incoming.contains(live)) &&
