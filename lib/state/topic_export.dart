@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'topic_note.dart';
 import 'topic_store.dart';
 import 'topic_summary.dart';
@@ -18,6 +21,9 @@ class TopicExportNote {
   final int? page;
 }
 
+// Leave room for ".md" and a collision suffix within a 255-byte component.
+const _maxStemBytes = 230;
+
 String _displayName(Topic topic) =>
     topic.kind == TopicKind.book && topic.author.trim().isNotEmpty
     ? '${topic.title} - ${topic.author}'
@@ -31,15 +37,30 @@ String _fileStem(Topic topic) {
       .replaceAll(RegExp(r'^[. ]+|[. ]+$'), '')
       .trim();
   if (stem.isEmpty) stem = '主题';
+  stem = _truncateUtf8(stem, _maxStemBytes);
+  stem = stem.replaceAll(RegExp(r'[. ]+$'), '');
+  if (stem.isEmpty) stem = '主题';
   if (RegExp(
     r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$',
     caseSensitive: false,
   ).hasMatch(stem)) {
     stem = '_$stem';
   }
-  final runes = stem.runes.toList();
-  if (runes.length > 90) stem = String.fromCharCodes(runes.take(90));
-  return stem.replaceAll(RegExp(r'[. ]+$'), '');
+  return stem;
+}
+
+String _truncateUtf8(String value, int maxBytes) {
+  if (utf8.encode(value).length <= maxBytes) return value;
+  final buffer = StringBuffer();
+  var bytes = 0;
+  for (final rune in value.runes) {
+    final char = String.fromCharCode(rune);
+    final length = utf8.encode(char).length;
+    if (bytes + length > maxBytes) break;
+    buffer.write(char);
+    bytes += length;
+  }
+  return buffer.toString();
 }
 
 /// Stable, human-readable collision handling, including names that collide
@@ -58,6 +79,25 @@ String topicExportFileName(Topic topic, Iterable<Topic> allTopics) {
     if (candidate.id == topic.id) return name;
   }
   return '${_fileStem(topic)}.md';
+}
+
+/// Writes one export to an isolated temp directory and always removes it after
+/// the share callback returns, throws, or declines to present the share sheet.
+Future<void> shareTopicMarkdownFile({
+  required String markdown,
+  required String filename,
+  required Future<void> Function(File file) share,
+}) async {
+  final directory = await Directory.systemTemp.createTemp('koe-topic-');
+  try {
+    final file = File('${directory.path}/$filename');
+    await file.writeAsString(markdown, encoding: utf8, flush: true);
+    await share(file);
+  } finally {
+    try {
+      await directory.delete(recursive: true);
+    } catch (_) {}
+  }
 }
 
 String _oneLine(String value) => value

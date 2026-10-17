@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1154,36 +1152,40 @@ class TopicDetailScreen extends StatelessWidget {
     try {
       final markdown = _markdown(c, topic);
       if (share) {
-        final filename = topicExportFileName(topic, c.topics.topics);
-        // Each handoff gets its own directory. Repeated exports and topics
-        // with the same title never replace an earlier in-flight share file.
-        final directory = await Directory.systemTemp.createTemp('koe-topic-');
-        final file = File('${directory.path}/$filename');
-        await file.writeAsString(markdown, encoding: utf8, flush: true);
         if (!context.mounted) return;
-        final box = context.findRenderObject() as RenderBox?;
-        await SharePlus.instance.share(
-          ShareParams(
-            files: [
-              XFile(file.path, name: filename, mimeType: 'text/markdown'),
-            ],
-            title: filename,
-            sharePositionOrigin: box == null
-                ? null
-                : box.localToGlobal(Offset.zero) & box.size,
-          ),
+        final filename = topicExportFileName(topic, c.topics.topics);
+        await shareTopicMarkdownFile(
+          markdown: markdown,
+          filename: filename,
+          share: (file) async {
+            if (!context.mounted) return;
+            final box = context.findRenderObject() as RenderBox?;
+            await SharePlus.instance.share(
+              ShareParams(
+                files: [
+                  XFile(file.path, name: filename, mimeType: 'text/markdown'),
+                ],
+                title: filename,
+                sharePositionOrigin: box == null
+                    ? null
+                    : box.localToGlobal(Offset.zero) & box.size,
+              ),
+            );
+          },
         );
       } else {
         await Clipboard.setData(ClipboardData(text: markdown));
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('已复制主题 Markdown')));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('已复制主题 Markdown')));
         }
       }
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('导出失败，请重试')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('导出失败，请重试')));
       }
     }
   }

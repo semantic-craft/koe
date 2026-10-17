@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/state/topic_export.dart';
 import 'package:koe/state/topic_note.dart';
@@ -145,5 +148,60 @@ void main() {
     expect(topicExportFileName(first, all), 'A-B - C-D.md');
     expect(topicExportFileName(third, all), 'A-B - C-D (2).md');
     expect(topicExportFileName(second, all), 'A-B - C-D (3).md');
+  });
+
+  test('长中文标题按 UTF-8 字节截断并为扩展名和重名后缀留空间', () {
+    final title = '长' * 90;
+    final first = topic('first-long', title);
+    final second = topic('second-long', title);
+    final names = [
+      topicExportFileName(first, [first, second]),
+      topicExportFileName(second, [first, second]),
+    ];
+    for (final name in names) {
+      expect(utf8.encode(name).length, lessThanOrEqualTo(255));
+      expect(name, endsWith('.md'));
+    }
+    expect(names[0], isNot(names[1]));
+  });
+
+  test('分享成功、失败或提前返回后都删除临时文件', () async {
+    File? shared;
+    await shareTopicMarkdownFile(
+      markdown: '# 私有正文\n',
+      filename: '导出.md',
+      share: (file) async {
+        shared = file;
+        expect(await file.readAsString(), '# 私有正文\n');
+      },
+    );
+    expect(shared!.existsSync(), isFalse);
+    expect(shared!.parent.existsSync(), isFalse);
+
+    File? failed;
+    await expectLater(
+      shareTopicMarkdownFile(
+        markdown: '# 失败正文\n',
+        filename: '失败.md',
+        share: (file) async {
+          failed = file;
+          throw const FileSystemException('分享失败');
+        },
+      ),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(failed!.existsSync(), isFalse);
+    expect(failed!.parent.existsSync(), isFalse);
+
+    File? dismissed;
+    await shareTopicMarkdownFile(
+      markdown: '# 提前返回\n',
+      filename: '提前返回.md',
+      share: (file) async {
+        dismissed = file;
+      },
+    );
+    expect(dismissed!.existsSync(), isFalse);
+    expect(dismissed!.parent.existsSync(), isFalse);
   });
 }
