@@ -492,12 +492,14 @@ class RecorderController extends ChangeNotifier {
     this.recordingShortcutScanTimeout = const Duration(seconds: 30),
     this.retrievedAudioSettleTime = retrievedAudioSettle,
     Future<String> Function(String rawPath)? rawExportConverter,
+    Future<Duration?> Function(String path)? localDurationReader,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
            topicsEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
+       _localDurationReader = localDurationReader ?? AudioDuration.read,
        _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
@@ -980,6 +982,7 @@ class RecorderController extends ChangeNotifier {
   /// before it can be submitted; see [incompleteRetrievedAudioReason].
   final Duration retrievedAudioSettleTime;
   final Future<String> Function(String rawPath) _rawExportConverter;
+  final Future<Duration?> Function(String path) _localDurationReader;
 
   /// Longest gap without a BLE file packet before a pull stops waiting; see
   /// [BleFilePull.pullFile].
@@ -4969,7 +4972,7 @@ class RecorderController extends ChangeNotifier {
 
   Future<void> _loadLocalDuration(String path) async {
     try {
-      final value = await AudioDuration.read(path);
+      final value = await _localDurationReader(path);
       if (value != null && exportedPaths.contains(path)) {
         _localDurations[path] = value;
         notifyListeners();

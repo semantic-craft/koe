@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/doubao_stt.dart';
+import 'package:koe/audio/audio_duration.dart';
 import 'package:koe/audio/ogg_opus.dart';
 import 'package:koe/ai/engine_config.dart';
 import 'package:koe/ai/qwen_stt.dart';
@@ -1503,6 +1504,61 @@ void main() async {
       await settleUntil(
         () => c.localDurationForPath(wav) == const Duration(seconds: 2),
       );
+    },
+  );
+
+  test(
+    'a duration read started before reconversion cannot restore the old value',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'duration-in-flight-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      var seconds = 1;
+      final firstRead = Completer<Duration?>();
+      var reads = 0;
+      final c = RecorderController(
+        loadPersistedState: false,
+        rawExportConverter: (raw) async {
+          final wav = raw.replaceFirst(RegExp(r'\.opus$'), '.wav');
+          await File(
+            wav,
+          ).writeAsBytes(wavBytes(List<int>.filled(32000 * seconds, 0)));
+          return wav;
+        },
+        localDurationReader: (path) {
+          reads++;
+          if (reads == 1) return firstRead.future;
+          return AudioDuration.read(path);
+        },
+      );
+      addTearDown(c.dispose);
+      c.setAutoTranscribe(false);
+
+      final raw = File('${directory.path}/1790000001.opus');
+      await raw.writeAsBytes([1]);
+      await c.completeWifiTransfer([raw.path], decrypted: true);
+      final wav = '${directory.path}/1790000001.wav';
+      expect(c.localDurationForPath(wav), isNull);
+      expect(reads, 1);
+
+      // The WAV grows while the first read is still waiting on the file.
+      seconds = 2;
+      await raw.writeAsBytes([1, 2]);
+      await c.completeWifiTransfer([raw.path], decrypted: true);
+
+      // Invalidation must allow a fresh read even though the old one is still
+      // in flight.
+      expect(c.localDurationForPath(wav), isNull);
+      final readsAfterReconversion = reads;
+
+      firstRead.complete(const Duration(seconds: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(c.localDurationForPath(wav), isNot(const Duration(seconds: 1)));
+      await settleUntil(
+        () => c.localDurationForPath(wav) == const Duration(seconds: 2),
+      );
+      expect(readsAfterReconversion, 2);
     },
   );
 }
