@@ -745,6 +745,59 @@ void main() {
     expect(find.text('一条思路'), findsOneWidget);
   });
 
+  test('音频版本变化使笔记过期时阻止汇总请求', () async {
+    final dir = await Directory.systemTemp.createTemp('stale-audio-');
+    addTearDown(() => dir.delete(recursive: true));
+    final audio = File('${dir.path}/note.wav');
+    await audio.writeAsBytes([1, 2, 3, 4]);
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '音频过期',
+    );
+    final key = 'path:${audio.path}';
+    await store.moveRecording(key, topic.id);
+    var calls = 0;
+    final analysis = RecordingAnalysis(
+      inMemory: true,
+      service: _SummaryService((source, instruction) async {
+        calls++;
+        return _generalSummaryJson();
+      }),
+    );
+    final controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    controller.transcriptsByPath[audio.path] = '转写';
+    analysis.results[TopicNote.slotKey(key)] = noteResultForSource(
+      '转写',
+      TopicNote(
+        kind: TopicKind.general,
+        topicId: topic.id,
+        overview: '音频变化前的笔记',
+        audioSignature: 'stale-audio-version',
+        ideas: const [
+          TopicIdea(text: '想法', reason: '理由', sources: ['S1']),
+        ],
+      ),
+    );
+    await controller.settleTopicNoteWork();
+    expect(controller.topicSummaryInput(topic.id).invalidKeys, isEmpty);
+    await controller.refreshCachedAudioVersion(
+      RecordingReference(path: audio.path),
+      force: true,
+    );
+    expect(controller.topicSummaryInput(topic.id).invalidKeys, [key]);
+    await expectLater(
+      controller.generateTopicSummary(topic.id),
+      throwsStateError,
+    );
+    expect(calls, 0);
+  });
+
   testWidgets('主题详情手动生成、覆盖确认与逐条编辑', (tester) async {
     final store = TopicStore(inMemory: true);
     await store.load();
