@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/recorder_controller.dart';
+import '../../state/recording_analysis.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
@@ -180,6 +183,453 @@ class _Notice extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: Text(text, style: const TextStyle(color: AppColors.coral)),
+  );
+}
+
+/// A topic summary is an explicit paid action. Reopening this screen never
+/// starts analysis; it only reads the locally persisted result/checkpoints.
+class _TopicSummaryPanel extends StatefulWidget {
+  const _TopicSummaryPanel({required this.topicId});
+  final String topicId;
+
+  @override
+  State<_TopicSummaryPanel> createState() => _TopicSummaryPanelState();
+}
+
+class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(context.read<RecorderController>().analysis.load());
+  }
+
+  Future<void> _generate({required bool replace}) async {
+    final controller = context.read<RecorderController>();
+    final slot = TopicSummary.slotKey(widget.topicId);
+    TopicSummaryRetry intent = TopicSummaryRetry.auto;
+    if (replace) {
+      final sourceChanged =
+          controller.analysis.errors[slot]?.contains('旧检查点不能复用') == true;
+      final unsafeRetry =
+          controller.analysis.errors[slot]?.contains('未确认') == true ||
+          controller.analysis.errors[slot]?.contains('校验失败') == true ||
+          sourceChanged;
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(unsafeRetry ? '重新开始汇总？' : '重新生成汇总？'),
+          content: Text(
+            sourceChanged
+                ? '笔记内容已变化，旧检查点不能复用。重新开始会重新发送全部笔记并产生新的模型调用，且覆盖已有汇总。'
+                : unsafeRetry
+                ? '上次请求的结果未确认，可能已经计费。重新开始可能再次计费，并会覆盖已有汇总。'
+                : '重新生成会覆盖当前汇总，包括手动修改，并产生新的模型调用。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('继续'),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true || !mounted) return;
+      intent = unsafeRetry
+          ? TopicSummaryRetry.confirmedRetry
+          : TopicSummaryRetry.overwrite;
+    }
+    try {
+      await controller.generateTopicSummary(widget.topicId, retry: intent);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
+  Future<void> _editItem(
+    AnalysisResult result,
+    TopicSummary summary,
+    String section,
+    int? index,
+  ) async {
+    final original = index == null ? null : summary.sections[section]![index];
+    final updated = await showDialog<TopicSummaryItem>(
+      context: context,
+      builder: (_) => _SummaryItemDialog(
+        section: section,
+        original: original,
+        sources: summary.sources,
+      ),
+    );
+    if (updated == null || !mounted) return;
+    final sections = {
+      for (final key in TopicSummary.sectionKeys(summary.kind))
+        key: [...summary.sections[key]!],
+    };
+    if (index == null) {
+      sections[section]!.add(updated);
+    } else {
+      sections[section]![index] = updated;
+    }
+    try {
+      await context.read<RecorderController>().analysis.editResult(
+        TopicSummary.slotKey(widget.topicId),
+        result,
+        TopicSummary(
+          kind: summary.kind,
+          topicId: summary.topicId,
+          sources: summary.sources,
+          sections: sections,
+        ).encode(),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
+  Future<void> _deleteItem(
+    AnalysisResult result,
+    TopicSummary summary,
+    String section,
+    int index,
+  ) async {
+    final sections = {
+      for (final key in TopicSummary.sectionKeys(summary.kind))
+        key: [...summary.sections[key]!],
+    };
+    sections[section]!.removeAt(index);
+    try {
+      await context.read<RecorderController>().analysis.editResult(
+        TopicSummary.slotKey(widget.topicId),
+        result,
+        TopicSummary(
+          kind: summary.kind,
+          topicId: summary.topicId,
+          sources: summary.sources,
+          sections: sections,
+        ).encode(),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
+  void _openSource(TopicSummarySource source) {
+    _openRecordingKey(source.recordingKey);
+  }
+
+  String _recordingTitle(RecorderController c, String key) {
+    final path = _libraryByKey(c)[key];
+    if (path == null) return key;
+    return c
+        .recordingView(
+          RecordingReference(fileId: c.fileIdFromPath(path), path: path),
+        )
+        .title;
+  }
+
+  void _openRecordingKey(String recordingKey) {
+    final c = context.read<RecorderController>();
+    final path = _libraryByKey(c)[recordingKey];
+    if (path == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('来源录音已不在资料库中')));
+      return;
+    }
+    RecordingNavigation.open(
+      context,
+      RecordingReference(fileId: c.fileIdFromPath(path), path: path),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.read<RecorderController>();
+    return ListenableBuilder(
+      listenable: c.analysis,
+      builder: (context, _) {
+        final topic = c.topics.topicById(widget.topicId);
+        if (topic == null) return const SizedBox.shrink();
+        final slot = TopicSummary.slotKey(widget.topicId);
+        final result = c.analysis.results[slot];
+        final summary = result == null
+            ? null
+            : TopicSummary.tryParse(result.text);
+        final busy = c.analysis.busy(slot);
+        final error = c.analysis.errors[slot];
+        final unsafeRetry =
+            error?.contains('未确认') == true ||
+            error?.contains('校验失败') == true ||
+            error?.contains('旧检查点不能复用') == true;
+        final stale = c.isTopicSummaryStale(widget.topicId);
+        final input = c.topicSummaryInput(widget.topicId);
+        final noteCount = input.sources.length;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: SurfaceCard(
+            key: const ValueKey('topic-summary-panel'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '汇总',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    if (stale)
+                      const Text(
+                        '已过期',
+                        style: TextStyle(color: AppColors.coral),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (busy) Text(c.analysis.progress[slot] ?? '正在生成…'),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      error,
+                      style: const TextStyle(color: AppColors.coral),
+                    ),
+                  ),
+                if (summary == null && !busy) Text('已有 $noteCount 条笔记可汇总'),
+                if (input.invalidKeys.isNotEmpty) ...[
+                  Text(
+                    '有 ${input.invalidKeys.length} 条笔记已过期或无法解析（转写或音频可能有变化），'
+                    '请先打开对应录音重新生成笔记，再生成汇总。',
+                    style: const TextStyle(color: AppColors.coral),
+                  ),
+                  for (final key in input.invalidKeys)
+                    TextButton(
+                      onPressed: () => _openRecordingKey(key),
+                      child: Text('打开 ${_recordingTitle(c, key)}'),
+                    ),
+                ],
+                if (summary != null) ...[
+                  for (final section in TopicSummary.sectionKeys(
+                    summary.kind,
+                  )) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            TopicSummary.sectionLabel(section),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: '添加${TopicSummary.sectionLabel(section)}',
+                          onPressed: busy
+                              ? null
+                              : () =>
+                                    _editItem(result!, summary, section, null),
+                          icon: const Icon(Icons.add_rounded, size: 18),
+                        ),
+                      ],
+                    ),
+                    if (summary.sections[section]!.isEmpty)
+                      const Text(
+                        '未提及',
+                        style: TextStyle(color: AppColors.textSecondary),
+                      ),
+                    for (final entry in summary.sections[section]!.indexed)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(entry.$2.text),
+                            Wrap(
+                              spacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                for (final sourceId in entry.$2.sources)
+                                  ActionChip(
+                                    label: Text(sourceId),
+                                    tooltip: '打开来源笔记',
+                                    onPressed: () {
+                                      final source = summary.sources
+                                          .where((s) => s.id == sourceId)
+                                          .firstOrNull;
+                                      if (source != null) _openSource(source);
+                                    },
+                                  ),
+                                IconButton(
+                                  tooltip: '编辑条目',
+                                  onPressed: busy
+                                      ? null
+                                      : () => _editItem(
+                                          result!,
+                                          summary,
+                                          section,
+                                          entry.$1,
+                                        ),
+                                  icon: const Icon(
+                                    Icons.edit_outlined,
+                                    size: 18,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: '删除条目',
+                                  onPressed: busy
+                                      ? null
+                                      : () => _deleteItem(
+                                          result!,
+                                          summary,
+                                          section,
+                                          entry.$1,
+                                        ),
+                                  icon: const Icon(
+                                    Icons.delete_outline,
+                                    size: 18,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ],
+                const SizedBox(height: 8),
+                if (!busy)
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      FilledButton(
+                        key: const ValueKey('topic-summary-generate'),
+                        onPressed:
+                            noteCount == 0 || input.invalidKeys.isNotEmpty
+                            ? null
+                            : () => _generate(
+                                replace: result != null || unsafeRetry,
+                              ),
+                        child: Text(summary == null ? '生成汇总' : '重新生成'),
+                      ),
+                      if (error != null &&
+                          !unsafeRetry &&
+                          result == null &&
+                          input.invalidKeys.isEmpty)
+                        TextButton(
+                          onPressed: () => _generate(replace: false),
+                          child: const Text('继续重试'),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SummaryItemDialog extends StatefulWidget {
+  const _SummaryItemDialog({
+    required this.section,
+    required this.original,
+    required this.sources,
+  });
+
+  final String section;
+  final TopicSummaryItem? original;
+  final List<TopicSummarySource> sources;
+
+  @override
+  State<_SummaryItemDialog> createState() => _SummaryItemDialogState();
+}
+
+class _SummaryItemDialogState extends State<_SummaryItemDialog> {
+  late final TextEditingController _text = TextEditingController(
+    text: widget.original?.text ?? '',
+  );
+  late final Set<String> _selected = {...?widget.original?.sources};
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('编辑${TopicSummary.sectionLabel(widget.section)}'),
+    content: SizedBox(
+      width: 440,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              key: const ValueKey('topic-summary-edit-text'),
+              controller: _text,
+              minLines: 3,
+              maxLines: 10,
+              autofocus: true,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(labelText: '内容'),
+            ),
+            const SizedBox(height: 12),
+            const Text('依据笔记'),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final source in widget.sources)
+                  FilterChip(
+                    label: Text(source.id),
+                    selected: _selected.contains(source.id),
+                    onSelected: (value) => setState(() {
+                      if (value) {
+                        _selected.add(source.id);
+                      } else {
+                        _selected.remove(source.id);
+                      }
+                    }),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: _text.text.trim().isEmpty || _selected.isEmpty
+            ? null
+            : () => Navigator.pop(
+                context,
+                TopicSummaryItem(
+                  text: _text.text.trim(),
+                  sources: _selected.toList(),
+                ),
+              ),
+        child: const Text('保存'),
+      ),
+    ],
   );
 }
 
@@ -573,7 +1023,9 @@ class _DriftBanner extends StatelessWidget {
               context,
               store,
               exclude: topicId,
-              suggestedTopicId: store.driftHintFor(recordingKey)?.suggestedTopicId,
+              suggestedTopicId: store
+                  .driftHintFor(recordingKey)
+                  ?.suggestedTopicId,
             );
             if (target != null) {
               await store.moveRecording(recordingKey, target.id);
@@ -727,6 +1179,7 @@ class TopicDetailScreen extends StatelessWidget {
                           child: const Text('设为今天的当前主题'),
                         ),
                 ),
+              _TopicSummaryPanel(topicId: topicId),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 8, 0),
                 child: Row(

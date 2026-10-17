@@ -1283,6 +1283,59 @@ void main() async {
   );
 
   test(
+    'a short cloud final result does not replace a longer saved live draft',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('short-final-');
+      addTearDown(() => directory.delete(recursive: true));
+      final audio = File('${directory.path}/final-short.wav');
+      await audio.writeAsBytes([1, 2, 3]);
+      final ble = _Ble();
+      final c = controller(_Apple(), ble: ble)
+        ..setAutoTranscribe(true)
+        ..refreshAppleCapabilities();
+      await c.startRecord();
+      final ref = c.currentRecordingReference!;
+      final stream = _Stream();
+      c.attachSttStreamForTesting(stream);
+      stream.emit('Realtime line one\nRealtime line two');
+      await Future<void>.delayed(Duration.zero);
+      expect(c.recordingView(ref).text, 'Realtime line one\nRealtime line two');
+      // The server's `done` event arrives while the subscription is still
+      // active, before the recording is stopped or finish() is awaited.
+      stream.emitFinal('Short final');
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        c.recordingView(ref).text,
+        'Realtime line one\nRealtime line two',
+        reason: '订阅中的短 done 不得覆盖更长的实时稿',
+      );
+      c.handleRealtimeOpusFrameForTesting(Uint8List(160));
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(fileId: 130, path: audio.path, bytesReceived: 320),
+      );
+      ble.stopRecording();
+      await Future<void>.delayed(Duration.zero);
+      stream.close();
+      await settleUntil(() => c.transcriptsByPath[audio.path] != null);
+      expect(
+        c.recordingView(ref).text,
+        'Realtime line one\nRealtime line two',
+        reason: '云端完成结果不是稳定超集时不得覆盖已保存的实时文本',
+      );
+      expect(
+        c.transcriptForPath(audio.path),
+        'Realtime line one\nRealtime line two',
+        reason: '持久化读取仍应是长实时稿',
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        c.recordingView(RecordingReference(path: audio.path)).text,
+        'Realtime line one\nRealtime line two',
+      );
+    },
+  );
+
+  test(
     'Apple live revisions replace partial text and stop rejects late events',
     () async {
       final ble = _Ble();
@@ -1669,6 +1722,12 @@ class _Stream implements SttStreamSession {
   void emit(String text) {
     if (!_events.isClosed) {
       _events.add(SttStreamEvent(type: 'partial', text: text));
+    }
+  }
+
+  void emitFinal(String text) {
+    if (!_events.isClosed) {
+      _events.add(SttStreamEvent(type: 'done', text: text, isFinal: true));
     }
   }
 

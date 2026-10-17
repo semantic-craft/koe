@@ -205,6 +205,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
         final slotKey = TopicNote.slotKey(key);
         final analysis = widget.controller.analysis;
         final busy = analysis.busy(slotKey);
+        final running = analysis.running(slotKey);
         final progress = analysis.progress[slotKey];
         final error = analysis.errors[slotKey];
         final result = analysis.results[slotKey];
@@ -279,13 +280,14 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                       Text(progress ?? '正在生成主题笔记…'),
                       const SizedBox(height: 8),
                       const LinearProgressIndicator(minHeight: 3),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () => analysis.cancel(slotKey),
-                          child: const Text('取消'),
+                      if (running)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: () => analysis.cancel(slotKey),
+                            child: const Text('取消'),
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),

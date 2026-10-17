@@ -130,6 +130,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
             );
       final result = manager.results[key];
       final busy = manager.busy(key);
+      final running = manager.running(key);
       final audioChanged = widget.controller.recordingAudioChanged(
         widget.reference,
       );
@@ -258,8 +259,9 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                             if (!activeTemplate.builtIn) ...[
                               TextButton(
                                 key: const ValueKey('edit-template'),
-                                onPressed: () =>
-                                    _openTemplateEditor(editing: activeTemplate),
+                                onPressed: () => _openTemplateEditor(
+                                  editing: activeTemplate,
+                                ),
                                 child: const Text('编辑模板'),
                               ),
                               TextButton(
@@ -270,9 +272,8 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                                   );
                                   if (mounted) {
                                     setState(
-                                      () =>
-                                          selectedTemplateId =
-                                              summaryTemplateId,
+                                      () => selectedTemplateId =
+                                          summaryTemplateId,
                                     );
                                   }
                                 },
@@ -314,10 +315,11 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
               if (busy) ...[
                 const LinearProgressIndicator(),
                 Text(manager.progress[key] ?? '正在准备分析'),
-                TextButton(
-                  onPressed: () => manager.cancel(key),
-                  child: const Text('取消分析'),
-                ),
+                if (running)
+                  TextButton(
+                    onPressed: () => manager.cancel(key),
+                    child: const Text('取消分析'),
+                  ),
               ] else
                 FilledButton(
                   key: const ValueKey('generate-analysis'),

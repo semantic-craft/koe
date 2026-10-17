@@ -245,6 +245,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
         } catch (_) {}
       }
       final busy = manager.busy(key);
+      final running = manager.running(key);
       return Scaffold(
         appBar: AppBar(
           title: const Text('结构化纪要'),
@@ -278,10 +279,11 @@ class _MinutesPanelState extends State<MinutesPanel> {
               if (busy) ...[
                 const LinearProgressIndicator(),
                 Text(manager.progress[key] ?? '正在整理纪要'),
-                TextButton(
-                  onPressed: () => manager.cancel(key),
-                  child: const Text('取消生成'),
-                ),
+                if (running)
+                  TextButton(
+                    onPressed: () => manager.cancel(key),
+                    child: const Text('取消生成'),
+                  ),
               ] else
                 FilledButton(
                   onPressed:
