@@ -2,6 +2,8 @@
 
 2026-10-17 更新；功能基线 `main@ab5dcdc658d122c61456d9e6ec3f637c06d12996`（含 PR #94 squash `9d09a92`、PR #87 squash `ea03b41`、PR #98 squash `ab5dcdc`）。GitHub 总工单 [#6](https://github.com/semantic-craft/koe/issues/6) 跟踪剩余事项；本页区分已交付能力、代码回归和真实设备/云端验证边界。
 
+真机验收总入口：[Koe 真机验收执行清单](acceptance/koe-device-acceptance-checklist-20261017.md)，按 #15 → #71 → #96 → #92 → #97 → #95 → #16 执行。
+
 ## 产品目标与当前决定
 
 脱离飞书使用 D3200：独立或 App 发起录音 → 完整取回并保留音频 → 指定服务转写 → 摘要与分析 → 阅读、回听和导出。iPhone、Mac 各自可用。
