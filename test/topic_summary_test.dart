@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -30,6 +31,16 @@ void main() {
     sources: const ['synthetic source block'],
     createdAt: DateTime(2026, 10, 16),
   );
+
+  AnalysisResult noteResultForSource(String source, TopicNote note) =>
+      AnalysisResult(
+        text: note.encode(),
+        sourceHash: analysisFingerprint(source),
+        model: TopicNote.defaultModel,
+        instruction: 'synthetic note',
+        sources: [source],
+        createdAt: DateTime(2026, 10, 16),
+      );
 
   test('书籍按口述页码排序，无页码按录音时间；普通主题全按时间', () {
     final book = Topic(
@@ -375,14 +386,8 @@ void main() {
     await resumed.load();
     expect(File(file.path).existsSync(), isTrue, reason: '失败前应先落盘检查点');
     final resumedSlot = TopicSummary.slotKey('retry');
-    expect(resumed.hasPendingClaim(resumedSlot), isFalse);
-    expect(resumed.busy(resumedSlot), isFalse);
-    expect(resumed.hasCheckpoint(resumedSlot), isTrue);
-    expect(resumed.hasUnconfirmedNode(resumedSlot), isTrue);
     expect(resumed.errors[resumedSlot], contains('结果未确认'));
     expect(resumed.errors[TopicSummary.slotKey('retry')], contains('结果未确认'));
-    // The controller clears this guard only after the user confirms retry.
-    resumed.clearUnconfirmedNode(resumedSlot);
     await resumed.run(
       recording: 'topic:retry',
       source: 'two notes',
@@ -394,6 +399,7 @@ void main() {
       validateResult: validateTopicSummary(topic, retrySources),
       avoidDuplicateCharges: true,
       preserveInputCitations: true,
+      confirmedRestart: true,
       currentSource: () => 'two notes',
     );
     expect(resumedSent, hasLength(2));
@@ -417,6 +423,111 @@ void main() {
     );
   });
 
+  test('确认重试只重跑校验失败的合并节点，成功片段不重发', () async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '重试汇总',
+    );
+    final sent = <String>[];
+    var mergeCalls = 0;
+    final analysis = RecordingAnalysis(
+      inMemory: true,
+      service: _SummaryService((source, instruction) async {
+        sent.add(source);
+        if (instruction.contains('依据这些覆盖原文')) {
+          mergeCalls++;
+          return mergeCalls == 1 ? '不是 JSON' : _generalSummaryJson();
+        }
+        return source.startsWith('[N1]') ? '[N1] 第一段笔记' : '[N2] 第二段笔记';
+      }),
+    );
+    TopicNote longNote(String label) =>
+        generalNote(topic.id, '$label ${'长' * 3000}');
+    for (final key in ['file:1760000301', 'file:1760000302']) {
+      await store.moveRecording(key, topic.id);
+      analysis.results[TopicNote.slotKey(key)] = noteResult(longNote('笔记$key'));
+    }
+    final controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    await controller.settleTopicNoteWork();
+    await controller.generateTopicSummary(topic.id);
+    final slot = TopicSummary.slotKey(topic.id);
+    expect(analysis.results[slot], isNull);
+    expect(analysis.errors[slot], contains('校验失败'));
+    expect(sent, hasLength(3), reason: '两段笔记加一次合并');
+
+    await controller.generateTopicSummary(
+      topic.id,
+      retry: TopicSummaryRetry.confirmedRetry,
+    );
+    expect(sent, hasLength(4), reason: '确认后只重跑被拒的合并节点');
+    expect(sent.last, contains('[N1] 第一段笔记'));
+    expect(sent.last, contains('[N2] 第二段笔记'));
+    expect(TopicSummary.tryParse(analysis.results[slot]!.text), isNotNull);
+  });
+
+  test('来源变化需明确重新开始，确认后使用新笔记并清除旧检查点', () async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '来源变化',
+    );
+    final keys = ['file:1760000311', 'file:1760000312'];
+    final sent = <String>[];
+    var failSecond = true;
+    TopicNote longNote(String label) =>
+        generalNote(topic.id, '$label ${'长' * 3000}');
+    final analysis = RecordingAnalysis(
+      inMemory: true,
+      service: _SummaryService((source, instruction) async {
+        sent.add(source);
+        if (source.startsWith('[N2]') && failSecond) {
+          failSecond = false;
+          throw const HttpException('第二段失败');
+        }
+        if (instruction.contains('依据这些覆盖原文')) {
+          return _generalSummaryJson();
+        }
+        return source.startsWith('[N1]') ? '[N1] 一' : '[N2] 二';
+      }),
+    );
+    for (final key in keys) {
+      await store.moveRecording(key, topic.id);
+      analysis.results[TopicNote.slotKey(key)] = noteResult(longNote('笔记$key'));
+    }
+    final controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    await controller.settleTopicNoteWork();
+    await controller.generateTopicSummary(topic.id);
+    final slot = TopicSummary.slotKey(topic.id);
+    expect(analysis.results[slot], isNull);
+
+    analysis.results[TopicNote.slotKey(keys.first)] = noteResult(
+      longNote('变更后的笔记'),
+    );
+    await controller.generateTopicSummary(topic.id);
+    expect(analysis.errors[slot], contains('旧检查点不能复用'));
+    final callsBeforeConfirm = sent.length;
+    expect(callsBeforeConfirm, 2);
+
+    await controller.generateTopicSummary(
+      topic.id,
+      retry: TopicSummaryRetry.overwrite,
+    );
+    expect(sent.length, greaterThan(callsBeforeConfirm));
+    expect(sent, anyElement(contains('变更后的笔记')));
+    expect(TopicSummary.tryParse(analysis.results[slot]!.text), isNotNull);
+  });
+
   test('并发触发同一主题只执行一次模型任务', () async {
     final store = TopicStore(inMemory: true);
     await store.load();
@@ -424,10 +535,9 @@ void main() {
     final key = 'file:1760000201';
     await store.moveRecording(key, topic.id);
     final service = _SummaryService((source, instruction) async {
-      await Future<void>.delayed(const Duration(milliseconds: 20));
       return _generalSummaryJson();
     });
-    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final analysis = _RunLoadGatedAnalysis(service: service);
     analysis.results[TopicNote.slotKey(key)] = noteResult(
       generalNote(topic.id, '某个笔记'),
     );
@@ -437,10 +547,100 @@ void main() {
     );
     addTearDown(controller.dispose);
     await controller.settleTopicNoteWork();
-    await Future.wait([
-      controller.generateTopicSummary(topic.id),
-      controller.generateTopicSummary(topic.id),
-    ]);
+    final first = controller.generateTopicSummary(topic.id);
+    await analysis.runLoadStarted.future;
+    final second = controller.generateTopicSummary(topic.id);
+    await second;
+    expect(service.calls, 0, reason: '首个请求仍在加载，第二次触发必须被拒绝');
+    analysis.releaseRunLoad.complete();
+    await first;
+    expect(service.calls, 1);
+  });
+
+  test('加载阶段第二次 run 不进入模型请求', () async {
+    final service = _SummaryService((source, instruction) async => '结果');
+    final analysis = _LoadGatedAnalysis(service: service);
+    addTearDown(analysis.dispose);
+    Future<void> run() => analysis.run(
+      recording: 'topic:loading',
+      source: 'note snapshot',
+      sourceBlocks: const ['[N1] note snapshot'],
+      apiKey: 'synthetic-test-key',
+      custom: true,
+      resultSlot: TopicSummary.slot,
+      instruction: 'synthetic instruction',
+      currentSource: () => 'note snapshot',
+    );
+
+    final first = run();
+    await analysis.loadStarted.future;
+    final second = run();
+    await pumpEventQueue();
+    expect(service.calls, 0, reason: '首个请求仍在加载，第二次触发必须被拒绝');
+    await second;
+    analysis.releaseLoad.complete();
+    await first;
+    expect(service.calls, 1);
+  });
+
+  test('模型请求阶段第二次 run 不重复调用', () async {
+    final service = _GatedSummaryService();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    addTearDown(analysis.dispose);
+    Future<void> run() => analysis.run(
+      recording: 'topic:request',
+      source: 'note snapshot',
+      sourceBlocks: const ['[N1] note snapshot'],
+      apiKey: 'synthetic-test-key',
+      custom: true,
+      resultSlot: TopicSummary.slot,
+      instruction: 'synthetic instruction',
+      currentSource: () => 'note snapshot',
+    );
+
+    final first = run();
+    await service.started.future;
+    final second = run();
+    await pumpEventQueue();
+    expect(service.calls, 1, reason: '请求进行中不得再次调用模型');
+    service.release.complete();
+    await Future.wait([first, second]);
+    expect(service.calls, 1);
+  });
+
+  test('首次保存任务状态失败后释放忙碌并允许重试', () async {
+    final dir = await Directory.systemTemp.createTemp('analysis-save-fail-');
+    addTearDown(() => dir.delete(recursive: true));
+    final blocker = File('${dir.path}/blocked');
+    await blocker.writeAsString('not a directory');
+    final service = _SummaryService((source, instruction) async => '结果');
+    final analysis = RecordingAnalysis(
+      file: File('${blocker.path}/analysis.json'),
+      service: service,
+    );
+    addTearDown(analysis.dispose);
+    Future<void> run() => analysis.run(
+      recording: 'topic:save-fail',
+      source: 'note snapshot',
+      apiKey: 'synthetic-test-key',
+      custom: true,
+      resultSlot: TopicSummary.slot,
+      instruction: 'synthetic instruction',
+      avoidDuplicateCharges: true,
+      currentSource: () => 'note snapshot',
+    );
+
+    await run();
+    final slot = TopicSummary.slotKey('save-fail');
+    expect(analysis.busy(slot), isFalse);
+    expect(analysis.errors[slot], contains('无法保存任务状态'));
+    expect(service.calls, 0);
+
+    await blocker.delete();
+    await Directory(blocker.path).create();
+    await run();
+    expect(analysis.busy(slot), isFalse);
+    expect(analysis.results[slot], isNotNull);
     expect(service.calls, 1);
   });
 
@@ -481,6 +681,68 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+
+  testWidgets('转写变化使笔记过期时禁止生成汇总，重生成笔记后恢复', (tester) async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '过期笔记',
+    );
+    const path = '/tmp/koe-stale-note-source.wav';
+    const key = 'path:$path';
+    await store.moveRecording(key, topic.id);
+    var calls = 0;
+    final analysis = RecordingAnalysis(
+      inMemory: true,
+      service: _SummaryService((source, instruction) async {
+        calls++;
+        return _generalSummaryJson();
+      }),
+    );
+    final RecorderController controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    controller.transcriptsByPath[path] = '旧转写';
+    analysis.results[TopicNote.slotKey(key)] = noteResultForSource(
+      '旧转写',
+      generalNote(topic.id, '旧笔记'),
+    );
+    await controller.settleTopicNoteWork();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: TopicDetailScreen(topicId: topic.id),
+        ),
+      ),
+    );
+    await tester.pump();
+    final generate = find.byKey(const ValueKey('topic-summary-generate'));
+    expect(tester.widget<FilledButton>(generate).onPressed, isNotNull);
+
+    controller.transcriptsByPath[path] = '新转写';
+    analysis.notifyListeners();
+    await tester.pump();
+    expect(find.textContaining('请先打开对应录音重新生成笔记'), findsOneWidget);
+    expect(tester.widget<FilledButton>(generate).onPressed, isNull);
+    expect(calls, 0);
+
+    analysis.results[TopicNote.slotKey(key)] = noteResultForSource(
+      '新转写',
+      generalNote(topic.id, '更新后的笔记'),
+    );
+    analysis.notifyListeners();
+    await tester.pump();
+    expect(tester.widget<FilledButton>(generate).onPressed, isNotNull);
+    await tester.tap(generate);
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.text('一条思路'), findsOneWidget);
   });
 
   testWidgets('主题详情手动生成、覆盖确认与逐条编辑', (tester) async {
@@ -595,5 +857,66 @@ class _SummaryService implements AnalysisService {
     calls++;
     await Future<void>.delayed(Duration.zero);
     return handler(source, instruction);
+  }
+}
+
+class _GatedSummaryService implements AnalysisService {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  int calls = 0;
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> generate({
+    required String model,
+    required String apiKey,
+    required String source,
+    required String instruction,
+    required Future<void> abort,
+  }) async {
+    calls++;
+    if (!started.isCompleted) started.complete();
+    await release.future;
+    return _generalSummaryJson();
+  }
+}
+
+class _LoadGatedAnalysis extends RecordingAnalysis {
+  _LoadGatedAnalysis({super.service}) : super(inMemory: true);
+
+  final loadStarted = Completer<void>();
+  final releaseLoad = Completer<void>();
+  bool _blocked = false;
+
+  @override
+  Future<void> load() async {
+    if (!_blocked) {
+      _blocked = true;
+      loadStarted.complete();
+      await releaseLoad.future;
+    }
+    await super.load();
+  }
+}
+
+class _RunLoadGatedAnalysis extends RecordingAnalysis {
+  _RunLoadGatedAnalysis({super.service}) : super(inMemory: true);
+
+  final runLoadStarted = Completer<void>();
+  final releaseRunLoad = Completer<void>();
+  int _loads = 0;
+
+  @override
+  Future<void> load() async {
+    _loads++;
+    // The controller's own pre-check is the first load; block only the load
+    // that run() performs after claiming the slot.
+    if (_loads == 2) {
+      runLoadStarted.complete();
+      await releaseRunLoad.future;
+    }
+    await super.load();
   }
 }

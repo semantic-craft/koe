@@ -1300,21 +1300,32 @@ void main() async {
       stream.emit('Realtime line one\nRealtime line two');
       await Future<void>.delayed(Duration.zero);
       expect(c.recordingView(ref).text, 'Realtime line one\nRealtime line two');
+      // The server's `done` event arrives while the subscription is still
+      // active, before the recording is stopped or finish() is awaited.
+      stream.emitFinal('Short final');
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        c.recordingView(ref).text,
+        'Realtime line one\nRealtime line two',
+        reason: '订阅中的短 done 不得覆盖更长的实时稿',
+      );
       c.handleRealtimeOpusFrameForTesting(Uint8List(160));
       c.handleRealtimeStateForTesting(
         RealtimeStreamState(fileId: 130, path: audio.path, bytesReceived: 320),
       );
       ble.stopRecording();
       await Future<void>.delayed(Duration.zero);
-      stream
-        ..emit('Realtime line one\nRealtime line two')
-        ..close();
-      stream.emitFinal('Short final');
+      stream.close();
       await settleUntil(() => c.transcriptsByPath[audio.path] != null);
       expect(
         c.recordingView(ref).text,
         'Realtime line one\nRealtime line two',
         reason: '云端完成结果不是稳定超集时不得覆盖已保存的实时文本',
+      );
+      expect(
+        c.transcriptForPath(audio.path),
+        'Realtime line one\nRealtime line two',
+        reason: '持久化读取仍应是长实时稿',
       );
       await Future<void>.delayed(Duration.zero);
       expect(

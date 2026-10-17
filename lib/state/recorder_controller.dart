@@ -190,6 +190,11 @@ class RecorderController extends ChangeNotifier {
       final result = analysis.results[TopicNote.slotKey(key)];
       if (result == null) continue;
       noteKeys.add(key);
+      final ref = _referenceFromKey(key);
+      if (isTopicNoteStale(ref)) {
+        invalidKeys.add(key);
+        continue;
+      }
       final note = TopicNote.tryParse(
         result.text,
         result.sources.isEmpty ? 1 : result.sources.length,
@@ -201,7 +206,6 @@ class RecorderController extends ChangeNotifier {
         invalidKeys.add(key);
         continue;
       }
-      final ref = _referenceFromKey(key);
       final seconds = key.startsWith('file:')
           ? int.tryParse(key.substring(5))
           : null;
@@ -258,6 +262,7 @@ class RecorderController extends ChangeNotifier {
         retry == TopicSummaryRetry.auto) {
       throw StateError('重新生成会覆盖已有汇总，请先确认');
     }
+    final confirmedRestart = retry != TopicSummaryRetry.auto;
     if (retry == TopicSummaryRetry.confirmedRetry &&
         !analysis.hasUnconfirmedNode(slotKey)) {
       retry = TopicSummaryRetry.overwrite;
@@ -277,6 +282,7 @@ class RecorderController extends ChangeNotifier {
       validateResult: validateTopicSummary(topic, input.sources),
       avoidDuplicateCharges: true,
       preserveInputCitations: true,
+      confirmedRestart: confirmedRestart,
       currentSource: () => topicSummaryInput(topicId).source,
     );
   }
@@ -2346,6 +2352,22 @@ class RecorderController extends ChangeNotifier {
       ? normalizeSttText(text)
       : normalizeSttText('$_streamTranscriptPrefix\n$text');
 
+  /// A late final snapshot may only replace live text when it still contains
+  /// everything shown or saved. A short tail must not erase the live draft.
+  void _applyServerFinalText(String raw) {
+    final incoming = _streamText(raw).trim();
+    final partial = transcriptPartial?.trim() ?? '';
+    final live = (partial.isNotEmpty ? partial : transcript).trim();
+    final saved = (_currentRecording?.text ?? '').trim();
+    final known = live.length >= saved.length ? live : saved;
+    final stable =
+        incoming.isNotEmpty &&
+        (live.isEmpty || incoming.contains(live)) &&
+        (saved.isEmpty || incoming.contains(saved));
+    transcript = stable ? incoming : known;
+    transcriptPartial = null;
+  }
+
   void _onSttStreamEvent(SttStreamEvent e) {
     final translationSnapshotUpdated =
         (translationModeActive || communicationModeActive) &&
@@ -2401,10 +2423,7 @@ class RecorderController extends ChangeNotifier {
         notifyListeners();
       case 'done':
         _currentRecording?.transcriptionComplete = true;
-        if (e.text.isNotEmpty) {
-          transcript = _streamText(e.text);
-          transcriptPartial = null;
-        }
+        _applyServerFinalText(e.text);
         transcribing = false;
         streamingSttActive = false;
         statusMessage = '转写完成';
@@ -2476,18 +2495,11 @@ class RecorderController extends ChangeNotifier {
         _flushPendingPcmTo(session);
         final done = await session.finish();
         if (revision != _sttLifecycleRevision) return;
-        if (done != null && done.text.isNotEmpty) {
-          // A final callback can arrive after the realtime stream is gone and
-          // return only the tail. Replace saved content only when it is a
-          // stable superset of what the user already saw; otherwise preserve.
-          final finishedText = _streamText(done.text);
-          final savedLive = _currentRecording?.text ?? '';
-          if (savedLive.trim().isEmpty ||
-              finishedText.trim().contains(savedLive.trim())) {
-            transcript = finishedText;
-          }
+        if (done != null) {
+          // The same rule as the subscribed `done` event: never let a short
+          // final tail replace the longer text already shown or saved.
+          _applyServerFinalText(done.text);
           recordingSession?.transcriptionComplete = true;
-          transcriptPartial = null;
         }
       }
       if (revision != _sttLifecycleRevision) return;

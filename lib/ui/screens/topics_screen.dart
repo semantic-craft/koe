@@ -208,16 +208,20 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
     final slot = TopicSummary.slotKey(widget.topicId);
     TopicSummaryRetry intent = TopicSummaryRetry.auto;
     if (replace) {
+      final sourceChanged =
+          controller.analysis.errors[slot]?.contains('旧检查点不能复用') == true;
       final unsafeRetry =
           controller.analysis.errors[slot]?.contains('未确认') == true ||
           controller.analysis.errors[slot]?.contains('校验失败') == true ||
-          controller.analysis.errors[slot]?.contains('旧检查点不能复用') == true;
+          sourceChanged;
       final accepted = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: Text(unsafeRetry ? '重新开始汇总？' : '重新生成汇总？'),
           content: Text(
-            unsafeRetry
+            sourceChanged
+                ? '笔记内容已变化，旧检查点不能复用。重新开始会重新发送全部笔记并产生新的模型调用，且覆盖已有汇总。'
+                : unsafeRetry
                 ? '上次请求的结果未确认，可能已经计费。重新开始可能再次计费，并会覆盖已有汇总。'
                 : '重新生成会覆盖当前汇总，包括手动修改，并产生新的模型调用。',
           ),
@@ -408,7 +412,8 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                 if (summary == null && !busy) Text('已有 $noteCount 条笔记可汇总'),
                 if (input.invalidKeys.isNotEmpty) ...[
                   Text(
-                    '有 ${input.invalidKeys.length} 条笔记已过期或无法解析，请先打开录音重生成笔记。',
+                    '有 ${input.invalidKeys.length} 条笔记已过期或无法解析（转写或音频可能有变化），'
+                    '请先打开对应录音重新生成笔记，再生成汇总。',
                     style: const TextStyle(color: AppColors.coral),
                   ),
                   for (final key in input.invalidKeys)

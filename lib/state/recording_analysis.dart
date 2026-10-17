@@ -673,16 +673,13 @@ class RecordingAnalysis extends ChangeNotifier {
   /// Allows the next safe run to resend the unconfirmed node. Completed
   /// checkpoints remain untouched; the caller must have obtained explicit
   /// user confirmation because the prior request may already have been billed.
-  /// Allows the next safe run to resend the unconfirmed node. Completed
-  /// checkpoints remain untouched; the caller must have obtained explicit
-  /// user confirmation because the prior request may already have been billed.
   void clearUnconfirmedNode(String k) => _unconfirmedNodes.remove(k);
 
   /// Synchronously claims a slot before any later asynchronous work. A second
   /// trigger cannot pass this gate while the first is loading or validating.
-  void claim(String k) {
-    if (busy(k)) return;
-    _pendingClaims.add(k);
+  bool claim(String k) {
+    if (busy(k)) return false;
+    return _pendingClaims.add(k);
   }
 
   bool releaseClaim(String k) => _pendingClaims.remove(k);
@@ -784,6 +781,7 @@ class RecordingAnalysis extends ChangeNotifier {
     List<String>? sourceBlocks,
     bool avoidDuplicateCharges = false,
     bool preserveInputCitations = false,
+    bool confirmedRestart = false,
     required String Function() currentSource,
   }) async {
     final k = slotKey(
@@ -792,7 +790,7 @@ class RecordingAnalysis extends ChangeNotifier {
       templateId: templateId,
       resultSlot: resultSlot,
     );
-    claim(k);
+    if (!claim(k)) return;
     try {
       await load();
     } catch (_) {
@@ -849,17 +847,18 @@ class RecordingAnalysis extends ChangeNotifier {
     final legacyJobHash = analysisFingerprint(
       '$sourceHash/$selected/$prompt/v1',
     );
-    if (avoidDuplicateCharges &&
+    final sourceChanged =
         _jobHashes[k] != null &&
         _jobHashes[k] != jobHash &&
-        _jobHashes[k] != legacyJobHash) {
+        _jobHashes[k] != legacyJobHash;
+    if (avoidDuplicateCharges && sourceChanged && !confirmedRestart) {
       errors[k] = '笔记已变动，旧检查点不能复用；请确认重新开始，避免意外重复收费。';
       notifyListeners();
       releaseClaim(k);
       return;
     }
     final unconfirmedNode = _unconfirmedNodes[k];
-    if (avoidDuplicateCharges && unconfirmedNode != null) {
+    if (avoidDuplicateCharges && unconfirmedNode != null && !confirmedRestart) {
       final completed = _checkpoints[k]?.containsKey(unconfirmedNode) == true;
       if (completed) {
         _unconfirmedNodes.remove(k);
@@ -871,18 +870,31 @@ class RecordingAnalysis extends ChangeNotifier {
         return;
       }
     }
-    if (_jobHashes[k] != jobHash && _jobHashes[k] != legacyJobHash) {
+    if (sourceChanged) {
       _checkpoints[k] = {};
       _unconfirmedNodes.remove(k);
     }
+    if (confirmedRestart) _unconfirmedNodes.remove(k);
     _jobHashes[k] = jobHash;
     final checkpoint = _checkpoints.putIfAbsent(k, () => {});
     final abort = Completer<void>();
     _running[k] = abort;
     releaseClaim(k);
     errors.remove(k);
-    await save();
+    try {
+      await save();
+    } catch (_) {
+      if (identical(_running[k], abort)) {
+        _running.remove(k);
+        progress.remove(k);
+        if (!abort.isCompleted) abort.complete();
+      }
+      errors[k] = '无法保存任务状态，请检查存储空间后重试';
+      if (!_disposed) notifyListeners();
+      return;
+    }
     var invalidOutput = false;
+    String? finalNodeId;
     bool current() =>
         !_disposed &&
         identical(_running[k], abort) &&
@@ -924,13 +936,14 @@ class RecordingAnalysis extends ChangeNotifier {
     }
 
     try {
-      await save();
       final sources = sourceBlocks ?? analysisSourceBlocks(source);
       List<String> level;
       if (sources.length == 1) {
+        const id = 'final';
+        finalNodeId = id;
         level = [
           await node(
-            'final',
+            id,
             preserveInputCitations ? sources.first : '[S1] ${sources.first}',
             prompt,
           ),
@@ -953,13 +966,15 @@ class RecordingAnalysis extends ChangeNotifier {
           final next = <String>[];
           for (var i = 0; i < level.length; i += 3) {
             final group = level.sublist(i, (i + 3).clamp(0, level.length));
+            final id = '汇总 $depth-${i ~/ 3}';
+            finalNodeId = id;
             next.add(
               await node(
-                '汇总 $depth-${i ~/ 3}',
+                id,
                 group.join('\n\n'),
                 '$prompt\n依据这些覆盖原文的笔记合并整理，'
-                    '${preserveInputCitations ? '保留笔记 [N数字] 引用' : '保留原文 [S数字] 引用'}'
-                    '，勿把笔记当作新事实。用不超过 1500 字输出。',
+                '${preserveInputCitations ? '保留笔记 [N数字] 引用' : '保留原文 [S数字] 引用'}'
+                '，勿把笔记当作新事实。用不超过 1500 字输出。',
               ),
             );
           }
@@ -972,8 +987,15 @@ class RecordingAnalysis extends ChangeNotifier {
       try {
         output = validateResult?.call(level.single, sources) ?? level.single;
       } catch (_) {
-        // Invalid final output must not become an endlessly reused checkpoint.
-        if (!avoidDuplicateCharges) checkpoint.clear();
+        // Keep successful fragments, but never reuse the rejected final node.
+        if (!avoidDuplicateCharges) {
+          checkpoint.clear();
+        } else if (finalNodeId != null) {
+          checkpoint.remove(finalNodeId);
+          try {
+            await save();
+          } catch (_) {}
+        }
         invalidOutput = true;
         rethrow;
       }
@@ -1013,7 +1035,7 @@ class RecordingAnalysis extends ChangeNotifier {
             : avoidDuplicateCharges && _unconfirmedNodes.containsKey(k)
             ? '上次 ${_unconfirmedNodes[k]} 请求结果未确认；为避免重复收费，不能自动重试该片段。已完成片段仍保留。'
             : avoidDuplicateCharges && invalidOutput
-            ? '汇总结构校验失败，模型输出已保留；为避免重复收费，需确认后重新生成。'
+            ? '汇总结构校验失败；成功片段已保留，确认后只会重跑汇总节点。'
             : '分析未完成，已有结果与片段已保留；可重试（未确认的请求可能重复计费）';
       }
     } finally {
