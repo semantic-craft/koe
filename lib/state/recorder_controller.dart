@@ -4993,6 +4993,11 @@ class RecorderController extends ChangeNotifier {
     }
     try {
       final wavPath = await conversion;
+      // Pause/resume and reconnect append to the raw file, then reconvert the
+      // same WAV path. Drop the old cached value before the list rebuilds so
+      // the row reflects the longer audio without waiting for a restart.
+      _localDurations.remove(path);
+      _localDurations.remove(wavPath);
       if (register) {
         _registerExportedPaths([wavPath]);
         if (errorMessage == '无法准备播放，录音已保留，请重试') {

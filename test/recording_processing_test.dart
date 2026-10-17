@@ -1465,6 +1465,46 @@ void main() async {
       expect(await file.exists(), isTrue);
     },
   );
+
+  test(
+    'reconverting a grown recording refreshes its cached duration',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'duration-refresh-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      var seconds = 1;
+      final c = RecorderController(
+        loadPersistedState: false,
+        rawExportConverter: (raw) async {
+          final wav = raw.replaceFirst(RegExp(r'\.opus$'), '.wav');
+          await File(
+            wav,
+          ).writeAsBytes(wavBytes(List<int>.filled(32000 * seconds, 0)));
+          return wav;
+        },
+      );
+      addTearDown(c.dispose);
+      c.setAutoTranscribe(false);
+
+      final raw = File('${directory.path}/1790000000.opus');
+      await raw.writeAsBytes([1]);
+      await c.completeWifiTransfer([raw.path], decrypted: true);
+      final wav = '${directory.path}/1790000000.wav';
+      expect(c.localDurationForPath(wav), isNull);
+      await settleUntil(
+        () => c.localDurationForPath(wav) == const Duration(seconds: 1),
+      );
+
+      // A pause/resume or reconnect reconverts the same path with more audio.
+      seconds = 2;
+      await raw.writeAsBytes([1, 2]);
+      await c.completeWifiTransfer([raw.path], decrypted: true);
+      await settleUntil(
+        () => c.localDurationForPath(wav) == const Duration(seconds: 2),
+      );
+    },
+  );
 }
 
 class _Apple extends AppleSpeechService {
