@@ -56,6 +56,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final controller = context.read<RecorderController>();
+        if (controller.recordingAudioChanged(widget.reference)) return;
         final recording = controller.recordingView(widget.reference);
         final path = recording.path;
         if (path == null ||

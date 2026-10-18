@@ -1378,6 +1378,43 @@ void main() {
     expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
   });
 
+  testWidgets('focused source does not start stale audio', (tester) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final c = _RecordingController()..audioReplaced = true;
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '来源回跳',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: [
+        TranscriptSegment(
+          text: '第一句',
+          start: Duration.zero,
+          end: Duration(seconds: 5),
+        ),
+        TranscriptSegment(
+          text: '第二句',
+          start: Duration(seconds: 12),
+          end: Duration(seconds: 20),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    await pump(
+      tester,
+      c,
+      const RecordingDetailScreen(
+        reference: reference,
+        initialHighlightedParagraph: 1,
+        initialPlaybackStart: Duration(seconds: 12),
+        focusedSource: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(c.playbackRequests, isEmpty);
+  });
+
   testWidgets('focused source has a back control on wide layouts', (
     tester,
   ) async {
