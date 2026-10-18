@@ -204,23 +204,52 @@ class RecordingLibraryStore {
   };
 
   Future<void> upsert(RecordingAsset asset, {bool strict = true}) async {
+    final previous = _assets[asset.path];
     _assets[asset.path] = asset;
-    await save(strict: strict);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      if (previous == null) {
+        _assets.remove(asset.path);
+      } else {
+        _assets[asset.path] = previous;
+      }
+      rethrow;
+    }
   }
 
   Future<void> upsertAll(
     Iterable<RecordingAsset> assets, {
     bool strict = true,
   }) async {
-    for (final asset in assets) {
-      _assets[asset.path] = asset;
+    final previous = <String, RecordingAsset?>{};
+    try {
+      for (final asset in assets) {
+        previous.putIfAbsent(asset.path, () => _assets[asset.path]);
+        _assets[asset.path] = asset;
+      }
+      await save(strict: strict);
+    } catch (_) {
+      for (final entry in previous.entries) {
+        final before = entry.value;
+        if (before == null) {
+          _assets.remove(entry.key);
+        } else {
+          _assets[entry.key] = before;
+        }
+      }
+      rethrow;
     }
-    await save(strict: strict);
   }
 
   Future<void> remove(String path, {bool strict = true}) async {
-    _assets.remove(path);
-    await save(strict: strict);
+    final previous = _assets.remove(path);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      if (previous != null) _assets[path] = previous;
+      rethrow;
+    }
   }
 
   Future<void> rename(
@@ -228,9 +257,18 @@ class RecordingLibraryStore {
     RecordingAsset asset, {
     bool strict = true,
   }) async {
+    final previousFrom = _assets[from];
+    final previousTarget = _assets[asset.path];
     _assets.remove(from);
     _assets[asset.path] = asset;
-    await save(strict: strict);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      _assets.remove(asset.path);
+      if (previousTarget != null) _assets[asset.path] = previousTarget;
+      if (previousFrom != null) _assets[from] = previousFrom;
+      rethrow;
+    }
   }
 
   Future<void> save({bool strict = true}) {

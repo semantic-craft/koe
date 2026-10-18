@@ -2986,6 +2986,7 @@ class RecorderController extends ChangeNotifier {
         ? settings.withSourceLanguage(sourceLanguage.trim())
         : settings;
     await _fileJobsLoaded;
+    await _libraryLoaded;
     // Manual retry runs straight through the deferred mechanism's executor so
     // the engine answers a busy start with its own readable error.
     await _deferredJobs.runNow(
@@ -3003,7 +3004,14 @@ class RecorderController extends ChangeNotifier {
     bool fromQueue = false,
   }) async {
     if (_disposed) return true;
+    await _libraryLoaded;
+    await _fileJobsLoaded;
     final key = _recordingKey(path: path);
+    if (library.assetForPath(path)?.trashed == true) {
+      await _fileJobs.discard(key);
+      _deferredJobs.discard(key);
+      return true;
+    }
     if (fileProcessingBusy ||
         _isRecordingAudioLocked(fileIdFromPath(path), path)) {
       if (!fromQueue) {
@@ -3153,6 +3161,10 @@ class RecorderController extends ChangeNotifier {
           );
           if (_disposed || revision != _fileJobRevision) return true;
         }
+      }
+      if (library.assetForPath(path)?.trashed == true) {
+        await _fileJobs.discard(key);
+        return true;
       }
       final result = job.stage == 'result'
           ? SttResult(
@@ -4944,6 +4956,7 @@ class RecorderController extends ChangeNotifier {
 
   Future<void> _loadLocalExports({bool notify = true}) async {
     try {
+      await _libraryLoaded;
       final dir = await _localExportDirectory();
       if (!await dir.exists()) {
         if (notify) notifyListeners();
@@ -4957,6 +4970,18 @@ class RecorderController extends ChangeNotifier {
           paths.add(entity.path);
         }
       }
+      final trashedPaths = <String>{};
+      final trashedIds = <int>{};
+      for (final asset in library.assets.where((asset) => asset.trashed)) {
+        trashedPaths.add(asset.path);
+        final id = ExportCatalog.fileIdFromPath(asset.path);
+        if (id != null) trashedIds.add(id);
+      }
+      paths.removeWhere((path) {
+        final id = ExportCatalog.fileIdFromPath(path);
+        return trashedPaths.contains(path) ||
+            (id != null && trashedIds.contains(id));
+      });
       _registerExportedPaths([...exportedPaths, ...paths]);
       final wavIds = paths
           .where((path) => path.endsWith('.wav'))
@@ -5213,6 +5238,8 @@ class RecorderController extends ChangeNotifier {
               importedAt: _localFileTimestamp(path) ?? stamp,
             );
         await library.upsert(asset.copyWith(archived: true, deletedAt: stamp));
+        final key = _recordingKey(path: path);
+        _discardTrashedFileJob(key);
         queued.add(path);
         trashed++;
       } catch (error) {
@@ -5234,6 +5261,15 @@ class RecorderController extends ChangeNotifier {
     errorMessage = failed.isEmpty ? null : failed.join('\n');
     notifyListeners();
     return (trashed: trashed, failed: failed);
+  }
+
+  void _discardTrashedFileJob(String key) {
+    _deferredJobs.discard(key);
+    unawaited(
+      _fileJobsLoaded
+          .then((_) => _fileJobs.discard(key))
+          .catchError((Object _) {}),
+    );
   }
 
   String _trashDisplayName(String path) {

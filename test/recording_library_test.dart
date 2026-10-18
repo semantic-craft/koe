@@ -154,6 +154,26 @@ void main() {
     expect(await File(imported.path).exists(), isTrue);
   });
 
+  test('回收站标记保存失败时回滚内存状态', () async {
+    final blocker = File('${temp.path}/blocked');
+    await blocker.writeAsString('not a directory');
+    final store = RecordingLibraryStore(
+      file: File('${blocker.path}/library.json'),
+    );
+    final asset = RecordingAsset(
+      path: '/tmp/rollback.wav',
+      displayName: '回滚测试',
+      source: RecordingSource.device,
+      importedAt: DateTime(2026, 10, 18),
+    );
+
+    await expectLater(
+      store.upsert(asset.copyWith(archived: true, deletedAt: DateTime.now())),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.assets, isEmpty);
+  });
+
   test('超过 30 天的回收站资料在启动时清理，其他原件保留', () async {
     final expireSource = await sourceAudio('过期资料', seed: 11);
     final keepSource = await sourceAudio('保留资料', seed: 21);
@@ -181,18 +201,14 @@ void main() {
     addTearDown(c.dispose);
     final imported = await c.importLocalAudio(source.path);
     final now = DateTime(2026, 10, 18, 12);
-    await c.trashLocalExports(
-      [imported.path],
-      now: now.subtract(const Duration(days: 29, hours: 1)),
-    );
+    await c.trashLocalExports([
+      imported.path,
+    ], now: now.subtract(const Duration(days: 29, hours: 1)));
     final asset = c.trashedAssets.single;
 
     expect(c.trashDaysRemaining(asset, now: now), 1);
     expect(
-      c.trashDaysRemaining(
-        asset,
-        now: now.add(const Duration(hours: 23)),
-      ),
+      c.trashDaysRemaining(asset, now: now.add(const Duration(hours: 23))),
       0,
     );
   });
