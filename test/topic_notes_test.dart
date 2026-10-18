@@ -443,6 +443,105 @@ void main() {
     expect(controller.isTopicNoteStale(refA), isTrue);
   });
 
+  test('移入回收站后停止主题笔记后续分块请求', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-trash-');
+    addTearDown(() => dir.delete(recursive: true));
+    final audio = File('${dir.path}/1760001999.wav')
+      ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    final firstStarted = Completer<void>();
+    final releaseFirst = Completer<void>();
+    var calls = 0;
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      calls++;
+      if (calls == 1) {
+        firstStarted.complete();
+        await releaseFirst.future;
+      }
+      return _generalNoteJson('第 $calls 段');
+    });
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: true,
+      topicStore: store,
+      analysisController: analysis,
+      topicRecommendationService: _CallbackAnalysisService(
+        (_, _, _) async => '{}',
+      ),
+      fileJobJournal: FileJobJournal(inMemory: true),
+    );
+    addTearDown(controller.dispose);
+    await controller.setQwenConfig(const EngineConfig(apiKey: 'sk-test'));
+    final topic = await store.createTopic(
+      title: '回收站测试',
+      kind: TopicKind.general,
+    );
+    final ref = RecordingReference(fileId: 1760001999, path: audio.path);
+    final key = controller.analysisKey(ref);
+    await store.moveRecording(key, topic.id);
+
+    controller.rememberTranscript(audio.path, '长转写。' * 1800);
+    await firstStarted.future.timeout(const Duration(seconds: 2));
+    await controller.trashLocalExports([audio.path]);
+    releaseFirst.complete();
+    await controller.settleTopicNoteWork();
+
+    expect(calls, 1);
+    expect(analysis.busy(TopicNote.slotKey(key)), isFalse);
+  });
+
+  test('重复导入恢复回收站资料后可继续生成主题笔记', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-restore-');
+    addTearDown(() => dir.delete(recursive: true));
+    final source = File('${dir.path}/source.wav')
+      ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    var calls = 0;
+    final service = _CallbackAnalysisService((_, _, _) async {
+      calls++;
+      return _generalNoteJson('恢复后的笔记');
+    });
+    final topicStore = TopicStore(inMemory: true);
+    await topicStore.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: true,
+      topicStore: topicStore,
+      analysisController: analysis,
+      topicRecommendationService: _CallbackAnalysisService(
+        (_, _, _) async => '{}',
+      ),
+      libraryStore: RecordingLibraryStore(inMemory: true),
+      libraryDirectory: Directory('${dir.path}/imports'),
+      fileJobJournal: FileJobJournal(inMemory: true),
+    );
+    addTearDown(controller.dispose);
+    await controller.setQwenConfig(const EngineConfig(apiKey: 'sk-test'));
+    final imported = await controller.importLocalAudio(source.path);
+    final topic = await topicStore.createTopic(
+      title: '恢复测试',
+      kind: TopicKind.general,
+    );
+    final ref = RecordingReference(path: imported.path);
+    final key = controller.analysisKey(ref);
+    await topicStore.moveRecording(key, topic.id);
+    await controller.trashLocalExports([imported.path]);
+
+    final restored = await controller.importLocalAudio(source.path);
+    expect(restored.duplicate, isTrue);
+    controller.rememberTranscript(restored.path, '恢复后的转写正文。');
+    await controller.settleTopicNoteWork();
+
+    expect(calls, 1);
+    expect(analysis.results[TopicNote.slotKey(key)], isNotNull);
+  });
+
   test('重复完成通知、重启恢复、长转写分段断点续跑与音频变更后不重复计费', () async {
     final dir = await Directory.systemTemp.createTemp('koe-topic-notes-dedup-');
     addTearDown(() => dir.delete(recursive: true));
@@ -710,7 +809,9 @@ void main() {
     addTearDown(controller.dispose);
     final topic = await store.createTopic(title: '面板', kind: TopicKind.general);
     const transcript = '这段转写显示在主题笔记面板里。';
-    final version = (await tester.runAsync(() => audioVersion(audioFile.path)))!;
+    final version = (await tester.runAsync(
+      () => audioVersion(audioFile.path),
+    ))!;
     controller.transcriptsByPath[audioFile.path] = transcript;
     controller.transcriptsByFileId[ref.fileId!] = transcript;
     controller.localPathsByFileId[ref.fileId!] = audioFile.path;
@@ -723,15 +824,16 @@ void main() {
         TopicIdea(text: '核心观点', reason: '因为如此', sources: ['S1']),
       ],
     );
-    analysis.results[TopicNote.slotKey(controller.analysisKey(ref))] =
-        AnalysisResult(
-          text: note.encode(),
-          sourceHash: analysisFingerprint(transcript),
-          model: TopicNote.defaultModel,
-          instruction: '已保存',
-          sources: const ['s1'],
-          createdAt: DateTime(2026, 10, 16),
-        );
+    analysis.results[TopicNote.slotKey(
+      controller.analysisKey(ref),
+    )] = AnalysisResult(
+      text: note.encode(),
+      sourceHash: analysisFingerprint(transcript),
+      model: TopicNote.defaultModel,
+      instruction: '已保存',
+      sources: const ['s1'],
+      createdAt: DateTime(2026, 10, 16),
+    );
     await tester.runAsync(
       () => controller.refreshCachedAudioVersion(ref, force: true),
     );
@@ -848,8 +950,9 @@ void main() {
     await tester.tap(find.text('保存'));
     await tester.pump();
 
-    final saved = jsonDecode(analysis.results[TopicNote.slotKey(key)]!.text)
-        as Map<String, dynamic>;
+    final saved =
+        jsonDecode(analysis.results[TopicNote.slotKey(key)]!.text)
+            as Map<String, dynamic>;
     expect(saved['overview'], '迁到新主题后修订的概要');
     expect(saved['topicId'], oldTopic.id);
     expect(saved['audioSignature'], 'sig-before-move');

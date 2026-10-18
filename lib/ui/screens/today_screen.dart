@@ -46,7 +46,7 @@ class TodayScreen extends StatelessWidget {
             return path != null;
           }).length
         : 0;
-    final playing = c.hasLoadedTrack ? c.playingPath : null;
+    final continuePath = c.continuePath;
 
     return GradientScaffold(
       child: ListView(
@@ -112,28 +112,33 @@ class TodayScreen extends StatelessWidget {
                 const SizedBox(height: 22),
                 const SectionLabel('继续回听'),
                 _ContinueListeningCard(
-                  path: playing,
-                  playing: c.isPlaying,
-                  onToggle: c.togglePlayPause,
-                  onOpen: playing == null
+                  path: continuePath,
+                  playing: c.playingPath == continuePath && c.isPlaying,
+                  onToggle: () => c.playingPath == continuePath
+                      ? c.togglePlayPause()
+                      : c.toggleLatestPlayback(),
+                  onOpen: continuePath == null
                       ? null
                       : () => RecordingNavigation.open(
                           context,
                           RecordingReference(
-                            fileId: c.fileIdFromPath(playing),
-                            path: playing,
+                            fileId: c.fileIdFromPath(continuePath),
+                            path: continuePath,
                           ),
                         ),
-                  title: playing == null
+                  title: continuePath == null
                       ? null
                       : c
                             .recordingView(
                               RecordingReference(
-                                fileId: c.fileIdFromPath(playing),
-                                path: playing,
+                                fileId: c.fileIdFromPath(continuePath),
+                                path: continuePath,
                               ),
                             )
                             .title,
+                  subtitle: continuePath == null
+                      ? '还没有回听中的资料'
+                      : c.continueDetail,
                   onOpenLibrary: () =>
                       RecordingNavigation.of(context)?.onSelectTab?.call(2),
                 ),
@@ -400,6 +405,7 @@ class _ContinueListeningCard extends StatelessWidget {
     required this.onToggle,
     required this.onOpen,
     required this.title,
+    required this.subtitle,
     required this.onOpenLibrary,
   });
 
@@ -408,6 +414,7 @@ class _ContinueListeningCard extends StatelessWidget {
   final VoidCallback onToggle;
   final VoidCallback? onOpen;
   final String? title;
+  final String subtitle;
   final VoidCallback onOpenLibrary;
 
   @override
@@ -464,8 +471,8 @@ class _ContinueListeningCard extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
-                const Text(
-                  '继续回听 · 原声保存在手机',
+                Text(
+                  subtitle,
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textSecondary,

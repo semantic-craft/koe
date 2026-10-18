@@ -9,6 +9,7 @@ import '../widgets/mobile_header.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
 import 'new_recording_sheet.dart';
+import 'trash_screen.dart';
 
 /// Phone "Materials" section (#131).
 ///
@@ -35,7 +36,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
-    final playing = c.hasLoadedTrack ? c.playingPath : null;
+    final continuePath = c.continuePath;
     return GradientScaffold(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -61,6 +62,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           letterSpacing: -0.6,
                         ),
                       ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('library-trash'),
+                      tooltip: '回收站',
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const TrashScreen(),
+                        ),
+                      ),
+                      icon: const Icon(Icons.delete_outline_rounded),
                     ),
                     TextButton.icon(
                       key: const ValueKey('library-import'),
@@ -141,24 +152,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ],
                 ),
-                if (playing != null) ...[
+                if (continuePath != null) ...[
                   const SizedBox(height: 10),
                   _LibraryContinueCard(
                     title: c
                         .recordingView(
                           RecordingReference(
-                            fileId: c.fileIdFromPath(playing),
-                            path: playing,
+                            fileId: c.fileIdFromPath(continuePath),
+                            path: continuePath,
                           ),
                         )
                         .title,
-                    playing: c.isPlaying,
-                    onToggle: c.togglePlayPause,
+                    subtitle: c.continueDetail,
+                    playing: c.playingPath == continuePath && c.isPlaying,
+                    onToggle: () => c.playingPath == continuePath
+                        ? c.togglePlayPause()
+                        : c.toggleLatestPlayback(),
                     onOpen: () => RecordingNavigation.open(
                       context,
                       RecordingReference(
-                        fileId: c.fileIdFromPath(playing),
-                        path: playing,
+                        fileId: c.fileIdFromPath(continuePath),
+                        path: continuePath,
                       ),
                     ),
                   ),
@@ -222,12 +236,14 @@ class _FilterChip extends StatelessWidget {
 class _LibraryContinueCard extends StatelessWidget {
   const _LibraryContinueCard({
     required this.title,
+    required this.subtitle,
     required this.playing,
     required this.onToggle,
     required this.onOpen,
   });
 
   final String title;
+  final String subtitle;
   final bool playing;
   final VoidCallback onToggle;
   final VoidCallback onOpen;
@@ -250,11 +266,24 @@ class _LibraryContinueCard extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: Text(
-              '继续回听 · $title',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '继续回听 · $title',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ),
           const Icon(Icons.chevron_right_rounded),

@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:provider/provider.dart';
 
 import 'app_identity.dart';
@@ -14,6 +16,15 @@ import 'ui/shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android) {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.semanticcraft.soundcore.audio',
+      androidNotificationChannelName: '回听',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+    );
+  }
   LicenseRegistry.addLicense(() async* {
     for (final name in ['meetily', 'ownscribe']) {
       yield LicenseEntryWithLineBreaks([
@@ -41,12 +52,33 @@ Future<void> main() async {
     ),
   );
   final controller = RecorderController();
+  if (defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android) {
+    unawaited(_watchAudioInterruptions(controller));
+  }
   runApp(KoeApp(controller: controller));
   unawaited(
     RecordingShortcutService.instance.initialize(
       onStartRecording: controller.requestRecordingFromShortcut,
     ),
   );
+}
+
+Future<void> _watchAudioInterruptions(RecorderController controller) async {
+  try {
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.speech());
+    session.interruptionEventStream.listen((event) {
+      if (event.begin) {
+        unawaited(controller.pauseForInterruption(message: '系统中断了播放'));
+      }
+    });
+    session.becomingNoisyEventStream.listen((_) {
+      unawaited(controller.pauseForInterruption(message: '耳机已断开，播放已暂停'));
+    });
+  } catch (error) {
+    debugPrint('[AudioSession] setup failed: $error');
+  }
 }
 
 class KoeApp extends StatelessWidget {
