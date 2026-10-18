@@ -38,19 +38,19 @@ class ListeningQueueScreen extends StatelessWidget {
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
-            child: entries.isEmpty
-                ? const _QueueEmpty()
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (controller.listeningQueue.recoveryNotice != null)
-                        _QueueBanner(
-                          message: controller.listeningQueue.recoveryNotice!,
-                        ),
-                      if (controller.queueNotice != null)
-                        _QueueBanner(message: controller.queueNotice!),
-                      Expanded(
-                        child: ReorderableListView.builder(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (controller.listeningQueue.recoveryNotice != null)
+                  _QueueBanner(
+                    message: controller.listeningQueue.recoveryNotice!,
+                  ),
+                if (controller.queueNotice != null)
+                  _QueueBanner(message: controller.queueNotice!),
+                Expanded(
+                  child: entries.isEmpty
+                      ? const _QueueEmpty()
+                      : ReorderableListView.builder(
                           key: const ValueKey('listening-queue-list'),
                           buildDefaultDragHandles: false,
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -69,9 +69,9 @@ class ListeningQueueScreen extends StatelessWidget {
                             );
                           },
                         ),
-                      ),
-                    ],
-                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -183,9 +183,6 @@ class _QueueTile extends StatelessWidget {
       fileId: availability.fileId ?? entry.fileId,
       path: path,
     );
-    final hasTimedTranscript =
-        availability.playable && view.segments.length >= 2;
-
     String status;
     if (!availability.playable) {
       status = availability.reason;
@@ -322,13 +319,6 @@ class _QueueTile extends StatelessWidget {
                   ),
                 ),
               ),
-              if (hasTimedTranscript)
-                IconButton(
-                  key: ValueKey('queue-chapters-${entry.key}'),
-                  tooltip: '章节',
-                  onPressed: () => _openChapters(context, entry, view.title),
-                  icon: const Icon(Icons.list_alt_rounded, size: 20),
-                ),
               if (current && !availability.playable)
                 IconButton(
                   key: ValueKey('queue-skip-${entry.key}'),
@@ -403,97 +393,6 @@ class _QueueTile extends StatelessWidget {
             ? '已移除当前项，继续下一项'
             : '已移出收听队列');
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(notice)));
-  }
-
-  Future<void> _openChapters(
-    BuildContext context,
-    ListeningQueueEntry entry,
-    String title,
-  ) async {
-    final chapters = controller.queueChaptersFor(entry);
-    if (!context.mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: FractionallySizedBox(
-          heightFactor: 0.7,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-                child: Text(
-                  '章节 · $title',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Text(
-                  '起点来自已有转写句子的可靠时间，不额外编造章节。',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: chapters.isEmpty
-                    ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text(
-                            '这份资料没有可靠的章节起点，将保持整段连续播放。',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              height: 1.45,
-                            ),
-                          ),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: chapters.length,
-                        itemBuilder: (context, index) {
-                          final chapter = chapters[index];
-                          return ListTile(
-                            key: ValueKey('queue-chapter-$index'),
-                            leading: Text(
-                              clock(chapter.start),
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontFeatures: [FontFeature.tabularFigures()],
-                              ),
-                            ),
-                            title: Text(
-                              chapter.label,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: () {
-                              Navigator.pop(sheetContext);
-                              controller.playQueueChapter(
-                                entry.key,
-                                chapter.start,
-                              );
-                            },
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 

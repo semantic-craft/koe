@@ -25,13 +25,15 @@ void main() {
   /// Store, controller and their loads all run in the real zone: a load queue
   /// created under the fake test clock would never finish.
   Future<({RecorderController controller, _UiPlayer player})> start(
-    WidgetTester tester,
-  ) async {
+    WidgetTester tester, {
+    ListeningQueueStore Function()? storeFactory,
+  }) async {
     final result = (await tester.runAsync(() async {
       final player = _UiPlayer();
       final controller = RecorderController(
         loadPersistedState: false,
-        listeningQueueStore: ListeningQueueStore(inMemory: true),
+        listeningQueueStore:
+            storeFactory?.call() ?? ListeningQueueStore(inMemory: true),
         player: player,
         libraryDirectory: Directory('${directory.path}/imports'),
       );
@@ -96,6 +98,102 @@ void main() {
 
     expect(controller.queueEntries.single.path, file.path);
     expect(find.text('已加入收听队列'), findsOneWidget);
+  });
+
+  testWidgets('队列文件损坏时空队列仍显示已另存原文件的恢复原因', (tester) async {
+    final file = File('${directory.path}/listening_queue.json')
+      ..writeAsStringSync('{not json');
+    final (:controller, :player) = await start(
+      tester,
+      storeFactory: () => ListeningQueueStore(file: file),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: const MaterialApp(home: ListeningQueueScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('queue-empty')), findsOneWidget);
+    expect(find.textContaining('已另存原文件'), findsOneWidget);
+    expect(controller.listeningQueue.recoveryNotice, isNotNull);
+    final backups = directory
+        .listSync()
+        .whereType<File>()
+        .where((item) => item.path.contains('.unreadable-'))
+        .toList();
+    expect(backups, isNotEmpty);
+  });
+
+  testWidgets('队列文件无法另存时空队列显示真实原因且不覆盖原文件', (tester) async {
+    final file = File('${directory.path}/listening_queue.json')
+      ..writeAsStringSync('{not json');
+    final store = _UnbackupableQueueStore(file: file);
+    final (:controller, :player) = await start(
+      tester,
+      storeFactory: () => store,
+    );
+
+    expect(store.writeBlocked, isTrue);
+    expect(file.readAsStringSync(), '{not json', reason: '备份失败不能覆盖原文件');
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: const MaterialApp(home: ListeningQueueScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('queue-empty')), findsOneWidget);
+    expect(find.textContaining('未能另存原文件'), findsOneWidget);
+    expect(find.textContaining('暂不保存队列修改'), findsOneWidget);
+  });
+
+  testWidgets('有转写时队列页没有章节入口，整段原声仍可播放', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final (:controller, :player) = await start(tester);
+    final file = audio('访谈一.wav');
+    controller.exportedPaths.add(file.path);
+    controller.rememberTranscript(
+      file.path,
+      '第一句。第二句。',
+      segments: const [
+        TranscriptSegment(
+          text: '第一句。',
+          start: Duration.zero,
+          end: Duration(seconds: 4),
+        ),
+        TranscriptSegment(
+          text: '第二句。',
+          start: Duration(seconds: 10),
+          end: Duration(seconds: 14),
+        ),
+      ],
+    );
+    await tester.runAsync(
+      () => controller.addToListeningQueue(RecordingReference(path: file.path)),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: const MaterialApp(home: ListeningQueueScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final key = ListeningQueueEntry.keyFor(path: file.path);
+    expect(find.byKey(ValueKey('queue-chapters-$key')), findsNothing);
+    expect(find.byTooltip('章节'), findsNothing);
+
+    await tester.tap(find.byKey(ValueKey('queue-play-$key')));
+    await until(tester, () => controller.playingPath == file.path);
+    expect(controller.playingPath, file.path, reason: '没有章节时仍按整段播放');
   });
 
   testWidgets('队列页在窄屏大字号下不溢出', (tester) async {
@@ -187,6 +285,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(RecordingDetailScreen), findsOneWidget);
   });
+}
+
+class _UnbackupableQueueStore extends ListeningQueueStore {
+  _UnbackupableQueueStore({super.file});
+
+  @override
+  Future<void> backupUnreadable(File target) async {
+    throw const FileSystemException('backup denied');
+  }
 }
 
 class _UiPlayer extends AudioPlayer {

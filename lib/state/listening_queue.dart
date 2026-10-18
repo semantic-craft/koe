@@ -59,20 +59,6 @@ class ListeningQueueEntry {
   }
 }
 
-/// A jump point that reuses an already reliable timed transcript sentence.
-/// Nothing is generated here: no reliable segment means no chapter.
-class ListeningChapter {
-  const ListeningChapter({
-    required this.index,
-    required this.start,
-    required this.label,
-  });
-
-  final int index;
-  final Duration start;
-  final String label;
-}
-
 /// Whether a queue item can be played now, with the real reason when it cannot.
 class ListeningQueueAvailability {
   const ListeningQueueAvailability({
@@ -194,11 +180,7 @@ class ListeningQueueStore {
       _currentKey = null;
       try {
         if (target == null) throw StateError('no queue file');
-        if (await target.exists()) {
-          await target.rename(
-            '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}',
-          );
-        }
+        if (await target.exists()) await backupUnreadable(target);
         recoveryNotice = '收听队列无法读取，已另存原文件；资料与回听进度不受影响。';
       } catch (backupError) {
         debugPrint('[ListeningQueue] backup failed: $backupError');
@@ -302,6 +284,14 @@ class ListeningQueueStore {
     _pendingSave = operation.then<void>((_) {}, onError: (Object _) {});
     return operation;
   }
+
+  /// Moves an unreadable queue file aside before anything can overwrite it.
+  /// Overridable so tests can exercise a backup failure without touching
+  /// production paths.
+  @visibleForOverriding
+  Future<void> backupUnreadable(File target) => target.rename(
+    '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}',
+  );
 
   Future<void> _write(List<ListeningQueueEntry> entries, String? currentKey) =>
       writeSnapshot(
