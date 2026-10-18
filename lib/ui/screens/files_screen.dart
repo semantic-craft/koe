@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -87,9 +88,13 @@ class _FilesBodyState extends State<FilesBody>
     final busy =
         c.phase == AppPhase.busy || exporting || c.downloadingFileId != null;
     final normalizedQuery = widget.query.trim().toLowerCase();
+    final availablePaths = <String>{
+      ...c.exportedPaths,
+      ...c.archiveOnlyPaths,
+    }.toList();
     final localPaths = <String>[];
     final searchHits = <String, TranscriptSearchHit>{};
-    for (final path in c.exportedPaths) {
+    for (final path in availablePaths) {
       final view = c.recordingView(
         RecordingReference(fileId: c.fileIdFromPath(path), path: path),
       );
@@ -117,7 +122,7 @@ class _FilesBodyState extends State<FilesBody>
     }
     final localCount = localPaths.length;
     final deviceCount = c.files.length;
-    final filtered = localCount != c.exportedPaths.length;
+    final filtered = localCount != availablePaths.length;
 
     return Padding(
       padding: widget.padding,
@@ -295,9 +300,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('移到回收站？'),
-        content: Text(
-          '所选 ${_selected.length} 个录音会移到回收站，原件保留 30 天，期间可恢复。',
-        ),
+        content: Text('所选 ${_selected.length} 个录音会移到回收站，原件保留 30 天，期间可恢复。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -336,11 +339,13 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
-    bool selectable(String path) => !c
-        .recordingView(
-          RecordingReference(fileId: c.fileIdFromPath(path), path: path),
-        )
-        .audioLocked;
+    bool selectable(String path) =>
+        File(path).existsSync() &&
+        !c
+            .recordingView(
+              RecordingReference(fileId: c.fileIdFromPath(path), path: path),
+            )
+            .audioLocked;
     _selected.removeWhere(
       (path) => !widget.paths.contains(path) || !selectable(path),
     );
@@ -887,6 +892,22 @@ class _LocalExportCard extends StatelessWidget {
                             color: recording.error != null
                                 ? AppColors.coral
                                 : AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                      if (!kIsWeb &&
+                          (defaultTargetPlatform == TargetPlatform.iOS ||
+                              defaultTargetPlatform ==
+                                  TargetPlatform.macOS)) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          'Mac：${c.archive.statusForPath(path)}',
+                          key: ValueKey('recording-mac-archive-$path'),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
                           ),
                         ),
                       ],

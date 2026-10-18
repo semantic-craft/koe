@@ -27,6 +27,9 @@ import '../audio/retrieved_audio.dart';
 import '../audio/ogg_opus.dart';
 import '../audio/opus_pcm_decoder.dart';
 import '../audio/opus_wave.dart';
+import '../archive/mac_archive_controller.dart';
+import '../archive/archive_store.dart';
+import '../archive/archive_wire.dart';
 import '../ble/ble_service.dart';
 import '../ble/ble_file_pull.dart';
 import '../ble/realtime_stream.dart';
@@ -60,6 +63,10 @@ export 'playback_history.dart';
 export 'topic_store.dart';
 export 'topic_note.dart';
 export 'topic_summary.dart';
+export '../archive/mac_archive_controller.dart';
+export '../archive/archive_store.dart';
+export '../archive/archive_pairing.dart';
+export '../archive/archive_wire.dart';
 export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
@@ -510,6 +517,9 @@ class RecorderController extends ChangeNotifier {
     ListeningQueueStore? listeningQueueStore,
     RecordingBookmarkStore? bookmarkStore,
     AudioPlayer? player,
+    MacArchiveController? archiveController,
+    ArchivePhoneStore? archivePhoneStore,
+    ArchiveDeskStore? archiveDeskStore,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -723,6 +733,18 @@ class RecorderController extends ChangeNotifier {
         );
       }
     }
+    _ownsArchive = archiveController == null;
+    archive =
+        archiveController ??
+        MacArchiveController(
+          source: _RecorderArchiveSource(this),
+          isDesk: !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS,
+          phoneStore: archivePhoneStore,
+          deskStore: archiveDeskStore,
+          inMemory: !loadPersistedState,
+        );
+    archive.addListener(_onArchiveChanged);
+    unawaited(archive.initialize());
     unawaited(_purgeTrashWhenReady());
     if (this.topicsEnabled && loadPersistedState) {
       _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
@@ -738,6 +760,8 @@ class RecorderController extends ChangeNotifier {
   /// Whether topic notes (#49) are active. First version: iPhone only.
   final bool topicsEnabled;
   late final RecordingLibraryStore library;
+  late final MacArchiveController archive;
+  late final bool _ownsArchive;
   late final Future<void> _libraryLoaded;
   final Directory? _libraryDirectoryOverride;
   late final PlaybackHistoryStore playbackHistory;
@@ -1665,17 +1689,26 @@ class RecorderController extends ChangeNotifier {
               : null);
     final label = path == null ? '' : ExportCatalog.editableLabelFromPath(path);
     final asset = path == null ? null : library.assetForPath(path);
+    final archiveRecord = path == null ? null : archive.recordForPath(path);
     final title = asset?.displayName.isNotEmpty == true
         ? asset!.displayName
+        : archiveRecord?.displayName.isNotEmpty == true
+        ? archiveRecord!.displayName
         : label.isNotEmpty
         ? label
         : id == null
         ? '当前录音'
         : _recordingDateTitle(id);
-    final recordedAt = asset?.recordedAt ?? _recordedAtFromFileId(id);
+    final recordedAt =
+        asset?.recordedAt ??
+        archiveRecord?.recordedAt ??
+        _recordedAtFromFileId(id);
     // Device recordings have no library entry until they are renamed or
     // archived; their retrieval time is still the local file timestamp.
-    final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
+    final importedAt =
+        asset?.importedAt ??
+        archiveRecord?.updatedAt ??
+        _localFileTimestamp(path);
     return RecordingViewData(
       reference: RecordingReference(
         sessionId: ref.sessionId,
@@ -5006,6 +5039,23 @@ class RecorderController extends ChangeNotifier {
   RecordingAsset? recordingAssetForPath(String path) =>
       library.assetForPath(path);
 
+  void _onArchiveChanged() {
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Verified Mac copies whose phone original is no longer present. These rows
+  /// remain visible so the user can explicitly restore and verify the original.
+  List<String> get archiveOnlyPaths {
+    final paths = <String>[];
+    for (final record in archive.records) {
+      if (!record.verified || !record.hasVersion) continue;
+      if (File(record.localPath).existsSync()) continue;
+      if (_isTrashedPath(record.localPath)) continue;
+      paths.add(record.localPath);
+    }
+    return ExportCatalog.newestPathsFirst(paths);
+  }
+
   @visibleForTesting
   Future<void> waitForRecordingLibrary() => _libraryLoaded;
 
@@ -5065,6 +5115,7 @@ class RecorderController extends ChangeNotifier {
       statusMessage = restored ? '这条音频在回收站中，已恢复' : '这条音频已在资料库中';
       errorMessage = null;
       notifyListeners();
+      unawaited(archive.onLocalLibraryChanged());
       return (
         path: existing.path,
         duplicate: true,
@@ -5116,6 +5167,7 @@ class RecorderController extends ChangeNotifier {
       statusMessage = '原件已保存';
       errorMessage = null;
       notifyListeners();
+      unawaited(archive.onLocalLibraryChanged());
       return (path: target.path, duplicate: false, asset: asset);
     } catch (error) {
       try {
@@ -5373,6 +5425,9 @@ class RecorderController extends ChangeNotifier {
       }
     }
 
+    for (final path in removed) {
+      unawaited(archive.forgetLocalPath(path));
+    }
     exportedPaths.removeWhere((path) {
       final id = ExportCatalog.fileIdFromPath(path);
       return removed.contains(path) ||
@@ -5733,6 +5788,7 @@ class RecorderController extends ChangeNotifier {
         strict: false,
       );
     }
+    unawaited(archive.renameLocalPath(path, targetPath));
     final renamedPaths = exportedPaths
         .map((item) => item == path ? targetPath : item)
         .toList();
@@ -7312,6 +7368,8 @@ class RecorderController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    archive.removeListener(_onArchiveChanged);
+    if (_ownsArchive) archive.dispose();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();
@@ -7407,4 +7465,118 @@ class _TranscriptSaveFailure implements Exception {
 
   @override
   String toString() => 'Transcript save failed: $cause';
+}
+
+/// Adapts the existing recording library to the archive coordinator without
+/// moving protocol or queue logic into [RecorderController].
+class _RecorderArchiveSource implements ArchiveSource {
+  _RecorderArchiveSource(this.controller);
+
+  final RecorderController controller;
+
+  @override
+  Future<List<ArchiveCandidate>> archiveCandidates() async {
+    await controller._libraryLoaded;
+    final paths = <String>{...controller.exportedPaths};
+    for (final asset in controller.library.assets) {
+      if (asset.trashed || asset.permanentlyDeleted) continue;
+      if (File(asset.path).existsSync()) paths.add(asset.path);
+    }
+    final candidates = <ArchiveCandidate>[];
+    for (final path in paths) {
+      final candidate = await archiveCandidate(path);
+      if (candidate != null) candidates.add(candidate);
+    }
+    return candidates;
+  }
+
+  @override
+  Future<ArchiveCandidate?> archiveCandidate(String path) async {
+    final lower = path.toLowerCase();
+    final extension = lower.endsWith('.opus.bin')
+        ? '.opus.bin'
+        : p.extension(lower);
+    if (!archiveAllowedSourceExtensions.contains(extension)) return null;
+    if (controller._isTrashedPath(path)) return null;
+    final id = controller.fileIdFromPath(path);
+    if (controller._isRecordingAudioLocked(id, path)) return null;
+    final asset = controller.library.assetForPath(path);
+    if (asset?.originalComplete == false) return null;
+    if (id != null && controller._incompleteRetrievalIds.contains(id)) {
+      return null;
+    }
+    if (controller._blePull.isIncomplete(path)) return null;
+    final file = File(path);
+    if (!await file.exists()) return null;
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
+    final label = ExportCatalog.editableLabelFromPath(path).trim();
+    final displayName = asset?.displayName.isNotEmpty == true
+        ? asset!.displayName
+        : label.isNotEmpty
+        ? label
+        : p.basenameWithoutExtension(path);
+    return ArchiveCandidate(
+      path: path,
+      displayName: displayName.isEmpty ? '录音' : displayName,
+      extension: extension,
+      length: stat.size,
+      modifiedMs: stat.modified.millisecondsSinceEpoch,
+      recordedAt: asset?.recordedAt ?? controller._recordedAtFromFileId(id),
+    );
+  }
+
+  @override
+  Future<String> archiveRestoreTarget(ArchivePhoneRecord record) async {
+    // Restore in place whenever possible: transcripts, bookmarks and topics
+    // are keyed by the original path and stay attached to the same material.
+    if (record.localPath.isNotEmpty &&
+        archiveIsAllowedSourceExtension(record.localPath)) {
+      return record.localPath;
+    }
+    final directory = await controller._importDirectory();
+    await directory.create(recursive: true);
+    final extension =
+        archiveAllowedSourceExtensions.contains(
+          record.originalExtension.toLowerCase(),
+        )
+        ? record.originalExtension.toLowerCase()
+        : '.wav';
+    final hash = (record.contentHash ?? 'unknown').padRight(12, '0');
+    return p.join(
+      directory.path,
+      '${DateTime.now().millisecondsSinceEpoch}_${hash.substring(0, 12)}_restored$extension',
+    );
+  }
+
+  @override
+  Future<void> archiveDidRestore(
+    ArchivePhoneRecord record,
+    String path, {
+    required int length,
+    required String contentHash,
+  }) async {
+    final asset = controller.library.assetForPath(path);
+    if (asset == null) {
+      await controller.library.upsert(
+        RecordingAsset(
+          path: path,
+          displayName: record.displayName,
+          source: RecordingSource.localImport,
+          recordedAt: record.recordedAt,
+          importedAt: DateTime.now(),
+          contentHash: contentHash,
+        ),
+      );
+    } else {
+      await controller.library.upsert(
+        asset.copyWith(contentHash: contentHash, originalComplete: true),
+      );
+    }
+    controller._registerExportedPaths([...controller.exportedPaths, path]);
+    controller._invalidateLocalDuration(path);
+    controller.statusMessage = '已从 Mac 恢复并校验原件';
+    controller.errorMessage = null;
+    controller.notifyListeners();
+  }
 }
