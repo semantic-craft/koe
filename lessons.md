@@ -254,3 +254,12 @@
 
 - 2026-10-18：PR #173 最终复审发现非法 base64 密钥会抛出非领域异常，提前终止整个手机归档配置加载，连带隐藏有效副本回执；多网卡 Mac 还会生成超过解析上限的无效配对码。
 - 修正：在密钥解码边界统一异常，让坏配对信息单独失效；生成器与解析器共用地址上限。行为测试从持久 JSON 加载并检查原回执，以及从实际启动的服务生成配对码后交给手机解析；两条均在旧版失败、候选通过。
+
+### 跨 part 使用的私有成员会被分析器误报未使用
+
+**RecorderController 拆成 part + mixin 后，只被别的 part 经抽象声明使用的私有成员，要加带说明的 `// ignore:`，不要改签名或改成公有。**
+
+- 起因与后果：2026-10-19 拆分 recorder_controller.dart（#180–#190）时，`_scheduleTopicAssist`、`_fileCancellation` 等私有成员只被其他 mixin 调用；调用方解析到自己 mixin 里的抽象声明，分析器因此报 unused_element / unused_field，抽象声明里没传过的可选参数报 unused_element_parameter，flutter analyze 失败。为避开警告而省略抽象声明里的可选参数，在后加入的 mixin 上会变成无效覆写（invalid_override）。
+- 修复与证据：#187 起统一保留完整签名，在报警行上方加 `// ignore: <诊断名>`，成员定义处另加「Used by other parts through their abstract declarations.」说明；各 PR flutter analyze 无问题、79 个测试文件 / 645 条测试通过。
+- 正确做法（Done right）：给某块加成员、或让一块调用另一块的私有成员时，在调用方 mixin 顶部「Provided by…」段加与原定义完全一致的抽象声明；分析器报上述三种诊断时按本条加 ignore。静态成员不继承，别块用时写 `RecorderController.` 前缀或随所属块移动。
+- 复发记录：Seen 1x (2026-10-19)。
