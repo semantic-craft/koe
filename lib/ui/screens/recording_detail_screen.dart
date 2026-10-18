@@ -17,6 +17,7 @@ import '../widgets/analysis_panel.dart';
 import '../widgets/topic_note_panel.dart';
 import '../recording_navigation.dart';
 import '../widgets/scan_sheet.dart';
+import 'files_screen.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({
@@ -315,6 +316,86 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     }
   }
 
+  Future<void> _showInfo(RecordingViewData recording) async {
+    final controller = context.read<RecorderController>();
+    final path = recording.path;
+    String date(DateTime? value) {
+      if (value == null) return '未知';
+      final local = value.toLocal();
+      String two(int number) => number.toString().padLeft(2, '0');
+      return '${local.year}-${two(local.month)}-${two(local.day)} '
+          '${two(local.hour)}:${two(local.minute)}';
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '资料信息',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              _InfoRow(
+                label: '录音发生时间',
+                value: recording.recordedAt == null
+                    ? '未知（导入文件未提供）'
+                    : date(recording.recordedAt),
+              ),
+              _InfoRow(
+                label: '导入资料库',
+                value: recording.importedAt == null
+                    ? '未知'
+                    : date(recording.importedAt),
+              ),
+              _InfoRow(
+                label: '时长',
+                value: path == null
+                    ? '未知'
+                    : FilesBody.formatDuration(
+                        controller.localDurationForPath(path),
+                      ),
+              ),
+              _InfoRow(
+                label: '来源',
+                value: recordingSourceLabel(recording.source),
+              ),
+              _InfoRow(
+                label: '原件状态',
+                value: !recording.originalPresent
+                    ? '找不到原件'
+                    : recording.originalComplete
+                    ? '已保留'
+                    : '已保留但不完整',
+              ),
+              _InfoRow(
+                label: '原件位置',
+                value: path ?? '尚未保存到本机',
+                selectable: true,
+              ),
+              if (recording.originalPath != null)
+                _InfoRow(
+                  label: '原始文件',
+                  value: recording.originalPath!,
+                  selectable: true,
+                ),
+              _InfoRow(
+                label: '归档状态',
+                value: recording.archived ? '回收站' : '资料库',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -379,6 +460,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   _transcribe(recording);
                 case 'speakers':
                   _speakers(recording);
+                case 'info':
+                  _showInfo(recording);
               }
             },
             itemBuilder: (_) => [
@@ -407,6 +490,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   enabled: fileReady && !recording.processing,
                   child: const Text('说话人姓名'),
                 ),
+              const PopupMenuItem(value: 'info', child: Text('资料信息')),
             ],
           ),
         ],
@@ -566,8 +650,9 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     live: recording.live,
                     visible:
                         translation == (_showTranslation && hasTranslation),
-                    highlightedParagraph:
-                        translation ? null : _highlightedParagraph,
+                    highlightedParagraph: translation
+                        ? null
+                        : _highlightedParagraph,
                     header: !hasReaderHeader || (translation && !hasTranslation)
                         ? null
                         : Column(
@@ -839,8 +924,9 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                     decoration: highlighted
                                         ? BoxDecoration(
                                             color: AppColors.bgSubtle,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
                                           )
                                         : null,
                                     child: Text(
@@ -1347,6 +1433,39 @@ class _ProcessingStatus extends StatelessWidget {
       ),
     );
   }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.label,
+    required this.value,
+    this.selectable = false,
+  });
+
+  final String label;
+  final String value;
+  final bool selectable;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 9),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 3),
+        selectable
+            ? SelectableText(
+                value,
+                style: const TextStyle(fontSize: 14, height: 1.4),
+              )
+            : Text(value, style: const TextStyle(fontSize: 14, height: 1.4)),
+      ],
+    ),
+  );
 }
 
 class _NameDialog extends StatefulWidget {
