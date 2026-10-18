@@ -15,7 +15,8 @@ class RecordingNavigation extends InheritedWidget {
     required super.child,
   });
 
-  final ValueChanged<RecordingReference> onOpen;
+  final void Function(RecordingReference reference, {int? initialParagraph})
+  onOpen;
   final int tabIndex;
   final bool wide;
   final RecordingReference? selected;
@@ -32,15 +33,22 @@ class RecordingNavigation extends InheritedWidget {
             selected.path != null && selected.path == reference.path);
   }
 
-  static void open(BuildContext context, RecordingReference reference) {
+  static void open(
+    BuildContext context,
+    RecordingReference reference, {
+    int? initialParagraph,
+  }) {
     final navigation = context
         .dependOnInheritedWidgetOfExactType<RecordingNavigation>();
     if (navigation != null) {
-      navigation.onOpen(reference);
+      navigation.onOpen(reference, initialParagraph: initialParagraph);
     } else {
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => RecordingDetailScreen(reference: reference),
+          builder: (_) => RecordingDetailScreen(
+            reference: reference,
+            initialHighlightedParagraph: initialParagraph,
+          ),
         ),
       );
     }

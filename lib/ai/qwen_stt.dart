@@ -179,12 +179,20 @@ class QwenSttService extends CloudFileSttService {
     _ensureCurrent(isCurrent);
     onProgress?.call(const SttFileProgress(SttFileStage.fetching));
     final parts = <String>[];
+    final segments = <SttSegment>[];
+    var timingComplete = true;
     double? durationSec;
     for (final url in task.transcriptionUrls) {
       final document = await _fetchTranscript(url);
       _ensureCurrent(isCurrent);
-      final text = renderQwenTranscript(document);
+      final parsed = parseQwenTranscript(document);
+      final text = parsed.text;
       if (text.isNotEmpty) parts.add(text);
+      if (parsed.segments.isEmpty) {
+        timingComplete = false;
+      } else {
+        segments.addAll(parsed.segments);
+      }
       durationSec ??= qwenDurationSec(document);
     }
     return SttResult(
@@ -194,6 +202,7 @@ class QwenSttService extends CloudFileSttService {
           ? 'auto'
           : language.trim().toLowerCase(),
       durationSec: durationSec ?? task.durationSec,
+      segments: timingComplete ? segments : const [],
     );
   }
 
@@ -690,13 +699,28 @@ QwenTaskStatus parseQwenTask(Map<String, dynamic> json) {
 /// Paragraph text from a `transcription_url` document.
 ///
 /// Speaker labels use `sentences[].speaker_id` when diarization is enabled.
-String renderQwenTranscript(Map<String, dynamic> json) {
+String renderQwenTranscript(Map<String, dynamic> json) =>
+    parseQwenTranscript(json).text;
+
+/// Paragraph text plus provider times from a `transcription_url` document.
+///
+/// Times are only returned when every emitted sentence has a valid
+/// `begin_time`/`end_time`. Partial timing would make a sentence jump to the
+/// wrong place, so it is discarded rather than guessed from text length.
+({String text, List<SttSegment> segments}) parseQwenTranscript(
+  Map<String, dynamic> json,
+) {
   final transcripts = json['transcripts'];
   if (transcripts is! List || transcripts.isEmpty) {
-    return normalizeSttText('${json['text'] ?? ''}');
+    return (
+      text: normalizeSttText('${json['text'] ?? ''}'),
+      segments: const [],
+    );
   }
   final buffer = StringBuffer();
+  final segments = <SttSegment>[];
   String? currentSpeaker;
+  var timingComplete = true;
   for (final transcript in transcripts) {
     if (transcript is! Map) continue;
     final sentences = transcript['sentences'];
@@ -706,18 +730,38 @@ String renderQwenTranscript(Map<String, dynamic> json) {
         final text = '${sentence['text'] ?? ''}'.trim();
         if (text.isEmpty) continue;
         final speaker = _speakerId(sentence['speaker_id']);
+        final labeled = speaker != null && speaker != currentSpeaker;
         _writeQwenSentence(
           buffer,
           text: text,
           speaker: speaker,
           currentSpeaker: currentSpeaker,
         );
+        final startMs = _intOrNone(sentence['begin_time']);
+        final endMs = _intOrNone(sentence['end_time']);
+        if (startMs == null ||
+            endMs == null ||
+            startMs < 0 ||
+            endMs < startMs) {
+          timingComplete = false;
+        } else {
+          segments.add(
+            SttSegment(
+              text: text,
+              startMs: startMs,
+              endMs: endMs,
+              speaker: speaker,
+              speakerChanged: labeled,
+            ),
+          );
+        }
         if (speaker != null) currentSpeaker = speaker;
       }
       continue;
     }
     final text = '${transcript['text'] ?? ''}'.trim();
     if (text.isEmpty) continue;
+    timingComplete = false;
     _writeQwenSentence(
       buffer,
       text: text,
@@ -725,7 +769,10 @@ String renderQwenTranscript(Map<String, dynamic> json) {
       currentSpeaker: currentSpeaker,
     );
   }
-  return normalizeSttText(buffer.toString());
+  return (
+    text: normalizeSttText(buffer.toString()),
+    segments: timingComplete ? segments : const <SttSegment>[],
+  );
 }
 
 double? qwenDurationSec(Map<String, dynamic> json) {
@@ -741,6 +788,8 @@ String? _speakerId(Object? raw) {
   final id = '$raw'.trim();
   return id.isEmpty ? null : id;
 }
+
+int? _intOrNone(Object? raw) => raw is num ? raw.toInt() : null;
 
 void _writeQwenSentence(
   StringBuffer buffer, {

@@ -170,6 +170,42 @@ void main() {
     );
   });
 
+  test('utterance times become replay segments only when complete', () {
+    final json = {
+      'result': {
+        'utterances': [
+          {
+            'additions': {'speaker': '1'},
+            'text': '你好',
+            'start_time': 480,
+            'end_time': 5880,
+          },
+          {
+            'additions': {'speaker': '1'},
+            'text': '世界',
+            'start_time': 5880,
+            'end_time': 6312,
+          },
+        ],
+      },
+    };
+    final segments = doubaoTranscriptSegments(json);
+    expect(segments, hasLength(2));
+    expect(segments[0].startMs, 480);
+    expect(segments[1].startMs, 5880);
+    expect(segments[1].speaker, '1');
+    expect(segments[1].speakerChanged, isFalse);
+
+    final missingEnd = {
+      'result': {
+        'utterances': [
+          {'text': '缺终点', 'start_time': 480},
+        ],
+      },
+    };
+    expect(doubaoTranscriptSegments(missingEnd), isEmpty);
+  });
+
   test(
     'flash transcription posts base64 audio once and parses the reply',
     () async {

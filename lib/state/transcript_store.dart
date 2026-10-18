@@ -13,6 +13,7 @@ typedef TranscriptStoreData = ({
   Map<int, Map<String, String>> aliasesByFileId,
   Map<String, TranscriptMetadata> metadata,
   Map<String, RecordingTranslation> translations,
+  Map<String, List<TranscriptSegment>> segments,
 });
 
 /// Persists completed per-recording transcripts on the app device.
@@ -41,6 +42,7 @@ class TranscriptStore {
     aliasesByFileId: <int, Map<String, String>>{},
     metadata: <String, TranscriptMetadata>{},
     translations: <String, RecordingTranslation>{},
+    segments: <String, List<TranscriptSegment>>{},
   );
 
   static Future<TranscriptStoreData> load() async {
@@ -97,7 +99,26 @@ class TranscriptStore {
       aliasesByFileId: aliasesByFileId,
       metadata: _decodeMetadata(json['metadata']),
       translations: _decodeTranslations(json['translations']),
+      segments: _decodeSegments(json['segments']),
     );
+  }
+
+  static Map<String, List<TranscriptSegment>> _decodeSegments(Object? value) {
+    if (value is! Map) return {};
+    final output = <String, List<TranscriptSegment>>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      final raw = entry.value;
+      if (key is! String || raw is! List) continue;
+      final segments = raw
+          .map(TranscriptSegment.decode)
+          .whereType<TranscriptSegment>()
+          .toList(growable: false);
+      if (segments.isNotEmpty && segments.length == raw.length) {
+        output[key] = segments;
+      }
+    }
+    return output;
   }
 
   static Map<String, TranscriptMetadata> _decodeMetadata(Object? value) {
@@ -152,6 +173,7 @@ class TranscriptStore {
     required Map<int, Map<String, String>> aliasesByFileId,
     Map<String, TranscriptMetadata> metadata = const {},
     Map<String, RecordingTranslation> translations = const {},
+    Map<String, List<TranscriptSegment>> segments = const {},
     bool strict = false,
   }) {
     final paths = Map<String, String>.from(byPath);
@@ -160,9 +182,22 @@ class TranscriptStore {
     final idAliases = _copyAliases(aliasesByFileId);
     final meta = Map<String, TranscriptMetadata>.from(metadata);
     final translated = Map<String, RecordingTranslation>.from(translations);
+    final timed = <String, List<TranscriptSegment>>{
+      for (final entry in segments.entries)
+        if (entry.value.isNotEmpty)
+          entry.key: List<TranscriptSegment>.unmodifiable(entry.value),
+    };
     final operation = _pendingSave.then(
-      (_) =>
-          _write(paths, ids, pathAliases, idAliases, meta, translated, strict),
+      (_) => _write(
+        paths,
+        ids,
+        pathAliases,
+        idAliases,
+        meta,
+        translated,
+        timed,
+        strict,
+      ),
     );
     _pendingSave = operation.catchError((Object _) {});
     return operation;
@@ -182,8 +217,9 @@ class TranscriptStore {
     required Map<int, Map<String, String>> aliasesByFileId,
     Map<String, TranscriptMetadata> metadata = const {},
     Map<String, RecordingTranslation> translations = const {},
+    Map<String, List<TranscriptSegment>> segments = const {},
   }) => <String, dynamic>{
-    'version': 2,
+    'version': 3,
     'byPath': byPath,
     'byFileId': byFileId.map((id, text) => MapEntry('$id', text)),
     'aliasesByPath': aliasesByPath,
@@ -194,6 +230,9 @@ class TranscriptStore {
     'translations': translations.map(
       (key, value) => MapEntry(key, value.toJson()),
     ),
+    'segments': segments.map(
+      (key, value) => MapEntry(key, value.map((s) => s.toJson()).toList()),
+    ),
   };
 
   static Future<void> _write(
@@ -203,6 +242,7 @@ class TranscriptStore {
     Map<int, Map<String, String>> aliasesByFileId,
     Map<String, TranscriptMetadata> metadata,
     Map<String, RecordingTranslation> translations,
+    Map<String, List<TranscriptSegment>> segments,
     bool strict,
   ) async {
     try {
@@ -214,6 +254,7 @@ class TranscriptStore {
         aliasesByFileId: aliasesByFileId,
         metadata: metadata,
         translations: translations,
+        segments: segments,
       );
       final temporary = File('${file.path}.tmp');
       await temporary.writeAsString(

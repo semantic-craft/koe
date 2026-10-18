@@ -9,6 +9,27 @@ import '../ai/speech_provider.dart';
 import '../ai/stt_types.dart';
 import 'speech_configuration.dart';
 
+SttSegment? _decodeSegment(Object? value) {
+  if (value is! Map) return null;
+  final text = value['text'];
+  final startMs = value['startMs'];
+  final endMs = value['endMs'];
+  final speaker = value['speaker'];
+  if (text is! String || text.trim().isEmpty || startMs is! int) return null;
+  if (startMs < 0 || endMs != null && (endMs is! int || endMs < startMs)) {
+    return null;
+  }
+  return SttSegment(
+    text: text.trim(),
+    startMs: startMs,
+    endMs: endMs as int?,
+    speaker: speaker is String && speaker.trim().isNotEmpty
+        ? speaker.trim()
+        : null,
+    speakerChanged: value['speakerChanged'] == true,
+  );
+}
+
 /// No credentials are serialized. A recovered job uses the credential for its
 /// saved provider; its endpoint, model and language never follow new settings.
 class FileJob {
@@ -23,6 +44,7 @@ class FileJob {
   String? text;
   String? language;
   String? error;
+  List<SttSegment> segments = const [];
   bool get recoverable =>
       stage == 'queued' ||
       stage == 'result' ||
@@ -38,6 +60,17 @@ class FileJob {
     'text': text,
     'language': language,
     'error': error,
+    'segments': segments
+        .map(
+          (s) => {
+            'text': s.text,
+            'startMs': s.startMs,
+            'endMs': s.endMs,
+            if (s.speaker != null) 'speaker': s.speaker,
+            if (s.speakerChanged) 'speakerChanged': true,
+          },
+        )
+        .toList(),
     'operation': 'transcription',
   };
   factory FileJob.fromJson(Map<String, dynamic> json) {
@@ -71,6 +104,13 @@ class FileJob {
     job.text = json['text'] as String?;
     job.language = json['language'] as String?;
     job.error = json['error'] as String?;
+    final rawSegments = json['segments'];
+    if (rawSegments is List) {
+      job.segments = rawSegments
+          .map(_decodeSegment)
+          .whereType<SttSegment>()
+          .toList(growable: false);
+    }
     if (job.stage == 'result' && job.text == null) {
       throw const FormatException('Missing task result');
     }

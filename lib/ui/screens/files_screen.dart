@@ -11,11 +11,12 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../ai/stt_types.dart';
 import '../../protocol/models.dart';
 import '../../state/recorder_controller.dart';
-import '../recording_navigation.dart';
 import '../../theme/app_theme.dart';
+import '../../wifi/wifi_export_service.dart';
 import '../import_audio.dart';
 import '../library_filter.dart';
-import '../../wifi/wifi_export_service.dart';
+import '../recording_navigation.dart';
+import '../transcript_layout.dart';
 import '../widgets/widgets.dart';
 
 /// On-device + local export file list (embedded in Home when not live recording).
@@ -87,13 +88,22 @@ class _FilesBodyState extends State<FilesBody>
         c.phase == AppPhase.busy || exporting || c.downloadingFileId != null;
     final normalizedQuery = widget.query.trim().toLowerCase();
     final localPaths = <String>[];
+    final searchHits = <String, TranscriptSearchHit>{};
     for (final path in c.exportedPaths) {
       final view = c.recordingView(
         RecordingReference(fileId: c.fileIdFromPath(path), path: path),
       );
-      if (normalizedQuery.isNotEmpty &&
-          !view.title.toLowerCase().contains(normalizedQuery)) {
-        continue;
+      if (normalizedQuery.isNotEmpty) {
+        final titleMatch = view.title.toLowerCase().contains(normalizedQuery);
+        final hit = findTranscriptSearchHit(
+          text: view.text,
+          segments: view.segments,
+          query: widget.query,
+          aliases: c.speakerAliasesForPath(path),
+          duration: c.localDurationForPath(path),
+        );
+        if (!titleMatch && hit == null) continue;
+        if (hit != null) searchHits[path] = hit;
       }
       if (widget.typeFilter == LibraryTypeFilter.audio &&
           !view.originalPresent) {
@@ -182,9 +192,10 @@ class _FilesBodyState extends State<FilesBody>
                 // ── 已导出（本地） ─────────────────────────────────
                 _LocalExportsTab(
                   paths: localPaths,
+                  hitsByPath: searchHits,
                   emptyTitle: filtered ? '没有匹配的资料' : '暂无本地录音',
                   emptyBody: filtered
-                      ? '换一个标题关键词，或切回「全部」查看其他资料。'
+                      ? '换一个标题或正文关键词，或切回「全部」查看其他资料。'
                       : '导入手机里的音频，或在「设备端」下载已有录音。',
                 ),
                 // ── 设备端 ────────────────────────────────────────
@@ -201,11 +212,13 @@ class _FilesBodyState extends State<FilesBody>
 class _LocalExportsTab extends StatefulWidget {
   const _LocalExportsTab({
     required this.paths,
+    this.hitsByPath = const {},
     this.emptyTitle = '暂无本地录音',
     this.emptyBody = '导入手机里的音频，或在「设备端」下载已有录音。',
   });
 
   final List<String> paths;
+  final Map<String, TranscriptSearchHit> hitsByPath;
   final String emptyTitle;
   final String emptyBody;
 
@@ -418,6 +431,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
                       final path = widget.paths[i];
                       return _LocalExportCard(
                         path: path,
+                        searchHit: widget.hitsByPath[path],
                         selecting: _selecting,
                         selected: _selected.contains(path),
                         onSelected: _saving || _deleting || !selectable(path)
@@ -755,6 +769,7 @@ class _DeviceFilesTab extends StatelessWidget {
 class _LocalExportCard extends StatelessWidget {
   const _LocalExportCard({
     required this.path,
+    this.searchHit,
     this.selecting = false,
     this.selected = false,
     this.onSelected,
@@ -762,6 +777,7 @@ class _LocalExportCard extends StatelessWidget {
   });
 
   final String path;
+  final TranscriptSearchHit? searchHit;
   final bool selecting;
   final bool selected;
   final VoidCallback? onSelected;
@@ -802,7 +818,11 @@ class _LocalExportCard extends StatelessWidget {
           onLongPress: onLongPress,
           onTap: selecting
               ? (recording.audioLocked ? null : onSelected)
-              : () => RecordingNavigation.open(context, reference),
+              : () => RecordingNavigation.open(
+                  context,
+                  reference,
+                  initialParagraph: searchHit?.index,
+                ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
             child: Row(
@@ -870,7 +890,9 @@ class _LocalExportCard extends StatelessWidget {
                           ),
                         ),
                       ],
-                      if (text.isNotEmpty && !selecting) ...[
+                      if (text.isNotEmpty &&
+                          !selecting &&
+                          searchHit == null) ...[
                         const SizedBox(height: 8),
                         Text(
                           text,
@@ -881,6 +903,34 @@ class _LocalExportCard extends StatelessWidget {
                             fontSize: 14,
                             height: 1.45,
                             color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                      if (searchHit != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          searchHit!.snippet,
+                          key: ValueKey('search-hit-$path'),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            height: 1.45,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          searchHit!.timecode == null || !originalPresent
+                              ? '正文命中 · ${originalPresent ? '无可用时码' : '原件缺失'}，打开可阅读原文'
+                              : '正文命中 · ${FilesBody.formatDuration(searchHit!.timecode)} 可回听',
+                          key: ValueKey('search-hit-time-$path'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                searchHit!.timecode == null || !originalPresent
+                                ? AppColors.textSecondary
+                                : AppColors.accent,
                           ),
                         ),
                       ],

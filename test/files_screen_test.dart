@@ -1,4 +1,5 @@
 import 'support/settings_completion.dart';
+import 'support/wav_fixture.dart';
 import 'package:koe/ai/engine_config.dart';
 import 'dart:async';
 import 'dart:io';
@@ -131,7 +132,12 @@ void main() async {
     'detail download shows progress and enables sharing while backlog continues',
     (tester) async {
       final c = _AutoTransferController();
+      final downloaded = File('/tmp/102.wav');
+      downloaded.writeAsBytesSync(wavBytes([1, 2, 3, 4]));
       addTearDown(c.dispose);
+      addTearDown(() {
+        if (downloaded.existsSync()) downloaded.deleteSync();
+      });
       await tester.pumpWidget(
         ChangeNotifierProvider<RecorderController>.value(
           value: c,
@@ -233,10 +239,19 @@ void main() async {
     tester,
   ) async {
     const path = '/tmp/1783917051.wav';
-    final controller = RecorderController(loadPersistedState: false)
-      ..exportedPaths = [path]
-      ..transcriptsByPath[path] = '说话人 1：第一句话\n说话人 2：第二句话';
+    final original = File(path);
+    original.writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    final controller =
+        RecorderController(
+            loadPersistedState: false,
+            localDurationReader: (_) async => const Duration(seconds: 1),
+          )
+          ..exportedPaths = [path]
+          ..transcriptsByPath[path] = '说话人 1：第一句话\n说话人 2：第二句话';
     addTearDown(controller.dispose);
+    addTearDown(() {
+      if (original.existsSync()) original.deleteSync();
+    });
     await pumpFiles(tester, controller);
     await tester.tap(find.byKey(const ValueKey('recording-row-$path')));
     await tester.pumpAndSettle();
@@ -261,12 +276,17 @@ void main() async {
     'retranscription is confirmed before replacing an existing result',
     (tester) async {
       const path = '/tmp/1783917051.wav';
+      final original = File(path);
+      original.writeAsBytesSync(wavBytes([1, 2, 3, 4]));
       final controller = _TrackingRecorderController()
         ..exportedPaths = [path]
         ..transcriptsByPath[path] = '说话人 1：测试';
       controller.setQwenConfig(const EngineConfig(apiKey: 'test-key'));
       await waitForSettings(tester, controller);
       addTearDown(controller.dispose);
+      addTearDown(() {
+        if (original.existsSync()) original.deleteSync();
+      });
       await pumpFiles(tester, controller);
       await tester.tap(find.byKey(const ValueKey('recording-row-$path')));
       await tester.pumpAndSettle();
@@ -391,7 +411,11 @@ void main() async {
 }
 
 class _TrackingRecorderController extends RecorderController {
-  _TrackingRecorderController() : super(loadPersistedState: false);
+  _TrackingRecorderController()
+    : super(
+        loadPersistedState: false,
+        localDurationReader: (_) async => const Duration(seconds: 1),
+      );
 
   int transcribeCalls = 0;
 
@@ -406,7 +430,11 @@ class _TrackingRecorderController extends RecorderController {
 }
 
 class _AutoTransferController extends RecorderController {
-  _AutoTransferController() : super(loadPersistedState: false) {
+  _AutoTransferController()
+    : super(
+        loadPersistedState: false,
+        localDurationReader: (_) async => const Duration(seconds: 1),
+      ) {
     connected = true;
     phase = AppPhase.busy;
     files = [

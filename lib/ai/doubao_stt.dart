@@ -219,6 +219,7 @@ class DoubaoSttService extends CloudFileSttService {
             ? 'auto'
             : language.trim().toLowerCase(),
         durationSec: recognized.durationSec,
+        segments: doubaoTranscriptSegments(document),
       );
     } catch (error) {
       if (submitted &&
@@ -551,6 +552,42 @@ String renderDoubaoTranscript(Map<String, dynamic> json) {
     return normalizeSttText('${result['text'] ?? ''}');
   }
   return normalizeSttText(buffer.toString());
+}
+
+/// Provider-timed utterances, or an empty list when any time is missing.
+List<SttSegment> doubaoTranscriptSegments(Map<String, dynamic> json) {
+  final result = json['result'];
+  if (result is! Map) return const [];
+  final utterances = result['utterances'];
+  if (utterances is! List || utterances.isEmpty) return const [];
+  final segments = <SttSegment>[];
+  String? currentSpeaker;
+  for (final item in utterances) {
+    if (item is! Map) continue;
+    final text = '${item['text'] ?? ''}'.trim();
+    if (text.isEmpty) continue;
+    final additions = item['additions'];
+    final rawSpeaker = additions is Map
+        ? '${additions['speaker'] ?? ''}'.trim()
+        : '';
+    final speaker = rawSpeaker.isEmpty ? null : rawSpeaker;
+    final startMs = _intOrNone(item['start_time']);
+    final endMs = _intOrNone(item['end_time']);
+    if (startMs == null || endMs == null || startMs < 0 || endMs < startMs) {
+      return const [];
+    }
+    segments.add(
+      SttSegment(
+        text: text,
+        startMs: startMs,
+        endMs: endMs,
+        speaker: speaker,
+        speakerChanged: speaker != null && speaker != currentSpeaker,
+      ),
+    );
+    if (speaker != null) currentSpeaker = speaker;
+  }
+  return segments;
 }
 
 /// `audio_info.duration` milliseconds -> seconds.
