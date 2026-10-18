@@ -73,6 +73,7 @@ export '../ai/speech_provider.dart';
 
 part 'recorder/playback.dart';
 part 'recorder/library.dart';
+part 'recorder/place.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
@@ -98,7 +99,7 @@ class _TopicAssistLatest {
 typedef TranscriptPersister = Future<void> Function({bool strict});
 
 class RecorderController extends ChangeNotifier
-    with _RecorderPlayback, _RecorderLibrary {
+    with _RecorderPlayback, _RecorderLibrary, _RecorderPlace {
   @override
   late final RecordingAnalysis analysis =
       _analysisOverride ??
@@ -788,6 +789,7 @@ class RecorderController extends ChangeNotifier
   late final bool _ownsArchive;
   @override
   final Directory? _libraryDirectoryOverride;
+  @override
   final PlaceCapture _placeCapture;
   @override
   late final TopicStore topics;
@@ -5143,73 +5145,6 @@ class RecorderController extends ChangeNotifier
       phase = connected ? AppPhase.ready : AppPhase.idle;
       notifyListeners();
       _scheduleAutoTransferMissing();
-    }
-  }
-
-  /// Adds or corrects a place label from the user. A manual label always wins
-  /// over a later automatic capture.
-  Future<void> setRecordingPlace(String path, String label) async {
-    await _libraryLoaded;
-    final trimmed = label.trim();
-    if (trimmed.isEmpty) throw ArgumentError('地点不能为空');
-    final id = fileIdFromPath(path);
-    final asset =
-        library.assetForPath(path) ??
-        RecordingAsset(
-          path: path,
-          displayName: _placeDisplayName(path),
-          source: RecordingSource.device,
-          recordedAt: _recordedAtFromFileId(id),
-          importedAt: _localFileTimestamp(path) ?? DateTime.now(),
-        );
-    await library.upsert(
-      asset.copyWith(
-        place: RecordingPlace(
-          label: trimmed,
-          source: RecordingPlaceSource.manual,
-          capturedAt: DateTime.now(),
-        ),
-      ),
-    );
-    notifyListeners();
-  }
-
-  String _placeDisplayName(String path) {
-    final label = ExportCatalog.editableLabelFromPath(path).trim();
-    return label.isEmpty ? p.basename(path) : label;
-  }
-
-  /// Removes the place note without touching the original audio.
-  Future<void> clearRecordingPlace(String path) async {
-    await _libraryLoaded;
-    final asset = library.assetForPath(path);
-    if (asset == null) throw StateError('找不到这条资料');
-    await library.upsert(asset.copyWith(clearPlace: true));
-    notifyListeners();
-  }
-
-  /// Best-effort coarse place for a phone recording.
-  ///
-  /// Imported files and device recordings never receive the import/retrieval
-  /// location: their recording place stays unknown. A denied permission or a
-  /// capture failure simply leaves the place blank.
-  Future<void> attachAutomaticPlace(String path) async {
-    await _libraryLoaded;
-    final asset = library.assetForPath(path);
-    if (asset == null || asset.source != RecordingSource.phone) return;
-    if (asset.place?.source == RecordingPlaceSource.manual) return;
-    final captured = await _placeCapture.capture();
-    if (captured == null || _disposed) return;
-    final current = library.assetForPath(path);
-    if (current == null ||
-        current.place?.source == RecordingPlaceSource.manual) {
-      return;
-    }
-    try {
-      await library.upsert(current.copyWith(place: captured));
-      notifyListeners();
-    } catch (_) {
-      // Location is optional; the recording remains saved and readable.
     }
   }
 
