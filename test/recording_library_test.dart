@@ -347,7 +347,7 @@ void main() {
     expect(c.exportedPaths, contains(original.path));
   });
 
-  test('设备传输的 WAV 能通过同名原始流清理可恢复缓存', () async {
+  test('设备传输的 WAV 清理缓存时保留同名字节原始流', () async {
     const id = '1783917002';
     final wav = File('${temp.path}/$id.wav');
     final raw = File('${temp.path}/$id.opus');
@@ -370,9 +370,9 @@ void main() {
     expect(c.hasRecoverableCacheForPath(wav.path), isTrue);
     final result = await c.clearRecoverableCache(wav.path);
 
-    expect(result.removed, 2);
+    expect(result.removed, 1);
     expect(await wav.exists(), isTrue);
-    expect(await raw.exists(), isFalse);
+    expect(await raw.exists(), isTrue);
     expect(await ogg.exists(), isFalse);
   });
 

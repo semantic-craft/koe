@@ -5437,8 +5437,6 @@ class RecorderController extends ChangeNotifier {
     final candidates = <String>{
       p.join(directory, '$id.wav'),
       p.join(directory, '$id.ogg'),
-      if (original.endsWith('.wav')) p.join(directory, '$id.opus'),
-      if (original.endsWith('.wav')) p.join(directory, '$id.opus.bin'),
       '$original.ogg',
       if (original.endsWith('.opus'))
         '${original.substring(0, original.length - 5)}.ogg',
@@ -5482,8 +5480,6 @@ class RecorderController extends ChangeNotifier {
     final candidates = <String>{
       p.join(directory, '$id.wav'),
       p.join(directory, '$id.ogg'),
-      if (original.endsWith('.wav')) p.join(directory, '$id.opus'),
-      if (original.endsWith('.wav')) p.join(directory, '$id.opus.bin'),
       '$original.ogg',
       if (original.endsWith('.opus'))
         '${original.substring(0, original.length - 5)}.ogg',
@@ -5581,9 +5577,7 @@ class RecorderController extends ChangeNotifier {
       if (id != null && trashedIds.contains(id)) continue;
       accepted.add(path);
     }
-    exportedPaths = ExportCatalog.newestPathsFirst([
-      ...accepted,
-    ]);
+    exportedPaths = ExportCatalog.newestPathsFirst([...accepted]);
     localPathsByFileId.clear();
     for (final path in exportedPaths) {
       final id = ExportCatalog.fileIdFromPath(path);
