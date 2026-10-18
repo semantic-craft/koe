@@ -23,6 +23,8 @@ class RecordingAsset {
     this.contentHash,
     this.originalComplete = true,
     this.archived = false,
+    this.deletedAt,
+    this.permanentlyDeleted = false,
   });
 
   final String path;
@@ -35,6 +37,15 @@ class RecordingAsset {
   final bool originalComplete;
   final bool archived;
 
+  /// When this asset was moved to the 30-day trash. Null means it is live.
+  final DateTime? deletedAt;
+
+  /// A hidden marker for a device recording the user permanently deleted.
+  /// It prevents automatic transfer from recreating the same material.
+  final bool permanentlyDeleted;
+
+  bool get trashed => deletedAt != null || archived;
+
   RecordingAsset copyWith({
     String? path,
     String? displayName,
@@ -45,6 +56,9 @@ class RecordingAsset {
     String? contentHash,
     bool? originalComplete,
     bool? archived,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
+    bool? permanentlyDeleted,
   }) => RecordingAsset(
     path: path ?? this.path,
     displayName: displayName ?? this.displayName,
@@ -55,6 +69,8 @@ class RecordingAsset {
     contentHash: contentHash ?? this.contentHash,
     originalComplete: originalComplete ?? this.originalComplete,
     archived: archived ?? this.archived,
+    deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
+    permanentlyDeleted: permanentlyDeleted ?? this.permanentlyDeleted,
   );
 
   Map<String, Object?> toJson() => {
@@ -67,6 +83,8 @@ class RecordingAsset {
     if (contentHash != null) 'contentHash': contentHash,
     'originalComplete': originalComplete,
     'archived': archived,
+    if (deletedAt != null) 'deletedAt': deletedAt!.toIso8601String(),
+    if (permanentlyDeleted) 'permanentlyDeleted': true,
   };
 
   static RecordingAsset? decode(Object? value) {
@@ -88,6 +106,9 @@ class RecordingAsset {
     final recordedAt = value['recordedAt'] is String
         ? DateTime.tryParse(value['recordedAt'] as String)
         : null;
+    final deletedAt = value['deletedAt'] is String
+        ? DateTime.tryParse(value['deletedAt'] as String)
+        : null;
     return RecordingAsset(
       path: path,
       displayName: displayName.trim(),
@@ -101,7 +122,9 @@ class RecordingAsset {
           ? value['contentHash'] as String
           : null,
       originalComplete: value['originalComplete'] != false,
-      archived: value['archived'] == true,
+      archived: value['archived'] == true || deletedAt != null,
+      deletedAt: deletedAt,
+      permanentlyDeleted: value['permanentlyDeleted'] == true,
     );
   }
 }
@@ -190,23 +213,52 @@ class RecordingLibraryStore {
   };
 
   Future<void> upsert(RecordingAsset asset, {bool strict = true}) async {
+    final previous = _assets[asset.path];
     _assets[asset.path] = asset;
-    await save(strict: strict);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      if (previous == null) {
+        _assets.remove(asset.path);
+      } else {
+        _assets[asset.path] = previous;
+      }
+      rethrow;
+    }
   }
 
   Future<void> upsertAll(
     Iterable<RecordingAsset> assets, {
     bool strict = true,
   }) async {
-    for (final asset in assets) {
-      _assets[asset.path] = asset;
+    final previous = <String, RecordingAsset?>{};
+    try {
+      for (final asset in assets) {
+        previous.putIfAbsent(asset.path, () => _assets[asset.path]);
+        _assets[asset.path] = asset;
+      }
+      await save(strict: strict);
+    } catch (_) {
+      for (final entry in previous.entries) {
+        final before = entry.value;
+        if (before == null) {
+          _assets.remove(entry.key);
+        } else {
+          _assets[entry.key] = before;
+        }
+      }
+      rethrow;
     }
-    await save(strict: strict);
   }
 
   Future<void> remove(String path, {bool strict = true}) async {
-    _assets.remove(path);
-    await save(strict: strict);
+    final previous = _assets.remove(path);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      if (previous != null) _assets[path] = previous;
+      rethrow;
+    }
   }
 
   Future<void> rename(
@@ -214,9 +266,18 @@ class RecordingLibraryStore {
     RecordingAsset asset, {
     bool strict = true,
   }) async {
+    final previousFrom = _assets[from];
+    final previousTarget = _assets[asset.path];
     _assets.remove(from);
     _assets[asset.path] = asset;
-    await save(strict: strict);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      _assets.remove(asset.path);
+      if (previousTarget != null) _assets[asset.path] = previousTarget;
+      if (previousFrom != null) _assets[from] = previousFrom;
+      rethrow;
+    }
   }
 
   Future<void> save({bool strict = true}) {

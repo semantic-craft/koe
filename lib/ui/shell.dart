@@ -15,6 +15,7 @@ import 'screens/projects_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/today_screen.dart';
+import 'screens/trash_screen.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -28,6 +29,7 @@ class _AppShellState extends State<AppShell> {
   int _index = 0;
   int _mobileIndex = 0;
   bool _wide = false;
+  bool _trashOpen = false;
   bool? _renderedWide;
   int? _compactRestoreIndex;
   Route<void>? _compactSettingsRoute;
@@ -104,6 +106,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _selectDesktopTab(int index) {
+    if (_trashOpen) {
+      _trashOpen = false;
+      _navigator.currentState?.pop();
+    }
     setState(() {
       _index = index;
       _sectionVisible = index != 0 && (_wide || _sectionVisible);
@@ -111,6 +117,23 @@ class _AppShellState extends State<AppShell> {
     final c = context.read<RecorderController>();
     if (index == 0) c.refreshFilesOnTabEnter();
     if (index == 1) c.refreshInfoOnDeviceTabEnter();
+  }
+
+  Future<void> _openTrash() async {
+    final navigator = _navigator.currentState;
+    if (navigator == null || _trashOpen) return;
+    _trashOpen = true;
+    setState(() {
+      _index = 0;
+      _sectionVisible = false;
+    });
+    await navigator.push(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'trash'),
+        builder: (_) => const TrashScreen(),
+      ),
+    );
+    if (mounted) setState(() => _trashOpen = false);
   }
 
   void _selectMobileTab(int index) {
@@ -215,7 +238,12 @@ class _AppShellState extends State<AppShell> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (_wide)
-                _DesktopSidebar(index: _index, onSelect: _selectDesktopTab),
+                _DesktopSidebar(
+                  index: _index,
+                  trashOpen: _trashOpen,
+                  onSelect: _selectDesktopTab,
+                  onOpenTrash: _openTrash,
+                ),
               if (_wide)
                 Offstage(
                   offstage: _index != 0,
@@ -637,9 +665,16 @@ class _DesktopPages extends StatelessWidget {
 }
 
 class _DesktopSidebar extends StatelessWidget {
-  const _DesktopSidebar({required this.index, required this.onSelect});
+  const _DesktopSidebar({
+    required this.index,
+    required this.trashOpen,
+    required this.onSelect,
+    required this.onOpenTrash,
+  });
   final int index;
+  final bool trashOpen;
   final ValueChanged<int> onSelect;
+  final VoidCallback onOpenTrash;
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -698,15 +733,18 @@ class _DesktopSidebar extends StatelessWidget {
                 (2, Icons.tune_rounded, '设置'),
               ]) ...[
                 Semantics(
-                  selected: index == i,
+                  button: true,
+                  selected: !trashOpen && index == i,
+                  label: label,
+                  excludeSemantics: true,
                   child: TextButton.icon(
                     key: ValueKey('nav-${['home', 'device', 'settings'][i]}'),
                     style: TextButton.styleFrom(
                       alignment: Alignment.centerLeft,
-                      backgroundColor: index == i
+                      backgroundColor: !trashOpen && index == i
                           ? AppColors.bgCardHover
                           : null,
-                      foregroundColor: index == i
+                      foregroundColor: !trashOpen && index == i
                           ? AppColors.textPrimary
                           : AppColors.textSecondary,
                       padding: const EdgeInsets.symmetric(
@@ -721,6 +759,30 @@ class _DesktopSidebar extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
               ],
+              Semantics(
+                button: true,
+                selected: trashOpen,
+                label: '回收站',
+                excludeSemantics: true,
+                child: TextButton.icon(
+                  key: const ValueKey('nav-trash'),
+                  style: TextButton.styleFrom(
+                    alignment: Alignment.centerLeft,
+                    backgroundColor: trashOpen ? AppColors.bgCardHover : null,
+                    foregroundColor: trashOpen
+                        ? AppColors.textPrimary
+                        : AppColors.textSecondary,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 16,
+                    ),
+                  ),
+                  onPressed: onOpenTrash,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                  label: const Text('回收站'),
+                ),
+              ),
+              const SizedBox(height: 6),
               const Spacer(),
               const Text(
                 AppIdentity.subtitle,

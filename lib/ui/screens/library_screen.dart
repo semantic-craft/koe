@@ -12,6 +12,7 @@ import '../widgets/widgets.dart';
 import 'files_screen.dart';
 import 'minutes_document_screen.dart';
 import 'new_recording_sheet.dart';
+import 'trash_screen.dart';
 
 /// Phone "Materials" section (#131).
 ///
@@ -38,7 +39,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
-    final playing = c.hasLoadedTrack ? c.playingPath : null;
+    final continuePath = c.continuePath;
     return GradientScaffold(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -65,14 +66,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         ),
                       ),
                     ),
-                    TextButton.icon(
+                    IconButton(
+                      key: const ValueKey('library-trash'),
+                      tooltip: '回收站',
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const TrashScreen(),
+                        ),
+                      ),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                    IconButton(
                       key: const ValueKey('library-import'),
+                      tooltip: '导入音频',
                       onPressed: () => handleNewRecordingAction(
                         context,
                         NewRecordingAction.importAudio,
                       ),
-                      icon: const Icon(Icons.audio_file_outlined, size: 18),
-                      label: const Text('音频'),
+                      icon: const Icon(Icons.audio_file_outlined, size: 20),
                     ),
                     IconButton(
                       key: const ValueKey('library-import-text'),
@@ -150,24 +161,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ],
                 ),
-                if (playing != null) ...[
+                if (continuePath != null) ...[
                   const SizedBox(height: 10),
                   _LibraryContinueCard(
                     title: c
                         .recordingView(
                           RecordingReference(
-                            fileId: c.fileIdFromPath(playing),
-                            path: playing,
+                            fileId: c.fileIdFromPath(continuePath),
+                            path: continuePath,
                           ),
                         )
                         .title,
-                    playing: c.isPlaying,
-                    onToggle: c.togglePlayPause,
+                    subtitle: c.continueDetail,
+                    playing: c.playingPath == continuePath && c.isPlaying,
+                    onToggle: () => c.playingPath == continuePath
+                        ? c.togglePlayPause()
+                        : c.toggleLatestPlayback(),
                     onOpen: () => RecordingNavigation.open(
                       context,
                       RecordingReference(
-                        fileId: c.fileIdFromPath(playing),
-                        path: playing,
+                        fileId: c.fileIdFromPath(continuePath),
+                        path: continuePath,
                       ),
                     ),
                   ),
@@ -190,9 +204,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     document: document,
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        settings: RouteSettings(
-                          name: 'minutes/${document.id}',
-                        ),
+                        settings: RouteSettings(name: 'minutes/${document.id}'),
                         builder: (_) =>
                             MinutesDocumentScreen(documentId: document.id),
                       ),
@@ -232,10 +244,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _importText(BuildContext context) async {
     final controller = context.read<RecorderController>();
-    const group = XTypeGroup(
-      label: '妙记文字',
-      extensions: ['json', 'txt'],
-    );
+    const group = XTypeGroup(label: '妙记文字', extensions: ['json', 'txt']);
     final selected = await openFile(acceptedTypeGroups: const [group]);
     if (selected == null || !context.mounted) return;
     try {
@@ -458,12 +467,14 @@ class _FilterChip extends StatelessWidget {
 class _LibraryContinueCard extends StatelessWidget {
   const _LibraryContinueCard({
     required this.title,
+    required this.subtitle,
     required this.playing,
     required this.onToggle,
     required this.onOpen,
   });
 
   final String title;
+  final String subtitle;
   final bool playing;
   final VoidCallback onToggle;
   final VoidCallback onOpen;
@@ -486,11 +497,24 @@ class _LibraryContinueCard extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: Text(
-              '继续回听 · $title',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '继续回听 · $title',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ),
           const Icon(Icons.chevron_right_rounded),

@@ -272,6 +272,64 @@ void main() {
     expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
   });
 
+  testWidgets('wide shell opens the same trash as the phone library', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final path = (await tester.runAsync(() => addAudio('可删资料.wav')))!;
+    await tester.runAsync(() => controller.trashLocalExports([path]));
+    await pump(tester);
+
+    expect(find.byKey(const ValueKey('desktop-navigation')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-trash')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('trash-screen')), findsOneWidget);
+    expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-trash')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isTrue'),
+    );
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-home')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isFalse'),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('nav-home')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('trash-screen')), findsNothing);
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-home')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isTrue'),
+    );
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-trash')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isFalse'),
+    );
+    semantics.dispose();
+  });
+
   testWidgets('new recording keeps phone recording honest and import real', (
     tester,
   ) async {
@@ -283,6 +341,47 @@ void main() {
     expect(find.text('取回设备录音'), findsOneWidget);
     expect(find.text('手机录音'), findsOneWidget);
     expect(find.text('尚未开放'), findsOneWidget);
+  });
+
+  testWidgets('trash hides a material and restores it from the library', (
+    tester,
+  ) async {
+    final path = (await tester.runAsync(() => addAudio('可删资料.wav')))!;
+    controller.rememberTranscript(path, '人工校订正文');
+    await pump(tester);
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('recording-row-$path')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除资料…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('移到回收站'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(ValueKey('recording-row-$path')), findsNothing);
+    expect(await tester.runAsync(() => File(path).exists()), isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('library-trash')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('trash-restore-$path')));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('trash-row-$path')), findsNothing);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('recording-row-$path')), findsOneWidget);
   });
 
   testWidgets('Ask Koe says it is not open and routes to materials', (

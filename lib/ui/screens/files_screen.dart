@@ -294,8 +294,10 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('删除所选录音？'),
-        content: Text('将永久删除所选的 ${_selected.length} 个本地录音，此操作无法撤销。'),
+        title: const Text('移到回收站？'),
+        content: Text(
+          '所选 ${_selected.length} 个录音会移到回收站，原件保留 30 天，期间可恢复。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -303,7 +305,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除', style: TextStyle(color: AppColors.coral)),
+            child: const Text('移到回收站'),
           ),
         ],
       ),
@@ -311,7 +313,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
     if (confirmed != true || !context.mounted) return;
 
     setState(() => _deleting = true);
-    final result = await context.read<RecorderController>().deleteLocalExports(
+    final result = await context.read<RecorderController>().trashLocalExports(
       _selected,
     );
     if (!context.mounted) return;
@@ -324,8 +326,8 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
       SnackBar(
         content: Text(
           result.failed.isEmpty
-              ? '已删除 ${result.deleted} 个录音'
-              : '已删除 ${result.deleted} 个录音，${result.failed.length} 个失败',
+              ? '已移到回收站 ${result.trashed} 个录音'
+              : '已移到回收站 ${result.trashed} 个录音，${result.failed.length} 个失败',
         ),
       ),
     );
