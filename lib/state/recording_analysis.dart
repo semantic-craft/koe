@@ -352,6 +352,9 @@ class RecordingAnalysis extends ChangeNotifier {
   final bool inMemory;
   String? model = 'qwen3.8-flash';
   final Map<String, AnalysisResult> results = {};
+
+  /// Last replaced version per slot, kept so regenerated minutes can compare.
+  final Map<String, AnalysisResult> previousResults = {};
   final Map<String, String> errors = {};
   final Map<String, String> customInstructions = {};
   final List<PromptTemplate> _customTemplates = [];
@@ -582,6 +585,11 @@ class RecordingAnalysis extends ChangeNotifier {
         customInstructions.putIfAbsent(rec, () => decoded.instruction);
       }
     }
+    for (final e in (j['previousResults'] as Map? ?? {}).entries) {
+      previousResults[e.key as String] = AnalysisResult.fromJson(
+        Map<String, dynamic>.from(e.value as Map),
+      );
+    }
     for (final e in (j['customInstructions'] as Map? ?? {}).entries) {
       final value = e.value;
       if (value is String && value.trim().isNotEmpty) {
@@ -635,6 +643,7 @@ class RecordingAnalysis extends ChangeNotifier {
       'version': 1,
       'model': model,
       'results': results.map((k, v) => MapEntry(k, v.toJson())),
+      'previousResults': previousResults.map((k, v) => MapEntry(k, v.toJson())),
       'customInstructions': customInstructions,
       'customTemplates': _customTemplates.map((t) => t.toJson()).toList(),
       'checkpoints': _checkpoints,
@@ -768,6 +777,7 @@ class RecordingAnalysis extends ChangeNotifier {
       if (abort != null && !abort.isCompleted) abort.complete();
     }
     results.removeWhere((k, _) => matches(k));
+    previousResults.removeWhere((k, _) => matches(k));
     errors.removeWhere((k, _) => matches(k));
     progress.removeWhere((k, _) => matches(k));
     _checkpoints.removeWhere((k, _) => matches(k));
@@ -792,6 +802,7 @@ class RecordingAnalysis extends ChangeNotifier {
     }
 
     moveMap(results);
+    moveMap(previousResults);
     moveMap(errors);
     moveMap(progress);
     moveMap(_checkpoints);
@@ -1058,6 +1069,8 @@ class RecordingAnalysis extends ChangeNotifier {
         templateVersion: templateVersion,
       );
       final previous = results[k];
+      final previousVersion = previousResults[k];
+      if (previous != null) previousResults[k] = previous;
       results[k] = result;
       try {
         await save();
@@ -1067,6 +1080,11 @@ class RecordingAnalysis extends ChangeNotifier {
             results.remove(k);
           } else {
             results[k] = previous;
+          }
+          if (previousVersion == null) {
+            previousResults.remove(k);
+          } else {
+            previousResults[k] = previousVersion;
           }
         }
         rethrow;

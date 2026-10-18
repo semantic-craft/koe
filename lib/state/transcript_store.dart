@@ -14,6 +14,9 @@ typedef TranscriptStoreData = ({
   Map<String, TranscriptMetadata> metadata,
   Map<String, RecordingTranslation> translations,
   Map<String, List<TranscriptSegment>> segments,
+  Map<String, String> manualByKey,
+  Map<String, String> incomingByKey,
+  Map<String, Map<int, String>> segmentSpeakersByKey,
 });
 
 /// Persists completed per-recording transcripts on the app device.
@@ -43,6 +46,9 @@ class TranscriptStore {
     metadata: <String, TranscriptMetadata>{},
     translations: <String, RecordingTranslation>{},
     segments: <String, List<TranscriptSegment>>{},
+    manualByKey: <String, String>{},
+    incomingByKey: <String, String>{},
+    segmentSpeakersByKey: <String, Map<int, String>>{},
   );
 
   static Future<TranscriptStoreData> load() async {
@@ -100,7 +106,40 @@ class TranscriptStore {
       metadata: _decodeMetadata(json['metadata']),
       translations: _decodeTranslations(json['translations']),
       segments: _decodeSegments(json['segments']),
+      manualByKey: _decodeTextByKey(json['manualByKey']),
+      incomingByKey: _decodeTextByKey(json['incomingByKey']),
+      segmentSpeakersByKey: _decodeSegmentSpeakers(
+        json['segmentSpeakersByKey'],
+      ),
     );
+  }
+
+  static Map<String, String> _decodeTextByKey(Object? value) {
+    if (value is! Map) return {};
+    return {
+      for (final entry in value.entries)
+        if (entry.key is String &&
+            entry.value is String &&
+            (entry.value as String).trim().isNotEmpty)
+          entry.key as String: (entry.value as String).trim(),
+    };
+  }
+
+  static Map<String, Map<int, String>> _decodeSegmentSpeakers(Object? value) {
+    if (value is! Map) return {};
+    final output = <String, Map<int, String>>{};
+    for (final entry in value.entries) {
+      if (entry.key is! String || entry.value is! Map) continue;
+      final overrides = <int, String>{};
+      for (final item in (entry.value as Map).entries) {
+        final index = int.tryParse('${item.key}');
+        final speaker = item.value;
+        if (index == null || index < 0 || speaker is! String) continue;
+        overrides[index] = speaker.trim();
+      }
+      if (overrides.isNotEmpty) output[entry.key as String] = overrides;
+    }
+    return output;
   }
 
   static Map<String, List<TranscriptSegment>> _decodeSegments(Object? value) {
@@ -174,6 +213,9 @@ class TranscriptStore {
     Map<String, TranscriptMetadata> metadata = const {},
     Map<String, RecordingTranslation> translations = const {},
     Map<String, List<TranscriptSegment>> segments = const {},
+    Map<String, String> manualByKey = const {},
+    Map<String, String> incomingByKey = const {},
+    Map<String, Map<int, String>> segmentSpeakersByKey = const {},
     bool strict = false,
   }) {
     final paths = Map<String, String>.from(byPath);
@@ -187,6 +229,13 @@ class TranscriptStore {
         if (entry.value.isNotEmpty)
           entry.key: List<TranscriptSegment>.unmodifiable(entry.value),
     };
+    final manual = Map<String, String>.from(manualByKey);
+    final incoming = Map<String, String>.from(incomingByKey);
+    final speakers = {
+      for (final entry in segmentSpeakersByKey.entries)
+        if (entry.value.isNotEmpty)
+          entry.key: Map<int, String>.from(entry.value),
+    };
     final operation = _pendingSave.then(
       (_) => _write(
         paths,
@@ -196,6 +245,9 @@ class TranscriptStore {
         meta,
         translated,
         timed,
+        manual,
+        incoming,
+        speakers,
         strict,
       ),
     );
@@ -218,8 +270,11 @@ class TranscriptStore {
     Map<String, TranscriptMetadata> metadata = const {},
     Map<String, RecordingTranslation> translations = const {},
     Map<String, List<TranscriptSegment>> segments = const {},
+    Map<String, String> manualByKey = const {},
+    Map<String, String> incomingByKey = const {},
+    Map<String, Map<int, String>> segmentSpeakersByKey = const {},
   }) => <String, dynamic>{
-    'version': 3,
+    'version': 4,
     'byPath': byPath,
     'byFileId': byFileId.map((id, text) => MapEntry('$id', text)),
     'aliasesByPath': aliasesByPath,
@@ -233,6 +288,14 @@ class TranscriptStore {
     'segments': segments.map(
       (key, value) => MapEntry(key, value.map((s) => s.toJson()).toList()),
     ),
+    'manualByKey': manualByKey,
+    'incomingByKey': incomingByKey,
+    'segmentSpeakersByKey': segmentSpeakersByKey.map(
+      (key, value) => MapEntry(
+        key,
+        value.map((index, speaker) => MapEntry('$index', speaker)),
+      ),
+    ),
   };
 
   static Future<void> _write(
@@ -243,6 +306,9 @@ class TranscriptStore {
     Map<String, TranscriptMetadata> metadata,
     Map<String, RecordingTranslation> translations,
     Map<String, List<TranscriptSegment>> segments,
+    Map<String, String> manualByKey,
+    Map<String, String> incomingByKey,
+    Map<String, Map<int, String>> segmentSpeakersByKey,
     bool strict,
   ) async {
     try {
@@ -255,6 +321,9 @@ class TranscriptStore {
         metadata: metadata,
         translations: translations,
         segments: segments,
+        manualByKey: manualByKey,
+        incomingByKey: incomingByKey,
+        segmentSpeakersByKey: segmentSpeakersByKey,
       );
       final temporary = File('${file.path}.tmp');
       await temporary.writeAsString(

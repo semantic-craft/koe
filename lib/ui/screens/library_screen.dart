@@ -10,6 +10,7 @@ import '../recording_navigation.dart';
 import '../widgets/mobile_header.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
+import 'listening_queue_screen.dart';
 import 'minutes_document_screen.dart';
 import 'new_recording_sheet.dart';
 import 'trash_screen.dart';
@@ -56,14 +57,33 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 Row(
                   children: [
                     const Expanded(
-                      child: Text(
-                        '资料',
-                        style: TextStyle(
-                          fontSize: 30,
-                          height: 1.15,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.6,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '资料',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 30,
+                            height: 1.15,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.6,
+                          ),
                         ),
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('library-queue'),
+                      tooltip: '收听队列',
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const ListeningQueueScreen(),
+                        ),
+                      ),
+                      icon: Badge(
+                        isLabelVisible: c.queueEntries.isNotEmpty,
+                        label: Text('${c.queueEntries.length}'),
+                        child: const Icon(Icons.queue_music_rounded),
                       ),
                     ),
                     IconButton(

@@ -76,7 +76,18 @@ void main() {
         persistedDeviceLoader: DeviceStore.load,
       );
       _disposeAfterSettling(restarted);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final boundLoaded = Completer<void>();
+      void onRestored() {
+        if (restarted.bound && !boundLoaded.isCompleted) boundLoaded.complete();
+      }
+
+      restarted.addListener(onRestored);
+      onRestored();
+      try {
+        await boundLoaded.future.timeout(const Duration(seconds: 5));
+      } finally {
+        restarted.removeListener(onRestored);
+      }
       expect(restarted.bound, isTrue);
       expect(
         ble.startScanCalls,
@@ -103,7 +114,7 @@ void main() {
         persistedDeviceLoader: DeviceStore.load,
       );
       _disposeAfterSettling(next);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await nextBle.scanStarted.future.timeout(const Duration(seconds: 5));
       expect(
         nextBle.startScanCalls,
         1,
@@ -409,6 +420,7 @@ class _FakeBleService extends BleService {
   bool failStartWrite = false;
   bool blockStartWrite = false;
   int startScanCalls = 0;
+  final scanStarted = Completer<void>();
   int stopScanCalls = 0;
   int connectCalls = 0;
   Completer<void> startWriteEntered = Completer<void>();
@@ -450,6 +462,7 @@ class _FakeBleService extends BleService {
     Duration timeout = const Duration(seconds: 30),
   }) async {
     startScanCalls++;
+    if (!scanStarted.isCompleted) scanStarted.complete();
   }
 
   @override

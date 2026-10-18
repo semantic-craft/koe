@@ -12,24 +12,32 @@ import '../../ai/apple_speech.dart';
 import '../../ai/stt_types.dart';
 import '../../state/export_catalog.dart';
 import '../../state/recorder_controller.dart';
+import '../../state/recording_bookmarks.dart';
+import '../../state/transcript_chapters.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../transcript_layout.dart';
+import '../transcript_jump.dart';
 import '../widgets/analysis_panel.dart';
 import '../widgets/inline_player.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/topic_note_panel.dart';
 import 'files_screen.dart';
+import 'settings_screen.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({
     super.key,
     required this.reference,
     this.initialHighlightedParagraph,
+    this.initialPlaybackStart,
+    this.focusedSource = false,
   });
 
   final RecordingReference reference;
   final int? initialHighlightedParagraph;
+  final Duration? initialPlaybackStart;
+  final bool focusedSource;
 
   @override
   State<RecordingDetailScreen> createState() => _RecordingDetailScreenState();
@@ -45,6 +53,22 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   void initState() {
     super.initState();
     _highlightedParagraph = widget.initialHighlightedParagraph;
+    final start = widget.initialPlaybackStart;
+    if (start != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final controller = context.read<RecorderController>();
+        if (controller.recordingAudioChanged(widget.reference)) return;
+        final recording = controller.recordingView(widget.reference);
+        final path = recording.path;
+        if (path == null ||
+            !recording.originalPresent ||
+            recording.audioLocked) {
+          return;
+        }
+        controller.playFrom(path, start, fileId: widget.reference.fileId);
+      });
+    }
   }
 
   @override
@@ -58,9 +82,325 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
   void _notice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _jumpTo(TranscriptJump jump) {
+    final controller = context.read<RecorderController>();
+    final recording = controller.recordingView(widget.reference);
+    if (controller.recordingAudioChanged(widget.reference)) {
+      _notice('录音已更换，旧时码无法定位');
+      return;
+    }
+    setState(() {
+      _showTranslation = false;
+      _highlightedParagraph = jump.segmentIndex;
+    });
+    final path = recording.path;
+    if (path != null && recording.originalPresent && !recording.audioLocked) {
+      controller.playFrom(path, jump.start, fileId: widget.reference.fileId);
+    }
+  }
+
+  /// Opens a focused copy of this recording so closing it returns to minutes.
+  void _openSource(TranscriptJump jump) {
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingDetailScreen(
+          reference: widget.reference,
+          initialHighlightedParagraph: jump.segmentIndex,
+          initialPlaybackStart: jump.start,
+          focusedSource: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openChapters(List<TranscriptSegment> segments) async {
+    final chapters = buildTranscriptChapters(segments);
+    if (chapters.isEmpty) {
+      _notice('没有可靠的时码，无法生成章节');
+      return;
+    }
+    final selected = await showModalBottomSheet<TranscriptChapter>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          children: [
+            Text('章节', style: Theme.of(sheetContext).textTheme.titleLarge),
+            const SizedBox(height: 4),
+            const Text('按发言人变化和较长停顿整理；仅显示有可靠时码的段落。'),
+            const SizedBox(height: 8),
+            for (final chapter in chapters)
+              ListTile(
+                key: ValueKey('chapter-${chapter.firstSegmentIndex}'),
+                contentPadding: EdgeInsets.zero,
+                leading: Text(
+                  _formatSegmentTime(chapter.start),
+                  style: const TextStyle(
+                    color: AppColors.accent,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+                title: Text(chapter.title),
+                subtitle: chapter.summary.isEmpty
+                    ? null
+                    : Text(chapter.summary),
+                onTap: () => Navigator.pop(sheetContext, chapter),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      _jumpTo(
+        TranscriptJump(
+          segmentIndex: selected.firstSegmentIndex,
+          start: selected.start,
+          snippet: selected.title,
+        ),
+      );
+    }
+  }
+
+  /// Segments the reader can locate; bookmarks resolve against the same list
+  /// the user sees so a marker never lands on a different sentence.
+  List<TranscriptSegment> _locatableSegments(
+    RecorderController c,
+    RecordingViewData recording,
+  ) {
+    final path = recording.path;
+    final source = normalizeSttText(recording.text);
+    final raw = recording.segments;
+    final matched =
+        transcriptSegmentsMatchText(
+          raw,
+          source,
+          aliases: path == null ? const {} : c.speakerAliasesForPath(path),
+        )
+        ? raw
+        : const <TranscriptSegment>[];
+    final locatable =
+        recording.originalPresent &&
+        transcriptSegmentsLocatable(
+          matched,
+          duration: path == null ? null : c.localDurationForPath(path),
+        );
+    return locatable ? matched : const <TranscriptSegment>[];
+  }
+
+  List<BookmarkTarget> _bookmarkTargets(
+    RecorderController c,
+    RecordingViewData recording,
+    List<TranscriptSegment> segments, {
+    List<RecordingBookmark>? only,
+    ({bool known, String? version})? audioOverride,
+  }) {
+    if (recording.live) return const [];
+    final path = recording.path;
+    final saved = only ?? c.bookmarksFor(widget.reference);
+    if (saved.isEmpty) return const [];
+    final audio =
+        audioOverride ??
+        (path == null || !recording.originalPresent
+            ? (known: true, version: null)
+            : c.bookmarkAudioVersion(path));
+    return [
+      for (final bookmark in saved)
+        resolveBookmark(
+          bookmark,
+          audioAvailable:
+              path != null &&
+              recording.originalPresent &&
+              !recording.audioLocked,
+          audioChanged: c.recordingAudioChanged(widget.reference),
+          segments: segments,
+          duration: path == null ? null : c.localDurationForPath(path),
+          audioVersionKnown: audio.known,
+          currentAudioVersion: audio.version,
+        ),
+    ];
+  }
+
+  Future<void> _openBookmark(BookmarkTarget target) async {
+    final c = context.read<RecorderController>();
+    final path = c.recordingView(widget.reference).path;
+    if (target.seekTo == null || path == null) {
+      _notice(target.unavailableReason ?? '这条书签暂时无法回听');
+      return;
+    }
+    // Verify the content itself before playing; the marker may have been
+    // drawn from a cached digest of a file replaced with the same size/mtime.
+    final fresh = await c.verifyBookmarkAudio(path);
+    if (!mounted) return;
+    final recording = c.recordingView(widget.reference);
+    final checked = _bookmarkTargets(
+      c,
+      recording,
+      _locatableSegments(c, recording),
+      only: [target.bookmark],
+      audioOverride: (known: true, version: fresh),
+    );
+    final now = checked.isEmpty ? null : checked.single;
+    final seekTo = now?.seekTo;
+    if (now == null || seekTo == null || recording.path == null) {
+      _notice(now?.unavailableReason ?? '这条书签暂时无法回听');
+      return;
+    }
+    if (_showTranslation) setState(() => _showTranslation = false);
+    await c.playFrom(
+      recording.path!,
+      seekTo,
+      fileId: recording.reference.fileId,
+    );
+  }
+
+  Future<void> _addBookmark() async {
+    final c = context.read<RecorderController>();
+    final recording = c.recordingView(widget.reference);
+    final path = recording.path;
+    if (path == null) return;
+    final loaded =
+        c.playingPath == path ||
+        (recording.reference.fileId != null &&
+            c.playingFileId == recording.reference.fileId);
+    final position = loaded ? c.position : Duration.zero;
+    final segments = _locatableSegments(c, recording);
+    // A gap between sentences stays a plain time bookmark.
+    final index = segmentContaining(segments, position);
+    final segment = index == null ? null : segments[index];
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      enableDrag: false,
+      builder: (_) => _BookmarkEditor(
+        title: '添加书签',
+        position: position,
+        excerpt: segment == null
+            ? null
+            : transcriptSegmentLabel(
+                segment,
+                aliases: c.speakerAliasesForPath(path),
+              ),
+        onSave: (note) => c.addBookmark(
+          widget.reference,
+          position: position,
+          segment: segment,
+          note: note,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    _notice(saved == true ? '已保存书签' : '已取消，未保存书签');
+  }
+
+  Future<void> _editBookmark(RecordingBookmark bookmark) async {
+    final c = context.read<RecorderController>();
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      enableDrag: false,
+      builder: (_) => _BookmarkEditor(
+        title: '编辑批注',
+        position: bookmark.position,
+        excerpt: bookmark.segmentText,
+        initialNote: bookmark.note,
+        onSave: (note) => c.updateBookmarkNote(bookmark.id, note),
+      ),
+    );
+    if (!mounted) return;
+    _notice(saved == true ? '已更新批注' : '已取消，批注未更改');
+  }
+
+  Future<void> _removeBookmark(
+    BuildContext sheetContext,
+    RecordingBookmark bookmark,
+  ) async {
+    final c = context.read<RecorderController>();
+    final confirmed = await showDialog<bool>(
+      context: sheetContext,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这条书签？'),
+        content: const Text('书签和批注将被删除，录音与转写不受影响。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除', style: TextStyle(color: AppColors.coral)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await c.removeBookmark(bookmark.id);
+    } catch (_) {
+      _notice('删除失败，书签仍保留');
+    }
+  }
+
+  Future<void> _openBookmarkList() async {
+    final c = context.read<RecorderController>();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: 0.75,
+          child: ListenableBuilder(
+            listenable: c,
+            builder: (context, _) {
+              final recording = c.recordingView(widget.reference);
+              final targets = _bookmarkTargets(
+                c,
+                recording,
+                _locatableSegments(c, recording),
+              );
+              return _BookmarkListSheet(
+                notice: c.bookmarkRecoveryNotice,
+                targets: targets,
+                showMarkers: c.showBookmarkMarkers,
+                onShowMarkersChanged: (value) async {
+                  try {
+                    await c.setShowBookmarkMarkers(value);
+                  } catch (_) {
+                    _notice('标记显示设置未保存');
+                  }
+                },
+                onOpen: (target) {
+                  Navigator.pop(sheetContext);
+                  _openBookmark(target);
+                },
+                onEdit: (bookmark) => _editBookmark(bookmark),
+                onRemove: (bookmark) => _removeBookmark(sheetContext, bookmark),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addToQueue() async {
+    final controller = context.read<RecorderController>();
+    final added = await controller.addToListeningQueue(widget.reference);
+    if (!mounted) return;
+    if (added) {
+      _notice('已加入收听队列');
+    } else if (controller.queueContainsRecording(widget.reference)) {
+      _notice('已在收听队列中');
+    } else {
+      _notice(controller.errorMessage ?? '未能加入收听队列，请重试');
+    }
   }
 
   Future<void> _share(RecordingViewData recording) async {
@@ -129,7 +469,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     try {
       await context.read<RecorderController>().renameLocalExport(path, label);
     } catch (error) {
-      _notice('无法重命名，请检查名称后重试');
+      _notice(error is StateError ? error.message : '无法重命名，请检查名称后重试');
     }
   }
 
@@ -395,6 +735,113 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     }
   }
 
+  Future<void> _editTranscript(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final controller = context.read<RecorderController>();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _TranscriptEditDialog(
+        initialText:
+            controller.canonicalTranscriptForPath(path) ?? recording.text,
+        onSave: (text) => controller.saveManualTranscript(path, text),
+      ),
+    );
+    if (saved == true && mounted) {
+      _notice('校订已保存；无法对应的旧时码不再逐句定位');
+    }
+  }
+
+  Future<void> _correctSegmentSpeaker(
+    RecordingViewData recording,
+    int index,
+  ) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final controller = context.read<RecorderController>();
+    final speakers = controller.transcriptSpeakersForPath(path);
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                '这段是谁说的？',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              ),
+            ),
+            for (final speaker in speakers)
+              ListTile(
+                title: Text(speaker.displayLabel),
+                onTap: () => Navigator.pop(context, speaker.id),
+              ),
+            ListTile(
+              title: const Text('不标注发言人'),
+              onTap: () => Navigator.pop(context, ''),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    try {
+      await controller.setSegmentSpeaker(path, index, selected);
+      if (mounted) _notice('已更新这段的发言人');
+    } catch (error) {
+      _notice('无法保存发言人归属，请重试');
+    }
+  }
+
+  Future<void> _viewIncoming(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    final text =
+        context.read<RecorderController>().incomingTranscriptForPath(path) ??
+        '';
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('新转写版本'),
+        content: SizedBox(
+          width: 600,
+          child: SingleChildScrollView(child: SelectableText(text)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _adoptIncoming(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    try {
+      await context.read<RecorderController>().adoptIncomingTranscript(path);
+      if (mounted) _notice('已采用新转写；你的校订已被替换');
+    } catch (error) {
+      _notice('无法保存新版本，请重试');
+    }
+  }
+
+  Future<void> _keepManualTranscript(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    try {
+      await context.read<RecorderController>().dismissIncomingTranscript(path);
+      if (mounted) _notice('已保留你的校订');
+    } catch (error) {
+      _notice('无法保存选择，请重试');
+    }
+  }
+
   Future<void> _showInfo(RecordingViewData recording) async {
     final controller = context.read<RecorderController>();
     final path = recording.path;
@@ -406,73 +853,277 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           '${two(local.hour)}:${two(local.minute)}';
     }
 
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                '资料信息',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              _InfoRow(
-                label: '录音发生时间',
-                value: recording.recordedAt == null
-                    ? '未知（导入文件未提供）'
-                    : date(recording.recordedAt),
-              ),
-              _InfoRow(
-                label: '导入资料库',
-                value: recording.importedAt == null
-                    ? '未知'
-                    : date(recording.importedAt),
-              ),
-              _InfoRow(
-                label: '时长',
-                value: path == null
-                    ? '未知'
-                    : FilesBody.formatDuration(
-                        controller.localDurationForPath(path),
+    String size(int bytes) {
+      if (bytes < 1024) return '$bytes B';
+      if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+
+    var busy = false;
+    String? actionError;
+    StateSetter? sheetSetState;
+    void archiveListener() {
+      try {
+        sheetSetState?.call(() {});
+      } catch (_) {
+        // The sheet may be closing; a late archive notification is harmless.
+      }
+    }
+
+    controller.addListener(archiveListener);
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (sheetContext) {
+          Future<void> run(
+            Future<void> Function() action,
+            String success,
+          ) async {
+            if (busy) return;
+            busy = true;
+            actionError = null;
+            sheetSetState?.call(() {});
+            try {
+              await action();
+              if (!mounted || !sheetContext.mounted) return;
+              sheetSetState = null;
+              Navigator.pop(sheetContext);
+              _notice(success);
+            } on ArchiveException catch (error) {
+              if (!mounted) return;
+              busy = false;
+              actionError = error.message;
+              sheetSetState?.call(() {});
+            } catch (_) {
+              if (!mounted) return;
+              busy = false;
+              actionError = '操作失败，请重试';
+              sheetSetState?.call(() {});
+            }
+          }
+
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              sheetSetState = setSheetState;
+              final archive = controller.archive;
+              final archiveRecord = path == null
+                  ? null
+                  : archive.recordForPath(path);
+              final archiveVerified = archiveRecord?.verified == true;
+              final verifiedForCurrent =
+                  archiveVerified &&
+                  (archive.pairing == null ||
+                      archiveRecord?.deskId == null ||
+                      archiveRecord!.deskId == archive.pairing!.deskId);
+              final currentReceipt = archiveRecord == null
+                  ? null
+                  : archive.receiptForCurrentDesk(archiveRecord);
+              final otherDesk = archiveRecord == null
+                  ? null
+                  : archive.otherDeskWithReceipt(archiveRecord);
+              final hasRemote =
+                  archiveVerified ||
+                  currentReceipt != null ||
+                  otherDesk != null;
+              return SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        '资料信息',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-              ),
-              _InfoRow(
-                label: '来源',
-                value: recordingSourceLabel(recording.source),
-              ),
-              _InfoRow(
-                label: '原件状态',
-                value: !recording.originalPresent
-                    ? '找不到原件'
-                    : recording.originalComplete
-                    ? '已保留'
-                    : '已保留但不完整',
-              ),
-              _InfoRow(
-                label: '原件位置',
-                value: path ?? '尚未保存到本机',
-                selectable: true,
-              ),
-              if (recording.originalPath != null)
-                _InfoRow(
-                  label: '原始文件',
-                  value: recording.originalPath!,
-                  selectable: true,
+                      const SizedBox(height: 12),
+                      _InfoRow(
+                        label: '录音发生时间',
+                        value: recording.recordedAt == null
+                            ? '未知（导入文件未提供）'
+                            : date(recording.recordedAt),
+                      ),
+                      _InfoRow(
+                        label: '导入资料库',
+                        value: recording.importedAt == null
+                            ? '未知'
+                            : date(recording.importedAt),
+                      ),
+                      _InfoRow(
+                        label: '时长',
+                        value: path == null
+                            ? '未知'
+                            : FilesBody.formatDuration(
+                                controller.localDurationForPath(path),
+                              ),
+                      ),
+                      _InfoRow(
+                        label: '来源',
+                        value: recordingSourceLabel(recording.source),
+                      ),
+                      _InfoRow(
+                        label: '原件状态',
+                        value: !recording.originalPresent
+                            ? '找不到原件'
+                            : recording.originalComplete
+                            ? '已保留'
+                            : '已保留但不完整',
+                      ),
+                      _InfoRow(
+                        label: '原件位置',
+                        value: path ?? '尚未保存到本机',
+                        selectable: true,
+                      ),
+                      if (recording.originalPath != null)
+                        _InfoRow(
+                          label: '原始文件',
+                          value: recording.originalPath!,
+                          selectable: true,
+                        ),
+                      _InfoRow(
+                        label: '回收站状态',
+                        value: recording.archived ? '回收站' : '资料库',
+                      ),
+                      if (!kIsWeb &&
+                          (defaultTargetPlatform == TargetPlatform.iOS ||
+                              defaultTargetPlatform == TargetPlatform.macOS))
+                        _InfoRow(
+                          label: 'Mac 归档',
+                          value: path == null
+                              ? '没有可归档的原件'
+                              : archive.statusForPath(path),
+                        ),
+                      if (archiveRecord != null)
+                        _InfoRow(
+                          label: 'Mac 说明',
+                          value: archive.detailForPath(path!),
+                        ),
+                      if (hasRemote)
+                        _InfoRow(
+                          label: 'Mac 副本',
+                          value: verifiedForCurrent || currentReceipt != null
+                              ? '已校验 · ${size(archiveRecord?.verifiedLength ?? currentReceipt?.length ?? archiveRecord?.length ?? 0)}'
+                              : '原件在另一台 Mac',
+                        ),
+                      if (!recording.originalPresent && !hasRemote)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 4, bottom: 8),
+                          child: Text(
+                            '原件已彻底缺失（本机与 Mac 均无副本）。',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      if (!recording.originalPresent &&
+                          !verifiedForCurrent &&
+                          otherDesk != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          '原件在另一台 Mac（${otherDesk.substring(0, 8)}）；当前 Mac 没有这份副本。请配回原 Mac 后恢复。',
+                          key: const ValueKey('other-mac-archive-notice'),
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          key: const ValueKey('open-archive-settings'),
+                          onPressed: busy
+                              ? null
+                              : () {
+                                  final navigator = Navigator.of(context);
+                                  Navigator.pop(sheetContext);
+                                  navigator.push(
+                                    MaterialPageRoute<void>(
+                                      settings: const RouteSettings(
+                                        name: 'settings',
+                                      ),
+                                      builder: (_) =>
+                                          const SettingsScreen(showBack: true),
+                                    ),
+                                  );
+                                },
+                          icon: const Icon(Icons.settings_outlined),
+                          label: const Text('去设置更换配对'),
+                        ),
+                      ],
+                      if (busy) ...[
+                        const SizedBox(height: 8),
+                        const LinearProgressIndicator(minHeight: 2),
+                      ],
+                      if (actionError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          actionError!,
+                          key: const ValueKey('mac-archive-action-error'),
+                          style: const TextStyle(
+                            color: AppColors.coral,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      if (verifiedForCurrent && !recording.originalPresent) ...[
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          key: const ValueKey('restore-from-mac'),
+                          onPressed: busy
+                              ? null
+                              : () => run(
+                                  () => archive.restoreFromArchive(path!),
+                                  '已从 Mac 恢复并校验原件',
+                                ),
+                          icon: const Icon(Icons.download_rounded),
+                          label: const Text('从 Mac 恢复原件'),
+                        ),
+                      ],
+                      if (recording.originalPresent &&
+                          archive.pairing != null &&
+                          !verifiedForCurrent) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          key: const ValueKey('archive-to-mac'),
+                          onPressed: busy || path == null
+                              ? null
+                              : () => run(
+                                  () => archive.archiveNow(path),
+                                  '已加入 Mac 归档队列',
+                                ),
+                          icon: const Icon(Icons.upload_rounded),
+                          label: const Text('归档到 Mac'),
+                        ),
+                      ],
+                      if (archiveRecord?.phase == MacArchivePhase.failed &&
+                          recording.originalPresent) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          key: const ValueKey('retry-mac-archive'),
+                          onPressed: busy || path == null
+                              ? null
+                              : () => run(() => archive.retry(path), '已重新排队归档'),
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('重试归档'),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-              _InfoRow(
-                label: '归档状态',
-                value: recording.archived ? '回收站' : '资料库',
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      controller.removeListener(archiveListener);
+      sheetSetState = null;
+    }
   }
 
   @override
@@ -499,6 +1150,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         : const <TranscriptSegment>[];
     final segmentsLocatable =
         recording.originalPresent &&
+        !c.recordingAudioChanged(widget.reference) &&
         transcriptSegmentsLocatable(
           segmentText,
           duration: path == null ? null : c.localDurationForPath(path),
@@ -507,6 +1159,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         !_showTranslation && segmentsLocatable && c.playingPath == path
         ? _segmentAt(segmentText, c.position)
         : null;
+    final bookmarkTargets = _bookmarkTargets(
+      c,
+      recording,
+      segmentsLocatable ? segmentText : const [],
+    );
+    final showMarkers = c.showBookmarkMarkers;
+    String markerLabel(RecordingBookmark bookmark) =>
+        bookmark.note.isNotEmpty ? bookmark.note : bookmark.segmentText ?? '';
     final text = _showTranslation && hasTranslation ? translated : source;
     final fileReady =
         recording.path != null &&
@@ -527,14 +1187,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         ? c.topics.topicOf(c.recordingKeyFor(widget.reference))
         : null;
     final hasRecoverableCache =
-        recording.path != null &&
-        c.hasRecoverableCacheForPath(recording.path!);
+        recording.path != null && c.hasRecoverableCacheForPath(recording.path!);
 
     return Scaffold(
       key: ValueKey('recording-detail-${widget.reference.key}'),
       backgroundColor: AppColors.bgElevated,
       appBar: AppBar(
         backgroundColor: AppColors.bgElevated,
+        leading: widget.focusedSource
+            ? IconButton(
+                tooltip: '返回纪要',
+                onPressed: () => Navigator.maybePop(context),
+                icon: const Icon(Icons.arrow_back_rounded),
+              )
+            : null,
         automaticallyImplyLeading:
             !(RecordingNavigation.of(context)?.wide ?? false),
         toolbarHeight: (RecordingNavigation.of(context)?.wide ?? false)
@@ -552,6 +1218,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         ),
         actions: [
           IconButton(
+            key: const ValueKey('add-to-queue'),
+            tooltip: c.queueContainsRecording(widget.reference)
+                ? '已在收听队列中'
+                : '加入收听队列',
+            onPressed: fileReady && !recording.live && !recording.audioLocked
+                ? _addToQueue
+                : null,
+            icon: Icon(
+              c.queueContainsRecording(widget.reference)
+                  ? Icons.playlist_add_check_rounded
+                  : Icons.playlist_add_rounded,
+            ),
+          ),
+          IconButton(
             tooltip: '分享录音',
             onPressed: fileReady ? () => _share(recording) : null,
             icon: const Icon(Icons.ios_share_rounded),
@@ -566,8 +1246,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   _save(recording);
                 case 'transcribe':
                   _transcribe(recording);
+                case 'edit':
+                  _editTranscript(recording);
                 case 'speakers':
                   _speakers(recording);
+                case 'chapters':
+                  _openChapters(segmentText);
                 case 'info':
                   _showInfo(recording);
                 case 'remove-topic':
@@ -598,12 +1282,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           c.sttConfigured),
                   child: const Text('重新转写'),
                 ),
+              if (source.isNotEmpty)
+                PopupMenuItem(
+                  value: 'edit',
+                  enabled: fileReady && !recording.processing,
+                  child: const Text('编辑正文'),
+                ),
               if (hasSpeakers)
                 PopupMenuItem(
                   value: 'speakers',
                   enabled: fileReady && !recording.processing,
                   child: const Text('说话人姓名'),
                 ),
+              if (source.isNotEmpty && !recording.live && segmentsLocatable)
+                const PopupMenuItem(value: 'chapters', child: Text('章节')),
               if (topicPlacement != null)
                 PopupMenuItem(
                   value: 'remove-topic',
@@ -715,6 +1407,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             builder: (_) => AnalysisPanel(
                               controller: c,
                               reference: widget.reference,
+                              onOpenSource: _openSource,
                             ),
                           ),
                         ),
@@ -748,6 +1441,18 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           label: const Text('翻译'),
                         ),
                     ],
+                    if (!recording.live &&
+                        (path != null || bookmarkTargets.isNotEmpty))
+                      IconButton(
+                        key: const ValueKey('bookmark-list-button'),
+                        tooltip: '书签与批注',
+                        onPressed: _openBookmarkList,
+                        icon: Badge(
+                          isLabelVisible: bookmarkTargets.isNotEmpty,
+                          label: Text('${bookmarkTargets.length}'),
+                          child: const Icon(Icons.bookmarks_outlined),
+                        ),
+                      ),
                     IconButton(
                       tooltip: _showTranslation && hasTranslation
                           ? '复制译文'
@@ -772,6 +1477,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
             ),
           ),
           if (!_showTranslation &&
+              recording.hasPendingTranscript &&
+              path != null)
+            _PendingTranscriptBanner(
+              onView: () => _viewIncoming(recording),
+              onAdopt: () => _adoptIncoming(recording),
+              onKeep: () => _keepManualTranscript(recording),
+            ),
+          if (!_showTranslation &&
               source.isNotEmpty &&
               !recording.live &&
               !segmentsLocatable)
@@ -780,6 +1493,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
               originalPresent: recording.originalPresent,
               hasLocalPath: path != null,
               hasFileId: recording.reference.fileId != null,
+              edited: recording.manuallyEdited,
             ),
           Expanded(
             child: IndexedStack(
@@ -801,6 +1515,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         ? const []
                         : segmentText,
                     activeSegment: translation ? null : activeSegment,
+                    bookmarkedSegments: translation || !showMarkers
+                        ? const {}
+                        : {
+                            for (final target in bookmarkTargets)
+                              if (target.segmentIndex != null)
+                                target.segmentIndex!,
+                          },
                     speakerAliases: translation
                         ? const {}
                         : recording.path == null
@@ -816,6 +1537,9 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                               fileId: recording.reference.fileId,
                             );
                           },
+                    onSegmentSpeakerTap: translation || !segmentsLocatable
+                        ? null
+                        : (index) => _correctSegmentSpeaker(recording, index),
                     header: !hasReaderHeader || (translation && !hasTranslation)
                         ? null
                         : Column(
@@ -905,6 +1629,26 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       child: InlinePlayer(
                         path: recording.path!,
                         fileId: recording.reference.fileId,
+                        markers: showMarkers
+                            ? [
+                                for (final target in bookmarkTargets)
+                                  if (target.seekTo != null)
+                                    InlinePlayerMarker(
+                                      id: target.bookmark.id,
+                                      at: target.seekTo!,
+                                      label: markerLabel(target.bookmark),
+                                    ),
+                              ]
+                            : const [],
+                        onMarkerTap: (marker) {
+                          for (final target in bookmarkTargets) {
+                            if (target.bookmark.id == marker.id) {
+                              _openBookmark(target);
+                              return;
+                            }
+                          }
+                        },
+                        onAddBookmark: _addBookmark,
                       ),
                     ),
                   ),
@@ -944,12 +1688,14 @@ class _TranscriptTimingNotice extends StatelessWidget {
     required this.originalPresent,
     required this.hasLocalPath,
     required this.hasFileId,
+    required this.edited,
   });
 
   final bool unreliable;
   final bool originalPresent;
   final bool hasLocalPath;
   final bool hasFileId;
+  final bool edited;
 
   @override
   Widget build(BuildContext context) {
@@ -966,6 +1712,9 @@ class _TranscriptTimingNotice extends StatelessWidget {
         key = 'original-missing-timing-notice';
         message = '原录音不可用，无法回听；转写文字仍可阅读。';
       }
+    } else if (edited) {
+      key = 'edited-timing-notice';
+      message = '正文已校订，旧时码无法再对应到原句；已关闭逐句定位，原录音仍可整段回听。';
     } else if (unreliable) {
       key = 'unreliable-timing-notice';
       message = '这条转写的时码缺失或越界，已关闭逐句定位；整段录音仍可播放。';
@@ -1011,8 +1760,10 @@ class RecordingTextReader extends StatefulWidget {
     this.highlightedParagraph,
     this.segments = const [],
     this.activeSegment,
+    this.bookmarkedSegments = const {},
     this.speakerAliases = const {},
     this.onSegmentTap,
+    this.onSegmentSpeakerTap,
     this.header,
   });
   final String text;
@@ -1021,8 +1772,10 @@ class RecordingTextReader extends StatefulWidget {
   final int? highlightedParagraph;
   final List<TranscriptSegment> segments;
   final int? activeSegment;
+  final Set<int> bookmarkedSegments;
   final Map<String, String> speakerAliases;
   final ValueChanged<int>? onSegmentTap;
+  final ValueChanged<int>? onSegmentSpeakerTap;
   final Widget? header;
 
   @override
@@ -1200,19 +1953,68 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         if (segment != null)
-                                          Text(
-                                            _formatSegmentTime(segment.start),
-                                            key: ValueKey(
-                                              'segment-time-$paragraphIndex',
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color: AppColors.accent,
-                                              fontFeatures: [
-                                                FontFeature.tabularFigures(),
+                                          Row(
+                                            children: [
+                                              Text(
+                                                _formatSegmentTime(
+                                                  segment.start,
+                                                ),
+                                                key: ValueKey(
+                                                  'segment-time-$paragraphIndex',
+                                                ),
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: AppColors.accent,
+                                                  fontFeatures: [
+                                                    FontFeature.tabularFigures(),
+                                                  ],
+                                                ),
+                                              ),
+                                              if (widget.bookmarkedSegments
+                                                  .contains(paragraphIndex))
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        left: 6,
+                                                      ),
+                                                  child: Icon(
+                                                    Icons.bookmark_rounded,
+                                                    key: ValueKey(
+                                                      'segment-bookmark-$paragraphIndex',
+                                                    ),
+                                                    size: 14,
+                                                    color: AppColors.accent,
+                                                    semanticLabel: '已加书签',
+                                                  ),
+                                                ),
+                                              if (widget.onSegmentSpeakerTap !=
+                                                  null) ...[
+                                                const SizedBox(width: 4),
+                                                InkWell(
+                                                  key: ValueKey(
+                                                    'segment-speaker-$paragraphIndex',
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                  onTap: () =>
+                                                      widget
+                                                          .onSegmentSpeakerTap!(
+                                                        paragraphIndex,
+                                                      ),
+                                                  child: const Padding(
+                                                    padding: EdgeInsets.all(4),
+                                                    child: Icon(
+                                                      Icons
+                                                          .record_voice_over_outlined,
+                                                      size: 14,
+                                                      color:
+                                                          AppColors.textMuted,
+                                                    ),
+                                                  ),
+                                                ),
                                               ],
-                                            ),
+                                            ],
                                           ),
                                         if (segment != null)
                                           const SizedBox(height: 2),
@@ -1951,4 +2753,459 @@ class _TranslationDialogState extends State<_TranslationDialog> {
       ),
     ],
   );
+}
+
+class _PendingTranscriptBanner extends StatelessWidget {
+  const _PendingTranscriptBanner({
+    required this.onView,
+    required this.onAdopt,
+    required this.onKeep,
+  });
+
+  final VoidCallback onView;
+  final VoidCallback onAdopt;
+  final VoidCallback onKeep;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      child: Container(
+        key: const ValueKey('pending-transcript-banner'),
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        decoration: BoxDecoration(
+          color: AppColors.bgSubtle,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '转写服务返回了新版本，未覆盖你的校订。',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 4,
+              children: [
+                TextButton(onPressed: onView, child: const Text('查看新版本')),
+                TextButton(onPressed: onAdopt, child: const Text('采用新版本')),
+                TextButton(onPressed: onKeep, child: const Text('保留校订')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TranscriptEditDialog extends StatefulWidget {
+  const _TranscriptEditDialog({
+    required this.initialText,
+    required this.onSave,
+  });
+
+  final String initialText;
+  final Future<bool> Function(String text) onSave;
+
+  @override
+  State<_TranscriptEditDialog> createState() => _TranscriptEditDialogState();
+}
+
+class _TranscriptEditDialogState extends State<_TranscriptEditDialog> {
+  late final _input = TextEditingController(text: widget.initialText);
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    if (_input.text.trim().isEmpty) {
+      setState(() => _error = '正文不能为空');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(_input.text);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = error is ArgumentError
+            ? '${error.message}'
+            : '保存失败，编辑内容仍在，请重试';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑正文'),
+      content: SizedBox(
+        width: 640,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '保存后旧时码若无法对上这段文字，会关闭逐句定位并明确提示；原录音仍可整段回听。',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('transcript-edit-input'),
+              controller: _input,
+              minLines: 8,
+              maxLines: 14,
+              autofocus: true,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: const ValueKey('transcript-edit-error'),
+                style: const TextStyle(color: AppColors.coral, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: Text(_saving ? '保存中…' : '保存'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Adds or edits one bookmark note. The sheet only closes after the store
+/// confirms the write; a failure keeps the draft and says nothing was saved.
+class _BookmarkEditor extends StatefulWidget {
+  const _BookmarkEditor({
+    required this.title,
+    required this.position,
+    required this.onSave,
+    this.excerpt,
+    this.initialNote = '',
+  });
+
+  final String title;
+  final Duration position;
+  final String? excerpt;
+  final String initialNote;
+  final Future<void> Function(String note) onSave;
+
+  @override
+  State<_BookmarkEditor> createState() => _BookmarkEditorState();
+}
+
+class _BookmarkEditorState extends State<_BookmarkEditor> {
+  late final _note = TextEditingController(text: widget.initialNote);
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(_note.text);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = error is BookmarkSaveException
+            ? error.message
+            : '未保存：书签无法写入本机存储。草稿已保留，可稍后重试。';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // While the write is in flight the sheet cannot be dismissed, so a closed
+    // sheet always matches what was actually stored.
+    return PopScope(canPop: !_saving, child: _content(context));
+  }
+
+  Widget _content(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        24,
+        24,
+        24,
+        16 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.title,
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _formatSegmentTime(widget.position),
+              key: const ValueKey('bookmark-editor-time'),
+              style: const TextStyle(
+                color: AppColors.accent,
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            if (widget.excerpt != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                widget.excerpt!,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  height: 1.4,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('bookmark-note-field'),
+              controller: _note,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: '批注（可选）',
+                hintText: '写下你的观察',
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: const ValueKey('bookmark-save-error'),
+                style: const TextStyle(color: AppColors.coral, height: 1.4),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: _saving
+                      ? null
+                      : () => Navigator.pop(context, false),
+                  child: const Text('取消'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _saving ? null : _save,
+                  child: Text(_saving ? '正在保存…' : '保存'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BookmarkListSheet extends StatelessWidget {
+  const _BookmarkListSheet({
+    this.notice,
+    required this.targets,
+    required this.showMarkers,
+    required this.onShowMarkersChanged,
+    required this.onOpen,
+    required this.onEdit,
+    required this.onRemove,
+  });
+
+  final String? notice;
+  final List<BookmarkTarget> targets;
+  final bool showMarkers;
+  final ValueChanged<bool> onShowMarkersChanged;
+  final ValueChanged<BookmarkTarget> onOpen;
+  final ValueChanged<RecordingBookmark> onEdit;
+  final ValueChanged<RecordingBookmark> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const ValueKey('bookmark-list'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+          child: Text(
+            '书签与批注',
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+        if (notice != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 4),
+            child: Text(
+              notice!,
+              key: const ValueKey('bookmark-recovery-notice'),
+              style: const TextStyle(color: AppColors.coral, height: 1.4),
+            ),
+          ),
+        SwitchListTile(
+          key: const ValueKey('bookmark-markers-switch'),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          title: const Text('在播放条和正文显示标记'),
+          subtitle: const Text('只影响显示，不会删除书签'),
+          value: showMarkers,
+          onChanged: onShowMarkersChanged,
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: targets.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    '还没有书签。播放时点“为当前片段加书签”，可保存位置和个人批注。',
+                    key: ValueKey('bookmark-list-empty'),
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.5,
+                    ),
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: targets.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final target = targets[index];
+                    final bookmark = target.bookmark;
+                    final time = _formatSegmentTime(bookmark.position);
+                    return Semantics(
+                      button: target.available,
+                      label: target.available
+                          ? '从 $time 回听书签'
+                          : '书签 $time 暂时无法回听',
+                      child: InkWell(
+                        key: ValueKey('bookmark-item-$index'),
+                        onTap: target.available ? () => onOpen(target) : null,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 12, 8, 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          target.available
+                                              ? Icons.bookmark_rounded
+                                              : Icons.bookmark_remove_outlined,
+                                          size: 16,
+                                          color: target.available
+                                              ? AppColors.accent
+                                              : AppColors.textMuted,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          time,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontFeatures: [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    if (bookmark.segmentText != null) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        bookmark.segmentText!,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: AppColors.textSecondary,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                    ],
+                                    if (bookmark.note.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        bookmark.note,
+                                        style: const TextStyle(height: 1.4),
+                                      ),
+                                    ],
+                                    if (target.unavailableReason != null) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        target.unavailableReason!,
+                                        key: ValueKey(
+                                          'bookmark-unavailable-$index',
+                                        ),
+                                        style: const TextStyle(
+                                          color: AppColors.coral,
+                                          fontSize: 13,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: '编辑批注',
+                                onPressed: () => onEdit(bookmark),
+                                icon: const Icon(Icons.edit_outlined),
+                              ),
+                              IconButton(
+                                tooltip: '删除书签',
+                                onPressed: () => onRemove(bookmark),
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
 }
