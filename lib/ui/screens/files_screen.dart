@@ -340,7 +340,6 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     bool selectable(String path) =>
-        File(path).existsSync() &&
         !c
             .recordingView(
               RecordingReference(fileId: c.fileIdFromPath(path), path: path),

@@ -7590,7 +7590,13 @@ class _RecorderArchiveSource implements ArchiveSource {
       final stored = controller.library.assetForPath(path);
       if (identical(stored, asset)) {
         try {
-          await controller.library.remove(path, strict: false);
+          if (existing != null) {
+            // Restore the exact pre-restore metadata; a failed/renamed/cancelled
+            // restore must not discard the user's original asset record.
+            await controller.library.upsert(existing, strict: false);
+          } else {
+            await controller.library.remove(path, strict: false);
+          }
         } catch (_) {}
       }
       return false;

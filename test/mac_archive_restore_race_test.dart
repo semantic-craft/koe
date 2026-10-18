@@ -181,4 +181,37 @@ void main() {
     expect(reopened.assetForPath(setup.file.path), isNull);
     expect(reopened.assetForPath(renamed), isNotNull);
   });
+
+  test(
+    'a failed rename after restore library write preserves the original metadata',
+    () async {
+      final setup = await prepare();
+      final before = setup.controller.library.assetForPath(setup.file.path);
+      expect(before, isNotNull);
+      setup.library.arm(setup.file.path, setup.hash);
+      final restore = setup.controller.archive.restoreFromArchive(
+        setup.file.path,
+      );
+      await setup.library.entered!.future;
+
+      final target = File('${root.path}/1700000000_renamed.wav');
+      await target.writeAsBytes(<int>[9, 9, 9], flush: true);
+      await expectLater(
+        setup.controller.renameLocalExport(setup.file.path, 'renamed'),
+        throwsA(isA<StateError>()),
+      );
+      setup.library.activeGate!.complete();
+      await expectLater(restore, throwsA(isA<ArchiveException>()));
+
+      final after = setup.controller.library.assetForPath(setup.file.path);
+      expect(after, isNotNull);
+      expect(after!.toJson(), before!.toJson());
+      expect(setup.controller.exportedPaths, contains(setup.file.path));
+      final reopened = RecordingLibraryStore(
+        file: File('${root.path}/recording_library.json'),
+      );
+      await reopened.load();
+      expect(reopened.assetForPath(setup.file.path)?.toJson(), before.toJson());
+    },
+  );
 }

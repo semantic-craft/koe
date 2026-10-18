@@ -204,7 +204,8 @@
 - 起因与后果：PR #94 `bc770c6` 的并发测试用 20ms 延时、确认重试直接清内部未确认标记、云端 done 测试在完成流程结束后才发事件。独立复审发现加载中或请求中的第二次触发仍可能发起付费调用、校验失败的 final/merge 检查点会被复用、订阅中的短 done 会覆盖长实时稿；旧 head 的 390/390 与 analyze 0 issue 都没覆盖这些真实路径。
 - 修复与证据：新回归从控制器和 `RecordingAnalysis.run` 两个入口覆盖加载与请求窗口，经 `generateTopicSummary(...confirmedRetry/overwrite)` 断言只重跑失败节点并复用成功片段，在订阅仍有效时发送短 done 后核对长稿与持久化读取，转写或音频变化的笔记在 UI 禁用生成，首次保存失败后释放忙碌并可重试。同一批 9 条回归在 `bc770c6` 上 9/9 失败，在修复提交上通过；全量 53/53 个测试文件、397 条用例通过。
 - 正确做法（Done right）：需要证明并发或重试时，用可控 Completer/事件流制造目标窗口，从用户实际触发的控制器或 UI 入口调用，断言模型请求序列、结果和持久化内容；不直接清内部标记，不以固定短延时、内部 claim/checkpoint 状态或流程结束后的迟到事件代替真实顺序。
-- 复发记录：Seen 1x (2026-10-17)；证据：PR #94 复审（issuecomment-6232346316），旧 head `bc770c6` 新回归 8/8 红，修复后全量通过。
+- 2026-10-18 再现：#148 Mac 原件归档中，索引写盘前发布内存状态会让第二条连接提前确认副本；恢复写入资料库期间，真实删除、改名与失败改名也会产生迟到写入或误删元数据。修正以串行事务的持久化成功作为确认点，用 Completer 挂住真实 library 写入，再从 RecorderController 的删除、改名入口触发交错，检查 exportedPaths、资料库及重新加载结果；取消恢复时只撤销自己的对象，并保留恢复前已有元数据。
+- 复发记录：Seen 2x (2026-10-17, 2026-10-18)；证据：PR #94 复审（issuecomment-6232346316），旧 head `bc770c6` 新回归 8/8 红；#148 的 `mac_archive_commit_test.dart`、`mac_archive_store_concurrency_test.dart` 与 `mac_archive_restore_race_test.dart`。
 
 ### 改名要在同一个 PR 里查完文档中的旧产物名
 

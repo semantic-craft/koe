@@ -537,4 +537,51 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  testWidgets(
+    'a never-verified other desk without receipts is not a recoverable copy',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const oldDesk = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      final missing = '${root.path}/never-verified.wav';
+      final pair = await pumpArchive(
+        tester,
+        seed: (store) => store.upsert(
+          ArchivePhoneRecord(
+            localPath: missing,
+            displayName: '从未成功的资料',
+            originalExtension: '.wav',
+            deskId: oldDesk,
+            phase: MacArchivePhase.failed,
+            length: 4,
+            sourceModifiedMs: 1,
+            error: '从未归档成功',
+            updatedAt: DateTime(2026, 10, 18),
+          ),
+        ),
+        exportedPaths: <String>[missing],
+      );
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: pair.recorder,
+          child: const MaterialApp(home: Scaffold(body: FilesBody())),
+        ),
+      );
+      await tester.pump();
+      await openInfo(tester, missing);
+
+      expect(find.textContaining('原件已彻底缺失'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('other-mac-archive-notice')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('open-archive-settings')), findsNothing);
+      expect(find.byKey(const ValueKey('restore-from-mac')), findsNothing);
+      expect(find.text('Mac 副本'), findsNothing);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 }

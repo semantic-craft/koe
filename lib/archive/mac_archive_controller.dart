@@ -182,7 +182,12 @@ class MacArchiveController extends ChangeNotifier {
 
   String? otherDeskWithReceipt(ArchivePhoneRecord record) {
     final current = pairing?.deskId;
-    if (record.deskId != null && record.deskId != current) {
+    // A desk identity alone is not evidence of a verified copy: failed,
+    // pending, cancelled or hash-less records must rely on receipts only.
+    if (record.verified &&
+        record.hasVersion &&
+        record.deskId != null &&
+        record.deskId != current) {
       return record.deskId;
     }
     for (final entry in record.receipts.entries) {
