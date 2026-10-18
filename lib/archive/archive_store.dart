@@ -715,6 +715,7 @@ class ArchiveDeskStore {
     Future<Directory> Function()? supportDirectory,
     bool? developmentProfile,
     Future<bool> Function()? isolationProvider,
+    Future<void> Function()? configWriteInterceptor,
   }) : _directoryOverride = directory,
        // ignore: prefer_initializing_formals
        _inMemory = inMemory,
@@ -724,6 +725,8 @@ class ArchiveDeskStore {
        _developmentProfile = developmentProfile,
        // ignore: prefer_initializing_formals
        _isolationProvider = isolationProvider,
+       // ignore: prefer_initializing_formals
+       _configWriteInterceptor = configWriteInterceptor,
        // ignore: prefer_initializing_formals
        config = ArchiveDeskConfig(
          deskId: ArchivePairing.generateDeskId(),
@@ -738,6 +741,7 @@ class ArchiveDeskStore {
   final Future<Directory> Function()? _supportDirectory;
   final bool? _developmentProfile;
   final Future<bool> Function()? _isolationProvider;
+  final Future<void> Function()? _configWriteInterceptor;
   final Map<String, ArchiveDeskEntry> _entries = {};
   ArchiveDeskConfig config;
   String? loadError;
@@ -878,6 +882,7 @@ class ArchiveDeskStore {
 
   Future<void> _writeConfig(ArchiveDeskConfig value) async {
     if (_inMemory) return;
+    await _configWriteInterceptor?.call();
     final target = File(p.join((await _directory()).path, configFileName));
     await _writeAtomic(target, jsonEncode(value.toJson()));
   }

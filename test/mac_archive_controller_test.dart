@@ -783,4 +783,83 @@ void main() {
       controller.recordForPath(file.path)!.contentHash,
     );
   });
+
+  test(
+    'a newer disconnect cancels an older resume while pause persistence is gated',
+    () async {
+      final gate = Completer<void>();
+      final entered = Completer<void>();
+      var gateNextWrite = false;
+      final source = _TestSource();
+      final file = await makeAudio('intent-race.wav', seed: 131);
+      source.add(file.path);
+      final phoneDirectory = Directory('${root.path}/pause-intent-phone');
+      final store = ArchivePhoneStore(
+        directory: phoneDirectory,
+        writeInterceptor: () async {
+          if (!gateNextWrite) return;
+          gateNextWrite = false;
+          if (!entered.isCompleted) entered.complete();
+          await gate.future;
+        },
+      );
+      final controller = MacArchiveController(
+        source: source,
+        isDesk: false,
+        phoneStore: store,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      await controller.initialize();
+      await controller.pairWithCode(pairing.encode());
+      await controller.disconnect();
+      final stat = await file.stat();
+      await store.upsert(
+        ArchivePhoneRecord(
+          localPath: file.path,
+          displayName: '等待恢复的队列',
+          originalExtension: '.wav',
+          deskId: pairing.deskId,
+          phase: MacArchivePhase.pending,
+          length: stat.size,
+          sourceModifiedMs: stat.modified.millisecondsSinceEpoch,
+          manual: true,
+          updatedAt: DateTime(2026, 10, 18),
+        ),
+      );
+
+      gateNextWrite = true;
+      final oldResume = controller.connectNow();
+      await entered.future;
+      final newerDisconnect = controller.disconnect();
+      gate.complete();
+      await expectLater(oldResume, throwsA(isA<ArchiveException>()));
+      await newerDisconnect;
+
+      expect(controller.manualPaused, isTrue);
+      expect(controller.connected, isFalse);
+      expect(store.manualPaused, isTrue);
+      expect(deskStore.entries, isEmpty);
+      controller.dispose();
+
+      final reopened = ArchivePhoneStore(directory: phoneDirectory);
+      await reopened.load();
+      expect(reopened.manualPaused, isTrue);
+      final second = MacArchiveController(
+        source: _TestSource()..add(file.path),
+        isDesk: false,
+        phoneStore: reopened,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      addTearDown(second.dispose);
+      await second.initialize();
+      expect(second.manualPaused, isTrue);
+      await second.waitForWorker();
+      expect(deskStore.entries, isEmpty);
+
+      await second.connectNow();
+      await second.waitForWorker();
+      expect(second.recordForPath(file.path)?.phase, MacArchivePhase.verified);
+      expect(deskStore.entries, hasLength(1));
+    },
+  );
 }
