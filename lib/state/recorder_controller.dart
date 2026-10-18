@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -42,6 +43,7 @@ import 'transcript_store.dart';
 import 'recording.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
+import 'playback_history.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
@@ -51,6 +53,7 @@ import 'topic_summary.dart';
 
 export 'recording.dart';
 export 'recording_library.dart';
+export 'playback_history.dart';
 export 'topic_store.dart';
 export 'topic_note.dart';
 export 'topic_summary.dart';
@@ -500,6 +503,8 @@ class RecorderController extends ChangeNotifier {
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    PlaybackHistoryStore? playbackHistoryStore,
+    AudioPlayer? player,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -511,9 +516,18 @@ class RecorderController extends ChangeNotifier {
        _qwenStt = qwenSpeech ?? QwenSttService(),
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
-       _libraryDirectoryOverride = libraryDirectory {
+       _libraryDirectoryOverride = libraryDirectory,
+       _player = player ?? AudioPlayer() {
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
+    playbackHistory =
+        playbackHistoryStore ??
+        PlaybackHistoryStore(inMemory: !loadPersistedState);
+    _playbackHistoryLoaded = playbackHistory.load().then((_) {
+      if (_disposed) return;
+      playbackSpeed = playbackHistory.speed;
+      notifyListeners();
+    });
     _libraryLoaded = _loadRecordingLibrary();
     _subs.add(
       _ble.scanResults.listen((list) {
@@ -710,6 +724,8 @@ class RecorderController extends ChangeNotifier {
   late final RecordingLibraryStore library;
   late final Future<void> _libraryLoaded;
   final Directory? _libraryDirectoryOverride;
+  late final PlaybackHistoryStore playbackHistory;
+  late final Future<void> _playbackHistoryLoaded;
   late final TopicStore topics;
   late final Future<void> _topicsLoaded;
   AppLifecycleListener? _lifecycle;
@@ -3450,6 +3466,11 @@ class RecorderController extends ChangeNotifier {
   }
 
   DateTime _lastPositionNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastHistoryPersist = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _switchingAudio = false;
+  bool _pausePersistArmed = false;
+  Duration _confirmedPosition = Duration.zero;
+  bool _playbackStartedSinceSource = false;
 
   void _wirePlayer() {
     _subs.add(
@@ -3458,6 +3479,17 @@ class RecorderController extends ChangeNotifier {
         // Clear sticky "正在播放" header once audio is no longer playing.
         if (!s.playing) {
           _clearPlayingStatus();
+          // Stop/loading events during a source switch still carry the old
+          // path but may already expose the new source's zero position.
+          if (_pausePersistArmed &&
+              !_switchingAudio &&
+              _player.processingState == ProcessingState.ready) {
+            _pausePersistArmed = false;
+            unawaited(_persistPlayback(at: _confirmedPosition));
+          }
+        } else if (!_switchingAudio) {
+          _playbackStartedSinceSource = true;
+          _pausePersistArmed = true;
         }
         notifyListeners();
       }),
@@ -3472,6 +3504,34 @@ class RecorderController extends ChangeNotifier {
           _lastPositionNotify = now;
           notifyListeners();
         }
+        if (_switchingAudio) return;
+        final paused = !isPlaying && !playbackCompleted;
+        final changed = pos != _confirmedPosition;
+        final resumedAfterCompletion =
+            playbackCompleted &&
+            duration > Duration.zero &&
+            pos < duration - const Duration(milliseconds: 500);
+        if (resumedAfterCompletion) {
+          // A lock-screen or notification seek bypasses seekTo.
+          playbackCompleted = false;
+          _confirmedPosition = pos;
+          unawaited(_persistPlayback(at: pos));
+          notifyListeners();
+        } else if (isPlaying ||
+            pos > Duration.zero ||
+            paused && changed && _playbackStartedSinceSource) {
+          // Position events before the player reports "playing" still carry
+          // real progress. A paused seek must persist immediately, including
+          // a seek back to zero; source-initialization zero events are ignored
+          // until that source has actually started playing.
+          _confirmedPosition = pos;
+          if (paused ||
+              now.difference(_lastHistoryPersist) >=
+                  const Duration(seconds: 2)) {
+            _lastHistoryPersist = now;
+            unawaited(_persistPlayback(at: _confirmedPosition));
+          }
+        }
       }),
     );
     _subs.add(
@@ -3483,13 +3543,17 @@ class RecorderController extends ChangeNotifier {
     _subs.add(
       _player.processingStateStream.listen((state) {
         if (state == ProcessingState.completed) {
+          if (_switchingAudio) return;
           isPlaying = false;
           // Keep the final position and mark completion so the UI never looks
           // like it is still playing or silently restarts at zero.
           playbackCompleted = true;
           if (duration > Duration.zero) position = duration;
+          _confirmedPosition = position;
           _clearPlayingStatus();
           unawaited(_player.pause());
+          _pausePersistArmed = false;
+          unawaited(_persistPlayback(completed: true));
           notifyListeners();
         }
       }),
@@ -3515,7 +3579,7 @@ class RecorderController extends ChangeNotifier {
   late final WifiExportService _wifi;
   late final RealtimeBleStream _realtime;
   late final BleFilePull _blePull;
-  final AudioPlayer _player = AudioPlayer();
+  final AudioPlayer _player;
   final List<StreamSubscription> _subs = [];
 
   /// Auto BLE realtime transfer while device is recording (no SoftAP).
@@ -5165,6 +5229,7 @@ class RecorderController extends ChangeNotifier {
     final removed = <String>{};
     var deleted = 0;
     final failed = <String>[];
+    var historyCleanupFailed = false;
 
     for (final path in selected) {
       final id = ExportCatalog.fileIdFromPath(path);
@@ -5216,6 +5281,13 @@ class RecorderController extends ChangeNotifier {
           speakerAliasesByFileId.remove(id);
         }
         final key = _recordingKey(path: path);
+        try {
+          await playbackHistory.forget(fileId: id, path: path);
+        } catch (_) {
+          // The recording is already gone; stale history must not turn a
+          // completed deletion into a failure or skip the remaining cleanup.
+          historyCleanupFailed = true;
+        }
         await _fileJobs.discard(key);
         await topics.forgetRecording(key);
         await analysis.forgetRecording(key);
@@ -5256,7 +5328,8 @@ class RecorderController extends ChangeNotifier {
     statusMessage = failed.isEmpty
         ? '已删除 $deleted 个本地录音'
         : '已删除 $deleted 个录音，${failed.length} 个失败';
-    errorMessage = failed.isEmpty ? null : failed.join('\n');
+    final errors = [...failed, if (historyCleanupFailed) '录音已删除，但播放进度记录未能清理'];
+    errorMessage = errors.isEmpty ? null : errors.join('\n');
     notifyListeners();
     return (deleted: deleted, failed: failed);
   }
@@ -5958,6 +6031,90 @@ class RecorderController extends ChangeNotifier {
 
   bool isFileLoaded(int fileId) => playingFileId == fileId;
 
+  PlaybackPoint? get latestPlayback {
+    final point = playbackHistory.latest;
+    if (point == null) return null;
+    final path = point.fileId == null
+        ? point.path
+        : localPathsByFileId[point.fileId];
+    if (path == null || !File(path).existsSync()) return null;
+    return point.path == path ? point : point.copyWith(path: path);
+  }
+
+  String? get continuePath => playingPath ?? latestPlayback?.path;
+
+  bool get continueCompleted =>
+      continuePath != null &&
+      playingPath == null &&
+      (latestPlayback?.completed ?? false);
+
+  String get continueDetail {
+    final point = latestPlayback;
+    if (point == null || playingPath != null) return '原声保存在手机';
+    if (point.completed) return '已听完 · 可重新回听';
+    if (point.duration > Duration.zero) {
+      return '已听 ${_clock(point.position)} / ${_clock(point.duration)}';
+    }
+    return '原声保存在手机';
+  }
+
+  Duration resumePositionFor(String path, {int? fileId, Duration? total}) {
+    final point = playbackHistory.forRecording(fileId: fileId, path: path);
+    if (point == null || point.completed) return Duration.zero;
+    if (total != null &&
+        total > Duration.zero &&
+        point.position >= total - const Duration(seconds: 1)) {
+      return Duration.zero;
+    }
+    return point.position;
+  }
+
+  @visibleForTesting
+  Future<void> waitForPlaybackHistory() => _playbackHistoryLoaded;
+
+  Future<void> _persistPlayback({bool? completed, Duration? at}) async {
+    final path = playingPath;
+    if (path == null || _disposed) return;
+    final fileId = playingFileId;
+    final total = duration;
+    final point = at ?? position;
+    final finished =
+        completed ??
+        (total > Duration.zero &&
+            point >= total - const Duration(milliseconds: 500));
+    await _playbackHistoryLoaded;
+    if (_disposed) return;
+    try {
+      await playbackHistory.record(
+        PlaybackPoint(
+          path: path,
+          fileId: fileId,
+          position: finished && total > Duration.zero ? total : point,
+          duration: total,
+          completed: finished,
+          updatedAt: DateTime.now(),
+        ),
+      );
+    } catch (_) {
+      if (_disposed) return;
+      statusMessage = '回听进度保存失败，重启后可能丢失';
+      notifyListeners();
+    }
+  }
+
+  String _playbackTitle(String path) {
+    final label = library.assetForPath(path)?.displayName.trim();
+    if (label != null && label.isNotEmpty) return label;
+    final edited = ExportCatalog.editableLabelFromPath(path).trim();
+    return edited.isEmpty ? p.basename(path) : edited;
+  }
+
+  Future<void> toggleLatestPlayback() async {
+    final path = latestPlayback?.path;
+    if (path == null) return;
+    await playExported(path, fileId: fileIdFromPath(path));
+  }
+
   /// Load local [path] and start playback. Tapping the same track pauses.
   ///
   /// Completed exports are standard WAV. Legacy raw Opus files are still muxed
@@ -5965,7 +6122,7 @@ class RecorderController extends ChangeNotifier {
   Future<void> playExported(
     String path, {
     int? fileId,
-    Duration startAt = Duration.zero,
+    Duration? startAt,
   }) async {
     if (_isRecordingAudioLocked(fileId ?? fileIdFromPath(path), path)) {
       errorMessage = '录音保存后即可播放';
@@ -5998,6 +6155,9 @@ class RecorderController extends ChangeNotifier {
         await togglePlayPause();
         return;
       }
+      if (playingPath != null) {
+        await _persistPlayback(at: _confirmedPosition);
+      }
       errorMessage = null;
       statusMessage = '正在准备播放 ${path.split('/').last}…';
       notifyListeners();
@@ -6008,32 +6168,54 @@ class RecorderController extends ChangeNotifier {
         throw StateError('封装后的音频无效（${len}B）');
       }
 
-      await _player.stop();
-      final durationFromFile = await _player.setFilePath(playPath);
-      await _player.setSpeed(playbackSpeed);
-      playingPath = path; // keep UI key on original export path
-      playingFileId = logicalId;
-      position = Duration.zero;
-      duration = durationFromFile ?? _player.duration ?? Duration.zero;
-      // Duration may arrive async on some platforms.
-      if (duration <= Duration.zero) {
-        await Future<void>.delayed(const Duration(milliseconds: 80));
-        duration = _player.duration ?? Duration.zero;
+      _switchingAudio = true;
+      _playbackStartedSinceSource = false;
+      try {
+        await _player.stop();
+        await _playbackHistoryLoaded;
+        final title = _playbackTitle(path);
+        final durationFromFile = await _player.setAudioSource(
+          AudioSource.uri(
+            Uri.file(playPath),
+            tag: MediaItem(
+              id: logicalId == null ? 'koe:$path' : 'koe:id:$logicalId',
+              title: title,
+              album: 'Koe 资料',
+            ),
+          ),
+        );
+        await _player.setSpeed(playbackSpeed);
+        playingPath = path; // keep UI key on original export path
+        playingFileId = logicalId;
+        duration = durationFromFile ?? _player.duration ?? Duration.zero;
+        // Duration may arrive async on some platforms.
+        if (duration <= Duration.zero) {
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          duration = _player.duration ?? Duration.zero;
+        }
+        final resume = _resolvePlaybackStart(
+          path: path,
+          fileId: logicalId,
+          total: duration,
+          requested: startAt,
+        );
+        position = resume;
+        _confirmedPosition = resume;
+        if (resume > Duration.zero) {
+          await _player.seek(resume);
+        }
+        playbackCompleted = false;
+        final sec = duration.inMilliseconds / 1000.0;
+        statusMessage = resume > Duration.zero
+            ? '已从 ${_clock(resume)} 继续回听'
+            : duration > Duration.zero
+            ? '正在播放 · ${sec.toStringAsFixed(1)}s'
+            : '正在播放 ${path.split('/').last}';
+        _startPlayback();
+        notifyListeners();
+      } finally {
+        _switchingAudio = false;
       }
-      if (startAt > Duration.zero) {
-        final target = duration > Duration.zero && startAt > duration
-            ? duration
-            : startAt;
-        await _player.seek(target);
-        position = target;
-      }
-      playbackCompleted = false;
-      await _player.play();
-      final sec = duration.inMilliseconds / 1000.0;
-      statusMessage = duration > Duration.zero
-          ? '正在播放 · ${sec.toStringAsFixed(1)}s'
-          : '正在播放 ${path.split('/').last}';
-      notifyListeners();
     } catch (e) {
       errorMessage = '无法播放录音，请重新下载后重试';
       statusMessage = '无法播放';
@@ -6041,9 +6223,17 @@ class RecorderController extends ChangeNotifier {
       playingFileId = null;
       isPlaying = false;
       playbackCompleted = false;
+      _playbackStartedSinceSource = false;
+      _confirmedPosition = Duration.zero;
       duration = Duration.zero;
       notifyListeners();
     }
+  }
+
+  String _clock(Duration value) {
+    final minutes = value.inMinutes;
+    final seconds = value.inSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
   /// Load [path] when needed, jump to [start] and play.
@@ -6057,7 +6247,7 @@ class RecorderController extends ChangeNotifier {
       if (playingPath == null) return;
       if (!isPlaying) {
         playbackCompleted = false;
-        await _player.play();
+        _startPlayback();
         notifyListeners();
       }
       return;
@@ -6067,19 +6257,46 @@ class RecorderController extends ChangeNotifier {
 
   int? _fileIdFromPath(String path) => ExportCatalog.fileIdFromPath(path);
 
+  Duration _resolvePlaybackStart({
+    required String path,
+    required Duration total,
+    int? fileId,
+    Duration? requested,
+  }) {
+    if (requested == null) {
+      return resumePositionFor(path, fileId: fileId, total: total);
+    }
+    return total > Duration.zero && requested > total ? total : requested;
+  }
+
+  void _startPlayback() {
+    unawaited(
+      _player.play().catchError((Object error, StackTrace stack) {
+        if (_disposed) return;
+        errorMessage = '无法播放录音，请重新下载后重试';
+        statusMessage = '无法播放';
+        isPlaying = false;
+        notifyListeners();
+      }),
+    );
+  }
+
   Future<void> togglePlayPause() async {
     if (playingPath == null) return;
     try {
       if (isPlaying) {
         await _player.pause();
+        await _persistPlayback(at: _confirmedPosition);
+        _pausePersistArmed = false;
         _clearPlayingStatus();
       } else {
         if (playbackCompleted) {
           await _player.seek(Duration.zero);
           position = Duration.zero;
+          _confirmedPosition = Duration.zero;
           playbackCompleted = false;
         }
-        await _player.play();
+        _startPlayback();
         final sec = duration.inMilliseconds / 1000.0;
         statusMessage = duration > Duration.zero
             ? '正在播放 · ${sec.toStringAsFixed(1)}s'
@@ -6088,6 +6305,22 @@ class RecorderController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       errorMessage = '无法控制播放，请重新打开录音';
+      notifyListeners();
+    }
+  }
+
+  /// System interruptions and route changes must stop real audio, not only
+  /// move the progress bar.
+  Future<void> pauseForInterruption({String? message}) async {
+    if (playingPath == null || !isPlaying) return;
+    try {
+      await _player.pause();
+      await _persistPlayback(at: _confirmedPosition);
+      _clearPlayingStatus();
+      statusMessage = message ?? '播放已暂停，可手动继续';
+      notifyListeners();
+    } catch (error) {
+      errorMessage = '播放状态已中断，请手动继续';
       notifyListeners();
     }
   }
@@ -6106,6 +6339,7 @@ class RecorderController extends ChangeNotifier {
     try {
       await _player.seek(target);
       position = target;
+      _confirmedPosition = target;
       playbackCompleted = duration > Duration.zero && target >= duration;
       notifyListeners();
     } catch (e) {
@@ -6120,11 +6354,20 @@ class RecorderController extends ChangeNotifier {
       await _player.setSpeed(speed);
     } catch (e) {
       errorMessage = '无法更改播放速度，请重试';
+      notifyListeners();
+      return;
+    }
+    try {
+      await _playbackHistoryLoaded;
+      await playbackHistory.setSpeed(speed);
+    } catch (_) {
+      statusMessage = '倍速已更改，但无法保存到本机';
     }
     notifyListeners();
   }
 
   Future<void> stopPlayback() async {
+    await _persistPlayback(at: _confirmedPosition);
     try {
       await _player.stop();
     } catch (_) {}
@@ -6132,6 +6375,7 @@ class RecorderController extends ChangeNotifier {
     playingFileId = null;
     isPlaying = false;
     playbackCompleted = false;
+    _confirmedPosition = Duration.zero;
     position = Duration.zero;
     duration = Duration.zero;
     _clearPlayingStatus();
