@@ -31,6 +31,7 @@ import '../ble/ble_file_pull.dart';
 import '../ble/realtime_stream.dart';
 import '../crypto/device_crypto.dart';
 import '../platform/background_sync_service.dart';
+import '../platform/place_capture.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
@@ -499,6 +500,7 @@ class RecorderController extends ChangeNotifier {
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    PlaceCapture? placeCapture,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -510,7 +512,8 @@ class RecorderController extends ChangeNotifier {
        _qwenStt = qwenSpeech ?? QwenSttService(),
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
-       _libraryDirectoryOverride = libraryDirectory {
+       _libraryDirectoryOverride = libraryDirectory,
+       _placeCapture = placeCapture ?? const DevicePlaceCapture() {
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
     _libraryLoaded = _loadRecordingLibrary();
@@ -708,6 +711,7 @@ class RecorderController extends ChangeNotifier {
   late final RecordingLibraryStore library;
   late final Future<void> _libraryLoaded;
   final Directory? _libraryDirectoryOverride;
+  final PlaceCapture _placeCapture;
   late final TopicStore topics;
   late final Future<void> _topicsLoaded;
   AppLifecycleListener? _lifecycle;
@@ -1600,9 +1604,7 @@ class RecorderController extends ChangeNotifier {
         : id == null
         ? '当前录音'
         : _recordingDateTitle(id);
-    final recordedAt =
-        asset?.recordedAt ??
-        (id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000));
+    final recordedAt = asset?.recordedAt ?? _recordedAtFromFileId(id);
     // Device recordings have no library entry until they are renamed or
     // archived; their retrieval time is still the local file timestamp.
     final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
@@ -1655,9 +1657,17 @@ class RecorderController extends ChangeNotifier {
   }
 
   String _recordingDateTitle(int id) {
-    final date = DateTime.fromMillisecondsSinceEpoch(id * 1000);
+    final date = _recordedAtFromFileId(id);
+    if (date == null) return '当前录音';
     String pad(int value) => value.toString().padLeft(2, '0');
     return '${date.year}/${pad(date.month)}/${pad(date.day)} ${pad(date.hour)}:${pad(date.minute)}';
+  }
+
+  /// Device file ids are Unix seconds. Imported originals use a microsecond
+  /// timestamp prefix, which must never be treated as a recording date.
+  DateTime? _recordedAtFromFileId(int? id) {
+    if (id == null || id < 1000000000 || id > 4102444800) return null;
+    return DateTime.fromMillisecondsSinceEpoch(id * 1000);
   }
 
   DateTime? _localFileTimestamp(String? path) {
@@ -4812,6 +4822,73 @@ class RecorderController extends ChangeNotifier {
   RecordingAsset? recordingAssetForPath(String path) =>
       library.assetForPath(path);
 
+  /// Adds or corrects a place label from the user. A manual label always wins
+  /// over a later automatic capture.
+  Future<void> setRecordingPlace(String path, String label) async {
+    await _libraryLoaded;
+    final trimmed = label.trim();
+    if (trimmed.isEmpty) throw ArgumentError('地点不能为空');
+    final id = fileIdFromPath(path);
+    final asset =
+        library.assetForPath(path) ??
+        RecordingAsset(
+          path: path,
+          displayName: _placeDisplayName(path),
+          source: RecordingSource.device,
+          recordedAt: _recordedAtFromFileId(id),
+          importedAt: _localFileTimestamp(path) ?? DateTime.now(),
+        );
+    await library.upsert(
+      asset.copyWith(
+        place: RecordingPlace(
+          label: trimmed,
+          source: RecordingPlaceSource.manual,
+          capturedAt: DateTime.now(),
+        ),
+      ),
+    );
+    notifyListeners();
+  }
+
+  String _placeDisplayName(String path) {
+    final label = ExportCatalog.editableLabelFromPath(path).trim();
+    return label.isEmpty ? p.basename(path) : label;
+  }
+
+  /// Removes the place note without touching the original audio.
+  Future<void> clearRecordingPlace(String path) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    if (asset == null) throw StateError('找不到这条资料');
+    await library.upsert(asset.copyWith(clearPlace: true));
+    notifyListeners();
+  }
+
+  /// Best-effort coarse place for a phone recording.
+  ///
+  /// Imported files and device recordings never receive the import/retrieval
+  /// location: their recording place stays unknown. A denied permission or a
+  /// capture failure simply leaves the place blank.
+  Future<void> attachAutomaticPlace(String path) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    if (asset == null || asset.source != RecordingSource.phone) return;
+    if (asset.place?.source == RecordingPlaceSource.manual) return;
+    final captured = await _placeCapture.capture();
+    if (captured == null || _disposed) return;
+    final current = library.assetForPath(path);
+    if (current == null ||
+        current.place?.source == RecordingPlaceSource.manual) {
+      return;
+    }
+    try {
+      await library.upsert(current.copyWith(place: captured));
+      notifyListeners();
+    } catch (_) {
+      // Location is optional; the recording remains saved and readable.
+    }
+  }
+
   @visibleForTesting
   Future<void> waitForRecordingLibrary() => _libraryLoaded;
 
@@ -4819,7 +4896,7 @@ class RecorderController extends ChangeNotifier {
     final asset = library.assetForPath(path);
     if (asset?.recordedAt != null) return asset!.recordedAt;
     final id = fileIdFromPath(path);
-    return id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000);
+    return _recordedAtFromFileId(id);
   }
 
   /// Copies a user-selected audio file into the app's original-audio library.

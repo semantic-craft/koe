@@ -333,69 +333,130 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                '资料信息',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              _InfoRow(
-                label: '录音发生时间',
-                value: recording.recordedAt == null
-                    ? '未知（导入文件未提供）'
-                    : date(recording.recordedAt),
-              ),
-              _InfoRow(
-                label: '导入资料库',
-                value: recording.importedAt == null
-                    ? '未知'
-                    : date(recording.importedAt),
-              ),
-              _InfoRow(
-                label: '时长',
-                value: path == null
-                    ? '未知'
-                    : FilesBody.formatDuration(
-                        controller.localDurationForPath(path),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          final place = path == null
+              ? null
+              : controller.recordingAssetForPath(path)?.place;
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    '资料信息',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+                  _InfoRow(
+                    label: '录音发生时间',
+                    value: recording.recordedAt == null
+                        ? '未知（导入文件未提供）'
+                        : date(recording.recordedAt),
+                  ),
+                  _InfoRow(
+                    label: '导入资料库',
+                    value: recording.importedAt == null
+                        ? '未知'
+                        : date(recording.importedAt),
+                  ),
+                  _InfoRow(
+                    label: '时长',
+                    value: path == null
+                        ? '未知'
+                        : FilesBody.formatDuration(
+                            controller.localDurationForPath(path),
+                          ),
+                  ),
+                  _InfoRow(
+                    label: '来源',
+                    value: recordingSourceLabel(recording.source),
+                  ),
+                  _InfoRow(
+                    label: '原件状态',
+                    value: !recording.originalPresent
+                        ? '找不到原件'
+                        : recording.originalComplete
+                        ? '已保留'
+                        : '已保留但不完整',
+                  ),
+                  _InfoRow(
+                    label: '原件位置',
+                    value: path ?? '尚未保存到本机',
+                    selectable: true,
+                  ),
+                  if (recording.originalPath != null)
+                    _InfoRow(
+                      label: '原始文件',
+                      value: recording.originalPath!,
+                      selectable: true,
+                    ),
+                  _InfoRow(
+                    label: '地点',
+                    value: place == null
+                        ? '未知'
+                        : '${place.label} · ${place.source == RecordingPlaceSource.automatic ? '自动记录' : '手动填写'}',
+                  ),
+                  if (path != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: () async {
+                              final saved = await _editPlace(path);
+                              if (saved && sheetContext.mounted) {
+                                setSheetState(() {});
+                              }
+                            },
+                            child: Text(place == null ? '填写地点' : '修改地点'),
+                          ),
+                          if (place != null)
+                            TextButton(
+                              onPressed: () async {
+                                try {
+                                  await controller.clearRecordingPlace(path);
+                                  if (sheetContext.mounted) {
+                                    setSheetState(() {});
+                                  }
+                                } catch (_) {
+                                  if (sheetContext.mounted) {
+                                    ScaffoldMessenger.of(
+                                      sheetContext,
+                                    ).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('地点未清除，请重试'),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                              child: const Text('清除地点'),
+                            ),
+                        ],
                       ),
+                    ),
+                  _InfoRow(
+                    label: '归档状态',
+                    value: recording.archived ? '回收站' : '资料库',
+                  ),
+                ],
               ),
-              _InfoRow(
-                label: '来源',
-                value: recordingSourceLabel(recording.source),
-              ),
-              _InfoRow(
-                label: '原件状态',
-                value: !recording.originalPresent
-                    ? '找不到原件'
-                    : recording.originalComplete
-                    ? '已保留'
-                    : '已保留但不完整',
-              ),
-              _InfoRow(
-                label: '原件位置',
-                value: path ?? '尚未保存到本机',
-                selectable: true,
-              ),
-              if (recording.originalPath != null)
-                _InfoRow(
-                  label: '原始文件',
-                  value: recording.originalPath!,
-                  selectable: true,
-                ),
-              _InfoRow(
-                label: '归档状态',
-                value: recording.archived ? '回收站' : '资料库',
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
+  }
+
+  Future<bool> _editPlace(String path) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _PlaceEditDialog(path: path),
+    );
+    return saved == true;
   }
 
   @override
@@ -1842,4 +1903,110 @@ class _TranslationDialogState extends State<_TranslationDialog> {
       ),
     ],
   );
+}
+
+class _PlaceEditDialog extends StatefulWidget {
+  const _PlaceEditDialog({required this.path});
+
+  final String path;
+
+  @override
+  State<_PlaceEditDialog> createState() => _PlaceEditDialogState();
+}
+
+class _PlaceEditDialogState extends State<_PlaceEditDialog> {
+  late final TextEditingController _input;
+  var _error = '';
+  var _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _input = TextEditingController(
+      text:
+          context
+              .read<RecorderController>()
+              .recordingAssetForPath(widget.path)
+              ?.place
+              ?.label ??
+          '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final text = _input.text.trim();
+    if (text.isEmpty) {
+      setState(() => _error = '请填写地名');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = '';
+    });
+    try {
+      await context.read<RecorderController>().setRecordingPlace(
+        widget.path,
+        text,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = '地点未保存，请重试；输入仍保留。';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('记录地点'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            key: const ValueKey('place-edit-input'),
+            controller: _input,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '地名或区域',
+              hintText: '例如：上海 徐汇',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '只保存地名，不保存精确坐标；拒绝定位不影响录音。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_error.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              key: const ValueKey('place-edit-error'),
+              _error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: Text(_saving ? '保存中…' : '保存'),
+        ),
+      ],
+    );
+  }
 }

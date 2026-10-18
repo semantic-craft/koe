@@ -7,6 +7,48 @@ import 'package:path_provider/path_provider.dart';
 
 enum RecordingSource { device, localImport, phone }
 
+/// Where a recording's place label came from.
+enum RecordingPlaceSource { automatic, manual }
+
+/// A coarse place note attached to one recording.
+///
+/// Only a human-readable region label is stored. Coordinates are deliberately
+/// not persisted: default queries and shares never carry precise location.
+class RecordingPlace {
+  const RecordingPlace({
+    required this.label,
+    required this.source,
+    required this.capturedAt,
+  });
+
+  final String label;
+  final RecordingPlaceSource source;
+  final DateTime capturedAt;
+
+  Map<String, Object?> toJson() => {
+    'label': label,
+    'source': source.name,
+    'capturedAt': capturedAt.toIso8601String(),
+  };
+
+  static RecordingPlace? decode(Object? value) {
+    if (value is! Map) return null;
+    final label = value['label'];
+    final capturedAt = DateTime.tryParse('${value['capturedAt']}');
+    final source = RecordingPlaceSource.values
+        .where((item) => item.name == value['source'])
+        .firstOrNull;
+    if (label is! String || label.trim().isEmpty || capturedAt == null) {
+      return null;
+    }
+    return RecordingPlace(
+      label: label.trim(),
+      source: source ?? RecordingPlaceSource.manual,
+      capturedAt: capturedAt,
+    );
+  }
+}
+
 /// One original audio asset in the local library.
 ///
 /// The audio file is the source of truth. This record only remembers where it
@@ -23,6 +65,7 @@ class RecordingAsset {
     this.contentHash,
     this.originalComplete = true,
     this.archived = false,
+    this.place,
   });
 
   final String path;
@@ -34,6 +77,7 @@ class RecordingAsset {
   final String? contentHash;
   final bool originalComplete;
   final bool archived;
+  final RecordingPlace? place;
 
   RecordingAsset copyWith({
     String? path,
@@ -45,6 +89,8 @@ class RecordingAsset {
     String? contentHash,
     bool? originalComplete,
     bool? archived,
+    RecordingPlace? place,
+    bool clearPlace = false,
   }) => RecordingAsset(
     path: path ?? this.path,
     displayName: displayName ?? this.displayName,
@@ -55,6 +101,7 @@ class RecordingAsset {
     contentHash: contentHash ?? this.contentHash,
     originalComplete: originalComplete ?? this.originalComplete,
     archived: archived ?? this.archived,
+    place: clearPlace ? null : (place ?? this.place),
   );
 
   Map<String, Object?> toJson() => {
@@ -67,6 +114,7 @@ class RecordingAsset {
     if (contentHash != null) 'contentHash': contentHash,
     'originalComplete': originalComplete,
     'archived': archived,
+    if (place != null) 'place': place!.toJson(),
   };
 
   static RecordingAsset? decode(Object? value) {
@@ -102,6 +150,7 @@ class RecordingAsset {
           : null,
       originalComplete: value['originalComplete'] != false,
       archived: value['archived'] == true,
+      place: RecordingPlace.decode(value['place']),
     );
   }
 }
@@ -190,8 +239,18 @@ class RecordingLibraryStore {
   };
 
   Future<void> upsert(RecordingAsset asset, {bool strict = true}) async {
+    final previous = _assets[asset.path];
     _assets[asset.path] = asset;
-    await save(strict: strict);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      if (previous == null) {
+        _assets.remove(asset.path);
+      } else {
+        _assets[asset.path] = previous;
+      }
+      rethrow;
+    }
   }
 
   Future<void> upsertAll(
