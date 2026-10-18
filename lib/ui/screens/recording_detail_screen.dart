@@ -12,6 +12,7 @@ import '../../ai/apple_speech.dart';
 import '../../ai/stt_types.dart';
 import '../../state/export_catalog.dart';
 import '../../state/recorder_controller.dart';
+import '../../state/recording_bookmarks.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../transcript_layout.dart';
@@ -61,6 +62,195 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Segments the reader can locate; bookmarks resolve against the same list
+  /// the user sees so a marker never lands on a different sentence.
+  List<TranscriptSegment> _locatableSegments(
+    RecorderController c,
+    RecordingViewData recording,
+  ) {
+    final path = recording.path;
+    final source = normalizeSttText(recording.text);
+    final raw = recording.segments;
+    final matched =
+        transcriptSegmentsMatchText(
+          raw,
+          source,
+          aliases: path == null ? const {} : c.speakerAliasesForPath(path),
+        )
+        ? raw
+        : const <TranscriptSegment>[];
+    final locatable =
+        recording.originalPresent &&
+        transcriptSegmentsLocatable(
+          matched,
+          duration: path == null ? null : c.localDurationForPath(path),
+        );
+    return locatable ? matched : const <TranscriptSegment>[];
+  }
+
+  List<BookmarkTarget> _bookmarkTargets(
+    RecorderController c,
+    RecordingViewData recording,
+    List<TranscriptSegment> segments,
+  ) {
+    if (recording.live) return const [];
+    final path = recording.path;
+    return [
+      for (final bookmark in c.bookmarksFor(widget.reference))
+        resolveBookmark(
+          bookmark,
+          audioAvailable:
+              path != null &&
+              recording.originalPresent &&
+              !recording.audioLocked,
+          audioChanged: c.recordingAudioChanged(widget.reference),
+          segments: segments,
+          duration: path == null ? null : c.localDurationForPath(path),
+        ),
+    ];
+  }
+
+  void _openBookmark(BookmarkTarget target) {
+    final c = context.read<RecorderController>();
+    final recording = c.recordingView(widget.reference);
+    final path = recording.path;
+    final seekTo = target.seekTo;
+    if (seekTo == null || path == null) {
+      _notice(target.unavailableReason ?? '这条书签暂时无法回听');
+      return;
+    }
+    if (_showTranslation) setState(() => _showTranslation = false);
+    c.playFrom(path, seekTo, fileId: recording.reference.fileId);
+  }
+
+  Future<void> _addBookmark() async {
+    final c = context.read<RecorderController>();
+    final recording = c.recordingView(widget.reference);
+    final path = recording.path;
+    if (path == null) return;
+    final loaded =
+        c.playingPath == path ||
+        (recording.reference.fileId != null &&
+            c.playingFileId == recording.reference.fileId);
+    final position = loaded ? c.position : Duration.zero;
+    final segments = _locatableSegments(c, recording);
+    final index = segments.isEmpty ? null : _segmentAt(segments, position);
+    final segment = index == null ? null : segments[index];
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _BookmarkEditor(
+        title: '添加书签',
+        position: position,
+        excerpt: segment == null
+            ? null
+            : transcriptSegmentLabel(
+                segment,
+                aliases: c.speakerAliasesForPath(path),
+              ),
+        onSave: (note) => c.addBookmark(
+          widget.reference,
+          position: position,
+          segment: segment,
+          note: note,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    _notice(saved == true ? '已保存书签' : '已取消，未保存书签');
+  }
+
+  Future<void> _editBookmark(RecordingBookmark bookmark) async {
+    final c = context.read<RecorderController>();
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _BookmarkEditor(
+        title: '编辑批注',
+        position: bookmark.position,
+        excerpt: bookmark.segmentText,
+        initialNote: bookmark.note,
+        onSave: (note) => c.updateBookmarkNote(bookmark.id, note),
+      ),
+    );
+    if (!mounted) return;
+    _notice(saved == true ? '已更新批注' : '已取消，批注未更改');
+  }
+
+  Future<void> _removeBookmark(
+    BuildContext sheetContext,
+    RecordingBookmark bookmark,
+  ) async {
+    final c = context.read<RecorderController>();
+    final confirmed = await showDialog<bool>(
+      context: sheetContext,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这条书签？'),
+        content: const Text('书签和批注将被删除，录音与转写不受影响。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除', style: TextStyle(color: AppColors.coral)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await c.removeBookmark(bookmark.id);
+    } catch (_) {
+      _notice('删除失败，书签仍保留');
+    }
+  }
+
+  Future<void> _openBookmarkList() async {
+    final c = context.read<RecorderController>();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: 0.75,
+          child: ListenableBuilder(
+            listenable: c,
+            builder: (context, _) {
+              final recording = c.recordingView(widget.reference);
+              final targets = _bookmarkTargets(
+                c,
+                recording,
+                _locatableSegments(c, recording),
+              );
+              return _BookmarkListSheet(
+                targets: targets,
+                showMarkers: c.showBookmarkMarkers,
+                onShowMarkersChanged: (value) async {
+                  try {
+                    await c.setShowBookmarkMarkers(value);
+                  } catch (_) {
+                    _notice('标记显示设置未保存');
+                  }
+                },
+                onOpen: (target) {
+                  Navigator.pop(sheetContext);
+                  _openBookmark(target);
+                },
+                onEdit: (bookmark) => _editBookmark(bookmark),
+                onRemove: (bookmark) => _removeBookmark(sheetContext, bookmark),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _share(RecordingViewData recording) async {
@@ -507,6 +697,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         !_showTranslation && segmentsLocatable && c.playingPath == path
         ? _segmentAt(segmentText, c.position)
         : null;
+    final bookmarkTargets = _bookmarkTargets(
+      c,
+      recording,
+      segmentsLocatable ? segmentText : const [],
+    );
+    final showMarkers = c.showBookmarkMarkers;
+    String markerLabel(RecordingBookmark bookmark) =>
+        bookmark.note.isNotEmpty ? bookmark.note : bookmark.segmentText ?? '';
     final text = _showTranslation && hasTranslation ? translated : source;
     final fileReady =
         recording.path != null &&
@@ -527,8 +725,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         ? c.topics.topicOf(c.recordingKeyFor(widget.reference))
         : null;
     final hasRecoverableCache =
-        recording.path != null &&
-        c.hasRecoverableCacheForPath(recording.path!);
+        recording.path != null && c.hasRecoverableCacheForPath(recording.path!);
 
     return Scaffold(
       key: ValueKey('recording-detail-${widget.reference.key}'),
@@ -748,6 +945,18 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           label: const Text('翻译'),
                         ),
                     ],
+                    if (!recording.live &&
+                        (path != null || bookmarkTargets.isNotEmpty))
+                      IconButton(
+                        key: const ValueKey('bookmark-list-button'),
+                        tooltip: '书签与批注',
+                        onPressed: _openBookmarkList,
+                        icon: Badge(
+                          isLabelVisible: bookmarkTargets.isNotEmpty,
+                          label: Text('${bookmarkTargets.length}'),
+                          child: const Icon(Icons.bookmarks_outlined),
+                        ),
+                      ),
                     IconButton(
                       tooltip: _showTranslation && hasTranslation
                           ? '复制译文'
@@ -801,6 +1010,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         ? const []
                         : segmentText,
                     activeSegment: translation ? null : activeSegment,
+                    bookmarkedSegments: translation || !showMarkers
+                        ? const {}
+                        : {
+                            for (final target in bookmarkTargets)
+                              if (target.segmentIndex != null)
+                                target.segmentIndex!,
+                          },
                     speakerAliases: translation
                         ? const {}
                         : recording.path == null
@@ -905,6 +1121,26 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       child: InlinePlayer(
                         path: recording.path!,
                         fileId: recording.reference.fileId,
+                        markers: showMarkers
+                            ? [
+                                for (final target in bookmarkTargets)
+                                  if (target.seekTo != null)
+                                    InlinePlayerMarker(
+                                      id: target.bookmark.id,
+                                      at: target.seekTo!,
+                                      label: markerLabel(target.bookmark),
+                                    ),
+                              ]
+                            : const [],
+                        onMarkerTap: (marker) {
+                          for (final target in bookmarkTargets) {
+                            if (target.bookmark.id == marker.id) {
+                              _openBookmark(target);
+                              return;
+                            }
+                          }
+                        },
+                        onAddBookmark: _addBookmark,
                       ),
                     ),
                   ),
@@ -1011,6 +1247,7 @@ class RecordingTextReader extends StatefulWidget {
     this.highlightedParagraph,
     this.segments = const [],
     this.activeSegment,
+    this.bookmarkedSegments = const {},
     this.speakerAliases = const {},
     this.onSegmentTap,
     this.header,
@@ -1021,6 +1258,7 @@ class RecordingTextReader extends StatefulWidget {
   final int? highlightedParagraph;
   final List<TranscriptSegment> segments;
   final int? activeSegment;
+  final Set<int> bookmarkedSegments;
   final Map<String, String> speakerAliases;
   final ValueChanged<int>? onSegmentTap;
   final Widget? header;
@@ -1200,19 +1438,42 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         if (segment != null)
-                                          Text(
-                                            _formatSegmentTime(segment.start),
-                                            key: ValueKey(
-                                              'segment-time-$paragraphIndex',
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color: AppColors.accent,
-                                              fontFeatures: [
-                                                FontFeature.tabularFigures(),
-                                              ],
-                                            ),
+                                          Row(
+                                            children: [
+                                              Text(
+                                                _formatSegmentTime(
+                                                  segment.start,
+                                                ),
+                                                key: ValueKey(
+                                                  'segment-time-$paragraphIndex',
+                                                ),
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: AppColors.accent,
+                                                  fontFeatures: [
+                                                    FontFeature.tabularFigures(),
+                                                  ],
+                                                ),
+                                              ),
+                                              if (widget.bookmarkedSegments
+                                                  .contains(paragraphIndex))
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        left: 6,
+                                                      ),
+                                                  child: Icon(
+                                                    Icons.bookmark_rounded,
+                                                    key: ValueKey(
+                                                      'segment-bookmark-$paragraphIndex',
+                                                    ),
+                                                    size: 14,
+                                                    color: AppColors.accent,
+                                                    semanticLabel: '已加书签',
+                                                  ),
+                                                ),
+                                            ],
                                           ),
                                         if (segment != null)
                                           const SizedBox(height: 2),
@@ -1951,4 +2212,302 @@ class _TranslationDialogState extends State<_TranslationDialog> {
       ),
     ],
   );
+}
+
+/// Adds or edits one bookmark note. The sheet only closes after the store
+/// confirms the write; a failure keeps the draft and says nothing was saved.
+class _BookmarkEditor extends StatefulWidget {
+  const _BookmarkEditor({
+    required this.title,
+    required this.position,
+    required this.onSave,
+    this.excerpt,
+    this.initialNote = '',
+  });
+
+  final String title;
+  final Duration position;
+  final String? excerpt;
+  final String initialNote;
+  final Future<void> Function(String note) onSave;
+
+  @override
+  State<_BookmarkEditor> createState() => _BookmarkEditorState();
+}
+
+class _BookmarkEditorState extends State<_BookmarkEditor> {
+  late final _note = TextEditingController(text: widget.initialNote);
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(_note.text);
+      if (mounted) Navigator.pop(context, true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = '未保存：书签无法写入本机存储。草稿已保留，可稍后重试。';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        24,
+        0,
+        24,
+        16 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _formatSegmentTime(widget.position),
+              key: const ValueKey('bookmark-editor-time'),
+              style: const TextStyle(
+                color: AppColors.accent,
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            if (widget.excerpt != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                widget.excerpt!,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  height: 1.4,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('bookmark-note-field'),
+              controller: _note,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: '批注（可选）',
+                hintText: '写下你的观察',
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: const ValueKey('bookmark-save-error'),
+                style: const TextStyle(color: AppColors.coral, height: 1.4),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: _saving
+                      ? null
+                      : () => Navigator.pop(context, false),
+                  child: const Text('取消'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _saving ? null : _save,
+                  child: Text(_saving ? '正在保存…' : '保存'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BookmarkListSheet extends StatelessWidget {
+  const _BookmarkListSheet({
+    required this.targets,
+    required this.showMarkers,
+    required this.onShowMarkersChanged,
+    required this.onOpen,
+    required this.onEdit,
+    required this.onRemove,
+  });
+
+  final List<BookmarkTarget> targets;
+  final bool showMarkers;
+  final ValueChanged<bool> onShowMarkersChanged;
+  final ValueChanged<BookmarkTarget> onOpen;
+  final ValueChanged<RecordingBookmark> onEdit;
+  final ValueChanged<RecordingBookmark> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: const ValueKey('bookmark-list'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+          child: Text(
+            '书签与批注',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+        SwitchListTile(
+          key: const ValueKey('bookmark-markers-switch'),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+          title: const Text('在播放条和正文显示标记'),
+          subtitle: const Text('只影响显示，不会删除书签'),
+          value: showMarkers,
+          onChanged: onShowMarkersChanged,
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: targets.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    '还没有书签。播放时点“为当前片段加书签”，可保存位置和个人批注。',
+                    key: ValueKey('bookmark-list-empty'),
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.5,
+                    ),
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: targets.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final target = targets[index];
+                    final bookmark = target.bookmark;
+                    final time = _formatSegmentTime(bookmark.position);
+                    return Semantics(
+                      button: target.available,
+                      label: target.available
+                          ? '从 $time 回听书签'
+                          : '书签 $time 暂时无法回听',
+                      child: InkWell(
+                        key: ValueKey('bookmark-item-$index'),
+                        onTap: target.available ? () => onOpen(target) : null,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 12, 8, 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          target.available
+                                              ? Icons.bookmark_rounded
+                                              : Icons.bookmark_remove_outlined,
+                                          size: 16,
+                                          color: target.available
+                                              ? AppColors.accent
+                                              : AppColors.textMuted,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          time,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontFeatures: [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    if (bookmark.segmentText != null) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        bookmark.segmentText!,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: AppColors.textSecondary,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                    ],
+                                    if (bookmark.note.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        bookmark.note,
+                                        style: const TextStyle(height: 1.4),
+                                      ),
+                                    ],
+                                    if (target.unavailableReason != null) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        target.unavailableReason!,
+                                        key: ValueKey(
+                                          'bookmark-unavailable-$index',
+                                        ),
+                                        style: const TextStyle(
+                                          color: AppColors.coral,
+                                          fontSize: 13,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: '编辑批注',
+                                onPressed: () => onEdit(bookmark),
+                                icon: const Icon(Icons.edit_outlined),
+                              ),
+                              IconButton(
+                                tooltip: '删除书签',
+                                onPressed: () => onRemove(bookmark),
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
 }
