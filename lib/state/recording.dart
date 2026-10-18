@@ -1,5 +1,6 @@
 import '../ai/speech_provider.dart';
 import '../ai/stt_types.dart';
+import 'recording_library.dart';
 
 /// Navigation identity survives a live recording acquiring its file id/path.
 class RecordingReference {
@@ -102,6 +103,13 @@ class RecordingViewData {
     this.provider = SttProvider.soniox,
     this.transcriptionEnabled = true,
     this.speechReady = true,
+    this.source = RecordingSource.device,
+    this.recordedAt,
+    this.importedAt,
+    this.originalPath,
+    this.originalPresent = true,
+    this.originalComplete = true,
+    this.archived = false,
   });
 
   final RecordingReference reference;
@@ -120,4 +128,11 @@ class RecordingViewData {
   final SttProvider provider;
   final bool transcriptionEnabled;
   final bool speechReady;
+  final RecordingSource source;
+  final DateTime? recordedAt;
+  final DateTime? importedAt;
+  final String? originalPath;
+  final bool originalPresent;
+  final bool originalComplete;
+  final bool archived;
 }

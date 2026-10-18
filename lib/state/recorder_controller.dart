@@ -1,4 +1,5 @@
 import '../platform/credential_store.dart';
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -40,6 +41,7 @@ import 'export_catalog.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
 import 'recording_analysis.dart';
+import 'recording_library.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
@@ -48,6 +50,7 @@ import 'topic_note.dart';
 import 'topic_summary.dart';
 
 export 'recording.dart';
+export 'recording_library.dart';
 export 'topic_store.dart';
 export 'topic_note.dart';
 export 'topic_summary.dart';
@@ -494,6 +497,8 @@ class RecorderController extends ChangeNotifier {
     Future<String> Function(String rawPath)? rawExportConverter,
     Future<Duration?> Function(String path)? localDurationReader,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
+    RecordingLibraryStore? libraryStore,
+    Directory? libraryDirectory,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -504,7 +509,11 @@ class RecorderController extends ChangeNotifier {
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
-       _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load {
+       _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
+       _libraryDirectoryOverride = libraryDirectory {
+    library =
+        libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
+    _libraryLoaded = _loadRecordingLibrary();
     _subs.add(
       _ble.scanResults.listen((list) {
         devices = list;
@@ -696,6 +705,9 @@ class RecorderController extends ChangeNotifier {
 
   /// Whether topic notes (#49) are active. First version: iPhone only.
   final bool topicsEnabled;
+  late final RecordingLibraryStore library;
+  late final Future<void> _libraryLoaded;
+  final Directory? _libraryDirectoryOverride;
   late final TopicStore topics;
   late final Future<void> _topicsLoaded;
   AppLifecycleListener? _lifecycle;
@@ -1580,11 +1592,20 @@ class RecorderController extends ChangeNotifier {
               ? savedTranslation
               : null);
     final label = path == null ? '' : ExportCatalog.editableLabelFromPath(path);
-    final title = label.isNotEmpty
+    final asset = path == null ? null : library.assetForPath(path);
+    final title = asset?.displayName.isNotEmpty == true
+        ? asset!.displayName
+        : label.isNotEmpty
         ? label
         : id == null
         ? '当前录音'
         : _recordingDateTitle(id);
+    final recordedAt =
+        asset?.recordedAt ??
+        (id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000));
+    // Device recordings have no library entry until they are renamed or
+    // archived; their retrieval time is still the local file timestamp.
+    final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
     return RecordingViewData(
       reference: RecordingReference(
         sessionId: ref.sessionId,
@@ -1620,6 +1641,15 @@ class RecorderController extends ChangeNotifier {
       error:
           _recordingErrors[key] ?? _fileJobs.jobs[key]?.error ?? session?.error,
       progress: _fileJobKey == key ? fileTranscriptionProgress : null,
+      source: asset?.source ?? RecordingSource.device,
+      recordedAt: recordedAt,
+      importedAt: importedAt,
+      originalPath: asset?.originalPath,
+      originalPresent: path == null ? false : File(path).existsSync(),
+      originalComplete:
+          (asset?.originalComplete ?? true) &&
+          (id == null || !_incompleteRetrievalIds.contains(id)),
+      archived: asset?.archived ?? false,
     );
   }
 
@@ -1627,6 +1657,15 @@ class RecorderController extends ChangeNotifier {
     final date = DateTime.fromMillisecondsSinceEpoch(id * 1000);
     String pad(int value) => value.toString().padLeft(2, '0');
     return '${date.year}/${pad(date.month)}/${pad(date.day)} ${pad(date.hour)}:${pad(date.minute)}';
+  }
+
+  DateTime? _localFileTimestamp(String? path) {
+    if (path == null) return null;
+    try {
+      return File(path).lastModifiedSync();
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _isRecordingAudioLocked(int? id, String? path) {
@@ -4689,6 +4728,141 @@ class RecorderController extends ChangeNotifier {
     return Directory(p.join(base.path, 'AnkerRecorder', 'exports'));
   }
 
+  Future<Directory> _importDirectory() async {
+    if (_libraryDirectoryOverride != null) {
+      return _libraryDirectoryOverride;
+    }
+    Directory base;
+    try {
+      base = await getApplicationDocumentsDirectory();
+    } catch (_) {
+      base = Directory.systemTemp;
+    }
+    return Directory(p.join(base.path, 'AnkerRecorder', 'imports'));
+  }
+
+  Future<void> _loadRecordingLibrary() async {
+    await library.load();
+    final present = <String>[];
+    for (final asset in library.assets) {
+      if (File(asset.path).existsSync()) present.add(asset.path);
+    }
+    if (present.isNotEmpty && !_disposed) {
+      _registerExportedPaths([...exportedPaths, ...present]);
+      notifyListeners();
+    }
+  }
+
+  RecordingAsset? recordingAssetForPath(String path) =>
+      library.assetForPath(path);
+
+  @visibleForTesting
+  Future<void> waitForRecordingLibrary() => _libraryLoaded;
+
+  DateTime? recordingRecordedAtForPath(String path) {
+    final asset = library.assetForPath(path);
+    if (asset?.recordedAt != null) return asset!.recordedAt;
+    final id = fileIdFromPath(path);
+    return id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000);
+  }
+
+  /// Copies a user-selected audio file into the app's original-audio library.
+  ///
+  /// The returned path is stable across restarts. Equal content is reused
+  /// rather than imported twice. Metadata persistence is part of the commit:
+  /// if it fails, the newly copied file is removed and the caller sees failure.
+  Future<({String path, bool duplicate, RecordingAsset asset})>
+  importLocalAudio(String sourcePath, {DateTime? recordedAt}) async {
+    await _libraryLoaded;
+    const extensions = {
+      '.wav',
+      '.m4a',
+      '.mp3',
+      '.aac',
+      '.flac',
+      '.ogg',
+      '.opus',
+    };
+    final source = File(sourcePath);
+    final extension = p.extension(sourcePath).toLowerCase();
+    if (!extensions.contains(extension)) {
+      throw StateError('不支持这种音频格式，请选择 WAV、M4A、MP3、AAC、FLAC、OGG 或 Opus');
+    }
+    if (!await source.exists()) throw StateError('所选音频不存在，请重新选择');
+    if (await source.length() == 0) throw StateError('所选音频为空，无法保存');
+
+    String? contentHash;
+    try {
+      contentHash = await audioVersion(sourcePath);
+    } on AudioVersionException catch (error) {
+      throw StateError(error.message);
+    }
+    if (contentHash == null) throw StateError('无法读取所选音频，请重新选择');
+
+    final existing = library.assetForHash(contentHash);
+    if (existing != null) {
+      _registerExportedPaths([...exportedPaths, existing.path]);
+      statusMessage = '这条音频已在资料库中';
+      errorMessage = null;
+      notifyListeners();
+      return (path: existing.path, duplicate: true, asset: existing);
+    }
+
+    final now = DateTime.now();
+    final importedAt = now;
+    final dir = await _importDirectory();
+    await dir.create(recursive: true);
+    final rawName = p.basenameWithoutExtension(sourcePath).trim();
+    final safeName = rawName
+        .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1f]'), '_')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final displayName = safeName.isEmpty ? '导入的录音' : safeName;
+    final fileName =
+        '${importedAt.microsecondsSinceEpoch}_${contentHash.substring(0, 12)}'
+        '${safeName.isEmpty ? '' : '_$safeName'}$extension';
+    final target = File(p.join(dir.path, fileName));
+    final temporary = File('${target.path}.part');
+    var copied = false;
+    try {
+      await source.copy(temporary.path);
+      if (await temporary.length() != await source.length()) {
+        throw StateError('音频复制不完整，请重试');
+      }
+      final copiedHash = await audioVersion(temporary.path);
+      if (copiedHash != contentHash) {
+        throw StateError('音频复制后内容发生变化，请重试');
+      }
+      await temporary.rename(target.path);
+      copied = true;
+      final asset = RecordingAsset(
+        path: target.path,
+        displayName: displayName,
+        source: RecordingSource.localImport,
+        recordedAt: recordedAt,
+        importedAt: importedAt,
+        originalPath: p.absolute(sourcePath),
+        contentHash: contentHash,
+      );
+      await library.upsert(asset);
+      _registerExportedPaths([...exportedPaths, target.path]);
+      _invalidateLocalDuration(target.path);
+      statusMessage = '原件已保存';
+      errorMessage = null;
+      notifyListeners();
+      return (path: target.path, duplicate: false, asset: asset);
+    } catch (error) {
+      try {
+        if (await temporary.exists()) await temporary.delete();
+        if (copied && await target.exists()) await target.delete();
+      } catch (_) {}
+      errorMessage = error is StateError ? error.message : '原件保存失败，请检查存储空间后重试';
+      statusMessage = '保存失败，原件未加入资料库';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   Future<void> _loadLocalExports({bool notify = true}) async {
     try {
       final dir = await _localExportDirectory();
@@ -4847,6 +5021,7 @@ class RecorderController extends ChangeNotifier {
         for (final candidate in logicalPaths) {
           final file = File(candidate);
           if (await file.exists()) await file.delete();
+          await library.remove(candidate, strict: false);
           transcriptsByPath.remove(candidate);
           speakerAliasesByPath.remove(candidate);
           _localDurations.remove(candidate);
@@ -4936,6 +5111,14 @@ class RecorderController extends ChangeNotifier {
     }
     final cachedDuration = _localDurations.remove(path);
     if (cachedDuration != null) _localDurations[targetPath] = cachedDuration;
+    final asset = library.assetForPath(path);
+    if (asset != null) {
+      await library.rename(
+        path,
+        asset.copyWith(path: targetPath, displayName: label.trim()),
+        strict: false,
+      );
+    }
     final renamedPaths = exportedPaths
         .map((item) => item == path ? targetPath : item)
         .toList();

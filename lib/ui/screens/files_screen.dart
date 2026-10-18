@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -41,6 +42,13 @@ class FilesBody extends StatefulWidget {
     return hours > 0
         ? '$hours:$minuteText:$secondText'
         : '$minuteText:$secondText';
+  }
+
+  static String formatDateTime(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} '
+        '${two(local.hour)}:${two(local.minute)}';
   }
 
   @override
@@ -173,6 +181,43 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
   bool _selecting = false;
   bool _saving = false;
   bool _deleting = false;
+  bool _importing = false;
+
+  Future<void> _importLocalAudio(BuildContext context) async {
+    if (_importing) return;
+    setState(() => _importing = true);
+    try {
+      final selected = await openFile(
+        confirmButtonText: '导入',
+        acceptedTypeGroups: const [
+          XTypeGroup(
+            label: '音频',
+            extensions: ['wav', 'm4a', 'mp3', 'aac', 'flac', 'ogg', 'opus'],
+            mimeTypes: ['audio/*'],
+          ),
+        ],
+      );
+      if (selected == null || !context.mounted) return;
+      final result = await context.read<RecorderController>().importLocalAudio(
+        selected.path,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.duplicate ? '已复用资料库中的同一音频' : '原件已保存到资料库'),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error is StateError ? error.message : '无法导入音频，请重试'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
 
   void _toggleSelecting() {
     setState(() {
@@ -277,6 +322,21 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (!_selecting)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const ValueKey('import-local-audio'),
+              onPressed: _importing ? null : () => _importLocalAudio(context),
+              icon: _importing
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_rounded, size: 20),
+              label: Text(_importing ? '正在保存原件…' : '导入本地音频'),
+            ),
+          ),
         if (!_selecting &&
             widget.paths.isNotEmpty &&
             (RecordingNavigation.of(context)?.wide ?? false))
@@ -331,7 +391,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
                     hint: _Hint(
                       icon: Icons.folder_open_rounded,
                       title: '暂无本地录音',
-                      body: '用设备开始录音，或在「设备端」下载已有录音。',
+                      body: '导入手机里的音频，或在「设备端」下载已有录音。',
                     ),
                   )
                 : ListView.separated(
@@ -705,6 +765,10 @@ class _LocalExportCard extends StatelessWidget {
     final text = FilesBody.cleanTranscript(recording.text);
     final loaded = c.playingPath == path;
     final duration = FilesBody.formatDuration(c.localDurationForPath(path));
+    final recordedAt = c.recordingRecordedAtForPath(path);
+    final source =
+        c.recordingAssetForPath(path)?.source ?? RecordingSource.device;
+    final originalPresent = File(path).existsSync();
     final status = recording.audioLocked
         ? (recording.live ? '录音中' : '正在保存')
         : recording.processing
@@ -764,7 +828,16 @@ class _LocalExportCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '$duration${status == null ? '' : ' · $status'}',
+                        '${recordedAt == null ? '发生时间未知' : '发生 ${FilesBody.formatDateTime(recordedAt)}'}'
+                        ' · $duration · ${recordingSourceLabel(source)}'
+                        ' · ${!originalPresent
+                            ? '原件缺失'
+                            : !recording.originalComplete
+                            ? '原件不完整'
+                            : '原件已保存'}',
+                        key: ValueKey('recording-facts-$path'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
                           color: recording.error != null
@@ -772,6 +845,18 @@ class _LocalExportCard extends StatelessWidget {
                               : AppColors.textSecondary,
                         ),
                       ),
+                      if (status != null) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          status,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: recording.error != null
+                                ? AppColors.coral
+                                : AppColors.textMuted,
+                          ),
+                        ),
+                      ],
                       if (text.isNotEmpty && !selecting) ...[
                         const SizedBox(height: 8),
                         Text(
