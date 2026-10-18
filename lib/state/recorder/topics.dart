@@ -401,6 +401,8 @@ mixin _RecorderTopics on ChangeNotifier {
     }
   }
 
+  // Only called from other parts, through their abstract declarations.
+  // ignore: unused_element
   Future<void> _scheduleTopicAssist(String recordingKey, String transcript) {
     if (!topicsEnabled || _disposed) return Future<void>.value();
     final excerpt = topicTranscriptExcerpt(transcript);
