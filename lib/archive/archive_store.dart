@@ -565,8 +565,9 @@ class ArchivePhoneStore {
     required String to,
     required ArchivePhoneRecord expected,
   }) => _serializedMutation(() async {
-    if (!identical(_records[from], expected) || _records.containsKey(to))
+    if (!identical(_records[from], expected) || _records.containsKey(to)) {
       return false;
+    }
     final next = Map<String, ArchivePhoneRecord>.of(_records)
       ..remove(from)
       ..[to] = expected.copyWith(localPath: to);

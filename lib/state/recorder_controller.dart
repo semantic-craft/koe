@@ -5437,8 +5437,9 @@ class RecorderController extends ChangeNotifier {
               preDeleted,
               expectedVersion: forgottenVersion,
             );
-            if (!restored)
+            if (!restored) {
               failed.add('${p.basename(path)}：删除失败，归档记录已有新操作，请检查资料状态');
+            }
           } catch (_) {
             failed.add('${p.basename(path)}：删除失败，且归档记录无法恢复；请重新归档修复');
           }
