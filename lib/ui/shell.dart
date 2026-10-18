@@ -9,8 +9,12 @@ import 'recording_navigation.dart';
 import 'screens/device_screen.dart';
 import 'screens/communication_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/library_screen.dart';
+import 'screens/new_recording_sheet.dart';
+import 'screens/projects_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/today_screen.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -22,7 +26,11 @@ class _AppShellState extends State<AppShell> {
   final _navigator = GlobalKey<NavigatorState>();
   late final _routes = _RecordingRouteObserver(_routeChanged);
   int _index = 0;
+  int _mobileIndex = 0;
   bool _wide = false;
+  bool? _renderedWide;
+  int? _compactRestoreIndex;
+  Route<void>? _compactSettingsRoute;
   // Keep a visible desktop section visible when the window becomes compact.
   bool _sectionVisible = false;
   int _handledLiveRevision = 0;
@@ -49,10 +57,10 @@ class _AppShellState extends State<AppShell> {
   void _openRecording(RecordingReference reference) {
     final navigator = _navigator.currentState;
     if (navigator == null) return;
-    if (_sectionVisible || (_wide && _index != 0)) {
+    if (_wide && _index != 0) {
       setState(() {
         _sectionVisible = false;
-        if (_wide) _index = 0;
+        _index = 0;
       });
     }
     if (_sameRecording(_routes.visibleReference, reference)) return;
@@ -88,7 +96,7 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
-  void _selectTab(int index) {
+  void _selectDesktopTab(int index) {
     setState(() {
       _index = index;
       _sectionVisible = index != 0 && (_wide || _sectionVisible);
@@ -98,12 +106,60 @@ class _AppShellState extends State<AppShell> {
     if (index == 1) c.refreshInfoOnDeviceTabEnter();
   }
 
+  void _selectMobileTab(int index) {
+    if (_mobileIndex == index) return;
+    setState(() => _mobileIndex = index);
+    final c = context.read<RecorderController>();
+    if (index == 2) c.refreshFilesOnTabEnter();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     _wide =
         MediaQuery.sizeOf(context).width >= 1100 &&
         MediaQuery.textScalerOf(context).scale(14) < 21;
+    final previousWide = _renderedWide;
+    _renderedWide = _wide;
+    if (previousWide == true && !_wide && _index != 0) {
+      final restore = _index;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _wide) return;
+        setState(() {
+          _compactRestoreIndex = restore;
+          _index = 0;
+          if (restore == 1) _mobileIndex = 2;
+        });
+        if (restore == 2) {
+          final navigator = _navigator.currentState;
+          if (navigator != null) {
+            final route = MaterialPageRoute<void>(
+              settings: const RouteSettings(name: 'settings'),
+              builder: (_) => const SettingsScreen(showBack: true),
+            );
+            _compactSettingsRoute = route;
+            navigator.push(route);
+          }
+        }
+      });
+    } else if (previousWide == false &&
+        _wide &&
+        (_compactSettingsRoute != null || _compactRestoreIndex != null)) {
+      final route = _compactSettingsRoute;
+      final restore = _compactRestoreIndex;
+      _compactSettingsRoute = null;
+      _compactRestoreIndex = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_wide) return;
+        if (route != null && route.isActive) {
+          _navigator.currentState?.removeRoute(route);
+        }
+        setState(() {
+          _index = restore ?? 0;
+          _sectionVisible = _index != 0;
+        });
+      });
+    }
     final current = c.currentRecordingReference;
     final newLive = c.liveSessionRevision != _handledLiveRevision;
     final shortcut = c.shortcutNavigationRevision != _handledShortcutRevision;
@@ -125,7 +181,7 @@ class _AppShellState extends State<AppShell> {
         });
       }
     }
-    final covered = _index != 0 && (_wide || _sectionVisible);
+    final covered = _wide && _sectionVisible;
     final visible = covered ? null : _routes.visibleReference;
     final showRecording =
         current != null && c.isLiveSession && !_sameRecording(current, visible);
@@ -138,9 +194,10 @@ class _AppShellState extends State<AppShell> {
 
     return RecordingNavigation(
       onOpen: _openRecording,
-      tabIndex: _index,
+      tabIndex: _mobileIndex,
       wide: _wide,
       selected: _wide ? visible : null,
+      onSelectTab: _selectMobileTab,
       child: PopScope(
         canPop: !detailVisible,
         onPopInvokedWithResult: (didPop, _) {
@@ -150,7 +207,8 @@ class _AppShellState extends State<AppShell> {
           body: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_wide) _DesktopSidebar(index: _index, onSelect: _selectTab),
+              if (_wide)
+                _DesktopSidebar(index: _index, onSelect: _selectDesktopTab),
               if (_wide)
                 Offstage(
                   offstage: _index != 0,
@@ -183,6 +241,17 @@ class _AppShellState extends State<AppShell> {
                         offstage: !covered,
                         child: _DesktopPages(index: _index),
                       ),
+                    if (!_wide && !detailVisible)
+                      Positioned(
+                        right: 16,
+                        bottom: 12,
+                        child: _AskKoeButton(
+                          onPressed: () => showAskKoeSheet(
+                            context,
+                            onOpenLibrary: () => _selectMobileTab(2),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -211,7 +280,10 @@ class _AppShellState extends State<AppShell> {
                         ),
                       ),
                     if (!_wide && !detailVisible)
-                      _NavBar(index: _index, onSelect: _selectTab),
+                      _MobileNavBar(
+                        index: _mobileIndex,
+                        onSelect: _selectMobileTab,
+                      ),
                     if (detailVisible && (showPlayer || showRecording))
                       SizedBox(height: MediaQuery.paddingOf(context).bottom),
                   ],
@@ -233,7 +305,7 @@ class _ShellPages extends StatelessWidget {
     if (navigation.wide) return const _ReaderPlaceholder();
     return IndexedStack(
       index: navigation.tabIndex,
-      children: const [HomeScreen(), DeviceScreen(), SettingsScreen()],
+      children: const [TodayScreen(), ProjectsScreen(), LibraryScreen()],
     );
   }
 }
@@ -380,8 +452,8 @@ class _CompactPlayer extends StatelessWidget {
   }
 }
 
-class _NavBar extends StatelessWidget {
-  const _NavBar({required this.index, required this.onSelect});
+class _MobileNavBar extends StatelessWidget {
+  const _MobileNavBar({required this.index, required this.onSelect});
 
   final int index;
   final ValueChanged<int> onSelect;
@@ -401,23 +473,23 @@ class _NavBar extends StatelessWidget {
           child: Row(
             children: [
               _NavItem(
-                key: const ValueKey('nav-home'),
-                icon: Icons.home_rounded,
-                label: '首页',
+                key: const ValueKey('nav-today'),
+                icon: Icons.today_outlined,
+                label: '今日',
                 selected: index == 0,
                 onTap: () => onSelect(0),
               ),
               _NavItem(
-                key: const ValueKey('nav-device'),
-                icon: Icons.devices_rounded,
-                label: '设备',
+                key: const ValueKey('nav-projects'),
+                icon: Icons.workspaces_outline,
+                label: '项目',
                 selected: index == 1,
                 onTap: () => onSelect(1),
               ),
               _NavItem(
-                key: const ValueKey('nav-settings'),
-                icon: Icons.settings_rounded,
-                label: '设置',
+                key: const ValueKey('nav-library'),
+                icon: Icons.library_music_outlined,
+                label: '资料',
                 selected: index == 2,
                 onTap: () => onSelect(2),
               ),
@@ -447,36 +519,64 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = selected ? AppColors.accent : AppColors.textSecondary;
     return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              AnimatedContainer(
-                key: selected ? const ValueKey('active-tab-indicator') : null,
-                duration: const Duration(milliseconds: 180),
-                width: selected ? 22 : 0,
-                height: 2,
-                color: selected ? AppColors.accent : Colors.transparent,
-              ),
-            ],
+                const SizedBox(height: 3),
+                AnimatedContainer(
+                  key: selected ? const ValueKey('active-tab-indicator') : null,
+                  duration: const Duration(milliseconds: 180),
+                  width: selected ? 22 : 0,
+                  height: 2,
+                  color: selected ? AppColors.accent : Colors.transparent,
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AskKoeButton extends StatelessWidget {
+  const _AskKoeButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      key: const ValueKey('ask-koe'),
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: AppColors.mint,
+        foregroundColor: Colors.white,
+        minimumSize: const Size(44, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+      ),
+      icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+      label: const Text('问 Koe'),
     );
   }
 }

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -14,6 +13,8 @@ import '../../protocol/models.dart';
 import '../../state/recorder_controller.dart';
 import '../recording_navigation.dart';
 import '../../theme/app_theme.dart';
+import '../import_audio.dart';
+import '../library_filter.dart';
 import '../../wifi/wifi_export_service.dart';
 import '../widgets/widgets.dart';
 
@@ -24,9 +25,13 @@ class FilesBody extends StatefulWidget {
   const FilesBody({
     super.key,
     this.padding = const EdgeInsets.fromLTRB(20, 8, 20, 0),
+    this.query = '',
+    this.typeFilter = LibraryTypeFilter.all,
   });
 
   final EdgeInsets padding;
+  final String query;
+  final LibraryTypeFilter typeFilter;
 
   /// Display cleanup: Soniox `<end>` → newline (see [normalizeSttText]).
   static String cleanTranscript(String raw) => normalizeSttText(raw);
@@ -80,9 +85,29 @@ class _FilesBodyState extends State<FilesBody>
     final exporting = c.isExporting || c.needsWifiJoin;
     final busy =
         c.phase == AppPhase.busy || exporting || c.downloadingFileId != null;
-    final localPaths = c.exportedPaths.toList();
-    final localCount = c.exportedPaths.length;
+    final normalizedQuery = widget.query.trim().toLowerCase();
+    final localPaths = <String>[];
+    for (final path in c.exportedPaths) {
+      final view = c.recordingView(
+        RecordingReference(fileId: c.fileIdFromPath(path), path: path),
+      );
+      if (normalizedQuery.isNotEmpty &&
+          !view.title.toLowerCase().contains(normalizedQuery)) {
+        continue;
+      }
+      if (widget.typeFilter == LibraryTypeFilter.audio &&
+          !view.originalPresent) {
+        continue;
+      }
+      if (widget.typeFilter == LibraryTypeFilter.text &&
+          view.text.trim().isEmpty) {
+        continue;
+      }
+      localPaths.add(path);
+    }
+    final localCount = localPaths.length;
     final deviceCount = c.files.length;
+    final filtered = localCount != c.exportedPaths.length;
 
     return Padding(
       padding: widget.padding,
@@ -155,7 +180,13 @@ class _FilesBodyState extends State<FilesBody>
               controller: _tabs,
               children: [
                 // ── 已导出（本地） ─────────────────────────────────
-                _LocalExportsTab(paths: localPaths),
+                _LocalExportsTab(
+                  paths: localPaths,
+                  emptyTitle: filtered ? '没有匹配的资料' : '暂无本地录音',
+                  emptyBody: filtered
+                      ? '换一个标题关键词，或切回「全部」查看其他资料。'
+                      : '导入手机里的音频，或在「设备端」下载已有录音。',
+                ),
                 // ── 设备端 ────────────────────────────────────────
                 _DeviceFilesTab(busy: busy),
               ],
@@ -168,9 +199,15 @@ class _FilesBodyState extends State<FilesBody>
 }
 
 class _LocalExportsTab extends StatefulWidget {
-  const _LocalExportsTab({required this.paths});
+  const _LocalExportsTab({
+    required this.paths,
+    this.emptyTitle = '暂无本地录音',
+    this.emptyBody = '导入手机里的音频，或在「设备端」下载已有录音。',
+  });
 
   final List<String> paths;
+  final String emptyTitle;
+  final String emptyBody;
 
   @override
   State<_LocalExportsTab> createState() => _LocalExportsTabState();
@@ -187,33 +224,7 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
     if (_importing) return;
     setState(() => _importing = true);
     try {
-      final selected = await openFile(
-        confirmButtonText: '导入',
-        acceptedTypeGroups: const [
-          XTypeGroup(
-            label: '音频',
-            extensions: ['wav', 'm4a', 'mp3', 'aac', 'flac', 'ogg', 'opus'],
-            mimeTypes: ['audio/*'],
-          ),
-        ],
-      );
-      if (selected == null || !context.mounted) return;
-      final result = await context.read<RecorderController>().importLocalAudio(
-        selected.path,
-      );
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.duplicate ? '已复用资料库中的同一音频' : '原件已保存到资料库'),
-        ),
-      );
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error is StateError ? error.message : '无法导入音频，请重试'),
-        ),
-      );
+      await pickAndImportLocalAudio(context);
     } finally {
       if (mounted) setState(() => _importing = false);
     }
@@ -387,11 +398,11 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
                 notification.depth == 0 &&
                 notification.metrics.axis == Axis.vertical,
             child: widget.paths.isEmpty
-                ? const _ScrollableHint(
+                ? _ScrollableHint(
                     hint: _Hint(
                       icon: Icons.folder_open_rounded,
-                      title: '暂无本地录音',
-                      body: '导入手机里的音频，或在「设备端」下载已有录音。',
+                      title: widget.emptyTitle,
+                      body: widget.emptyBody,
                     ),
                   )
                 : ListView.separated(

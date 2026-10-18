@@ -170,6 +170,8 @@ void main() {
     const size = Size(393, 852);
     const safeInsets = EdgeInsets.only(top: 59, bottom: 34);
     await pump(tester, c, const AppShell(), size: size, safeInsets: safeInsets);
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('recording-row-${reference.path}')));
     await tester.pumpAndSettle();
     expect(
@@ -397,7 +399,7 @@ void main() {
       addTearDown(c.dispose);
       await pump(tester, c, const AppShell());
       expect(find.byKey(const ValueKey('compact-player')), findsOneWidget);
-      await tester.tap(find.text('Playback recording'));
+      await tester.tap(find.byKey(const ValueKey('compact-player')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('compact-player')), findsNothing);
       expect(find.byTooltip('播放录音'), findsOneWidget);
@@ -942,6 +944,8 @@ void main() {
         find.byKey(const ValueKey('bottom-navigation-bar')),
         findsOneWidget,
       );
+      await tester.tap(find.byKey(const ValueKey('nav-library')));
+      await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('recording-row-/tmp/101.wav')),
         findsOneWidget,

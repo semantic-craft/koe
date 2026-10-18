@@ -11,10 +11,14 @@ import '../../platform/credential_store.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import '../widgets/about_koe.dart';
+import 'device_screen.dart';
 
 /// Processing choices apply to the next recording.
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.showBack = false});
+
+  /// Pushed as a phone route (#131) rather than an always-visible desktop pane.
+  final bool showBack;
 
   @override
   Widget build(BuildContext context) {
@@ -22,96 +26,172 @@ class SettingsScreen extends StatelessWidget {
 
     return GradientScaffold(
       child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        child: Stack(
           children: [
-            const Padding(
-              padding: EdgeInsets.only(top: 16, bottom: 24),
-              child: Text(
-                '处理与偏好',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600),
-              ),
-            ),
-            if (c.settingsStorageError != null)
-              Text(
-                c.settingsStorageError!,
-                style: const TextStyle(color: AppColors.coral),
-              ),
-            if (c.settingsStorageError != null)
-              TextButton(
-                onPressed: c.reloadSettings,
-                child: const Text('重试读取安全配置'),
-              ),
-            const SectionLabel('传输'),
-            _SettingsGroup(
-              key: const ValueKey('settings-transfer-group'),
-              child: _SettingsSwitch(
-                title: '自动传输',
-                subtitle: c.autoTransferActive
-                    ? '正在传输设备端未导出录音…'
-                    : '自动下载设备上的历史录音',
-                value: c.autoRealtime,
-                onChanged: c.setAutoRealtime,
-              ),
-            ),
-            const SizedBox(height: 18),
-            const SectionLabel('语音与翻译'),
-            _SettingsGroup(
-              key: const ValueKey('settings-stt-group'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _SettingsSwitch(
-                    title: '自动转写',
-                    subtitle: '连接录音时实时转写，取回独立录音后自动处理',
-                    value: c.autoTranscribe,
-                    onChanged: c.setAutoTranscribe,
+            ListView(
+              padding: EdgeInsets.fromLTRB(20, showBack ? 56 : 8, 20, 24),
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 8, bottom: 24),
+                  child: Text(
+                    '处理与偏好',
+                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600),
                   ),
-                  const Divider(height: 20),
-                  _ProviderSelector(controller: c),
-                  const SizedBox(height: 16),
-                  if (c.speechProvider.usesEngineTrio) ...[
-                    _CloudEngineSettings(
-                      key: ValueKey(c.speechProvider),
-                      controller: c,
-                      provider: c.speechProvider,
+                ),
+                if (c.settingsStorageError != null)
+                  Text(
+                    c.settingsStorageError!,
+                    style: const TextStyle(color: AppColors.coral),
+                  ),
+                if (c.settingsStorageError != null)
+                  TextButton(
+                    onPressed: c.reloadSettings,
+                    child: const Text('重试读取安全配置'),
+                  ),
+                const SectionLabel('传输'),
+                _SettingsGroup(
+                  key: const ValueKey('settings-transfer-group'),
+                  child: _SettingsSwitch(
+                    title: '自动传输',
+                    subtitle: c.autoTransferActive
+                        ? '正在传输设备端未导出录音…'
+                        : '自动下载设备上的历史录音',
+                    value: c.autoRealtime,
+                    onChanged: c.setAutoRealtime,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const SectionLabel('语音与翻译'),
+                _SettingsGroup(
+                  key: const ValueKey('settings-stt-group'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _SettingsSwitch(
+                        title: '自动转写',
+                        subtitle: '连接录音时实时转写，取回独立录音后自动处理',
+                        value: c.autoTranscribe,
+                        onChanged: c.setAutoTranscribe,
+                      ),
+                      const Divider(height: 20),
+                      _ProviderSelector(controller: c),
+                      const SizedBox(height: 16),
+                      if (c.speechProvider.usesEngineTrio) ...[
+                        _CloudEngineSettings(
+                          key: ValueKey(c.speechProvider),
+                          controller: c,
+                          provider: c.speechProvider,
+                        ),
+                        const SizedBox(height: 14),
+                        _TranscriptLanguageSelector(controller: c),
+                      ] else
+                        _AppleLanguageSettings(controller: c),
+                      if (c.isLiveSession) ...[
+                        const SizedBox(height: 12),
+                        const Text(
+                          '更改将用于下一段录音',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                      if (!c.speechProvider.defersTranscription) ...[
+                        const Divider(height: 28),
+                        _SttModeSelector(controller: c),
+                      ],
+                      if (c.fileJobRecoveryError != null)
+                        Text(c.fileJobRecoveryError!),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const SectionLabel('设备'),
+                _SettingsGroup(
+                  child: ListTile(
+                    key: const ValueKey('device-entry'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.headphones_rounded),
+                    title: const Text('安克录音豆'),
+                    subtitle: Text(
+                      c.connected
+                          ? '已连接 · ${c.displayDeviceName}'
+                          : '未连接设备 · 打开后扫描',
                     ),
-                    const SizedBox(height: 14),
-                    _TranscriptLanguageSelector(controller: c),
-                  ] else
-                    _AppleLanguageSettings(controller: c),
-                  if (c.isLiveSession) ...[
-                    const SizedBox(height: 12),
-                    const Text(
-                      '更改将用于下一段录音',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 13,
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        settings: const RouteSettings(name: 'device'),
+                        builder: (_) => const DeviceScreen(showBack: true),
                       ),
                     ),
-                  ],
-                  if (!c.speechProvider.defersTranscription) ...[
-                    const Divider(height: 28),
-                    _SttModeSelector(controller: c),
-                  ],
-                  if (c.fileJobRecoveryError != null)
-                    Text(c.fileJobRecoveryError!),
-                ],
-              ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const SectionLabel('外部 AI'),
+                _SettingsGroup(
+                  child: ListTile(
+                    key: const ValueKey('external-ai-entry'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.hub_outlined),
+                    title: const Text('外部 AI 连接'),
+                    subtitle: const Text('尚未开放 · 后续用于让授权客户端读取资料'),
+                    trailing: const Text(
+                      '未开放',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    onTap: () => _showExternalAiNotice(context),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                _SettingsGroup(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.info_outline_rounded),
+                    title: const Text('关于 Koe'),
+                    subtitle: const Text(AppIdentity.subtitle),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => showKoeAboutDialog(context),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 18),
-            _SettingsGroup(
-              child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.info_outline_rounded),
-                title: const Text('关于 Koe'),
-                subtitle: const Text(AppIdentity.subtitle),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => showKoeAboutDialog(context),
+            if (showBack)
+              Positioned(
+                left: 8,
+                top: 4,
+                child: IconButton(
+                  key: const ValueKey('settings-back'),
+                  tooltip: '返回',
+                  onPressed: () => Navigator.maybePop(context),
+                  style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
               ),
-            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _showExternalAiNotice(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('外部 AI 尚未开放'),
+        content: const Text(
+          '这里以后用于连接经授权的外部客户端，让它们读取你选择的资料并交办任务。'
+          '当前版本不会发起连接、不会申请权限，也不会显示连接成功。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('知道了'),
+          ),
+        ],
       ),
     );
   }

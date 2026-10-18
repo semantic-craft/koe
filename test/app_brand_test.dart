@@ -23,7 +23,7 @@ void main() {
       addTearDown(controller.dispose);
       await tester.pumpWidget(KoeApp(controller: controller));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('设置'));
+      await tester.tap(find.byKey(const ValueKey('nav-settings')));
       await tester.pumpAndSettle();
       final about = find.text('关于 Koe');
       await tester.scrollUntilVisible(
