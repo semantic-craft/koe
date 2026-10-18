@@ -339,12 +339,11 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
-    bool selectable(String path) =>
-        !c
-            .recordingView(
-              RecordingReference(fileId: c.fileIdFromPath(path), path: path),
-            )
-            .audioLocked;
+    bool selectable(String path) => !c
+        .recordingView(
+          RecordingReference(fileId: c.fileIdFromPath(path), path: path),
+        )
+        .audioLocked;
     _selected.removeWhere(
       (path) => !widget.paths.contains(path) || !selectable(path),
     );
