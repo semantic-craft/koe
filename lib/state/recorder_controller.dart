@@ -76,6 +76,7 @@ part 'recorder/library.dart';
 part 'recorder/place.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
+part 'recorder/transcription_jobs.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
@@ -106,7 +107,8 @@ class RecorderController extends ChangeNotifier
         _RecorderLibrary,
         _RecorderPlace,
         _RecorderArchive,
-        _RecorderTopics {
+        _RecorderTopics,
+        _RecorderTranscriptionJobs {
   @override
   late final RecordingAnalysis analysis =
       _analysisOverride ??
@@ -149,23 +151,6 @@ class RecorderController extends ChangeNotifier
       return RecordingReference(path: resolvedPath ?? key.substring(5));
     }
     return RecordingReference(path: resolvedPath);
-  }
-
-  bool get doubaoFileProcessing => _fileJobProvider == SttProvider.doubao;
-  void cancelDoubaoFileProcessing() {
-    if (doubaoFileProcessing) {
-      _doubaoStt.cancelCurrent();
-      statusMessage = '正在停止等待；结果未确认时，重试会重新上传并可能重复计费';
-      notifyListeners();
-    }
-  }
-
-  void cancelQwenFileProcessing() {
-    if (_fileJobProvider == SttProvider.qwen) {
-      _qwenStt.cancelCurrent();
-      statusMessage = '正在停止等待；云端任务如已提交会保留，稍后可继续查询';
-      notifyListeners();
-    }
   }
 
   @override
@@ -461,35 +446,6 @@ class RecorderController extends ChangeNotifier
   final Directory? _libraryDirectoryOverride;
   @override
   final PlaceCapture _placeCapture;
-  @override
-  Completer<void>? _activeFileJobCompleter;
-
-  bool _fileJobPreparing = false;
-  @override
-  late final FileJobJournal _fileJobs;
-  @override
-  late final Future<void> _fileJobsLoaded;
-  String? fileJobRecoveryError;
-
-  Future<void> _restoreFileJobs() async {
-    try {
-      await Future.wait([_settingsLoaded, _transcriptsLoaded]);
-      await _fileJobs.load();
-      for (final job in _fileJobs.jobs.values.toList()) {
-        if (_disposed) return;
-        if (job.recoverable) {
-          await _deferredJobs.enqueue(
-            job.key,
-            job.path,
-            job.resolve(_settingsConfiguration),
-          );
-        }
-      }
-    } catch (_) {
-      fileJobRecoveryError = '无法读取转写任务记录；请保留数据并检查存储空间';
-    }
-    notifyListeners();
-  }
 
   /// How long a retrieved WAV must keep the same size and modification time
   /// before it can be submitted; see [incompleteRetrievedAudioReason].
@@ -998,6 +954,7 @@ class RecorderController extends ChangeNotifier
     unawaited(_persistSettings());
   }
 
+  @override
   SpeechConfiguration get _settingsConfiguration => SpeechConfiguration(
     provider: speechProvider,
     sourceLanguage: speechProvider == SttProvider.apple
@@ -1020,6 +977,7 @@ class RecorderController extends ChangeNotifier
 
   _RecordingSession? get _currentRecording =>
       _recordingSessions[_currentSessionId];
+  @override
   bool get _liveProcessing =>
       recording ||
       realtimeState.active ||
@@ -1028,8 +986,10 @@ class RecorderController extends ChangeNotifier
       (_currentRecording?.finalizing ?? false);
   // Final BLE/file callbacks can arrive after capture and stream flags clear.
   // They still belong to this take and must never adopt the next provider.
+  @override
   SpeechConfiguration get _activeConfiguration =>
       _liveConfiguration ?? _settingsConfiguration;
+  @override
   bool _isConfigured(SpeechConfiguration config) {
     if (config.provider.retired) return false;
     if (config.provider == SttProvider.apple) {
@@ -1070,6 +1030,7 @@ class RecorderController extends ChangeNotifier
     );
   }
 
+  @override
   _RecordingSession? _sessionForReference(RecordingReference ref) {
     if (ref.sessionId != null) return _recordingSessions[ref.sessionId];
     final id =
@@ -1248,9 +1209,6 @@ class RecorderController extends ChangeNotifier
     }
   }
 
-  bool get fileProcessingBusy =>
-      _fileJobKey != null || _fileJobPreparing || _liveProcessing;
-
   void _bindCurrentRecording({int? fileId, String? path}) {
     final session = _currentRecording;
     if (session == null) return;
@@ -1307,6 +1265,7 @@ class RecorderController extends ChangeNotifier
     }
   }
 
+  @override
   String _speechErrorMessage(Object error) {
     if (error is CloudSttException) return error.message;
     if (error is AudioVersionException) return error.message;
@@ -1666,6 +1625,7 @@ class RecorderController extends ChangeNotifier
   }
 
   /// Store per-file transcript so Home list can show text (not just a button).
+  @override
   void rememberTranscript(
     String path,
     String text, {
@@ -1753,6 +1713,7 @@ class RecorderController extends ChangeNotifier
   }
 
   /// Provider-timed segments for [path], scoped to its transcript key.
+  @override
   List<TranscriptSegment> transcriptSegmentsForPath(String path) {
     final key = _recordingKey(path: path);
     final segments = _transcriptSegments[key];
@@ -2764,469 +2725,6 @@ class RecorderController extends ChangeNotifier
     notifyListeners();
   }
 
-  Future<SpeechResourceStatus> recordingSpeechStatus(
-    String sourceLanguage,
-  ) async {
-    final capabilities = await _appleSpeech.capabilities(
-      sourceLanguage: sourceLanguage,
-    );
-    return capabilities.speechStatus;
-  }
-
-  Future<void> transcribeRecording(
-    RecordingReference ref, {
-    String? sourceLanguage,
-    bool prepareLanguages = false,
-  }) async {
-    final view = recordingView(ref);
-    if (view.path == null) {
-      _recordingErrors[_referenceKey(ref)] = '请先下载录音';
-      notifyListeners();
-      return;
-    }
-    await transcribeLocalFile(
-      view.path!,
-      sourceLanguage:
-          sourceLanguage ??
-          (speechProvider == SttProvider.apple && view.sourceLanguage != 'auto'
-              ? view.sourceLanguage
-              : null),
-      prepareLanguages: prepareLanguages,
-    );
-  }
-
-  /// File jobs never write the current live transcript.
-  Future<void> transcribeLocalFile(
-    String path, {
-    String? sourceLanguage,
-    bool prepareLanguages = false,
-  }) async {
-    await _settingsLoaded;
-    if (_disposed) return;
-    final settings = _settingsConfiguration;
-    final config =
-        settings.provider == SttProvider.apple && sourceLanguage != null
-        ? settings.withSourceLanguage(sourceLanguage.trim())
-        : settings;
-    await _fileJobsLoaded;
-    await _libraryLoaded;
-    // Manual retry runs straight through the deferred mechanism's executor so
-    // the engine answers a busy start with its own readable error.
-    await _deferredJobs.runNow(
-      path,
-      config,
-      prepareLanguages: prepareLanguages,
-    );
-  }
-
-  /// Returns false when a queued deferred job should wait and try again.
-  Future<bool> _runFileTranscription(
-    String path,
-    SpeechConfiguration config, {
-    bool prepareLanguages = false,
-    bool fromQueue = false,
-  }) async {
-    if (_disposed) return true;
-    await _libraryLoaded;
-    await _fileJobsLoaded;
-    final key = _recordingKey(path: path);
-    if (_isTrashedPath(path)) {
-      await _fileJobs.discard(key);
-      _deferredJobs.discard(key);
-      return true;
-    }
-    if (fileProcessingBusy ||
-        _isRecordingAudioLocked(fileIdFromPath(path), path)) {
-      if (!fromQueue) {
-        _recordingErrors[key] = '请在当前录音或处理结束后重试';
-        notifyListeners();
-      }
-      return !fromQueue;
-    }
-    if (_fileJobs.jobs[key]?.stage != 'result' &&
-        (config.provider == SttProvider.apple
-            ? config.sourceLanguage.isEmpty
-            : !_isConfigured(config))) {
-      _recordingErrors[key] = config.provider == SttProvider.apple
-          ? '请选择录音语言'
-          : '请在设置中配置 ${config.provider.label}';
-      final pending = _fileJobs.jobs[key];
-      if (pending != null) {
-        pending.error = _recordingErrors[key];
-        if (pending.taskId == null) pending.stage = 'failed';
-        try {
-          await _fileJobs.save();
-        } catch (_) {}
-      }
-      notifyListeners();
-      return true;
-    }
-    _fileJobPreparing = true;
-    final jobCompleter = Completer<void>();
-    _activeFileJobCompleter = jobCompleter;
-    void finishJobCompleter() {
-      if (!jobCompleter.isCompleted) jobCompleter.complete();
-      if (identical(_activeFileJobCompleter, jobCompleter)) {
-        _activeFileJobCompleter = null;
-      }
-    }
-
-    FileJob job;
-    try {
-      final version = await audioVersion(path);
-      final previous = _fileJobs.jobs[key];
-      // A missing file has no version; it is not "changed" audio and must
-      // reach the readable missing-recording failure below instead.
-      if (version != null &&
-          previous?.audioHash != null &&
-          previous!.audioHash != version &&
-          (fromQueue ||
-              previous.stage == 'result' ||
-              previous.stage == 'running' && previous.taskId != null)) {
-        previous.audioChanged = true;
-        previous.error = '音频内容已变化，原任务与结果保留；请恢复原音频后重试';
-        _recordingErrors[key] = previous.error!;
-        await _fileJobs.save();
-        _fileJobPreparing = false;
-        finishJobCompleter();
-        notifyListeners();
-        return true;
-      }
-      job = await _fileJobs.enqueue(key, path, config, retry: !fromQueue);
-      if (version != null &&
-          previous?.audioHash != null &&
-          previous!.audioHash != version) {
-        job.audioChanged = true;
-      }
-      if (version != null && job.audioHash == null) {
-        job.audioHash = version;
-        await _fileJobs.save();
-      }
-      if (fromQueue && !job.recoverable) {
-        _fileJobPreparing = false;
-        finishJobCompleter();
-        return true;
-      }
-      config = job.resolve(config);
-      if (job.stage != 'result' &&
-          config.provider != SttProvider.apple &&
-          !_isConfigured(config)) {
-        _fileJobPreparing = false;
-        job.error = '任务使用的服务地址已变更，请恢复原配置后重试';
-        _recordingErrors[key] = job.error!;
-        await _fileJobs.save();
-        finishJobCompleter();
-        notifyListeners();
-        return true;
-      }
-    } catch (_) {
-      _fileJobPreparing = false;
-      _recordingErrors[key] = '无法保存转写任务，请检查存储空间后重试';
-      finishJobCompleter();
-      notifyListeners();
-      return true;
-    }
-    _fileJobPreparing = false;
-    if (_disposed) {
-      finishJobCompleter();
-      return true;
-    }
-    if (_isRecordingAudioLocked(fileIdFromPath(path), path) ||
-        config.provider == SttProvider.apple && _liveProcessing) {
-      _recordingErrors[key] = '处理因录音暂停，可在录音结束后重试';
-      finishJobCompleter();
-      notifyListeners();
-      return !fromQueue;
-    }
-    final revision = ++_fileJobRevision;
-    _fileJobKey = key;
-    _fileJobProvider = config.provider;
-    transcribingPath = path;
-    transcribing = true;
-    fileTranscriptionProgress = const SttFileProgress(SttFileStage.preparing);
-    _recordingErrors.remove(key);
-    notifyListeners();
-    try {
-      if (fromQueue && !await File(path).exists()) {
-        throw StateError('录音文件不存在');
-      }
-      if (job.stage != 'result') {
-        job.stage = 'running';
-        job.error = null;
-        await _fileJobs.save();
-      }
-      if (config.provider == SttProvider.qwen) {
-        _qwenStt.recovery = QwenTaskRecovery(
-          taskId: job.taskId,
-          onSubmitted: (id) async {
-            job.taskId = id;
-            await _fileJobs.save();
-          },
-        );
-      }
-      if (config.provider == SttProvider.apple && job.stage != 'result') {
-        final capabilities = await _appleSpeech.capabilities(
-          sourceLanguage: config.sourceLanguage,
-        );
-        if (_disposed || revision != _fileJobRevision) return true;
-        if (!capabilities.supported) {
-          throw PlatformException(code: 'unsupported');
-        }
-        if (capabilities.speechStatus == SpeechResourceStatus.unsupported) {
-          throw PlatformException(code: 'language_unsupported');
-        }
-        if (capabilities.speechStatus == SpeechResourceStatus.needsDownload) {
-          if (!prepareLanguages) {
-            throw PlatformException(code: 'resources_missing');
-          }
-          await _appleSpeech.prepareLanguages(
-            sourceLanguage: config.sourceLanguage,
-          );
-          if (_disposed || revision != _fileJobRevision) return true;
-        }
-      }
-      if (_isTrashedPath(path)) {
-        await _fileJobs.discard(key);
-        return true;
-      }
-      final result = job.stage == 'result'
-          ? SttResult(
-              text: job.text!,
-              sourcePath: path,
-              language: job.language,
-              segments: job.segments,
-            )
-          : await _transcribePath(
-              path,
-              configuration: config,
-              isCurrent: () => !_disposed && revision == _fileJobRevision,
-              onProgress: (progress) {
-                if (_disposed || revision != _fileJobRevision) return;
-                fileTranscriptionProgress = progress;
-                notifyListeners();
-              },
-            );
-      if (_disposed || revision != _fileJobRevision) return true;
-      if (job.audioHash != null && await audioVersion(path) != job.audioHash) {
-        job.audioChanged = true;
-        throw const AudioVersionException('音频内容已变化，迟到结果未覆盖原有文字；请手动重新转写');
-      }
-      if (_disposed || revision != _fileJobRevision) return true;
-      if (result.text.trim().isEmpty) {
-        _recordingErrors[key] = '未识别到语音，可重试';
-        job.stage = 'failed';
-        job.error = _recordingErrors[key];
-        await _fileJobs.save();
-      } else {
-        job.stage = 'result';
-        job.text = result.text;
-        job.language = result.language;
-        job.segments = result.segments;
-        await _fileJobs.save();
-        final currentPath =
-            recordingView(RecordingReference(path: path)).path ?? path;
-        final rememberedSegments = _rememberedSegments(result.segments);
-        final remembered =
-            transcriptForPath(currentPath) != result.text ||
-            _transcriptMetadata[key]?.provider != config.provider ||
-            _transcriptMetadata[key]?.sourceLanguage != config.sourceLanguage ||
-            !listEquals(
-              transcriptSegmentsForPath(currentPath),
-              rememberedSegments,
-            );
-        if (remembered) {
-          rememberTranscript(
-            currentPath,
-            result.text,
-            provider: config.provider,
-            sourceLanguage: config.provider == SttProvider.apple
-                ? config.sourceLanguage
-                : result.language ?? config.sourceLanguage,
-            segments: rememberedSegments,
-          );
-        }
-        try {
-          await _persistTranscripts(strict: !_fileJobs.inMemory);
-        } catch (error, stack) {
-          // The paid result is kept in the job; only local storage failed.
-          Error.throwWithStackTrace(_TranscriptSaveFailure(error), stack);
-        }
-        job.stage = 'complete';
-        job.error = null;
-        job.audioChanged = false;
-        await _fileJobs.save();
-        if (topicsEnabled && !remembered) {
-          unawaited(_scheduleTopicAssist(key, result.text));
-        }
-        statusMessage = '转写已保存';
-        // Refresh a closed live route without retaining an obsolete error.
-        final session = _sessionForReference(
-          RecordingReference(path: currentPath),
-        );
-        if (session != null && !session.active) session.error = null;
-      }
-    } catch (error) {
-      if (!_disposed && revision == _fileJobRevision) {
-        _recordingErrors[key] =
-            error is PlatformException && error.code == 'resources_missing'
-            ? '请下载所选录音语言后重试'
-            : error is _TranscriptSaveFailure
-            ? '转写结果未能保存；请检查存储空间后重试'
-            : _speechErrorMessage(error);
-        job.error = _recordingErrors[key];
-        if (job.text != null && job.stage == 'complete') job.stage = 'result';
-        if (error is QwenTaskFailedException) {
-          job.taskId = null;
-          job.stage = 'failed';
-        }
-        // Known task IDs and saved results remain resumable; uncertain requests
-        // require an explicit retry and never automatically resubmit.
-        if (job.stage != 'result' && job.taskId == null) job.stage = 'failed';
-        try {
-          await _fileJobs.save();
-        } catch (_) {
-          _recordingErrors[key] = '无法保存任务状态；请检查存储空间后重试';
-        }
-      }
-    } finally {
-      _qwenStt.recovery = null;
-      finishJobCompleter();
-      if (!_disposed && revision == _fileJobRevision) {
-        _fileJobKey = null;
-        _fileJobProvider = null;
-        transcribingPath = null;
-        fileTranscriptionProgress = null;
-        transcribing = streamingSttActive;
-        notifyListeners();
-      }
-    }
-    return true;
-  }
-
-  Future<void> prepareRecordingTranslation(
-    RecordingReference ref, {
-    required String sourceLanguage,
-    required String targetLanguage,
-  }) => translateRecording(
-    ref,
-    sourceLanguage: sourceLanguage,
-    targetLanguage: targetLanguage,
-    prepareLanguages: true,
-  );
-
-  Future<void> translateRecording(
-    RecordingReference ref, {
-    String? sourceLanguage,
-    String? targetLanguage,
-    bool prepareLanguages = false,
-  }) async {
-    final view = recordingView(ref);
-    final key = _referenceKey(ref);
-    if (fileProcessingBusy || view.audioLocked) {
-      _recordingErrors[key] = '请在当前录音或处理结束后重试';
-      notifyListeners();
-      return;
-    }
-    if (view.text.trim().isEmpty) return;
-    final source =
-        sourceLanguage ??
-        (view.sourceLanguage == null || view.sourceLanguage == 'auto'
-            ? appleSourceLanguage
-            : view.sourceLanguage!);
-    final target = targetLanguage ?? translationTargetLanguage;
-    if (source.isEmpty) {
-      _recordingErrors[key] = '请在设置中选择录音语言';
-      notifyListeners();
-      return;
-    }
-    final revision = ++_fileJobRevision;
-    final sourceRevision = _transcriptMetadata[key]?.revision ?? 0;
-    _fileJobKey = key;
-    _fileJobProvider = SttProvider.apple;
-    _recordingErrors.remove(key);
-    fileTranscriptionProgress = const SttFileProgress(SttFileStage.processing);
-    notifyListeners();
-    try {
-      if (prepareLanguages) {
-        await _appleSpeech.prepareTranslation(
-          sourceLanguage: source,
-          targetLanguage: target,
-        );
-        if (_disposed || revision != _fileJobRevision) return;
-      }
-      final translated = await _appleSpeech.translate(
-        view.text,
-        sourceLanguage: source,
-        targetLanguage: target,
-      );
-      if (_disposed ||
-          revision != _fileJobRevision ||
-          sourceRevision != (_transcriptMetadata[key]?.revision ?? 0) ||
-          recordingView(ref).text != view.text) {
-        return;
-      }
-      if (translated.trim().isEmpty) throw StateError('empty_translation');
-      _transcriptMetadata.putIfAbsent(
-        key,
-        () => TranscriptMetadata(
-          provider: view.provider,
-          sourceLanguage: source,
-          revision: sourceRevision,
-        ),
-      );
-      _recordingTranslations[key] = RecordingTranslation(
-        text: translated,
-        sourceLanguage: source,
-        targetLanguage: target,
-        provider: SttProvider.apple,
-        sourceRevision: sourceRevision,
-      );
-      _sessionForReference(ref)?.error = null;
-      await _persistTranscripts();
-    } catch (error) {
-      if (!_disposed && revision == _fileJobRevision) {
-        _recordingErrors[key] = _speechErrorMessage(error);
-      }
-    } finally {
-      if (!_disposed && revision == _fileJobRevision) {
-        _fileJobKey = null;
-        _fileJobProvider = null;
-        fileTranscriptionProgress = null;
-        notifyListeners();
-      }
-    }
-  }
-
-  Future<SttResult> _transcribePath(
-    String path, {
-    SpeechConfiguration? configuration,
-    SttFileProgressCallback? onProgress,
-    bool Function()? isCurrent,
-  }) async {
-    final config = configuration ?? _activeConfiguration;
-    if (config.provider == SttProvider.apple) {
-      final wavPath = await _convertExportToWav(path);
-      if (isCurrent != null && !isCurrent()) {
-        throw PlatformException(code: 'cancelled');
-      }
-      if (!wavPath.endsWith('.wav')) {
-        throw PlatformException(code: 'audio_invalid');
-      }
-      return _appleSpeech.transcribePath(
-        wavPath,
-        sourceLanguage: config.sourceLanguage,
-        onProgress: onProgress,
-      );
-    }
-    return _engineAdapters[config.provider]!.transcribe(
-      path,
-      config.engineConfig(config.provider),
-      language: config.sourceLanguage == 'auto' ? null : config.sourceLanguage,
-      onProgress: onProgress,
-      isCurrent: isCurrent,
-    );
-  }
-
   final BleService _ble;
   final PersistedDeviceLoader _persistedDeviceLoader;
   final Duration recordingShortcutScanTimeout;
@@ -3270,6 +2768,7 @@ class RecorderController extends ChangeNotifier
 
   String transcriptLanguage = 'auto';
   SttDisplayMode sttMode = SttDisplayMode.transcription;
+  @override
   String translationTargetLanguage = 'zh';
   String ownerLanguage = 'zh';
   String guestLanguage = 'en';
@@ -3279,18 +2778,23 @@ class RecorderController extends ChangeNotifier
   List<SttTranslationTurn> guestTranslationTurns = const [];
   String transcript = '';
   String? transcriptPartial;
+  @override
   bool transcribing = false;
+  @override
   String? transcribingPath;
+  @override
   SttFileProgress? fileTranscriptionProgress;
   String? transcriptError;
 
   /// Live streaming STT session active after Opus→PCM decode.
+  @override
   bool streamingSttActive = false;
 
   /// Decoded Opus frames in the current session (diagnostics).
   int pcmFramesDecoded = 0;
   @override
   final QwenSttService _qwenStt;
+  @override
   final DoubaoSttService _doubaoStt;
 
   /// How every non-Apple engine plugs into this controller: loading and
@@ -3298,6 +2802,7 @@ class RecorderController extends ChangeNotifier
   /// freezes, and its file-transcription dispatch. The provider switches
   /// elsewhere collapse to one lookup here; adding a cloud engine is a
   /// service plus one entry in this map.
+  @override
   late final Map<SttProvider, _EngineAdapter> _engineAdapters = {
     SttProvider.qwen: _EngineAdapter(
       load: (settings) => settings.engineConfig(SttProvider.qwen),
@@ -3375,9 +2880,10 @@ class RecorderController extends ChangeNotifier
   }
 
   @override
-  late final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   final AppleSpeechService _appleSpeech;
+  @override
   SttProvider speechProvider = SttProvider.qwen;
+  @override
   String appleSourceLanguage = '';
   AppleSpeechCapabilities appleCapabilities =
       const AppleSpeechCapabilities.unsupported();
@@ -3399,11 +2905,6 @@ class RecorderController extends ChangeNotifier
   @override
   final Map<String, String> _recordingErrors = {};
   final Set<String> _finalizingRecordings = {};
-  int _fileJobRevision = 0;
-  @override
-  String? _fileJobKey;
-  SttProvider? _fileJobProvider;
-  Future<void> _fileCancellation = Future<void>.value();
   final OpusPcmDecoder _opusPcm = OpusPcmDecoder(outputSampleRate: 16000);
   SttStreamSession? _sttStream;
   StreamSubscription? _sttStreamSub;
