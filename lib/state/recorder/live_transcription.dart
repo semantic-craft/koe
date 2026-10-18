@@ -13,7 +13,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   abstract final AppleSpeechService _appleSpeech;
   Future<String> _convertExportToWav(
     String path, {
+    // ignore: unused_element_parameter
     bool register = true,
+    // ignore: unused_element_parameter
     List<String>? conversionFailures,
   });
   Future<void> _enqueueDeferredRecording(_RecordingSession owner, String path);
