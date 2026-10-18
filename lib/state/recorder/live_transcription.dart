@@ -586,6 +586,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     }
   }
 
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
   void _cancelStreamSttAfterPause() {
     _snapshotLiveText();
     final recordingSession = _currentRecording;
@@ -669,6 +671,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   }
 
   /// Fresh recording session: clear live draft and STT stream (keep per-file history).
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
   Future<void> _beginNewLiveTranscriptSession() async {
     final previous = _currentRecording;
     if (previous != null) {
