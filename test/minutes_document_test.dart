@@ -103,6 +103,16 @@ void main() {
     );
   });
 
+  test('混合秒与毫秒键时按实际选中的时间键换算', () {
+    final parsed = parseMinutesDocument(
+      'mixed.json',
+      '{"segments":[{"start":12,"endMs":13000,"text":"混合单位"}]}',
+    );
+
+    expect(parsed.document.segments.single.start, const Duration(seconds: 12));
+    expect(parsed.document.segments.single.end, const Duration(seconds: 13));
+  });
+
   test('补配音频覆盖最后时码才建立配对，过短音频被拒绝且不留下资料', () async {
     final c = controller();
     addTearDown(c.dispose);
@@ -240,6 +250,53 @@ void main() {
       throwsA(isA<FileSystemException>()),
     );
     expect(store.documents, isEmpty);
+  });
+
+  test('补配引用保存失败会抛出并回滚，不静默保留内存变化', () async {
+    final store = MinutesDocumentStore(file: minutesFile);
+    final document = parseMinutesDocument(
+      'a.txt',
+      '一段文字',
+    ).document.copyWith(audioPath: '/tmp/original.mp3');
+    await store.upsert(document);
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    await expectLater(
+      store.updateAudioPath('/tmp/original.mp3', '/tmp/renamed.mp3'),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.byId(document.id)!.audioPath, '/tmp/original.mp3');
+
+    await expectLater(
+      store.clearAudioForPaths({'/tmp/original.mp3'}),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.byId(document.id)!.audioPath, '/tmp/original.mp3');
+  });
+
+  test('MP3 等格式无法从文件头读时长时用播放器探测后完成配对', () async {
+    final c = RecorderController(
+      loadPersistedState: false,
+      libraryStore: RecordingLibraryStore(file: libraryFile),
+      libraryDirectory: imports,
+      minutesStore: MinutesDocumentStore(file: minutesFile),
+      localDurationReader: (_) async => null,
+      audioDurationProbe: (path) async =>
+          path.endsWith('.mp3') ? const Duration(seconds: 40) : null,
+    );
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final mp3 = File('${temp.path}/original.mp3');
+    await mp3.writeAsBytes([1, 2, 3, 4]);
+
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      mp3.path,
+    );
+
+    expect(attached.ok, isTrue);
+    expect(attached.document!.audioDuration, const Duration(seconds: 40));
   });
 
   test('改名或删除音频后同步补配引用', () async {

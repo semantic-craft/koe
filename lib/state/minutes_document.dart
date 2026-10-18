@@ -306,8 +306,7 @@ MinutesSegment? _segmentFromJson(Object? item) {
     'body',
   ]);
   if (text == null) return null;
-  final start = _duration(
-    _firstValue(item, const [
+  final startEntry = _firstEntry(item, const [
       'startMs',
       'start',
       'startTime',
@@ -315,18 +314,19 @@ MinutesSegment? _segmentFromJson(Object? item) {
       'begin_time',
       'offset',
       'time',
-    ]),
-    millisecondsHint: item.keys.any(
-      (key) => '$key'.toLowerCase().contains('ms'),
-    ),
+    ]);
+  final start = _duration(
+    startEntry?.value,
+    millisecondsHint:
+        startEntry?.key.toLowerCase().contains('ms') ?? false,
+  );
+  final endEntry = _firstEntry(
+    item,
+    const ['endMs', 'end', 'endTime', 'finishTime'],
   );
   final end = _duration(
-    _firstValue(item, const ['endMs', 'end', 'endTime', 'finishTime']),
-    millisecondsHint: item.keys.any(
-      (key) =>
-          '$key'.toLowerCase().contains('ms') &&
-          !'$key'.toLowerCase().contains('start'),
-    ),
+    endEntry?.value,
+    millisecondsHint: endEntry?.key.toLowerCase().contains('ms') ?? false,
   );
   final speaker = _firstText(item, const [
     'speaker',
@@ -485,6 +485,18 @@ Object? _firstValue(Map<dynamic, dynamic> value, List<String> keys) {
   return null;
 }
 
+MapEntry<String, Object?>? _firstEntry(
+  Map<dynamic, dynamic> value,
+  List<String> keys,
+) {
+  for (final key in keys) {
+    if (value.containsKey(key) && value[key] != null) {
+      return MapEntry(key, value[key]);
+    }
+  }
+  return null;
+}
+
 String? _firstText(Map<dynamic, dynamic> value, List<String> keys) {
   final raw = _firstValue(value, keys);
   if (raw is! String || raw.trim().isEmpty) return null;
@@ -618,16 +630,26 @@ class MinutesDocumentStore {
   }
 
   Future<void> updateAudioPath(String oldPath, String newPath) async {
+    final previous = Map<String, MinutesDocument>.of(_documents);
     var changed = false;
     for (final entry in _documents.entries.toList()) {
       if (entry.value.audioPath != oldPath) continue;
       _documents[entry.key] = entry.value.copyWith(audioPath: newPath);
       changed = true;
     }
-    if (changed) await save(strict: false);
+    if (!changed) return;
+    try {
+      await save(strict: true);
+    } catch (_) {
+      _documents
+        ..clear()
+        ..addAll(previous);
+      rethrow;
+    }
   }
 
   Future<void> clearAudioForPaths(Set<String> paths) async {
+    final previous = Map<String, MinutesDocument>.of(_documents);
     var changed = false;
     for (final entry in _documents.entries.toList()) {
       final path = entry.value.audioPath;
@@ -635,7 +657,15 @@ class MinutesDocumentStore {
       _documents[entry.key] = entry.value.copyWith(clearAudio: true);
       changed = true;
     }
-    if (changed) await save(strict: false);
+    if (!changed) return;
+    try {
+      await save(strict: true);
+    } catch (_) {
+      _documents
+        ..clear()
+        ..addAll(previous);
+      rethrow;
+    }
   }
 
   Future<void> save({bool strict = true}) {

@@ -497,6 +497,7 @@ class RecorderController extends ChangeNotifier {
     this.retrievedAudioSettleTime = retrievedAudioSettle,
     Future<String> Function(String rawPath)? rawExportConverter,
     Future<Duration?> Function(String path)? localDurationReader,
+    Future<Duration?> Function(String path)? audioDurationProbe,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
@@ -507,6 +508,7 @@ class RecorderController extends ChangeNotifier {
            topicsEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
        _localDurationReader = localDurationReader ?? AudioDuration.read,
+       _audioDurationProbe = audioDurationProbe ?? _probeAudioDuration,
        _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
@@ -1002,6 +1004,21 @@ class RecorderController extends ChangeNotifier {
   final Duration retrievedAudioSettleTime;
   final Future<String> Function(String rawPath) _rawExportConverter;
   final Future<Duration?> Function(String path) _localDurationReader;
+  final Future<Duration?> Function(String path) _audioDurationProbe;
+
+  static Future<Duration?> _probeAudioDuration(String path) async {
+    final player = AudioPlayer();
+    try {
+      final reported = await player
+          .setFilePath(path)
+          .timeout(const Duration(seconds: 15));
+      return reported ?? player.duration;
+    } catch (_) {
+      return null;
+    } finally {
+      await player.dispose();
+    }
+  }
 
   /// Longest gap without a BLE file packet before a pull stops waiting; see
   /// [BleFilePull.pullFile].
@@ -4908,6 +4925,7 @@ class RecorderController extends ChangeNotifier {
     }
     var duration = localDurationForPath(imported.path);
     duration ??= await _localDurationReader(imported.path);
+    duration ??= await _audioDurationProbe(imported.path);
     final required = document.lastEnd;
     if (document.timingReliable && duration == null) {
       await discardNewCopy();
