@@ -718,12 +718,20 @@ class RecorderController extends ChangeNotifier {
   @visibleForTesting
   Future<void> waitForTopicAssist() async {
     await _deferredJobs.pump();
-    while (_activeFileJobCompleter != null || _topicAssistTasks.isNotEmpty) {
+    while (_deferredJobs.busy ||
+        _activeFileJobCompleter != null ||
+        _topicAssistTasks.isNotEmpty) {
       final inflight = <Future<void>>[
         if (_activeFileJobCompleter != null) _activeFileJobCompleter!.future,
         ..._topicAssistTasks.values,
       ];
-      if (inflight.isEmpty) break;
+      if (inflight.isEmpty) {
+        // The pump can be waiting between queue acceptance and registering its
+        // completer; yield so the test observes that progress instead of
+        // returning before the job has actually run.
+        await Future<void>.delayed(Duration.zero);
+        continue;
+      }
       await Future.wait(inflight);
     }
   }
