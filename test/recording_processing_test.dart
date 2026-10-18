@@ -66,6 +66,41 @@ void main() async {
     );
   });
 
+  test('改名前移入回收站的录音不会被重新传输后上传', () async {
+    final dir = await Directory.systemTemp.createTemp('trash-upload-');
+    addTearDown(() => dir.delete(recursive: true));
+    final canonical = File('${dir.path}/1783917006.wav');
+    final renamed = File('${dir.path}/1783917006_旧名字.wav');
+    await canonical.writeAsBytes([1, 2, 3, 4]);
+    await renamed.writeAsBytes([1, 2, 3, 4]);
+    final qwen = _Qwen();
+    final c = RecorderController(
+      loadPersistedState: false,
+      qwenSpeech: qwen,
+      libraryStore: RecordingLibraryStore(
+        file: File('${dir.path}/library.json'),
+      ),
+      libraryDirectory: Directory('${dir.path}/imports'),
+    );
+    addTearDown(c.dispose);
+    await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
+    c.setSpeechProvider(SttProvider.qwen);
+    await c.library.upsert(
+      RecordingAsset(
+        path: renamed.path,
+        displayName: '旧名字',
+        source: RecordingSource.device,
+        importedAt: DateTime(2026, 10, 1),
+        archived: true,
+        deletedAt: DateTime(2026, 10, 1),
+      ),
+    );
+
+    await c.transcribeLocalFile(canonical.path);
+
+    expect(qwen.calls, 0);
+  });
+
   for (final stage in ['queued', 'result', 'running', 'submitted']) {
     test(
       'controller restart recovers $stage without duplicate submission',

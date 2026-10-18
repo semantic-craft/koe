@@ -1758,12 +1758,12 @@ class _RecordingController extends RecorderController {
   Future<void> playExported(
     String path, {
     int? fileId,
-    Duration startAt = Duration.zero,
+    Duration? startAt,
   }) async {
     if (playingPath == path) return togglePlayPause();
     playingPath = path;
     playingFileId = fileId;
-    position = startAt;
+    position = startAt ?? Duration.zero;
     playbackCompleted = false;
     isPlaying = true;
     notifyListeners();

@@ -82,10 +82,11 @@
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Koe 使用蓝牙查找并连接已适配的安克录音豆（soundcore Work / D3200），管理录音。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Koe 需要直连安克录音豆的 Wi-Fi 热点来导出录音。</string>
+	<string>Koe 需要直连安克录音豆的 Wi-Fi 热点来导出录音，并在你配对后直连同一局域网内的 Mac 归档原件。</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
+		<string>audio</string>
 	</array>
 </dict>
 </plist>

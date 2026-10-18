@@ -8,6 +8,7 @@
 | 录音、转写与状态 | [lib/audio](lib/audio/)、[lib/ai](lib/ai/)、[lib/state](lib/state/) |
 | 界面与平台接入 | [lib/ui](lib/ui/)、[lib/platform](lib/platform/)，再读对应平台目录 |
 | 签名、安装脚本、系统 Keychain 凭据 | [skills/verify-koe/SKILL.md](skills/verify-koe/SKILL.md)，验收含真实安装升级读取 |
+| agent 协作：Dot 编码派发与 Perplexity 只读验证的区分 | [docs/agents/project-dispatch.md](docs/agents/project-dispatch.md) |
 
 在根目录运行 `flutter test`，现有用例在 [test](test/)。终端里默认的 compact 输出会原地覆盖进度行，日志只留下有 print 输出的文件，不能据此判断哪些文件跑过；要看到每个测试文件用 `flutter test --reporter expanded`，核对文件数见 [lessons](lessons.md)「compact 日志里缺文件不等于没跑」。构建和真机运行按 README；设备连接、音频接收和真实转写需另留证据。安装脚本在 [scripts](scripts/)，运行前核对其目标设备和副作用。
 实现、评审或验收前读相关 [lessons](lessons.md)；出现可复用的纠正或漏验时更新原条目。
@@ -30,14 +31,19 @@
 ### Domain docs
 采用单一领域文档布局。见 [docs/agents/domain.md](docs/agents/domain.md)。
 
+### Project dispatch
+Dot 已认领编码工单经 `project_run` 派发到隔离检出执行（执行者可改文件、分支提交）；与 Perplexity 只读本机验证是两条路径。见 [docs/agents/project-dispatch.md](docs/agents/project-dispatch.md)。
+
 ## Perplexity × Helios ZCode 本机验证契约
 
 首次走通：PR #55 @ `54b4b6e`（2026-10-16，结论 PASS）。
 
+本合同是**只读**验证路径：ZCode 在此不改文件、不提交。Dot 已认领工单的编码派发（执行者可改文件、在分支上提交）走另一条路径，见 [docs/agents/project-dispatch.md](docs/agents/project-dispatch.md)；本节的限制不适用于那条路径，那条路径的边界以该文档为准。
+
 1. **交接只走 PR 评论。** Perplexity 开 PR 后在该 PR 评论写 `## 本机待办`，不使用 `~/AgentBridge/`、`~/Projects/.sonori-handoff/` 等文件信箱。内容：
    - `repo: semantic-craft/koe`、`ref: <branch>@<完整 sha>`、可选 `cwd:`（默认仓库根 `~/Projects/koe`）
    - `- [ ] <命令>` 清单，按顺序执行（如 `flutter pub get` / `flutter analyze` / `flutter test`）
-2. **派单。** 图灵在 Helios `~/Projects/koe` fetch 并切到该 sha（工作区须干净），然后**只经 zcode-dispatch**（Helios receiver `:7791`，项目名 `koe`）派给 ZCode；不得绕开 zcode-dispatch 直调 ZCode CLI。ZCode 不改文件、不提交。
+2. **派单。** 图灵在 Helios `~/Projects/koe` fetch 并切到该 sha（工作区须干净），然后**只经 zcode-dispatch**（Helios receiver `:7791`，项目名 `koe`）派给 ZCode；不得绕开 zcode-dispatch 直调 ZCode CLI。该路径上 ZCode 不改文件、不提交（仅限本只读合同）。
    - 主工作区正被另一单占用（多个 PR 同时有本机待办）时，不切主工作区分支，改用独立 worktree：`git worktree add --detach /tmp/koe-pr<N>-<短sha> <完整 sha>`，跑完 `git worktree remove --force` 清掉（首次用于 PR #56）。
    - 派单提示词须原样抄入第 3 条的回帖格式，不另写模板（PR #56 因提示词自带模板，回帖少了标题短 sha、`<details>` 日志和 `结论:` 行）。
 3. **回帖。** ZCode 在同一 PR 评论 `## 本机结果 (<短 sha>)`：
