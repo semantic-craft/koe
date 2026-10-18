@@ -23,11 +23,13 @@ mixin _RecorderLibrary on ChangeNotifier {
   DateTime? _localFileTimestamp(String? path);
   abstract final Map<String, String> _manualTranscripts;
   set _observedPlacements(Map<String, TopicPlacement> value);
-  Future<void> _persistTranscripts();
+  // ignore: unused_element_parameter
+  Future<void> _persistTranscripts({bool strict = false});
   abstract final Future<String> Function(String rawPath) _rawExportConverter;
   DateTime? _recordedAtFromFileId(int? id);
   abstract final Map<String, String> _recordingErrors;
-  String _recordingKey({String? path});
+  // ignore: unused_element_parameter
+  String _recordingKey({int? fileId, String? path});
   abstract final Map<String, _RecordingSession> _recordingSessions;
   abstract final Map<String, RecordingTranslation> _recordingTranslations;
   void _requireFinishedRecording(String path);

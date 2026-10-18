@@ -13,7 +13,8 @@ mixin _RecorderTopics on ChangeNotifier {
   abstract final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   abstract bool _disposed;
   abstract final QwenSttService _qwenStt;
-  String _recordingKey({String? path});
+  // ignore: unused_element_parameter
+  String _recordingKey({int? fileId, String? path});
   RecordingReference _referenceFromKey(String key, {String? pathHint});
   String _referenceKey(RecordingReference ref);
   abstract final Future<void> _settingsLoaded;
