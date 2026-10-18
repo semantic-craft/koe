@@ -3405,6 +3405,7 @@ class RecorderController extends ChangeNotifier {
   DateTime _lastHistoryPersist = DateTime.fromMillisecondsSinceEpoch(0);
   bool _switchingAudio = false;
   bool _pausePersistArmed = false;
+  Duration _confirmedPosition = Duration.zero;
 
   void _wirePlayer() {
     _subs.add(
@@ -3419,7 +3420,7 @@ class RecorderController extends ChangeNotifier {
               !_switchingAudio &&
               _player.processingState == ProcessingState.ready) {
             _pausePersistArmed = false;
-            unawaited(_persistPlayback());
+            unawaited(_persistPlayback(at: _confirmedPosition));
           }
         } else if (!_switchingAudio) {
           _pausePersistArmed = true;
@@ -3437,10 +3438,25 @@ class RecorderController extends ChangeNotifier {
           _lastPositionNotify = now;
           notifyListeners();
         }
-        if (!_switchingAudio &&
-            now.difference(_lastHistoryPersist) >= const Duration(seconds: 2)) {
-          _lastHistoryPersist = now;
-          unawaited(_persistPlayback());
+        if (_switchingAudio) return;
+        final resumedAfterCompletion =
+            playbackCompleted &&
+            duration > Duration.zero &&
+            pos < duration - const Duration(milliseconds: 500);
+        if (resumedAfterCompletion) {
+          // A lock-screen or notification seek bypasses seekTo.
+          playbackCompleted = false;
+          _confirmedPosition = pos;
+          unawaited(_persistPlayback(at: pos));
+        } else if (isPlaying || pos > Duration.zero) {
+          // Position events before the player reports "playing" still carry
+          // real progress; only an idle zero event can clobber a breakpoint.
+          _confirmedPosition = pos;
+          if (now.difference(_lastHistoryPersist) >=
+              const Duration(seconds: 2)) {
+            _lastHistoryPersist = now;
+            unawaited(_persistPlayback(at: _confirmedPosition));
+          }
         }
       }),
     );
@@ -3459,6 +3475,7 @@ class RecorderController extends ChangeNotifier {
           // like it is still playing or silently restarts at zero.
           playbackCompleted = true;
           if (duration > Duration.zero) position = duration;
+          _confirmedPosition = position;
           _clearPlayingStatus();
           unawaited(_player.pause());
           _pausePersistArmed = false;
@@ -5617,16 +5634,16 @@ class RecorderController extends ChangeNotifier {
   @visibleForTesting
   Future<void> waitForPlaybackHistory() => _playbackHistoryLoaded;
 
-  Future<void> _persistPlayback({bool? completed}) async {
+  Future<void> _persistPlayback({bool? completed, Duration? at}) async {
     final path = playingPath;
     if (path == null || _disposed) return;
     final fileId = playingFileId;
     final total = duration;
+    final point = at ?? position;
     final finished =
         completed ??
         (total > Duration.zero &&
-            position >= total - const Duration(milliseconds: 500));
-    final point = position;
+            point >= total - const Duration(milliseconds: 500));
     await _playbackHistoryLoaded;
     if (_disposed) return;
     try {
@@ -5700,7 +5717,9 @@ class RecorderController extends ChangeNotifier {
         await togglePlayPause();
         return;
       }
-      if (playingPath != null) await _persistPlayback();
+      if (playingPath != null) {
+        await _persistPlayback(at: _confirmedPosition);
+      }
       errorMessage = null;
       statusMessage = '正在准备播放 ${path.split('/').last}…';
       notifyListeners();
@@ -5742,6 +5761,7 @@ class RecorderController extends ChangeNotifier {
           requested: startAt,
         );
         position = resume;
+        _confirmedPosition = resume;
         if (resume > Duration.zero) {
           await _player.seek(resume);
         }
@@ -5764,6 +5784,7 @@ class RecorderController extends ChangeNotifier {
       playingFileId = null;
       isPlaying = false;
       playbackCompleted = false;
+      _confirmedPosition = Duration.zero;
       duration = Duration.zero;
       notifyListeners();
     }
@@ -5825,13 +5846,14 @@ class RecorderController extends ChangeNotifier {
     try {
       if (isPlaying) {
         await _player.pause();
-        await _persistPlayback();
+        await _persistPlayback(at: _confirmedPosition);
         _pausePersistArmed = false;
         _clearPlayingStatus();
       } else {
         if (playbackCompleted) {
           await _player.seek(Duration.zero);
           position = Duration.zero;
+          _confirmedPosition = Duration.zero;
           playbackCompleted = false;
         }
         _startPlayback();
@@ -5853,7 +5875,7 @@ class RecorderController extends ChangeNotifier {
     if (playingPath == null || !isPlaying) return;
     try {
       await _player.pause();
-      await _persistPlayback();
+      await _persistPlayback(at: _confirmedPosition);
       _clearPlayingStatus();
       statusMessage = message ?? '播放已暂停，可手动继续';
       notifyListeners();
@@ -5877,6 +5899,7 @@ class RecorderController extends ChangeNotifier {
     try {
       await _player.seek(target);
       position = target;
+      _confirmedPosition = target;
       playbackCompleted = duration > Duration.zero && target >= duration;
       notifyListeners();
     } catch (e) {
@@ -5904,7 +5927,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<void> stopPlayback() async {
-    await _persistPlayback();
+    await _persistPlayback(at: _confirmedPosition);
     try {
       await _player.stop();
     } catch (_) {}
@@ -5912,6 +5935,7 @@ class RecorderController extends ChangeNotifier {
     playingFileId = null;
     isPlaying = false;
     playbackCompleted = false;
+    _confirmedPosition = Duration.zero;
     position = Duration.zero;
     duration = Duration.zero;
     _clearPlayingStatus();

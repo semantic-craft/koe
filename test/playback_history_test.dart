@@ -162,6 +162,61 @@ void main() {
     expect(controller.statusMessage, contains('无法保存'));
   });
 
+  test('未播放时的零位置事件不会覆盖已保存断点', () async {
+    final audio = File('${temp.path}/178.wav');
+    await audio.writeAsBytes(List<int>.filled(100, 0));
+    final store = PlaybackHistoryStore(inMemory: true);
+    await store.load();
+    await store.record(point(audio.path, fileId: 178, seconds: 30));
+    final player = _FakePlayer();
+    final controller = RecorderController(
+      loadPersistedState: false,
+      playbackHistoryStore: store,
+      player: player,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForPlaybackHistory();
+
+    await controller.playExported(
+      audio.path,
+      fileId: 178,
+      startAt: const Duration(seconds: 30),
+    );
+    player.emitPosition(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(
+      store.forRecording(fileId: 178, path: audio.path)?.position,
+      const Duration(seconds: 30),
+    );
+  });
+
+  test('系统回退到已结束音频的中段时清除完成状态', () async {
+    final audio = File('${temp.path}/178.wav');
+    await audio.writeAsBytes(List<int>.filled(100, 0));
+    final store = PlaybackHistoryStore(inMemory: true);
+    await store.load();
+    final player = _FakePlayer();
+    final controller = RecorderController(
+      loadPersistedState: false,
+      playbackHistoryStore: store,
+      player: player,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForPlaybackHistory();
+
+    await controller.playExported(audio.path, fileId: 178);
+    player.emitCompleted();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(controller.playbackCompleted, isTrue);
+
+    player.emitPosition(const Duration(seconds: 60));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(controller.playbackCompleted, isFalse);
+    expect(controller.position, const Duration(seconds: 60));
+  });
+
   test('播放进度写失败不把已完成的删除报成失败', () async {
     final blocker = File('${temp.path}/blocked-delete');
     await blocker.writeAsString('not a directory');
@@ -289,6 +344,7 @@ class _FakePlayer extends AudioPlayer {
   Future<void> stop() async {}
 
   void emitPosition(Duration value) => _positions.add(value);
+  void emitCompleted() => _processing.add(ProcessingState.completed);
 
   @override
   Future<void> dispose() async {
