@@ -146,7 +146,11 @@ class _PlaybackProbeController extends RecorderController {
   final played = <String>[];
 
   @override
-  Future<void> playExported(String path, {int? fileId}) async {
+  Future<void> playExported(
+    String path, {
+    int? fileId,
+    Duration startAt = Duration.zero,
+  }) async {
     played.add(path);
     notifyListeners();
   }
