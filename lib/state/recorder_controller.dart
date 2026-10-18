@@ -4767,6 +4767,9 @@ class RecorderController extends ChangeNotifier {
   @visibleForTesting
   Future<void> waitForRecordingLibrary() => _libraryLoaded;
 
+  @visibleForTesting
+  Future<void> waitForTranscripts() => _transcriptsLoaded;
+
   DateTime? recordingRecordedAtForPath(String path) {
     final asset = library.assetForPath(path);
     if (asset?.recordedAt != null) return asset!.recordedAt;
@@ -5014,6 +5017,9 @@ class RecorderController extends ChangeNotifier {
   Future<({int deleted, List<String> failed})> deleteLocalExports(
     Iterable<String> paths,
   ) async {
+    // Permanent deletion must run after persisted transcripts have loaded;
+    // otherwise the load can repopulate the maps and save the entry back.
+    await _transcriptsLoaded;
     final selected = paths.toSet();
     final removed = <String>{};
     var deleted = 0;
@@ -5111,7 +5117,10 @@ class RecorderController extends ChangeNotifier {
     if (deletedAt == null) return trashRetention.inDays;
     final elapsed = (now ?? DateTime.now()).difference(deletedAt);
     final remaining = trashRetention - elapsed;
-    return remaining.isNegative ? 0 : remaining.inDays;
+    if (remaining <= Duration.zero) return 0;
+    // A partial final day still allows restore; round up instead of
+    // truncating 1 hour left to zero and disabling the action.
+    return (remaining.inMinutes / Duration.minutesPerDay).ceil();
   }
 
   /// Hides materials from the library while keeping their only original.
@@ -5219,12 +5228,14 @@ class RecorderController extends ChangeNotifier {
   Future<int> purgeExpiredTrash({DateTime? now}) async {
     await _libraryLoaded;
     await _topicsLoaded;
+    await _transcriptsLoaded;
     return _purgeExpiredTrash(now: now);
   }
 
   Future<void> _purgeTrashWhenReady() async {
     await _libraryLoaded;
     await _topicsLoaded;
+    await _transcriptsLoaded;
     if (_disposed) return;
     await _purgeExpiredTrash();
   }
@@ -5316,7 +5327,7 @@ class RecorderController extends ChangeNotifier {
   /// Unassigns one material from its project/topic without deleting notes.
   Future<void> removeRecordingFromTopics(String path) async {
     final key = _recordingKey(path: path);
-    await topics.forgetRecording(key);
+    await topics.removeFromTopic(key);
     _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
     statusMessage = '已移出项目/主题，资料与笔记仍保留';
     errorMessage = null;

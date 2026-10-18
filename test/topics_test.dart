@@ -81,6 +81,30 @@ void main() {
     expect(saved.containsKey('current'), isFalse);
   });
 
+  test('移出主题后再次取回不会自动归入当前主题', () async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.general,
+      title: '职业规划',
+    );
+    await store.setCurrentTopic(topic.id);
+    final c = controller(store);
+    final path = await recording(1760000009);
+    const key = 'file:1760000009';
+
+    await c.processRetrievedRecording(path);
+    expect(store.placementOf(key), isA<InTopicPlacement>());
+    expect(store.recordingsIn(topic.id), contains(key));
+
+    await c.removeRecordingFromTopics(path);
+    expect(store.placementOf(key), isA<NoTopicPlacement>());
+
+    await store.placeRetrieved(key);
+    expect(store.placementOf(key), isA<NoTopicPlacement>());
+    expect(store.recordingsIn(topic.id), isEmpty);
+  });
+
   testWidgets('crossing midnight in the foreground clears the current topic '
       'without any other interaction', (tester) async {
     var now = DateTime(2026, 10, 16, 23, 59, 58);

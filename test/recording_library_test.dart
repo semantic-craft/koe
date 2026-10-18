@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/state/transcript_store.dart';
 import 'package:koe/ui/screens/files_screen.dart';
 import 'package:koe/ui/screens/trash_screen.dart';
 import 'package:provider/provider.dart';
@@ -172,6 +173,74 @@ void main() {
     expect(restarted.recordingAssetForPath(expiring.path), isNull);
     expect(await File(keeping.path).exists(), isTrue);
     expect(restarted.exportedPaths, contains(keeping.path));
+  });
+
+  test('回收站最后一天仍显示可恢复，满 30 天才失效', () async {
+    final source = await sourceAudio('最后一天资料');
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importLocalAudio(source.path);
+    final now = DateTime(2026, 10, 18, 12);
+    await c.trashLocalExports(
+      [imported.path],
+      now: now.subtract(const Duration(days: 29, hours: 1)),
+    );
+    final asset = c.trashedAssets.single;
+
+    expect(c.trashDaysRemaining(asset, now: now), 1);
+    expect(
+      c.trashDaysRemaining(
+        asset,
+        now: now.add(const Duration(hours: 23)),
+      ),
+      0,
+    );
+  });
+
+  test('启动清理过期资料时等转写加载完成，彻底删除不会复活', () async {
+    final source = await sourceAudio('过期转写资料');
+    final store = RecordingLibraryStore(inMemory: true);
+    await store.load();
+    await store.upsert(
+      RecordingAsset(
+        path: source.path,
+        displayName: '过期转写资料',
+        source: RecordingSource.localImport,
+        importedAt: DateTime.now().subtract(const Duration(days: 40)),
+        archived: true,
+        deletedAt: DateTime.now().subtract(const Duration(days: 31)),
+      ),
+    );
+
+    await TranscriptStore.save(
+      byPath: {source.path: '需要彻底删除的转写内容。'},
+      byFileId: const {},
+      aliasesByPath: const {},
+      aliasesByFileId: const {},
+    );
+    addTearDown(
+      () => TranscriptStore.save(
+        byPath: const {},
+        byFileId: const {},
+        aliasesByPath: const {},
+        aliasesByFileId: const {},
+      ),
+    );
+
+    final restarted = RecorderController(
+      loadPersistedState: true,
+      libraryStore: store,
+      libraryDirectory: imports,
+    );
+    addTearDown(restarted.dispose);
+    await restarted.waitForRecordingLibrary();
+    await restarted.purgeExpiredTrash();
+    await restarted.waitForTranscripts();
+
+    expect(await File(source.path).exists(), isFalse);
+    expect(restarted.transcriptForPath(source.path), isNull);
+    final saved = await TranscriptStore.load();
+    expect(saved.byPath.containsKey(source.path), isFalse);
   });
 
   test('再次导入回收站中的同一音频会恢复原资料而不复制', () async {
