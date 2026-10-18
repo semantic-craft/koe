@@ -1,16 +1,71 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../platform/credential_store.dart';
 import 'archive_pairing.dart';
 import 'archive_wire.dart';
 
 /// Per-original archive state on the phone. This is deliberately separate from
 /// [RecordingAsset.archived], which is the existing 30-day trash marker.
 enum MacArchivePhase { pending, uploading, verifying, verified, failed }
+
+class ArchiveDeskReceipt {
+  const ArchiveDeskReceipt({
+    required this.contentHash,
+    required this.length,
+    required this.extension,
+    required this.verifiedAt,
+    required this.sourceLength,
+    required this.sourceModifiedMs,
+  });
+
+  final String contentHash;
+  final int length;
+  final String extension;
+  final DateTime verifiedAt;
+  final int sourceLength;
+  final int sourceModifiedMs;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'hash': contentHash,
+    'length': length,
+    'ext': extension,
+    'verifiedAt': verifiedAt.toIso8601String(),
+    'sourceLength': sourceLength,
+    'sourceModifiedMs': sourceModifiedMs,
+  };
+
+  static ArchiveDeskReceipt? decode(Object? value) {
+    if (value is! Map) return null;
+    final hash = value['hash'];
+    final length = value['length'];
+    final extension = value['ext'];
+    final verifiedAt = DateTime.tryParse('${value['verifiedAt']}');
+    final sourceLength = value['sourceLength'];
+    final sourceModifiedMs = value['sourceModifiedMs'];
+    if (!archiveIsValidContentHash(hash) ||
+        length is! int ||
+        length <= 0 ||
+        extension is! String ||
+        !archiveAllowedStoredExtensions.contains(extension) ||
+        verifiedAt == null ||
+        sourceLength is! int ||
+        sourceModifiedMs is! int) {
+      return null;
+    }
+    return ArchiveDeskReceipt(
+      contentHash: hash as String,
+      length: length,
+      extension: extension,
+      verifiedAt: verifiedAt,
+      sourceLength: sourceLength,
+      sourceModifiedMs: sourceModifiedMs,
+    );
+  }
+}
 
 class ArchivePhoneRecord {
   const ArchivePhoneRecord({
@@ -29,6 +84,7 @@ class ArchivePhoneRecord {
     this.error,
     this.attempts = 0,
     this.manual = false,
+    this.receipts = const <String, ArchiveDeskReceipt>{},
   });
 
   final String localPath;
@@ -53,6 +109,10 @@ class ArchivePhoneRecord {
   /// Queued by an explicit user action; survives restarts even when automatic
   /// archiving is off.
   final bool manual;
+
+  /// Verified copies on other Mac desks. Switching targets keeps these so a
+  /// later pairing back can restore the old bytes.
+  final Map<String, ArchiveDeskReceipt> receipts;
   final DateTime updatedAt;
 
   bool get verified => phase == MacArchivePhase.verified;
@@ -77,6 +137,7 @@ class ArchivePhoneRecord {
     bool clearVerified = false,
     int? attempts,
     bool? manual,
+    Map<String, ArchiveDeskReceipt>? receipts,
     DateTime? updatedAt,
   }) => ArchivePhoneRecord(
     localPath: localPath ?? this.localPath,
@@ -95,6 +156,7 @@ class ArchivePhoneRecord {
     error: clearError ? null : (error ?? this.error),
     attempts: attempts ?? this.attempts,
     manual: manual ?? this.manual,
+    receipts: receipts ?? this.receipts,
     updatedAt: updatedAt ?? this.updatedAt,
   );
 
@@ -113,6 +175,10 @@ class ArchivePhoneRecord {
     if (error != null) 'error': error,
     'attempts': attempts,
     if (manual) 'manual': true,
+    if (receipts.isNotEmpty)
+      'receipts': <String, Object?>{
+        for (final entry in receipts.entries) entry.key: entry.value.toJson(),
+      },
     'updatedAt': updatedAt.toIso8601String(),
   };
 
@@ -136,6 +202,16 @@ class ArchivePhoneRecord {
     }
     final hash = value['hash'];
     final deskId = value['desk'];
+    final receipts = <String, ArchiveDeskReceipt>{};
+    final rawReceipts = value['receipts'];
+    if (rawReceipts is Map) {
+      for (final entry in rawReceipts.entries) {
+        final receipt = ArchiveDeskReceipt.decode(entry.value);
+        if (receipt != null && entry.key is String) {
+          receipts[entry.key as String] = receipt;
+        }
+      }
+    }
     return ArchivePhoneRecord(
       localPath: path,
       displayName: archiveSanitizeDisplayName(name),
@@ -161,6 +237,7 @@ class ArchivePhoneRecord {
       error: value['error'] is String ? value['error'] as String : null,
       attempts: value['attempts'] is int ? value['attempts'] as int : 0,
       manual: value['manual'] == true,
+      receipts: Map.unmodifiable(receipts),
       updatedAt: updatedAt,
     );
   }
@@ -172,19 +249,28 @@ class ArchivePhoneStore {
     bool inMemory = false,
     Future<Directory> Function()? supportDirectory,
     bool? developmentProfile,
+    Future<bool> Function()? isolationProvider,
+    Future<void> Function()? writeInterceptor,
   }) : _directoryOverride = directory,
        // ignore: prefer_initializing_formals
        _inMemory = inMemory,
        // ignore: prefer_initializing_formals
        _supportDirectory = supportDirectory,
-       _developmentProfile = developmentProfile ?? kDebugMode;
+       // ignore: prefer_initializing_formals
+       _developmentProfile = developmentProfile,
+       // ignore: prefer_initializing_formals
+       _isolationProvider = isolationProvider,
+       // ignore: prefer_initializing_formals
+       _writeInterceptor = writeInterceptor;
 
   static const fileName = 'phone_archive.json';
 
   final Directory? _directoryOverride;
   final bool _inMemory;
   final Future<Directory> Function()? _supportDirectory;
-  final bool _developmentProfile;
+  final bool? _developmentProfile;
+  final Future<bool> Function()? _isolationProvider;
+  final Future<void> Function()? _writeInterceptor;
   final Map<String, ArchivePhoneRecord> _records = {};
 
   ArchivePairing? pairing;
@@ -194,7 +280,7 @@ class ArchivePhoneStore {
   String? loadError;
   String? saveError;
   bool storageUnavailable = false;
-  Future<void> _pendingWrite = Future<void>.value();
+  Future<void> _mutation = Future<void>.value();
   bool _loaded = false;
 
   bool get loaded => _loaded;
@@ -211,10 +297,14 @@ class ArchivePhoneStore {
     } catch (_) {
       throw const ArchiveException('无法访问应用私有归档目录，已停止读写配对信息');
     }
+    final development = await _resolveArchiveDevelopmentProfile(
+      _developmentProfile,
+      _isolationProvider,
+    );
     return Directory(
       p.join(
         base.path,
-        _developmentProfile ? 'KoeArchiveDevelopment' : 'KoeArchive',
+        development ? 'KoeArchiveDevelopment' : 'KoeArchive',
         'phone',
       ),
     );
@@ -233,10 +323,7 @@ class ArchivePhoneStore {
     if (_inMemory) return;
     try {
       final target = await _file();
-      if (!await target.exists()) {
-        await save();
-        return;
-      }
+      if (!await target.exists()) return;
       final raw = jsonDecode(await target.readAsString());
       if (raw is! Map) throw const FormatException('not an object');
       final config = raw['config'];
@@ -286,134 +373,160 @@ class ArchivePhoneStore {
     }
   }
 
-  Map<String, Object?> _toJson() => <String, Object?>{
+  Map<String, Object?> _encode({
+    required Map<String, ArchivePhoneRecord> records,
+    required ArchivePairing? pairing,
+    required bool autoArchive,
+    required DateTime? autoArchiveFrom,
+  }) => <String, Object?>{
     'version': 1,
     'config': <String, Object?>{
-      if (pairing != null) 'pairing': pairing!.encode(),
+      if (pairing != null) 'pairing': pairing.encode(),
       'autoArchive': autoArchive,
       if (autoArchiveFrom != null)
-        'autoArchiveFrom': autoArchiveFrom!.toIso8601String(),
+        'autoArchiveFrom': autoArchiveFrom.toIso8601String(),
       'clientId': clientId,
     },
-    'records': _records.values.map((record) => record.toJson()).toList(),
+    'records': records.values.map((record) => record.toJson()).toList(),
   };
 
-  Future<void> save() {
-    if (_inMemory) return Future<void>.value();
-    final snapshot = jsonEncode(_toJson());
-    final operation = _pendingWrite.then((_) async {
-      try {
-        final target = await _file();
-        await target.parent.create(recursive: true);
-        final temporary = File('${target.path}.tmp');
-        await temporary.writeAsString(snapshot, flush: true);
-        await temporary.rename(target.path);
-        saveError = null;
-      } catch (error) {
-        saveError = 'Mac 归档记录保存失败，请检查存储空间';
-        rethrow;
-      }
-    });
-    _pendingWrite = operation.catchError((Object _) {});
+  Future<void> _writeSnapshot({
+    required Map<String, ArchivePhoneRecord> records,
+    required ArchivePairing? pairing,
+    required bool autoArchive,
+    required DateTime? autoArchiveFrom,
+  }) async {
+    if (_inMemory) return;
+    await _writeInterceptor?.call();
+    try {
+      final target = await _file();
+      await target.parent.create(recursive: true);
+      final temporary = File('${target.path}.tmp');
+      await temporary.writeAsString(
+        jsonEncode(
+          _encode(
+            records: records,
+            pairing: pairing,
+            autoArchive: autoArchive,
+            autoArchiveFrom: autoArchiveFrom,
+          ),
+        ),
+        flush: true,
+      );
+      await temporary.rename(target.path);
+      saveError = null;
+    } catch (_) {
+      saveError = 'Mac 归档记录保存失败，请检查存储空间';
+      rethrow;
+    }
+  }
+
+  Future<T> _serializedMutation<T>(Future<T> Function() work) {
+    final operation = _mutation.then((_) => work());
+    _mutation = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
     return operation;
   }
+
+  /// Persist the currently published state (used after load recovery).
+  Future<void> save() => _serializedMutation(
+    () => _writeSnapshot(
+      records: Map<String, ArchivePhoneRecord>.of(_records),
+      pairing: pairing,
+      autoArchive: autoArchive,
+      autoArchiveFrom: autoArchiveFrom,
+    ),
+  );
 
   Future<void> setConfiguration({
     required ArchivePairing? pairing,
     required bool autoArchive,
     DateTime? autoArchiveFrom,
-  }) async {
-    final previousPairing = this.pairing;
-    final previousAuto = this.autoArchive;
-    final previousFrom = this.autoArchiveFrom;
+  }) => _serializedMutation(() async {
+    await _writeSnapshot(
+      records: Map<String, ArchivePhoneRecord>.of(_records),
+      pairing: pairing,
+      autoArchive: autoArchive,
+      autoArchiveFrom: autoArchiveFrom,
+    );
     this.pairing = pairing;
     this.autoArchive = autoArchive;
     this.autoArchiveFrom = autoArchiveFrom;
-    try {
-      await save();
-    } catch (_) {
-      this.pairing = previousPairing;
-      this.autoArchive = previousAuto;
-      this.autoArchiveFrom = previousFrom;
-      rethrow;
-    }
-  }
+  });
 
-  Future<void> setAutoArchive(bool value, {DateTime? autoArchiveFrom}) async {
-    final previous = autoArchive;
-    final previousFrom = this.autoArchiveFrom;
-    autoArchive = value;
-    this.autoArchiveFrom = autoArchiveFrom ?? this.autoArchiveFrom;
-    try {
-      await save();
-    } catch (_) {
-      autoArchive = previous;
-      this.autoArchiveFrom = previousFrom;
-      rethrow;
-    }
-  }
+  Future<void> setAutoArchive(bool value, {DateTime? autoArchiveFrom}) =>
+      _serializedMutation(() async {
+        final nextFrom = autoArchiveFrom ?? this.autoArchiveFrom;
+        await _writeSnapshot(
+          records: Map<String, ArchivePhoneRecord>.of(_records),
+          pairing: pairing,
+          autoArchive: value,
+          autoArchiveFrom: nextFrom,
+        );
+        autoArchive = value;
+        this.autoArchiveFrom = nextFrom;
+      });
 
-  Future<void> upsert(ArchivePhoneRecord record) async {
-    final previous = _records[record.localPath];
-    _records[record.localPath] = record;
-    try {
-      await save();
-    } catch (_) {
-      if (previous == null) {
-        _records.remove(record.localPath);
-      } else {
-        _records[record.localPath] = previous;
-      }
-      rethrow;
-    }
-  }
+  Future<void> upsert(ArchivePhoneRecord record) =>
+      _serializedMutation(() async {
+        final next = Map<String, ArchivePhoneRecord>.of(_records)
+          ..[record.localPath] = record;
+        await _writeSnapshot(
+          records: next,
+          pairing: pairing,
+          autoArchive: autoArchive,
+          autoArchiveFrom: autoArchiveFrom,
+        );
+        _records[record.localPath] = record;
+      });
 
-  Future<void> upsertAll(Iterable<ArchivePhoneRecord> records) async {
-    final previous = <String, ArchivePhoneRecord?>{};
-    for (final record in records) {
-      previous.putIfAbsent(record.localPath, () => _records[record.localPath]);
-      _records[record.localPath] = record;
-    }
-    try {
-      await save();
-    } catch (_) {
-      for (final entry in previous.entries) {
-        final before = entry.value;
-        if (before == null) {
-          _records.remove(entry.key);
-        } else {
-          _records[entry.key] = before;
+  Future<void> upsertAll(Iterable<ArchivePhoneRecord> records) =>
+      _serializedMutation(() async {
+        final incoming = records.toList();
+        final next = Map<String, ArchivePhoneRecord>.of(_records);
+        for (final record in incoming) {
+          next[record.localPath] = record;
         }
-      }
-      rethrow;
-    }
-  }
+        await _writeSnapshot(
+          records: next,
+          pairing: pairing,
+          autoArchive: autoArchive,
+          autoArchiveFrom: autoArchiveFrom,
+        );
+        for (final record in incoming) {
+          _records[record.localPath] = record;
+        }
+      });
 
-  Future<void> remove(String path) async {
-    final previous = _records.remove(path);
-    if (previous == null) return;
-    try {
-      await save();
-    } catch (_) {
-      _records[path] = previous;
-      rethrow;
-    }
-  }
+  Future<void> remove(String path) => _serializedMutation(() async {
+    if (!_records.containsKey(path)) return;
+    final next = Map<String, ArchivePhoneRecord>.of(_records)..remove(path);
+    await _writeSnapshot(
+      records: next,
+      pairing: pairing,
+      autoArchive: autoArchive,
+      autoArchiveFrom: autoArchiveFrom,
+    );
+    _records.remove(path);
+  });
 
-  Future<void> rename(String from, String to) async {
-    final previous = _records.remove(from);
+  Future<void> rename(String from, String to) => _serializedMutation(() async {
+    final previous = _records[from];
     if (previous == null) return;
-    final existingTarget = _records[to];
-    _records[to] = previous.copyWith(localPath: to, updatedAt: DateTime.now());
-    try {
-      await save();
-    } catch (_) {
-      _records.remove(to);
-      if (existingTarget != null) _records[to] = existingTarget;
-      _records[from] = previous;
-      rethrow;
-    }
-  }
+    final next = Map<String, ArchivePhoneRecord>.of(_records)..remove(from);
+    next[to] = previous.copyWith(localPath: to, updatedAt: DateTime.now());
+    await _writeSnapshot(
+      records: next,
+      pairing: pairing,
+      autoArchive: autoArchive,
+      autoArchiveFrom: autoArchiveFrom,
+    );
+    _records
+      ..remove(from)
+      ..[to] = next[to]!;
+  });
 }
 
 class ArchiveDeskConfig {
@@ -541,12 +654,19 @@ class ArchiveDeskStore {
     bool inMemory = false,
     Future<Directory> Function()? supportDirectory,
     bool? developmentProfile,
+    Future<bool> Function()? isolationProvider,
+    Future<void> Function()? configWriteInterceptor,
   }) : _directoryOverride = directory,
        // ignore: prefer_initializing_formals
        _inMemory = inMemory,
        // ignore: prefer_initializing_formals
        _supportDirectory = supportDirectory,
-       _developmentProfile = developmentProfile ?? kDebugMode,
+       // ignore: prefer_initializing_formals
+       _developmentProfile = developmentProfile,
+       // ignore: prefer_initializing_formals
+       _isolationProvider = isolationProvider,
+       // ignore: prefer_initializing_formals
+       _configWriteInterceptor = configWriteInterceptor,
        config = ArchiveDeskConfig(
          deskId: ArchivePairing.generateDeskId(),
          pairingKey: ArchivePairing.generateKey(),
@@ -558,13 +678,16 @@ class ArchiveDeskStore {
   final Directory? _directoryOverride;
   final bool _inMemory;
   final Future<Directory> Function()? _supportDirectory;
-  final bool _developmentProfile;
+  final bool? _developmentProfile;
+  final Future<bool> Function()? _isolationProvider;
+  final Future<void> Function()? _configWriteInterceptor;
   final Map<String, ArchiveDeskEntry> _entries = {};
   ArchiveDeskConfig config;
   String? loadError;
   String? saveError;
   bool storageUnavailable = false;
   Future<void> _pendingWrite = Future<void>.value();
+  Future<void> _configChain = Future<void>.value();
   Future<void> _commitChain = Future<void>.value();
   bool _loaded = false;
 
@@ -585,10 +708,14 @@ class ArchiveDeskStore {
     } catch (_) {
       throw const ArchiveException('无法访问 Mac 私有归档目录，已停止接收与读写配对信息');
     }
+    final development = await _resolveArchiveDevelopmentProfile(
+      _developmentProfile,
+      _isolationProvider,
+    );
     return Directory(
       p.join(
         base.path,
-        _developmentProfile ? 'KoeArchiveDevelopment' : 'KoeArchive',
+        development ? 'KoeArchiveDevelopment' : 'KoeArchive',
         'desk',
       ),
     );
@@ -617,10 +744,8 @@ class ArchiveDeskStore {
     if (_loaded) return;
     _loaded = true;
     if (_inMemory) return;
-    final directory = await _directory();
-    await (await filesDirectory()).create(recursive: true);
-    await (await incomingDirectory()).create(recursive: true);
     try {
+      final directory = await _directory();
       final target = File(p.join(directory.path, configFileName));
       if (await target.exists()) {
         final decoded = ArchiveDeskConfig.decode(
@@ -632,8 +757,6 @@ class ArchiveDeskStore {
         } else {
           config = decoded;
         }
-      } else {
-        await saveConfig();
       }
       final index = File(p.join(directory.path, indexFileName));
       if (await index.exists()) {
@@ -660,6 +783,7 @@ class ArchiveDeskStore {
 
   Future<void> _adoptFilesOnDisk() async {
     final files = await filesDirectory();
+    if (!await files.exists()) return;
     var changed = false;
     final pattern = RegExp(r'^([a-f0-9]{64})(\.[a-z0-9.]+)$');
     await for (final entity in files.list(followLinks: false)) {
@@ -672,32 +796,53 @@ class ArchiveDeskStore {
       if (_entries.containsKey(hash)) continue;
       final stat = await entity.stat();
       if (stat.type != FileSystemEntityType.file || stat.size <= 0) continue;
+      String? actual;
+      try {
+        actual = await archiveFileHash(entity.path);
+      } on ArchiveException {
+        continue;
+      }
+      if (actual != hash) {
+        // Keep a misleadingly named/corrupt file on disk for diagnosis, but do
+        // not expose it as a verified archive entry.
+        continue;
+      }
       _entries[hash] = ArchiveDeskEntry(
         contentHash: hash,
         length: stat.size,
         extension: extension,
         displayName: 'Koe 归档',
-        verifiedAt: stat.modified,
+        verifiedAt: DateTime.now(),
       );
       changed = true;
     }
     if (changed) await saveIndex();
   }
 
-  Future<void> saveConfig() {
-    if (_inMemory) return Future<void>.value();
-    final snapshot = jsonEncode(config.toJson());
-    return _serialized(() async {
-      final target = File(p.join((await _directory()).path, configFileName));
-      await _writeAtomic(target, snapshot);
-    });
+  Future<void> _writeConfig(ArchiveDeskConfig value) async {
+    if (_inMemory) return;
+    await _configWriteInterceptor?.call();
+    final target = File(p.join((await _directory()).path, configFileName));
+    await _writeAtomic(target, jsonEncode(value.toJson()));
   }
 
-  Future<void> saveIndex() {
+  Future<T> _serializedConfig<T>(Future<T> Function() work) {
+    final operation = _configChain.then((_) => work());
+    _configChain = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return operation;
+  }
+
+  Future<void> saveConfig() => _serializedConfig(() => _writeConfig(config));
+
+  Future<void> saveIndex({Map<String, ArchiveDeskEntry>? entries}) {
     if (_inMemory) return Future<void>.value();
+    final source = entries ?? _entries;
     final snapshot = jsonEncode(<String, Object?>{
       'version': 1,
-      'entries': _entries.values.map((entry) => entry.toJson()).toList(),
+      'entries': source.values.map((entry) => entry.toJson()).toList(),
     });
     return _serialized(() async {
       final target = File(p.join((await _directory()).path, indexFileName));
@@ -705,54 +850,46 @@ class ArchiveDeskStore {
     });
   }
 
-  Future<void> setReceiving({required bool enabled, int? preferredPort}) async {
-    final previous = config;
-    config = config.copyWith(
-      receivingEnabled: enabled,
-      preferredPort: preferredPort,
-    );
-    try {
-      await saveConfig();
-    } catch (_) {
-      config = previous;
-      rethrow;
-    }
-  }
+  Future<void> setReceiving({required bool enabled, int? preferredPort}) =>
+      _serializedConfig(() async {
+        final next = config.copyWith(
+          receivingEnabled: enabled,
+          preferredPort: preferredPort,
+        );
+        await _writeConfig(next);
+        config = next;
+      });
 
   Future<void> updatePreferredPort(int port) async {
     if (config.preferredPort == port) return;
-    final previous = config;
-    config = config.copyWith(preferredPort: port);
     try {
-      await saveConfig();
+      await _serializedConfig(() async {
+        final next = config.copyWith(preferredPort: port);
+        await _writeConfig(next);
+        config = next;
+      });
     } catch (_) {
-      config = previous;
+      // Port persistence is best effort; a later start can reveal a fresh code.
     }
   }
 
-  Future<void> forgetEntry(String hash) async {
-    final previous = _entries.remove(hash);
-    if (previous == null) return;
-    try {
-      await saveIndex();
-    } catch (_) {
-      _entries[hash] = previous;
-      rethrow;
-    }
-  }
+  Future<void> forgetEntry(String hash) => _serializedCommit(() async {
+    if (!_entries.containsKey(hash)) return;
+    final next = Map<String, ArchiveDeskEntry>.of(_entries)..remove(hash);
+    await saveIndex(entries: next);
+    _entries.remove(hash);
+  });
 
-  Future<ArchiveDeskEntry> recordVerified(ArchiveDeskEntry entry) async {
-    final existing = _entries[entry.contentHash];
-    if (existing != null) return existing;
-    _entries[entry.contentHash] = entry;
-    try {
-      await saveIndex();
-      return entry;
-    } catch (_) {
-      _entries.remove(entry.contentHash);
-      rethrow;
-    }
-  }
+  Future<ArchiveDeskEntry> recordVerified(ArchiveDeskEntry entry) =>
+      _serializedCommit(() async {
+        final existing = _entries[entry.contentHash];
+        if (existing != null) return existing;
+        final next = Map<String, ArchiveDeskEntry>.of(_entries)
+          ..[entry.contentHash] = entry;
+        await saveIndex(entries: next);
+        _entries[entry.contentHash] = entry;
+        return entry;
+      });
 
   Future<bool> verifyEntry(ArchiveDeskEntry entry) async {
     final file = await fileForEntry(entry);
@@ -788,11 +925,19 @@ class ArchiveDeskStore {
         throw const ArchiveProtocolException('归档内容参数不合法');
       }
       final storedExtension = archiveStoredExtension(extension);
+      await (await filesDirectory()).create(recursive: true);
       final finalFile = await fileFor(contentHash, storedExtension);
 
-      final existing = _entries[contentHash];
+      final next = Map<String, ArchiveDeskEntry>.of(_entries);
+      final existing = next[contentHash];
       if (existing != null) {
         if (existing.length == length && await verifyEntry(existing)) {
+          final temp = File(temporaryPath);
+          if (await temp.exists()) {
+            try {
+              await temp.delete();
+            } catch (_) {}
+          }
           return existing;
         }
         // A stale/corrupt index entry is removed under the same commit lock;
@@ -809,7 +954,7 @@ class ArchiveDeskStore {
             );
           }
         }
-        _entries.remove(contentHash);
+        next.remove(contentHash);
       }
 
       var created = false;
@@ -851,13 +996,10 @@ class ArchiveDeskStore {
         verifiedAt: verifiedAt,
         sourceClientId: sourceClientId,
       );
-      _entries[contentHash] = entry;
+      next[contentHash] = entry;
       try {
-        await saveIndex();
+        await saveIndex(entries: next);
       } catch (_) {
-        if (identical(_entries[contentHash], entry)) {
-          _entries.remove(contentHash);
-        }
         if (created) {
           try {
             await finalFile.delete();
@@ -872,6 +1014,9 @@ class ArchiveDeskStore {
           } catch (_) {}
         }
       }
+      _entries
+        ..clear()
+        ..addAll(next);
       return entry;
     });
   }
@@ -900,4 +1045,20 @@ Future<void> _writeAtomic(File target, String contents) async {
   final temporary = File('${target.path}.tmp');
   await temporary.writeAsString(contents, flush: true);
   await temporary.rename(target.path);
+}
+
+Future<bool> _resolveArchiveDevelopmentProfile(
+  bool? explicit,
+  Future<bool> Function()? provider,
+) async {
+  if (explicit != null) return explicit;
+  try {
+    final Future<bool> pending = provider != null
+        ? provider()
+        : CredentialStore().isIsolated;
+    return await pending;
+  } catch (_) {
+    // Fail closed: an unreadable build mode must never open production pairing.
+    return true;
+  }
 }

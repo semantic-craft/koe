@@ -61,6 +61,22 @@ class _TestSource implements ArchiveSource {
   }
 }
 
+class _GatedRestoreSource extends _TestSource {
+  Completer<void>? gate;
+  Completer<void>? entered;
+
+  @override
+  Future<String> archiveRestoreTarget(ArchivePhoneRecord record) async {
+    if (!(entered?.isCompleted ?? true)) entered!.complete();
+    final pending = gate;
+    if (pending != null) {
+      gate = null;
+      await pending.future;
+    }
+    return record.localPath;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -382,6 +398,176 @@ void main() {
 
       gate.complete();
       await controller.waitForWorker();
+      expect(
+        controller.recordForPath(second.path)?.phase,
+        MacArchivePhase.verified,
+      );
+      expect(deskStore.entries, hasLength(2));
+    },
+  );
+
+  test(
+    'deleting or renaming a record while restore is paused prevents resurrection',
+    () async {
+      for (final action in <String>['delete', 'rename']) {
+        final source = _GatedRestoreSource();
+        final file = await makeAudio(
+          'restore-$action.wav',
+          seed: action == 'delete' ? 101 : 103,
+        );
+        source.add(file.path);
+        final controller = phone(
+          source,
+          storeDirectory: Directory('${root.path}/phone-$action'),
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+        await controller.pairWithCode(pairing.encode());
+        await controller.archiveNow(file.path);
+        await controller.waitForWorker();
+        await file.delete();
+        await controller.onLocalLibraryChanged();
+        await controller.waitForWorker();
+
+        source
+          ..gate = Completer<void>()
+          ..entered = Completer<void>();
+        final gate = source.gate!;
+        final entered = source.entered!;
+        final restore = controller.restoreFromArchive(file.path);
+        await entered.future;
+        if (action == 'delete') {
+          await controller.forgetLocalPath(file.path);
+        } else {
+          await controller.renameLocalPath(
+            file.path,
+            '${root.path}/renamed-$action.wav',
+          );
+        }
+        gate.complete();
+        await expectLater(restore, throwsA(isA<ArchiveException>()));
+        expect(source.restored, isEmpty);
+        if (action == 'delete') {
+          expect(controller.recordForPath(file.path), isNull);
+        } else {
+          expect(controller.recordForPath(file.path), isNull);
+          expect(
+            controller.recordForPath('${root.path}/renamed-$action.wav')?.phase,
+            MacArchivePhase.verified,
+          );
+        }
+      }
+    },
+  );
+
+  test(
+    'pairing back to the original Mac restores the preserved archive receipt',
+    () async {
+      final secondStore = ArchiveDeskStore(
+        directory: Directory('${root.path}/desk-b'),
+      );
+      await secondStore.load();
+      final secondServer = ArchiveDeskServer(store: secondStore);
+      await secondServer.start(port: 0);
+      addTearDown(secondServer.stop);
+      final secondPairing = ArchivePairing(
+        deskId: secondStore.config.deskId,
+        key: secondStore.config.pairingKey,
+        hosts: const <String>['127.0.0.1'],
+        port: secondServer.port!,
+      );
+
+      final source = _TestSource();
+      final file = await makeAudio('roundtrip.wav', seed: 107);
+      source.add(file.path);
+      final controller = phone(
+        source,
+        storeDirectory: Directory('${root.path}/phone-roundtrip'),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.pairWithCode(pairing.encode());
+      await controller.archiveNow(file.path);
+      await controller.waitForWorker();
+      final hash = (await archiveFileHash(file.path))!;
+      await file.delete();
+      await controller.onLocalLibraryChanged();
+      await controller.waitForWorker();
+
+      await controller.pairWithCode(secondPairing.encode());
+      final afterB = controller.recordForPath(file.path);
+      expect(afterB?.receipts.keys, contains(pairing.deskId));
+      expect(afterB?.deskId, secondPairing.deskId);
+      expect(afterB?.phase, isNot(MacArchivePhase.verified));
+
+      await controller.pairWithCode(pairing.encode());
+      final backOnA = controller.recordForPath(file.path);
+      expect(backOnA?.deskId, pairing.deskId);
+      expect(backOnA?.phase, MacArchivePhase.verified);
+      expect(backOnA?.contentHash, hash);
+      expect(controller.archivedWithoutLocal, contains(file.path));
+
+      final restored = await controller.restoreFromArchive(file.path);
+      expect(restored, file.path);
+      expect(await archiveFileHash(file.path), hash);
+    },
+  );
+
+  test(
+    'manual disconnect stops the queued worker and explicit connect resumes it',
+    () async {
+      final gate = Completer<void>();
+      final entered = Completer<void>();
+      var blockNext = false;
+      final source = _TestSource();
+      final first = await makeAudio('queued-a.wav', seed: 109);
+      final second = await makeAudio('queued-b.wav', seed: 113);
+      source
+        ..add(first.path)
+        ..add(second.path);
+      final controller = MacArchiveController(
+        source: source,
+        isDesk: false,
+        phoneStore: ArchivePhoneStore(
+          directory: Directory('${root.path}/pause-phone'),
+        ),
+        deskStore: ArchiveDeskStore(inMemory: true),
+        clientConnector: (pairing, clientId) async {
+          if (blockNext) {
+            blockNext = false;
+            if (!entered.isCompleted) entered.complete();
+            await gate.future;
+          }
+          return ArchiveClient.connect(pairing, clientId: clientId);
+        },
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.pairWithCode(pairing.encode());
+      blockNext = true;
+      await controller.queueAllExisting();
+      await entered.future;
+      await controller.disconnect();
+      gate.complete();
+      await controller.waitForWorker();
+
+      expect(deskStore.entries, isEmpty);
+      expect(
+        controller.recordForPath(first.path)?.phase,
+        isNot(MacArchivePhase.verified),
+      );
+      expect(
+        controller.recordForPath(second.path)?.phase,
+        isNot(MacArchivePhase.verified),
+      );
+      expect(controller.connected, isFalse);
+
+      await controller.connectNow();
+      await controller.waitForWorker();
+      expect(
+        controller.recordForPath(first.path)?.phase,
+        MacArchivePhase.verified,
+      );
       expect(
         controller.recordForPath(second.path)?.phase,
         MacArchivePhase.verified,

@@ -95,7 +95,10 @@ class ArchiveWire {
     return _take(length, deadline);
   }
 
-  Future<void> writeFrame(Uint8List payload) async {
+  Future<void> writeFrame(
+    Uint8List payload, {
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
     if (_closed) throw const ArchiveProtocolException('连接已关闭');
     if (payload.length > archiveMaxDataBytes + 64) {
       throw const ArchiveProtocolException('待发送的数据帧过大');
@@ -103,8 +106,17 @@ class ArchiveWire {
     final output = Uint8List(4 + payload.length);
     ByteData.sublistView(output).setUint32(0, payload.length, Endian.big);
     output.setRange(4, output.length, payload);
-    _socket.add(output);
-    await _socket.flush();
+    try {
+      _socket.add(output);
+      await _socket.flush().timeout(timeout);
+    } on TimeoutException {
+      _socket.destroy();
+      _closed = true;
+      throw const ArchiveTimeoutException('发送超时，连接已关闭');
+    } on SocketException {
+      _closed = true;
+      throw const ArchiveProtocolException('连接已断开');
+    }
   }
 
   Future<Uint8List> _take(int count, DateTime deadline) async {
@@ -342,7 +354,7 @@ class ArchiveSecureSession {
     if (plain.length > archiveMaxControlBytes) {
       throw const ArchiveProtocolException('控制消息过大');
     }
-    await _sendFrame(ArchiveFrameKind.control, plain);
+    await _sendFrame(ArchiveFrameKind.control, plain, timeout: timeout);
   }
 
   Future<void> sendData(Uint8List data) async {
@@ -412,13 +424,17 @@ class ArchiveSecureSession {
     return incoming;
   }
 
-  Future<void> _sendFrame(ArchiveFrameKind kind, Uint8List plain) async {
+  Future<void> _sendFrame(
+    ArchiveFrameKind kind,
+    Uint8List plain, {
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
     final sequence = _sendSequence++;
     final sealed = _seal(kind, plain, sequence);
     final payload = Uint8List(1 + sealed.length);
     payload[0] = kind.wireValue;
     payload.setRange(1, payload.length, sealed);
-    await _wire.writeFrame(payload);
+    await _wire.writeFrame(payload, timeout: timeout);
   }
 
   Uint8List _seal(ArchiveFrameKind kind, Uint8List plain, int sequence) {

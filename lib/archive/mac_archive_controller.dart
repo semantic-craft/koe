@@ -107,6 +107,8 @@ class MacArchiveController extends ChangeNotifier {
   Timer? _retryTimer;
   final Set<String> _explicitPaths = <String>{};
   final Map<String, DateTime> _nextAttempt = <String, DateTime>{};
+  final Map<String, int> _recordGenerations = <String, int>{};
+  final Set<String> _restoreInFlight = <String>{};
   final Map<String, String> _restoreErrors = <String, String>{};
   final Map<String, double> _transferProgress = <String, double>{};
 
@@ -164,12 +166,20 @@ class MacArchiveController extends ChangeNotifier {
     for (final record in phoneStore.records)
       if (record.verified &&
           record.hasVersion &&
+          (pairing == null ||
+              record.deskId == null ||
+              record.deskId == pairing!.deskId) &&
           !File(record.localPath).existsSync())
         record.localPath,
   ];
 
-  bool hasArchiveForPath(String path) =>
-      phoneStore.recordForPath(path)?.verified == true;
+  bool hasArchiveForPath(String path) {
+    final record = phoneStore.recordForPath(path);
+    return record?.verified == true &&
+        (pairing == null ||
+            record?.deskId == null ||
+            record?.deskId == pairing!.deskId);
+  }
 
   String statusForPath(String path) {
     final record = phoneStore.recordForPath(path);
@@ -177,6 +187,12 @@ class MacArchiveController extends ChangeNotifier {
       return pairing == null ? '未配对' : '未归档';
     }
     final localPresent = File(path).existsSync();
+    if (record.verified &&
+        record.deskId != null &&
+        pairing != null &&
+        record.deskId != pairing!.deskId) {
+      return '需重新归档到当前 Mac';
+    }
     return switch (record.phase) {
       MacArchivePhase.pending => connected ? '等待传输' : '等待连接',
       MacArchivePhase.uploading => '传输中',
@@ -191,6 +207,12 @@ class MacArchiveController extends ChangeNotifier {
     if (record == null) {
       if (pairing == null) return '未配对 Mac；原件保留在手机';
       return '原件保留在手机，可手动归档到 Mac';
+    }
+    if (record.verified &&
+        record.deskId != null &&
+        pairing != null &&
+        record.deskId != pairing!.deskId) {
+      return '这条归档属于另一台 Mac；原字节仍保留在旧 Mac';
     }
     final error = record.error;
     return switch (record.phase) {
@@ -235,7 +257,9 @@ class MacArchiveController extends ChangeNotifier {
     }
     if (phoneStore.loadError != null) _phoneError = phoneStore.loadError;
     if (deskStore.loadError != null) _deskError = deskStore.loadError;
-    if (isDesk && deskStore.config.receivingEnabled) {
+    if (isDesk &&
+        !deskStore.storageUnavailable &&
+        deskStore.config.receivingEnabled) {
       try {
         await _server!.start();
       } on ArchiveException catch (error) {
@@ -263,6 +287,7 @@ class MacArchiveController extends ChangeNotifier {
   Future<void> pairWithCode(String raw) async {
     await initialize();
     _requireActive();
+    _requirePhoneStorage();
     final next = ArchivePairing.parse(raw);
     final operation = ++_pairEpoch;
     final startEpoch = _connectionEpoch;
@@ -318,25 +343,77 @@ class MacArchiveController extends ChangeNotifier {
     unawaited(_kick());
   }
 
+  Map<String, ArchiveDeskReceipt> _receiptsWith(ArchivePhoneRecord record) {
+    final receipts = Map<String, ArchiveDeskReceipt>.of(record.receipts);
+    final desk = record.deskId;
+    if (desk != null && record.verified && record.hasVersion) {
+      receipts[desk] = ArchiveDeskReceipt(
+        contentHash: record.contentHash!,
+        length: record.verifiedLength ?? record.length,
+        extension: record.originalExtension,
+        verifiedAt: record.verifiedAt ?? record.updatedAt,
+        sourceLength: record.length,
+        sourceModifiedMs: record.sourceModifiedMs,
+      );
+    }
+    return receipts;
+  }
+
   Future<void> _rebindRecordsTo(String deskId, DateTime now) async {
     final changes = <ArchivePhoneRecord>[];
     for (final record in phoneStore.records) {
       if (record.deskId == deskId) continue;
-      final localPresent = File(record.localPath).existsSync();
-      changes.add(
-        record.copyWith(
-          deskId: deskId,
-          phase: localPresent
-              ? MacArchivePhase.pending
-              : MacArchivePhase.failed,
-          clearContentHash: true,
-          clearVerified: true,
-          manual: localPresent,
-          error: localPresent ? null : '原件不在本机，无法归档到新 Mac',
-          clearError: localPresent,
-          updatedAt: now,
-        ),
-      );
+      final receipts = _receiptsWith(record);
+      final target = receipts[deskId];
+      final local = File(record.localPath);
+      final localPresent = await local.exists();
+      final stat = localPresent ? await local.stat() : null;
+      invalidateRestore(record.localPath);
+      if (target != null) {
+        final matches =
+            !localPresent ||
+            (stat != null &&
+                stat.size == target.sourceLength &&
+                stat.modified.millisecondsSinceEpoch ==
+                    target.sourceModifiedMs);
+        changes.add(
+          record.copyWith(
+            deskId: deskId,
+            receipts: receipts,
+            phase: matches ? MacArchivePhase.verified : MacArchivePhase.pending,
+            contentHash: matches ? target.contentHash : null,
+            clearContentHash: !matches,
+            clearVerified: !matches,
+            length: localPresent ? stat!.size : target.sourceLength,
+            sourceModifiedMs: localPresent
+                ? stat!.modified.millisecondsSinceEpoch
+                : target.sourceModifiedMs,
+            verifiedAt: matches ? target.verifiedAt : null,
+            verifiedLength: matches ? target.length : null,
+            originalExtension: target.extension,
+            manual: !matches && localPresent,
+            error: !matches && !localPresent ? '原件不在本机，无法归档到新 Mac' : null,
+            clearError: matches || localPresent,
+            updatedAt: now,
+          ),
+        );
+      } else {
+        changes.add(
+          record.copyWith(
+            deskId: deskId,
+            receipts: receipts,
+            phase: localPresent
+                ? MacArchivePhase.pending
+                : MacArchivePhase.failed,
+            clearContentHash: true,
+            clearVerified: true,
+            manual: localPresent,
+            error: localPresent ? null : '原件不在本机，无法归档到新 Mac',
+            clearError: localPresent,
+            updatedAt: now,
+          ),
+        );
+      }
     }
     if (changes.isEmpty) return;
     await phoneStore.upsertAll(changes);
@@ -364,6 +441,7 @@ class MacArchiveController extends ChangeNotifier {
   Future<void> setAutoArchive(bool value) async {
     await initialize();
     _requireActive();
+    _requirePhoneStorage();
     if (value && pairing == null) {
       throw const ArchiveException('请先配对 Mac');
     }
@@ -382,12 +460,15 @@ class MacArchiveController extends ChangeNotifier {
   Future<void> connectNow() async {
     await initialize();
     _requireActive();
+    _requirePhoneStorage();
     if (pairing == null) throw const ArchiveException('请先配对 Mac');
     _manualPaused = false;
     _authFailed = false;
+    _nextAttempt.clear();
     try {
       await _ensureInteractiveClient(expectedDeskId: pairing!.deskId);
       _ensureTimer();
+      unawaited(_kick());
       _notify();
     } on ArchiveException catch (error) {
       _phoneError = error.message;
@@ -409,6 +490,7 @@ class MacArchiveController extends ChangeNotifier {
   Future<void> archiveNow(String path) async {
     await initialize();
     _requireActive();
+    _requirePhoneStorage();
     if (pairing == null) throw const ArchiveException('请先配对 Mac');
     final candidate = await source.archiveCandidate(path);
     if (candidate == null) {
@@ -430,6 +512,7 @@ class MacArchiveController extends ChangeNotifier {
       updatedAt: now,
     );
     await phoneStore.upsert(record);
+    _nextAttempt.remove(path);
     _explicitPaths.add(path);
     _ensureTimer();
     _notify();
@@ -441,6 +524,7 @@ class MacArchiveController extends ChangeNotifier {
   Future<int> queueAllExisting() async {
     await initialize();
     _requireActive();
+    _requirePhoneStorage();
     if (pairing == null) throw const ArchiveException('请先配对 Mac');
     final candidates = await source.archiveCandidates();
     final now = _clock();
@@ -471,6 +555,7 @@ class MacArchiveController extends ChangeNotifier {
     if (queued.isEmpty) return 0;
     await phoneStore.upsertAll(queued);
     _manualPaused = false;
+    _nextAttempt.clear();
     _ensureTimer();
     _notify();
     unawaited(_kick());
@@ -480,6 +565,7 @@ class MacArchiveController extends ChangeNotifier {
   Future<String> restoreFromArchive(String path) async {
     await initialize();
     _requireActive();
+    _requirePhoneStorage();
     final record = phoneStore.recordForPath(path);
     if (record == null || !record.verified || !record.hasVersion) {
       throw const ArchiveException('这条资料没有已校验的 Mac 归档，无法恢复');
@@ -489,7 +575,11 @@ class MacArchiveController extends ChangeNotifier {
     if (record.deskId != null && record.deskId != targetDeskId) {
       throw const ArchiveException('这条归档属于另一台 Mac，请重新配对或归档');
     }
+    if (!_restoreInFlight.add(path)) {
+      throw const ArchiveException('这条资料正在恢复，请稍候');
+    }
     final epoch = _connectionEpoch;
+    final generation = _recordGeneration(path);
     _manualPaused = false;
     _restoreErrors.remove(path);
     _notify();
@@ -510,7 +600,6 @@ class MacArchiveController extends ChangeNotifier {
         throw const ArchiveRemoteException('Mac 上的归档未通过校验，不能恢复');
       }
       final target = await source.archiveRestoreTarget(record);
-      final targetExisted = await File(target).exists();
       await client.fetchToFile(
         contentHash: record.contentHash!,
         expectedLength: remote.length!,
@@ -521,13 +610,16 @@ class MacArchiveController extends ChangeNotifier {
           _notify();
         },
       );
-      if (!_targetStillCurrent(epoch, targetDeskId)) {
-        if (!targetExisted && await File(target).exists()) {
-          try {
-            await File(target).delete();
-          } catch (_) {}
-        }
-        throw const ArchiveException('连接目标已变更');
+      final latestRecord = phoneStore.recordForPath(path);
+      if (!_targetStillCurrent(epoch, targetDeskId) ||
+          _recordGeneration(path) != generation ||
+          latestRecord == null ||
+          latestRecord.contentHash != record.contentHash ||
+          latestRecord.deskId != targetDeskId) {
+        // Never delete the downloaded final file here: the path may already
+        // belong to a newer user action. fetchToFile only removes its own
+        // temporary part on failure.
+        throw const ArchiveException('资料已变更，已取消恢复');
       }
       final diskHash = await archiveFileHash(target);
       final diskLength = await File(target).length();
@@ -549,12 +641,22 @@ class MacArchiveController extends ChangeNotifier {
         throw const ArchiveException('连接目标已变更');
       }
       final latest = phoneStore.recordForPath(target) ?? record;
+      final receipts = _receiptsWith(latest);
+      receipts[targetDeskId] = ArchiveDeskReceipt(
+        contentHash: record.contentHash!,
+        length: diskLength,
+        extension: record.originalExtension,
+        verifiedAt: record.verifiedAt ?? _clock(),
+        sourceLength: record.length,
+        sourceModifiedMs: record.sourceModifiedMs,
+      );
       await phoneStore.upsert(
         latest.copyWith(
           localPath: target,
           deskId: targetDeskId,
           phase: MacArchivePhase.verified,
           verifiedLength: diskLength,
+          receipts: receipts,
           error: null,
           clearError: true,
           updatedAt: _clock(),
@@ -583,10 +685,22 @@ class MacArchiveController extends ChangeNotifier {
       _phoneError = '恢复失败，请重试';
       _notify();
       throw const ArchiveException('恢复失败，请重试');
+    } finally {
+      _restoreInFlight.remove(path);
     }
   }
 
+  /// Invalidates an in-flight restore without deleting the phone original or
+  /// the Mac copy. Called when the local material is trashed, renamed or
+  /// permanently removed.
+  void invalidateRestore(String path) {
+    _recordGenerations[path] = _recordGeneration(path) + 1;
+  }
+
+  int _recordGeneration(String path) => _recordGenerations[path] ?? 0;
+
   Future<void> forgetLocalPath(String path) async {
+    invalidateRestore(path);
     await phoneStore.remove(path);
     _restoreErrors.remove(path);
     _nextAttempt.remove(path);
@@ -595,6 +709,8 @@ class MacArchiveController extends ChangeNotifier {
   }
 
   Future<void> renameLocalPath(String from, String to) async {
+    invalidateRestore(from);
+    invalidateRestore(to);
     await phoneStore.rename(from, to);
     _notify();
   }
@@ -608,6 +724,9 @@ class MacArchiveController extends ChangeNotifier {
   Future<void> setDeskReceiving(bool enabled) async {
     await initialize();
     if (!isDesk) throw const ArchiveException('只有 Mac 可以接收原件');
+    if (deskStore.storageUnavailable) {
+      throw ArchiveException(deskStore.loadError ?? '无法访问 Mac 私有归档目录');
+    }
     final server = _server!;
     if (enabled) {
       try {
@@ -840,6 +959,7 @@ class MacArchiveController extends ChangeNotifier {
             existing.sourceModifiedMs != candidate.modifiedMs) {
           changes.add(
             existing.copyWith(
+              receipts: _receiptsWith(existing),
               phase: MacArchivePhase.pending,
               clearContentHash: true,
               clearVerified: true,
@@ -922,6 +1042,7 @@ class MacArchiveController extends ChangeNotifier {
       );
 
   ArchivePhoneRecord? _nextProcessable() {
+    if (_manualPaused) return null;
     final now = _clock();
     final records =
         phoneStore.records
@@ -988,7 +1109,7 @@ class MacArchiveController extends ChangeNotifier {
       );
       await phoneStore.upsert(current);
       _notify();
-      if (_manualPaused && !current.manual) {
+      if (_manualPaused) {
         await _markPending(current, '等待连接');
         return;
       }
@@ -1044,11 +1165,21 @@ class MacArchiveController extends ChangeNotifier {
         // transfer; the old completion must never overwrite the newer state.
         return;
       }
+      final receipts = _receiptsWith(settled);
+      receipts[targetDeskId] = ArchiveDeskReceipt(
+        contentHash: hash,
+        length: result.length,
+        extension: candidate.extension,
+        verifiedAt: result.verifiedAt,
+        sourceLength: settled.length,
+        sourceModifiedMs: settled.sourceModifiedMs,
+      );
       await phoneStore.upsert(
         settled.copyWith(
           phase: MacArchivePhase.verified,
           verifiedAt: result.verifiedAt,
           verifiedLength: result.length,
+          receipts: receipts,
           error: null,
           clearError: true,
           manual: false,
@@ -1062,10 +1193,13 @@ class MacArchiveController extends ChangeNotifier {
       _authFailed = true;
       _linkPhase = ArchiveLinkPhase.failed;
       _phoneError = error.message;
+      await _closeWorkerClient();
       await _markFailed(initial, error.message, hash: attemptedHash);
     } on ArchiveRemoteException catch (error) {
+      await _closeWorkerClient();
       await _markFailed(initial, error.message, hash: attemptedHash);
     } on ArchiveSourceChangedException {
+      await _closeWorkerClient();
       await _markChanged(initial, hash: attemptedHash);
     } on ArchiveException catch (error) {
       await _closeWorkerClient();
@@ -1084,6 +1218,7 @@ class MacArchiveController extends ChangeNotifier {
       _notify();
     } catch (error) {
       debugPrint('[MacArchive] transfer failed: $error');
+      await _closeWorkerClient();
       await _markFailed(initial, '归档失败，请重试', hash: attemptedHash);
     } finally {
       _inFlightPath = null;
@@ -1163,6 +1298,12 @@ class MacArchiveController extends ChangeNotifier {
 
   void _requireActive() {
     if (_disposed) throw const ArchiveException('归档服务已关闭');
+  }
+
+  void _requirePhoneStorage() {
+    if (phoneStore.storageUnavailable) {
+      throw ArchiveException(phoneStore.loadError ?? '无法访问应用私有归档目录');
+    }
   }
 
   void _notify() {

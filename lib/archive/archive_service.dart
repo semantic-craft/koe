@@ -47,6 +47,8 @@ class ArchiveDeskServer {
   Future<void> start({int? port}) async {
     if (running) return;
     lastError = null;
+    await (await store.filesDirectory()).create(recursive: true);
+    await (await store.incomingDirectory()).create(recursive: true);
     final preferred = port ?? store.config.preferredPort;
     ServerSocket? socket;
     Object? bindError;
@@ -159,7 +161,8 @@ class ArchiveDeskServer {
         length > archiveMaxAudioBytes ||
         extension is! String ||
         displayName is! String ||
-        clientId is! String) {
+        clientId is! String ||
+        !RegExp(r'^[a-f0-9]{16,64}$').hasMatch(clientId)) {
       await session.sendControl(<String, Object?>{
         't': 'upload.rejected',
         'reason': 'invalid',
@@ -533,121 +536,137 @@ class ArchiveClient {
     void Function(int sent, int total)? onProgress,
     Future<void> Function()? onSentAll,
   }) => _serial(() async {
-    if (!archiveIsValidContentHash(contentHash)) {
-      throw const ArchiveProtocolException('原件内容标识不合法');
-    }
-    final file = File(path);
-    final before = await file.stat();
-    if (before.type != FileSystemEntityType.file ||
-        before.size != length ||
-        length <= 0) {
-      throw const ArchiveSourceChangedException('原件已变化，请重试');
-    }
-    await _session.sendControl(<String, Object?>{
-      't': 'upload.begin',
-      'contentHash': contentHash,
-      'length': length,
-      'extension': extension,
-      'displayName': archiveSanitizeDisplayName(displayName),
-      'clientId': clientId,
-      'recordedAt': recordedAt?.toIso8601String(),
-    });
-    final response = await _session.readControl();
-    switch (response['t']) {
-      case 'upload.verified':
-        final remoteHash = response['contentHash'];
-        final remoteLength = response['length'];
-        if (remoteHash != contentHash || remoteLength != length) {
-          throw const ArchiveProtocolException('Mac 返回的归档信息不一致');
+    try {
+      if (!archiveIsValidContentHash(contentHash)) {
+        throw const ArchiveProtocolException('原件内容标识不合法');
+      }
+      final file = File(path);
+      final before = await file.stat();
+      if (before.type != FileSystemEntityType.file ||
+          before.size != length ||
+          length <= 0) {
+        throw const ArchiveSourceChangedException('原件已变化，请重试');
+      }
+      await _session.sendControl(<String, Object?>{
+        't': 'upload.begin',
+        'contentHash': contentHash,
+        'length': length,
+        'extension': extension,
+        'displayName': archiveSanitizeDisplayName(displayName),
+        'clientId': clientId,
+        'recordedAt': recordedAt?.toIso8601String(),
+      });
+      final response = await _session.readControl();
+      switch (response['t']) {
+        case 'upload.verified':
+          final remoteHash = response['contentHash'];
+          final remoteLength = response['length'];
+          if (remoteHash != contentHash || remoteLength != length) {
+            throw const ArchiveProtocolException('Mac 返回的归档信息不一致');
+          }
+          final verifiedAt =
+              DateTime.tryParse('${response['verifiedAt']}') ?? DateTime.now();
+          await _verifyLocalSourceUnchanged(path, contentHash, length);
+          return ArchiveUploadResult(
+            contentHash: contentHash,
+            length: length,
+            duplicate: response['duplicate'] == true,
+            verifiedAt: verifiedAt,
+          );
+        case 'upload.rejected':
+          throw ArchiveRemoteException(
+            response['message'] is String
+                ? response['message'] as String
+                : 'Mac 拒绝接收这份原件',
+            reason: response['reason'] is String
+                ? response['reason'] as String
+                : null,
+          );
+        case 'upload.ready':
+          break;
+        default:
+          throw const ArchiveProtocolException('Mac 没有准备好接收原件');
+      }
+
+      _session.resetDataOrder();
+      final handle = await file.open();
+      var sent = 0;
+      try {
+        final digest = SHA256Digest();
+        while (sent < length) {
+          final chunk = await handle.read(
+            min(archiveChunkBytes, length - sent),
+          );
+          if (chunk.isEmpty) {
+            throw const ArchiveSourceChangedException('原件读取中断，请重试');
+          }
+          digest.update(chunk, 0, chunk.length);
+          await _session.sendData(chunk);
+          sent += chunk.length;
+          onProgress?.call(sent, length);
         }
-        final verifiedAt =
-            DateTime.tryParse('${response['verifiedAt']}') ?? DateTime.now();
-        await _verifyLocalSourceUnchanged(path, contentHash, length);
-        return ArchiveUploadResult(
-          contentHash: contentHash,
-          length: length,
-          duplicate: response['duplicate'] == true,
-          verifiedAt: verifiedAt,
-        );
-      case 'upload.rejected':
+        final output = Uint8List(digest.digestSize);
+        digest.doFinal(output, 0);
+        final computed = output
+            .map((value) => value.toRadixString(16).padLeft(2, '0'))
+            .join();
+        final after = await file.stat();
+        if (computed != contentHash ||
+            after.size != before.size ||
+            after.modified != before.modified) {
+          throw const ArchiveSourceChangedException();
+        }
+      } finally {
+        await handle.close();
+      }
+
+      await onSentAll?.call();
+      await _session.sendControl(<String, Object?>{'t': 'upload.finish'});
+      final result = await _session.readControl(
+        timeout: const Duration(seconds: 120),
+      );
+      if (result['t'] == 'upload.rejected') {
         throw ArchiveRemoteException(
-          response['message'] is String
-              ? response['message'] as String
+          result['message'] is String
+              ? result['message'] as String
               : 'Mac 拒绝接收这份原件',
-          reason: response['reason'] is String
-              ? response['reason'] as String
+          reason: result['reason'] is String
+              ? result['reason'] as String
               : null,
         );
-      case 'upload.ready':
-        break;
-      default:
-        throw const ArchiveProtocolException('Mac 没有准备好接收原件');
-    }
-
-    _session.resetDataOrder();
-    final handle = await file.open();
-    var sent = 0;
-    try {
-      final digest = SHA256Digest();
-      while (sent < length) {
-        final chunk = await handle.read(min(archiveChunkBytes, length - sent));
-        if (chunk.isEmpty) {
-          throw const ArchiveSourceChangedException('原件读取中断，请重试');
-        }
-        digest.update(chunk, 0, chunk.length);
-        await _session.sendData(chunk);
-        sent += chunk.length;
-        onProgress?.call(sent, length);
       }
-      final output = Uint8List(digest.digestSize);
-      digest.doFinal(output, 0);
-      final computed = output
-          .map((value) => value.toRadixString(16).padLeft(2, '0'))
-          .join();
-      final after = await file.stat();
-      if (computed != contentHash ||
-          after.size != before.size ||
-          after.modified != before.modified) {
-        throw const ArchiveSourceChangedException();
+      if (result['t'] != 'upload.verified') {
+        throw ArchiveRemoteException(
+          result['message'] is String
+              ? result['message'] as String
+              : 'Mac 未确认归档，手机原件仍保留',
+          reason: 'not_verified',
+        );
       }
-    } finally {
-      await handle.close();
-    }
-
-    await onSentAll?.call();
-    await _session.sendControl(<String, Object?>{'t': 'upload.finish'});
-    final result = await _session.readControl(
-      timeout: const Duration(seconds: 120),
-    );
-    if (result['t'] == 'upload.rejected') {
-      throw ArchiveRemoteException(
-        result['message'] is String
-            ? result['message'] as String
-            : 'Mac 拒绝接收这份原件',
-        reason: result['reason'] is String ? result['reason'] as String : null,
+      if (result['contentHash'] != contentHash || result['length'] != length) {
+        throw const ArchiveProtocolException('Mac 返回的归档信息不一致');
+      }
+      // The sender independently re-reads its source after the receiver's
+      // confirmation; a changed file is never reported as archived.
+      await _verifyLocalSourceUnchanged(path, contentHash, length);
+      return ArchiveUploadResult(
+        contentHash: contentHash,
+        length: length,
+        duplicate: result['duplicate'] == true,
+        verifiedAt:
+            DateTime.tryParse('${result['verifiedAt']}') ?? DateTime.now(),
       );
+    } on ArchiveException {
+      // A rejected, changed or failed upload leaves the command stream in an
+      // unknown state; close it instead of sending a stale ping/retry.
+      _closed = true;
+      await _session.close();
+      rethrow;
+    } catch (_) {
+      _closed = true;
+      await _session.close();
+      rethrow;
     }
-    if (result['t'] != 'upload.verified') {
-      throw ArchiveRemoteException(
-        result['message'] is String
-            ? result['message'] as String
-            : 'Mac 未确认归档，手机原件仍保留',
-        reason: 'not_verified',
-      );
-    }
-    if (result['contentHash'] != contentHash || result['length'] != length) {
-      throw const ArchiveProtocolException('Mac 返回的归档信息不一致');
-    }
-    // The sender independently re-reads its source after the receiver's
-    // confirmation; a changed file is never reported as archived.
-    await _verifyLocalSourceUnchanged(path, contentHash, length);
-    return ArchiveUploadResult(
-      contentHash: contentHash,
-      length: length,
-      duplicate: result['duplicate'] == true,
-      verifiedAt:
-          DateTime.tryParse('${result['verifiedAt']}') ?? DateTime.now(),
-    );
   });
 
   Future<void> _verifyLocalSourceUnchanged(

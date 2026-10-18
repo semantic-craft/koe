@@ -50,7 +50,7 @@ void main() {
 
   Future<void> scrollToArchive(WidgetTester tester) async {
     await tester.scrollUntilVisible(
-      find.text('Mac 原件归档'),
+      find.byKey(const ValueKey('mac-archive-section')),
       250,
       scrollable: find.byType(Scrollable).first,
     );
@@ -64,7 +64,7 @@ void main() {
     await pumpSettings(tester, controller);
     await scrollToArchive(tester);
 
-    expect(find.text('Mac 原件归档'), findsOneWidget);
+    expect(find.byKey(const ValueKey('mac-archive-section')), findsOneWidget);
     expect(find.byKey(const ValueKey('phone-archive-pair')), findsOneWidget);
     expect(find.text('配对 Mac'), findsOneWidget);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
@@ -101,7 +101,7 @@ void main() {
     await pumpSettings(tester, controller);
     await scrollToArchive(tester);
 
-    expect(find.text('Mac 原件归档'), findsOneWidget);
+    expect(find.byKey(const ValueKey('mac-archive-section')), findsOneWidget);
     expect(find.byKey(const ValueKey('mac-receive-switch')), findsOneWidget);
     expect(find.text('这台 Mac 接收原件'), findsOneWidget);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,14 +12,22 @@ class _FailingDeskStore extends ArchiveDeskStore {
   _FailingDeskStore({required super.directory});
 
   int failures = 0;
+  Completer<void>? gate;
+  Completer<void>? entered;
 
   @override
-  Future<void> saveIndex() async {
+  Future<void> saveIndex({Map<String, ArchiveDeskEntry>? entries}) async {
+    final pending = gate;
+    if (pending != null) {
+      gate = null;
+      if (!(entered?.isCompleted ?? true)) entered!.complete();
+      await pending.future;
+    }
     if (failures > 0) {
       failures--;
       throw const FileSystemException('synthetic index write failure');
     }
-    return super.saveIndex();
+    return super.saveIndex(entries: entries);
   }
 }
 
@@ -87,11 +96,14 @@ void main() {
         upload(client, file),
         throwsA(isA<ArchiveRemoteException>()),
       );
+      expect(client.connected, isFalse);
       expect(deskStore.entries, isEmpty);
       expect(await (await deskStore.filesDirectory()).list().toList(), isEmpty);
 
       deskStore.failures = 0;
-      final result = await upload(client, file);
+      final retry = await connect();
+      addTearDown(retry.close);
+      final result = await upload(retry, file);
       expect(result.duplicate, isFalse);
       expect(deskStore.entries, hasLength(1));
       final stored = await deskStore.fileForEntry(deskStore.entries.single);
@@ -123,6 +135,75 @@ void main() {
       expect(await stored.exists(), isTrue);
       expect(await archiveFileHash(stored.path), hash);
       expect(await deskStore.verifyEntry(entry), isTrue);
+    },
+  );
+
+  test(
+    'an uncommitted index write is invisible to a duplicate upload',
+    () async {
+      final file = await makeAudio('gated.wav', seed: 83);
+      final hash = (await archiveFileHash(file.path))!;
+      final first = await connect();
+      final second = await connect();
+      addTearDown(first.close);
+      addTearDown(second.close);
+      deskStore
+        ..failures = 1
+        ..gate = Completer<void>()
+        ..entered = Completer<void>();
+      final gate = deskStore.gate!;
+      final entered = deskStore.entered!;
+
+      final firstUpload = upload(first, file);
+      await entered.future;
+      expect(deskStore.entryForHash(hash), isNull);
+
+      var secondDone = false;
+      final secondUpload = upload(second, file);
+      secondUpload.then<void>((_) => secondDone = true, onError: (Object _) {});
+      await Future<void>.delayed(Duration.zero);
+      expect(secondDone, isFalse);
+
+      gate.complete();
+      await expectLater(firstUpload, throwsA(isA<ArchiveRemoteException>()));
+      final secondResult = await secondUpload;
+      expect(secondResult.duplicate, isFalse);
+      expect(deskStore.entries, hasLength(1));
+      final entry = deskStore.entries.single;
+      expect(entry.contentHash, hash);
+      final stored = await deskStore.fileForEntry(entry);
+      expect(await archiveFileHash(stored.path), hash);
+      expect(await deskStore.verifyEntry(entry), isTrue);
+    },
+  );
+
+  test(
+    'startup adoption verifies bytes before exposing a recovered entry',
+    () async {
+      final directory = Directory('${root.path}/recovered');
+      final first = ArchiveDeskStore(directory: directory);
+      await first.load();
+      final files = await first.filesDirectory();
+      await files.create(recursive: true);
+
+      final fakeHash = archiveHashBytes(<int>[1, 2, 3]);
+      final fake = File('${files.path}/$fakeHash.wav');
+      await fake.writeAsBytes(<int>[4, 5, 6], flush: true);
+      final reopened = ArchiveDeskStore(directory: directory);
+      await reopened.load();
+      expect(reopened.entries, isEmpty);
+      expect(await fake.exists(), isTrue);
+
+      final bytes = Uint8List.fromList(<int>[7, 8, 9, 10, 11]);
+      final goodHash = archiveHashBytes(bytes);
+      final good = File('${files.path}/$goodHash.opus.bin');
+      await good.writeAsBytes(bytes, flush: true);
+      final recovered = ArchiveDeskStore(directory: directory);
+      await recovered.load();
+      expect(recovered.entries, hasLength(1));
+      expect(recovered.entries.single.contentHash, goodHash);
+      expect(recovered.entries.single.extension, '.opus.bin');
+      expect(await recovered.verifyEntry(recovered.entries.single), isTrue);
     },
   );
 }

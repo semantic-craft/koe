@@ -5512,6 +5512,7 @@ class RecorderController extends ChangeNotifier {
               importedAt: _localFileTimestamp(path) ?? stamp,
             );
         await library.upsert(asset.copyWith(archived: true, deletedAt: stamp));
+        archive.invalidateRestore(path);
         final key = _recordingKey(path: path);
         analysis.suspendRecording(key);
         _discardTrashedFileJob(key);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -50,6 +51,24 @@ class _UiSource implements ArchiveSource {
   }
 }
 
+class _ControlledArchiveController extends MacArchiveController {
+  _ControlledArchiveController({
+    required super.source,
+    required super.isDesk,
+    super.phoneStore,
+    super.deskStore,
+  });
+
+  Completer<void>? restoreGate;
+
+  @override
+  Future<String> restoreFromArchive(String path) async {
+    final gate = restoreGate;
+    if (gate != null) await gate.future;
+    throw const ArchiveRemoteException('恢复失败：合成故障');
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -63,29 +82,33 @@ void main() {
     if (await root.exists()) await root.delete(recursive: true);
   });
 
-  ArchivePhoneStore newStore() =>
-      ArchivePhoneStore(directory: Directory('${root.path}/phone'));
-
   Future<({RecorderController recorder, MacArchiveController archive})>
   pumpArchive(
-    WidgetTester tester,
-    ArchivePhoneStore store, {
+    WidgetTester tester, {
+    Future<void> Function(ArchivePhoneStore store)? seed,
     List<String> exportedPaths = const <String>[],
   }) async {
-    final archive = MacArchiveController(
-      source: _UiSource(),
-      isDesk: false,
-      phoneStore: store,
-      deskStore: ArchiveDeskStore(inMemory: true),
-    );
-    await archive.initialize();
-    final recorder = RecorderController(
-      loadPersistedState: false,
-      archiveController: archive,
-    )..exportedPaths = [...exportedPaths];
-    addTearDown(recorder.dispose);
-    addTearDown(archive.dispose);
-    return (recorder: recorder, archive: archive);
+    final pair = await tester.runAsync(() async {
+      final store = ArchivePhoneStore(inMemory: true);
+      await store.load();
+      if (seed != null) await seed(store);
+      final archive = MacArchiveController(
+        source: _UiSource(),
+        isDesk: false,
+        phoneStore: store,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      await archive.initialize();
+      final recorder = RecorderController(
+        loadPersistedState: false,
+        archiveController: archive,
+      )..exportedPaths = [...exportedPaths];
+      return (recorder: recorder, archive: archive);
+    });
+    if (pair == null) fail('archive fixture did not start');
+    addTearDown(pair.recorder.dispose);
+    addTearDown(pair.archive.dispose);
+    return pair;
   }
 
   Future<void> pumpSettings(
@@ -97,6 +120,12 @@ void main() {
         value: controller,
         child: const MaterialApp(home: SettingsScreen()),
       ),
+    );
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('mac-archive-section')),
+      250,
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.pump();
   }
@@ -116,19 +145,19 @@ void main() {
   testWidgets('settings expose pairing, auto switch, connect and disconnect', (
     tester,
   ) async {
-    final store = newStore();
-    await store.load();
-    await store.setConfiguration(
-      pairing: ArchivePairing(
-        deskId: 'a' * 32,
-        key: ArchivePairing.generateKey(),
-        hosts: const <String>['127.0.0.1'],
-        port: 47831,
+    final pair = await pumpArchive(
+      tester,
+      seed: (store) => store.setConfiguration(
+        pairing: ArchivePairing(
+          deskId: 'a' * 32,
+          key: ArchivePairing.generateKey(),
+          hosts: const <String>['127.0.0.1'],
+          port: 47831,
+        ),
+        autoArchive: true,
+        autoArchiveFrom: DateTime(2026, 10, 18),
       ),
-      autoArchive: true,
-      autoArchiveFrom: DateTime(2026, 10, 18),
     );
-    final pair = await pumpArchive(tester, store);
     await pumpSettings(tester, pair.recorder);
 
     expect(find.byKey(const ValueKey('mac-archive-section')), findsOneWidget);
@@ -155,23 +184,23 @@ void main() {
 
       final missing = '${root.path}/missing.wav';
       final hash = archiveHashBytes(<int>[1, 2, 3, 4]);
-      final store = newStore();
-      await store.load();
-      await store.upsert(
-        ArchivePhoneRecord(
-          localPath: missing,
-          displayName: '已归档的旧资料',
-          originalExtension: '.wav',
-          contentHash: hash,
-          length: 4,
-          sourceModifiedMs: 1,
-          phase: MacArchivePhase.verified,
-          verifiedAt: DateTime(2026, 10, 18, 10, 30),
-          verifiedLength: 4,
-          updatedAt: DateTime(2026, 10, 18, 10, 30),
+      final pair = await pumpArchive(
+        tester,
+        seed: (store) => store.upsert(
+          ArchivePhoneRecord(
+            localPath: missing,
+            displayName: '已归档的旧资料',
+            originalExtension: '.wav',
+            contentHash: hash,
+            length: 4,
+            sourceModifiedMs: 1,
+            phase: MacArchivePhase.verified,
+            verifiedAt: DateTime(2026, 10, 18, 10, 30),
+            verifiedLength: 4,
+            updatedAt: DateTime(2026, 10, 18, 10, 30),
+          ),
         ),
       );
-      final pair = await pumpArchive(tester, store);
       await tester.pumpWidget(
         ChangeNotifierProvider<RecorderController>.value(
           value: pair.recorder,
@@ -205,26 +234,23 @@ void main() {
 
       final file = File('${root.path}/failed.wav');
       final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5]);
-      await file.writeAsBytes(bytes, flush: true);
+      await tester.runAsync(() => file.writeAsBytes(bytes, flush: true));
       final hash = archiveHashBytes(bytes);
-      final store = newStore();
-      await store.load();
-      await store.upsert(
-        ArchivePhoneRecord(
-          localPath: file.path,
-          displayName: '失败可重试',
-          originalExtension: '.wav',
-          contentHash: hash,
-          length: bytes.length,
-          sourceModifiedMs: 1,
-          phase: MacArchivePhase.failed,
-          error: 'Mac 未确认归档',
-          updatedAt: DateTime(2026, 10, 18),
-        ),
-      );
       final pair = await pumpArchive(
         tester,
-        store,
+        seed: (store) => store.upsert(
+          ArchivePhoneRecord(
+            localPath: file.path,
+            displayName: '失败可重试',
+            originalExtension: '.wav',
+            contentHash: hash,
+            length: bytes.length,
+            sourceModifiedMs: 1,
+            phase: MacArchivePhase.failed,
+            error: 'Mac 未确认归档',
+            updatedAt: DateTime(2026, 10, 18),
+          ),
+        ),
         exportedPaths: <String>[file.path],
       );
       await tester.pumpWidget(
@@ -251,11 +277,10 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       final file = File('${root.path}/incomplete.wav');
-      await tester.runAsync(() => file.writeAsBytes(<int>[1, 2, 3, 4]));
-      final recorder = RecorderController(loadPersistedState: false);
-      addTearDown(recorder.dispose);
-      await tester.runAsync(
-        () => recorder.library.upsert(
+      final fixture = await tester.runAsync(() async {
+        await file.writeAsBytes(<int>[1, 2, 3, 4]);
+        final recorder = RecorderController(loadPersistedState: false);
+        await recorder.library.upsert(
           RecordingAsset(
             path: file.path,
             displayName: '不完整原件',
@@ -263,15 +288,15 @@ void main() {
             importedAt: DateTime(2026, 10, 18),
             originalComplete: false,
           ),
-        ),
-      );
-      recorder.exportedPaths = <String>[file.path];
-      expect(
-        await tester.runAsync(
-          () => recorder.archive.source.archiveCandidates(),
-        ),
-        isEmpty,
-      );
+        );
+        recorder.exportedPaths = <String>[file.path];
+        final candidates = await recorder.archive.source.archiveCandidates();
+        return (recorder: recorder, candidates: candidates);
+      });
+      if (fixture == null) fail('incomplete fixture did not start');
+      final recorder = fixture.recorder;
+      addTearDown(recorder.dispose);
+      expect(fixture.candidates, isEmpty);
 
       await tester.pumpWidget(
         ChangeNotifierProvider<RecorderController>.value(
@@ -288,4 +313,142 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  testWidgets('restore keeps busy disabled and retains a retryable error', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final missing = '${root.path}/busy-missing.wav';
+    final hash = archiveHashBytes(<int>[1, 2, 3, 4]);
+    final pair = await tester.runAsync(() async {
+      final store = ArchivePhoneStore(inMemory: true);
+      await store.load();
+      await store.upsert(
+        ArchivePhoneRecord(
+          localPath: missing,
+          displayName: '恢复测试',
+          originalExtension: '.wav',
+          contentHash: hash,
+          length: 4,
+          sourceModifiedMs: 1,
+          phase: MacArchivePhase.verified,
+          verifiedAt: DateTime(2026, 10, 18),
+          verifiedLength: 4,
+          updatedAt: DateTime(2026, 10, 18),
+        ),
+      );
+      final archive = _ControlledArchiveController(
+        source: _UiSource(),
+        isDesk: false,
+        phoneStore: store,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      await archive.initialize();
+      final recorder = RecorderController(
+        loadPersistedState: false,
+        archiveController: archive,
+      );
+      return (recorder: recorder, archive: archive);
+    });
+    if (pair == null) fail('controlled fixture did not start');
+    addTearDown(pair.recorder.dispose);
+    addTearDown(pair.archive.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: pair.recorder,
+        child: const MaterialApp(home: Scaffold(body: FilesBody())),
+      ),
+    );
+    await tester.pump();
+    await openInfo(tester, missing);
+
+    final gate = Completer<void>();
+    pair.archive.restoreGate = gate;
+    await tester.tap(find.byKey(const ValueKey('restore-from-mac')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('restore-from-mac')))
+          .onPressed,
+      isNull,
+    );
+
+    gate.complete();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      find.byKey(const ValueKey('mac-archive-action-error')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('恢复失败'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('restore-from-mac')))
+          .onPressed,
+      isNotNull,
+    );
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('an open info sheet refreshes when the archive phase changes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final file = File('${root.path}/refresh.wav');
+    await tester.runAsync(() => file.writeAsBytes(<int>[1, 2, 3, 4]));
+    final hash = archiveHashBytes(<int>[1, 2, 3, 4]);
+    late ArchivePhoneStore storeRef;
+    final pair = await pumpArchive(
+      tester,
+      seed: (store) async {
+        storeRef = store;
+        await store.upsert(
+          ArchivePhoneRecord(
+            localPath: file.path,
+            displayName: '刷新测试',
+            originalExtension: '.wav',
+            contentHash: hash,
+            length: 4,
+            sourceModifiedMs: 1,
+            phase: MacArchivePhase.failed,
+            error: 'Mac 未确认归档',
+            updatedAt: DateTime(2026, 10, 18),
+          ),
+        );
+      },
+      exportedPaths: <String>[file.path],
+    );
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: pair.recorder,
+        child: const MaterialApp(home: Scaffold(body: FilesBody())),
+      ),
+    );
+    await tester.pump();
+    await openInfo(tester, file.path);
+    expect(find.text('Mac 副本'), findsNothing);
+
+    await tester.runAsync(() async {
+      await storeRef.upsert(
+        storeRef
+            .recordForPath(file.path)!
+            .copyWith(
+              phase: MacArchivePhase.verified,
+              verifiedAt: DateTime(2026, 10, 18, 11),
+              verifiedLength: 4,
+              error: null,
+              clearError: true,
+            ),
+      );
+      await pair.archive.disconnect();
+    });
+    await tester.pump();
+    expect(find.text('Mac 副本'), findsOneWidget);
+    expect(find.textContaining('已校验'), findsWidgets);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }
