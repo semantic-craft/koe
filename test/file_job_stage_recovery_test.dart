@@ -214,7 +214,13 @@ void main() {
       final resumed = _StagedQwen();
       final reopened = FileJobJournal(file: journalFile);
       final r = await open(reopened, qwen: resumed);
-      await settleUntil(() => reopened.jobs.values.single.stage == 'complete');
+      // The complete stage is published before its final disk write ends.
+      // Do not dispose or remove the journal directory while it is still busy.
+      await settleUntil(
+        () =>
+            reopened.jobs.values.single.stage == 'complete' &&
+            !r.fileProcessingBusy,
+      );
       expect(resumed.calls, 1);
       expect(resumed.uploads, 0, reason: 'only GET on the saved task');
       expect(resumed.seenTaskIds, ['task-1']);
