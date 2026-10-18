@@ -412,7 +412,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final source = normalizeSttText(recording.text);
     final path = recording.path;
     final rawSegments = recording.segments;
-    final segmentText = transcriptSegmentsMatchText(rawSegments, source)
+    final segmentText =
+        transcriptSegmentsMatchText(
+          rawSegments,
+          source,
+          aliases: path == null ? const {} : c.speakerAliasesForPath(path),
+        )
         ? rawSegments
         : const <TranscriptSegment>[];
     final segmentsLocatable =

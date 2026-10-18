@@ -48,11 +48,12 @@ TranscriptSearchHit? findTranscriptSearchHit({
   required String text,
   required List<TranscriptSegment> segments,
   required String query,
+  Map<String, String> aliases = const {},
 }) {
   final needle = query.trim().toLowerCase();
   if (needle.isEmpty) return null;
   final timed =
-      transcriptSegmentsMatchText(segments, text) &&
+      transcriptSegmentsMatchText(segments, text, aliases: aliases) &&
           transcriptSegmentsLocatable(segments)
       ? segments
       : const <TranscriptSegment>[];

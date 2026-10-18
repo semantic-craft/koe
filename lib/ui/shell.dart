@@ -63,7 +63,10 @@ class _AppShellState extends State<AppShell> {
         _index = 0;
       });
     }
-    if (_sameRecording(_routes.visibleReference, reference)) return;
+    if (initialParagraph == null &&
+        _sameRecording(_routes.visibleReference, reference)) {
+      return;
+    }
     final existing = _routes.routes
         .where(
           (route) =>

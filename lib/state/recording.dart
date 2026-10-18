@@ -153,13 +153,26 @@ bool transcriptSegmentsLocatable(
 /// comparing the concatenated segment text with the stored transcript.
 bool transcriptSegmentsMatchText(
   List<TranscriptSegment> segments,
-  String transcript,
-) {
+  String transcript, {
+  Map<String, String> aliases = const {},
+}) {
   if (segments.isEmpty) return false;
-  String normalize(String value) => value
-      .replaceAll(RegExp(r'说话人\s+[^：\r\n]+：'), '')
-      .replaceAll(RegExp(r'\s+'), '')
-      .trim();
+  String normalize(String value) {
+    var normalized = value.replaceAll(
+      RegExp(r'^\s*说话人\s+[^：\r\n]+：', multiLine: true),
+      '',
+    );
+    for (final alias in aliases.values) {
+      final label = alias.trim();
+      if (label.isEmpty) continue;
+      normalized = normalized.replaceAll(
+        RegExp('^\\s*${RegExp.escape(label)}：', multiLine: true),
+        '',
+      );
+    }
+    return normalized.replaceAll(RegExp(r'\s+'), '').trim();
+  }
+
   final fromSegments = normalize(segments.map((s) => s.text).join());
   return fromSegments.isNotEmpty && fromSegments == normalize(transcript);
 }

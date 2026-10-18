@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/main.dart';
 import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/recording_navigation.dart';
 import 'package:koe/ui/screens/library_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:koe/ui/screens/topics_screen.dart';
@@ -172,6 +173,102 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('recording-row-$timed')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
+  });
+
+  testWidgets('renamed speakers keep transcript replay and search hits', (
+    tester,
+  ) async {
+    final path = (await tester.runAsync(() => addAudio('访谈.wav')))!;
+    controller.rememberTranscript(
+      path,
+      '说话人 1：开头第一句。\n说话人 2：这里谈到产品核心观点A。\n说话人 1：结尾。',
+      segments: const [
+        TranscriptSegment(
+          text: '开头第一句。',
+          start: Duration.zero,
+          end: Duration(seconds: 8),
+          speaker: '1',
+          speakerChanged: true,
+        ),
+        TranscriptSegment(
+          text: '这里谈到产品核心观点A。',
+          start: Duration(seconds: 12),
+          end: Duration(seconds: 30),
+          speaker: '2',
+          speakerChanged: true,
+        ),
+        TranscriptSegment(
+          text: '结尾。',
+          start: Duration(seconds: 35),
+          end: Duration(seconds: 40),
+          speaker: '1',
+          speakerChanged: true,
+        ),
+      ],
+    );
+    controller.speakerAliasesByPath[path] = {'2': '张三'};
+    controller.notifyListeners();
+    await pump(tester);
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('library-search')),
+      '核心观点',
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('recording-row-$path')), findsOneWidget);
+    expect(find.text('正文命中 · 00:12 可回听'), findsOneWidget);
+
+    await tester.tap(find.byKey(ValueKey('recording-row-$path')));
+    await tester.pumpAndSettle();
+    expect(find.text('张三：这里谈到产品核心观点A。'), findsOneWidget);
+    expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
+  });
+
+  testWidgets('wide search target updates the visible recording source', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final path = (await tester.runAsync(() => addAudio('访谈.wav')))!;
+    controller.rememberTranscript(
+      path,
+      '开头第一句。这里谈到产品核心观点A。结尾。',
+      segments: const [
+        TranscriptSegment(
+          text: '开头第一句。',
+          start: Duration.zero,
+          end: Duration(seconds: 8),
+        ),
+        TranscriptSegment(
+          text: '这里谈到产品核心观点A。',
+          start: Duration(seconds: 12),
+          end: Duration(seconds: 30),
+        ),
+        TranscriptSegment(
+          text: '结尾。',
+          start: Duration(seconds: 35),
+          end: Duration(seconds: 40),
+        ),
+      ],
+    );
+    await pump(tester);
+    await tester.tap(find.byKey(ValueKey('recording-row-$path')));
+    await tester.pumpAndSettle();
+
+    final navigation = tester.widget<RecordingNavigation>(
+      find.byType(RecordingNavigation),
+    );
+    navigation.onOpen(
+      RecordingReference(fileId: controller.fileIdFromPath(path), path: path),
+      initialParagraph: 1,
+    );
+    await tester.pumpAndSettle();
+
     expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
   });
 

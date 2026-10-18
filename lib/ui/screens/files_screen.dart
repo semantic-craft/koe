@@ -99,6 +99,7 @@ class _FilesBodyState extends State<FilesBody>
           text: view.text,
           segments: view.segments,
           query: widget.query,
+          aliases: c.speakerAliasesForPath(path),
         );
         if (!titleMatch && hit == null) continue;
         if (hit != null) searchHits[path] = hit;
