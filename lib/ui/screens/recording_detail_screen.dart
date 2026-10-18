@@ -97,8 +97,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   ) {
     if (recording.live) return const [];
     final path = recording.path;
+    final saved = c.bookmarksFor(widget.reference);
+    if (saved.isEmpty) return const [];
+    final audio = path == null || !recording.originalPresent
+        ? (known: true, version: null)
+        : c.bookmarkAudioVersion(path);
     return [
-      for (final bookmark in c.bookmarksFor(widget.reference))
+      for (final bookmark in saved)
         resolveBookmark(
           bookmark,
           audioAvailable:
@@ -108,6 +113,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           audioChanged: c.recordingAudioChanged(widget.reference),
           segments: segments,
           duration: path == null ? null : c.localDurationForPath(path),
+          audioVersionKnown: audio.known,
+          currentAudioVersion: audio.version,
         ),
     ];
   }
@@ -136,12 +143,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
             c.playingFileId == recording.reference.fileId);
     final position = loaded ? c.position : Duration.zero;
     final segments = _locatableSegments(c, recording);
-    final index = segments.isEmpty ? null : _segmentAt(segments, position);
+    // A gap between sentences stays a plain time bookmark.
+    final index = segmentContaining(segments, position);
     final segment = index == null ? null : segments[index];
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
+      enableDrag: false,
       builder: (_) => _BookmarkEditor(
         title: '添加书签',
         position: position,
@@ -168,7 +176,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
+      enableDrag: false,
       builder: (_) => _BookmarkEditor(
         title: '编辑批注',
         position: bookmark.position,
@@ -230,6 +238,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 _locatableSegments(c, recording),
               );
               return _BookmarkListSheet(
+                notice: c.bookmarkRecoveryNotice,
                 targets: targets,
                 showMarkers: c.showBookmarkMarkers,
                 onShowMarkersChanged: (value) async {
@@ -2266,10 +2275,16 @@ class _BookmarkEditorState extends State<_BookmarkEditor> {
 
   @override
   Widget build(BuildContext context) {
+    // While the write is in flight the sheet cannot be dismissed, so a closed
+    // sheet always matches what was actually stored.
+    return PopScope(canPop: !_saving, child: _content(context));
+  }
+
+  Widget _content(BuildContext context) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
         24,
-        0,
+        24,
         24,
         16 + MediaQuery.viewInsetsOf(context).bottom,
       ),
@@ -2353,6 +2368,7 @@ class _BookmarkEditorState extends State<_BookmarkEditor> {
 
 class _BookmarkListSheet extends StatelessWidget {
   const _BookmarkListSheet({
+    this.notice,
     required this.targets,
     required this.showMarkers,
     required this.onShowMarkersChanged,
@@ -2361,6 +2377,7 @@ class _BookmarkListSheet extends StatelessWidget {
     required this.onRemove,
   });
 
+  final String? notice;
   final List<BookmarkTarget> targets;
   final bool showMarkers;
   final ValueChanged<bool> onShowMarkersChanged;
@@ -2383,6 +2400,15 @@ class _BookmarkListSheet extends StatelessWidget {
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
         ),
+        if (notice != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 4),
+            child: Text(
+              notice!,
+              key: const ValueKey('bookmark-recovery-notice'),
+              style: const TextStyle(color: AppColors.coral, height: 1.4),
+            ),
+          ),
         SwitchListTile(
           key: const ValueKey('bookmark-markers-switch'),
           contentPadding: const EdgeInsets.symmetric(horizontal: 24),

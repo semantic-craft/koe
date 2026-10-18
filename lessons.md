@@ -29,6 +29,15 @@
 - 复发记录：Seen <N>x (<YYYY-MM-DD, ...>)；<每次独立发生的证据；修复提交数与重试次数不计入。>
 ```
 
+### 带异步加载的对象要在 runAsync 里构造，不能在 fake zone 建好再等
+
+**widget 测试里，持有真实文件加载或 Future 队列的 store/controller，连同 load/wait 一起放进同一个 `tester.runAsync` 构造。**
+
+- 起因与后果：2026-10-18 #144 WIP `5d1b63c` 的书签界面测试先在 fake zone 构造 `RecordingBookmarkStore` 与控制器，再 `runAsync` 等加载；加载与保存队列的续体排在假时钟里，云端首次运行 630 秒被沙箱终止，本机首条也卡住。
+- 修复与证据：本机 Codex 评审给出探针，store、controller 构造与 `waitForBookmarks` 全部移进同一个 `runAsync` 后整文件约 6 秒跑完；之后的真实文件写入用“反复 runAsync 短等 + pump 直到可见结果出现”同步，不靠固定延时判定完成。
+- 正确做法（Done right）：构造即启动异步 I/O 的对象在真实 zone 创建并等加载；需要观察写入中途状态时，用可覆写的写入点挂 Completer，而不是改成更长的延时。
+- 复发记录：Seen 1x (2026-10-18)。
+
 ### compact 日志里缺文件不等于没跑
 
 **判断哪些测试文件执行过，用 expanded 或 json reporter 的输出，不用终端里 compact reporter 留下的日志。**

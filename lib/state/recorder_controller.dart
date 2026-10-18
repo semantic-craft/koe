@@ -5299,6 +5299,7 @@ class RecorderController extends ChangeNotifier {
           historyCleanupFailed = true;
         }
         try {
+          await _bookmarksLoaded;
           await bookmarks.forgetRecording(key);
         } catch (_) {
           bookmarkCleanupFailed = true;
@@ -6095,6 +6096,61 @@ class RecorderController extends ChangeNotifier {
   Future<void> waitForBookmarks() => _bookmarksLoaded;
 
   bool get showBookmarkMarkers => bookmarks.showMarkers;
+  String? get bookmarkRecoveryNotice => bookmarks.recoveryNotice;
+
+  @visibleForTesting
+  bool get bookmarkAudioReading => _bookmarkAudioReads.isNotEmpty;
+
+  final Map<String, ({int size, DateTime modified, String? version})>
+  _bookmarkAudio = {};
+  final Map<String, Future<String?>> _bookmarkAudioReads = {};
+
+  /// Digest of the audio now at [path] for bookmark checks, reusing the
+  /// `audioVersion` content identity. `known` is false while it is being read;
+  /// a changed size or modification time triggers a fresh read.
+  ({bool known, String? version}) bookmarkAudioVersion(String path) {
+    FileStat stat;
+    try {
+      stat = File(path).statSync();
+    } catch (_) {
+      return (known: true, version: null);
+    }
+    if (stat.type != FileSystemEntityType.file) {
+      return (known: true, version: null);
+    }
+    final cached = _bookmarkAudio[path];
+    if (cached != null &&
+        cached.size == stat.size &&
+        cached.modified == stat.modified) {
+      return (known: true, version: cached.version);
+    }
+    unawaited(_readBookmarkAudio(path));
+    return (known: false, version: null);
+  }
+
+  Future<String?> _readBookmarkAudio(String path) =>
+      _bookmarkAudioReads[path] ??= () async {
+        try {
+          final before = await File(path).stat();
+          String? version;
+          try {
+            version = await audioVersion(path);
+          } catch (_) {
+            version = null;
+          }
+          _bookmarkAudio[path] = (
+            size: before.size,
+            modified: before.modified,
+            version: version,
+          );
+          if (!_disposed) notifyListeners();
+          return version;
+        } catch (_) {
+          return null;
+        } finally {
+          _bookmarkAudioReads.remove(path);
+        }
+      }();
 
   /// Bookmarks of exactly this material, ordered by position.
   List<RecordingBookmark> bookmarksFor(RecordingReference ref) =>
@@ -6111,6 +6167,14 @@ class RecorderController extends ChangeNotifier {
   }) async {
     await _bookmarksLoaded;
     final key = _referenceKey(ref);
+    final path = recordingView(ref).path;
+    String? version;
+    if (path != null) {
+      final current = bookmarkAudioVersion(path);
+      version = current.known
+          ? current.version
+          : await _readBookmarkAudio(path);
+    }
     final now = DateTime.now();
     final bookmark = RecordingBookmark(
       id: bookmarks.newId(now),
@@ -6123,6 +6187,7 @@ class RecorderController extends ChangeNotifier {
       transcriptRevision: segment == null
           ? null
           : _transcriptMetadata[key]?.revision ?? 0,
+      audioVersion: version,
       createdAt: now,
       updatedAt: now,
     );

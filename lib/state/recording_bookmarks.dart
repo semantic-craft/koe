@@ -25,6 +25,7 @@ class RecordingBookmark {
     this.segmentStart,
     this.segmentEnd,
     this.transcriptRevision,
+    this.audioVersion,
   });
 
   final String id;
@@ -35,6 +36,10 @@ class RecordingBookmark {
   final Duration? segmentStart;
   final Duration? segmentEnd;
   final int? transcriptRevision;
+
+  /// Content digest of the original audio when saved (`audioVersion`), or
+  /// null when it could not be read.
+  final String? audioVersion;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -50,6 +55,7 @@ class RecordingBookmark {
         segmentStart: segmentStart,
         segmentEnd: segmentEnd,
         transcriptRevision: transcriptRevision,
+        audioVersion: audioVersion,
         createdAt: createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );
@@ -63,6 +69,7 @@ class RecordingBookmark {
     if (segmentStart != null) 'segmentStartMs': segmentStart!.inMilliseconds,
     if (segmentEnd != null) 'segmentEndMs': segmentEnd!.inMilliseconds,
     if (transcriptRevision != null) 'transcriptRevision': transcriptRevision,
+    if (audioVersion != null) 'audioVersion': audioVersion,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
   };
@@ -93,6 +100,9 @@ class RecordingBookmark {
       transcriptRevision: value['transcriptRevision'] is int
           ? value['transcriptRevision'] as int
           : null,
+      audioVersion: value['audioVersion'] is String
+          ? value['audioVersion'] as String
+          : null,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
@@ -118,18 +128,40 @@ class BookmarkTarget {
 /// Tolerance for a re-transcribed sentence whose start moved slightly.
 const _anchorTolerance = Duration(seconds: 1);
 
+/// The segment whose own time range contains [position], if any.
+///
+/// A position in a silent gap, or past a known segment end, belongs to no
+/// sentence; a segment without an end extends to the next segment's start.
+int? segmentContaining(List<TranscriptSegment> segments, Duration position) {
+  for (var index = 0; index < segments.length; index++) {
+    final segment = segments[index];
+    if (position < segment.start) return null;
+    final next = index + 1 < segments.length ? segments[index + 1].start : null;
+    if (next != null && position >= next) continue;
+    if (position == segment.start) return index;
+    final end = segment.end ?? next;
+    return end == null || position < end ? index : null;
+  }
+  return null;
+}
+
 /// Resolves [bookmark] against the material as it is now.
 ///
 /// [segments] must be the timed segments the reader can actually locate
-/// (empty when timing is unreliable). A segment-anchored bookmark only replays
-/// when the same sentence is still present near its saved time; otherwise it
-/// is reported as changed rather than jumping to a different sentence.
+/// (empty when timing is unreliable). A segment-anchored bookmark replays
+/// only when exactly the same sentence can be identified: an exact start match
+/// wins; otherwise a single nearby match is accepted and several are treated
+/// as ambiguous rather than guessed. [currentAudioVersion] is the digest of
+/// the audio on disk now (null with [audioVersionKnown] false while it is
+/// still being read).
 BookmarkTarget resolveBookmark(
   RecordingBookmark bookmark, {
   required bool audioAvailable,
   required bool audioChanged,
   required List<TranscriptSegment> segments,
   Duration? duration,
+  bool audioVersionKnown = true,
+  String? currentAudioVersion,
 }) {
   if (!audioAvailable) {
     return BookmarkTarget._(
@@ -137,7 +169,11 @@ BookmarkTarget resolveBookmark(
       unavailableReason: '原录音不在本机，暂时无法回听；书签与批注仍保留。',
     );
   }
-  if (audioChanged) {
+  final saved = bookmark.audioVersion;
+  if (saved != null && !audioVersionKnown) {
+    return BookmarkTarget._(bookmark, unavailableReason: '正在核对原音频，稍后即可回听。');
+  }
+  if (audioChanged || (saved != null && currentAudioVersion != saved)) {
     return BookmarkTarget._(
       bookmark,
       unavailableReason: '原音频已变化，书签位置可能不再对应；为避免跳错，暂不定位。',
@@ -152,26 +188,34 @@ BookmarkTarget resolveBookmark(
         unavailableReason: '当前转写没有可用的句段时间，无法确认原片段；为避免跳错，暂不定位。',
       );
     }
+    int? exact;
+    final near = <int>[];
     for (var index = 0; index < segments.length; index++) {
       final segment = segments[index];
       if (segment.text.trim() != savedText) continue;
-      if ((segment.start - savedStart).abs() > _anchorTolerance) continue;
-      final end = segment.end ?? bookmark.segmentEnd;
-      final length = end != null && end > segment.start
-          ? end - segment.start
-          : Duration.zero;
-      var offset = bookmark.position - savedStart;
-      if (offset < Duration.zero) offset = Duration.zero;
-      if (offset > length) offset = length;
+      if (segment.start == savedStart) {
+        exact = index;
+        break;
+      }
+      if ((segment.start - savedStart).abs() <= _anchorTolerance) {
+        near.add(index);
+      }
+    }
+    final match = exact ?? (near.length == 1 ? near.single : null);
+    if (match == null) {
       return BookmarkTarget._(
         bookmark,
-        seekTo: segment.start + offset,
-        segmentIndex: index,
+        unavailableReason: near.length > 1
+            ? '转写已更新，附近有多处相同文字，无法确认原片段；为避免跳错，不再定位。'
+            : '转写已更新，原片段已不存在；为避免跳错，不再定位。',
       );
     }
+    var offset = bookmark.position - savedStart;
+    if (offset < Duration.zero) offset = Duration.zero;
     return BookmarkTarget._(
       bookmark,
-      unavailableReason: '转写已更新，原片段已不存在；为避免跳错，不再定位。',
+      seekTo: segments[match].start + offset,
+      segmentIndex: match,
     );
   }
   if (duration != null &&
@@ -228,6 +272,11 @@ class RecordingBookmarkStore {
     return File(p.join(dir.path, fileName));
   }
 
+  /// True when an unreadable file could not be set aside; saving would then
+  /// overwrite the only copy, so every mutation is refused.
+  bool get writeBlocked => _writeBlocked;
+  bool _writeBlocked = false;
+
   Future<void> load() async {
     if (inMemory) return;
     File? target;
@@ -246,15 +295,17 @@ class RecordingBookmarkStore {
       _showMarkers = value['showMarkers'] != false;
     } catch (error) {
       debugPrint('[Bookmarks] load failed: $error');
+      _items = const [];
       // Keep the unreadable file aside so the next save cannot erase it.
       try {
-        if (target != null && await target.exists()) {
-          await target.rename(
-            '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}',
-          );
-        }
-      } catch (_) {}
-      recoveryNotice = '书签记录无法读取，已另存原文件；录音与转写不受影响';
+        if (target == null) throw StateError('no bookmark file');
+        if (await target.exists()) await backupUnreadable(target);
+        recoveryNotice = '书签记录无法读取，已另存原文件；录音与转写不受影响。';
+      } catch (backupError) {
+        debugPrint('[Bookmarks] backup failed: $backupError');
+        _writeBlocked = true;
+        recoveryNotice = '书签记录无法读取，也未能另存原文件；为避免覆盖，暂不保存新的书签。';
+      }
     }
   }
 
@@ -272,24 +323,27 @@ class RecordingBookmarkStore {
   Future<void> remove(String id) =>
       _commit((items) => items.where((item) => item.id != id).toList());
 
-  Future<void> forgetRecording(String recordingKey) async {
-    if (!_items.any((item) => item.recordingKey == recordingKey)) return;
-    await _commit(
-      (items) =>
-          items.where((item) => item.recordingKey != recordingKey).toList(),
-    );
-  }
+  /// Decided inside the save queue so a bookmark still being written is
+  /// removed too.
+  Future<void> forgetRecording(String recordingKey) => _commit((items) {
+    if (!items.any((item) => item.recordingKey == recordingKey)) return null;
+    return items.where((item) => item.recordingKey != recordingKey).toList();
+  });
 
   Future<void> setShowMarkers(bool value) =>
       _commit((items) => items, showMarkers: value);
 
   /// Serialises mutations; each one sees the previous committed list.
   Future<void> _commit(
-    List<RecordingBookmark> Function(List<RecordingBookmark> items) change, {
+    List<RecordingBookmark>? Function(List<RecordingBookmark> items) change, {
     bool? showMarkers,
   }) {
     final operation = _pendingSave.then((_) async {
+      if (_writeBlocked) {
+        throw StateError('bookmark file unreadable and not backed up');
+      }
       final next = change(_items);
+      if (next == null) return;
       final markers = showMarkers ?? _showMarkers;
       if (!inMemory) await _write(next, markers);
       _items = List.unmodifiable(next);
@@ -299,17 +353,28 @@ class RecordingBookmarkStore {
     return operation;
   }
 
-  Future<void> _write(List<RecordingBookmark> items, bool showMarkers) async {
+  Future<void> _write(List<RecordingBookmark> items, bool showMarkers) =>
+      writeSnapshot(
+        const JsonEncoder.withIndent('  ').convert({
+          'version': 1,
+          'showMarkers': showMarkers,
+          'bookmarks': [for (final item in items) item.toJson()],
+        }),
+      );
+
+  /// Moves an unreadable bookmark file aside before anything can overwrite it.
+  @visibleForOverriding
+  Future<void> backupUnreadable(File target) => target.rename(
+    '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}',
+  );
+
+  /// Atomically replaces the bookmark file. Overridable so tests can hold a
+  /// write open and exercise the real save queue.
+  @visibleForOverriding
+  Future<void> writeSnapshot(String json) async {
     final target = await _file();
     final temporary = File('${target.path}.tmp');
-    await temporary.writeAsString(
-      const JsonEncoder.withIndent('  ').convert({
-        'version': 1,
-        'showMarkers': showMarkers,
-        'bookmarks': [for (final item in items) item.toJson()],
-      }),
-      flush: true,
-    );
+    await temporary.writeAsString(json, flush: true);
     await temporary.rename(target.path);
   }
 }
