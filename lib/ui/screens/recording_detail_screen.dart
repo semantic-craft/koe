@@ -286,6 +286,19 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     );
   }
 
+  Future<void> _addToQueue() async {
+    final controller = context.read<RecorderController>();
+    final added = await controller.addToListeningQueue(widget.reference);
+    if (!mounted) return;
+    if (added) {
+      _notice('已加入收听队列');
+    } else if (controller.queueContainsRecording(widget.reference)) {
+      _notice('已在收听队列中');
+    } else {
+      _notice(controller.errorMessage ?? '未能加入收听队列，请重试');
+    }
+  }
+
   Future<void> _share(RecordingViewData recording) async {
     final path = recording.path;
     if (path == null || recording.audioLocked) return;
@@ -781,6 +794,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           fontWeight: FontWeight.w600,
         ),
         actions: [
+          IconButton(
+            key: const ValueKey('add-to-queue'),
+            tooltip: c.queueContainsRecording(widget.reference)
+                ? '已在收听队列中'
+                : '加入收听队列',
+            onPressed: fileReady && !recording.live && !recording.audioLocked
+                ? _addToQueue
+                : null,
+            icon: Icon(
+              c.queueContainsRecording(widget.reference)
+                  ? Icons.playlist_add_check_rounded
+                  : Icons.playlist_add_rounded,
+            ),
+          ),
           IconButton(
             tooltip: '分享录音',
             onPressed: fileReady ? () => _share(recording) : null,
