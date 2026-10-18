@@ -325,7 +325,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final saved = await showDialog<bool>(
       context: context,
       builder: (_) => _TranscriptEditDialog(
-        initialText: recording.text,
+        initialText:
+            controller.canonicalTranscriptForPath(path) ?? recording.text,
         onSave: (text) => controller.saveManualTranscript(path, text),
       ),
     );
@@ -381,9 +382,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   Future<void> _viewIncoming(RecordingViewData recording) async {
     final path = recording.path;
     if (path == null) return;
-    final text = context
-            .read<RecorderController>()
-            .incomingTranscriptForPath(path) ??
+    final text =
+        context.read<RecorderController>().incomingTranscriptForPath(path) ??
         '';
     await showDialog<void>(
       context: context,
@@ -391,9 +391,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         title: const Text('新转写版本'),
         content: SizedBox(
           width: 600,
-          child: SingleChildScrollView(
-            child: SelectableText(text),
-          ),
+          child: SingleChildScrollView(child: SelectableText(text)),
         ),
         actions: [
           TextButton(
@@ -420,9 +418,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final path = recording.path;
     if (path == null) return;
     try {
-      await context
-          .read<RecorderController>()
-          .dismissIncomingTranscript(path);
+      await context.read<RecorderController>().dismissIncomingTranscript(path);
       if (mounted) _notice('已保留你的校订');
     } catch (error) {
       _notice('无法保存选择，请重试');
@@ -837,8 +833,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           },
                     onSegmentSpeakerTap: translation || !segmentsLocatable
                         ? null
-                        : (index) =>
-                              _correctSegmentSpeaker(recording, index),
+                        : (index) => _correctSegmentSpeaker(recording, index),
                     header: !hasReaderHeader || (translation && !hasTranslation)
                         ? null
                         : Column(
@@ -1257,8 +1252,9 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                                   ),
                                                   borderRadius:
                                                       BorderRadius.circular(12),
-                                                  onTap: () => widget
-                                                      .onSegmentSpeakerTap!(
+                                                  onTap: () =>
+                                                      widget
+                                                          .onSegmentSpeakerTap!(
                                                         paragraphIndex,
                                                       ),
                                                   child: const Padding(

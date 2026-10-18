@@ -180,9 +180,7 @@ void main() {
     expect(c.incomingTranscriptForPath(path), '另一版转写');
     expect(
       c
-          .recordingView(
-            const RecordingReference(fileId: 128100, path: path),
-          )
+          .recordingView(const RecordingReference(fileId: 128100, path: path))
           .translation
           ?.text,
       'Manual translation',
@@ -217,12 +215,41 @@ void main() {
 
     expect(
       c
-          .recordingView(
-            const RecordingReference(fileId: 128100, path: path),
-          )
+          .recordingView(const RecordingReference(fileId: 128100, path: path))
           .translation,
       isNull,
     );
+  });
+
+  test('保存与现有手改相同的正文不会作废译文', () async {
+    await TranscriptStore.save(
+      byPath: const {path: '人工正文'},
+      byFileId: const {},
+      aliasesByPath: const {},
+      aliasesByFileId: const {},
+      metadata: const {
+        key: TranscriptMetadata(provider: SttProvider.qwen, revision: 1),
+      },
+      translations: const {
+        key: RecordingTranslation(
+          text: 'Manual translation',
+          sourceLanguage: 'zh',
+          targetLanguage: 'en',
+          provider: SttProvider.qwen,
+          sourceRevision: 1,
+        ),
+      },
+      manualByKey: const {key: '人工正文'},
+    );
+    final c = RecorderController(loadPersistedState: true);
+    addTearDown(c.dispose);
+    await c.settleTopicNoteWork();
+    const reference = RecordingReference(fileId: 128100, path: path);
+    expect(c.recordingView(reference).translation, isNotNull);
+
+    await c.saveManualTranscript(path, '人工正文');
+
+    expect(c.recordingView(reference).translation?.text, 'Manual translation');
   });
 
   test('关闭待采用稿保存失败时恢复提示', () async {
@@ -391,6 +418,44 @@ void main() {
     expect(find.byKey(const ValueKey('transcript-edit-input')), findsNothing);
     expect(c.saved, ['失败时保留的草稿']);
   });
+
+  testWidgets('编辑正文时使用无别名的原始正文', (tester) async {
+    const reference = RecordingReference(fileId: 128100, path: path);
+    final c = _EditProbeController();
+    c.canonicalText = '说话人 1：原始正文';
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '别名测试',
+      path: path,
+      text: '张三：原始正文',
+      segments: [],
+    );
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: const MaterialApp(
+          home: RecordingDetailScreen(reference: reference),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('编辑正文'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('transcript-edit-input')),
+          )
+          .controller
+          ?.text,
+      '说话人 1：原始正文',
+    );
+  });
 }
 
 class _EditProbeController extends RecorderController {
@@ -399,10 +464,15 @@ class _EditProbeController extends RecorderController {
   final views = <String, RecordingViewData>{};
   final saved = <String>[];
   bool failSave = false;
+  String? canonicalText;
 
   @override
   RecordingViewData recordingView(RecordingReference reference) =>
       views[reference.key] ?? super.recordingView(reference);
+
+  @override
+  String? canonicalTranscriptForPath(String path) =>
+      canonicalText ?? super.canonicalTranscriptForPath(path);
 
   @override
   Future<bool> saveManualTranscript(String path, String text) async {

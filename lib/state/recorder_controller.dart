@@ -2226,6 +2226,12 @@ class RecorderController extends ChangeNotifier {
   String? manualTranscriptForPath(String path) =>
       _manualTranscripts[_recordingKey(path: path)];
 
+  /// Visible source text without display aliases, for editing.
+  String? canonicalTranscriptForPath(String path) {
+    final raw = manualTranscriptForPath(path) ?? _rawTranscriptForPath(path);
+    return raw == null ? null : normalizeSttText(raw);
+  }
+
   /// Provider text that arrived after a manual edit, still unadopted.
   String? incomingTranscriptForPath(String path) =>
       _incomingTranscripts[_recordingKey(path: path)];
@@ -2242,7 +2248,10 @@ class RecorderController extends ChangeNotifier {
     final provider = _rawTranscriptForPath(path);
     final previousManual = _manualTranscripts[key];
     final previousIncoming = _incomingTranscripts[key];
-    final previousTranslation = _recordingTranslations.remove(key);
+    final previousVisible = previousManual ?? provider ?? '';
+    final visibleChanged = normalized != previousVisible;
+    final previousTranslation = _recordingTranslations[key];
+    if (visibleChanged) _recordingTranslations.remove(key);
     if (provider == normalized) {
       _manualTranscripts.remove(key);
       _incomingTranscripts.remove(key);
@@ -2264,7 +2273,7 @@ class RecorderController extends ChangeNotifier {
       } else {
         _incomingTranscripts[key] = previousIncoming;
       }
-      if (previousTranslation != null) {
+      if (visibleChanged && previousTranslation != null) {
         _recordingTranslations[key] = previousTranslation;
       }
       notifyListeners();
@@ -2450,8 +2459,7 @@ class RecorderController extends ChangeNotifier {
     final knownFromSegments = transcriptSegmentsForPath(
       path,
     ).any((segment) => segment.speaker == id);
-    if (id.isEmpty ||
-        (!known && !knownFromSegments)) {
+    if (id.isEmpty || (!known && !knownFromSegments)) {
       throw ArgumentError('说话人不存在');
     }
 
