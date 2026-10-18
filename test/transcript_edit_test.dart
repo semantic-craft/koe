@@ -189,6 +189,42 @@ void main() {
     );
   });
 
+  test('手改正文后转写语言变化仍会作废旧译文', () async {
+    await TranscriptStore.save(
+      byPath: const {path: '人工正文'},
+      byFileId: const {},
+      aliasesByPath: const {},
+      aliasesByFileId: const {},
+      metadata: const {
+        key: TranscriptMetadata(provider: SttProvider.qwen, revision: 1),
+      },
+      translations: const {
+        key: RecordingTranslation(
+          text: 'Manual translation',
+          sourceLanguage: 'zh',
+          targetLanguage: 'en',
+          provider: SttProvider.qwen,
+          sourceRevision: 1,
+        ),
+      },
+      manualByKey: const {key: '人工正文'},
+    );
+    final c = RecorderController(loadPersistedState: true);
+    addTearDown(c.dispose);
+    await c.settleTopicNoteWork();
+
+    c.rememberTranscript(path, '人工正文', sourceLanguage: 'ja');
+
+    expect(
+      c
+          .recordingView(
+            const RecordingReference(fileId: 128100, path: path),
+          )
+          .translation,
+      isNull,
+    );
+  });
+
   test('关闭待采用稿保存失败时恢复提示', () async {
     var failStrictSave = false;
     final c = RecorderController(
@@ -262,6 +298,46 @@ void main() {
       c.transcriptSpeakersForPath(path).map((speaker) => speaker.displayLabel),
       contains('张三'),
     );
+  });
+
+  test('采用新转写时清掉旧发言人姓名', () async {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    c.rememberTranscript(path, '旧正文', segments: [segment('旧正文', 0)]);
+    c.speakerAliasesByPath[path] = {'1': '张三'};
+    c.speakerAliasesByFileId[128100] = {'1': '张三'};
+    await c.saveManualTranscript(path, '人工正文');
+    c.rememberTranscript(path, '新版本正文');
+
+    await c.adoptIncomingTranscript(path);
+
+    expect(c.speakerAliasesByPath[path], isNull);
+    expect(c.speakerAliasesByFileId[128100], isNull);
+  });
+
+  test('采用新转写保存失败时恢复旧发言人姓名', () async {
+    var failStrictSave = false;
+    final c = RecorderController(
+      loadPersistedState: false,
+      transcriptPersister: ({bool strict = false}) async {
+        if (strict && failStrictSave) throw StateError('磁盘不可写');
+      },
+    );
+    addTearDown(c.dispose);
+    c.rememberTranscript(path, '旧正文', segments: [segment('旧正文', 0)]);
+    c.speakerAliasesByPath[path] = {'1': '张三'};
+    c.speakerAliasesByFileId[128100] = {'1': '张三'};
+    await c.saveManualTranscript(path, '人工正文');
+    c.rememberTranscript(path, '新版本正文');
+
+    failStrictSave = true;
+    await expectLater(
+      c.adoptIncomingTranscript(path),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(c.speakerAliasesByPath[path], {'1': '张三'});
+    expect(c.speakerAliasesByFileId[128100], {'1': '张三'});
   });
 
   testWidgets('保存失败保留编辑草稿，成功后关闭并保存校订', (tester) async {

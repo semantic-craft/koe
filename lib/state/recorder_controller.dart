@@ -2131,15 +2131,15 @@ class RecorderController extends ChangeNotifier {
     final manual = _manualTranscripts[key];
     final languageChanged =
         sourceLanguage != null && sourceLanguage != metadata?.sourceLanguage;
-    final visibleChanged =
-        manual == null && (previous != t || languageChanged);
-    if (visibleChanged) {
+    final textChanged = manual == null && previous != t;
+    final visibleChanged = textChanged || languageChanged;
+    if (textChanged) {
       // Speaker display names belong to the material, not to one provider run.
       // Keep them when a manual transcript already protects the visible text.
       _clearSpeakerAliases(path);
-      _recordingTranslations.remove(key);
       _transcriptSegments.remove(key);
     }
+    if (visibleChanged) _recordingTranslations.remove(key);
     if (manual != null && t != manual) {
       _incomingTranscripts[key] = t;
     }
@@ -2290,6 +2290,11 @@ class RecorderController extends ChangeNotifier {
     final previousManual = _manualTranscripts.remove(key);
     final previousText = transcriptsByPath[path];
     final previousTranslation = _recordingTranslations.remove(key);
+    final id = fileIdFromPath(path);
+    final previousAliasesPath = speakerAliasesByPath.remove(path);
+    final previousAliasesId = id == null
+        ? null
+        : speakerAliasesByFileId.remove(id);
     // Adopting a provider version makes it the new base text, so later
     // re-transcriptions and the edit notice compare against that version.
     transcriptsByPath[path] = incoming;
@@ -2306,6 +2311,12 @@ class RecorderController extends ChangeNotifier {
       }
       if (previousTranslation != null) {
         _recordingTranslations[key] = previousTranslation;
+      }
+      if (previousAliasesPath != null) {
+        speakerAliasesByPath[path] = previousAliasesPath;
+      }
+      if (id != null && previousAliasesId != null) {
+        speakerAliasesByFileId[id] = previousAliasesId;
       }
       notifyListeners();
       rethrow;
