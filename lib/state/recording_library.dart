@@ -244,7 +244,7 @@ class RecordingLibraryStore {
   };
 
   Future<void> upsert(RecordingAsset asset, {bool strict = true}) {
-    final operation = _mutationQueue.then((_) async {
+    return _enqueueMutation(() async {
       final committed = _persisted[asset.path];
       _assets[asset.path] = asset;
       try {
@@ -260,33 +260,41 @@ class RecordingLibraryStore {
         rethrow;
       }
     });
-    _mutationQueue = operation.catchError((Object _) {});
-    return operation;
   }
 
   Future<void> upsertAll(
     Iterable<RecordingAsset> assets, {
     bool strict = true,
-  }) async {
-    for (final asset in assets) {
+  }) {
+    return _enqueueMutation(() async {
+      for (final asset in assets) {
+        _assets[asset.path] = asset;
+      }
+      await save(strict: strict);
+    });
+  }
+
+  Future<void> remove(String path, {bool strict = true}) {
+    return _enqueueMutation(() async {
+      _assets.remove(path);
+      await save(strict: strict);
+    });
+  }
+
+  Future<void> rename(String from, RecordingAsset asset, {bool strict = true}) {
+    return _enqueueMutation(() async {
+      _assets.remove(from);
       _assets[asset.path] = asset;
-    }
-    await save(strict: strict);
+      await save(strict: strict);
+    });
   }
 
-  Future<void> remove(String path, {bool strict = true}) async {
-    _assets.remove(path);
-    await save(strict: strict);
-  }
-
-  Future<void> rename(
-    String from,
-    RecordingAsset asset, {
-    bool strict = true,
-  }) async {
-    _assets.remove(from);
-    _assets[asset.path] = asset;
-    await save(strict: strict);
+  /// Every mutation shares one queue so a later removal or rename can never
+  /// be overtaken by a snapshot captured by an earlier, still-pending write.
+  Future<void> _enqueueMutation(Future<void> Function() mutate) {
+    final operation = _mutationQueue.then((_) => mutate());
+    _mutationQueue = operation.catchError((Object _) {});
+    return operation;
   }
 
   Future<void> save({bool strict = true}) {

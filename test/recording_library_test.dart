@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -192,6 +193,60 @@ void main() {
     expect(reloaded.assetForPath(secondAsset.path)?.displayName, 'B 新标题');
   });
 
+  test('删除不会被排队中的旧写入复活', () async {
+    final store = _BlockingLibraryStore(file: storeFile);
+    final asset = RecordingAsset(
+      path: '/tmp/place-remove.wav',
+      displayName: '已保存标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(asset);
+
+    final gate = Completer<void>();
+    store.gate = gate;
+    final pending = store.upsert(asset.copyWith(displayName: '排队标题'));
+    final removal = store.remove(asset.path);
+    gate.complete();
+    await pending;
+    await removal;
+
+    expect(store.assetForPath(asset.path), isNull);
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(asset.path), isNull);
+  });
+
+  test('改名不会被排队中的旧写入重新建出旧路径', () async {
+    final store = _BlockingLibraryStore(file: storeFile);
+    final asset = RecordingAsset(
+      path: '/tmp/place-rename.wav',
+      displayName: '旧标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(asset);
+    const renamedPath = '/tmp/place-renamed.wav';
+
+    final gate = Completer<void>();
+    store.gate = gate;
+    final pending = store.upsert(asset.copyWith(displayName: '排队标题'));
+    final renamed = store.rename(
+      asset.path,
+      asset.copyWith(path: renamedPath, displayName: '新标题'),
+    );
+    gate.complete();
+    await pending;
+    await renamed;
+
+    expect(store.assetForPath(asset.path), isNull);
+    expect(store.assetForPath(renamedPath)?.displayName, '新标题');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(asset.path), isNull);
+    expect(reloaded.assetForPath(renamedPath)?.displayName, '新标题');
+  });
+
   testWidgets('资料行显示发生时间、来源与原件状态，信息页区分两个时间', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -269,6 +324,22 @@ class _FailNextLibraryStore extends RecordingLibraryStore {
     if (failures > 0) {
       failures--;
       return Future<void>.error(StateError('save failed'));
+    }
+    return super.save(strict: strict);
+  }
+}
+
+class _BlockingLibraryStore extends RecordingLibraryStore {
+  _BlockingLibraryStore({super.file});
+
+  Completer<void>? gate;
+
+  @override
+  Future<void> save({bool strict = true}) async {
+    final current = gate;
+    if (current != null) {
+      gate = null;
+      await current.future;
     }
     return super.save(strict: strict);
   }
