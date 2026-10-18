@@ -275,6 +275,7 @@ void main() {
   testWidgets('wide shell opens the same trash as the phone library', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     tester.view.physicalSize = const Size(1280, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -289,11 +290,44 @@ void main() {
 
     expect(find.byKey(const ValueKey('trash-screen')), findsOneWidget);
     expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-trash')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isTrue'),
+    );
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-home')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isFalse'),
+    );
 
     await tester.tap(find.byKey(const ValueKey('nav-home')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('trash-screen')), findsNothing);
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-home')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isTrue'),
+    );
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('nav-trash')))
+          .flagsCollection
+          .isSelected
+          .toString(),
+      contains('isFalse'),
+    );
+    semantics.dispose();
   });
 
   testWidgets('new recording keeps phone recording honest and import real', (
