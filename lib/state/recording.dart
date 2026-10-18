@@ -67,6 +67,21 @@ class TranscriptSegment {
   /// Whether this segment starts a new speaker run and should show the label.
   final bool speakerChanged;
 
+  TranscriptSegment copyWith({
+    String? text,
+    Duration? start,
+    Duration? end,
+    String? speaker,
+    bool clearSpeaker = false,
+    bool? speakerChanged,
+  }) => TranscriptSegment(
+    text: text ?? this.text,
+    start: start ?? this.start,
+    end: end ?? this.end,
+    speaker: clearSpeaker ? null : (speaker ?? this.speaker),
+    speakerChanged: speakerChanged ?? this.speakerChanged,
+  );
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -249,6 +264,8 @@ class RecordingViewData {
     this.originalComplete = true,
     this.archived = false,
     this.segments = const [],
+    this.manuallyEdited = false,
+    this.hasPendingTranscript = false,
   });
 
   final RecordingReference reference;
@@ -275,4 +292,6 @@ class RecordingViewData {
   final bool originalComplete;
   final bool archived;
   final List<TranscriptSegment> segments;
+  final bool manuallyEdited;
+  final bool hasPendingTranscript;
 }

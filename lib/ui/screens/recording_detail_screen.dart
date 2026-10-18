@@ -82,9 +82,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
   void _notice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _jumpTo(TranscriptJump jump) {
@@ -736,6 +735,113 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     }
   }
 
+  Future<void> _editTranscript(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final controller = context.read<RecorderController>();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _TranscriptEditDialog(
+        initialText:
+            controller.canonicalTranscriptForPath(path) ?? recording.text,
+        onSave: (text) => controller.saveManualTranscript(path, text),
+      ),
+    );
+    if (saved == true && mounted) {
+      _notice('校订已保存；无法对应的旧时码不再逐句定位');
+    }
+  }
+
+  Future<void> _correctSegmentSpeaker(
+    RecordingViewData recording,
+    int index,
+  ) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final controller = context.read<RecorderController>();
+    final speakers = controller.transcriptSpeakersForPath(path);
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                '这段是谁说的？',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              ),
+            ),
+            for (final speaker in speakers)
+              ListTile(
+                title: Text(speaker.displayLabel),
+                onTap: () => Navigator.pop(context, speaker.id),
+              ),
+            ListTile(
+              title: const Text('不标注发言人'),
+              onTap: () => Navigator.pop(context, ''),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    try {
+      await controller.setSegmentSpeaker(path, index, selected);
+      if (mounted) _notice('已更新这段的发言人');
+    } catch (error) {
+      _notice('无法保存发言人归属，请重试');
+    }
+  }
+
+  Future<void> _viewIncoming(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    final text =
+        context.read<RecorderController>().incomingTranscriptForPath(path) ??
+        '';
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('新转写版本'),
+        content: SizedBox(
+          width: 600,
+          child: SingleChildScrollView(child: SelectableText(text)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _adoptIncoming(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    try {
+      await context.read<RecorderController>().adoptIncomingTranscript(path);
+      if (mounted) _notice('已采用新转写；你的校订已被替换');
+    } catch (error) {
+      _notice('无法保存新版本，请重试');
+    }
+  }
+
+  Future<void> _keepManualTranscript(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    try {
+      await context.read<RecorderController>().dismissIncomingTranscript(path);
+      if (mounted) _notice('已保留你的校订');
+    } catch (error) {
+      _notice('无法保存选择，请重试');
+    }
+  }
+
   Future<void> _showInfo(RecordingViewData recording) async {
     final controller = context.read<RecorderController>();
     final path = recording.path;
@@ -1140,6 +1246,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   _save(recording);
                 case 'transcribe':
                   _transcribe(recording);
+                case 'edit':
+                  _editTranscript(recording);
                 case 'speakers':
                   _speakers(recording);
                 case 'chapters':
@@ -1173,6 +1281,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       (c.speechProvider == SttProvider.apple ||
                           c.sttConfigured),
                   child: const Text('重新转写'),
+                ),
+              if (source.isNotEmpty)
+                PopupMenuItem(
+                  value: 'edit',
+                  enabled: fileReady && !recording.processing,
+                  child: const Text('编辑正文'),
                 ),
               if (hasSpeakers)
                 PopupMenuItem(
@@ -1363,6 +1477,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
             ),
           ),
           if (!_showTranslation &&
+              recording.hasPendingTranscript &&
+              path != null)
+            _PendingTranscriptBanner(
+              onView: () => _viewIncoming(recording),
+              onAdopt: () => _adoptIncoming(recording),
+              onKeep: () => _keepManualTranscript(recording),
+            ),
+          if (!_showTranslation &&
               source.isNotEmpty &&
               !recording.live &&
               !segmentsLocatable)
@@ -1371,6 +1493,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
               originalPresent: recording.originalPresent,
               hasLocalPath: path != null,
               hasFileId: recording.reference.fileId != null,
+              edited: recording.manuallyEdited,
             ),
           Expanded(
             child: IndexedStack(
@@ -1414,6 +1537,9 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                               fileId: recording.reference.fileId,
                             );
                           },
+                    onSegmentSpeakerTap: translation || !segmentsLocatable
+                        ? null
+                        : (index) => _correctSegmentSpeaker(recording, index),
                     header: !hasReaderHeader || (translation && !hasTranslation)
                         ? null
                         : Column(
@@ -1562,12 +1688,14 @@ class _TranscriptTimingNotice extends StatelessWidget {
     required this.originalPresent,
     required this.hasLocalPath,
     required this.hasFileId,
+    required this.edited,
   });
 
   final bool unreliable;
   final bool originalPresent;
   final bool hasLocalPath;
   final bool hasFileId;
+  final bool edited;
 
   @override
   Widget build(BuildContext context) {
@@ -1584,6 +1712,9 @@ class _TranscriptTimingNotice extends StatelessWidget {
         key = 'original-missing-timing-notice';
         message = '原录音不可用，无法回听；转写文字仍可阅读。';
       }
+    } else if (edited) {
+      key = 'edited-timing-notice';
+      message = '正文已校订，旧时码无法再对应到原句；已关闭逐句定位，原录音仍可整段回听。';
     } else if (unreliable) {
       key = 'unreliable-timing-notice';
       message = '这条转写的时码缺失或越界，已关闭逐句定位；整段录音仍可播放。';
@@ -1632,6 +1763,7 @@ class RecordingTextReader extends StatefulWidget {
     this.bookmarkedSegments = const {},
     this.speakerAliases = const {},
     this.onSegmentTap,
+    this.onSegmentSpeakerTap,
     this.header,
   });
   final String text;
@@ -1643,6 +1775,7 @@ class RecordingTextReader extends StatefulWidget {
   final Set<int> bookmarkedSegments;
   final Map<String, String> speakerAliases;
   final ValueChanged<int>? onSegmentTap;
+  final ValueChanged<int>? onSegmentSpeakerTap;
   final Widget? header;
 
   @override
@@ -1855,6 +1988,32 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                                     semanticLabel: '已加书签',
                                                   ),
                                                 ),
+                                              if (widget.onSegmentSpeakerTap !=
+                                                  null) ...[
+                                                const SizedBox(width: 4),
+                                                InkWell(
+                                                  key: ValueKey(
+                                                    'segment-speaker-$paragraphIndex',
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                  onTap: () =>
+                                                      widget
+                                                          .onSegmentSpeakerTap!(
+                                                        paragraphIndex,
+                                                      ),
+                                                  child: const Padding(
+                                                    padding: EdgeInsets.all(4),
+                                                    child: Icon(
+                                                      Icons
+                                                          .record_voice_over_outlined,
+                                                      size: 14,
+                                                      color:
+                                                          AppColors.textMuted,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
                                             ],
                                           ),
                                         if (segment != null)
@@ -2596,6 +2755,146 @@ class _TranslationDialogState extends State<_TranslationDialog> {
   );
 }
 
+class _PendingTranscriptBanner extends StatelessWidget {
+  const _PendingTranscriptBanner({
+    required this.onView,
+    required this.onAdopt,
+    required this.onKeep,
+  });
+
+  final VoidCallback onView;
+  final VoidCallback onAdopt;
+  final VoidCallback onKeep;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      child: Container(
+        key: const ValueKey('pending-transcript-banner'),
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        decoration: BoxDecoration(
+          color: AppColors.bgSubtle,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '转写服务返回了新版本，未覆盖你的校订。',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 4,
+              children: [
+                TextButton(onPressed: onView, child: const Text('查看新版本')),
+                TextButton(onPressed: onAdopt, child: const Text('采用新版本')),
+                TextButton(onPressed: onKeep, child: const Text('保留校订')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TranscriptEditDialog extends StatefulWidget {
+  const _TranscriptEditDialog({
+    required this.initialText,
+    required this.onSave,
+  });
+
+  final String initialText;
+  final Future<bool> Function(String text) onSave;
+
+  @override
+  State<_TranscriptEditDialog> createState() => _TranscriptEditDialogState();
+}
+
+class _TranscriptEditDialogState extends State<_TranscriptEditDialog> {
+  late final _input = TextEditingController(text: widget.initialText);
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    if (_input.text.trim().isEmpty) {
+      setState(() => _error = '正文不能为空');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(_input.text);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = error is ArgumentError
+            ? '${error.message}'
+            : '保存失败，编辑内容仍在，请重试';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('编辑正文'),
+      content: SizedBox(
+        width: 640,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '保存后旧时码若无法对上这段文字，会关闭逐句定位并明确提示；原录音仍可整段回听。',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('transcript-edit-input'),
+              controller: _input,
+              minLines: 8,
+              maxLines: 14,
+              autofocus: true,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: const ValueKey('transcript-edit-error'),
+                style: const TextStyle(color: AppColors.coral, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: Text(_saving ? '保存中…' : '保存'),
+        ),
+      ],
+    );
+  }
+}
+
 /// Adds or edits one bookmark note. The sheet only closes after the store
 /// confirms the write; a failure keeps the draft and says nothing was saved.
 class _BookmarkEditor extends StatefulWidget {
@@ -2671,9 +2970,8 @@ class _BookmarkEditorState extends State<_BookmarkEditor> {
           children: [
             Text(
               widget.title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
             Text(
@@ -2770,9 +3068,8 @@ class _BookmarkListSheet extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
           child: Text(
             '书签与批注',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600),
           ),
         ),
         if (notice != null)

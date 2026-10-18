@@ -97,7 +97,7 @@ void main() {
       aliasesByFileId: const {},
       segments: const {'file:123': segments},
     );
-    expect(encoded['version'], 3);
+    expect(encoded['version'], 4);
 
     final data = TranscriptStore.decode(encoded);
     expect(data.segments['file:123'], segments);

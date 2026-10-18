@@ -166,6 +166,39 @@ void main() {
     },
   );
 
+  test('采用服务新版本后按新正文重跑待归类建议', () async {
+    final dir = await makeTempDir();
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final recommender = _FakeRecommendService();
+    final c = buildController(store, recommender: recommender);
+    await c.setQwenConfig(const EngineConfig(apiKey: 'key'));
+    c.setSpeechProvider(SttProvider.qwen);
+
+    final path = await recording(dir, 1760000199);
+    const key = 'file:1760000199';
+    await store.placeRetrieved(key);
+    c.rememberTranscript(path, '旧正文');
+    await c.waitForTopicAssist();
+    await c.saveManualTranscript(path, '人工正文');
+    await c.waitForTopicAssist();
+    c.rememberTranscript(path, '新版本正文提到法学方法论');
+    await c.waitForTopicAssist();
+    recommender.sources.clear();
+
+    await c.adoptIncomingTranscript(path);
+    await c.waitForTopicAssist();
+
+    expect(recommender.sources, isNotEmpty);
+    expect(recommender.sources.last, contains('新版本正文提到法学方法论'));
+  });
+
   testWidgets(
     'PendingRecordingsScreen and TopicDetailScreen render recommendation and '
     'drift actions (确认/改选/忽略 and 移到…/保留) without auto-migrating',

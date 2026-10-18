@@ -90,6 +90,8 @@ class _TopicAssistLatest {
   bool dirty = false;
 }
 
+typedef TranscriptPersister = Future<void> Function({bool strict});
+
 class RecorderController extends ChangeNotifier {
   late final analysis =
       _analysisOverride ??
@@ -513,6 +515,7 @@ class RecorderController extends ChangeNotifier {
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    TranscriptPersister? transcriptPersister,
     PlaybackHistoryStore? playbackHistoryStore,
     ListeningQueueStore? listeningQueueStore,
     RecordingBookmarkStore? bookmarkStore,
@@ -532,6 +535,9 @@ class RecorderController extends ChangeNotifier {
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
        _libraryDirectoryOverride = libraryDirectory,
+       // Keep the injection seam public while the field stays private.
+       // ignore: prefer_initializing_formals
+       _transcriptPersister = transcriptPersister,
        _player = player ?? AudioPlayer() {
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
@@ -1754,6 +1760,12 @@ class RecorderController extends ChangeNotifier {
           (id == null || !_incompleteRetrievalIds.contains(id)),
       archived: asset?.trashed ?? false,
       segments: path == null ? const [] : transcriptSegmentsForPath(path),
+      manuallyEdited:
+          path != null &&
+          _manualTranscripts.containsKey(_recordingKey(path: path)),
+      hasPendingTranscript:
+          path != null &&
+          _incomingTranscripts.containsKey(_recordingKey(path: path)),
     );
   }
 
@@ -2122,11 +2134,28 @@ class RecorderController extends ChangeNotifier {
         () => List<TranscriptSegment>.unmodifiable(entry.value),
       );
     }
+    for (final entry in saved.manualByKey.entries) {
+      _manualTranscripts.putIfAbsent(entry.key, () => entry.value);
+    }
+    for (final entry in saved.incomingByKey.entries) {
+      _incomingTranscripts.putIfAbsent(entry.key, () => entry.value);
+    }
+    for (final entry in saved.segmentSpeakersByKey.entries) {
+      _segmentSpeakers.putIfAbsent(
+        entry.key,
+        () => Map<int, String>.from(entry.value),
+      );
+    }
     notifyListeners();
   }
 
   Future<void> _persistTranscripts({bool strict = false}) async {
     await _transcriptsLoaded;
+    final override = _transcriptPersister;
+    if (override != null) {
+      await override(strict: strict);
+      return;
+    }
     await TranscriptStore.save(
       byPath: transcriptsByPath,
       byFileId: transcriptsByFileId,
@@ -2135,6 +2164,9 @@ class RecorderController extends ChangeNotifier {
       metadata: _transcriptMetadata,
       translations: _recordingTranslations,
       segments: _transcriptSegments,
+      manualByKey: _manualTranscripts,
+      incomingByKey: _incomingTranscripts,
+      segmentSpeakersByKey: _segmentSpeakers,
       strict: strict,
     );
   }
@@ -2219,19 +2251,33 @@ class RecorderController extends ChangeNotifier {
     final key = _recordingKey(path: path);
     final previous = _rawTranscriptForPath(path);
     final metadata = _transcriptMetadata[key];
-    final changed =
-        previous != t ||
-        metadata == null ||
-        (sourceLanguage != null && sourceLanguage != metadata.sourceLanguage);
-    if (changed) {
+    final manual = _manualTranscripts[key];
+    final languageChanged =
+        sourceLanguage != null && sourceLanguage != metadata?.sourceLanguage;
+    final textChanged = manual == null && previous != t;
+    final visibleChanged = textChanged || languageChanged;
+    if (textChanged) {
+      // Speaker display names belong to the material, not to one provider run.
+      // Keep them when a manual transcript already protects the visible text.
       _clearSpeakerAliases(path);
-      _recordingTranslations.remove(key);
       _transcriptSegments.remove(key);
     }
+    // Segment speaker fixes are indexed into the stored segment list; they do
+    // not carry over to a different list from another provider run.
+    if (textChanged ||
+        (segments != null &&
+            !listEquals(segments, _transcriptSegments[key] ?? const []))) {
+      _segmentSpeakers.remove(key);
+    }
+    if (visibleChanged) _recordingTranslations.remove(key);
+    if (manual != null && t != manual) {
+      _incomingTranscripts[key] = t;
+    }
+    if (manual != null && t == manual) _incomingTranscripts.remove(key);
     _transcriptMetadata[key] = TranscriptMetadata(
       provider: provider ?? metadata?.provider ?? speechProvider,
       sourceLanguage: sourceLanguage ?? metadata?.sourceLanguage,
-      revision: (metadata?.revision ?? 0) + (changed ? 1 : 0),
+      revision: (metadata?.revision ?? 0) + (visibleChanged ? 1 : 0),
     );
     transcriptsByPath[path] = t;
     _transcriptPathsByKey[key] = path;
@@ -2246,7 +2292,7 @@ class RecorderController extends ChangeNotifier {
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
     unawaited(_persistTranscripts());
-    if (changed && topicsEnabled) {
+    if (visibleChanged && topicsEnabled) {
       unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
     }
     if (topicsEnabled && !_isRecordingAudioLocked(id, path)) {
@@ -2270,7 +2316,7 @@ class RecorderController extends ChangeNotifier {
   ];
 
   String? transcriptForPath(String path) {
-    final raw = _rawTranscriptForPath(path);
+    final raw = manualTranscriptForPath(path) ?? _rawTranscriptForPath(path);
     if (raw == null) return null;
     return applyTranscriptSpeakerAliases(
       normalizeSttText(raw),
@@ -2279,8 +2325,222 @@ class RecorderController extends ChangeNotifier {
   }
 
   /// Provider-timed segments for [path], scoped to its transcript key.
-  List<TranscriptSegment> transcriptSegmentsForPath(String path) =>
-      _transcriptSegments[_recordingKey(path: path)] ?? const [];
+  List<TranscriptSegment> transcriptSegmentsForPath(String path) {
+    final key = _recordingKey(path: path);
+    final segments = _transcriptSegments[key];
+    if (segments == null) return const [];
+    final overrides = _segmentSpeakers[key];
+    final effective = <TranscriptSegment>[];
+    String? previousSpeaker;
+    for (var index = 0; index < segments.length; index++) {
+      final segment = segments[index];
+      final speaker = overrides?[index] ?? segment.speaker;
+      final effectiveSpeaker = speaker == null || speaker.isEmpty
+          ? null
+          : speaker;
+      final changed =
+          effectiveSpeaker != null && effectiveSpeaker != previousSpeaker;
+      effective.add(
+        segment.copyWith(
+          speaker: effectiveSpeaker,
+          clearSpeaker: effectiveSpeaker == null,
+          speakerChanged: changed,
+        ),
+      );
+      previousSpeaker = effectiveSpeaker;
+    }
+    return effective;
+  }
+
+  /// Manual text last saved by the user, before display aliases are applied.
+  String? manualTranscriptForPath(String path) =>
+      _manualTranscripts[_recordingKey(path: path)];
+
+  /// Visible source text without display aliases, for editing.
+  String? canonicalTranscriptForPath(String path) {
+    final raw = manualTranscriptForPath(path) ?? _rawTranscriptForPath(path);
+    return raw == null ? null : normalizeSttText(raw);
+  }
+
+  /// Provider text that arrived after a manual edit, still unadopted.
+  String? incomingTranscriptForPath(String path) =>
+      _incomingTranscripts[_recordingKey(path: path)];
+
+  bool hasPendingTranscript(String path) =>
+      _incomingTranscripts.containsKey(_recordingKey(path: path));
+
+  /// Saves a human-corrected transcript. Returns false when the text equals
+  /// the provider version and the manual override was removed.
+  Future<bool> saveManualTranscript(String path, String text) async {
+    final key = _recordingKey(path: path);
+    final normalized = normalizeSttText(text);
+    if (normalized.isEmpty) throw ArgumentError('正文不能为空');
+    final provider = _rawTranscriptForPath(path);
+    final previousManual = _manualTranscripts[key];
+    final previousIncoming = _incomingTranscripts[key];
+    final previousVisible = previousManual ?? provider ?? '';
+    final visibleChanged = normalized != previousVisible;
+    final previousTranslation = _recordingTranslations[key];
+    final adoptsProvider = provider == normalized && visibleChanged;
+    final previousAliasesPath = speakerAliasesByPath[path];
+    final fileId = fileIdFromPath(path);
+    final previousAliasesId = fileId == null
+        ? null
+        : speakerAliasesByFileId[fileId];
+    if (visibleChanged) _recordingTranslations.remove(key);
+    if (provider == normalized) {
+      _manualTranscripts.remove(key);
+      _incomingTranscripts.remove(key);
+      // The provider version may reuse speaker ids for different people.
+      if (adoptsProvider) _clearSpeakerAliases(path);
+    } else {
+      _manualTranscripts[key] = normalized;
+    }
+    notifyListeners();
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      // Keep the editor draft by rolling the in-memory state back.
+      if (previousManual == null) {
+        _manualTranscripts.remove(key);
+      } else {
+        _manualTranscripts[key] = previousManual;
+      }
+      if (previousIncoming == null) {
+        _incomingTranscripts.remove(key);
+      } else {
+        _incomingTranscripts[key] = previousIncoming;
+      }
+      if (visibleChanged && previousTranslation != null) {
+        _recordingTranslations[key] = previousTranslation;
+      }
+      if (adoptsProvider) {
+        if (previousAliasesPath != null) {
+          speakerAliasesByPath[path] = previousAliasesPath;
+        }
+        if (fileId != null && previousAliasesId != null) {
+          speakerAliasesByFileId[fileId] = previousAliasesId;
+        }
+      }
+      notifyListeners();
+      rethrow;
+    }
+    if (topicsEnabled && !_isRecordingAudioLocked(fileIdFromPath(path), path)) {
+      if (adoptsProvider) {
+        unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
+      }
+      // Recommendations follow the visible text, but never overwrite notes.
+      unawaited(_scheduleTopicAssist(key, normalized));
+    }
+    return _manualTranscripts.containsKey(key);
+  }
+
+  Future<void> discardManualTranscript(String path) async {
+    _manualTranscripts.remove(_recordingKey(path: path));
+    notifyListeners();
+    await _persistTranscripts(strict: true);
+  }
+
+  Future<void> adoptIncomingTranscript(String path) async {
+    final key = _recordingKey(path: path);
+    final incoming = _incomingTranscripts.remove(key);
+    if (incoming == null) return;
+    final previousManual = _manualTranscripts.remove(key);
+    final previousText = transcriptsByPath[path];
+    final previousTranslation = _recordingTranslations.remove(key);
+    final id = fileIdFromPath(path);
+    final previousAliasesPath = speakerAliasesByPath.remove(path);
+    final previousAliasesId = id == null
+        ? null
+        : speakerAliasesByFileId.remove(id);
+    // Adopting a provider version makes it the new base text, so later
+    // re-transcriptions and the edit notice compare against that version.
+    transcriptsByPath[path] = incoming;
+    notifyListeners();
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      _incomingTranscripts[key] = incoming;
+      if (previousManual != null) _manualTranscripts[key] = previousManual;
+      if (previousText == null) {
+        transcriptsByPath.remove(path);
+      } else {
+        transcriptsByPath[path] = previousText;
+      }
+      if (previousTranslation != null) {
+        _recordingTranslations[key] = previousTranslation;
+      }
+      if (previousAliasesPath != null) {
+        speakerAliasesByPath[path] = previousAliasesPath;
+      }
+      if (id != null && previousAliasesId != null) {
+        speakerAliasesByFileId[id] = previousAliasesId;
+      }
+      notifyListeners();
+      rethrow;
+    }
+    final visible = normalizeSttText(incoming);
+    if (topicsEnabled &&
+        visible.isNotEmpty &&
+        !_isRecordingAudioLocked(id, path)) {
+      unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
+      unawaited(_scheduleTopicAssist(key, visible));
+    }
+  }
+
+  Future<void> dismissIncomingTranscript(String path) async {
+    final key = _recordingKey(path: path);
+    final incoming = _incomingTranscripts.remove(key);
+    if (incoming == null) return;
+    notifyListeners();
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      _incomingTranscripts[key] = incoming;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Corrects which speaker owns one timed segment. An empty [speakerId]
+  /// removes the label instead of guessing another speaker.
+  Future<void> setSegmentSpeaker(
+    String path,
+    int index,
+    String speakerId,
+  ) async {
+    final key = _recordingKey(path: path);
+    final segments = _transcriptSegments[key];
+    if (segments == null || index < 0 || index >= segments.length) {
+      throw ArgumentError('片段不存在');
+    }
+    final previousOverrides = _segmentSpeakers[key] == null
+        ? null
+        : Map<int, String>.of(_segmentSpeakers[key]!);
+    final speaker = speakerId.trim();
+    final overrides = _segmentSpeakers.putIfAbsent(key, () => <int, String>{});
+    final original = segments[index].speaker;
+    final clearsOriginal = speaker.isEmpty && original != null;
+    if ((speaker == original && !clearsOriginal) ||
+        (speaker.isEmpty && original == null)) {
+      overrides.remove(index);
+    } else {
+      overrides[index] = speaker;
+    }
+    if (overrides.isEmpty) _segmentSpeakers.remove(key);
+    notifyListeners();
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      if (previousOverrides == null) {
+        _segmentSpeakers.remove(key);
+      } else {
+        _segmentSpeakers[key] = previousOverrides;
+      }
+      notifyListeners();
+      rethrow;
+    }
+  }
 
   Map<String, String> speakerAliasesForPath(String path) =>
       Map<String, String>.unmodifiable(_speakerAliasesForPath(path));
@@ -2308,7 +2568,9 @@ class RecorderController extends ChangeNotifier {
   }
 
   String? transcriptForFileId(int fileId) {
-    final raw = transcriptsByFileId[fileId];
+    final raw =
+        _manualTranscripts[_recordingKey(fileId: fileId)] ??
+        transcriptsByFileId[fileId];
     if (raw == null) return null;
     return applyTranscriptSpeakerAliases(
       normalizeSttText(raw),
@@ -2317,12 +2579,25 @@ class RecorderController extends ChangeNotifier {
   }
 
   List<TranscriptSpeaker> transcriptSpeakersForPath(String path) {
-    final raw = _rawTranscriptForPath(path);
-    if (raw == null) return const [];
-    return extractTranscriptSpeakers(
-      normalizeSttText(raw),
-      aliases: _speakerAliasesForPath(path),
-    );
+    final raw = manualTranscriptForPath(path) ?? _rawTranscriptForPath(path);
+    final aliases = _speakerAliasesForPath(path);
+    final speakers = raw == null
+        ? <TranscriptSpeaker>[]
+        : extractTranscriptSpeakers(normalizeSttText(raw), aliases: aliases);
+    final seen = {for (final speaker in speakers) speaker.id};
+    for (final segment in transcriptSegmentsForPath(path)) {
+      final id = segment.speaker;
+      if (id == null || !seen.add(id)) continue;
+      final alias = aliases[id]?.trim();
+      speakers.add(
+        TranscriptSpeaker(
+          id: id,
+          defaultLabel: '说话人 $id',
+          displayLabel: alias == null || alias.isEmpty ? '说话人 $id' : alias,
+        ),
+      );
+    }
+    return speakers;
   }
 
   Future<void> renameTranscriptSpeaker(
@@ -2331,12 +2606,16 @@ class RecorderController extends ChangeNotifier {
     String value,
   ) async {
     final id = speakerId.trim();
-    final raw = _rawTranscriptForPath(path);
-    if (id.isEmpty ||
-        raw == null ||
-        !extractTranscriptSpeakers(
+    final raw = canonicalTranscriptForPath(path);
+    final known =
+        raw != null &&
+        extractTranscriptSpeakers(
           normalizeSttText(raw),
-        ).any((speaker) => speaker.id == id)) {
+        ).any((speaker) => speaker.id == id);
+    final knownFromSegments = transcriptSegmentsForPath(
+      path,
+    ).any((segment) => segment.speaker == id);
+    if (id.isEmpty || (!known && !knownFromSegments)) {
       throw ArgumentError('说话人不存在');
     }
 
@@ -3895,6 +4174,17 @@ class RecorderController extends ChangeNotifier {
 
   /// Device file id → provider speaker id → custom display name.
   final Map<int, Map<String, String>> speakerAliasesByFileId = {};
+
+  /// Recording key → manual transcript text that must survive re-transcription.
+  final Map<String, String> _manualTranscripts = {};
+
+  final TranscriptPersister? _transcriptPersister;
+
+  /// Recording key → provider text that arrived after a manual edit.
+  final Map<String, String> _incomingTranscripts = {};
+
+  /// Recording key → segment index → corrected speaker id.
+  final Map<String, Map<int, String>> _segmentSpeakers = {};
   Future<void> _transcriptsLoaded = Future<void>.value();
 
   /// Legacy expand id (device list no longer expands for playback).
@@ -5423,6 +5713,9 @@ class RecorderController extends ChangeNotifier {
         _transcriptMetadata.remove(key);
         _recordingTranslations.remove(key);
         _transcriptSegments.remove(key);
+        _manualTranscripts.remove(key);
+        _incomingTranscripts.remove(key);
+        _segmentSpeakers.remove(key);
         _recordingErrors.remove(key);
         _recordingSessions.removeWhere(
           (_, session) =>
