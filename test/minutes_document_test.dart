@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -111,6 +113,29 @@ void main() {
 
     expect(parsed.document.segments.single.start, const Duration(seconds: 12));
     expect(parsed.document.segments.single.end, const Duration(seconds: 13));
+  });
+
+  test('时间行单独一行时并入下一句且重启后仍可读', () async {
+    final parsed = parseMinutesDocument(
+      'speaker.txt',
+      '[00:00]\n林舟：先做手机录音。\n[00:12]\n我：保留原音频。',
+    );
+
+    expect(parsed.document.segments, hasLength(2));
+    expect(parsed.document.segments.first.text, '先做手机录音。');
+    expect(parsed.document.segments.first.speaker, '林舟');
+    expect(parsed.document.segments.first.start, Duration.zero);
+    expect(parsed.document.segments[1].start, const Duration(seconds: 12));
+    expect(
+      parsed.document.segments.every((segment) => segment.text.isNotEmpty),
+      isTrue,
+    );
+
+    final decoded = MinutesDocumentStore.decode(
+      jsonEncode(MinutesDocumentStore.encode([parsed.document])),
+    );
+    expect(decoded, isNotNull);
+    expect(decoded!.values.single.segments, hasLength(2));
   });
 
   test('补配音频覆盖最后时码才建立配对，过短音频被拒绝且不留下资料', () async {
@@ -364,6 +389,74 @@ void main() {
     );
     expect(c.minutesDocuments.single.audioPath, path);
   });
+
+  test('冷启动改名等待配对加载后再移动音频', () async {
+    final first = controller();
+    final imported = await first.importMinutesText('讨论.json', json);
+    final long = await audio('long-cold', const Duration(seconds: 40));
+    final attached = await first.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    first.dispose();
+
+    final gate = Completer<void>();
+    final c = RecorderController(
+      loadPersistedState: false,
+      libraryStore: RecordingLibraryStore(file: libraryFile),
+      libraryDirectory: imports,
+      minutesStore: _SlowMinutesStore(file: minutesFile, gate: gate),
+    );
+    addTearDown(c.dispose);
+
+    final rename = c.renameLocalExport(path, '冷启动改名');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    gate.complete();
+    final renamed = await rename;
+
+    await c.waitForMinutesDocuments();
+    expect(c.minutesDocuments.single.audioPath, renamed);
+    final persisted = MinutesDocumentStore(file: minutesFile);
+    await persisted.load();
+    expect(persisted.documents.single.audioPath, renamed);
+  });
+
+  test('删除音频失败时恢复补配引用', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long-locked', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    await Process.run('chmod', ['500', imports.path]);
+    addTearDown(() => Process.run('chmod', ['700', imports.path]));
+
+    final result = await c.deleteLocalExports([path]);
+
+    expect(result.deleted, 0);
+    expect(result.failed, hasLength(1));
+    expect(await File(path).exists(), isTrue);
+    expect(c.minutesDocuments.single.audioPath, path);
+    final persisted = MinutesDocumentStore(file: minutesFile);
+    await persisted.load();
+    expect(persisted.documents.single.audioPath, path);
+  });
+}
+
+class _SlowMinutesStore extends MinutesDocumentStore {
+  _SlowMinutesStore({required super.file, required this.gate});
+
+  final Completer<void> gate;
+
+  @override
+  Future<void> load() async {
+    await gate.future;
+    await super.load();
+  }
 }
 
 class _PlaybackProbeController extends RecorderController {

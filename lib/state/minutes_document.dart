@@ -307,23 +307,24 @@ MinutesSegment? _segmentFromJson(Object? item) {
   ]);
   if (text == null) return null;
   final startEntry = _firstEntry(item, const [
-      'startMs',
-      'start',
-      'startTime',
-      'beginTime',
-      'begin_time',
-      'offset',
-      'time',
-    ]);
+    'startMs',
+    'start',
+    'startTime',
+    'beginTime',
+    'begin_time',
+    'offset',
+    'time',
+  ]);
   final start = _duration(
     startEntry?.value,
-    millisecondsHint:
-        startEntry?.key.toLowerCase().contains('ms') ?? false,
+    millisecondsHint: startEntry?.key.toLowerCase().contains('ms') ?? false,
   );
-  final endEntry = _firstEntry(
-    item,
-    const ['endMs', 'end', 'endTime', 'finishTime'],
-  );
+  final endEntry = _firstEntry(item, const [
+    'endMs',
+    'end',
+    'endTime',
+    'finishTime',
+  ]);
   final end = _duration(
     endEntry?.value,
     millisecondsHint: endEntry?.key.toLowerCase().contains('ms') ?? false,
@@ -348,6 +349,8 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
   final segments = <MinutesSegment>[];
   var sawTiming = false;
   var untimed = 0;
+  Duration? pendingStart;
+  String? pendingSpeaker;
   for (final line in const LineSplitter().convert(raw)) {
     if (line.trim().isEmpty) continue;
     final match = RegExp(
@@ -358,14 +361,39 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
       if (start != null) {
         sawTiming = true;
         final body = _splitSpeaker(match.group(2)!);
+        if (body.text.trim().isEmpty) {
+          // Keep a timestamp-only line for the following text instead of
+          // persisting an empty segment that decode would reject.
+          pendingStart = start;
+          pendingSpeaker = body.speaker;
+          continue;
+        }
         segments.add(
-          MinutesSegment(text: body.text, start: start, speaker: body.speaker),
+          MinutesSegment(
+            text: body.text,
+            start: start,
+            speaker: body.speaker ?? pendingSpeaker,
+          ),
         );
+        pendingStart = null;
+        pendingSpeaker = null;
         continue;
       }
     }
     if (segments.isNotEmpty) {
       final body = _splitSpeaker(line.trim());
+      if (pendingStart != null) {
+        segments.add(
+          MinutesSegment(
+            text: body.text,
+            start: pendingStart,
+            speaker: body.speaker ?? pendingSpeaker,
+          ),
+        );
+        pendingStart = null;
+        pendingSpeaker = null;
+        continue;
+      }
       final previous = segments.removeLast();
       if (body.speaker != null && body.speaker != previous.speaker) {
         segments.add(previous);
@@ -386,15 +414,17 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
         ),
       );
     } else {
-      untimed++;
+      if (pendingStart == null) untimed++;
       final body = _splitSpeaker(line.trim());
       segments.add(
         MinutesSegment(
           text: body.text,
-          start: Duration.zero,
-          speaker: body.speaker,
+          start: pendingStart ?? Duration.zero,
+          speaker: body.speaker ?? pendingSpeaker,
         ),
       );
+      pendingStart = null;
+      pendingSpeaker = null;
     }
   }
   if (segments.isEmpty) throw const FormatException('没有找到可导入的文字段');

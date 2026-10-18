@@ -5200,6 +5200,7 @@ class RecorderController extends ChangeNotifier {
   Future<({int deleted, List<String> failed})> deleteLocalExports(
     Iterable<String> paths,
   ) async {
+    await _minutesLoaded;
     final selected = paths.toSet();
     final removed = <String>{};
     var deleted = 0;
@@ -5216,6 +5217,13 @@ class RecorderController extends ChangeNotifier {
               p.join(p.dirname(path), '$id.ogg'),
               p.join(p.dirname(path), '$id.opus.bin'),
             };
+      final pairedBefore = [
+        for (final document in minutes.documents)
+          if (document.audioPath != null &&
+              logicalPaths.contains(document.audioPath))
+            document,
+      ];
+      var clearedPairing = false;
       try {
         _requireFinishedRecording(path);
         if (_fileJobKey == _recordingKey(path: path)) {
@@ -5227,6 +5235,7 @@ class RecorderController extends ChangeNotifier {
         // Detach minutes before removing anything so a failed pairing write
         // never leaves documents pointing at irreversibly deleted audio.
         await minutes.clearAudioForPaths(logicalPaths);
+        clearedPairing = true;
         for (final candidate in logicalPaths) {
           final file = File(candidate);
           if (await file.exists()) await file.delete();
@@ -5259,6 +5268,15 @@ class RecorderController extends ChangeNotifier {
         removed.add(path);
         deleted++;
       } catch (error) {
+        if (clearedPairing) {
+          for (final document in pairedBefore) {
+            final audio = document.audioPath;
+            if (audio == null || !await File(audio).exists()) continue;
+            try {
+              await minutes.upsert(document, strict: true);
+            } catch (_) {}
+          }
+        }
         failed.add('${p.basename(path)}：无法删除，请稍后重试');
       }
     }
@@ -5283,6 +5301,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<String> renameLocalExport(String path, String label) async {
+    await _minutesLoaded;
     _requireFinishedRecording(path);
     if (_fileJobKey == _recordingKey(path: path)) throw StateError('处理完成后再重命名');
     final source = File(path);
