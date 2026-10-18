@@ -167,6 +167,7 @@ class RecordingLibraryStore {
   final Map<String, RecordingAsset> _assets = {};
   final Map<String, RecordingAsset> _persisted = {};
   Future<void> _pendingSave = Future<void>.value();
+  Future<void> _mutationQueue = Future<void>.value();
 
   String? recoveryNotice;
   String? saveError;
@@ -242,21 +243,25 @@ class RecordingLibraryStore {
     'assets': assets.map((asset) => asset.toJson()).toList(),
   };
 
-  Future<void> upsert(RecordingAsset asset, {bool strict = true}) async {
-    _assets[asset.path] = asset;
-    try {
-      await save(strict: strict);
-    } catch (_) {
-      if (identical(_assets[asset.path], asset)) {
-        final committed = _persisted[asset.path];
-        if (committed == null) {
-          _assets.remove(asset.path);
-        } else {
-          _assets[asset.path] = committed;
+  Future<void> upsert(RecordingAsset asset, {bool strict = true}) {
+    final operation = _mutationQueue.then((_) async {
+      final committed = _persisted[asset.path];
+      _assets[asset.path] = asset;
+      try {
+        await save(strict: strict);
+      } catch (_) {
+        if (identical(_assets[asset.path], asset)) {
+          if (committed == null) {
+            _assets.remove(asset.path);
+          } else {
+            _assets[asset.path] = committed;
+          }
         }
+        rethrow;
       }
-      rethrow;
-    }
+    });
+    _mutationQueue = operation.catchError((Object _) {});
+    return operation;
   }
 
   Future<void> upsertAll(
@@ -291,8 +296,9 @@ class RecordingLibraryStore {
         ..addAll(_assets);
       return Future<void>.value();
     }
-    final snapshot = List<RecordingAsset>.of(_assets.values);
-    final operation = _pendingSave.then((_) => _write(snapshot, strict));
+    final operation = _pendingSave.then(
+      (_) => _write(List<RecordingAsset>.of(_assets.values), strict),
+    );
     _pendingSave = operation.catchError((Object _) {});
     return operation;
   }

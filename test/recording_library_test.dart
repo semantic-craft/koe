@@ -162,6 +162,36 @@ void main() {
     expect(reloaded.assetForPath(seed.path)?.displayName, '已保存标题');
   });
 
+  test('失败写入不会被另一路径的后续保存带盘', () async {
+    final store = _FailNextLibraryStore(file: storeFile);
+    final firstAsset = RecordingAsset(
+      path: '/tmp/place-a.wav',
+      displayName: 'A 已保存',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    final secondAsset = RecordingAsset(
+      path: '/tmp/place-b.wav',
+      displayName: 'B 已保存',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(firstAsset);
+    await store.upsert(secondAsset);
+
+    store.failures = 1;
+    final failed = store.upsert(firstAsset.copyWith(displayName: 'A 未保存'));
+    final succeeding = store.upsert(secondAsset.copyWith(displayName: 'B 新标题'));
+    await expectLater(failed, throwsA(isA<StateError>()));
+    await succeeding;
+
+    expect(store.assetForPath(firstAsset.path)?.displayName, 'A 已保存');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(firstAsset.path)?.displayName, 'A 已保存');
+    expect(reloaded.assetForPath(secondAsset.path)?.displayName, 'B 新标题');
+  });
+
   testWidgets('资料行显示发生时间、来源与原件状态，信息页区分两个时间', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
