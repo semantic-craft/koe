@@ -244,10 +244,14 @@ class RecordingLibraryStore {
     try {
       await save(strict: strict);
     } catch (_) {
-      if (previous == null) {
-        _assets.remove(asset.path);
-      } else {
-        _assets[asset.path] = previous;
+      // A newer upsert may have replaced this value while the failed write was
+      // in flight; never roll back over it.
+      if (identical(_assets[asset.path], asset)) {
+        if (previous == null) {
+          _assets.remove(asset.path);
+        } else {
+          _assets[asset.path] = previous;
+        }
       }
       rethrow;
     }

@@ -119,6 +119,27 @@ void main() {
     );
   });
 
+  test('较早写入失败不会回滚更新的资料信息', () async {
+    final store = _FailOnceLibraryStore(file: storeFile);
+    final old = RecordingAsset(
+      path: '/tmp/place-race.wav',
+      displayName: '旧标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    final newer = old.copyWith(displayName: '新标题');
+
+    final first = store.upsert(old);
+    final second = store.upsert(newer);
+    await expectLater(first, throwsA(isA<StateError>()));
+    await second;
+
+    expect(store.assetForPath(old.path)?.displayName, '新标题');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(old.path)?.displayName, '新标题');
+  });
+
   testWidgets('资料行显示发生时间、来源与原件状态，信息页区分两个时间', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -169,4 +190,19 @@ void main() {
     expect(find.text('资料库'), findsOneWidget);
     expect(find.byType(SelectableText), findsNWidgets(2));
   });
+}
+
+class _FailOnceLibraryStore extends RecordingLibraryStore {
+  _FailOnceLibraryStore({super.file});
+
+  int _saves = 0;
+
+  @override
+  Future<void> save({bool strict = true}) {
+    _saves++;
+    if (_saves == 1) {
+      return Future<void>.error(StateError('first save failed'));
+    }
+    return super.save(strict: strict);
+  }
 }
