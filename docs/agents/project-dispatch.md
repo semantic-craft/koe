@@ -1,6 +1,6 @@
 # Project dispatch: Dot 编码派发
 
-Dot（ChatGPT agent dot）已认领的编码工单，由主会话经 zcode-dispatch 的 Dot 路由（Helios receiver `:7791`，HMAC 签名复用既有网关密钥，维持既有来源 IP 白名单）派发到该 job 的隔离检出里执行。这是**编码**路径：执行者可改文件、在分支上提交。它与「Perplexity × Helios ZCode 本机验证契约」（AGENTS.md；只读，ZCode 不改文件、不提交）是两条路径，互不替代。参数合同以 semantic-craft/agent-interop-private 已合并 PR #62 为准；本文与合同不一致时以合同为准、先修文档。
+Dot（ChatGPT agent dot）已认领的编码工单，由主会话经 zcode-dispatch 的 Dot 路由（Helios receiver `:7791`，HMAC 签名复用既有网关密钥，维持既有来源 IP 白名单）派发到该 job 的隔离检出里执行。这是**编码**路径：执行者可改文件、在分支上提交。它与「[Perplexity × Helios ZCode 本机验证契约](zcode-verification.md)」（只读，ZCode 不改文件、不提交）是两条路径，互不替代。参数合同以 semantic-craft/agent-interop-private 已合并 PR #62 为准；本文与合同不一致时以合同为准、先修文档。
 
 ## 派发前核对
 
