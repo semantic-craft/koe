@@ -196,4 +196,56 @@ void main() {
       );
     },
   );
+
+  test(
+    'closing the Mac receiver persists before stopping and reports an honest failure',
+    () async {
+      final directory = Directory('${root.path}/desk-toggle');
+      final store = ArchiveDeskStore(directory: directory);
+      await store.load();
+      final controller = MacArchiveController(
+        source: _NoopSource(),
+        isDesk: true,
+        phoneStore: ArchivePhoneStore(inMemory: true),
+        deskStore: store,
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.setDeskReceiving(true);
+      expect(store.config.receivingEnabled, isTrue);
+      expect(controller.deskRunning, isTrue);
+      expect(controller.deskReceivingEnabled, isTrue);
+
+      final blockedWrite = Directory(
+        '${directory.path}/${ArchiveDeskStore.configFileName}.tmp',
+      );
+      await blockedWrite.create();
+      await expectLater(
+        controller.setDeskReceiving(false),
+        throwsA(isA<ArchiveException>()),
+      );
+      expect(store.config.receivingEnabled, isTrue);
+      expect(controller.deskRunning, isTrue);
+      expect(controller.deskReceivingEnabled, isTrue);
+      expect(controller.deskError, isNotNull);
+
+      await blockedWrite.delete();
+      await controller.setDeskReceiving(false);
+      expect(store.config.receivingEnabled, isFalse);
+      expect(controller.deskRunning, isFalse);
+      final reopened = ArchiveDeskStore(directory: directory);
+      await reopened.load();
+      expect(reopened.config.receivingEnabled, isFalse);
+      final restarted = MacArchiveController(
+        source: _NoopSource(),
+        isDesk: true,
+        phoneStore: ArchivePhoneStore(inMemory: true),
+        deskStore: reopened,
+      );
+      addTearDown(restarted.dispose);
+      await restarted.initialize();
+      expect(restarted.deskRunning, isFalse);
+      expect(restarted.deskReceivingEnabled, isFalse);
+    },
+  );
 }

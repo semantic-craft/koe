@@ -143,12 +143,17 @@ class MacArchiveSettings extends StatelessWidget {
               ),
               TextButton.icon(
                 key: const ValueKey('phone-archive-disconnect'),
-                onPressed: archive.manualPaused
+                onPressed: archive.manualPaused && archive.phoneError == null
                     ? null
                     : () async {
-                        await archive.disconnect();
-                        if (!context.mounted) return;
-                        _snack(context, '已断开 Mac；已排队原件会保留');
+                        try {
+                          await archive.disconnect();
+                          if (!context.mounted) return;
+                          _snack(context, '已断开 Mac；已排队原件会保留');
+                        } on ArchiveException catch (error) {
+                          if (!context.mounted) return;
+                          _snack(context, error.message);
+                        }
                       },
                 icon: const Icon(Icons.link_off_rounded, size: 18),
                 label: const Text('断开'),

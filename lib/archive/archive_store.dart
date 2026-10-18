@@ -275,6 +275,7 @@ class ArchivePhoneStore {
 
   ArchivePairing? pairing;
   bool autoArchive = false;
+  bool manualPaused = false;
   DateTime? autoArchiveFrom;
   String clientId = '';
   String? loadError;
@@ -333,6 +334,7 @@ class ArchivePhoneStore {
           pairing = ArchivePairing.tryParse(encoded);
         }
         autoArchive = config['autoArchive'] == true;
+        manualPaused = config['manualPaused'] == true;
         autoArchiveFrom = config['autoArchiveFrom'] is String
             ? DateTime.tryParse(config['autoArchiveFrom'] as String)
             : null;
@@ -377,12 +379,14 @@ class ArchivePhoneStore {
     required Map<String, ArchivePhoneRecord> records,
     required ArchivePairing? pairing,
     required bool autoArchive,
+    required bool manualPaused,
     required DateTime? autoArchiveFrom,
   }) => <String, Object?>{
     'version': 1,
     'config': <String, Object?>{
       if (pairing != null) 'pairing': pairing.encode(),
       'autoArchive': autoArchive,
+      'manualPaused': manualPaused,
       if (autoArchiveFrom != null)
         'autoArchiveFrom': autoArchiveFrom.toIso8601String(),
       'clientId': clientId,
@@ -394,6 +398,7 @@ class ArchivePhoneStore {
     required Map<String, ArchivePhoneRecord> records,
     required ArchivePairing? pairing,
     required bool autoArchive,
+    required bool manualPaused,
     required DateTime? autoArchiveFrom,
   }) async {
     if (_inMemory) return;
@@ -408,6 +413,7 @@ class ArchivePhoneStore {
             records: records,
             pairing: pairing,
             autoArchive: autoArchive,
+            manualPaused: manualPaused,
             autoArchiveFrom: autoArchiveFrom,
           ),
         ),
@@ -436,6 +442,7 @@ class ArchivePhoneStore {
       records: Map<String, ArchivePhoneRecord>.of(_records),
       pairing: pairing,
       autoArchive: autoArchive,
+      manualPaused: manualPaused,
       autoArchiveFrom: autoArchiveFrom,
     ),
   );
@@ -443,31 +450,51 @@ class ArchivePhoneStore {
   Future<void> setConfiguration({
     required ArchivePairing? pairing,
     required bool autoArchive,
+    bool manualPaused = false,
     DateTime? autoArchiveFrom,
   }) => _serializedMutation(() async {
     await _writeSnapshot(
       records: Map<String, ArchivePhoneRecord>.of(_records),
       pairing: pairing,
       autoArchive: autoArchive,
+      manualPaused: manualPaused,
       autoArchiveFrom: autoArchiveFrom,
     );
     this.pairing = pairing;
     this.autoArchive = autoArchive;
+    this.manualPaused = manualPaused;
     this.autoArchiveFrom = autoArchiveFrom;
   });
 
-  Future<void> setAutoArchive(bool value, {DateTime? autoArchiveFrom}) =>
-      _serializedMutation(() async {
-        final nextFrom = autoArchiveFrom ?? this.autoArchiveFrom;
-        await _writeSnapshot(
-          records: Map<String, ArchivePhoneRecord>.of(_records),
-          pairing: pairing,
-          autoArchive: value,
-          autoArchiveFrom: nextFrom,
-        );
-        autoArchive = value;
-        this.autoArchiveFrom = nextFrom;
-      });
+  Future<void> setAutoArchive(
+    bool value, {
+    DateTime? autoArchiveFrom,
+    bool clearManualPause = false,
+  }) => _serializedMutation(() async {
+    final nextFrom = autoArchiveFrom ?? this.autoArchiveFrom;
+    final nextPaused = clearManualPause ? false : manualPaused;
+    await _writeSnapshot(
+      records: Map<String, ArchivePhoneRecord>.of(_records),
+      pairing: pairing,
+      autoArchive: value,
+      manualPaused: nextPaused,
+      autoArchiveFrom: nextFrom,
+    );
+    autoArchive = value;
+    manualPaused = nextPaused;
+    this.autoArchiveFrom = nextFrom;
+  });
+
+  Future<void> setManualPaused(bool value) => _serializedMutation(() async {
+    await _writeSnapshot(
+      records: Map<String, ArchivePhoneRecord>.of(_records),
+      pairing: pairing,
+      autoArchive: autoArchive,
+      manualPaused: value,
+      autoArchiveFrom: autoArchiveFrom,
+    );
+    manualPaused = value;
+  });
 
   Future<void> upsert(ArchivePhoneRecord record) =>
       _serializedMutation(() async {
@@ -477,6 +504,7 @@ class ArchivePhoneStore {
           records: next,
           pairing: pairing,
           autoArchive: autoArchive,
+          manualPaused: manualPaused,
           autoArchiveFrom: autoArchiveFrom,
         );
         _records[record.localPath] = record;
@@ -493,6 +521,7 @@ class ArchivePhoneStore {
           records: next,
           pairing: pairing,
           autoArchive: autoArchive,
+          manualPaused: manualPaused,
           autoArchiveFrom: autoArchiveFrom,
         );
         for (final record in incoming) {
@@ -520,6 +549,7 @@ class ArchivePhoneStore {
       records: next,
       pairing: pairing,
       autoArchive: autoArchive,
+      manualPaused: manualPaused,
       autoArchiveFrom: autoArchiveFrom,
     );
     _records
@@ -535,6 +565,7 @@ class ArchivePhoneStore {
       records: next,
       pairing: pairing,
       autoArchive: autoArchive,
+      manualPaused: manualPaused,
       autoArchiveFrom: autoArchiveFrom,
     );
     _records.remove(path);
@@ -549,6 +580,7 @@ class ArchivePhoneStore {
       records: next,
       pairing: pairing,
       autoArchive: autoArchive,
+      manualPaused: manualPaused,
       autoArchiveFrom: autoArchiveFrom,
     );
     _records
@@ -683,7 +715,6 @@ class ArchiveDeskStore {
     Future<Directory> Function()? supportDirectory,
     bool? developmentProfile,
     Future<bool> Function()? isolationProvider,
-    Future<void> Function()? configWriteInterceptor,
   }) : _directoryOverride = directory,
        // ignore: prefer_initializing_formals
        _inMemory = inMemory,
@@ -694,7 +725,6 @@ class ArchiveDeskStore {
        // ignore: prefer_initializing_formals
        _isolationProvider = isolationProvider,
        // ignore: prefer_initializing_formals
-       _configWriteInterceptor = configWriteInterceptor,
        config = ArchiveDeskConfig(
          deskId: ArchivePairing.generateDeskId(),
          pairingKey: ArchivePairing.generateKey(),
@@ -708,7 +738,6 @@ class ArchiveDeskStore {
   final Future<Directory> Function()? _supportDirectory;
   final bool? _developmentProfile;
   final Future<bool> Function()? _isolationProvider;
-  final Future<void> Function()? _configWriteInterceptor;
   final Map<String, ArchiveDeskEntry> _entries = {};
   ArchiveDeskConfig config;
   String? loadError;
@@ -849,7 +878,6 @@ class ArchiveDeskStore {
 
   Future<void> _writeConfig(ArchiveDeskConfig value) async {
     if (_inMemory) return;
-    await _configWriteInterceptor?.call();
     final target = File(p.join((await _directory()).path, configFileName));
     await _writeAtomic(target, jsonEncode(value.toJson()));
   }

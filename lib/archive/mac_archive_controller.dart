@@ -288,6 +288,7 @@ class MacArchiveController extends ChangeNotifier {
           .toList();
       if (unbound.isNotEmpty) await phoneStore.upsertAll(unbound);
     }
+    _manualPaused = phoneStore.manualPaused;
     if (phoneStore.loadError != null) _phoneError = phoneStore.loadError;
     if (deskStore.loadError != null) _deskError = deskStore.loadError;
     if (isDesk &&
@@ -308,7 +309,9 @@ class MacArchiveController extends ChangeNotifier {
         : ArchiveLinkPhase.waiting;
     _ensureTimer();
     _notify();
-    if (pairing != null && (phoneStore.autoArchive || _hasManualPending)) {
+    if (!_manualPaused &&
+        pairing != null &&
+        (phoneStore.autoArchive || _hasManualPending)) {
       unawaited(_kick());
     }
   }
@@ -349,6 +352,7 @@ class MacArchiveController extends ChangeNotifier {
       await phoneStore.setConfiguration(
         pairing: next,
         autoArchive: true,
+        manualPaused: false,
         autoArchiveFrom: now,
       );
     } catch (_) {
@@ -457,11 +461,16 @@ class MacArchiveController extends ChangeNotifier {
     _connectionEpoch++;
     await _closeWorkerClient();
     await _closeInteractiveClient();
-    await phoneStore.setConfiguration(
-      pairing: null,
-      autoArchive: false,
-      autoArchiveFrom: null,
-    );
+    try {
+      await phoneStore.setConfiguration(
+        pairing: null,
+        autoArchive: false,
+        manualPaused: false,
+        autoArchiveFrom: null,
+      );
+    } catch (_) {
+      throw const ArchiveException('保存取消配对失败，请检查存储空间');
+    }
     _manualPaused = false;
     _authFailed = false;
     _phoneError = null;
@@ -478,10 +487,15 @@ class MacArchiveController extends ChangeNotifier {
     if (value && pairing == null) {
       throw const ArchiveException('请先配对 Mac');
     }
-    await phoneStore.setAutoArchive(
-      value,
-      autoArchiveFrom: value ? _clock() : null,
-    );
+    try {
+      await phoneStore.setAutoArchive(
+        value,
+        autoArchiveFrom: value ? _clock() : null,
+        clearManualPause: value,
+      );
+    } catch (_) {
+      throw const ArchiveException('保存自动归档设置失败，请检查存储空间');
+    }
     if (value) {
       _manualPaused = false;
       _ensureTimer();
@@ -495,7 +509,7 @@ class MacArchiveController extends ChangeNotifier {
     _requireActive();
     _requirePhoneStorage();
     if (pairing == null) throw const ArchiveException('请先配对 Mac');
-    _manualPaused = false;
+    await _clearManualPause();
     _authFailed = false;
     _nextAttempt.clear();
     try {
@@ -518,6 +532,27 @@ class MacArchiveController extends ChangeNotifier {
     await _closeInteractiveClient();
     _linkPhase = ArchiveLinkPhase.disconnected;
     _notify();
+    try {
+      await phoneStore.setManualPaused(true);
+    } catch (_) {
+      _phoneError = '断开状态保存失败，重启后可能自动恢复归档；请检查存储空间后重试';
+      _notify();
+      throw const ArchiveException('断开状态保存失败，请检查存储空间后重试');
+    }
+    _phoneError = null;
+    _notify();
+  }
+
+  Future<void> _clearManualPause() async {
+    if (!_manualPaused && !phoneStore.manualPaused) return;
+    try {
+      await phoneStore.setManualPaused(false);
+    } catch (_) {
+      _phoneError = '恢复连接状态保存失败，请检查存储空间后重试';
+      _notify();
+      throw const ArchiveException('恢复连接状态保存失败，请检查存储空间后重试');
+    }
+    _manualPaused = false;
   }
 
   Future<void> archiveNow(String path) async {
@@ -529,6 +564,7 @@ class MacArchiveController extends ChangeNotifier {
     if (candidate == null) {
       throw const ArchiveException('原件不在手机上，无法再次归档');
     }
+    await _clearManualPause();
     _manualPaused = false;
     final now = _clock();
     final existing = phoneStore.recordForPath(path);
@@ -586,6 +622,7 @@ class MacArchiveController extends ChangeNotifier {
       queued.add(record);
     }
     if (queued.isEmpty) return 0;
+    await _clearManualPause();
     await phoneStore.upsertAll(queued);
     _manualPaused = false;
     _nextAttempt.clear();
@@ -608,6 +645,7 @@ class MacArchiveController extends ChangeNotifier {
     if (record.deskId != null && record.deskId != targetDeskId) {
       throw const ArchiveException('这条归档属于另一台 Mac，请重新配对或归档');
     }
+    await _clearManualPause();
     if (!_restoreInFlight.add(path)) {
       throw const ArchiveException('这条资料正在恢复，请稍候');
     }
@@ -790,25 +828,44 @@ class MacArchiveController extends ChangeNotifier {
     }
     final server = _server!;
     if (enabled) {
+      var started = false;
       try {
-        await server.start();
+        if (!server.running) {
+          await server.start();
+          started = true;
+        }
         await deskStore.setReceiving(enabled: true, preferredPort: server.port);
         _deskError = null;
-      } on ArchiveException catch (error) {
-        _deskError = error.message;
-        await server.stop();
+      } catch (error) {
+        if (started) await server.stop();
+        final message = _deskFailureMessage(error, '开启接收失败，未保存为已开启');
+        _deskError = message;
         _notify();
-        rethrow;
+        throw ArchiveException(message);
       }
     } else {
+      try {
+        // Persist the disabled state before stopping; if the write fails the
+        // running server and the persisted enabled state stay consistent.
+        await deskStore.setReceiving(
+          enabled: false,
+          preferredPort: deskStore.config.preferredPort,
+        );
+      } catch (error) {
+        final message = _deskFailureMessage(error, '关闭未生效，接收服务仍在运行');
+        _deskError = message;
+        _notify();
+        throw ArchiveException(message);
+      }
       await server.stop();
-      await deskStore.setReceiving(
-        enabled: false,
-        preferredPort: deskStore.config.preferredPort,
-      );
       _deskError = null;
     }
     _notify();
+  }
+
+  String _deskFailureMessage(Object error, String fallback) {
+    final detail = error is ArchiveException ? error.message : '$error';
+    return detail.isEmpty ? fallback : '$fallback：$detail';
   }
 
   Future<void> refreshDeskPairing() async {

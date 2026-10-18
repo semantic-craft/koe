@@ -639,4 +639,148 @@ void main() {
       }
     },
   );
+
+  test(
+    'manual pause survives restart until an explicit connect uploads',
+    () async {
+      final gate = Completer<void>();
+      final entered = Completer<void>();
+      var blockNext = false;
+      final source = _TestSource();
+      final file = await makeAudio('persisted-pause.wav', seed: 127);
+      source.add(file.path);
+      final phoneDirectory = Directory('${root.path}/pause-persist-phone');
+      final first = MacArchiveController(
+        source: source,
+        isDesk: false,
+        phoneStore: ArchivePhoneStore(directory: phoneDirectory),
+        deskStore: ArchiveDeskStore(inMemory: true),
+        clientConnector: (pairing, clientId) async {
+          if (blockNext) {
+            blockNext = false;
+            if (!entered.isCompleted) entered.complete();
+            await gate.future;
+          }
+          return ArchiveClient.connect(pairing, clientId: clientId);
+        },
+      );
+      await first.initialize();
+      await first.pairWithCode(pairing.encode());
+      blockNext = true;
+      await first.queueAllExisting();
+      await entered.future;
+      await first.disconnect();
+      gate.complete();
+      await first.waitForWorker();
+      expect(first.manualPaused, isTrue);
+      expect(deskStore.entries, isEmpty);
+      first.dispose();
+
+      final store = ArchivePhoneStore(directory: phoneDirectory);
+      await store.load();
+      final secondSource = _TestSource()..add(file.path);
+      final second = MacArchiveController(
+        source: secondSource,
+        isDesk: false,
+        phoneStore: store,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      addTearDown(second.dispose);
+      await second.initialize();
+      expect(second.manualPaused, isTrue);
+      expect(second.linkPhase, ArchiveLinkPhase.disconnected);
+      await second.waitForWorker();
+      expect(deskStore.entries, isEmpty);
+
+      await second.connectNow();
+      await second.waitForWorker();
+      expect(second.recordForPath(file.path)?.phase, MacArchivePhase.verified);
+      expect(deskStore.entries, hasLength(1));
+      expect(await deskStore.verifyEntry(deskStore.entries.single), isTrue);
+    },
+  );
+
+  test(
+    'disconnect surfaces a storage failure and retry persists the pause',
+    () async {
+      var failNext = false;
+      final phoneDirectory = Directory('${root.path}/disconnect-fail-phone');
+      final store = ArchivePhoneStore(
+        directory: phoneDirectory,
+        writeInterceptor: () async {
+          if (!failNext) return;
+          failNext = false;
+          throw const FileSystemException('synthetic disconnect write failure');
+        },
+      );
+      final controller = MacArchiveController(
+        source: _TestSource(),
+        isDesk: false,
+        phoneStore: store,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.pairWithCode(pairing.encode());
+      failNext = true;
+      await expectLater(
+        controller.disconnect(),
+        throwsA(isA<ArchiveException>()),
+      );
+      expect(controller.manualPaused, isTrue);
+      expect(controller.phoneError, isNotNull);
+
+      await controller.disconnect();
+      final reopened = ArchivePhoneStore(directory: phoneDirectory);
+      await reopened.load();
+      final restarted = MacArchiveController(
+        source: _TestSource(),
+        isDesk: false,
+        phoneStore: reopened,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      addTearDown(restarted.dispose);
+      await restarted.initialize();
+      expect(restarted.manualPaused, isTrue);
+    },
+  );
+  test('failed pause persistence while restoring remains retryable', () async {
+    var failNext = false;
+    final source = _TestSource();
+    final file = await makeAudio('restore-pause-retry.wav', seed: 79);
+    source.add(file.path);
+    final controller = MacArchiveController(
+      source: source,
+      isDesk: false,
+      phoneStore: ArchivePhoneStore(
+        directory: Directory('${root.path}/restore-pause-phone'),
+        writeInterceptor: () async {
+          if (failNext) {
+            failNext = false;
+            throw const FileSystemException('synthetic pause write failure');
+          }
+        },
+      ),
+      deskStore: ArchiveDeskStore(inMemory: true),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.pairWithCode(pairing.encode());
+    await controller.archiveNow(file.path);
+    await controller.waitForWorker();
+    await file.delete();
+    await controller.disconnect();
+    failNext = true;
+    await expectLater(
+      controller.restoreFromArchive(file.path),
+      throwsA(isA<ArchiveException>()),
+    );
+    expect(await file.exists(), isFalse);
+    await controller.restoreFromArchive(file.path);
+    expect(source.restored, contains(file.path));
+    expect(
+      await archiveFileHash(file.path),
+      controller.recordForPath(file.path)!.contentHash,
+    );
+  });
 }
