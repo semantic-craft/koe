@@ -15,7 +15,7 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 
 ## 运行与测试
 
-- `flutter pub get`、`flutter analyze`、`flutter test`；CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在每个 PR 和 main 推送上跑这三步，Flutter 3.47.7。
+- `flutter pub get`、`flutter analyze`、`flutter test`；CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在每个 PR 和 main 推送上跑这三步，Flutter 3.47.7，运行在用户自己的 Mac（自托管运行机，见 [ci-runner](docs/agents/ci-runner.md)）。
 - 要逐文件确认跑过哪些测试，用 `flutter test --reporter expanded`；终端默认 compact 输出会覆盖进度行（见 [lessons](lessons.md)「compact 日志里缺文件不等于没跑」）。
 - 构建、真机运行与安装脚本按 [README](README.md)；[scripts](scripts/) 运行前核对目标设备和副作用。
 - 实现、评审或验收前先读 [lessons](lessons.md) 顶部的十条规则。
