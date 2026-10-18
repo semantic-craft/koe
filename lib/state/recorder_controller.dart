@@ -3448,6 +3448,7 @@ class RecorderController extends ChangeNotifier {
           playbackCompleted = false;
           _confirmedPosition = pos;
           unawaited(_persistPlayback(at: pos));
+          notifyListeners();
         } else if (isPlaying || pos > Duration.zero) {
           // Position events before the player reports "playing" still carry
           // real progress; only an idle zero event can clobber a breakpoint.
