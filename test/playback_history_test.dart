@@ -162,6 +162,31 @@ void main() {
     expect(controller.statusMessage, contains('无法保存'));
   });
 
+  test('播放进度写失败不把已完成的删除报成失败', () async {
+    final blocker = File('${temp.path}/blocked-delete');
+    await blocker.writeAsString('not a directory');
+    final store = PlaybackHistoryStore(
+      file: File('${blocker.path}/history.json'),
+    );
+    final audio = File('${temp.path}/178.wav');
+    await audio.writeAsBytes([1, 2, 3, 4]);
+    final controller = RecorderController(
+      loadPersistedState: false,
+      playbackHistoryStore: store,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForPlaybackHistory();
+    controller.exportedPaths.add(audio.path);
+
+    final result = await controller.deleteLocalExports([audio.path]);
+
+    expect(result.deleted, 1);
+    expect(result.failed, isEmpty);
+    expect(await audio.exists(), isFalse);
+    expect(controller.exportedPaths, isNot(contains(audio.path)));
+    expect(controller.errorMessage, contains('播放进度记录未能清理'));
+  });
+
   testWidgets('重启后今日页从持久化记录显示继续回听并调用真实播放入口', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;

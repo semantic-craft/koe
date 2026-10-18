@@ -5091,6 +5091,7 @@ class RecorderController extends ChangeNotifier {
     final removed = <String>{};
     var deleted = 0;
     final failed = <String>[];
+    var historyCleanupFailed = false;
 
     for (final path in selected) {
       final id = ExportCatalog.fileIdFromPath(path);
@@ -5124,7 +5125,13 @@ class RecorderController extends ChangeNotifier {
           speakerAliasesByFileId.remove(id);
         }
         final key = _recordingKey(path: path);
-        await playbackHistory.forget(fileId: id, path: path);
+        try {
+          await playbackHistory.forget(fileId: id, path: path);
+        } catch (_) {
+          // The recording is already gone; stale history must not turn a
+          // completed deletion into a failure or skip the remaining cleanup.
+          historyCleanupFailed = true;
+        }
         await _fileJobs.discard(key);
         await topics.forgetRecording(key);
         await analysis.forgetRecording(key);
@@ -5162,7 +5169,8 @@ class RecorderController extends ChangeNotifier {
     statusMessage = failed.isEmpty
         ? '已删除 $deleted 个本地录音'
         : '已删除 $deleted 个录音，${failed.length} 个失败';
-    errorMessage = failed.isEmpty ? null : failed.join('\n');
+    final errors = [...failed, if (historyCleanupFailed) '录音已删除，但播放进度记录未能清理'];
+    errorMessage = errors.isEmpty ? null : errors.join('\n');
     notifyListeners();
     return (deleted: deleted, failed: failed);
   }
