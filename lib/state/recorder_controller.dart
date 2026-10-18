@@ -44,6 +44,7 @@ import 'recording.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
 import 'playback_history.dart';
+import 'recording_bookmarks.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
@@ -504,6 +505,7 @@ class RecorderController extends ChangeNotifier {
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
     PlaybackHistoryStore? playbackHistoryStore,
+    RecordingBookmarkStore? bookmarkStore,
     AudioPlayer? player,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
@@ -527,6 +529,11 @@ class RecorderController extends ChangeNotifier {
       if (_disposed) return;
       playbackSpeed = playbackHistory.speed;
       notifyListeners();
+    });
+    bookmarks =
+        bookmarkStore ?? RecordingBookmarkStore(inMemory: !loadPersistedState);
+    _bookmarksLoaded = bookmarks.load().then((_) {
+      if (!_disposed) notifyListeners();
     });
     _libraryLoaded = _loadRecordingLibrary();
     _subs.add(
@@ -726,6 +733,8 @@ class RecorderController extends ChangeNotifier {
   final Directory? _libraryDirectoryOverride;
   late final PlaybackHistoryStore playbackHistory;
   late final Future<void> _playbackHistoryLoaded;
+  late final RecordingBookmarkStore bookmarks;
+  late final Future<void> _bookmarksLoaded;
   late final TopicStore topics;
   late final Future<void> _topicsLoaded;
   AppLifecycleListener? _lifecycle;
@@ -5230,6 +5239,7 @@ class RecorderController extends ChangeNotifier {
     var deleted = 0;
     final failed = <String>[];
     var historyCleanupFailed = false;
+    var bookmarkCleanupFailed = false;
 
     for (final path in selected) {
       final id = ExportCatalog.fileIdFromPath(path);
@@ -5288,6 +5298,13 @@ class RecorderController extends ChangeNotifier {
           // completed deletion into a failure or skip the remaining cleanup.
           historyCleanupFailed = true;
         }
+        _bookmarkGenerations[key] = (_bookmarkGenerations[key] ?? 0) + 1;
+        try {
+          await _bookmarksLoaded;
+          await bookmarks.forgetRecording(key);
+        } catch (_) {
+          bookmarkCleanupFailed = true;
+        }
         await _fileJobs.discard(key);
         await topics.forgetRecording(key);
         await analysis.forgetRecording(key);
@@ -5328,7 +5345,11 @@ class RecorderController extends ChangeNotifier {
     statusMessage = failed.isEmpty
         ? '已删除 $deleted 个本地录音'
         : '已删除 $deleted 个录音，${failed.length} 个失败';
-    final errors = [...failed, if (historyCleanupFailed) '录音已删除，但播放进度记录未能清理'];
+    final errors = [
+      ...failed,
+      if (historyCleanupFailed) '录音已删除，但播放进度记录未能清理',
+      if (bookmarkCleanupFailed) '录音已删除，但书签记录未能清理',
+    ];
     errorMessage = errors.isEmpty ? null : errors.join('\n');
     notifyListeners();
     return (deleted: deleted, failed: failed);
@@ -6071,6 +6092,143 @@ class RecorderController extends ChangeNotifier {
 
   @visibleForTesting
   Future<void> waitForPlaybackHistory() => _playbackHistoryLoaded;
+
+  @visibleForTesting
+  Future<void> waitForBookmarks() => _bookmarksLoaded;
+
+  bool get showBookmarkMarkers => bookmarks.showMarkers;
+  String? get bookmarkRecoveryNotice => bookmarks.recoveryNotice;
+
+  @visibleForTesting
+  bool get bookmarkAudioReading => _bookmarkAudioReads.isNotEmpty;
+
+  final Map<String, ({int size, DateTime modified, String? version})>
+  _bookmarkAudio = {};
+  final Map<String, Future<String?>> _bookmarkAudioReads = {};
+
+  /// Digest of the audio now at [path] for bookmark checks, reusing the
+  /// `audioVersion` content identity. `known` is false while it is being read;
+  /// a changed size or modification time triggers a fresh read.
+  ({bool known, String? version}) bookmarkAudioVersion(String path) {
+    FileStat stat;
+    try {
+      stat = File(path).statSync();
+    } catch (_) {
+      return (known: true, version: null);
+    }
+    if (stat.type != FileSystemEntityType.file) {
+      return (known: true, version: null);
+    }
+    final cached = _bookmarkAudio[path];
+    if (cached != null &&
+        cached.size == stat.size &&
+        cached.modified == stat.modified) {
+      return (known: true, version: cached.version);
+    }
+    unawaited(_readBookmarkAudio(path));
+    return (known: false, version: null);
+  }
+
+  /// Content identity used for bookmarks; overridable to simulate a read
+  /// that cannot establish it.
+  @visibleForTesting
+  Future<String?> readBookmarkAudioVersion(String path) => audioVersion(path);
+
+  /// Re-reads the audio content now (not the stat-keyed cache), so a replay
+  /// is never allowed by a cached digest of a file replaced in place.
+  Future<String?> verifyBookmarkAudio(String path) => _readBookmarkAudio(path);
+
+  final Map<String, int> _bookmarkGenerations = {};
+
+  Future<String?> _readBookmarkAudio(String path) =>
+      _bookmarkAudioReads[path] ??= () async {
+        try {
+          final before = await File(path).stat();
+          String? version;
+          try {
+            version = await readBookmarkAudioVersion(path);
+          } catch (_) {
+            version = null;
+          }
+          _bookmarkAudio[path] = (
+            size: before.size,
+            modified: before.modified,
+            version: version,
+          );
+          if (!_disposed) notifyListeners();
+          return version;
+        } catch (_) {
+          return null;
+        } finally {
+          _bookmarkAudioReads.remove(path);
+        }
+      }();
+
+  /// Bookmarks of exactly this material, ordered by position.
+  List<RecordingBookmark> bookmarksFor(RecordingReference ref) =>
+      bookmarks.forRecording(_referenceKey(ref));
+
+  /// Saves a bookmark at [position]; [segment] anchors it to the sentence the
+  /// reader shows so a later transcript change cannot redirect it. Throws when
+  /// the store cannot be written, leaving nothing saved.
+  Future<RecordingBookmark> addBookmark(
+    RecordingReference ref, {
+    required Duration position,
+    TranscriptSegment? segment,
+    String note = '',
+  }) async {
+    await _bookmarksLoaded;
+    final key = _referenceKey(ref);
+    final generation = _bookmarkGenerations[key] ?? 0;
+    final path = recordingView(ref).path;
+    final version = path == null ? null : await _readBookmarkAudio(path);
+    if (version == null) {
+      throw const BookmarkSaveException('未保存：无法读取原音频以确认书签来源。草稿已保留，可稍后重试。');
+    }
+    // A permanent delete may have finished while the digest was read; the
+    // check and the queued add below run without an await in between.
+    if ((_bookmarkGenerations[key] ?? 0) != generation) {
+      throw const BookmarkSaveException('未保存：这份资料已被删除。');
+    }
+    final now = DateTime.now();
+    final bookmark = RecordingBookmark(
+      id: bookmarks.newId(now),
+      recordingKey: key,
+      position: position < Duration.zero ? Duration.zero : position,
+      note: note.trim(),
+      segmentText: segment?.text.trim(),
+      segmentStart: segment?.start,
+      segmentEnd: segment?.end,
+      transcriptRevision: segment == null
+          ? null
+          : _transcriptMetadata[key]?.revision ?? 0,
+      audioVersion: version,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await bookmarks.add(bookmark);
+    if (!_disposed) notifyListeners();
+    return bookmark;
+  }
+
+  Future<void> updateBookmarkNote(String id, String note) async {
+    await _bookmarksLoaded;
+    await bookmarks.updateNote(id, note.trim(), now: DateTime.now());
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> removeBookmark(String id) async {
+    await _bookmarksLoaded;
+    await bookmarks.remove(id);
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Display only: hiding markers never deletes bookmarks.
+  Future<void> setShowBookmarkMarkers(bool value) async {
+    await _bookmarksLoaded;
+    await bookmarks.setShowMarkers(value);
+    if (!_disposed) notifyListeners();
+  }
 
   Future<void> _persistPlayback({bool? completed, Duration? at}) async {
     final path = playingPath;
