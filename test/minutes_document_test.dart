@@ -156,6 +156,24 @@ void main() {
     expect(parsed.document.warning, isNotNull);
   });
 
+  test('逆序结束时码被丢弃，重启后不丢整份文档', () {
+    final parsed = parseMinutesDocument(
+      'bad-end.json',
+      jsonEncode({
+        'segments': [
+          {'start': 10, 'end': 5, 'text': '段落'},
+        ],
+      }),
+    );
+
+    expect(parsed.document.segments.single.end, isNull);
+    final decoded = MinutesDocumentStore.decode(
+      jsonEncode(MinutesDocumentStore.encode([parsed.document])),
+    );
+    expect(decoded, isNotNull);
+    expect(decoded!.values.single.segments.single.text, '段落');
+  });
+
   test('时间行单独一行时并入下一句且重启后仍可读', () async {
     final parsed = parseMinutesDocument(
       'speaker.txt',

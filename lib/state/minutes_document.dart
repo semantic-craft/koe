@@ -301,10 +301,7 @@ MinutesParseResult _parseMinutesJson(
     return item.trim().isEmpty
         ? null
         : (
-            segment: MinutesSegment(
-              text: item.trim(),
-              start: Duration.zero,
-            ),
+            segment: MinutesSegment(text: item.trim(), start: Duration.zero),
             timed: false,
           );
   }
@@ -349,11 +346,15 @@ MinutesParseResult _parseMinutesJson(
     'name',
     'role',
   ]);
+  final safeStart = start ?? Duration.zero;
+  // The store rejects end < start on reload, so drop a contradictory end
+  // instead of saving a document that would disappear after restart.
+  final safeEnd = end != null && end < safeStart ? null : end;
   return (
     segment: MinutesSegment(
       text: text,
-      start: start ?? Duration.zero,
-      end: end,
+      start: safeStart,
+      end: safeEnd,
       speaker: speaker,
     ),
     timed: start != null,

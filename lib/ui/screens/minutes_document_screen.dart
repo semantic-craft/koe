@@ -46,120 +46,121 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
         File(audioPath).existsSync();
     final playing = audioPath != null && c.playingPath == audioPath;
     final canSeek = document.timingReliable && audioAvailable;
+    final header = <Widget>[
+      _MetaRow(label: '来源', value: document.sourceName),
+      _MetaRow(
+        label: '发生时间',
+        value: document.capturedAt == null
+            ? '未知（导入文件没有提供）'
+            : _formatDateTime(document.capturedAt!),
+      ),
+      _MetaRow(label: '导入时间', value: _formatDateTime(document.importedAt)),
+      _MetaRow(
+        label: '原音频',
+        value: audioPath == null
+            ? '尚未补配'
+            : !audioAvailable
+            ? '已配对，但原件不可用'
+            : document.unaligned
+            ? '已取得，时码不可靠'
+            : '已配对，可按句回听',
+      ),
+      const SizedBox(height: 12),
+      if (audioPath == null)
+        _StatusCard(
+          key: const ValueKey('minutes-text-only'),
+          title: '只有文字，尚未补配音频',
+          message: '可以阅读和整理，点击文字不会播放或推进计时。',
+          action: _attaching
+              ? null
+              : FilledButton.icon(
+                  key: const ValueKey('minutes-attach-audio'),
+                  onPressed: () => _attach(document),
+                  icon: const Icon(Icons.audio_file_outlined),
+                  label: Text(_attaching ? '正在核验…' : '补配原音频'),
+                ),
+        )
+      else ...[
+        if (document.unaligned)
+          const _StatusCard(
+            key: ValueKey('minutes-unaligned'),
+            title: '音频存在，但时码不可靠',
+            message: '没有把这段文字绑定到具体秒数；可以整段播放，不能点句定位。',
+          ),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const ValueKey('minutes-play-all'),
+                onPressed: !audioAvailable
+                    ? null
+                    : () => playing
+                          ? c.togglePlayPause()
+                          : c.playExported(audioPath),
+                icon: Icon(
+                  playing && c.isPlaying
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                ),
+                label: Text(playing && c.isPlaying ? '暂停整段' : '播放整段'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              key: const ValueKey('minutes-replace-audio'),
+              onPressed: _attaching ? null : () => _attach(document),
+              child: const Text('重新配对'),
+            ),
+          ],
+        ),
+      ],
+      if (document.warning != null) ...[
+        const SizedBox(height: 10),
+        Text(
+          document.warning!,
+          style: const TextStyle(
+            fontSize: 13,
+            color: AppColors.textSecondary,
+            height: 1.4,
+          ),
+        ),
+      ],
+      if (_notice != null) ...[
+        const SizedBox(height: 10),
+        Text(
+          _notice!,
+          key: const ValueKey('minutes-attach-result'),
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+      ],
+      const SizedBox(height: 18),
+      const Text(
+        '正文',
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 8),
+    ];
     return Scaffold(
       key: ValueKey('minutes-document-${document.id}'),
       appBar: AppBar(title: Text(document.title)),
-      body: ListView(
+      body: ListView.builder(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
-        children: [
-          _MetaRow(label: '来源', value: document.sourceName),
-          _MetaRow(
-            label: '发生时间',
-            value: document.capturedAt == null
-                ? '未知（导入文件没有提供）'
-                : _formatDateTime(document.capturedAt!),
-          ),
-          _MetaRow(label: '导入时间', value: _formatDateTime(document.importedAt)),
-          _MetaRow(
-            label: '原音频',
-            value: audioPath == null
-                ? '尚未补配'
-                : !audioAvailable
-                ? '已配对，但原件不可用'
-                : document.unaligned
-                ? '已取得，时码不可靠'
-                : '已配对，可按句回听',
-          ),
-          const SizedBox(height: 12),
-          if (audioPath == null)
-            _StatusCard(
-              key: const ValueKey('minutes-text-only'),
-              title: '只有文字，尚未补配音频',
-              message: '可以阅读和整理，点击文字不会播放或推进计时。',
-              action: _attaching
-                  ? null
-                  : FilledButton.icon(
-                      key: const ValueKey('minutes-attach-audio'),
-                      onPressed: () => _attach(document),
-                      icon: const Icon(Icons.audio_file_outlined),
-                      label: Text(_attaching ? '正在核验…' : '补配原音频'),
-                    ),
-            )
-          else ...[
-            if (document.unaligned)
-              const _StatusCard(
-                key: ValueKey('minutes-unaligned'),
-                title: '音频存在，但时码不可靠',
-                message: '没有把这段文字绑定到具体秒数；可以整段播放，不能点句定位。',
-              ),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    key: const ValueKey('minutes-play-all'),
-                    onPressed: !audioAvailable
-                        ? null
-                        : () => playing
-                              ? c.togglePlayPause()
-                              : c.playExported(audioPath),
-                    icon: Icon(
-                      playing && c.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                    ),
-                    label: Text(playing && c.isPlaying ? '暂停整段' : '播放整段'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  key: const ValueKey('minutes-replace-audio'),
-                  onPressed: _attaching ? null : () => _attach(document),
-                  child: const Text('重新配对'),
-                ),
-              ],
-            ),
-          ],
-          if (document.warning != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              document.warning!,
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textSecondary,
-                height: 1.4,
-              ),
-            ),
-          ],
-          if (_notice != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              _notice!,
-              key: const ValueKey('minutes-attach-result'),
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-          const SizedBox(height: 18),
-          const Text(
-            '正文',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          for (final segment in document.segments)
-            _SegmentRow(
-              segment: segment,
-              showTime: document.timingReliable,
-              onTap: canSeek
-                  ? () => c.playFrom(
-                      audioPath,
-                      segment.start,
-                      fileId: c.fileIdFromPath(audioPath),
-                    )
-                  : null,
-            ),
-        ],
+        itemCount: header.length + document.segments.length,
+        itemBuilder: (context, index) {
+          if (index < header.length) return header[index];
+          final segment = document.segments[index - header.length];
+          return _SegmentRow(
+            segment: segment,
+            showTime: document.timingReliable,
+            onTap: canSeek
+                ? () => c.playFrom(
+                    audioPath,
+                    segment.start,
+                    fileId: c.fileIdFromPath(audioPath),
+                  )
+                : null,
+          );
+        },
       ),
     );
   }
