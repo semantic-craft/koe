@@ -115,6 +115,47 @@ void main() {
     expect(parsed.document.segments.single.end, const Duration(seconds: 13));
   });
 
+  test('JSON begin_time 与 end_time 按毫秒换算', () {
+    final parsed = parseMinutesDocument(
+      'qwen.json',
+      jsonEncode({
+        'segments': [
+          {'begin_time': 12000, 'end_time': 15000, 'text': '第一句'},
+          {'begin_time': 20000, 'end_time': 23000, 'text': '第二句'},
+        ],
+      }),
+    );
+
+    expect(parsed.document.segments.first.start, const Duration(seconds: 12));
+    expect(parsed.document.segments.first.end, const Duration(seconds: 15));
+    expect(parsed.document.segments[1].start, const Duration(seconds: 20));
+    expect(parsed.document.timingReliable, isTrue);
+  });
+
+  test('JSON 缺少时码的段落不提供逐句定位', () {
+    final parsed = parseMinutesDocument(
+      'partial.json',
+      jsonEncode({
+        'segments': [
+          {'text': '前言'},
+          {'start': 12, 'text': '正文'},
+        ],
+      }),
+    );
+
+    expect(parsed.document.segments.first.start, Duration.zero);
+    expect(parsed.document.timingReliable, isFalse);
+    expect(parsed.document.warning, isNotNull);
+  });
+
+  test('TXT 开头无时码时不把后续时码视为完整对齐', () {
+    final parsed = parseMinutesDocument('partial.txt', '前言\n[00:12] 正文');
+
+    expect(parsed.document.segments, hasLength(2));
+    expect(parsed.document.timingReliable, isFalse);
+    expect(parsed.document.warning, isNotNull);
+  });
+
   test('时间行单独一行时并入下一句且重启后仍可读', () async {
     final parsed = parseMinutesDocument(
       'speaker.txt',

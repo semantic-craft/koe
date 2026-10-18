@@ -260,10 +260,14 @@ MinutesParseResult _parseMinutesJson(
     'lines',
   ]);
   final segments = <MinutesSegment>[];
+  var timedSegments = 0;
   if (list != null) {
     for (final item in list) {
-      final segment = _segmentFromJson(item);
-      if (segment != null) segments.add(segment);
+      final parsed = _segmentFromJson(item);
+      if (parsed != null) {
+        segments.add(parsed.segment);
+        if (parsed.timed) timedSegments++;
+      }
     }
   }
   if (segments.isEmpty) {
@@ -275,7 +279,8 @@ MinutesParseResult _parseMinutesJson(
   if (segments.isEmpty) {
     throw const FormatException('没有找到可导入的文字段');
   }
-  final reliable = _timingsReliable(segments);
+  final reliable =
+      timedSegments == segments.length && _timingsReliable(segments);
   return MinutesParseResult(
     MinutesDocument(
       id: _contentId(raw),
@@ -291,11 +296,17 @@ MinutesParseResult _parseMinutesJson(
   );
 }
 
-MinutesSegment? _segmentFromJson(Object? item) {
+({MinutesSegment segment, bool timed})? _segmentFromJson(Object? item) {
   if (item is String) {
     return item.trim().isEmpty
         ? null
-        : MinutesSegment(text: item.trim(), start: Duration.zero);
+        : (
+            segment: MinutesSegment(
+              text: item.trim(),
+              start: Duration.zero,
+            ),
+            timed: false,
+          );
   }
   if (item is! Map) return null;
   final text = _firstText(item, const [
@@ -317,17 +328,18 @@ MinutesSegment? _segmentFromJson(Object? item) {
   ]);
   final start = _duration(
     startEntry?.value,
-    millisecondsHint: startEntry?.key.toLowerCase().contains('ms') ?? false,
+    millisecondsHint: _isMillisecondsTimestamp(startEntry?.key),
   );
   final endEntry = _firstEntry(item, const [
     'endMs',
     'end',
     'endTime',
+    'end_time',
     'finishTime',
   ]);
   final end = _duration(
     endEntry?.value,
-    millisecondsHint: endEntry?.key.toLowerCase().contains('ms') ?? false,
+    millisecondsHint: _isMillisecondsTimestamp(endEntry?.key),
   );
   final speaker = _firstText(item, const [
     'speaker',
@@ -337,11 +349,14 @@ MinutesSegment? _segmentFromJson(Object? item) {
     'name',
     'role',
   ]);
-  return MinutesSegment(
-    text: text,
-    start: start ?? Duration.zero,
-    end: end,
-    speaker: speaker,
+  return (
+    segment: MinutesSegment(
+      text: text,
+      start: start ?? Duration.zero,
+      end: end,
+      speaker: speaker,
+    ),
+    timed: start != null,
   );
 }
 
@@ -428,7 +443,7 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
     }
   }
   if (segments.isEmpty) throw const FormatException('没有找到可导入的文字段');
-  final reliable = sawTiming && _timingsReliable(segments);
+  final reliable = sawTiming && untimed == 0 && _timingsReliable(segments);
   return MinutesParseResult(
     MinutesDocument(
       id: _contentId(raw),
@@ -472,6 +487,14 @@ bool _timingsReliable(List<MinutesSegment> segments) {
     previous = start;
   }
   return nonZero;
+}
+
+bool _isMillisecondsTimestamp(String? key) {
+  if (key == null) return false;
+  final normalized = key.toLowerCase();
+  return normalized.contains('ms') ||
+      normalized == 'begin_time' ||
+      normalized == 'end_time';
 }
 
 Duration? _duration(Object? value, {required bool millisecondsHint}) {
