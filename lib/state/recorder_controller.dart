@@ -47,6 +47,7 @@ import 'recording.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
 import 'listening_queue.dart';
+import 'minutes_document.dart';
 import 'playback_history.dart';
 import 'recording_bookmarks.dart';
 import 'speech_configuration.dart';
@@ -512,9 +513,11 @@ class RecorderController extends ChangeNotifier {
     this.retrievedAudioSettleTime = retrievedAudioSettle,
     Future<String> Function(String rawPath)? rawExportConverter,
     Future<Duration?> Function(String path)? localDurationReader,
+    Future<Duration?> Function(String path)? audioDurationProbe,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    MinutesDocumentStore? minutesStore,
     TranscriptPersister? transcriptPersister,
     PlaybackHistoryStore? playbackHistoryStore,
     ListeningQueueStore? listeningQueueStore,
@@ -529,6 +532,7 @@ class RecorderController extends ChangeNotifier {
            topicsEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
        _localDurationReader = localDurationReader ?? AudioDuration.read,
+       _audioDurationProbe = audioDurationProbe ?? _probeAudioDuration,
        _ble = ble ?? BleService(),
        _appleSpeech = appleSpeech ?? AppleSpeechService(),
        _qwenStt = qwenSpeech ?? QwenSttService(),
@@ -561,6 +565,9 @@ class RecorderController extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     });
     _libraryLoaded = _loadRecordingLibrary();
+    minutes =
+        minutesStore ?? MinutesDocumentStore(inMemory: !loadPersistedState);
+    _minutesLoaded = _loadMinutesDocuments();
     _subs.add(
       _ble.scanResults.listen((list) {
         devices = list;
@@ -769,6 +776,8 @@ class RecorderController extends ChangeNotifier {
   late final MacArchiveController archive;
   late final bool _ownsArchive;
   late final Future<void> _libraryLoaded;
+  late final MinutesDocumentStore minutes;
+  late final Future<void> _minutesLoaded;
   final Directory? _libraryDirectoryOverride;
   late final PlaybackHistoryStore playbackHistory;
   late final Future<void> _playbackHistoryLoaded;
@@ -1097,6 +1106,21 @@ class RecorderController extends ChangeNotifier {
   final Duration retrievedAudioSettleTime;
   final Future<String> Function(String rawPath) _rawExportConverter;
   final Future<Duration?> Function(String path) _localDurationReader;
+  final Future<Duration?> Function(String path) _audioDurationProbe;
+
+  static Future<Duration?> _probeAudioDuration(String path) async {
+    final player = AudioPlayer();
+    try {
+      final reported = await player
+          .setFilePath(path)
+          .timeout(const Duration(seconds: 15));
+      return reported ?? player.duration;
+    } catch (_) {
+      return null;
+    } finally {
+      await player.dispose();
+    }
+  }
 
   /// Longest gap without a BLE file packet before a pull stops waiting; see
   /// [BleFilePull.pullFile].
@@ -5351,6 +5375,127 @@ class RecorderController extends ChangeNotifier {
   @visibleForTesting
   Future<void> waitForRecordingLibrary() => _libraryLoaded;
 
+  Future<void> _loadMinutesDocuments() async {
+    await minutes.load();
+    if (!_disposed) notifyListeners();
+  }
+
+  @visibleForTesting
+  Future<void> waitForMinutesDocuments() => _minutesLoaded;
+
+  List<MinutesDocument> get minutesDocuments => minutes.documents;
+
+  MinutesDocument? minutesDocumentById(String id) => minutes.byId(id);
+
+  /// Imports a 妙记-style JSON/TXT export. Equal source content is reused so a
+  /// repeated import does not create a second text record.
+  Future<MinutesImportOutcome> importMinutesText(
+    String fileName,
+    String contents,
+  ) async {
+    await _minutesLoaded;
+    final parsed = parseMinutesDocument(fileName, contents);
+    final existing = minutes.byId(parsed.document.id);
+    if (existing != null) {
+      return MinutesImportOutcome(document: existing, duplicate: true);
+    }
+    try {
+      await minutes.upsert(parsed.document, strict: true);
+    } catch (_) {
+      throw StateError('文字保存失败，请重试');
+    }
+    notifyListeners();
+    return MinutesImportOutcome(document: parsed.document, duplicate: false);
+  }
+
+  /// Attaches an original audio file to a text-only import.
+  ///
+  /// A declared hash must match. Otherwise the audio must be long enough for
+  /// the last segment; a short file is reported as a wrong pairing and the
+  /// text record keeps its previous state. Unreliable timecodes still allow
+  /// whole-file playback but never claim sentence seeking.
+  Future<MinutesAttachOutcome> attachMinutesAudio(
+    String documentId,
+    String sourcePath,
+  ) async {
+    await _minutesLoaded;
+    final document = minutes.byId(documentId);
+    if (document == null) {
+      return const MinutesAttachOutcome(ok: false, message: '找不到这条导入文字');
+    }
+    final ({String path, bool duplicate, RecordingAsset asset}) imported;
+    try {
+      imported = await importLocalAudio(sourcePath);
+    } catch (error) {
+      return MinutesAttachOutcome(
+        ok: false,
+        message: error is StateError ? error.message : '无法读取所选音频，请重试',
+      );
+    }
+    Future<void> discardNewCopy() async {
+      if (imported.duplicate) return;
+      try {
+        await library.remove(imported.path, strict: false);
+        exportedPaths.remove(imported.path);
+        final file = File(imported.path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {
+        // The rejected copy stays on disk but is not linked to the text record.
+      }
+    }
+
+    if (document.audioHash != null &&
+        document.audioHash!.isNotEmpty &&
+        imported.asset.contentHash != document.audioHash) {
+      await discardNewCopy();
+      return const MinutesAttachOutcome(
+        ok: false,
+        message: '音频内容与导入文字声明的来源不一致，未建立配对',
+      );
+    }
+    var duration = localDurationForPath(imported.path);
+    duration ??= await _localDurationReader(imported.path);
+    duration ??= await _audioDurationProbe(imported.path);
+    final required = document.lastEnd;
+    if (document.timingReliable && duration == null) {
+      await discardNewCopy();
+      return const MinutesAttachOutcome(ok: false, message: '无法读取音频时长，未建立配对');
+    }
+    if (document.timingReliable &&
+        required != null &&
+        duration != null &&
+        required > duration + const Duration(seconds: 1)) {
+      await discardNewCopy();
+      return const MinutesAttachOutcome(
+        ok: false,
+        message: '音频比文字时码短，无法覆盖最后一段；未建立配对',
+      );
+    }
+    final updated = document.copyWith(
+      audioPath: imported.path,
+      audioDuration: duration,
+    );
+    try {
+      await minutes.upsert(updated, strict: true);
+    } catch (_) {
+      await discardNewCopy();
+      return const MinutesAttachOutcome(ok: false, message: '配对保存失败，请重试');
+    }
+    notifyListeners();
+    return MinutesAttachOutcome(
+      ok: true,
+      document: updated,
+      message: updated.unaligned ? '已取得音频，但时码不可靠；只能整段播放' : '已配对原音频，可按句回听',
+    );
+  }
+
+  Future<void> detachMinutesAudio(String documentId) async {
+    final document = minutes.byId(documentId);
+    if (document == null) return;
+    await minutes.upsert(document.copyWith(clearAudio: true), strict: true);
+    notifyListeners();
+  }
+
   @visibleForTesting
   Future<void> waitForTranscripts() => _transcriptsLoaded;
 
@@ -5358,7 +5503,7 @@ class RecorderController extends ChangeNotifier {
     final asset = library.assetForPath(path);
     if (asset?.recordedAt != null) return asset!.recordedAt;
     final id = fileIdFromPath(path);
-    return id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000);
+    return _recordedAtFromFileId(id);
   }
 
   /// Copies a user-selected audio file into the app's original-audio library.
@@ -5617,6 +5762,8 @@ class RecorderController extends ChangeNotifier {
   Future<({int deleted, List<String> failed})> deleteLocalExports(
     Iterable<String> paths,
   ) async {
+    await _minutesLoaded;
+
     final selected = paths.toSet();
     // Invalidate an in-flight restore before any asynchronous side effect, so
     // this explicit user action is the final writer for the path.
@@ -5658,6 +5805,13 @@ class RecorderController extends ChangeNotifier {
               : '$candidate.ogg',
         );
       }
+      final pairedBefore = [
+        for (final document in minutes.documents)
+          if (document.audioPath != null &&
+              logicalPaths.contains(document.audioPath))
+            document,
+      ];
+      var clearedPairing = false;
       final preDeleted = archive.phoneStore.recordForPath(path);
       var metadataForgotten = false;
       var forgottenVersion = -1;
@@ -5669,6 +5823,11 @@ class RecorderController extends ChangeNotifier {
         if (playingPath == path || (id != null && playingFileId == id)) {
           await stopPlayback();
         }
+        // Detach minutes before removing anything so a failed pairing write
+        // never leaves documents pointing at irreversibly deleted audio.
+        await minutes.clearAudioForPaths(logicalPaths);
+        clearedPairing = true;
+
         await archive.forgetLocalPath(path);
         metadataForgotten = true;
         forgottenVersion = archive.localChangeVersion(path);
@@ -5724,6 +5883,15 @@ class RecorderController extends ChangeNotifier {
         removed.add(path);
         deleted++;
       } catch (error) {
+        if (clearedPairing) {
+          for (final document in pairedBefore) {
+            final audio = document.audioPath;
+            if (audio == null || !await File(audio).exists()) continue;
+            try {
+              await minutes.upsert(document, strict: true);
+            } catch (_) {}
+          }
+        }
         if (metadataForgotten && preDeleted != null) {
           try {
             final restored = await archive.recoverForgottenRecord(
@@ -6058,6 +6226,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<String> renameLocalExport(String path, String label) async {
+    await _minutesLoaded;
     archive.invalidateRestore(path);
     _requireFinishedRecording(path);
     if (_fileJobKey == _recordingKey(path: path)) throw StateError('处理完成后再重命名');
@@ -6078,6 +6247,8 @@ class RecorderController extends ChangeNotifier {
     if (_fileJobs.jobs[_recordingKey(path: path)]?.recoverable == true) {
       throw StateError('转写完成后再重命名');
     }
+    // Persist the minutes pairing first; if it fails nothing else has moved.
+    await minutes.updateAudioPath(path, targetPath);
 
     // Pre-commit archive metadata before touching the original file or the
     // library. If this fails, the local rename has not happened and can be
@@ -6085,6 +6256,7 @@ class RecorderController extends ChangeNotifier {
     try {
       await archive.renameLocalPath(path, targetPath);
     } catch (_) {
+      await _revertMinutesRename(targetPath, path);
       errorMessage = '归档状态预提交失败，未重命名本地原件；请检查存储空间后重试';
       statusMessage = '重命名未开始，原件保持不变';
       notifyListeners();
@@ -6134,6 +6306,7 @@ class RecorderController extends ChangeNotifier {
       await _persistTranscripts();
     } catch (_) {
       if (!physicalRenamed) {
+        await _revertMinutesRename(targetPath, path);
         final rolledBack = await _rollbackArchiveRename(
           targetPath,
           path,
@@ -6160,6 +6333,14 @@ class RecorderController extends ChangeNotifier {
     errorMessage = null;
     notifyListeners();
     return targetPath;
+  }
+
+  /// Best effort: a failed revert leaves minutes pointing at [from]; the
+  /// minutes screen treats a missing file as unavailable audio.
+  Future<void> _revertMinutesRename(String from, String to) async {
+    try {
+      await minutes.updateAudioPath(from, to);
+    } catch (_) {}
   }
 
   Future<bool> _rollbackArchiveRename(
