@@ -538,6 +538,8 @@ mixin _RecorderTranscripts on ChangeNotifier {
 
   /// Recording key → segment index → corrected speaker id.
   final Map<String, Map<int, String>> _segmentSpeakers = {};
+  // Used by other parts through their abstract declarations.
+  // ignore: prefer_final_fields
   Future<void> _transcriptsLoaded = Future<void>.value();
 
   @visibleForTesting

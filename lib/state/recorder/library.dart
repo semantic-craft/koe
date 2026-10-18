@@ -395,6 +395,8 @@ mixin _RecorderLibrary on ChangeNotifier {
     }
   }
 
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
   Future<void> _loadLocalExports({bool notify = true}) async {
     try {
       await _libraryLoaded;
