@@ -584,4 +584,59 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  testWidgets('unpair storage failure is visible and keeps the pairing', (
+    tester,
+  ) async {
+    var failNext = false;
+    final pair = await tester.runAsync(() async {
+      final store = ArchivePhoneStore(
+        directory: Directory('${root.path}/unpair-phone'),
+        writeInterceptor: () async {
+          if (!failNext) return;
+          failNext = false;
+          throw const FileSystemException('synthetic unpair write failure');
+        },
+      );
+      await store.load();
+      await store.setConfiguration(
+        pairing: ArchivePairing(
+          deskId: 'c' * 32,
+          key: ArchivePairing.generateKey(),
+          hosts: const <String>['127.0.0.1'],
+          port: 47831,
+        ),
+        autoArchive: false,
+        autoArchiveFrom: DateTime(2026, 10, 18),
+      );
+      final archive = MacArchiveController(
+        source: _UiSource(),
+        isDesk: false,
+        phoneStore: store,
+        deskStore: ArchiveDeskStore(inMemory: true),
+      );
+      await archive.initialize();
+      final recorder = RecorderController(
+        loadPersistedState: false,
+        archiveController: archive,
+      );
+      return (recorder: recorder, archive: archive);
+    });
+    if (pair == null) fail('unpair fixture did not start');
+    addTearDown(pair.recorder.dispose);
+    addTearDown(pair.archive.dispose);
+    await pumpSettings(tester, pair.recorder);
+    failNext = true;
+    final action =
+        tester
+                .widget<TextButton>(
+                  find.byKey(const ValueKey('phone-archive-unpair')),
+                )
+                .onPressed
+            as Future<void> Function();
+    await tester.runAsync(action);
+    await tester.pump();
+    expect(find.textContaining('保存取消配对失败'), findsOneWidget);
+    expect(pair.archive.pairing, isNotNull);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }

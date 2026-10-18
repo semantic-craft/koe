@@ -320,4 +320,65 @@ void main() {
     expect(deskStore.entries, hasLength(1));
     expect(await deskStore.verifyEntry(deskStore.entries.single), isTrue);
   });
+
+  test(
+    'fetch never overwrites a target created after the existence check',
+    () async {
+      final file = await makeAudio('fetch-race.wav', seed: 137);
+      final hash = (await archiveFileHash(file.path))!;
+      final length = await file.length();
+      final client = await connect();
+      addTearDown(client.close);
+      await client.uploadFile(
+        path: file.path,
+        contentHash: hash,
+        length: length,
+        extension: '.wav',
+        displayName: '下载竞态',
+        clientId: archiveRandomHex(16),
+      );
+
+      final targetPath = '${root.path}/created-during-download.wav';
+      final otherBytes = Uint8List.fromList(<int>[9, 8, 7, 6]);
+      await expectLater(
+        client.fetchToFile(
+          contentHash: hash,
+          expectedLength: length,
+          targetPath: targetPath,
+          beforePublish: () =>
+              File(targetPath).writeAsBytes(otherBytes, flush: true),
+        ),
+        throwsA(isA<ArchiveRemoteException>()),
+      );
+      expect(await File(targetPath).readAsBytes(), otherBytes);
+      final leftovers = root
+          .listSync()
+          .whereType<File>()
+          .where((entry) => entry.path.contains('.part-'))
+          .toList();
+      expect(leftovers, isEmpty);
+    },
+  );
+
+  test('idle unauthenticated sockets cannot lock out a real pairing', () async {
+    final existing = await connect();
+    addTearDown(existing.close);
+    await existing.ping();
+
+    final idle = <Socket>[];
+    for (var i = 0; i < 8; i++) {
+      idle.add(await Socket.connect('127.0.0.1', server.port!));
+    }
+    addTearDown(() {
+      for (final socket in idle) {
+        socket.destroy();
+      }
+    });
+
+    final legal = await connect();
+    addTearDown(legal.close);
+    final verify = await legal.verify(archiveHashBytes(<int>[1, 2, 3]));
+    expect(verify.verified, isFalse);
+    await existing.ping();
+  });
 }

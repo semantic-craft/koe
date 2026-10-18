@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:math';
 
@@ -6,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:pointycastle/export.dart';
 
+import 'archive_atomic_link.dart';
 import 'archive_handshake.dart';
 import 'archive_pairing.dart';
 import 'archive_store.dart';
@@ -24,8 +26,17 @@ class ArchiveDeskServer {
   final int maxConnections;
   VoidCallback? onVerified;
 
+  static const int _preAuthLimit = 3;
+  static const int _preAuthPerPeerLimit = 2;
+  static const Duration _preAuthTimeout = Duration(seconds: 4);
+
   ServerSocket? _serverSocket;
   final Set<Socket> _sockets = <Socket>{};
+  final Set<Socket> _authenticated = <Socket>{};
+  final LinkedHashMap<Socket, DateTime> _preAuth =
+      LinkedHashMap<Socket, DateTime>();
+  final Map<Socket, String> _preAuthPeers = <Socket, String>{};
+  final Map<Socket, Timer> _preAuthTimers = <Socket, Timer>{};
   List<String> _addresses = const <String>[];
   String? lastError;
 
@@ -84,6 +95,13 @@ class ArchiveDeskServer {
     final socket = _serverSocket;
     _serverSocket = null;
     _addresses = const <String>[];
+    for (final timer in _preAuthTimers.values) {
+      timer.cancel();
+    }
+    _preAuthTimers.clear();
+    _preAuth.clear();
+    _preAuthPeers.clear();
+    _authenticated.clear();
     for (final client in _sockets.toList()) {
       client.destroy();
     }
@@ -96,12 +114,57 @@ class ArchiveDeskServer {
   }
 
   void _accept(Socket socket) {
-    if (_sockets.length >= maxConnections) {
+    // Authenticated sessions are protected by maxConnections. Unauthenticated
+    // sockets have a much smaller, evictable pre-auth pool so idle hellos
+    // cannot lock out a real pairing attempt.
+    if (_authenticated.length >= maxConnections) {
       socket.destroy();
       return;
     }
     _sockets.add(socket);
+    _admitPreAuth(socket);
     unawaited(_handle(socket));
+  }
+
+  void _admitPreAuth(Socket socket) {
+    final peer = socket.remoteAddress.address;
+    while (_preAuth.length >= _preAuthLimit) {
+      _evictPreAuth(_preAuth.keys.first);
+    }
+    while (_preAuthPeers.entries.where((entry) => entry.value == peer).length >=
+        _preAuthPerPeerLimit) {
+      final oldest = _preAuthPeers.entries
+          .where((entry) => entry.value == peer)
+          .first
+          .key;
+      _evictPreAuth(oldest);
+    }
+    _preAuth[socket] = DateTime.now();
+    _preAuthPeers[socket] = peer;
+    _preAuthTimers[socket] = Timer(_preAuthTimeout, () {
+      if (_preAuth.containsKey(socket)) _evictPreAuth(socket);
+    });
+  }
+
+  void _evictPreAuth(Socket socket) {
+    _preAuthTimers.remove(socket)?.cancel();
+    _preAuth.remove(socket);
+    _preAuthPeers.remove(socket);
+    _sockets.remove(socket);
+    socket.destroy();
+  }
+
+  void _markAuthenticated(Socket socket) {
+    final timer = _preAuthTimers.remove(socket);
+    timer?.cancel();
+    if (_preAuth.remove(socket) == null) {
+      throw const ArchiveException('连接在认证完成前已超时');
+    }
+    _preAuthPeers.remove(socket);
+    if (_authenticated.length >= maxConnections) {
+      throw const ArchiveException('接收连接已满，请稍后重试');
+    }
+    _authenticated.add(socket);
   }
 
   Future<void> _handle(Socket socket) async {
@@ -112,6 +175,7 @@ class ArchiveDeskServer {
         deskId: store.config.deskId,
         pairingKey: ArchivePairing.decodeKey(store.config.pairingKey),
       );
+      _markAuthenticated(socket);
       while (true) {
         final message = await session.readControl(
           timeout: const Duration(seconds: 120),
@@ -138,6 +202,10 @@ class ArchiveDeskServer {
     } catch (error) {
       debugPrint('[ArchiveDesk] session ended: $error');
     } finally {
+      _preAuthTimers.remove(socket)?.cancel();
+      _preAuth.remove(socket);
+      _preAuthPeers.remove(socket);
+      _authenticated.remove(socket);
       _sockets.remove(socket);
       try {
         await session?.close();
@@ -719,6 +787,8 @@ class ArchiveClient {
     required int expectedLength,
     required String targetPath,
     void Function(int received, int total)? onProgress,
+    // Deterministically exercise a target appearing after the existence check.
+    Future<void> Function()? beforePublish,
   }) => _serial(() async {
     if (!archiveIsValidContentHash(contentHash) || expectedLength <= 0) {
       throw const ArchiveProtocolException('恢复参数不合法');
@@ -792,7 +862,30 @@ class ArchiveClient {
           reason: 'conflict',
         );
       }
-      await temporary.rename(targetPath);
+      if (beforePublish != null) await beforePublish();
+      try {
+        archiveAtomicLinkNoReplace(temporary.path, targetPath);
+      } on ArchiveException {
+        // A target can appear after the check above. Never fall back to a
+        // replacing rename; inspect only to turn the same bytes into a dedup.
+        if (await target.exists()) {
+          final existing = await archiveFileHash(targetPath);
+          if (existing == contentHash) {
+            await temporary.delete();
+            return;
+          }
+          throw const ArchiveRemoteException(
+            '本机目标位置已有不同内容的文件，未覆盖',
+            reason: 'conflict',
+          );
+        }
+        rethrow;
+      }
+      try {
+        await temporary.delete();
+      } catch (_) {
+        // The published target is valid; a leftover owned .part is harmless.
+      }
     } catch (_) {
       try {
         await handle?.close();

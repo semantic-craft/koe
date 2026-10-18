@@ -5368,6 +5368,9 @@ class RecorderController extends ChangeNotifier {
               : '$candidate.ogg',
         );
       }
+      final preDeleted = archive.phoneStore.recordForPath(path);
+      var metadataForgotten = false;
+      var forgottenVersion = -1;
       try {
         _requireFinishedRecording(path);
         if (_fileJobKey == _recordingKey(path: path)) {
@@ -5376,6 +5379,9 @@ class RecorderController extends ChangeNotifier {
         if (playingPath == path || (id != null && playingFileId == id)) {
           await stopPlayback();
         }
+        await archive.forgetLocalPath(path);
+        metadataForgotten = true;
+        forgottenVersion = archive.localChangeVersion(path);
         if (tombstone != null) await library.upsert(tombstone);
         for (final candidate in logicalPaths) {
           final file = File(candidate);
@@ -5425,6 +5431,18 @@ class RecorderController extends ChangeNotifier {
         removed.add(path);
         deleted++;
       } catch (error) {
+        if (metadataForgotten && preDeleted != null) {
+          try {
+            final restored = await archive.recoverForgottenRecord(
+              preDeleted,
+              expectedVersion: forgottenVersion,
+            );
+            if (!restored)
+              failed.add('${p.basename(path)}：删除失败，归档记录已有新操作，请检查资料状态');
+          } catch (_) {
+            failed.add('${p.basename(path)}：删除失败，且归档记录无法恢复；请重新归档修复');
+          }
+        }
         if (tombstone != null && existing != null) {
           await library.upsert(existing, strict: false);
         }
@@ -5432,9 +5450,6 @@ class RecorderController extends ChangeNotifier {
       }
     }
 
-    for (final path in removed) {
-      unawaited(archive.forgetLocalPath(path));
-    }
     exportedPaths.removeWhere((path) {
       final id = ExportCatalog.fileIdFromPath(path);
       return removed.contains(path) ||
@@ -5448,7 +5463,7 @@ class RecorderController extends ChangeNotifier {
     await _persistTranscripts();
     statusMessage = failed.isEmpty
         ? '已删除 $deleted 个本地录音'
-        : '已删除 $deleted 个录音，${failed.length} 个失败';
+        : '已删除 $deleted 个本地录音，${failed.length} 个未完成';
     final errors = [
       ...failed,
       if (historyCleanupFailed) '录音已删除，但播放进度记录未能清理',
@@ -5766,54 +5781,108 @@ class RecorderController extends ChangeNotifier {
     if (playingPath == path || (id != null && playingFileId == id)) {
       await stopPlayback();
     }
-
     if (_fileJobs.jobs[_recordingKey(path: path)]?.recoverable == true) {
       throw StateError('转写完成后再重命名');
     }
-    await source.rename(targetPath);
-    final oldKey = _recordingKey(path: path);
-    final newKey = _recordingKey(path: targetPath);
-    await _fileJobs.rename(oldKey, newKey, targetPath);
-    await topics.renameRecordingKey(oldKey, newKey);
-    await analysis.renameRecordingKey(oldKey, newKey);
-    if (_transcriptPathsByKey.remove(oldKey) != null) {
-      _transcriptPathsByKey[newKey] = targetPath;
+
+    // Pre-commit archive metadata before touching the original file or the
+    // library. If this fails, the local rename has not happened and can be
+    // retried exactly as before.
+    try {
+      await archive.renameLocalPath(path, targetPath);
+    } catch (_) {
+      errorMessage = '归档状态预提交失败，未重命名本地原件；请检查存储空间后重试';
+      statusMessage = '重命名未开始，原件保持不变';
+      notifyListeners();
+      throw StateError('归档状态预提交失败，未重命名本地原件，请重试');
     }
-    if (oldKey != newKey) {
-      final segments = _transcriptSegments.remove(oldKey);
-      if (segments != null) _transcriptSegments[newKey] = segments;
+    final precommitted = archive.phoneStore.recordForPath(targetPath);
+    var physicalRenamed = false;
+    try {
+      await source.rename(targetPath);
+      physicalRenamed = true;
+      final oldKey = _recordingKey(path: path);
+      final newKey = _recordingKey(path: targetPath);
+      await _fileJobs.rename(oldKey, newKey, targetPath);
+      await topics.renameRecordingKey(oldKey, newKey);
+      await analysis.renameRecordingKey(oldKey, newKey);
+      if (_transcriptPathsByKey.remove(oldKey) != null) {
+        _transcriptPathsByKey[newKey] = targetPath;
+      }
+      if (oldKey != newKey) {
+        final segments = _transcriptSegments.remove(oldKey);
+        if (segments != null) _transcriptSegments[newKey] = segments;
+      }
+      _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
+      final transcript = transcriptsByPath.remove(path);
+      if (transcript != null) transcriptsByPath[targetPath] = transcript;
+      final aliases = speakerAliasesByPath.remove(path);
+      if (aliases != null) speakerAliasesByPath[targetPath] = aliases;
+      for (final session in _recordingSessions.values) {
+        if (session.path == path) session.path = targetPath;
+      }
+      final cachedDuration = _localDurations.remove(path);
+      if (cachedDuration != null) _localDurations[targetPath] = cachedDuration;
+      final asset = library.assetForPath(path);
+      if (asset != null) {
+        await library.rename(
+          path,
+          asset.copyWith(path: targetPath, displayName: label.trim()),
+          strict: false,
+        );
+      }
+      final renamedPaths = exportedPaths
+          .map((item) => item == path ? targetPath : item)
+          .toList();
+      exportedPaths = [];
+      _registerExportedPaths(renamedPaths);
+      if (expandedLocalPath == path) expandedLocalPath = targetPath;
+      await _persistTranscripts();
+    } catch (_) {
+      if (!physicalRenamed) {
+        final rolledBack = await _rollbackArchiveRename(
+          targetPath,
+          path,
+          precommitted,
+        );
+        if (!rolledBack && precommitted != null) {
+          errorMessage = '重命名未完成，但归档记录已预提交且无法安全回滚；请重新归档修复';
+          statusMessage = '本地原件未改名，归档记录需要修复';
+          notifyListeners();
+          throw StateError('本地原件未改名，归档记录需要修复，请重新归档');
+        }
+        errorMessage = '重命名失败，原件保持不变；请重试';
+        statusMessage = '重命名未生效，原件保持不变';
+        notifyListeners();
+        throw StateError('重命名失败，原件保持不变，请重试');
+      }
+      errorMessage = '文件已改名为 $targetName，但资料库/索引更新失败；请重试或重新归档';
+      statusMessage = '文件已改名，资料库更新失败';
+      notifyListeners();
+      throw StateError('文件已改名，但后续资料库更新失败，请重试');
     }
-    _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
-    final transcript = transcriptsByPath.remove(path);
-    if (transcript != null) transcriptsByPath[targetPath] = transcript;
-    final aliases = speakerAliasesByPath.remove(path);
-    if (aliases != null) speakerAliasesByPath[targetPath] = aliases;
-    for (final session in _recordingSessions.values) {
-      if (session.path == path) session.path = targetPath;
-    }
-    final cachedDuration = _localDurations.remove(path);
-    if (cachedDuration != null) _localDurations[targetPath] = cachedDuration;
-    final asset = library.assetForPath(path);
-    if (asset != null) {
-      await library.rename(
-        path,
-        asset.copyWith(path: targetPath, displayName: label.trim()),
-        strict: false,
-      );
-    }
-    unawaited(archive.renameLocalPath(path, targetPath));
-    final renamedPaths = exportedPaths
-        .map((item) => item == path ? targetPath : item)
-        .toList();
-    exportedPaths = [];
-    _registerExportedPaths(renamedPaths);
-    if (expandedLocalPath == path) expandedLocalPath = targetPath;
-    await _persistTranscripts();
 
     statusMessage = '已重命名为 $targetName';
     errorMessage = null;
     notifyListeners();
     return targetPath;
+  }
+
+  Future<bool> _rollbackArchiveRename(
+    String from,
+    String to,
+    ArchivePhoneRecord? precommitted,
+  ) async {
+    if (precommitted == null) return true;
+    try {
+      return await archive.phoneStore.rollbackRename(
+        from: from,
+        to: to,
+        expected: precommitted,
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   void _registerExportedPaths(Iterable<String> paths) {

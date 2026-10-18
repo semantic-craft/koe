@@ -366,7 +366,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     try {
       await context.read<RecorderController>().renameLocalExport(path, label);
     } catch (error) {
-      _notice('无法重命名，请检查名称后重试');
+      _notice(error is StateError ? error.message : '无法重命名，请检查名称后重试');
     }
   }
 

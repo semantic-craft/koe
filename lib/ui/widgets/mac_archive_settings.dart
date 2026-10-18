@@ -179,9 +179,14 @@ class MacArchiveSettings extends StatelessWidget {
               TextButton.icon(
                 key: const ValueKey('phone-archive-unpair'),
                 onPressed: () async {
-                  await archive.unpair();
-                  if (!context.mounted) return;
-                  _snack(context, '已取消配对');
+                  try {
+                    await archive.unpair();
+                    if (!context.mounted) return;
+                    _snack(context, '已取消配对');
+                  } on ArchiveException catch (error) {
+                    if (!context.mounted) return;
+                    _snack(context, error.message);
+                  }
                 },
                 icon: const Icon(Icons.delete_outline_rounded, size: 18),
                 label: const Text('取消配对'),

@@ -558,6 +558,46 @@ class ArchivePhoneStore {
     return true;
   });
 
+  /// Roll back only the record written by this rename, inside the mutation
+  /// queue. A later mutation must never be overwritten by an older rollback.
+  Future<bool> rollbackRename({
+    required String from,
+    required String to,
+    required ArchivePhoneRecord expected,
+  }) => _serializedMutation(() async {
+    if (!identical(_records[from], expected) || _records.containsKey(to))
+      return false;
+    final next = Map<String, ArchivePhoneRecord>.of(_records)
+      ..remove(from)
+      ..[to] = expected.copyWith(localPath: to);
+    await _commitRecords(next);
+    return true;
+  });
+
+  Future<bool> restoreIfAbsent(
+    ArchivePhoneRecord record, {
+    required bool Function() isCurrent,
+  }) => _serializedMutation(() async {
+    if (!isCurrent() || _records.containsKey(record.localPath)) return false;
+    await _commitRecords(
+      Map<String, ArchivePhoneRecord>.of(_records)..[record.localPath] = record,
+    );
+    return true;
+  });
+
+  Future<void> _commitRecords(Map<String, ArchivePhoneRecord> next) async {
+    await _writeSnapshot(
+      records: next,
+      pairing: pairing,
+      autoArchive: autoArchive,
+      manualPaused: manualPaused,
+      autoArchiveFrom: autoArchiveFrom,
+    );
+    _records
+      ..clear()
+      ..addAll(next);
+  }
+
   Future<void> remove(String path) => _serializedMutation(() async {
     if (!_records.containsKey(path)) return;
     final next = Map<String, ArchivePhoneRecord>.of(_records)..remove(path);

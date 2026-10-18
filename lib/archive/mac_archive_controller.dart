@@ -853,6 +853,17 @@ class MacArchiveController extends ChangeNotifier {
 
   int _recordGeneration(String path) => _recordGenerations[path] ?? 0;
 
+  int localChangeVersion(String path) => _recordGeneration(path);
+
+  Future<bool> recoverForgottenRecord(
+    ArchivePhoneRecord record, {
+    required int expectedVersion,
+  }) => phoneStore.restoreIfAbsent(
+    record,
+    isCurrent: () =>
+        !_disposed && _recordGeneration(record.localPath) == expectedVersion,
+  );
+
   Future<void> forgetLocalPath(String path) async {
     invalidateRestore(path);
     await phoneStore.remove(path);
