@@ -23,6 +23,7 @@ class RecordingAsset {
     this.contentHash,
     this.originalComplete = true,
     this.archived = false,
+    this.deletedAt,
   });
 
   final String path;
@@ -35,6 +36,11 @@ class RecordingAsset {
   final bool originalComplete;
   final bool archived;
 
+  /// When this asset was moved to the 30-day trash. Null means it is live.
+  final DateTime? deletedAt;
+
+  bool get trashed => deletedAt != null || archived;
+
   RecordingAsset copyWith({
     String? path,
     String? displayName,
@@ -45,6 +51,8 @@ class RecordingAsset {
     String? contentHash,
     bool? originalComplete,
     bool? archived,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
   }) => RecordingAsset(
     path: path ?? this.path,
     displayName: displayName ?? this.displayName,
@@ -55,6 +63,7 @@ class RecordingAsset {
     contentHash: contentHash ?? this.contentHash,
     originalComplete: originalComplete ?? this.originalComplete,
     archived: archived ?? this.archived,
+    deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
   );
 
   Map<String, Object?> toJson() => {
@@ -67,6 +76,7 @@ class RecordingAsset {
     if (contentHash != null) 'contentHash': contentHash,
     'originalComplete': originalComplete,
     'archived': archived,
+    if (deletedAt != null) 'deletedAt': deletedAt!.toIso8601String(),
   };
 
   static RecordingAsset? decode(Object? value) {
@@ -88,6 +98,9 @@ class RecordingAsset {
     final recordedAt = value['recordedAt'] is String
         ? DateTime.tryParse(value['recordedAt'] as String)
         : null;
+    final deletedAt = value['deletedAt'] is String
+        ? DateTime.tryParse(value['deletedAt'] as String)
+        : null;
     return RecordingAsset(
       path: path,
       displayName: displayName.trim(),
@@ -101,7 +114,8 @@ class RecordingAsset {
           ? value['contentHash'] as String
           : null,
       originalComplete: value['originalComplete'] != false,
-      archived: value['archived'] == true,
+      archived: value['archived'] == true || deletedAt != null,
+      deletedAt: deletedAt,
     );
   }
 }

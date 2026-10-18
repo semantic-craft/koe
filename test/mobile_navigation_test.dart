@@ -120,6 +120,47 @@ void main() {
     expect(find.text('尚未开放'), findsOneWidget);
   });
 
+  testWidgets('trash hides a material and restores it from the library', (
+    tester,
+  ) async {
+    final path = (await tester.runAsync(() => addAudio('可删资料.wav')))!;
+    controller.rememberTranscript(path, '人工校订正文');
+    await pump(tester);
+    await tester.tap(find.byKey(const ValueKey('nav-library')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('recording-row-$path')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除资料…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('移到回收站'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(ValueKey('recording-row-$path')), findsNothing);
+    expect(await tester.runAsync(() => File(path).exists()), isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('library-trash')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('trash-restore-$path')));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('trash-row-$path')), findsNothing);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('recording-row-$path')), findsOneWidget);
+  });
+
   testWidgets('Ask Koe says it is not open and routes to materials', (
     tester,
   ) async {

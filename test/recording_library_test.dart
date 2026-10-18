@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/ui/screens/files_screen.dart';
+import 'package:koe/ui/screens/trash_screen.dart';
 import 'package:provider/provider.dart';
 
 import 'support/wav_fixture.dart';
@@ -119,6 +120,122 @@ void main() {
     );
   });
 
+  test('移到回收站保留原件与转写，重启后可恢复', () async {
+    final source = await sourceAudio('可恢复资料');
+    final first = controller();
+    final imported = await first.importLocalAudio(source.path);
+    first.rememberTranscript(imported.path, '人工校订后的正文');
+    addTearDown(first.dispose);
+
+    final trashed = await first.trashLocalExports([imported.path]);
+
+    expect(trashed.trashed, 1);
+    expect(first.exportedPaths, isNot(contains(imported.path)));
+    expect(await File(imported.path).exists(), isTrue);
+    expect(first.transcriptForPath(imported.path), '人工校订后的正文');
+    expect(first.trashedAssets.single.path, imported.path);
+    expect(
+      first.recordingView(RecordingReference(path: imported.path)).archived,
+      isTrue,
+    );
+
+    final restarted = controller();
+    addTearDown(restarted.dispose);
+    await restarted.waitForRecordingLibrary();
+
+    expect(restarted.exportedPaths, isNot(contains(imported.path)));
+    expect(restarted.trashedAssets.single.path, imported.path);
+
+    await restarted.restoreTrashed(imported.path);
+
+    expect(restarted.exportedPaths, contains(imported.path));
+    expect(restarted.trashedAssets, isEmpty);
+    expect(await File(imported.path).exists(), isTrue);
+  });
+
+  test('超过 30 天的回收站资料在启动时清理，其他原件保留', () async {
+    final expireSource = await sourceAudio('过期资料', seed: 11);
+    final keepSource = await sourceAudio('保留资料', seed: 21);
+    final first = controller();
+    final expiring = await first.importLocalAudio(expireSource.path);
+    final keeping = await first.importLocalAudio(keepSource.path);
+    final old = DateTime.now().subtract(const Duration(days: 31));
+    await first.trashLocalExports([expiring.path], now: old);
+    first.dispose();
+
+    final restarted = controller();
+    addTearDown(restarted.dispose);
+    await restarted.waitForRecordingLibrary();
+    await restarted.purgeExpiredTrash();
+
+    expect(await File(expiring.path).exists(), isFalse);
+    expect(restarted.recordingAssetForPath(expiring.path), isNull);
+    expect(await File(keeping.path).exists(), isTrue);
+    expect(restarted.exportedPaths, contains(keeping.path));
+  });
+
+  test('再次导入回收站中的同一音频会恢复原资料而不复制', () async {
+    final source = await sourceAudio('重复导入资料', seed: 41);
+    final c = controller();
+    addTearDown(c.dispose);
+    final first = await c.importLocalAudio(source.path);
+    await c.trashLocalExports([first.path]);
+
+    final second = await c.importLocalAudio(source.path);
+
+    expect(second.duplicate, isTrue);
+    expect(second.path, first.path);
+    expect(c.trashedAssets, isEmpty);
+    expect(c.exportedPaths, contains(first.path));
+    expect(
+      imports.listSync().whereType<File>().where(
+        (f) => f.path.endsWith('.wav'),
+      ),
+      hasLength(1),
+    );
+  });
+
+  test('清理缓存只删除派生播放文件，不删除原件', () async {
+    const id = '1783917000';
+    final original = File('${temp.path}/$id.opus.bin');
+    final wav = File('${temp.path}/$id.wav');
+    final ogg = File('${temp.path}/$id.ogg');
+    await original.writeAsBytes([1, 2, 3, 4]);
+    await wav.writeAsBytes([5, 6, 7, 8]);
+    await ogg.writeAsBytes([9, 10, 11, 12]);
+    final c = controller();
+    addTearDown(c.dispose);
+    c.exportedPaths.add(original.path);
+    await c.library.upsert(
+      RecordingAsset(
+        path: original.path,
+        displayName: '设备录音',
+        source: RecordingSource.device,
+        importedAt: DateTime(2026, 10, 1),
+      ),
+    );
+
+    final result = await c.clearRecoverableCache(original.path);
+
+    expect(result.removed, 2);
+    expect(await original.exists(), isTrue);
+    expect(await wav.exists(), isFalse);
+    expect(await ogg.exists(), isFalse);
+    expect(c.exportedPaths, contains(original.path));
+  });
+
+  test('导入未提供发生时间时不会把微秒文件名当成日期', () async {
+    final source = await sourceAudio('无日期资料', seed: 31);
+    final c = controller();
+    addTearDown(c.dispose);
+
+    final imported = await c.importLocalAudio(source.path);
+    final view = c.recordingView(RecordingReference(path: imported.path));
+
+    expect(view.recordedAt, isNull);
+    expect(view.title, '无日期资料');
+  });
+
   testWidgets('资料行显示发生时间、来源与原件状态，信息页区分两个时间', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -168,5 +285,35 @@ void main() {
     expect(find.text('已保留'), findsOneWidget);
     expect(find.text('资料库'), findsOneWidget);
     expect(find.byType(SelectableText), findsNWidgets(2));
+  });
+
+  testWidgets('回收站在窄屏 200% 字号下不溢出', (tester) async {
+    tester.view.physicalSize = const Size(320, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    late RecorderController c;
+    late String path;
+    await tester.runAsync(() async {
+      final source = await sourceAudio('窄屏回收站', seed: 51);
+      c = controller();
+      final imported = await c.importLocalAudio(source.path);
+      path = imported.path;
+      await c.trashLocalExports([path]);
+    });
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: c,
+        child: const MaterialApp(home: TrashScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

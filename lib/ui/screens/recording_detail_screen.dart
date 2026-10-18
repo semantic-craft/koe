@@ -131,6 +131,83 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     }
   }
 
+  Future<void> _trash(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('移到回收站？'),
+        content: const Text(
+          '原件、转写和主题关联会保留 30 天，期间可以恢复。'
+          '移到回收站后会从资料列表和继续回听中消失；独立笔记不会删除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('移到回收站'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final result = await context.read<RecorderController>().trashLocalExports([
+      path,
+    ]);
+    if (!mounted) return;
+    if (result.failed.isNotEmpty) {
+      _notice(result.failed.first);
+      return;
+    }
+    _notice('已移到回收站，30 天内可恢复');
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) navigator.pop();
+  }
+
+  Future<void> _clearCache(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('清理可恢复的播放缓存？'),
+        content: const Text('只删除可重新生成的播放副本，原件、转写与笔记都会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final result = await context
+        .read<RecorderController>()
+        .clearRecoverableCache(path);
+    if (!mounted) return;
+    _notice(
+      result.removed == 0
+          ? '没有可清理的播放缓存，原件已保留'
+          : '已清理 ${result.removed} 个播放缓存，原件保留',
+    );
+  }
+
+  Future<void> _removeFromTopics(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null) return;
+    await context.read<RecorderController>().removeRecordingFromTopics(path);
+    if (!mounted) return;
+    _notice('已移出项目/主题，资料与笔记仍保留');
+  }
+
   Future<void> _transcribe(
     RecordingViewData recording, {
     String? sourceLanguage,
@@ -421,6 +498,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final hasSpeakers =
         recording.path != null &&
         c.transcriptSpeakersForPath(recording.path!).isNotEmpty;
+    final topicPlacement = c.topicsEnabled
+        ? c.topics.topicOf(c.recordingKeyFor(widget.reference))
+        : null;
+    final hasRecoverableCache =
+        recording.path != null &&
+        (recording.path!.endsWith('.opus') ||
+            recording.path!.endsWith('.opus.bin'));
 
     return Scaffold(
       key: ValueKey('recording-detail-${widget.reference.key}'),
@@ -462,6 +546,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   _speakers(recording);
                 case 'info':
                   _showInfo(recording);
+                case 'remove-topic':
+                  _removeFromTopics(recording);
+                case 'clear-cache':
+                  _clearCache(recording);
+                case 'trash':
+                  _trash(recording);
               }
             },
             itemBuilder: (_) => [
@@ -490,6 +580,26 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   enabled: fileReady && !recording.processing,
                   child: const Text('说话人姓名'),
                 ),
+              if (topicPlacement != null)
+                PopupMenuItem(
+                  value: 'remove-topic',
+                  enabled: fileReady,
+                  child: const Text('移出项目/主题'),
+                ),
+              if (hasRecoverableCache)
+                PopupMenuItem(
+                  value: 'clear-cache',
+                  enabled: fileReady && !recording.processing,
+                  child: const Text('清理可恢复缓存'),
+                ),
+              PopupMenuItem(
+                value: 'trash',
+                enabled: fileReady && !recording.processing,
+                child: const Text(
+                  '删除资料…',
+                  style: TextStyle(color: AppColors.coral),
+                ),
+              ),
               const PopupMenuItem(value: 'info', child: Text('资料信息')),
             ],
           ),

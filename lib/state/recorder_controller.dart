@@ -692,6 +692,7 @@ class RecorderController extends ChangeNotifier {
         );
       }
     }
+    unawaited(_purgeTrashWhenReady());
     if (this.topicsEnabled && loadPersistedState) {
       _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
     }
@@ -1600,9 +1601,7 @@ class RecorderController extends ChangeNotifier {
         : id == null
         ? '当前录音'
         : _recordingDateTitle(id);
-    final recordedAt =
-        asset?.recordedAt ??
-        (id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000));
+    final recordedAt = asset?.recordedAt ?? _recordedAtFromFileId(id);
     // Device recordings have no library entry until they are renamed or
     // archived; their retrieval time is still the local file timestamp.
     final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
@@ -1649,14 +1648,22 @@ class RecorderController extends ChangeNotifier {
       originalComplete:
           (asset?.originalComplete ?? true) &&
           (id == null || !_incompleteRetrievalIds.contains(id)),
-      archived: asset?.archived ?? false,
+      archived: asset?.trashed ?? false,
     );
   }
 
   String _recordingDateTitle(int id) {
-    final date = DateTime.fromMillisecondsSinceEpoch(id * 1000);
+    final date = _recordedAtFromFileId(id);
+    if (date == null) return '当前录音';
     String pad(int value) => value.toString().padLeft(2, '0');
     return '${date.year}/${pad(date.month)}/${pad(date.day)} ${pad(date.hour)}:${pad(date.minute)}';
+  }
+
+  /// Device file ids are Unix seconds. Imported originals use a microsecond
+  /// timestamp prefix, which must never be treated as a recording date.
+  DateTime? _recordedAtFromFileId(int? id) {
+    if (id == null || id < 1000000000 || id > 4102444800) return null;
+    return DateTime.fromMillisecondsSinceEpoch(id * 1000);
   }
 
   DateTime? _localFileTimestamp(String? path) {
@@ -4745,6 +4752,7 @@ class RecorderController extends ChangeNotifier {
     await library.load();
     final present = <String>[];
     for (final asset in library.assets) {
+      if (asset.trashed) continue;
       if (File(asset.path).existsSync()) present.add(asset.path);
     }
     if (present.isNotEmpty && !_disposed) {
@@ -4801,11 +4809,23 @@ class RecorderController extends ChangeNotifier {
 
     final existing = library.assetForHash(contentHash);
     if (existing != null) {
+      final restored = existing.trashed;
+      if (restored) {
+        await library.upsert(
+          existing.copyWith(archived: false, clearDeletedAt: true),
+        );
+      }
       _registerExportedPaths([...exportedPaths, existing.path]);
-      statusMessage = '这条音频已在资料库中';
+      statusMessage = restored ? '这条音频在回收站中，已恢复' : '这条音频已在资料库中';
       errorMessage = null;
       notifyListeners();
-      return (path: existing.path, duplicate: true, asset: existing);
+      return (
+        path: existing.path,
+        duplicate: true,
+        asset: restored
+            ? existing.copyWith(archived: false, clearDeletedAt: true)
+            : existing,
+      );
     }
 
     final now = DateTime.now();
@@ -5070,6 +5090,237 @@ class RecorderController extends ChangeNotifier {
     errorMessage = failed.isEmpty ? null : failed.join('\n');
     notifyListeners();
     return (deleted: deleted, failed: failed);
+  }
+
+  /// Moving a material to the trash keeps the original file, transcript,
+  /// speaker names, topics and notes. Only its visibility is changed.
+  static const trashRetention = Duration(days: 30);
+
+  List<RecordingAsset> get trashedAssets {
+    final items = library.assets.where((asset) => asset.trashed).toList();
+    items.sort((a, b) {
+      final left = a.deletedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final right = b.deletedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return right.compareTo(left);
+    });
+    return List.unmodifiable(items);
+  }
+
+  int trashDaysRemaining(RecordingAsset asset, {DateTime? now}) {
+    final deletedAt = asset.deletedAt;
+    if (deletedAt == null) return trashRetention.inDays;
+    final elapsed = (now ?? DateTime.now()).difference(deletedAt);
+    final remaining = trashRetention - elapsed;
+    return remaining.isNegative ? 0 : remaining.inDays;
+  }
+
+  /// Hides materials from the library while keeping their only original.
+  Future<({int trashed, List<String> failed})> trashLocalExports(
+    Iterable<String> paths, {
+    DateTime? now,
+  }) async {
+    await _libraryLoaded;
+    final stamp = now ?? DateTime.now();
+    var trashed = 0;
+    final failed = <String>[];
+    final queued = <String>{};
+    for (final path in paths.toSet()) {
+      try {
+        _requireFinishedRecording(path);
+        if (_fileJobKey == _recordingKey(path: path)) {
+          throw StateError('处理完成后再删除');
+        }
+        final id = ExportCatalog.fileIdFromPath(path);
+        if (playingPath == path || (id != null && playingFileId == id)) {
+          await stopPlayback();
+        }
+        final existing = library.assetForPath(path);
+        final asset =
+            existing ??
+            RecordingAsset(
+              path: path,
+              displayName: _trashDisplayName(path),
+              source: RecordingSource.device,
+              recordedAt: id == null
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(id * 1000),
+              importedAt: _localFileTimestamp(path) ?? stamp,
+            );
+        await library.upsert(asset.copyWith(archived: true, deletedAt: stamp));
+        queued.add(path);
+        trashed++;
+      } catch (error) {
+        failed.add('${p.basename(path)}：无法移到回收站，请稍后重试');
+      }
+    }
+    if (queued.isNotEmpty) {
+      exportedPaths.removeWhere((path) {
+        if (queued.contains(path)) return true;
+        final id = ExportCatalog.fileIdFromPath(path);
+        return id != null &&
+            queued.any((item) => ExportCatalog.fileIdFromPath(item) == id);
+      });
+      _registerExportedPaths(exportedPaths);
+    }
+    statusMessage = failed.isEmpty
+        ? '已移到回收站，30 天内可恢复'
+        : '已移到回收站 $trashed 个，${failed.length} 个失败';
+    errorMessage = failed.isEmpty ? null : failed.join('\n');
+    notifyListeners();
+    return (trashed: trashed, failed: failed);
+  }
+
+  String _trashDisplayName(String path) {
+    final label = ExportCatalog.editableLabelFromPath(path).trim();
+    return label.isEmpty ? p.basename(path) : label;
+  }
+
+  Future<void> restoreTrashed(String path, {DateTime? now}) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    if (asset == null || !asset.trashed) {
+      throw StateError('资料不在回收站中');
+    }
+    final deletedAt = asset.deletedAt;
+    if (deletedAt != null &&
+        (now ?? DateTime.now()).difference(deletedAt) >= trashRetention) {
+      throw StateError('已超过 30 天保留期，无法恢复');
+    }
+    if (!await File(path).exists()) {
+      throw StateError('原件已丢失，无法恢复');
+    }
+    await library.upsert(asset.copyWith(archived: false, clearDeletedAt: true));
+    _registerExportedPaths([...exportedPaths, path]);
+    statusMessage = '已从回收站恢复';
+    errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Explicit, irreversible removal. Callers must confirm first.
+  Future<({int deleted, List<String> failed})> emptyTrash({
+    Iterable<String>? paths,
+  }) async {
+    await _libraryLoaded;
+    final targets = (paths ?? trashedAssets.map((asset) => asset.path)).toSet();
+    var deleted = 0;
+    final failed = <String>[];
+    for (final path in targets) {
+      final result = await deleteLocalExports([path]);
+      deleted += result.deleted;
+      failed.addAll(result.failed);
+    }
+    if (deleted > 0) {
+      statusMessage = '已彻底删除 $deleted 个资料';
+    }
+    notifyListeners();
+    return (deleted: deleted, failed: failed);
+  }
+
+  Future<int> purgeExpiredTrash({DateTime? now}) async {
+    await _libraryLoaded;
+    await _topicsLoaded;
+    return _purgeExpiredTrash(now: now);
+  }
+
+  Future<void> _purgeTrashWhenReady() async {
+    await _libraryLoaded;
+    await _topicsLoaded;
+    if (_disposed) return;
+    await _purgeExpiredTrash();
+  }
+
+  Future<int>? _trashPurgeInFlight;
+
+  Future<int> _purgeExpiredTrash({DateTime? now}) async {
+    final running = _trashPurgeInFlight;
+    if (running != null) return running;
+    final task = _runPurgeExpiredTrash(now: now);
+    _trashPurgeInFlight = task;
+    unawaited(
+      task.whenComplete(() {
+        if (identical(_trashPurgeInFlight, task)) {
+          _trashPurgeInFlight = null;
+        }
+      }),
+    );
+    return task;
+  }
+
+  Future<int> _runPurgeExpiredTrash({DateTime? now}) async {
+    final stamp = now ?? DateTime.now();
+    final expired = library.assets
+        .where(
+          (asset) =>
+              asset.trashed &&
+              asset.deletedAt != null &&
+              stamp.difference(asset.deletedAt!) >= trashRetention,
+        )
+        .map((asset) => asset.path)
+        .toList();
+    var purged = 0;
+    for (final path in expired) {
+      if (_disposed) break;
+      final result = await deleteLocalExports([path]);
+      purged += result.deleted;
+    }
+    return purged;
+  }
+
+  /// Removes only derived playback files. The library original is never a
+  /// candidate, even when the archive was not verified.
+  Future<({int removed, int bytes, List<String> skipped})>
+  clearRecoverableCache(String path) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    final original = asset?.path ?? path;
+    if (!original.endsWith('.opus') && !original.endsWith('.opus.bin')) {
+      return (removed: 0, bytes: 0, skipped: <String>['这条资料没有可重建的播放缓存']);
+    }
+    final id = ExportCatalog.fileIdFromPath(original);
+    if (id == null) {
+      return (removed: 0, bytes: 0, skipped: <String>['无法确认缓存归属，已保留全部文件']);
+    }
+    if (!await File(original).exists()) {
+      return (removed: 0, bytes: 0, skipped: <String>['原件不在本机，未清理任何文件']);
+    }
+    final directory = p.dirname(original);
+    final candidates = <String>{
+      p.join(directory, '$id.wav'),
+      p.join(directory, '$id.ogg'),
+      '$original.ogg',
+    }..remove(original);
+    var removed = 0;
+    var bytes = 0;
+    final skipped = <String>[];
+    for (final candidate in candidates) {
+      final file = File(candidate);
+      if (!await file.exists()) continue;
+      try {
+        final length = await file.length();
+        await file.delete();
+        removed++;
+        bytes += length;
+        _invalidateLocalDuration(candidate);
+      } catch (error) {
+        skipped.add('${p.basename(candidate)}：无法清理');
+      }
+    }
+    statusMessage = removed == 0
+        ? '没有可清理的播放缓存，原件已保留'
+        : '已清理 $removed 个可重建缓存，原件与原文字保留';
+    errorMessage = skipped.isEmpty ? null : skipped.join('\n');
+    notifyListeners();
+    return (removed: removed, bytes: bytes, skipped: skipped);
+  }
+
+  /// Unassigns one material from its project/topic without deleting notes.
+  Future<void> removeRecordingFromTopics(String path) async {
+    final key = _recordingKey(path: path);
+    await topics.forgetRecording(key);
+    _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
+    statusMessage = '已移出项目/主题，资料与笔记仍保留';
+    errorMessage = null;
+    notifyListeners();
   }
 
   Future<String> renameLocalExport(String path, String label) async {
