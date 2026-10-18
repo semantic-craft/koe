@@ -596,6 +596,7 @@ class MinutesDocumentStore {
   final bool inMemory;
   final Map<String, MinutesDocument> _documents = {};
   Future<void> _pendingSave = Future<void>.value();
+  bool _loadFailed = false;
 
   String? recoveryNotice;
   String? saveError;
@@ -624,11 +625,13 @@ class MinutesDocumentStore {
       if (!await target.exists()) return;
       final decoded = decode(await target.readAsString());
       if (decoded == null) {
+        _loadFailed = true;
         recoveryNotice = '导入文字记录无法读取，原文字文件仍保留';
         return;
       }
       _documents.addAll(decoded);
     } catch (error) {
+      _loadFailed = true;
       recoveryNotice = '导入文字记录无法读取，原文字文件仍保留';
       debugPrint('[MinutesDocumentStore] load failed: $error');
     }
@@ -724,6 +727,9 @@ class MinutesDocumentStore {
 
   Future<void> save({bool strict = true}) {
     if (inMemory) return Future<void>.value();
+    if (_loadFailed) {
+      return Future<void>.error(StateError('导入文字记录无法读取，已停止写入以保护原文件'));
+    }
     final snapshot = List<MinutesDocument>.of(_documents.values);
     final operation = _pendingSave.then((_) => _write(snapshot, strict));
     _pendingSave = operation.catchError((Object _) {});

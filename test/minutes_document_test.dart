@@ -336,6 +336,49 @@ void main() {
     expect(store.documents, isEmpty);
   });
 
+  test('记录文件无法读取时停止写入，不覆盖原文件', () async {
+    await minutesFile.writeAsString('{"documents": [');
+    final before = await minutesFile.readAsString();
+    final store = MinutesDocumentStore(file: minutesFile);
+    await store.load();
+
+    expect(store.recoveryNotice, isNotNull);
+    await expectLater(
+      store.upsert(parseMinutesDocument('masked.txt', '不应落盘').document),
+      throwsA(isA<StateError>()),
+    );
+    expect(await minutesFile.readAsString(), before);
+  });
+
+  test('补配保存失败时删除新复制的音频并回滚资料', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('待补配.txt', '一段文字');
+    final audioFile = await audio(
+      'rejected-attach',
+      const Duration(seconds: 3),
+    );
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    final result = await c.attachMinutesAudio(
+      imported.document.id,
+      audioFile.path,
+    );
+
+    expect(result.ok, isFalse);
+    expect(c.minutesDocuments.single.audioPath, isNull);
+    expect(c.library.assets, isEmpty);
+    expect(
+      imports.existsSync()
+          ? imports.listSync().whereType<File>().where(
+              (file) => file.path.endsWith('.wav'),
+            )
+          : const <File>[],
+      isEmpty,
+    );
+  });
+
   test('补配引用保存失败会抛出并回滚，不静默保留内存变化', () async {
     final store = MinutesDocumentStore(file: minutesFile);
     final document = parseMinutesDocument(

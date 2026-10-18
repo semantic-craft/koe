@@ -4948,6 +4948,7 @@ class RecorderController extends ChangeNotifier {
     try {
       await minutes.upsert(updated, strict: true);
     } catch (_) {
+      await discardNewCopy();
       return const MinutesAttachOutcome(ok: false, message: '配对保存失败，请重试');
     }
     notifyListeners();
