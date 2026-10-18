@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -42,6 +43,7 @@ import 'transcript_store.dart';
 import 'recording.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
+import 'playback_history.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
@@ -51,6 +53,7 @@ import 'topic_summary.dart';
 
 export 'recording.dart';
 export 'recording_library.dart';
+export 'playback_history.dart';
 export 'topic_store.dart';
 export 'topic_note.dart';
 export 'topic_summary.dart';
@@ -499,6 +502,7 @@ class RecorderController extends ChangeNotifier {
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    PlaybackHistoryStore? playbackHistoryStore,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -513,6 +517,14 @@ class RecorderController extends ChangeNotifier {
        _libraryDirectoryOverride = libraryDirectory {
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
+    playbackHistory =
+        playbackHistoryStore ??
+        PlaybackHistoryStore(inMemory: !loadPersistedState);
+    _playbackHistoryLoaded = playbackHistory.load().then((_) {
+      if (_disposed) return;
+      playbackSpeed = playbackHistory.speed;
+      notifyListeners();
+    });
     _libraryLoaded = _loadRecordingLibrary();
     _subs.add(
       _ble.scanResults.listen((list) {
@@ -708,6 +720,8 @@ class RecorderController extends ChangeNotifier {
   late final RecordingLibraryStore library;
   late final Future<void> _libraryLoaded;
   final Directory? _libraryDirectoryOverride;
+  late final PlaybackHistoryStore playbackHistory;
+  late final Future<void> _playbackHistoryLoaded;
   late final TopicStore topics;
   late final Future<void> _topicsLoaded;
   AppLifecycleListener? _lifecycle;
@@ -3335,6 +3349,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   DateTime _lastPositionNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastHistoryPersist = DateTime.fromMillisecondsSinceEpoch(0);
 
   void _wirePlayer() {
     _subs.add(
@@ -3343,6 +3358,7 @@ class RecorderController extends ChangeNotifier {
         // Clear sticky "正在播放" header once audio is no longer playing.
         if (!s.playing) {
           _clearPlayingStatus();
+          unawaited(_persistPlayback());
         }
         notifyListeners();
       }),
@@ -3356,6 +3372,10 @@ class RecorderController extends ChangeNotifier {
             const Duration(milliseconds: 120)) {
           _lastPositionNotify = now;
           notifyListeners();
+        }
+        if (now.difference(_lastHistoryPersist) >= const Duration(seconds: 2)) {
+          _lastHistoryPersist = now;
+          unawaited(_persistPlayback());
         }
       }),
     );
@@ -3374,6 +3394,7 @@ class RecorderController extends ChangeNotifier {
           _clearPlayingStatus();
           unawaited(_player.seek(Duration.zero));
           unawaited(_player.pause());
+          unawaited(_persistPlayback(completed: true));
           notifyListeners();
         }
       }),
@@ -5031,6 +5052,7 @@ class RecorderController extends ChangeNotifier {
           speakerAliasesByFileId.remove(id);
         }
         final key = _recordingKey(path: path);
+        await playbackHistory.forget(fileId: id, path: path);
         await _fileJobs.discard(key);
         await topics.forgetRecording(key);
         await analysis.forgetRecording(key);
@@ -5469,6 +5491,84 @@ class RecorderController extends ChangeNotifier {
 
   bool isFileLoaded(int fileId) => playingFileId == fileId;
 
+  PlaybackPoint? get latestPlayback {
+    final point = playbackHistory.latest;
+    if (point == null) return null;
+    final path = point.fileId == null
+        ? point.path
+        : localPathsByFileId[point.fileId];
+    if (path == null || !File(path).existsSync()) return null;
+    return point.path == path ? point : point.copyWith(path: path);
+  }
+
+  String? get continuePath => playingPath ?? latestPlayback?.path;
+
+  bool get continueCompleted =>
+      continuePath != null &&
+      playingPath == null &&
+      (latestPlayback?.completed ?? false);
+
+  String get continueDetail {
+    final point = latestPlayback;
+    if (point == null || playingPath != null) return '原声保存在手机';
+    if (point.completed) return '已听完 · 可重新回听';
+    if (point.duration > Duration.zero) {
+      return '已听 ${_clock(point.position)} / ${_clock(point.duration)}';
+    }
+    return '原声保存在手机';
+  }
+
+  Duration resumePositionFor(String path, {int? fileId, Duration? total}) {
+    final point = playbackHistory.forRecording(fileId: fileId, path: path);
+    if (point == null || point.completed) return Duration.zero;
+    if (total != null &&
+        total > Duration.zero &&
+        point.position >= total - const Duration(seconds: 1)) {
+      return Duration.zero;
+    }
+    return point.position;
+  }
+
+  @visibleForTesting
+  Future<void> waitForPlaybackHistory() => _playbackHistoryLoaded;
+
+  Future<void> _persistPlayback({bool? completed}) async {
+    final path = playingPath;
+    if (path == null || _disposed) return;
+    final fileId = playingFileId;
+    final total = duration;
+    final finished =
+        completed ??
+        (total > Duration.zero &&
+            position >= total - const Duration(milliseconds: 500));
+    final point = position;
+    await _playbackHistoryLoaded;
+    if (_disposed) return;
+    await playbackHistory.record(
+      PlaybackPoint(
+        path: path,
+        fileId: fileId,
+        position: finished && total > Duration.zero ? total : point,
+        duration: total,
+        completed: finished,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  String _playbackTitle(String path) {
+    final label = library.assetForPath(path)?.displayName.trim();
+    if (label != null && label.isNotEmpty) return label;
+    final edited = ExportCatalog.editableLabelFromPath(path).trim();
+    return edited.isEmpty ? p.basename(path) : edited;
+  }
+
+  Future<void> toggleLatestPlayback() async {
+    final path = latestPlayback?.path;
+    if (path == null) return;
+    await playExported(path, fileId: fileIdFromPath(path));
+  }
+
   /// Load local [path] and start playback. Tapping the same track pauses.
   ///
   /// Completed exports are standard WAV. Legacy raw Opus files are still muxed
@@ -5505,6 +5605,7 @@ class RecorderController extends ChangeNotifier {
         await togglePlayPause();
         return;
       }
+      if (playingPath != null) await _persistPlayback();
       errorMessage = null;
       statusMessage = '正在准备播放 ${path.split('/').last}…';
       notifyListeners();
@@ -5516,20 +5617,41 @@ class RecorderController extends ChangeNotifier {
       }
 
       await _player.stop();
-      final durationFromFile = await _player.setFilePath(playPath);
+      await _playbackHistoryLoaded;
+      final title = _playbackTitle(path);
+      final durationFromFile = await _player.setAudioSource(
+        AudioSource.uri(
+          Uri.file(playPath),
+          tag: MediaItem(
+            id: logicalId == null ? 'koe:$path' : 'koe:id:$logicalId',
+            title: title,
+            album: 'Koe 资料',
+          ),
+        ),
+      );
       await _player.setSpeed(playbackSpeed);
       playingPath = path; // keep UI key on original export path
       playingFileId = logicalId;
-      position = Duration.zero;
       duration = durationFromFile ?? _player.duration ?? Duration.zero;
       // Duration may arrive async on some platforms.
       if (duration <= Duration.zero) {
         await Future<void>.delayed(const Duration(milliseconds: 80));
         duration = _player.duration ?? Duration.zero;
       }
+      final resume = resumePositionFor(
+        path,
+        fileId: logicalId,
+        total: duration,
+      );
+      position = resume;
+      if (resume > Duration.zero) {
+        await _player.seek(resume);
+      }
       await _player.play();
       final sec = duration.inMilliseconds / 1000.0;
-      statusMessage = duration > Duration.zero
+      statusMessage = resume > Duration.zero
+          ? '已从 ${_clock(resume)} 继续回听'
+          : duration > Duration.zero
           ? '正在播放 · ${sec.toStringAsFixed(1)}s'
           : '正在播放 ${path.split('/').last}';
       notifyListeners();
@@ -5544,6 +5666,12 @@ class RecorderController extends ChangeNotifier {
     }
   }
 
+  String _clock(Duration value) {
+    final minutes = value.inMinutes;
+    final seconds = value.inSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
   int? _fileIdFromPath(String path) => ExportCatalog.fileIdFromPath(path);
 
   Future<void> togglePlayPause() async {
@@ -5551,6 +5679,7 @@ class RecorderController extends ChangeNotifier {
     try {
       if (isPlaying) {
         await _player.pause();
+        await _persistPlayback();
         _clearPlayingStatus();
       } else {
         // Restart if finished.
@@ -5567,6 +5696,22 @@ class RecorderController extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       errorMessage = '无法控制播放，请重新打开录音';
+      notifyListeners();
+    }
+  }
+
+  /// System interruptions and route changes must stop real audio, not only
+  /// move the progress bar.
+  Future<void> pauseForInterruption({String? message}) async {
+    if (playingPath == null || !isPlaying) return;
+    try {
+      await _player.pause();
+      await _persistPlayback();
+      _clearPlayingStatus();
+      statusMessage = message ?? '播放已暂停，可手动继续';
+      notifyListeners();
+    } catch (error) {
+      errorMessage = '播放状态已中断，请手动继续';
       notifyListeners();
     }
   }
@@ -5596,6 +5741,8 @@ class RecorderController extends ChangeNotifier {
     playbackSpeed = speed;
     try {
       await _player.setSpeed(speed);
+      await _playbackHistoryLoaded;
+      await playbackHistory.setSpeed(speed);
     } catch (e) {
       errorMessage = '无法更改播放速度，请重试';
     }
@@ -5603,6 +5750,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<void> stopPlayback() async {
+    await _persistPlayback();
     try {
       await _player.stop();
     } catch (_) {}
