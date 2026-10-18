@@ -374,6 +374,10 @@ class MacArchiveController extends ChangeNotifier {
     _connectionEpoch++;
     await _closeWorkerClient();
     await _closeInteractiveClient();
+    if (_disposed || pauseIntent != _pauseIntent) {
+      await probe?.close();
+      throw const ArchiveException('配对状态已变更，本次配对已取消');
+    }
     _interactiveClient = probe;
     _manualPaused = false;
     _authFailed = false;
