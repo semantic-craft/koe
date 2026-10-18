@@ -140,6 +140,28 @@ void main() {
     expect(reloaded.assetForPath(old.path)?.displayName, '新标题');
   });
 
+  test('连续写入失败回到最后一次成功保存的值', () async {
+    final store = _FailNextLibraryStore(file: storeFile);
+    final seed = RecordingAsset(
+      path: '/tmp/place-chain.wav',
+      displayName: '已保存标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(seed);
+
+    store.failures = 2;
+    final first = store.upsert(seed.copyWith(displayName: '未保存一'));
+    final second = store.upsert(seed.copyWith(displayName: '未保存二'));
+    await expectLater(first, throwsA(isA<StateError>()));
+    await expectLater(second, throwsA(isA<StateError>()));
+
+    expect(store.assetForPath(seed.path)?.displayName, '已保存标题');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(seed.path)?.displayName, '已保存标题');
+  });
+
   testWidgets('资料行显示发生时间、来源与原件状态，信息页区分两个时间', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -202,6 +224,21 @@ class _FailOnceLibraryStore extends RecordingLibraryStore {
     _saves++;
     if (_saves == 1) {
       return Future<void>.error(StateError('first save failed'));
+    }
+    return super.save(strict: strict);
+  }
+}
+
+class _FailNextLibraryStore extends RecordingLibraryStore {
+  _FailNextLibraryStore({super.file});
+
+  int failures = 0;
+
+  @override
+  Future<void> save({bool strict = true}) {
+    if (failures > 0) {
+      failures--;
+      return Future<void>.error(StateError('save failed'));
     }
     return super.save(strict: strict);
   }

@@ -165,6 +165,7 @@ class RecordingLibraryStore {
   final File? file;
   final bool inMemory;
   final Map<String, RecordingAsset> _assets = {};
+  final Map<String, RecordingAsset> _persisted = {};
   Future<void> _pendingSave = Future<void>.value();
 
   String? recoveryNotice;
@@ -208,6 +209,9 @@ class RecordingLibraryStore {
         return;
       }
       _assets.addAll(decoded);
+      _persisted
+        ..clear()
+        ..addAll(_assets);
     } catch (error) {
       recoveryNotice = '资料信息无法读取，原音频文件仍保留';
       debugPrint('[RecordingLibrary] load failed: $error');
@@ -239,18 +243,16 @@ class RecordingLibraryStore {
   };
 
   Future<void> upsert(RecordingAsset asset, {bool strict = true}) async {
-    final previous = _assets[asset.path];
     _assets[asset.path] = asset;
     try {
       await save(strict: strict);
     } catch (_) {
-      // A newer upsert may have replaced this value while the failed write was
-      // in flight; never roll back over it.
       if (identical(_assets[asset.path], asset)) {
-        if (previous == null) {
+        final committed = _persisted[asset.path];
+        if (committed == null) {
           _assets.remove(asset.path);
         } else {
-          _assets[asset.path] = previous;
+          _assets[asset.path] = committed;
         }
       }
       rethrow;
@@ -283,7 +285,12 @@ class RecordingLibraryStore {
   }
 
   Future<void> save({bool strict = true}) {
-    if (inMemory) return Future<void>.value();
+    if (inMemory) {
+      _persisted
+        ..clear()
+        ..addAll(_assets);
+      return Future<void>.value();
+    }
     final snapshot = List<RecordingAsset>.of(_assets.values);
     final operation = _pendingSave.then((_) => _write(snapshot, strict));
     _pendingSave = operation.catchError((Object _) {});
@@ -299,6 +306,9 @@ class RecordingLibraryStore {
         flush: true,
       );
       await temporary.rename(target.path);
+      _persisted
+        ..clear()
+        ..addAll({for (final asset in snapshot) asset.path: asset});
       saveError = null;
     } catch (error) {
       saveError = '资料信息保存失败，请检查存储空间后重试';
