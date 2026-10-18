@@ -44,3 +44,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local agent / scratch state (keep on disk, never commit)
+.scratch/
+.sites/
+.sites-progress.json
+.agy-prompts/
+.agy-tasks/
+.agents/
+.collab/
+.envrc
+docs/acceptance/*-evidence/
