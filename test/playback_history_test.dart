@@ -217,6 +217,51 @@ void main() {
     expect(controller.position, const Duration(seconds: 60));
   });
 
+  test('暂停时从系统拖动位置立即保存，包括拖回 0:00', () async {
+    final audio = File('${temp.path}/178.wav');
+    await audio.writeAsBytes(List<int>.filled(100, 0));
+    final store = PlaybackHistoryStore(inMemory: true);
+    await store.load();
+    final player = _FakePlayer();
+    final controller = RecorderController(
+      loadPersistedState: false,
+      playbackHistoryStore: store,
+      player: player,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForPlaybackHistory();
+
+    await controller.playExported(
+      audio.path,
+      fileId: 178,
+      startAt: const Duration(seconds: 30),
+    );
+    player.emitState(playing: true);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    player.emitState(playing: false);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(
+      store.forRecording(fileId: 178, path: audio.path)?.position,
+      const Duration(seconds: 30),
+    );
+
+    player.emitPosition(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(
+      store.forRecording(fileId: 178, path: audio.path)?.position,
+      Duration.zero,
+      reason: '暂停时拖回开头也必须立即保存',
+    );
+
+    player.emitPosition(const Duration(seconds: 12));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(
+      store.forRecording(fileId: 178, path: audio.path)?.position,
+      const Duration(seconds: 12),
+      reason: '暂停时的两次拖动不受播放中节流影响',
+    );
+  });
+
   test('播放进度写失败不把已完成的删除报成失败', () async {
     final blocker = File('${temp.path}/blocked-delete');
     await blocker.writeAsString('not a directory');
@@ -344,6 +389,8 @@ class _FakePlayer extends AudioPlayer {
   Future<void> stop() async {}
 
   void emitPosition(Duration value) => _positions.add(value);
+  void emitState({required bool playing}) =>
+      _states.add(PlayerState(playing, ProcessingState.ready));
   void emitCompleted() => _processing.add(ProcessingState.completed);
 
   @override

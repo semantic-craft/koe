@@ -3406,6 +3406,7 @@ class RecorderController extends ChangeNotifier {
   bool _switchingAudio = false;
   bool _pausePersistArmed = false;
   Duration _confirmedPosition = Duration.zero;
+  bool _playbackStartedSinceSource = false;
 
   void _wirePlayer() {
     _subs.add(
@@ -3423,6 +3424,7 @@ class RecorderController extends ChangeNotifier {
             unawaited(_persistPlayback(at: _confirmedPosition));
           }
         } else if (!_switchingAudio) {
+          _playbackStartedSinceSource = true;
           _pausePersistArmed = true;
         }
         notifyListeners();
@@ -3439,6 +3441,8 @@ class RecorderController extends ChangeNotifier {
           notifyListeners();
         }
         if (_switchingAudio) return;
+        final paused = !isPlaying && !playbackCompleted;
+        final changed = pos != _confirmedPosition;
         final resumedAfterCompletion =
             playbackCompleted &&
             duration > Duration.zero &&
@@ -3449,12 +3453,17 @@ class RecorderController extends ChangeNotifier {
           _confirmedPosition = pos;
           unawaited(_persistPlayback(at: pos));
           notifyListeners();
-        } else if (isPlaying || pos > Duration.zero) {
+        } else if (isPlaying ||
+            pos > Duration.zero ||
+            paused && changed && _playbackStartedSinceSource) {
           // Position events before the player reports "playing" still carry
-          // real progress; only an idle zero event can clobber a breakpoint.
+          // real progress. A paused seek must persist immediately, including
+          // a seek back to zero; source-initialization zero events are ignored
+          // until that source has actually started playing.
           _confirmedPosition = pos;
-          if (now.difference(_lastHistoryPersist) >=
-              const Duration(seconds: 2)) {
+          if (paused ||
+              now.difference(_lastHistoryPersist) >=
+                  const Duration(seconds: 2)) {
             _lastHistoryPersist = now;
             unawaited(_persistPlayback(at: _confirmedPosition));
           }
@@ -5732,6 +5741,7 @@ class RecorderController extends ChangeNotifier {
       }
 
       _switchingAudio = true;
+      _playbackStartedSinceSource = false;
       try {
         await _player.stop();
         await _playbackHistoryLoaded;
@@ -5785,6 +5795,7 @@ class RecorderController extends ChangeNotifier {
       playingFileId = null;
       isPlaying = false;
       playbackCompleted = false;
+      _playbackStartedSinceSource = false;
       _confirmedPosition = Duration.zero;
       duration = Duration.zero;
       notifyListeners();
