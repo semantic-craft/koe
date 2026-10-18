@@ -53,11 +53,15 @@ void main() {
       expect(controller.speakerAliasesByPath[source.path], isNull);
       expect(controller.speakerAliasesByPath[renamed], {'1': '张三'});
       expect(controller.transcriptForPath(renamed), '张三：你好');
+      await controller.saveManualTranscript(renamed, '人工校订');
+      expect(controller.manualTranscriptForPath(renamed), '人工校订');
 
       final result = await controller.deleteLocalExports([renamed]);
       expect(result.deleted, 1);
       expect(controller.speakerAliasesByPath, isEmpty);
       expect(controller.speakerAliasesByFileId, isEmpty);
+      expect(controller.manualTranscriptForPath(renamed), isNull);
+      expect(controller.incomingTranscriptForPath(renamed), isNull);
     },
   );
 }

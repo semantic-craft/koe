@@ -1652,9 +1652,11 @@ class RecorderController extends ChangeNotifier {
       archived: asset?.archived ?? false,
       segments: path == null ? const [] : transcriptSegmentsForPath(path),
       manuallyEdited:
-          path != null && _manualTranscripts.containsKey(_recordingKey(path: path)),
+          path != null &&
+          _manualTranscripts.containsKey(_recordingKey(path: path)),
       hasPendingTranscript:
-          path != null && _incomingTranscripts.containsKey(_recordingKey(path: path)),
+          path != null &&
+          _incomingTranscripts.containsKey(_recordingKey(path: path)),
     );
   }
 
@@ -2130,6 +2132,7 @@ class RecorderController extends ChangeNotifier {
         _incomingTranscripts[key] = t;
       }
     }
+    if (manual != null && t == manual) _incomingTranscripts.remove(key);
     _transcriptMetadata[key] = TranscriptMetadata(
       provider: provider ?? metadata?.provider ?? speechProvider,
       sourceLanguage: sourceLanguage ?? metadata?.sourceLanguage,
@@ -2186,18 +2189,26 @@ class RecorderController extends ChangeNotifier {
     final segments = _transcriptSegments[key];
     if (segments == null) return const [];
     final overrides = _segmentSpeakers[key];
-    if (overrides == null) return segments;
-    return [
-      for (var index = 0; index < segments.length; index++)
-        if (overrides[index] case final speaker?)
-          segments[index].copyWith(
-            speaker: speaker,
-            clearSpeaker: speaker.isEmpty,
-            speakerChanged: speaker.isNotEmpty,
-          )
-        else
-          segments[index],
-    ];
+    final effective = <TranscriptSegment>[];
+    String? previousSpeaker;
+    for (var index = 0; index < segments.length; index++) {
+      final segment = segments[index];
+      final speaker = overrides?[index] ?? segment.speaker;
+      final effectiveSpeaker = speaker == null || speaker.isEmpty
+          ? null
+          : speaker;
+      final changed =
+          effectiveSpeaker != null && effectiveSpeaker != previousSpeaker;
+      effective.add(
+        segment.copyWith(
+          speaker: effectiveSpeaker,
+          clearSpeaker: effectiveSpeaker == null,
+          speakerChanged: changed,
+        ),
+      );
+      previousSpeaker = effectiveSpeaker;
+    }
+    return effective;
   }
 
   /// Manual text last saved by the user, before display aliases are applied.
@@ -2220,6 +2231,7 @@ class RecorderController extends ChangeNotifier {
     final provider = _rawTranscriptForPath(path);
     final previousManual = _manualTranscripts[key];
     final previousIncoming = _incomingTranscripts[key];
+    final previousTranslation = _recordingTranslations.remove(key);
     if (provider == normalized) {
       _manualTranscripts.remove(key);
       _incomingTranscripts.remove(key);
@@ -2241,6 +2253,9 @@ class RecorderController extends ChangeNotifier {
       } else {
         _incomingTranscripts[key] = previousIncoming;
       }
+      if (previousTranslation != null) {
+        _recordingTranslations[key] = previousTranslation;
+      }
       notifyListeners();
       rethrow;
     }
@@ -2261,12 +2276,29 @@ class RecorderController extends ChangeNotifier {
     final key = _recordingKey(path: path);
     final incoming = _incomingTranscripts.remove(key);
     if (incoming == null) return;
-    _manualTranscripts.remove(key);
+    final previousManual = _manualTranscripts.remove(key);
+    final previousText = transcriptsByPath[path];
+    final previousTranslation = _recordingTranslations.remove(key);
     // Adopting a provider version makes it the new base text, so later
     // re-transcriptions and the edit notice compare against that version.
     transcriptsByPath[path] = incoming;
     notifyListeners();
-    await _persistTranscripts(strict: true);
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      _incomingTranscripts[key] = incoming;
+      if (previousManual != null) _manualTranscripts[key] = previousManual;
+      if (previousText == null) {
+        transcriptsByPath.remove(path);
+      } else {
+        transcriptsByPath[path] = previousText;
+      }
+      if (previousTranslation != null) {
+        _recordingTranslations[key] = previousTranslation;
+      }
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> dismissIncomingTranscript(String path) async {
@@ -2288,11 +2320,11 @@ class RecorderController extends ChangeNotifier {
       throw ArgumentError('片段不存在');
     }
     final speaker = speakerId.trim();
-    final overrides = _segmentSpeakers.putIfAbsent(
-      key,
-      () => <int, String>{},
-    );
-    if (speaker.isEmpty || speaker == segments[index].speaker) {
+    final overrides = _segmentSpeakers.putIfAbsent(key, () => <int, String>{});
+    final original = segments[index].speaker;
+    final clearsOriginal = speaker.isEmpty && original != null;
+    if ((speaker == original && !clearsOriginal) ||
+        (speaker.isEmpty && original == null)) {
       overrides.remove(index);
     } else {
       overrides[index] = speaker;
@@ -5265,6 +5297,9 @@ class RecorderController extends ChangeNotifier {
         _transcriptMetadata.remove(key);
         _recordingTranslations.remove(key);
         _transcriptSegments.remove(key);
+        _manualTranscripts.remove(key);
+        _incomingTranscripts.remove(key);
+        _segmentSpeakers.remove(key);
         _recordingErrors.remove(key);
         _recordingSessions.removeWhere(
           (_, session) =>

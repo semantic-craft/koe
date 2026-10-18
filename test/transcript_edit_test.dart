@@ -9,16 +9,13 @@ void main() {
   const path = '/tmp/128100.wav';
   const key = 'file:128100';
 
-  TranscriptSegment segment(
-    String text,
-    int start, {
-    String? speaker = '1',
-  }) => TranscriptSegment(
-    text: text,
-    start: Duration(seconds: start),
-    speaker: speaker,
-    speakerChanged: speaker != null,
-  );
+  TranscriptSegment segment(String text, int start, {String? speaker = '1'}) =>
+      TranscriptSegment(
+        text: text,
+        start: Duration(seconds: start),
+        speaker: speaker,
+        speakerChanged: speaker != null,
+      );
 
   tearDown(() async {
     await TranscriptStore.save(
@@ -62,11 +59,7 @@ void main() {
     await c.saveManualTranscript(path, '人工校订正文');
     expect(c.transcriptForPath(path), '人工校订正文');
 
-    c.rememberTranscript(
-      path,
-      '新服务转写',
-      segments: [segment('新服务转写', 0)],
-    );
+    c.rememberTranscript(path, '新服务转写', segments: [segment('新服务转写', 0)]);
 
     expect(c.transcriptForPath(path), '人工校订正文');
     expect(c.hasPendingTranscript(path), isTrue);
@@ -92,12 +85,70 @@ void main() {
     await c.setSegmentSpeaker(path, 0, '2');
 
     expect(c.transcriptSegmentsForPath(path).first.speaker, '2');
-    expect(
-      c.transcriptSegmentsForPath(path).first.speakerChanged,
-      isTrue,
-    );
+    expect(c.transcriptSegmentsForPath(path).first.speakerChanged, isTrue);
     final saved = await TranscriptStore.load();
     expect(saved.segmentSpeakersByKey[key]?[0], '2');
+  });
+
+  test('清除发言人标签并在相邻片段重算显示边界', () async {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    c.rememberTranscript(
+      path,
+      '说话人 1：甲\n说话人 1：乙',
+      segments: [
+        segment('甲', 0, speaker: '1'),
+        segment('乙', 10, speaker: '1'),
+      ],
+    );
+
+    await c.setSegmentSpeaker(path, 0, '2');
+    var shown = c.transcriptSegmentsForPath(path);
+    expect(shown[0].speaker, '2');
+    expect(shown[0].speakerChanged, isTrue);
+    expect(shown[1].speaker, '1');
+    expect(shown[1].speakerChanged, isTrue);
+
+    await c.setSegmentSpeaker(path, 0, '');
+    shown = c.transcriptSegmentsForPath(path);
+    expect(shown[0].speaker, isNull);
+    expect(shown[0].speakerChanged, isFalse);
+    expect(shown[1].speaker, '1');
+    expect(shown[1].speakerChanged, isTrue);
+  });
+
+  test('人工改字后旧译文失效，重转写与手改一致时清掉旧待采用稿', () async {
+    const reference = RecordingReference(fileId: 128100, path: path);
+    await TranscriptStore.save(
+      byPath: const {path: '原始正文'},
+      byFileId: const {},
+      aliasesByPath: const {},
+      aliasesByFileId: const {},
+      metadata: const {
+        key: TranscriptMetadata(provider: SttProvider.qwen, revision: 1),
+      },
+      translations: const {
+        key: RecordingTranslation(
+          text: 'Old translation',
+          sourceLanguage: 'zh',
+          targetLanguage: 'en',
+          provider: SttProvider.qwen,
+          sourceRevision: 1,
+        ),
+      },
+    );
+    final c = RecorderController(loadPersistedState: true);
+    addTearDown(c.dispose);
+    await c.settleTopicNoteWork();
+    expect(c.recordingView(reference).translation, isNotNull);
+
+    await c.saveManualTranscript(path, '人工正文');
+    expect(c.recordingView(reference).translation, isNull);
+
+    c.rememberTranscript(path, '另一版转写');
+    expect(c.incomingTranscriptForPath(path), '另一版转写');
+    c.rememberTranscript(path, '人工正文');
+    expect(c.hasPendingTranscript(path), isFalse);
   });
 
   testWidgets('保存失败保留编辑草稿，成功后关闭并保存校订', (tester) async {
