@@ -1013,10 +1013,12 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
             if (notification.depth == 0 &&
                 (widget.live || widget.activeSegment != null) &&
                 _scroll.hasClients) {
+              // Live text can resume following when the reader reaches the
+              // end, but timed playback only follows after an explicit tap.
               final following =
-                  notification.direction == ScrollDirection.forward
-                  ? false
-                  : _scroll.position.extentAfter < 96;
+                  widget.live &&
+                  notification.direction != ScrollDirection.forward &&
+                  _scroll.position.extentAfter < 96;
               if (_following != following) {
                 setState(() => _following = following);
               }

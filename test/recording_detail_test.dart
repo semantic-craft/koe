@@ -1260,6 +1260,44 @@ void main() {
     expect(find.text('回到播放位置'), findsNothing);
   });
 
+  testWidgets('scrolling timed text to the end does not resume following', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final segments = List.generate(
+      60,
+      (index) => TranscriptSegment(
+        text: '第 $index 段，这是一句足够长的转写内容，用来形成可滚动的正文。',
+        start: Duration(seconds: index * 10),
+        end: Duration(seconds: index * 10 + 8),
+      ),
+    );
+    final c = _RecordingController();
+    c.views[reference.key] = RecordingViewData(
+      reference: reference,
+      title: '长录音',
+      path: '/tmp/100.wav',
+      text: segments.map((segment) => segment.text).join(),
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    c.setPlayback('/tmp/100.wav', const Duration(seconds: 300));
+    await tester.pumpAndSettle();
+
+    await tester.drag(
+      find.byKey(const ValueKey('source-reader')),
+      const Offset(0, -20000),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('回到播放位置'), findsOneWidget);
+
+    c.setPlayback('/tmp/100.wav', const Duration(seconds: 410));
+    await tester.pumpAndSettle();
+    expect(find.text('回到播放位置'), findsOneWidget);
+  });
+
   testWidgets(
     'untrusted timings never turn transcript text into seek targets',
     (tester) async {
