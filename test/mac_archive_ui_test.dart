@@ -370,6 +370,8 @@ void main() {
 
     final gate = Completer<void>();
     pair.archive.restoreGate = gate;
+    await tester.ensureVisible(find.byKey(const ValueKey('restore-from-mac')));
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('restore-from-mac')));
     await tester.pump();
     expect(

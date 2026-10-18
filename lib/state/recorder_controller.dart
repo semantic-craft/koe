@@ -35,6 +35,7 @@ import '../ble/ble_file_pull.dart';
 import '../ble/realtime_stream.dart';
 import '../crypto/device_crypto.dart';
 import '../platform/background_sync_service.dart';
+import '../platform/place_capture.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
@@ -517,6 +518,7 @@ class RecorderController extends ChangeNotifier {
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    PlaceCapture? placeCapture,
     MinutesDocumentStore? minutesStore,
     TranscriptPersister? transcriptPersister,
     PlaybackHistoryStore? playbackHistoryStore,
@@ -539,6 +541,7 @@ class RecorderController extends ChangeNotifier {
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
        _libraryDirectoryOverride = libraryDirectory,
+       _placeCapture = placeCapture ?? const DevicePlaceCapture(),
        // Keep the injection seam public while the field stays private.
        // ignore: prefer_initializing_formals
        _transcriptPersister = transcriptPersister,
@@ -779,6 +782,7 @@ class RecorderController extends ChangeNotifier {
   late final MinutesDocumentStore minutes;
   late final Future<void> _minutesLoaded;
   final Directory? _libraryDirectoryOverride;
+  final PlaceCapture _placeCapture;
   late final PlaybackHistoryStore playbackHistory;
   late final Future<void> _playbackHistoryLoaded;
   late final RecordingBookmarkStore bookmarks;
@@ -5352,6 +5356,73 @@ class RecorderController extends ChangeNotifier {
 
   RecordingAsset? recordingAssetForPath(String path) =>
       library.assetForPath(path);
+
+  /// Adds or corrects a place label from the user. A manual label always wins
+  /// over a later automatic capture.
+  Future<void> setRecordingPlace(String path, String label) async {
+    await _libraryLoaded;
+    final trimmed = label.trim();
+    if (trimmed.isEmpty) throw ArgumentError('地点不能为空');
+    final id = fileIdFromPath(path);
+    final asset =
+        library.assetForPath(path) ??
+        RecordingAsset(
+          path: path,
+          displayName: _placeDisplayName(path),
+          source: RecordingSource.device,
+          recordedAt: _recordedAtFromFileId(id),
+          importedAt: _localFileTimestamp(path) ?? DateTime.now(),
+        );
+    await library.upsert(
+      asset.copyWith(
+        place: RecordingPlace(
+          label: trimmed,
+          source: RecordingPlaceSource.manual,
+          capturedAt: DateTime.now(),
+        ),
+      ),
+    );
+    notifyListeners();
+  }
+
+  String _placeDisplayName(String path) {
+    final label = ExportCatalog.editableLabelFromPath(path).trim();
+    return label.isEmpty ? p.basename(path) : label;
+  }
+
+  /// Removes the place note without touching the original audio.
+  Future<void> clearRecordingPlace(String path) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    if (asset == null) throw StateError('找不到这条资料');
+    await library.upsert(asset.copyWith(clearPlace: true));
+    notifyListeners();
+  }
+
+  /// Best-effort coarse place for a phone recording.
+  ///
+  /// Imported files and device recordings never receive the import/retrieval
+  /// location: their recording place stays unknown. A denied permission or a
+  /// capture failure simply leaves the place blank.
+  Future<void> attachAutomaticPlace(String path) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    if (asset == null || asset.source != RecordingSource.phone) return;
+    if (asset.place?.source == RecordingPlaceSource.manual) return;
+    final captured = await _placeCapture.capture();
+    if (captured == null || _disposed) return;
+    final current = library.assetForPath(path);
+    if (current == null ||
+        current.place?.source == RecordingPlaceSource.manual) {
+      return;
+    }
+    try {
+      await library.upsert(current.copyWith(place: captured));
+      notifyListeners();
+    } catch (_) {
+      // Location is optional; the recording remains saved and readable.
+    }
+  }
 
   void _onArchiveChanged() {
     if (!_disposed) notifyListeners();

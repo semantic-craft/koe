@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -120,6 +121,133 @@ void main() {
           : <File>[],
       isEmpty,
     );
+  });
+
+  test('较早写入失败不会回滚更新的资料信息', () async {
+    final store = _FailOnceLibraryStore(file: storeFile);
+    final old = RecordingAsset(
+      path: '/tmp/place-race.wav',
+      displayName: '旧标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    final newer = old.copyWith(displayName: '新标题');
+
+    final first = store.upsert(old);
+    final second = store.upsert(newer);
+    await expectLater(first, throwsA(isA<StateError>()));
+    await second;
+
+    expect(store.assetForPath(old.path)?.displayName, '新标题');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(old.path)?.displayName, '新标题');
+  });
+
+  test('连续写入失败回到最后一次成功保存的值', () async {
+    final store = _FailNextLibraryStore(file: storeFile);
+    final seed = RecordingAsset(
+      path: '/tmp/place-chain.wav',
+      displayName: '已保存标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(seed);
+
+    store.failures = 2;
+    final first = store.upsert(seed.copyWith(displayName: '未保存一'));
+    final second = store.upsert(seed.copyWith(displayName: '未保存二'));
+    await expectLater(first, throwsA(isA<StateError>()));
+    await expectLater(second, throwsA(isA<StateError>()));
+
+    expect(store.assetForPath(seed.path)?.displayName, '已保存标题');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(seed.path)?.displayName, '已保存标题');
+  });
+
+  test('失败写入不会被另一路径的后续保存带盘', () async {
+    final store = _FailNextLibraryStore(file: storeFile);
+    final firstAsset = RecordingAsset(
+      path: '/tmp/place-a.wav',
+      displayName: 'A 已保存',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    final secondAsset = RecordingAsset(
+      path: '/tmp/place-b.wav',
+      displayName: 'B 已保存',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(firstAsset);
+    await store.upsert(secondAsset);
+
+    store.failures = 1;
+    final failed = store.upsert(firstAsset.copyWith(displayName: 'A 未保存'));
+    final succeeding = store.upsert(secondAsset.copyWith(displayName: 'B 新标题'));
+    await expectLater(failed, throwsA(isA<StateError>()));
+    await succeeding;
+
+    expect(store.assetForPath(firstAsset.path)?.displayName, 'A 已保存');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(firstAsset.path)?.displayName, 'A 已保存');
+    expect(reloaded.assetForPath(secondAsset.path)?.displayName, 'B 新标题');
+  });
+
+  test('删除不会被排队中的旧写入复活', () async {
+    final store = _BlockingLibraryStore(file: storeFile);
+    final asset = RecordingAsset(
+      path: '/tmp/place-remove.wav',
+      displayName: '已保存标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(asset);
+
+    final gate = Completer<void>();
+    store.gate = gate;
+    final pending = store.upsert(asset.copyWith(displayName: '排队标题'));
+    final removal = store.remove(asset.path);
+    gate.complete();
+    await pending;
+    await removal;
+
+    expect(store.assetForPath(asset.path), isNull);
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(asset.path), isNull);
+  });
+
+  test('改名不会被排队中的旧写入重新建出旧路径', () async {
+    final store = _BlockingLibraryStore(file: storeFile);
+    final asset = RecordingAsset(
+      path: '/tmp/place-rename.wav',
+      displayName: '旧标题',
+      source: RecordingSource.localImport,
+      importedAt: DateTime(2026, 10, 18, 9),
+    );
+    await store.upsert(asset);
+    const renamedPath = '/tmp/place-renamed.wav';
+
+    final gate = Completer<void>();
+    store.gate = gate;
+    final pending = store.upsert(asset.copyWith(displayName: '排队标题'));
+    final renamed = store.rename(
+      asset.path,
+      asset.copyWith(path: renamedPath, displayName: '新标题'),
+    );
+    gate.complete();
+    await pending;
+    await renamed;
+
+    expect(store.assetForPath(asset.path), isNull);
+    expect(store.assetForPath(renamedPath)?.displayName, '新标题');
+    final reloaded = RecordingLibraryStore(file: storeFile);
+    await reloaded.load();
+    expect(reloaded.assetForPath(asset.path), isNull);
+    expect(reloaded.assetForPath(renamedPath)?.displayName, '新标题');
   });
 
   test('移到回收站保留原件与转写，重启后可恢复', () async {
@@ -526,4 +654,50 @@ void main() {
     expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+class _FailOnceLibraryStore extends RecordingLibraryStore {
+  _FailOnceLibraryStore({super.file});
+
+  int _saves = 0;
+
+  @override
+  Future<void> save({bool strict = true}) {
+    _saves++;
+    if (_saves == 1) {
+      return Future<void>.error(StateError('first save failed'));
+    }
+    return super.save(strict: strict);
+  }
+}
+
+class _FailNextLibraryStore extends RecordingLibraryStore {
+  _FailNextLibraryStore({super.file});
+
+  int failures = 0;
+
+  @override
+  Future<void> save({bool strict = true}) {
+    if (failures > 0) {
+      failures--;
+      return Future<void>.error(StateError('save failed'));
+    }
+    return super.save(strict: strict);
+  }
+}
+
+class _BlockingLibraryStore extends RecordingLibraryStore {
+  _BlockingLibraryStore({super.file});
+
+  Completer<void>? gate;
+
+  @override
+  Future<void> save({bool strict = true}) async {
+    final current = gate;
+    if (current != null) {
+      gate = null;
+      await current.future;
+    }
+    return super.save(strict: strict);
+  }
 }
