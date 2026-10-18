@@ -5224,6 +5224,9 @@ class RecorderController extends ChangeNotifier {
         if (playingPath == path || (id != null && playingFileId == id)) {
           await stopPlayback();
         }
+        // Detach minutes before removing anything so a failed pairing write
+        // never leaves documents pointing at irreversibly deleted audio.
+        await minutes.clearAudioForPaths(logicalPaths);
         for (final candidate in logicalPaths) {
           final file = File(candidate);
           if (await file.exists()) await file.delete();
@@ -5232,7 +5235,6 @@ class RecorderController extends ChangeNotifier {
           speakerAliasesByPath.remove(candidate);
           _localDurations.remove(candidate);
         }
-        await minutes.clearAudioForPaths(logicalPaths);
         if (id != null) {
           transcriptsByFileId.remove(id);
           speakerAliasesByFileId.remove(id);
@@ -5300,7 +5302,16 @@ class RecorderController extends ChangeNotifier {
     if (_fileJobs.jobs[_recordingKey(path: path)]?.recoverable == true) {
       throw StateError('转写完成后再重命名');
     }
-    await source.rename(targetPath);
+    // Persist the pairing first; if it fails nothing else has moved yet.
+    await minutes.updateAudioPath(path, targetPath);
+    try {
+      await source.rename(targetPath);
+    } catch (_) {
+      try {
+        await minutes.updateAudioPath(targetPath, path);
+      } catch (_) {}
+      rethrow;
+    }
     final oldKey = _recordingKey(path: path);
     final newKey = _recordingKey(path: targetPath);
     await _fileJobs.rename(oldKey, newKey, targetPath);
@@ -5331,7 +5342,6 @@ class RecorderController extends ChangeNotifier {
         strict: false,
       );
     }
-    await minutes.updateAudioPath(path, targetPath);
     final renamedPaths = exportedPaths
         .map((item) => item == path ? targetPath : item)
         .toList();

@@ -290,10 +290,7 @@ void main() {
     final mp3 = File('${temp.path}/original.mp3');
     await mp3.writeAsBytes([1, 2, 3, 4]);
 
-    final attached = await c.attachMinutesAudio(
-      imported.document.id,
-      mp3.path,
-    );
+    final attached = await c.attachMinutesAudio(imported.document.id, mp3.path);
 
     expect(attached.ok, isTrue);
     expect(attached.document!.audioDuration, const Duration(seconds: 40));
@@ -317,6 +314,55 @@ void main() {
     final removed = await c.deleteLocalExports([renamed]);
     expect(removed.deleted, 1);
     expect(c.minutesDocuments.single.audioPath, isNull);
+  });
+
+  test('配对写入失败时删除不先删掉音频', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long-delete', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    final result = await c.deleteLocalExports([path]);
+
+    expect(result.deleted, 0);
+    expect(result.failed, hasLength(1));
+    expect(await File(path).exists(), isTrue);
+    expect(c.minutesDocuments.single.audioPath, path);
+  });
+
+  test('配对写入失败时改名不移动文件', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long-rename', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    await expectLater(
+      c.renameLocalExport(path, '改名后的录音'),
+      throwsA(isA<FileSystemException>()),
+    );
+
+    expect(await File(path).exists(), isTrue);
+    expect(
+      temp.listSync().whereType<File>().where(
+        (file) => file.path.contains('改名后的录音'),
+      ),
+      isEmpty,
+    );
+    expect(c.minutesDocuments.single.audioPath, path);
   });
 }
 
