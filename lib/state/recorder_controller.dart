@@ -503,6 +503,7 @@ class RecorderController extends ChangeNotifier {
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
     PlaybackHistoryStore? playbackHistoryStore,
+    AudioPlayer? player,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -514,7 +515,8 @@ class RecorderController extends ChangeNotifier {
        _qwenStt = qwenSpeech ?? QwenSttService(),
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
-       _libraryDirectoryOverride = libraryDirectory {
+       _libraryDirectoryOverride = libraryDirectory,
+       _player = player ?? AudioPlayer() {
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
     playbackHistory =
@@ -3486,7 +3488,7 @@ class RecorderController extends ChangeNotifier {
   late final WifiExportService _wifi;
   late final RealtimeBleStream _realtime;
   late final BleFilePull _blePull;
-  final AudioPlayer _player = AudioPlayer();
+  final AudioPlayer _player;
   final List<StreamSubscription> _subs = [];
 
   /// Auto BLE realtime transfer while device is recording (no SoftAP).
@@ -5619,16 +5621,22 @@ class RecorderController extends ChangeNotifier {
     final point = position;
     await _playbackHistoryLoaded;
     if (_disposed) return;
-    await playbackHistory.record(
-      PlaybackPoint(
-        path: path,
-        fileId: fileId,
-        position: finished && total > Duration.zero ? total : point,
-        duration: total,
-        completed: finished,
-        updatedAt: DateTime.now(),
-      ),
-    );
+    try {
+      await playbackHistory.record(
+        PlaybackPoint(
+          path: path,
+          fileId: fileId,
+          position: finished && total > Duration.zero ? total : point,
+          duration: total,
+          completed: finished,
+          updatedAt: DateTime.now(),
+        ),
+      );
+    } catch (_) {
+      if (_disposed) return;
+      statusMessage = '回听进度保存失败，重启后可能丢失';
+      notifyListeners();
+    }
   }
 
   String _playbackTitle(String path) {
@@ -5719,7 +5727,7 @@ class RecorderController extends ChangeNotifier {
           await Future<void>.delayed(const Duration(milliseconds: 80));
           duration = _player.duration ?? Duration.zero;
         }
-        final resume = resolvePlaybackStart(
+        final resume = _resolvePlaybackStart(
           path: path,
           fileId: logicalId,
           total: duration,
@@ -5780,8 +5788,7 @@ class RecorderController extends ChangeNotifier {
 
   int? _fileIdFromPath(String path) => ExportCatalog.fileIdFromPath(path);
 
-  @visibleForTesting
-  Duration resolvePlaybackStart({
+  Duration _resolvePlaybackStart({
     required String path,
     required Duration total,
     int? fileId,
@@ -5874,10 +5881,16 @@ class RecorderController extends ChangeNotifier {
     playbackSpeed = speed;
     try {
       await _player.setSpeed(speed);
-      await _playbackHistoryLoaded;
-      await playbackHistory.setSpeed(speed);
     } catch (e) {
       errorMessage = '无法更改播放速度，请重试';
+      notifyListeners();
+      return;
+    }
+    try {
+      await _playbackHistoryLoaded;
+      await playbackHistory.setSpeed(speed);
+    } catch (_) {
+      statusMessage = '倍速已更改，但无法保存到本机';
     }
     notifyListeners();
   }

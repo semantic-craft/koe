@@ -244,6 +244,7 @@ class PlaybackHistoryStore {
     } catch (error) {
       saveError = '回听进度保存失败';
       debugPrint('[PlaybackHistory] save failed: $error');
+      rethrow;
     }
   }
 }

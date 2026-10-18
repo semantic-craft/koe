@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:koe/main.dart';
 import 'package:koe/state/recorder_controller.dart';
 
@@ -106,42 +108,58 @@ void main() {
     );
   });
 
-  test('显式指定 0:00 时不恢复断点，只有未指定起点才续听', () async {
+  test('显式 0:00 从头播放，播放 Future 未结束也会保存断点', () async {
+    final audio = File('${temp.path}/178.wav');
+    await audio.writeAsBytes(List<int>.filled(100, 0));
     final store = PlaybackHistoryStore(inMemory: true);
-    await store.record(point('/tmp/100.wav', fileId: 100, seconds: 30));
+    await store.load();
+    await store.record(point(audio.path, fileId: 178, seconds: 30));
+    final player = _FakePlayer();
     final controller = RecorderController(
       loadPersistedState: false,
       playbackHistoryStore: store,
+      player: player,
     );
     addTearDown(controller.dispose);
     await controller.waitForPlaybackHistory();
 
+    await controller
+        .playExported(audio.path, fileId: 178, startAt: Duration.zero)
+        .timeout(const Duration(seconds: 1));
+
+    expect(controller.position, Duration.zero);
+    expect(player.seeks, isEmpty, reason: '显式 0:00 不能跳到旧断点 0:30');
+
+    player.emitPosition(const Duration(seconds: 10));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(
-      controller.resolvePlaybackStart(
-        path: '/tmp/100.wav',
-        fileId: 100,
-        total: const Duration(seconds: 120),
-        requested: Duration.zero,
-      ),
-      Duration.zero,
-    );
-    expect(
-      controller.resolvePlaybackStart(
-        path: '/tmp/100.wav',
-        fileId: 100,
-        total: const Duration(seconds: 120),
-      ),
-      const Duration(seconds: 30),
-    );
-    expect(
-      controller.resolvePlaybackStart(
-        path: '/tmp/100.wav',
-        fileId: 100,
-        total: const Duration(seconds: 10),
-        requested: const Duration(seconds: 30),
-      ),
+      store.forRecording(fileId: 178, path: audio.path)?.position,
       const Duration(seconds: 10),
+      reason: '播放 Future 尚未结束时也必须保存位置',
     );
+  });
+
+  test('回听进度写入失败会抛出并向用户提示，不静默成功', () async {
+    final blocker = File('${temp.path}/blocked');
+    await blocker.writeAsString('not a directory');
+    final store = PlaybackHistoryStore(
+      file: File('${blocker.path}/history.json'),
+    );
+    await expectLater(
+      store.record(point('/tmp/178.wav', fileId: 178)),
+      throwsA(isA<FileSystemException>()),
+    );
+    final controller = RecorderController(
+      loadPersistedState: false,
+      playbackHistoryStore: store,
+      player: _FakePlayer(),
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForPlaybackHistory();
+
+    await controller.setPlaybackSpeed(1.5);
+
+    expect(controller.statusMessage, contains('无法保存'));
   });
 
   testWidgets('重启后今日页从持久化记录显示继续回听并调用真实播放入口', (tester) async {
@@ -191,5 +209,68 @@ class _PlaybackProbeController extends RecorderController {
   }) async {
     played.add(path);
     notifyListeners();
+  }
+}
+
+class _FakePlayer extends AudioPlayer {
+  final _states = StreamController<PlayerState>.broadcast();
+  final _positions = StreamController<Duration>.broadcast();
+  final _durations = StreamController<Duration?>.broadcast();
+  final _processing = StreamController<ProcessingState>.broadcast();
+  final _play = Completer<void>();
+  final seeks = <Duration?>[];
+
+  @override
+  Stream<PlayerState> get playerStateStream => _states.stream;
+
+  @override
+  Stream<Duration> get positionStream => _positions.stream;
+
+  @override
+  Stream<Duration?> get durationStream => _durations.stream;
+
+  @override
+  Stream<ProcessingState> get processingStateStream => _processing.stream;
+
+  @override
+  ProcessingState get processingState => ProcessingState.ready;
+
+  @override
+  Duration? get duration => const Duration(seconds: 120);
+
+  @override
+  Future<Duration?> setAudioSource(
+    AudioSource audioSource, {
+    bool preload = true,
+    int? initialIndex,
+    Duration? initialPosition,
+  }) async => const Duration(seconds: 120);
+
+  @override
+  Future<void> setSpeed(double speed) async {}
+
+  @override
+  Future<void> seek(Duration? position, {int? index}) async {
+    seeks.add(position);
+  }
+
+  @override
+  Future<void> play() => _play.future;
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  void emitPosition(Duration value) => _positions.add(value);
+
+  @override
+  Future<void> dispose() async {
+    await _states.close();
+    await _positions.close();
+    await _durations.close();
+    await _processing.close();
+    await super.dispose();
   }
 }
