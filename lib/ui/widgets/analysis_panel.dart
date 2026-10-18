@@ -1,10 +1,13 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../../state/recorder_controller.dart';
 import '../../state/recording_analysis.dart';
+import '../transcript_jump.dart';
 import 'minutes_panel.dart';
 
 class AnalysisPanel extends StatefulWidget {
@@ -12,9 +15,11 @@ class AnalysisPanel extends StatefulWidget {
     super.key,
     required this.controller,
     required this.reference,
+    this.onOpenSource,
   });
   final RecorderController controller;
   final RecordingReference reference;
+  final ValueChanged<TranscriptJump>? onOpenSource;
   @override
   State<AnalysisPanel> createState() => _AnalysisPanelState();
 }
@@ -76,9 +81,8 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
       }
     }
   }
@@ -107,9 +111,8 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('导出失败，请重试')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('导出失败，请重试')));
       }
     }
   }
@@ -150,6 +153,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                   builder: (_) => MinutesPanel(
                     controller: widget.controller,
                     reference: widget.reference,
+                    onOpenSource: widget.onOpenSource,
                   ),
                 ),
               ),

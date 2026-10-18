@@ -1,11 +1,15 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../../state/meeting_minutes.dart';
 import '../../state/recording_analysis.dart';
 import '../../state/recorder_controller.dart';
+import '../../state/transcript_chapters.dart';
+import '../transcript_jump.dart';
 import 'minutes_mind_map.dart';
 
 class MinutesPanel extends StatefulWidget {
@@ -13,9 +17,11 @@ class MinutesPanel extends StatefulWidget {
     super.key,
     required this.controller,
     required this.reference,
+    this.onOpenSource,
   });
   final RecorderController controller;
   final RecordingReference reference;
+  final ValueChanged<TranscriptJump>? onOpenSource;
   @override
   State<MinutesPanel> createState() => _MinutesPanelState();
 }
@@ -103,6 +109,119 @@ class _MinutesPanelState extends State<MinutesPanel> {
 
   void message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+  void _openSource(
+    int sourceIndex,
+    String source,
+    TranscriptSourceMatch? match,
+  ) {
+    if (match != null && widget.onOpenSource != null) {
+      widget.onOpenSource!(
+        TranscriptJump(
+          segmentIndex: match.segmentIndex,
+          start: match.start,
+          snippet: match.snippet,
+        ),
+      );
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text('原文 [S${sourceIndex + 1}]'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (match == null)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text('无法可靠定位到原声；以下是模型使用的原文片段。'),
+                ),
+              SelectableText(source),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _compare(AnalysisResult current, AnalysisResult previous) async {
+    String readable(AnalysisResult result) {
+      try {
+        return MeetingMinutes.parse(
+          result.text,
+          result.sources.length,
+        ).export(result);
+      } catch (_) {
+        return result.text;
+      }
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('与上一版对比'),
+        content: SizedBox(
+          width: 720,
+          height: 480,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '上一版${previous.editedAt == null ? '（生成）' : '（人工编辑）'}',
+                      style: Theme.of(c).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: SelectableText(readable(previous)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const VerticalDivider(width: 24),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '当前版本${current.editedAt == null ? '（生成）' : '（人工编辑）'}',
+                      style: Theme.of(c).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: SelectableText(readable(current)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> edit(MeetingMinutes minutes, AnalysisResult result) async {
     final title = TextEditingController(text: minutes.title);
@@ -238,6 +357,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
     builder: (context, _) {
       final view = widget.controller.recordingView(widget.reference);
       final result = manager.results[key];
+      final previous = manager.previousResults[key];
       MeetingMinutes? minutes;
       if (result != null) {
         try {
@@ -246,6 +366,30 @@ class _MinutesPanelState extends State<MinutesPanel> {
       }
       final busy = manager.busy(key);
       final running = manager.running(key);
+      final sourceMatches = <int, TranscriptSourceMatch>{};
+      if (result != null && view.originalPresent && view.path != null) {
+        final aliases = widget.controller.speakerAliasesForPath(view.path!);
+        final timed =
+            transcriptSegmentsMatchText(
+              view.segments,
+              view.text,
+              aliases: aliases,
+            ) &&
+            transcriptSegmentsLocatable(
+              view.segments,
+              duration: widget.controller.localDurationForPath(view.path!),
+            );
+        if (timed) {
+          for (final match in matchTranscriptSources(
+            sources: result.sources,
+            segments: view.segments,
+            aliases: aliases,
+            duration: widget.controller.localDurationForPath(view.path!),
+          )) {
+            sourceMatches[match.sourceIndex] = match;
+          }
+        }
+      }
       return Scaffold(
         appBar: AppBar(
           title: const Text('结构化纪要'),
@@ -332,6 +476,11 @@ class _MinutesPanelState extends State<MinutesPanel> {
                       onPressed: () => export(minutes!, result),
                       child: const Text('导出纪要'),
                     ),
+                    if (previous != null)
+                      TextButton(
+                        onPressed: () => _compare(result, previous),
+                        child: const Text('对比上一版'),
+                      ),
                   ],
                 ),
                 for (final section in minutes.sections) ...[
@@ -354,30 +503,31 @@ class _MinutesPanelState extends State<MinutesPanel> {
                             if (item.owner != null)
                               Text('负责人：${item.owner} · 期限：${item.due}'),
                             Wrap(
+                              spacing: 4,
                               children: [
-                                for (final id in item.sources)
+                                for (final sourceIndex
+                                    in item.sources
+                                        .map(
+                                          (id) =>
+                                              int.parse(id.substring(1)) - 1,
+                                        )
+                                        .where(
+                                          (index) =>
+                                              index >= 0 &&
+                                              index < result.sources.length,
+                                        ))
                                   TextButton(
-                                    onPressed: () => showDialog<void>(
-                                      context: context,
-                                      builder: (c) => AlertDialog(
-                                        title: Text('原文 [$id]'),
-                                        content: SingleChildScrollView(
-                                          child: SelectableText(
-                                            result.sources[int.parse(
-                                                  id.substring(1),
-                                                ) -
-                                                1],
-                                          ),
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () => Navigator.pop(c),
-                                            child: const Text('关闭'),
-                                          ),
-                                        ],
-                                      ),
+                                    onPressed: () => _openSource(
+                                      sourceIndex,
+                                      result.sources[sourceIndex],
+                                      sourceMatches[sourceIndex],
                                     ),
-                                    child: Text('原文 [$id]'),
+                                    child: Text(
+                                      sourceMatches[sourceIndex] == null
+                                          ? '出处 [S${sourceIndex + 1}]'
+                                          : '出处 [S${sourceIndex + 1}] '
+                                                '${_time(sourceMatches[sourceIndex]!.start)}',
+                                    ),
                                   ),
                               ],
                             ),
@@ -393,4 +543,15 @@ class _MinutesPanelState extends State<MinutesPanel> {
       );
     },
   );
+}
+
+String _time(Duration value) {
+  final total = value.inSeconds.clamp(0, 359999);
+  final hours = total ~/ 3600;
+  final minutes = (total % 3600) ~/ 60;
+  final seconds = total % 60;
+  String two(int part) => part.toString().padLeft(2, '0');
+  return hours > 0
+      ? '$hours:${two(minutes)}:${two(seconds)}'
+      : '${two(minutes)}:${two(seconds)}';
 }

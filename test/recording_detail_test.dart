@@ -1214,6 +1214,133 @@ void main() {
     ]);
   });
 
+  testWidgets('chapter list starts playback at a timed segment', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+        speaker: '1',
+        speakerChanged: true,
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 12),
+        end: Duration(seconds: 20),
+        speaker: '1',
+      ),
+      TranscriptSegment(
+        text: '第三句',
+        start: Duration(seconds: 25),
+        end: Duration(seconds: 31),
+        speaker: '2',
+        speakerChanged: true,
+      ),
+    ];
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '访谈录音',
+      path: '/tmp/100.wav',
+      text: '第一句第二句第三句',
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('章节'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chapter-2')), findsOneWidget);
+    expect(find.text('第三句'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('chapter-2')));
+    await tester.pumpAndSettle();
+
+    expect(c.playbackRequests.last, (
+      '/tmp/100.wav',
+      const Duration(seconds: 25),
+      100,
+    ));
+    expect(find.byKey(const ValueKey('highlighted-segment-2')), findsOneWidget);
+  });
+
+  testWidgets('chapter action is hidden without reliable timecodes', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '没有时码',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: [
+        TranscriptSegment(
+          text: '第一句',
+          start: Duration.zero,
+          end: Duration(seconds: 5),
+        ),
+        TranscriptSegment(
+          text: '第二句',
+          start: Duration.zero,
+          end: Duration(seconds: 9),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    expect(find.text('章节'), findsNothing);
+  });
+
+  testWidgets('focused source opening restores and starts its position', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 12),
+        end: Duration(seconds: 20),
+      ),
+    ];
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '来源回跳',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(
+      tester,
+      c,
+      const RecordingDetailScreen(
+        reference: reference,
+        initialHighlightedParagraph: 1,
+        initialPlaybackStart: Duration(seconds: 12),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(c.playbackRequests, [
+      ('/tmp/100.wav', const Duration(seconds: 12), 100),
+    ]);
+    expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
+  });
+
   testWidgets('sentence highlight follows audio and yields to manual scroll', (
     tester,
   ) async {

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/state/meeting_minutes.dart';
 import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/transcript_jump.dart';
 import 'package:koe/ui/widgets/minutes_panel.dart';
 
 String fixture({String source = 'S1'}) => jsonEncode({
@@ -50,8 +51,9 @@ class Service implements AnalysisService {
 }
 
 class Controller extends RecorderController {
-  Controller(RecordingAnalysis manager)
+  Controller(RecordingAnalysis manager, {this.segments = const []})
     : super(loadPersistedState: false, analysisController: manager);
+  final List<TranscriptSegment> segments;
   @override
   String get analysisApiKey => 'test-key';
   @override
@@ -62,7 +64,10 @@ class Controller extends RecorderController {
     title: '短录音',
     text: '讨论发布，请核对发布。',
     path: '/1.wav',
+    segments: segments,
   );
+  @override
+  Duration? localDurationForPath(String path) => const Duration(seconds: 30);
 }
 
 Future<void> generate(RecordingAnalysis manager) => manager.run(
@@ -192,4 +197,136 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+
+  testWidgets('source links reopen the timed transcript at their segment', (
+    tester,
+  ) async {
+    final manager = RecordingAnalysis(inMemory: true, service: Service());
+    final controller = Controller(
+      manager,
+      segments: const [
+        TranscriptSegment(
+          text: '讨论发布，',
+          start: Duration.zero,
+          end: Duration(seconds: 4),
+        ),
+        TranscriptSegment(
+          text: '请核对发布。',
+          start: Duration(seconds: 8),
+          end: Duration(seconds: 12),
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    TranscriptJump? jump;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MinutesPanel(
+          controller: controller,
+          reference: const RecordingReference(fileId: 1),
+          onOpenSource: (value) => jump = value,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('生成纪要'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('出处 [S1] 00:00'), findsWidgets);
+    await tester.tap(find.text('出处 [S1] 00:00').first);
+    await tester.pumpAndSettle();
+    expect(jump, isNotNull);
+    expect(jump!.segmentIndex, 0);
+    expect(jump!.start, Duration.zero);
+    expect(find.text('项目会议'), findsOneWidget);
+  });
+
+  testWidgets('unlocatable sources show text without inventing playback', (
+    tester,
+  ) async {
+    final manager = RecordingAnalysis(inMemory: true, service: Service());
+    final controller = Controller(manager);
+    addTearDown(controller.dispose);
+    TranscriptJump? jump;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MinutesPanel(
+          controller: controller,
+          reference: const RecordingReference(fileId: 1),
+          onOpenSource: (value) => jump = value,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('生成纪要'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('出处 [S1]').first);
+    await tester.pumpAndSettle();
+    expect(jump, isNull);
+    expect(find.text('无法可靠定位到原声；以下是模型使用的原文片段。'), findsOneWidget);
+    expect(find.text('讨论发布，请核对发布。'), findsWidgets);
+  });
+
+  testWidgets('regeneration keeps the previous minutes for comparison', (
+    tester,
+  ) async {
+    final service = Service();
+    final manager = RecordingAnalysis(inMemory: true, service: service);
+    final controller = Controller(manager);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MinutesPanel(
+          controller: controller,
+          reference: const RecordingReference(fileId: 1),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('生成纪要'));
+    await tester.pumpAndSettle();
+
+    service.response = fixture().replaceAll('项目会议', '新稿会议');
+    await tester.tap(find.text('重新生成纪要'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重新生成'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('新稿会议'), findsOneWidget);
+    expect(manager.previousResults['file:1/minutes'], isNotNull);
+    await tester.tap(find.text('对比上一版'));
+    await tester.pumpAndSettle();
+    expect(find.text('与上一版对比'), findsOneWidget);
+    expect(find.textContaining('项目会议'), findsWidgets);
+    expect(find.textContaining('新稿会议'), findsWidgets);
+  });
+
+  test(
+    'previous minutes survive a restart without reviving paid requests',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('minutes-history');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/analysis.json');
+      final service = Service();
+      final manager = RecordingAnalysis(file: file, service: service);
+      addTearDown(manager.dispose);
+      await generate(manager);
+      service.response = fixture().replaceAll('项目会议', '新稿会议');
+      await generate(manager);
+      expect(manager.previousResults['file:1/minutes'], isNotNull);
+
+      final loaded = RecordingAnalysis(file: file, service: Service());
+      addTearDown(loaded.dispose);
+      await loaded.load();
+      expect(
+        MeetingMinutes.parse(
+          loaded.previousResults['file:1/minutes']!.text,
+          1,
+        ).title,
+        '项目会议',
+      );
+      expect(loaded.results['file:1/minutes'], isNotNull);
+    },
+  );
 }
