@@ -4944,6 +4944,7 @@ class RecorderController extends ChangeNotifier {
         await library.upsert(
           existing.copyWith(archived: false, clearDeletedAt: true),
         );
+        analysis.resumeRecording(_recordingKey(path: existing.path));
       }
       _registerExportedPaths([...exportedPaths, existing.path]);
       statusMessage = restored ? '这条音频在回收站中，已恢复' : '这条音频已在资料库中';

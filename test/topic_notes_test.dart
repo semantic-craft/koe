@@ -496,6 +496,52 @@ void main() {
     expect(analysis.busy(TopicNote.slotKey(key)), isFalse);
   });
 
+  test('重复导入恢复回收站资料后可继续生成主题笔记', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-restore-');
+    addTearDown(() => dir.delete(recursive: true));
+    final source = File('${dir.path}/source.wav')
+      ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
+    var calls = 0;
+    final service = _CallbackAnalysisService((_, _, _) async {
+      calls++;
+      return _generalNoteJson('恢复后的笔记');
+    });
+    final topicStore = TopicStore(inMemory: true);
+    await topicStore.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: true,
+      topicStore: topicStore,
+      analysisController: analysis,
+      topicRecommendationService: _CallbackAnalysisService(
+        (_, _, _) async => '{}',
+      ),
+      libraryStore: RecordingLibraryStore(inMemory: true),
+      libraryDirectory: Directory('${dir.path}/imports'),
+      fileJobJournal: FileJobJournal(inMemory: true),
+    );
+    addTearDown(controller.dispose);
+    await controller.setQwenConfig(const EngineConfig(apiKey: 'sk-test'));
+    final imported = await controller.importLocalAudio(source.path);
+    final topic = await topicStore.createTopic(
+      title: '恢复测试',
+      kind: TopicKind.general,
+    );
+    final ref = RecordingReference(path: imported.path);
+    final key = controller.analysisKey(ref);
+    await topicStore.moveRecording(key, topic.id);
+    await controller.trashLocalExports([imported.path]);
+
+    final restored = await controller.importLocalAudio(source.path);
+    expect(restored.duplicate, isTrue);
+    controller.rememberTranscript(restored.path, '恢复后的转写正文。');
+    await controller.settleTopicNoteWork();
+
+    expect(calls, 1);
+    expect(analysis.results[TopicNote.slotKey(key)], isNotNull);
+  });
+
   test('重复完成通知、重启恢复、长转写分段断点续跑与音频变更后不重复计费', () async {
     final dir = await Directory.systemTemp.createTemp('koe-topic-notes-dedup-');
     addTearDown(() => dir.delete(recursive: true));
