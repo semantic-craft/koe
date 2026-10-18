@@ -271,6 +271,7 @@ void main() {
       await settleUntil(() => reopened.jobs.values.single.stage == 'complete');
       expect(resumed.calls, 0, reason: 'saved result is reused');
       expect(r.transcriptForPath(audio.path), '通义文本 task-1');
+      await settleUntil(() => r.statusMessage == '转写已保存');
       expect(r.statusMessage, '转写已保存');
     });
 

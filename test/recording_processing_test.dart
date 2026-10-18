@@ -471,6 +471,7 @@ void main() async {
       expect(service.calls, 0);
       expect(restoredJournal.jobs.values.single.taskId, 'existing-paid-task');
       await audio.writeAsBytes([1, 2, 3]);
+      await settleUntil(() => !restored.fileProcessingBusy);
       await restored.transcribeLocalFile(audio.path);
       expect(service.calls, 1);
       expect(service.seenTaskId, 'existing-paid-task');
@@ -541,7 +542,11 @@ void main() async {
       c.handleRealtimeStateForTesting(
         RealtimeStreamState(fileId: 301, path: file.path, bytesReceived: 320),
       );
-      await settleUntil(() => qwen.calls == 1);
+      await settleUntil(
+        () =>
+            c.recordingView(RecordingReference(path: file.path)).text == '通义文本',
+      );
+      expect(qwen.calls, 1);
       expect(qwen.seenKey, 'qwen-key');
       expect(qwen.seenLanguage, 'zh');
       expect(qwen.seenModel, QwenSttService.defaultModel);
@@ -587,7 +592,11 @@ void main() async {
       c.handleRealtimeStateForTesting(
         RealtimeStreamState(fileId: 401, path: file.path, bytesReceived: 320),
       );
-      await settleUntil(() => doubao.calls == 1);
+      await settleUntil(
+        () =>
+            c.recordingView(RecordingReference(path: file.path)).text == '豆包文本',
+      );
+      expect(doubao.calls, 1);
       expect(doubao.seenKey, 'doubao-key');
       expect(doubao.seenLanguage, 'zh');
       expect(doubao.seenModel, DoubaoSttService.defaultModel);
@@ -947,11 +956,19 @@ void main() async {
 
     // Take 1 on Qwen.
     await recordTake(501, qwenFile);
-    await settleUntil(() => qwen.calls == 1);
+    await settleUntil(
+      () =>
+          c.recordingView(RecordingReference(path: qwenFile.path)).text ==
+          '通义文本',
+    );
     // Take 2 on Doubao after switching the default engine.
     c.setSpeechProvider(SttProvider.doubao);
     await recordTake(502, doubaoFile);
-    await settleUntil(() => doubao.calls == 1);
+    await settleUntil(
+      () =>
+          c.recordingView(RecordingReference(path: doubaoFile.path)).text ==
+          '豆包文本',
+    );
 
     // Switching the default engine again changes neither stored result.
     c.setSpeechProvider(SttProvider.apple);

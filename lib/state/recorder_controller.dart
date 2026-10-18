@@ -1603,6 +1603,9 @@ class RecorderController extends ChangeNotifier {
     final recordedAt =
         asset?.recordedAt ??
         (id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000));
+    // Device recordings have no library entry until they are renamed or
+    // archived; their retrieval time is still the local file timestamp.
+    final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
     return RecordingViewData(
       reference: RecordingReference(
         sessionId: ref.sessionId,
@@ -1640,7 +1643,7 @@ class RecorderController extends ChangeNotifier {
       progress: _fileJobKey == key ? fileTranscriptionProgress : null,
       source: asset?.source ?? RecordingSource.device,
       recordedAt: recordedAt,
-      importedAt: asset?.importedAt,
+      importedAt: importedAt,
       originalPath: asset?.originalPath,
       originalPresent: path == null ? false : File(path).existsSync(),
       originalComplete:
@@ -1654,6 +1657,15 @@ class RecorderController extends ChangeNotifier {
     final date = DateTime.fromMillisecondsSinceEpoch(id * 1000);
     String pad(int value) => value.toString().padLeft(2, '0');
     return '${date.year}/${pad(date.month)}/${pad(date.day)} ${pad(date.hour)}:${pad(date.minute)}';
+  }
+
+  DateTime? _localFileTimestamp(String? path) {
+    if (path == null) return null;
+    try {
+      return File(path).lastModifiedSync();
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _isRecordingAudioLocked(int? id, String? path) {
@@ -4867,7 +4879,6 @@ class RecorderController extends ChangeNotifier {
         }
       }
       _registerExportedPaths([...exportedPaths, ...paths]);
-      await _rememberDeviceAssets(paths);
       final wavIds = paths
           .where((path) => path.endsWith('.wav'))
           .map(ExportCatalog.fileIdFromPath)
@@ -4877,38 +4888,6 @@ class RecorderController extends ChangeNotifier {
       if (notify) notifyListeners();
     } catch (error) {
       debugPrint('[Exports] load local catalog failed: $error');
-    }
-  }
-
-  Future<void> _rememberDeviceAssets(Iterable<String> paths) async {
-    await _libraryLoaded;
-    final missing = <RecordingAsset>[];
-    for (final path in paths) {
-      if (library.assetForPath(path) != null) continue;
-      final id = ExportCatalog.fileIdFromPath(path);
-      if (id == null) continue;
-      final file = File(path);
-      String? hash;
-      try {
-        hash = await audioVersion(path);
-      } catch (_) {}
-      missing.add(
-        RecordingAsset(
-          path: path,
-          displayName: ExportCatalog.editableLabelFromPath(path).isNotEmpty
-              ? ExportCatalog.editableLabelFromPath(path)
-              : _recordingDateTitle(id),
-          source: RecordingSource.device,
-          recordedAt: DateTime.fromMillisecondsSinceEpoch(id * 1000),
-          importedAt: await file.lastModified(),
-          contentHash: hash,
-          originalComplete: !_incompleteRetrievalIds.contains(id),
-        ),
-      );
-    }
-    if (missing.isNotEmpty) {
-      await library.upsertAll(missing, strict: false);
-      if (!_disposed) notifyListeners();
     }
   }
 
