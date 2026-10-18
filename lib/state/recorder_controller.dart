@@ -2251,10 +2251,18 @@ class RecorderController extends ChangeNotifier {
     final previousVisible = previousManual ?? provider ?? '';
     final visibleChanged = normalized != previousVisible;
     final previousTranslation = _recordingTranslations[key];
+    final adoptsProvider = provider == normalized && visibleChanged;
+    final previousAliasesPath = speakerAliasesByPath[path];
+    final fileId = fileIdFromPath(path);
+    final previousAliasesId = fileId == null
+        ? null
+        : speakerAliasesByFileId[fileId];
     if (visibleChanged) _recordingTranslations.remove(key);
     if (provider == normalized) {
       _manualTranscripts.remove(key);
       _incomingTranscripts.remove(key);
+      // The provider version may reuse speaker ids for different people.
+      if (adoptsProvider) _clearSpeakerAliases(path);
     } else {
       _manualTranscripts[key] = normalized;
     }
@@ -2276,10 +2284,21 @@ class RecorderController extends ChangeNotifier {
       if (visibleChanged && previousTranslation != null) {
         _recordingTranslations[key] = previousTranslation;
       }
+      if (adoptsProvider) {
+        if (previousAliasesPath != null) {
+          speakerAliasesByPath[path] = previousAliasesPath;
+        }
+        if (fileId != null && previousAliasesId != null) {
+          speakerAliasesByFileId[fileId] = previousAliasesId;
+        }
+      }
       notifyListeners();
       rethrow;
     }
     if (topicsEnabled && !_isRecordingAudioLocked(fileIdFromPath(path), path)) {
+      if (adoptsProvider) {
+        unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
+      }
       // Recommendations follow the visible text, but never overwrite notes.
       unawaited(_scheduleTopicAssist(key, normalized));
     }
@@ -2329,6 +2348,13 @@ class RecorderController extends ChangeNotifier {
       }
       notifyListeners();
       rethrow;
+    }
+    final visible = normalizeSttText(incoming);
+    if (topicsEnabled &&
+        visible.isNotEmpty &&
+        !_isRecordingAudioLocked(id, path)) {
+      unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
+      unawaited(_scheduleTopicAssist(key, visible));
     }
   }
 
@@ -2450,7 +2476,7 @@ class RecorderController extends ChangeNotifier {
     String value,
   ) async {
     final id = speakerId.trim();
-    final raw = _rawTranscriptForPath(path);
+    final raw = canonicalTranscriptForPath(path);
     final known =
         raw != null &&
         extractTranscriptSpeakers(

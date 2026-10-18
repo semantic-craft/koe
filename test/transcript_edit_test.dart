@@ -367,6 +367,65 @@ void main() {
     expect(c.speakerAliasesByFileId[128100], {'1': '张三'});
   });
 
+  test('手工保存为服务版本时清掉旧发言人姓名', () async {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    c.rememberTranscript(path, '原始正文', segments: [segment('原始正文', 0)]);
+    c.speakerAliasesByPath[path] = {'1': '张三'};
+    c.speakerAliasesByFileId[128100] = {'1': '张三'};
+    await c.saveManualTranscript(path, '人工正文');
+    c.rememberTranscript(path, '新服务版本');
+
+    await c.saveManualTranscript(path, '新服务版本');
+
+    expect(c.speakerAliasesByPath[path], isNull);
+    expect(c.speakerAliasesByFileId[128100], isNull);
+  });
+
+  test('手工保存为服务版本失败时恢复旧发言人姓名', () async {
+    var failStrictSave = false;
+    final c = RecorderController(
+      loadPersistedState: false,
+      transcriptPersister: ({bool strict = false}) async {
+        if (strict && failStrictSave) throw StateError('磁盘不可写');
+      },
+    );
+    addTearDown(c.dispose);
+    c.rememberTranscript(path, '原始正文', segments: [segment('原始正文', 0)]);
+    c.speakerAliasesByPath[path] = {'1': '张三'};
+    c.speakerAliasesByFileId[128100] = {'1': '张三'};
+    await c.saveManualTranscript(path, '人工正文');
+    c.rememberTranscript(path, '新服务版本');
+
+    failStrictSave = true;
+    await expectLater(
+      c.saveManualTranscript(path, '新服务版本'),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(c.speakerAliasesByPath[path], {'1': '张三'});
+    expect(c.speakerAliasesByFileId[128100], {'1': '张三'});
+    expect(c.manualTranscriptForPath(path), '人工正文');
+  });
+
+  test('人工正文引入的发言人也能改名', () async {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    c.rememberTranscript(path, '原始正文', segments: [segment('原始正文', 0)]);
+    await c.saveManualTranscript(path, '说话人 3：人工补充');
+    expect(
+      c.transcriptSpeakersForPath(path).map((speaker) => speaker.id),
+      contains('3'),
+    );
+
+    await c.renameTranscriptSpeaker(path, '3', '李四');
+
+    expect(
+      c.transcriptSpeakersForPath(path).map((speaker) => speaker.displayLabel),
+      contains('李四'),
+    );
+  });
+
   testWidgets('保存失败保留编辑草稿，成功后关闭并保存校订', (tester) async {
     const reference = RecordingReference(fileId: 128100, path: path);
     final c = _EditProbeController();
