@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -12,11 +13,12 @@ import '../../ai/stt_types.dart';
 import '../../state/export_catalog.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
-import '../widgets/inline_player.dart';
-import '../widgets/analysis_panel.dart';
-import '../widgets/topic_note_panel.dart';
 import '../recording_navigation.dart';
+import '../transcript_layout.dart';
+import '../widgets/analysis_panel.dart';
+import '../widgets/inline_player.dart';
 import '../widgets/scan_sheet.dart';
+import '../widgets/topic_note_panel.dart';
 import 'files_screen.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
@@ -408,8 +410,26 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final translated = recording.translation?.text ?? '';
     final hasTranslation = translated.isNotEmpty;
     final source = normalizeSttText(recording.text);
+    final path = recording.path;
+    final rawSegments = recording.segments;
+    final segmentText = transcriptSegmentsMatchText(rawSegments, source)
+        ? rawSegments
+        : const <TranscriptSegment>[];
+    final segmentsLocatable =
+        recording.originalPresent &&
+        transcriptSegmentsLocatable(
+          segmentText,
+          duration: path == null ? null : c.localDurationForPath(path),
+        );
+    final activeSegment =
+        !_showTranslation && segmentsLocatable && c.playingPath == path
+        ? _segmentAt(segmentText, c.position)
+        : null;
     final text = _showTranslation && hasTranslation ? translated : source;
-    final fileReady = recording.path != null && !recording.audioLocked;
+    final fileReady =
+        recording.path != null &&
+        recording.originalPresent &&
+        !recording.audioLocked;
     final canProcess = fileReady && !c.fileProcessingBusy && !c.isLiveSession;
     final canOfferTranslation =
         source.isNotEmpty && !recording.live && c.appleCapabilities.supported;
@@ -637,6 +657,16 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
               ),
             ),
           ),
+          if (!_showTranslation &&
+              source.isNotEmpty &&
+              !recording.live &&
+              !segmentsLocatable)
+            _TranscriptTimingNotice(
+              unreliable: rawSegments.isNotEmpty,
+              originalPresent: recording.originalPresent,
+              hasLocalPath: path != null,
+              hasFileId: recording.reference.fileId != null,
+            ),
           Expanded(
             child: IndexedStack(
               index: _showTranslation && hasTranslation ? 1 : 0,
@@ -653,6 +683,25 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     highlightedParagraph: translation
                         ? null
                         : _highlightedParagraph,
+                    segments: translation || !segmentsLocatable
+                        ? const []
+                        : segmentText,
+                    activeSegment: translation ? null : activeSegment,
+                    speakerAliases: translation
+                        ? const {}
+                        : recording.path == null
+                        ? const {}
+                        : c.speakerAliasesForPath(recording.path!),
+                    onSegmentTap: translation || !segmentsLocatable
+                        ? null
+                        : (index) {
+                            final target = segmentText[index].start;
+                            c.playFrom(
+                              recording.path!,
+                              target,
+                              fileId: recording.reference.fileId,
+                            );
+                          },
                     header: !hasReaderHeader || (translation && !hasTranslation)
                         ? null
                         : Column(
@@ -753,6 +802,91 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   }
 }
 
+int? _segmentAt(List<TranscriptSegment> segments, Duration position) {
+  int? found;
+  for (var index = 0; index < segments.length; index++) {
+    if (position < segments[index].start) break;
+    found = index;
+  }
+  return found;
+}
+
+String _formatSegmentTime(Duration value) {
+  final total = value.inSeconds.clamp(0, 359999);
+  final hours = total ~/ 3600;
+  final minutes = (total % 3600) ~/ 60;
+  final seconds = total % 60;
+  String two(int part) => part.toString().padLeft(2, '0');
+  return hours > 0
+      ? '$hours:${two(minutes)}:${two(seconds)}'
+      : '${two(minutes)}:${two(seconds)}';
+}
+
+/// Explains why sentence replay is unavailable while keeping whole-file
+/// playback and the transcript itself usable.
+class _TranscriptTimingNotice extends StatelessWidget {
+  const _TranscriptTimingNotice({
+    required this.unreliable,
+    required this.originalPresent,
+    required this.hasLocalPath,
+    required this.hasFileId,
+  });
+
+  final bool unreliable;
+  final bool originalPresent;
+  final bool hasLocalPath;
+  final bool hasFileId;
+
+  @override
+  Widget build(BuildContext context) {
+    final String message;
+    final String key;
+    if (!originalPresent) {
+      if (hasLocalPath) {
+        key = 'missing-file-timing-notice';
+        message = '原录音文件已不在本机，无法回听；转写文字仍可阅读。';
+      } else if (hasFileId) {
+        key = 'undownloaded-timing-notice';
+        message = '录音尚未下载到本机；取回原音频后可回听，转写文字仍可阅读。';
+      } else {
+        key = 'original-missing-timing-notice';
+        message = '原录音不可用，无法回听；转写文字仍可阅读。';
+      }
+    } else if (unreliable) {
+      key = 'unreliable-timing-notice';
+      message = '这条转写的时码缺失或越界，已关闭逐句定位；整段录音仍可播放。';
+    } else {
+      key = 'missing-timing-notice';
+      message = '这条转写没有可靠的逐句时码，无法精确定位句段；整段录音仍可播放。';
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+      child: Row(
+        key: ValueKey(key),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            size: 16,
+            color: AppColors.textMuted,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Paragraphs are created lazily, with independent source/translation positions.
 class RecordingTextReader extends StatefulWidget {
   const RecordingTextReader({
@@ -761,12 +895,20 @@ class RecordingTextReader extends StatefulWidget {
     required this.live,
     this.visible = true,
     this.highlightedParagraph,
+    this.segments = const [],
+    this.activeSegment,
+    this.speakerAliases = const {},
+    this.onSegmentTap,
     this.header,
   });
   final String text;
   final bool live;
   final bool visible;
   final int? highlightedParagraph;
+  final List<TranscriptSegment> segments;
+  final int? activeSegment;
+  final Map<String, String> speakerAliases;
+  final ValueChanged<int>? onSegmentTap;
   final Widget? header;
 
   @override
@@ -781,45 +923,37 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
   @override
   void initState() {
     super.initState();
-    _paragraphs = _split(widget.text);
+    _paragraphs = _contentTexts();
     _follow();
   }
 
-  static List<String> _split(String text) {
-    final paragraphs = <String>[];
-    for (final line in text.split(RegExp(r'\n+'))) {
-      if (line.trim().isEmpty) continue;
-      // Some services emit an entire recording as one line. Bound paragraph
-      // size too, so a long unpunctuated transcript still lays out lazily.
-      var runes = line.runes.toList();
-      while (runes.length > 1200) {
-        var end = 1200;
-        for (var index = 1199; index > 800; index--) {
-          if (' 。！？.!?'.runes.contains(runes[index])) {
-            end = index + 1;
-            break;
-          }
-        }
-        paragraphs.add(String.fromCharCodes(runes.take(end)));
-        runes = runes.sublist(end);
-      }
-      if (runes.isNotEmpty) paragraphs.add(String.fromCharCodes(runes));
+  bool get _usesSegments => widget.segments.isNotEmpty;
+
+  List<String> _contentTexts() {
+    if (_usesSegments) {
+      return [
+        for (final segment in widget.segments)
+          transcriptSegmentLabel(segment, aliases: widget.speakerAliases),
+      ];
     }
-    return paragraphs;
+    return splitTranscriptDisplayParagraphs(widget.text);
   }
 
   @override
   void didUpdateWidget(RecordingTextReader oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) {
-      _paragraphs = _split(widget.text);
+    if (oldWidget.text != widget.text ||
+        !listEquals(oldWidget.segments, widget.segments) ||
+        !mapEquals(oldWidget.speakerAliases, widget.speakerAliases)) {
+      _paragraphs = _contentTexts();
       _follow();
     } else if (!oldWidget.visible && widget.visible) {
       _follow();
     }
-    if (widget.highlightedParagraph != oldWidget.highlightedParagraph &&
-        widget.highlightedParagraph != null) {
-      _scrollToParagraph(widget.highlightedParagraph!);
+    final target = widget.activeSegment ?? widget.highlightedParagraph;
+    final previous = oldWidget.activeSegment ?? oldWidget.highlightedParagraph;
+    if (target != previous && target != null && _following) {
+      _scrollToParagraph(target);
     }
   }
 
@@ -839,7 +973,14 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
   }
 
   void _follow([int remaining = 6]) {
-    if (!widget.live || !widget.visible || !_following) return;
+    final active = widget.activeSegment ?? widget.highlightedParagraph;
+    if ((!widget.live && active == null) || !widget.visible || !_following) {
+      return;
+    }
+    if (!widget.live && active != null) {
+      _scrollToParagraph(active);
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients || !_following || !widget.visible) {
         return;
@@ -864,7 +1005,9 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
       children: [
         NotificationListener<UserScrollNotification>(
           onNotification: (notification) {
-            if (notification.depth == 0 && widget.live && _scroll.hasClients) {
+            if (notification.depth == 0 &&
+                (widget.live || widget.activeSegment != null) &&
+                _scroll.hasClients) {
               final following =
                   notification.direction == ScrollDirection.forward
                   ? false
@@ -908,13 +1051,20 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                       index - (widget.header == null ? 0 : 1);
                                   final highlighted =
                                       paragraphIndex ==
-                                      widget.highlightedParagraph;
-                                  return Container(
+                                          widget.highlightedParagraph ||
+                                      paragraphIndex == widget.activeSegment;
+                                  final prefix = _usesSegments
+                                      ? 'segment'
+                                      : 'paragraph';
+                                  final segment = _usesSegments
+                                      ? widget.segments[paragraphIndex]
+                                      : null;
+                                  final content = Container(
                                     key: highlighted
                                         ? ValueKey(
-                                            'highlighted-paragraph-$paragraphIndex',
+                                            'highlighted-$prefix-$paragraphIndex',
                                           )
-                                        : ValueKey('paragraph-$paragraphIndex'),
+                                        : ValueKey('$prefix-$paragraphIndex'),
                                     padding: highlighted
                                         ? const EdgeInsets.symmetric(
                                             horizontal: 12,
@@ -929,13 +1079,53 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                             ),
                                           )
                                         : null,
-                                    child: Text(
-                                      _paragraphs[paragraphIndex],
-                                      style: const TextStyle(
-                                        fontSize: 17,
-                                        height: 1.85,
-                                        color: AppColors.textPrimary,
-                                      ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (segment != null)
+                                          Text(
+                                            _formatSegmentTime(segment.start),
+                                            key: ValueKey(
+                                              'segment-time-$paragraphIndex',
+                                            ),
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: AppColors.accent,
+                                              fontFeatures: [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                          ),
+                                        if (segment != null)
+                                          const SizedBox(height: 2),
+                                        Text(
+                                          _paragraphs[paragraphIndex],
+                                          style: const TextStyle(
+                                            fontSize: 17,
+                                            height: 1.85,
+                                            color: AppColors.textPrimary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  final tap = widget.onSegmentTap;
+                                  if (!_usesSegments || tap == null) {
+                                    return content;
+                                  }
+                                  return Semantics(
+                                    button: true,
+                                    label:
+                                        '从 ${_formatSegmentTime(widget.segments[paragraphIndex].start)} 回听第 ${paragraphIndex + 1} 段',
+                                    child: InkWell(
+                                      onTap: () {
+                                        setState(() => _following = true);
+                                        tap(paragraphIndex);
+                                      },
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: content,
                                     ),
                                   );
                                 },
@@ -948,7 +1138,7 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
             ),
           ),
         ),
-        if (widget.live && !_following)
+        if ((widget.live || widget.activeSegment != null) && !_following)
           Positioned(
             right: 20,
             bottom: 16,
@@ -956,10 +1146,15 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
               key: const ValueKey('follow-latest'),
               onPressed: () {
                 setState(() => _following = true);
-                _follow();
+                final active = widget.activeSegment;
+                if (active != null) {
+                  _scrollToParagraph(active);
+                } else {
+                  _follow();
+                }
               },
               icon: const Icon(Icons.arrow_downward_rounded),
-              label: const Text('最新内容'),
+              label: Text(widget.activeSegment == null ? '最新内容' : '回到播放位置'),
             ),
           ),
       ],

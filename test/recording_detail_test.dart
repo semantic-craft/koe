@@ -1154,6 +1154,248 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('tapping a sentence plays the original from its timecode', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+        speaker: '1',
+        speakerChanged: true,
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 12),
+        end: Duration(seconds: 20),
+        speaker: '1',
+      ),
+      TranscriptSegment(
+        text: '第三句',
+        start: Duration(seconds: 25),
+        end: Duration(seconds: 31),
+        speaker: '2',
+        speakerChanged: true,
+      ),
+    ];
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '访谈录音',
+      path: '/tmp/100.wav',
+      text: '第一句第二句第三句',
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    expect(find.text('说话人 1：第一句'), findsOneWidget);
+    expect(find.text('说话人 2：第三句'), findsOneWidget);
+    String segmentTime(int index) =>
+        tester.widget<Text>(find.byKey(ValueKey('segment-time-$index'))).data!;
+    expect(segmentTime(0), '00:00');
+    expect(segmentTime(1), '00:12');
+    expect(segmentTime(2), '00:25');
+
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('segment-1')),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    expect(c.playbackRequests, [
+      ('/tmp/100.wav', const Duration(seconds: 12), 100),
+    ]);
+  });
+
+  testWidgets('sentence highlight follows audio and yields to manual scroll', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final segments = List.generate(
+      60,
+      (index) => TranscriptSegment(
+        text: '第 $index 段，这是一句足够长的转写内容，用来形成可滚动的正文。',
+        start: Duration(seconds: index * 10),
+        end: Duration(seconds: index * 10 + 8),
+      ),
+    );
+    final c = _RecordingController();
+    c.views[reference.key] = RecordingViewData(
+      reference: reference,
+      title: '长录音',
+      path: '/tmp/100.wav',
+      text: segments.map((segment) => segment.text).join(),
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    c.setPlayback('/tmp/100.wav', const Duration(seconds: 300));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('highlighted-segment-30')),
+      findsOneWidget,
+    );
+
+    await tester.drag(
+      find.byKey(const ValueKey('source-reader')),
+      const Offset(0, 260),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('回到播放位置'), findsOneWidget);
+
+    c.setPlayback('/tmp/100.wav', const Duration(seconds: 410));
+    await tester.pumpAndSettle();
+    expect(find.text('回到播放位置'), findsOneWidget);
+
+    await tester.tap(find.text('回到播放位置'));
+    await tester.pumpAndSettle();
+    expect(find.text('回到播放位置'), findsNothing);
+  });
+
+  testWidgets(
+    'untrusted timings never turn transcript text into seek targets',
+    (tester) async {
+      const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+      final c = _RecordingController();
+      c.views[reference.key] = const RecordingViewData(
+        reference: reference,
+        title: '校订后的录音',
+        path: '/tmp/100.wav',
+        text: '校订后的正文',
+        segments: [
+          TranscriptSegment(
+            text: '旧的第一句',
+            start: Duration.zero,
+            end: Duration(seconds: 5),
+          ),
+          TranscriptSegment(
+            text: '旧的第二句',
+            start: Duration(seconds: 8),
+            end: Duration(seconds: 12),
+          ),
+        ],
+      );
+      addTearDown(c.dispose);
+      await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+      expect(find.text('校订后的正文'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('unreliable-timing-notice')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('segment-0')), findsNothing);
+
+      c.views[reference.key] = const RecordingViewData(
+        reference: reference,
+        title: '没有时码的录音',
+        path: '/tmp/100.wav',
+        text: '没有时码的正文',
+      );
+      c.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('missing-timing-notice')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('segment-0')), findsNothing);
+
+      c.views[reference.key] = const RecordingViewData(
+        reference: reference,
+        title: '时码重复的录音',
+        path: '/tmp/100.wav',
+        text: '重复时码的正文',
+        segments: [
+          TranscriptSegment(
+            text: '重复时码的',
+            start: Duration.zero,
+            end: Duration(seconds: 4),
+          ),
+          TranscriptSegment(
+            text: '正文',
+            start: Duration.zero,
+            end: Duration(seconds: 8),
+          ),
+        ],
+      );
+      c.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('unreliable-timing-notice')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('segment-0')), findsNothing);
+    },
+  );
+
+  testWidgets('missing original explains why replay is unavailable', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100);
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '只有文字',
+      text: '原件不在本机的转写。',
+      originalPresent: false,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    expect(find.text('只有文字'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('undownloaded-timing-notice')),
+      findsOneWidget,
+    );
+    expect(find.text('录音尚未下载到本机；取回原音频后可回听，转写文字仍可阅读。'), findsOneWidget);
+    expect(find.byType(InlinePlayer), findsNothing);
+
+    c.views[reference.key] = const RecordingViewData(
+      reference: RecordingReference(fileId: 100, path: '/tmp/100.wav'),
+      title: '文件丢失',
+      path: '/tmp/100.wav',
+      text: '原件文件已经丢失的转写。',
+      originalPresent: false,
+    );
+    c.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('missing-file-timing-notice')),
+      findsOneWidget,
+    );
+    expect(find.text('原录音文件已不在本机，无法回听；转写文字仍可阅读。'), findsOneWidget);
+    expect(find.byType(InlinePlayer), findsNothing);
+  });
+
+  testWidgets('completed playback shows the end state and offers replay', (
+    tester,
+  ) async {
+    final c = _RecordingController()
+      ..playingPath = '/tmp/100.wav'
+      ..duration = const Duration(seconds: 30)
+      ..position = const Duration(seconds: 30)
+      ..playbackCompleted = true;
+    addTearDown(c.dispose);
+    await pump(
+      tester,
+      c,
+      const Scaffold(body: InlinePlayer(path: '/tmp/100.wav')),
+    );
+
+    expect(find.byKey(const ValueKey('playback-completed')), findsOneWidget);
+    expect(find.byIcon(Icons.replay_rounded), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.replay_rounded));
+    await tester.pumpAndSettle();
+    expect(c.togglePlaybackCalls, 1);
+    expect(find.byKey(const ValueKey('playback-completed')), findsNothing);
+  });
 }
 
 class _RecordingController extends RecorderController {
@@ -1167,6 +1409,8 @@ class _RecordingController extends RecorderController {
   final languageStatusResolvers =
       <String, Future<SpeechResourceStatus> Function()>{};
   final transcriptionRequests = <(String?, bool)>[];
+  final playbackRequests = <(String, Duration, int?)>[];
+  int togglePlaybackCalls = 0;
   String? transcriptionFailure;
   (String, String)? preparedTranslation;
   RecordingReference? _current;
@@ -1197,6 +1441,42 @@ class _RecordingController extends RecorderController {
   @override
   RecordingViewData recordingView(RecordingReference reference) =>
       views[reference.key] ?? super.recordingView(reference);
+
+  @override
+  Future<void> playFrom(String path, Duration start, {int? fileId}) async {
+    playbackRequests.add((path, start, fileId));
+  }
+
+  @override
+  Future<void> playExported(
+    String path, {
+    int? fileId,
+    Duration startAt = Duration.zero,
+  }) async {
+    if (playingPath == path) return togglePlayPause();
+    playingPath = path;
+    playingFileId = fileId;
+    position = startAt;
+    playbackCompleted = false;
+    isPlaying = true;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> togglePlayPause() async {
+    togglePlaybackCalls++;
+    playbackCompleted = false;
+    position = Duration.zero;
+    notifyListeners();
+  }
+
+  void setPlayback(String path, Duration at, {bool completed = false}) {
+    playingPath = path;
+    position = at;
+    playbackCompleted = completed;
+    notifyListeners();
+  }
+
   void setProcessingBusy(bool value) {
     processingBusy = value;
     notifyListeners();

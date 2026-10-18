@@ -28,6 +28,7 @@ class InlinePlayer extends StatelessWidget {
     final c = context.watch<RecorderController>();
     final loaded = c.playingPath == path;
     final playing = loaded && c.isPlaying;
+    final completed = loaded && c.playbackCompleted;
     final canSeek =
         loaded && (c.duration > Duration.zero || c.position > Duration.zero);
     final progress = loaded ? c.playbackProgress : 0.0;
@@ -78,6 +79,17 @@ class InlinePlayer extends StatelessWidget {
             ),
             if (loaded) ...[
               const Spacer(),
+              if (completed)
+                const Text(
+                  '已结束',
+                  key: ValueKey('playback-completed'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              if (completed) const Spacer(),
               Text(
                 _fmt(c.duration),
                 style: const TextStyle(
@@ -131,10 +143,10 @@ class InlinePlayer extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _IconBtn(
-                  icon: Icons.replay_5_rounded,
-                  tooltip: '后退 5 秒',
+                  icon: Icons.fast_rewind_rounded,
+                  tooltip: '后退 15 秒',
                   onPressed: canSeek
-                      ? () => c.seekBy(const Duration(seconds: -5))
+                      ? () => c.seekBy(const Duration(seconds: -15))
                       : null,
                 ),
                 const SizedBox(width: 2),
@@ -148,10 +160,16 @@ class InlinePlayer extends StatelessWidget {
                       width: 52,
                       height: 52,
                       child: Tooltip(
-                        message: playing ? '暂停播放' : '播放录音',
+                        message: playing
+                            ? '暂停播放'
+                            : completed
+                            ? '重新播放'
+                            : '播放录音',
                         child: Icon(
                           playing
                               ? Icons.pause_rounded
+                              : completed
+                              ? Icons.replay_rounded
                               : Icons.play_arrow_rounded,
                           color: Colors.white,
                           size: 28,
@@ -162,10 +180,10 @@ class InlinePlayer extends StatelessWidget {
                 ),
                 const SizedBox(width: 2),
                 _IconBtn(
-                  icon: Icons.forward_5_rounded,
-                  tooltip: '前进 5 秒',
+                  icon: Icons.fast_forward_rounded,
+                  tooltip: '前进 15 秒',
                   onPressed: canSeek
-                      ? () => c.seekBy(const Duration(seconds: 5))
+                      ? () => c.seekBy(const Duration(seconds: 15))
                       : null,
                 ),
               ],

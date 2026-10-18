@@ -43,6 +43,127 @@ class TranscriptMetadata {
   );
 }
 
+/// One provider-timed transcript segment.
+///
+/// Times are absolute offsets into the recording, not relative to the previous
+/// segment. A missing [end] still allows seeking to [start]; a missing [start]
+/// makes the segment unlocatable.
+class TranscriptSegment {
+  const TranscriptSegment({
+    required this.text,
+    required this.start,
+    this.end,
+    this.speaker,
+    this.speakerChanged = false,
+  });
+
+  final String text;
+  final Duration start;
+  final Duration? end;
+
+  /// Provider-assigned speaker id, scoped to one recording.
+  final String? speaker;
+
+  /// Whether this segment starts a new speaker run and should show the label.
+  final bool speakerChanged;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TranscriptSegment &&
+          other.text == text &&
+          other.start == start &&
+          other.end == end &&
+          other.speaker == speaker &&
+          other.speakerChanged == speakerChanged;
+
+  @override
+  int get hashCode => Object.hash(text, start, end, speaker, speakerChanged);
+
+  Map<String, Object?> toJson() => {
+    'text': text,
+    'startMs': start.inMilliseconds,
+    'endMs': end?.inMilliseconds,
+    if (speaker != null) 'speaker': speaker,
+    if (speakerChanged) 'speakerChanged': true,
+  };
+
+  static TranscriptSegment? decode(Object? value) {
+    if (value is! Map) return null;
+    final text = value['text'];
+    final startMs = value['startMs'];
+    final endMs = value['endMs'];
+    final speaker = value['speaker'];
+    if (text is! String || text.trim().isEmpty || startMs is! int) return null;
+    if (startMs < 0) return null;
+    if (endMs != null && (endMs is! int || endMs < startMs)) return null;
+    return TranscriptSegment(
+      text: text.trim(),
+      start: Duration(milliseconds: startMs),
+      end: endMs == null ? null : Duration(milliseconds: endMs as int),
+      speaker: speaker is String && speaker.trim().isNotEmpty
+          ? speaker.trim()
+          : null,
+      speakerChanged: value['speakerChanged'] == true,
+    );
+  }
+}
+
+/// A segment label ready for display, including an optional speaker alias.
+String transcriptSegmentLabel(
+  TranscriptSegment segment, {
+  Map<String, String> aliases = const {},
+}) {
+  final speaker = segment.speaker;
+  if (!segment.speakerChanged || speaker == null) return segment.text;
+  final alias = aliases[speaker]?.trim();
+  final label = alias == null || alias.isEmpty ? '说话人 $speaker' : alias;
+  return '$label：${segment.text}';
+}
+
+/// Whether provider times can be used to jump to a specific segment.
+///
+/// Requires at least two distinct starts: a single whole-file segment or an
+/// all-zero timecode list would always jump to the beginning, so the UI must
+/// offer whole-file playback instead of pretending it can locate a sentence.
+bool transcriptSegmentsLocatable(
+  List<TranscriptSegment> segments, {
+  Duration? duration,
+}) {
+  if (segments.length < 2) return false;
+  final starts = <int>{};
+  const tolerance = Duration(milliseconds: 1000);
+  for (final segment in segments) {
+    if (segment.start < Duration.zero) return false;
+    if (segment.end != null && segment.end! < segment.start) return false;
+    if (duration != null && duration > Duration.zero) {
+      if (segment.start > duration) return false;
+      if (segment.end != null && segment.end! > duration + tolerance) {
+        return false;
+      }
+    }
+    starts.add(segment.start.inMilliseconds);
+  }
+  return starts.length >= 2;
+}
+
+/// Detect stale segment data left over from a previous transcript revision.
+///
+/// Leading speaker labels are presentation only, so they are removed before
+/// comparing the concatenated segment text with the stored transcript.
+bool transcriptSegmentsMatchText(
+  List<TranscriptSegment> segments,
+  String transcript,
+) {
+  if (segments.isEmpty) return false;
+  String normalize(String value) => value
+      .replaceAll(RegExp(r'说话人\s+[^：\r\n]+：'), '')
+      .replaceAll(RegExp(r'\s+'), '')
+      .trim();
+  final fromSegments = normalize(segments.map((s) => s.text).join());
+  return fromSegments.isNotEmpty && fromSegments == normalize(transcript);
+}
+
 class RecordingTranslation {
   const RecordingTranslation({
     required this.text,
@@ -110,6 +231,7 @@ class RecordingViewData {
     this.originalPresent = true,
     this.originalComplete = true,
     this.archived = false,
+    this.segments = const [],
   });
 
   final RecordingReference reference;
@@ -135,4 +257,5 @@ class RecordingViewData {
   final bool originalPresent;
   final bool originalComplete;
   final bool archived;
+  final List<TranscriptSegment> segments;
 }

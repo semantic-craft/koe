@@ -127,12 +127,31 @@ class SttResult {
     this.durationSec,
     this.language,
     this.sourcePath,
+    this.segments = const [],
   });
 
   final String text;
   final double? durationSec;
   final String? language;
   final String? sourcePath;
+  final List<SttSegment> segments;
+}
+
+/// One provider-timed sentence returned with a batch transcription.
+class SttSegment {
+  const SttSegment({
+    required this.text,
+    required this.startMs,
+    this.endMs,
+    this.speaker,
+    this.speakerChanged = false,
+  });
+
+  final String text;
+  final int startMs;
+  final int? endMs;
+  final String? speaker;
+  final bool speakerChanged;
 }
 
 /// Live transcript event from a streaming STT session.
