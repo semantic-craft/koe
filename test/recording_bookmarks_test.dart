@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -415,6 +416,86 @@ void main() {
     expect(file.readAsStringSync(), '{坏掉的内容');
   });
 
+  String partlyBroken() => jsonEncode({
+    'version': 1,
+    'showMarkers': true,
+    'bookmarks': [
+      {
+        'id': 'ok',
+        'recordingKey': 'file:100',
+        'positionMs': 3000,
+        'note': '有效批注',
+        'createdAt': '2026-01-01T00:00:00.000',
+        'updatedAt': '2026-01-01T00:00:00.000',
+      },
+      {
+        'id': 'bad',
+        'recordingKey': 'file:100',
+        'positionMs': '坏',
+        'note': '坏条目里的批注',
+        'createdAt': '2026-01-01T00:00:00.000',
+        'updatedAt': '2026-01-01T00:00:00.000',
+      },
+    ],
+  });
+
+  testWidgets('个别书签条目损坏时另存原文件，后续修改不丢坏条目内容', (tester) async {
+    final file = File('${temp.path}/b.json')..writeAsStringSync(partlyBroken());
+    final c = await start(tester, () => RecordingBookmarkStore(file: file));
+    await show(tester, c..shown = ref, ref);
+
+    await openList(tester);
+    expect(
+      find.byKey(const ValueKey('bookmark-recovery-notice')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('已另存原文件'), findsOneWidget);
+    expect(find.textContaining('有效批注'), findsOneWidget);
+    await closeList(tester);
+
+    await addAt(tester, c, const Duration(seconds: 13), note: '新批注');
+
+    final backups = temp
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('b.json.unreadable'))
+        .toList();
+    expect(backups, hasLength(1));
+    expect(backups.single.readAsStringSync(), contains('坏条目里的批注'));
+    final reloaded = (await tester.runAsync(() async {
+      final store = RecordingBookmarkStore(file: file);
+      await store.load();
+      return store.forRecording('file:100').map((b) => b.note).toList();
+    }))!;
+    expect(reloaded, unorderedEquals(['有效批注', '新批注']));
+  });
+
+  testWidgets('个别书签条目损坏且无法另存时禁止写入，原文件保持不变', (tester) async {
+    final original = partlyBroken();
+    final file = File('${temp.path}/b.json')..writeAsStringSync(original);
+    final c = await start(tester, () => _NoBackupStore(file));
+    await show(tester, c..shown = ref, ref);
+
+    await openList(tester);
+    expect(find.textContaining('未能另存原文件'), findsOneWidget);
+    expect(find.textContaining('有效批注'), findsOneWidget);
+    await closeList(tester);
+
+    c.setPlayback(audio, const Duration(seconds: 13));
+    await tester.pump();
+    await tester.tap(find.byTooltip('为当前片段加书签'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await until(
+      tester,
+      () => find
+          .byKey(const ValueKey('bookmark-save-error'))
+          .evaluate()
+          .isNotEmpty,
+    );
+    expect(file.readAsStringSync(), original);
+  });
+
   testWidgets('其他录音不显示本录音书签，关闭标记显示不删除书签', (tester) async {
     final file = File('${temp.path}/bookmarks.json');
     final c = await start(tester, () => RecordingBookmarkStore(file: file));
@@ -697,6 +778,8 @@ class _NoBackupStore extends RecordingBookmarkStore {
   _NoBackupStore(File file) : super(file: file);
 
   @override
-  Future<void> backupUnreadable(File target) async =>
-      throw const FileSystemException('backup refused');
+  Future<void> backupUnreadable(
+    File target, {
+    bool keepOriginal = false,
+  }) async => throw const FileSystemException('backup refused');
 }

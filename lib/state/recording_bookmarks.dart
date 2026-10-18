@@ -313,6 +313,7 @@ class RecordingBookmarkStore {
   Future<void> load() async {
     if (inMemory) return;
     File? target;
+    var broken = 0;
     try {
       target = await _file();
       if (!await target.exists()) return;
@@ -321,11 +322,13 @@ class RecordingBookmarkStore {
       if (value is! Map || value['bookmarks'] is! List) {
         throw const FormatException('bookmarks');
       }
-      _items = [
-        for (final entry in value['bookmarks'] as List)
-          ?RecordingBookmark.decode(entry),
+      final entries = value['bookmarks'] as List;
+      final valid = <RecordingBookmark>[
+        for (final entry in entries) ?RecordingBookmark.decode(entry),
       ];
+      _items = List.unmodifiable(valid);
       _showMarkers = value['showMarkers'] != false;
+      broken = entries.length - valid.length;
     } catch (error) {
       debugPrint('[Bookmarks] load failed: $error');
       _items = const [];
@@ -339,6 +342,29 @@ class RecordingBookmarkStore {
         _writeBlocked = true;
         recoveryNotice = '书签记录无法读取，也未能另存原文件；为避免覆盖，暂不保存新的书签。';
       }
+      return;
+    }
+    if (broken > 0) await _preservePartlyBroken(target, broken);
+  }
+
+  /// Some entries failed to decode: copy the original aside before any save
+  /// can drop them, then keep the readable ones usable.
+  Future<void> _preservePartlyBroken(File target, int broken) async {
+    try {
+      await backupUnreadable(target, keepOriginal: true);
+    } catch (error) {
+      debugPrint('[Bookmarks] partial backup failed: $error');
+      _writeBlocked = true;
+      recoveryNotice = '有 $broken 条书签记录无法读取，也未能另存原文件；为避免覆盖，暂不保存书签修改。';
+      return;
+    }
+    recoveryNotice = '有 $broken 条书签记录无法读取，已另存原文件；其余书签照常可用。';
+    try {
+      // Rewrite with the readable entries so the copy is not repeated on
+      // every launch; on failure the original file is still intact.
+      await _write(_items, _showMarkers);
+    } catch (error) {
+      debugPrint('[Bookmarks] rewrite after partial backup failed: $error');
     }
   }
 
@@ -397,9 +423,11 @@ class RecordingBookmarkStore {
 
   /// Moves an unreadable bookmark file aside before anything can overwrite it.
   @visibleForOverriding
-  Future<void> backupUnreadable(File target) => target.rename(
-    '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}',
-  );
+  Future<void> backupUnreadable(File target, {bool keepOriginal = false}) {
+    final aside =
+        '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}';
+    return keepOriginal ? target.copy(aside) : target.rename(aside);
+  }
 
   /// Atomically replaces the bookmark file. Overridable so tests can hold a
   /// write open and exercise the real save queue.
