@@ -77,6 +77,8 @@ class _TopicAssistLatest {
   bool dirty = false;
 }
 
+typedef TranscriptPersister = Future<void> Function({bool strict});
+
 class RecorderController extends ChangeNotifier {
   late final analysis =
       _analysisOverride ??
@@ -499,6 +501,7 @@ class RecorderController extends ChangeNotifier {
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    TranscriptPersister? transcriptPersister,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -510,7 +513,10 @@ class RecorderController extends ChangeNotifier {
        _qwenStt = qwenSpeech ?? QwenSttService(),
        _doubaoStt = doubaoSpeech ?? DoubaoSttService(),
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
-       _libraryDirectoryOverride = libraryDirectory {
+       _libraryDirectoryOverride = libraryDirectory,
+       // Keep the injection seam public while the field stays private.
+       // ignore: prefer_initializing_formals
+       _transcriptPersister = transcriptPersister {
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
     _libraryLoaded = _loadRecordingLibrary();
@@ -2022,6 +2028,11 @@ class RecorderController extends ChangeNotifier {
 
   Future<void> _persistTranscripts({bool strict = false}) async {
     await _transcriptsLoaded;
+    final override = _transcriptPersister;
+    if (override != null) {
+      await override(strict: strict);
+      return;
+    }
     await TranscriptStore.save(
       byPath: transcriptsByPath,
       byFileId: transcriptsByFileId,
@@ -2118,25 +2129,25 @@ class RecorderController extends ChangeNotifier {
     final previous = _rawTranscriptForPath(path);
     final metadata = _transcriptMetadata[key];
     final manual = _manualTranscripts[key];
-    final changed =
-        previous != t ||
-        metadata == null ||
-        (sourceLanguage != null && sourceLanguage != metadata.sourceLanguage);
-    if (changed) {
+    final languageChanged =
+        sourceLanguage != null && sourceLanguage != metadata?.sourceLanguage;
+    final visibleChanged =
+        manual == null && (previous != t || languageChanged);
+    if (visibleChanged) {
       // Speaker display names belong to the material, not to one provider run.
       // Keep them when a manual transcript already protects the visible text.
-      if (manual == null) _clearSpeakerAliases(path);
+      _clearSpeakerAliases(path);
       _recordingTranslations.remove(key);
-      if (manual == null) _transcriptSegments.remove(key);
-      if (manual != null && t != manual) {
-        _incomingTranscripts[key] = t;
-      }
+      _transcriptSegments.remove(key);
+    }
+    if (manual != null && t != manual) {
+      _incomingTranscripts[key] = t;
     }
     if (manual != null && t == manual) _incomingTranscripts.remove(key);
     _transcriptMetadata[key] = TranscriptMetadata(
       provider: provider ?? metadata?.provider ?? speechProvider,
       sourceLanguage: sourceLanguage ?? metadata?.sourceLanguage,
-      revision: (metadata?.revision ?? 0) + (changed ? 1 : 0),
+      revision: (metadata?.revision ?? 0) + (visibleChanged ? 1 : 0),
     );
     transcriptsByPath[path] = t;
     _transcriptPathsByKey[key] = path;
@@ -2151,7 +2162,7 @@ class RecorderController extends ChangeNotifier {
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
     unawaited(_persistTranscripts());
-    if (changed && topicsEnabled) {
+    if (visibleChanged && topicsEnabled) {
       unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
     }
     if (topicsEnabled && !_isRecordingAudioLocked(id, path)) {
@@ -2302,9 +2313,17 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<void> dismissIncomingTranscript(String path) async {
-    if (_incomingTranscripts.remove(_recordingKey(path: path)) == null) return;
+    final key = _recordingKey(path: path);
+    final incoming = _incomingTranscripts.remove(key);
+    if (incoming == null) return;
     notifyListeners();
-    await _persistTranscripts(strict: true);
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      _incomingTranscripts[key] = incoming;
+      notifyListeners();
+      rethrow;
+    }
   }
 
   /// Corrects which speaker owns one timed segment. An empty [speakerId]
@@ -2319,6 +2338,9 @@ class RecorderController extends ChangeNotifier {
     if (segments == null || index < 0 || index >= segments.length) {
       throw ArgumentError('片段不存在');
     }
+    final previousOverrides = _segmentSpeakers[key] == null
+        ? null
+        : Map<int, String>.of(_segmentSpeakers[key]!);
     final speaker = speakerId.trim();
     final overrides = _segmentSpeakers.putIfAbsent(key, () => <int, String>{});
     final original = segments[index].speaker;
@@ -2331,7 +2353,17 @@ class RecorderController extends ChangeNotifier {
     }
     if (overrides.isEmpty) _segmentSpeakers.remove(key);
     notifyListeners();
-    await _persistTranscripts(strict: true);
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      if (previousOverrides == null) {
+        _segmentSpeakers.remove(key);
+      } else {
+        _segmentSpeakers[key] = previousOverrides;
+      }
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Map<String, String> speakerAliasesForPath(String path) =>
@@ -2399,11 +2431,16 @@ class RecorderController extends ChangeNotifier {
   ) async {
     final id = speakerId.trim();
     final raw = _rawTranscriptForPath(path);
-    if (id.isEmpty ||
-        raw == null ||
-        !extractTranscriptSpeakers(
+    final known =
+        raw != null &&
+        extractTranscriptSpeakers(
           normalizeSttText(raw),
-        ).any((speaker) => speaker.id == id)) {
+        ).any((speaker) => speaker.id == id);
+    final knownFromSegments = transcriptSegmentsForPath(
+      path,
+    ).any((segment) => segment.speaker == id);
+    if (id.isEmpty ||
+        (!known && !knownFromSegments)) {
       throw ArgumentError('说话人不存在');
     }
 
@@ -3876,6 +3913,8 @@ class RecorderController extends ChangeNotifier {
 
   /// Recording key → manual transcript text that must survive re-transcription.
   final Map<String, String> _manualTranscripts = {};
+
+  final TranscriptPersister? _transcriptPersister;
 
   /// Recording key → provider text that arrived after a manual edit.
   final Map<String, String> _incomingTranscripts = {};

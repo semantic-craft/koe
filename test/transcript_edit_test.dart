@@ -151,6 +151,119 @@ void main() {
     expect(c.hasPendingTranscript(path), isFalse);
   });
 
+  test('手改正文后的译文不会被未采用的转写版本作废', () async {
+    await TranscriptStore.save(
+      byPath: const {path: '人工正文'},
+      byFileId: const {},
+      aliasesByPath: const {},
+      aliasesByFileId: const {},
+      metadata: const {
+        key: TranscriptMetadata(provider: SttProvider.qwen, revision: 1),
+      },
+      translations: const {
+        key: RecordingTranslation(
+          text: 'Manual translation',
+          sourceLanguage: 'zh',
+          targetLanguage: 'en',
+          provider: SttProvider.qwen,
+          sourceRevision: 1,
+        ),
+      },
+      manualByKey: const {key: '人工正文'},
+    );
+    final c = RecorderController(loadPersistedState: true);
+    addTearDown(c.dispose);
+    await c.settleTopicNoteWork();
+
+    c.rememberTranscript(path, '另一版转写');
+
+    expect(c.incomingTranscriptForPath(path), '另一版转写');
+    expect(
+      c
+          .recordingView(
+            const RecordingReference(fileId: 128100, path: path),
+          )
+          .translation
+          ?.text,
+      'Manual translation',
+    );
+  });
+
+  test('关闭待采用稿保存失败时恢复提示', () async {
+    var failStrictSave = false;
+    final c = RecorderController(
+      loadPersistedState: false,
+      transcriptPersister: ({bool strict = false}) async {
+        if (strict && failStrictSave) throw StateError('磁盘不可写');
+      },
+    );
+    addTearDown(c.dispose);
+    c.rememberTranscript(path, '原始正文');
+    await c.saveManualTranscript(path, '人工正文');
+    c.rememberTranscript(path, '新版本正文');
+    expect(c.hasPendingTranscript(path), isTrue);
+
+    failStrictSave = true;
+    await expectLater(
+      c.dismissIncomingTranscript(path),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(c.hasPendingTranscript(path), isTrue);
+    expect(c.incomingTranscriptForPath(path), '新版本正文');
+  });
+
+  test('发言人改正保存失败时回滚内存状态', () async {
+    var failStrictSave = false;
+    final c = RecorderController(
+      loadPersistedState: false,
+      transcriptPersister: ({bool strict = false}) async {
+        if (strict && failStrictSave) throw StateError('磁盘不可写');
+      },
+    );
+    addTearDown(c.dispose);
+    c.rememberTranscript(
+      path,
+      '甲\n乙',
+      segments: [
+        segment('甲', 0, speaker: '1'),
+        segment('乙', 10, speaker: '2'),
+      ],
+    );
+    await c.setSegmentSpeaker(path, 0, '2');
+
+    failStrictSave = true;
+    await expectLater(
+      c.setSegmentSpeaker(path, 1, '1'),
+      throwsA(isA<StateError>()),
+    );
+
+    final shown = c.transcriptSegmentsForPath(path);
+    expect(shown[0].speaker, '2');
+    expect(shown[1].speaker, '2');
+    expect(shown[1].speakerChanged, isFalse);
+  });
+
+  test('无文字标签但有时码分段的发言人也能改名', () async {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    c.rememberTranscript(
+      path,
+      '甲\n乙',
+      segments: [
+        segment('甲', 0, speaker: '1'),
+        segment('乙', 10, speaker: '2'),
+      ],
+    );
+
+    await c.renameTranscriptSpeaker(path, '2', '张三');
+
+    expect(
+      c.transcriptSpeakersForPath(path).map((speaker) => speaker.displayLabel),
+      contains('张三'),
+    );
+  });
+
   testWidgets('保存失败保留编辑草稿，成功后关闭并保存校订', (tester) async {
     const reference = RecordingReference(fileId: 128100, path: path);
     final c = _EditProbeController();
