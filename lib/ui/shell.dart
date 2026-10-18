@@ -15,6 +15,7 @@ import 'screens/projects_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/today_screen.dart';
+import 'screens/trash_screen.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -111,6 +112,21 @@ class _AppShellState extends State<AppShell> {
     final c = context.read<RecorderController>();
     if (index == 0) c.refreshFilesOnTabEnter();
     if (index == 1) c.refreshInfoOnDeviceTabEnter();
+  }
+
+  void _openTrash() {
+    final navigator = _navigator.currentState;
+    if (navigator == null) return;
+    setState(() {
+      _index = 0;
+      _sectionVisible = false;
+    });
+    navigator.push(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: 'trash'),
+        builder: (_) => const TrashScreen(),
+      ),
+    );
   }
 
   void _selectMobileTab(int index) {
@@ -215,7 +231,11 @@ class _AppShellState extends State<AppShell> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (_wide)
-                _DesktopSidebar(index: _index, onSelect: _selectDesktopTab),
+                _DesktopSidebar(
+                  index: _index,
+                  onSelect: _selectDesktopTab,
+                  onOpenTrash: _openTrash,
+                ),
               if (_wide)
                 Offstage(
                   offstage: _index != 0,
@@ -637,9 +657,14 @@ class _DesktopPages extends StatelessWidget {
 }
 
 class _DesktopSidebar extends StatelessWidget {
-  const _DesktopSidebar({required this.index, required this.onSelect});
+  const _DesktopSidebar({
+    required this.index,
+    required this.onSelect,
+    required this.onOpenTrash,
+  });
   final int index;
   final ValueChanged<int> onSelect;
+  final VoidCallback onOpenTrash;
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -721,6 +746,21 @@ class _DesktopSidebar extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
               ],
+              TextButton.icon(
+                key: const ValueKey('nav-trash'),
+                style: TextButton.styleFrom(
+                  alignment: Alignment.centerLeft,
+                  foregroundColor: AppColors.textSecondary,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 16,
+                  ),
+                ),
+                onPressed: onOpenTrash,
+                icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                label: const Text('回收站'),
+              ),
+              const SizedBox(height: 6),
               const Spacer(),
               const Text(
                 AppIdentity.subtitle,

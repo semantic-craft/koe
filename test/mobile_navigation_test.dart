@@ -272,6 +272,25 @@ void main() {
     expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
   });
 
+  testWidgets('wide shell opens the same trash as the phone library', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final path = (await tester.runAsync(() => addAudio('可删资料.wav')))!;
+    await tester.runAsync(() => controller.trashLocalExports([path]));
+    await pump(tester);
+
+    expect(find.byKey(const ValueKey('desktop-navigation')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-trash')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('trash-screen')), findsOneWidget);
+    expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
+  });
+
   testWidgets('new recording keeps phone recording honest and import real', (
     tester,
   ) async {
