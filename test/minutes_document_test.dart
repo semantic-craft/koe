@@ -49,9 +49,7 @@ void main() {
   Future<File> audio(String name, Duration duration) async {
     final file = File('${temp.path}/$name.wav');
     final samples = (16000 * duration.inMilliseconds / 1000).round();
-    await file.writeAsBytes(
-      wavBytes(List<int>.filled(samples * 2, 0)),
-    );
+    await file.writeAsBytes(wavBytes(List<int>.filled(samples * 2, 0)));
     return file;
   }
 
@@ -62,7 +60,10 @@ void main() {
 
     expect(first.duplicate, isFalse);
     expect(first.document.title, '产品讨论');
-    expect(first.document.capturedAt, DateTime.parse('2026-10-17T09:30:00+08:00'));
+    expect(
+      first.document.capturedAt,
+      DateTime.parse('2026-10-17T09:30:00+08:00'),
+    );
     expect(
       first.document.importedAt.difference(first.document.capturedAt!).inHours,
       greaterThan(1),
@@ -87,12 +88,19 @@ void main() {
     expect(zero.document.textOnly, isTrue);
     expect(zero.document.warning, isNotNull);
 
-    final text = parseMinutesDocument(
-      'plain.txt',
-      '第一行没有时间\n第二行也没有',
-    );
+    final text = parseMinutesDocument('plain.txt', '第一行没有时间\n第二行也没有');
     expect(text.document.timingReliable, isFalse);
     expect(text.document.segments.single.text, contains('第二行'));
+
+    final speakers = parseMinutesDocument('speakers.txt', '林舟：第一句\n我：第二句');
+    expect(speakers.document.segments, hasLength(2));
+    expect(speakers.document.segments[0].speaker, '林舟');
+    expect(speakers.document.segments[1].speaker, '我');
+
+    expect(
+      () => parseMinutesDocument('empty.json', '{"title":"空记录","segments":[]}'),
+      throwsFormatException,
+    );
   });
 
   test('补配音频覆盖最后时码才建立配对，过短音频被拒绝且不留下资料', () async {
@@ -101,14 +109,20 @@ void main() {
     final imported = await c.importMinutesText('讨论.json', json);
     final short = await audio('short', const Duration(seconds: 3));
 
-    final rejected = await c.attachMinutesAudio(imported.document.id, short.path);
+    final rejected = await c.attachMinutesAudio(
+      imported.document.id,
+      short.path,
+    );
     expect(rejected.ok, isFalse);
     expect(rejected.message, contains('比文字时码短'));
     expect(c.minutesDocuments.single.audioPath, isNull);
     expect(c.exportedPaths, isEmpty);
 
     final long = await audio('long', const Duration(seconds: 40));
-    final accepted = await c.attachMinutesAudio(imported.document.id, long.path);
+    final accepted = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
     expect(accepted.ok, isTrue);
     expect(accepted.document!.audioPath, isNotNull);
     expect(accepted.document!.unaligned, isFalse);
@@ -164,10 +178,15 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.byKey(ValueKey('minutes-row-${imported.document.id}')), findsOneWidget);
+    expect(
+      find.byKey(ValueKey('minutes-row-${imported.document.id}')),
+      findsOneWidget,
+    );
     expect(find.textContaining('只有文字'), findsOneWidget);
 
-    await tester.tap(find.byKey(ValueKey('minutes-row-${imported.document.id}')));
+    await tester.tap(
+      find.byKey(ValueKey('minutes-row-${imported.document.id}')),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byType(MinutesDocumentScreen), findsOneWidget);
@@ -187,6 +206,60 @@ void main() {
     expect(c.requests, hasLength(1));
     expect(c.requests.single.$2, Duration.zero);
     expect(c.requests.single.$1, c.minutesDocuments.single.audioPath);
+
+    await tester.runAsync(
+      () => File(c.minutesDocuments.single.audioPath!).delete(),
+    );
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: MaterialApp(
+          home: MinutesDocumentScreen(documentId: imported.document.id),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('已配对，但原件不可用'), findsOneWidget);
+    final play = tester.widget<OutlinedButton>(
+      find.byKey(const ValueKey('minutes-play-all')),
+    );
+    expect(play.onPressed, isNull);
+  });
+
+  test('保存失败会回滚内存文档，重试不会误报重复', () async {
+    final blocker = File('${temp.path}/blocked');
+    await blocker.writeAsString('not a directory');
+    final store = MinutesDocumentStore(
+      file: File('${blocker.path}/minutes.json'),
+    );
+    final document = parseMinutesDocument('a.txt', '一段文字').document;
+
+    await expectLater(
+      store.upsert(document),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.documents, isEmpty);
+  });
+
+  test('改名或删除音频后同步补配引用', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final oldPath = attached.document!.audioPath!;
+
+    final renamed = await c.renameLocalExport(oldPath, '改名后的录音');
+    expect(c.minutesDocuments.single.audioPath, renamed);
+    expect(File(renamed).existsSync(), isTrue);
+
+    final removed = await c.deleteLocalExports([renamed]);
+    expect(removed.deleted, 1);
+    expect(c.minutesDocuments.single.audioPath, isNull);
   });
 }
 

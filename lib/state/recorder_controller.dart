@@ -1607,8 +1607,7 @@ class RecorderController extends ChangeNotifier {
         : id == null
         ? '当前录音'
         : _recordingDateTitle(id);
-    final recordedAt =
-        asset?.recordedAt ?? _recordedAtFromFileId(id);
+    final recordedAt = asset?.recordedAt ?? _recordedAtFromFileId(id);
     // Device recordings have no library entry until they are renamed or
     // archived; their retrieval time is still the local file timestamp.
     final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
@@ -4912,10 +4911,7 @@ class RecorderController extends ChangeNotifier {
     final required = document.lastEnd;
     if (document.timingReliable && duration == null) {
       await discardNewCopy();
-      return const MinutesAttachOutcome(
-        ok: false,
-        message: '无法读取音频时长，未建立配对',
-      );
+      return const MinutesAttachOutcome(ok: false, message: '无法读取音频时长，未建立配对');
     }
     if (document.timingReliable &&
         required != null &&
@@ -4940,9 +4936,7 @@ class RecorderController extends ChangeNotifier {
     return MinutesAttachOutcome(
       ok: true,
       document: updated,
-      message: updated.unaligned
-          ? '已取得音频，但时码不可靠；只能整段播放'
-          : '已配对原音频，可按句回听',
+      message: updated.unaligned ? '已取得音频，但时码不可靠；只能整段播放' : '已配对原音频，可按句回听',
     );
   }
 
@@ -5220,6 +5214,7 @@ class RecorderController extends ChangeNotifier {
           speakerAliasesByPath.remove(candidate);
           _localDurations.remove(candidate);
         }
+        await minutes.clearAudioForPaths(logicalPaths);
         if (id != null) {
           transcriptsByFileId.remove(id);
           speakerAliasesByFileId.remove(id);
@@ -5318,6 +5313,7 @@ class RecorderController extends ChangeNotifier {
         strict: false,
       );
     }
+    await minutes.updateAudioPath(path, targetPath);
     final renamedPaths = exportedPaths
         .map((item) => item == path ? targetPath : item)
         .toList();

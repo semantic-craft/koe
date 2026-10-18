@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -34,11 +36,16 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
       );
     }
     final audioPath = document.audioPath;
-    final playing = audioPath != null && c.playingPath == audioPath;
-    final canSeek =
-        document.timingReliable &&
+    final audioAsset = audioPath == null
+        ? null
+        : c.recordingAssetForPath(audioPath);
+    final audioAvailable =
         audioPath != null &&
-        c.recordingAssetForPath(audioPath)?.originalComplete != false;
+        audioAsset != null &&
+        audioAsset.originalComplete &&
+        File(audioPath).existsSync();
+    final playing = audioPath != null && c.playingPath == audioPath;
+    final canSeek = document.timingReliable && audioAvailable;
     return Scaffold(
       key: ValueKey('minutes-document-${document.id}'),
       appBar: AppBar(title: Text(document.title)),
@@ -57,6 +64,8 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
             label: '原音频',
             value: audioPath == null
                 ? '尚未补配'
+                : !audioAvailable
+                ? '已配对，但原件不可用'
                 : document.unaligned
                 ? '已取得，时码不可靠'
                 : '已配对，可按句回听',
@@ -88,8 +97,11 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     key: const ValueKey('minutes-play-all'),
-                    onPressed: () =>
-                        playing ? c.togglePlayPause() : c.playExported(audioPath),
+                    onPressed: !audioAvailable
+                        ? null
+                        : () => playing
+                              ? c.togglePlayPause()
+                              : c.playExported(audioPath),
                     icon: Icon(
                       playing && c.isPlaying
                           ? Icons.pause_rounded
@@ -123,7 +135,10 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
             Text(
               _notice!,
               key: const ValueKey('minutes-attach-result'),
-              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.textSecondary,
+              ),
             ),
           ],
           const SizedBox(height: 18),
@@ -247,10 +262,7 @@ class _StatusCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
           Text(
             message,
@@ -291,7 +303,10 @@ class _MetaRow extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: Text(value, style: const TextStyle(fontSize: 13, height: 1.4)),
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
           ),
         ],
       ),

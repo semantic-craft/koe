@@ -135,8 +135,7 @@ class MinutesDocument {
     'importedAt': importedAt.toIso8601String(),
     if (capturedAt != null) 'capturedAt': capturedAt!.toIso8601String(),
     if (audioPath != null) 'audioPath': audioPath,
-    if (audioDuration != null)
-      'audioDurationMs': audioDuration!.inMilliseconds,
+    if (audioDuration != null) 'audioDurationMs': audioDuration!.inMilliseconds,
     if (audioHash != null) 'audioHash': audioHash,
     'timingReliable': timingReliable,
     if (warning != null) 'warning': warning,
@@ -173,11 +172,15 @@ class MinutesDocument {
       capturedAt: value['capturedAt'] is String
           ? DateTime.tryParse(value['capturedAt'] as String)
           : null,
-      audioPath: value['audioPath'] is String ? value['audioPath'] as String : null,
+      audioPath: value['audioPath'] is String
+          ? value['audioPath'] as String
+          : null,
       audioDuration: durationMs is int
           ? Duration(milliseconds: durationMs)
           : null,
-      audioHash: value['audioHash'] is String ? value['audioHash'] as String : null,
+      audioHash: value['audioHash'] is String
+          ? value['audioHash'] as String
+          : null,
       segments: segments,
       timingReliable: value['timingReliable'] == true,
       warning: value['warning'] is String ? value['warning'] as String : null,
@@ -215,13 +218,14 @@ class MinutesAttachOutcome {
 MinutesParseResult parseMinutesDocument(String fileName, String raw) {
   final trimmed = raw.trim();
   if (trimmed.startsWith('{')) {
+    Object? decoded;
     try {
-      final decoded = jsonDecode(trimmed);
-      if (decoded is Map) return _parseMinutesJson(fileName, decoded, raw);
-    } catch (_) {
+      decoded = jsonDecode(trimmed);
+    } on FormatException {
       // Fall through to the line parser so a malformed JSON export still opens
       // as readable text instead of disappearing.
     }
+    if (decoded is Map) return _parseMinutesJson(fileName, decoded, raw);
   }
   return _parseMinutesText(fileName, raw);
 }
@@ -231,7 +235,8 @@ MinutesParseResult _parseMinutesJson(
   Map<dynamic, dynamic> value,
   String raw,
 ) {
-  final title = _firstText(value, const ['title', 'name', 'subject']) ??
+  final title =
+      _firstText(value, const ['title', 'name', 'subject']) ??
       _fileStem(fileName);
   final capturedAt = _firstDate(value, const [
     'recordedAt',
@@ -293,8 +298,13 @@ MinutesSegment? _segmentFromJson(Object? item) {
         : MinutesSegment(text: item.trim(), start: Duration.zero);
   }
   if (item is! Map) return null;
-  final text =
-      _firstText(item, const ['text', 'content', 'sentence', 'words', 'body']);
+  final text = _firstText(item, const [
+    'text',
+    'content',
+    'sentence',
+    'words',
+    'body',
+  ]);
   if (text == null) return null;
   final start = _duration(
     _firstValue(item, const [
@@ -306,7 +316,9 @@ MinutesSegment? _segmentFromJson(Object? item) {
       'offset',
       'time',
     ]),
-    millisecondsHint: item.keys.any((key) => '$key'.toLowerCase().contains('ms')),
+    millisecondsHint: item.keys.any(
+      (key) => '$key'.toLowerCase().contains('ms'),
+    ),
   );
   final end = _duration(
     _firstValue(item, const ['endMs', 'end', 'endTime', 'finishTime']),
@@ -355,6 +367,17 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
     if (segments.isNotEmpty) {
       final body = _splitSpeaker(line.trim());
       final previous = segments.removeLast();
+      if (body.speaker != null && body.speaker != previous.speaker) {
+        segments.add(previous);
+        segments.add(
+          MinutesSegment(
+            text: body.text,
+            start: previous.start,
+            speaker: body.speaker,
+          ),
+        );
+        continue;
+      }
       segments.add(
         MinutesSegment(
           text: '${previous.text}\n${body.text}',
@@ -425,8 +448,9 @@ Duration? _duration(Object? value, {required bool millisecondsHint}) {
   if (value == null) return null;
   if (value is num) {
     if (value < 0) return null;
-    final milliseconds =
-        millisecondsHint || value > 100000 ? value.toInt() : (value * 1000).round();
+    final milliseconds = millisecondsHint || value > 100000
+        ? value.toInt()
+        : (value * 1000).round();
     return Duration(milliseconds: milliseconds);
   }
   if (value is String) return _clock(value);
@@ -510,8 +534,7 @@ class MinutesDocumentStore {
   String? recoveryNotice;
   String? saveError;
 
-  List<MinutesDocument> get documents =>
-      List.unmodifiable(_documents.values);
+  List<MinutesDocument> get documents => List.unmodifiable(_documents.values);
 
   MinutesDocument? byId(String id) => _documents[id];
 
@@ -569,14 +592,50 @@ class MinutesDocumentStore {
     'documents': documents.map((document) => document.toJson()).toList(),
   };
 
-  Future<void> upsert(MinutesDocument document, {bool strict = true}) {
+  Future<void> upsert(MinutesDocument document, {bool strict = true}) async {
+    final previous = _documents[document.id];
     _documents[document.id] = document;
-    return save(strict: strict);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      if (previous == null) {
+        _documents.remove(document.id);
+      } else {
+        _documents[document.id] = previous;
+      }
+      rethrow;
+    }
   }
 
-  Future<void> remove(String id, {bool strict = true}) {
-    _documents.remove(id);
-    return save(strict: strict);
+  Future<void> remove(String id, {bool strict = true}) async {
+    final previous = _documents.remove(id);
+    try {
+      await save(strict: strict);
+    } catch (_) {
+      if (previous != null) _documents[id] = previous;
+      rethrow;
+    }
+  }
+
+  Future<void> updateAudioPath(String oldPath, String newPath) async {
+    var changed = false;
+    for (final entry in _documents.entries.toList()) {
+      if (entry.value.audioPath != oldPath) continue;
+      _documents[entry.key] = entry.value.copyWith(audioPath: newPath);
+      changed = true;
+    }
+    if (changed) await save(strict: false);
+  }
+
+  Future<void> clearAudioForPaths(Set<String> paths) async {
+    var changed = false;
+    for (final entry in _documents.entries.toList()) {
+      final path = entry.value.audioPath;
+      if (path == null || !paths.contains(path)) continue;
+      _documents[entry.key] = entry.value.copyWith(clearAudio: true);
+      changed = true;
+    }
+    if (changed) await save(strict: false);
   }
 
   Future<void> save({bool strict = true}) {
