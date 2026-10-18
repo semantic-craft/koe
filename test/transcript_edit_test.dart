@@ -90,6 +90,34 @@ void main() {
     expect(saved.segmentSpeakersByKey[key]?[0], '2');
   });
 
+  test('重新转写换了分段后，旧的片段归属不套到新句子上', () async {
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    c.rememberTranscript(
+      path,
+      '说话人 1：甲\n说话人 2：乙',
+      segments: [
+        segment('甲', 0, speaker: '1'),
+        segment('乙', 10, speaker: '2'),
+      ],
+    );
+    await c.setSegmentSpeaker(path, 0, '2');
+
+    c.rememberTranscript(
+      path,
+      '说话人 1：丙丁',
+      segments: [
+        segment('丙', 0, speaker: '1'),
+        segment('丁', 10, speaker: '1'),
+      ],
+    );
+
+    expect(c.transcriptSegmentsForPath(path).map((s) => s.speaker), ['1', '1']);
+    await pumpEventQueue();
+    final saved = await TranscriptStore.load();
+    expect(saved.segmentSpeakersByKey[key], isNull);
+  });
+
   test('清除发言人标签并在相邻片段重算显示边界', () async {
     final c = RecorderController(loadPersistedState: false);
     addTearDown(c.dispose);

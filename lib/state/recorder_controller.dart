@@ -2262,6 +2262,13 @@ class RecorderController extends ChangeNotifier {
       _clearSpeakerAliases(path);
       _transcriptSegments.remove(key);
     }
+    // Segment speaker fixes are indexed into the stored segment list; they do
+    // not carry over to a different list from another provider run.
+    if (textChanged ||
+        (segments != null &&
+            !listEquals(segments, _transcriptSegments[key] ?? const []))) {
+      _segmentSpeakers.remove(key);
+    }
     if (visibleChanged) _recordingTranslations.remove(key);
     if (manual != null && t != manual) {
       _incomingTranscripts[key] = t;
