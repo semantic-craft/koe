@@ -109,6 +109,14 @@ class RecordingBookmark {
   }
 }
 
+/// A bookmark could not be saved; [message] is shown with the kept draft.
+class BookmarkSaveException implements Exception {
+  const BookmarkSaveException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 /// Where a bookmark can be replayed now, or why it cannot.
 class BookmarkTarget {
   const BookmarkTarget._(
@@ -170,10 +178,22 @@ BookmarkTarget resolveBookmark(
     );
   }
   final saved = bookmark.audioVersion;
-  if (saved != null && !audioVersionKnown) {
+  if (saved == null) {
+    return BookmarkTarget._(
+      bookmark,
+      unavailableReason: '这条书签没有记录原音频版本，无法确认来源；为避免跳错，暂不定位。',
+    );
+  }
+  if (!audioVersionKnown) {
     return BookmarkTarget._(bookmark, unavailableReason: '正在核对原音频，稍后即可回听。');
   }
-  if (audioChanged || (saved != null && currentAudioVersion != saved)) {
+  if (!audioChanged && currentAudioVersion == null) {
+    return BookmarkTarget._(
+      bookmark,
+      unavailableReason: '无法读取原音频以核对版本；为避免跳错，暂不定位。',
+    );
+  }
+  if (audioChanged || currentAudioVersion != saved) {
     return BookmarkTarget._(
       bookmark,
       unavailableReason: '原音频已变化，书签位置可能不再对应；为避免跳错，暂不定位。',
@@ -212,11 +232,24 @@ BookmarkTarget resolveBookmark(
     }
     var offset = bookmark.position - savedStart;
     if (offset < Duration.zero) offset = Duration.zero;
-    return BookmarkTarget._(
-      bookmark,
-      seekTo: segments[match].start + offset,
-      segmentIndex: match,
-    );
+    final segment = segments[match];
+    final seekTo = segment.start + offset;
+    final next = match + 1 < segments.length ? segments[match + 1].start : null;
+    final end = segment.end ?? next;
+    final outside =
+        offset > Duration.zero &&
+        ((end != null && seekTo >= end) ||
+            (next != null && seekTo >= next) ||
+            (duration != null &&
+                duration > Duration.zero &&
+                seekTo > duration));
+    if (outside) {
+      return BookmarkTarget._(
+        bookmark,
+        unavailableReason: '转写已更新，书签位置超出原片段的新范围；为避免跳到别的句子，不再定位。',
+      );
+    }
+    return BookmarkTarget._(bookmark, seekTo: seekTo, segmentIndex: match);
   }
   if (duration != null &&
       duration > Duration.zero &&

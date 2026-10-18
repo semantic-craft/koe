@@ -93,15 +93,19 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   List<BookmarkTarget> _bookmarkTargets(
     RecorderController c,
     RecordingViewData recording,
-    List<TranscriptSegment> segments,
-  ) {
+    List<TranscriptSegment> segments, {
+    List<RecordingBookmark>? only,
+    ({bool known, String? version})? audioOverride,
+  }) {
     if (recording.live) return const [];
     final path = recording.path;
-    final saved = c.bookmarksFor(widget.reference);
+    final saved = only ?? c.bookmarksFor(widget.reference);
     if (saved.isEmpty) return const [];
-    final audio = path == null || !recording.originalPresent
-        ? (known: true, version: null)
-        : c.bookmarkAudioVersion(path);
+    final audio =
+        audioOverride ??
+        (path == null || !recording.originalPresent
+            ? (known: true, version: null)
+            : c.bookmarkAudioVersion(path));
     return [
       for (final bookmark in saved)
         resolveBookmark(
@@ -119,17 +123,37 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     ];
   }
 
-  void _openBookmark(BookmarkTarget target) {
+  Future<void> _openBookmark(BookmarkTarget target) async {
     final c = context.read<RecorderController>();
-    final recording = c.recordingView(widget.reference);
-    final path = recording.path;
-    final seekTo = target.seekTo;
-    if (seekTo == null || path == null) {
+    final path = c.recordingView(widget.reference).path;
+    if (target.seekTo == null || path == null) {
       _notice(target.unavailableReason ?? '这条书签暂时无法回听');
       return;
     }
+    // Verify the content itself before playing; the marker may have been
+    // drawn from a cached digest of a file replaced with the same size/mtime.
+    final fresh = await c.verifyBookmarkAudio(path);
+    if (!mounted) return;
+    final recording = c.recordingView(widget.reference);
+    final checked = _bookmarkTargets(
+      c,
+      recording,
+      _locatableSegments(c, recording),
+      only: [target.bookmark],
+      audioOverride: (known: true, version: fresh),
+    );
+    final now = checked.isEmpty ? null : checked.single;
+    final seekTo = now?.seekTo;
+    if (now == null || seekTo == null || recording.path == null) {
+      _notice(now?.unavailableReason ?? '这条书签暂时无法回听');
+      return;
+    }
     if (_showTranslation) setState(() => _showTranslation = false);
-    c.playFrom(path, seekTo, fileId: recording.reference.fileId);
+    await c.playFrom(
+      recording.path!,
+      seekTo,
+      fileId: recording.reference.fileId,
+    );
   }
 
   Future<void> _addBookmark() async {
@@ -2264,11 +2288,13 @@ class _BookmarkEditorState extends State<_BookmarkEditor> {
     try {
       await widget.onSave(_note.text);
       if (mounted) Navigator.pop(context, true);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = '未保存：书签无法写入本机存储。草稿已保留，可稍后重试。';
+        _error = error is BookmarkSaveException
+            ? error.message
+            : '未保存：书签无法写入本机存储。草稿已保留，可稍后重试。';
       });
     }
   }

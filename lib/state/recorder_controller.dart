@@ -5298,6 +5298,7 @@ class RecorderController extends ChangeNotifier {
           // completed deletion into a failure or skip the remaining cleanup.
           historyCleanupFailed = true;
         }
+        _bookmarkGenerations[key] = (_bookmarkGenerations[key] ?? 0) + 1;
         try {
           await _bookmarksLoaded;
           await bookmarks.forgetRecording(key);
@@ -6128,13 +6129,24 @@ class RecorderController extends ChangeNotifier {
     return (known: false, version: null);
   }
 
+  /// Content identity used for bookmarks; overridable to simulate a read
+  /// that cannot establish it.
+  @visibleForTesting
+  Future<String?> readBookmarkAudioVersion(String path) => audioVersion(path);
+
+  /// Re-reads the audio content now (not the stat-keyed cache), so a replay
+  /// is never allowed by a cached digest of a file replaced in place.
+  Future<String?> verifyBookmarkAudio(String path) => _readBookmarkAudio(path);
+
+  final Map<String, int> _bookmarkGenerations = {};
+
   Future<String?> _readBookmarkAudio(String path) =>
       _bookmarkAudioReads[path] ??= () async {
         try {
           final before = await File(path).stat();
           String? version;
           try {
-            version = await audioVersion(path);
+            version = await readBookmarkAudioVersion(path);
           } catch (_) {
             version = null;
           }
@@ -6167,13 +6179,16 @@ class RecorderController extends ChangeNotifier {
   }) async {
     await _bookmarksLoaded;
     final key = _referenceKey(ref);
+    final generation = _bookmarkGenerations[key] ?? 0;
     final path = recordingView(ref).path;
-    String? version;
-    if (path != null) {
-      final current = bookmarkAudioVersion(path);
-      version = current.known
-          ? current.version
-          : await _readBookmarkAudio(path);
+    final version = path == null ? null : await _readBookmarkAudio(path);
+    if (version == null) {
+      throw const BookmarkSaveException('未保存：无法读取原音频以确认书签来源。草稿已保留，可稍后重试。');
+    }
+    // A permanent delete may have finished while the digest was read; the
+    // check and the queued add below run without an await in between.
+    if ((_bookmarkGenerations[key] ?? 0) != generation) {
+      throw const BookmarkSaveException('未保存：这份资料已被删除。');
     }
     final now = DateTime.now();
     final bookmark = RecordingBookmark(

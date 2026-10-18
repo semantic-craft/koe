@@ -152,6 +152,17 @@ void main() {
 
   Finder marker(int index) => find.byKey(ValueKey('player-marker-$index'));
 
+  /// Replay re-reads the audio content before playing; wait for that check.
+  Future<void> replay(
+    WidgetTester tester,
+    _BookmarkController c,
+    Finder target,
+  ) async {
+    await tester.tap(target);
+    await tester.pump();
+    await until(tester, () => !c.bookmarkAudioReading);
+  }
+
   testWidgets('播放时为片段加批注，重启后进度标记与列表都回到同一原声', (tester) async {
     final file = File('${temp.path}/bookmarks.json');
     final first = await start(tester, () => RecordingBookmarkStore(file: file));
@@ -171,16 +182,14 @@ void main() {
 
     expect(find.byKey(const ValueKey('segment-bookmark-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('segment-bookmark-2')), findsOneWidget);
-    await tester.tap(marker(1));
-    await tester.pumpAndSettle();
+    await replay(tester, second, marker(1));
     expect(second.playbackRequests, [
       (audio, const Duration(seconds: 26), 100),
     ]);
 
     await openList(tester);
     expect(find.text('预算数字要再核对'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('bookmark-item-0')));
-    await tester.pumpAndSettle();
+    await replay(tester, second, find.byKey(const ValueKey('bookmark-item-0')));
     expect(second.playbackRequests.last, (
       audio,
       const Duration(seconds: 14),
@@ -228,14 +237,12 @@ void main() {
 
     await show(tester, c..shown = shortRef, shortRef);
     await addAt(tester, c, const Duration(milliseconds: 600));
-    await tester.tap(marker(0));
-    await tester.pumpAndSettle();
+    await replay(tester, c, marker(0));
     expect(c.playbackRequests.last.$2, const Duration(milliseconds: 600));
 
     await show(tester, c..shown = openRef, openRef);
     await addAt(tester, c, const Duration(seconds: 18));
-    await tester.tap(marker(0));
-    await tester.pumpAndSettle();
+    await replay(tester, c, marker(0));
     expect(
       c.playbackRequests.last.$2,
       const Duration(seconds: 18),
@@ -249,8 +256,7 @@ void main() {
       findsNothing,
       reason: '空隙里的书签不能标到前一句上',
     );
-    await tester.tap(marker(0));
-    await tester.pumpAndSettle();
+    await replay(tester, c, marker(0));
     expect(
       c.playbackRequests.last.$2,
       const Duration(seconds: 10),
@@ -277,8 +283,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('segment-bookmark-2')), findsOneWidget);
     expect(find.byKey(const ValueKey('segment-bookmark-1')), findsNothing);
-    await tester.tap(marker(0));
-    await tester.pumpAndSettle();
+    await replay(tester, c, marker(0));
     expect(c.playbackRequests, [(audio, const Duration(seconds: 14), 100)]);
 
     // The sentence itself changed: never land on whatever sits there now.
@@ -294,8 +299,7 @@ void main() {
     await openList(tester);
     expect(find.textContaining('转写已更新，原片段已不存在'), findsOneWidget);
     expect(find.text('核对'), findsOneWidget, reason: '个人批注仍可阅读');
-    await tester.tap(find.byKey(const ValueKey('bookmark-item-0')));
-    await tester.pumpAndSettle();
+    await replay(tester, c, find.byKey(const ValueKey('bookmark-item-0')));
     expect(c.playbackRequests, hasLength(1));
     await closeList(tester);
 
@@ -311,16 +315,14 @@ void main() {
     expect(marker(0), findsNothing);
     await openList(tester);
     expect(find.textContaining('原音频已变化'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('bookmark-item-0')));
-    await tester.pumpAndSettle();
+    await replay(tester, c, find.byKey(const ValueKey('bookmark-item-0')));
     expect(c.playbackRequests, hasLength(1));
 
     c.views[ref.key] = _view(ref, _segments, originalPresent: false);
     c.notifyListeners();
     await tester.pumpAndSettle();
     expect(find.textContaining('原录音不在本机'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('bookmark-item-0')));
-    await tester.pumpAndSettle();
+    await replay(tester, c, find.byKey(const ValueKey('bookmark-item-0')));
     expect(c.playbackRequests, hasLength(1));
   });
 
@@ -443,8 +445,7 @@ void main() {
     expect(marker(0), findsNothing);
     await openList(tester);
     expect(find.text('只属于访谈'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('bookmark-item-0')));
-    await tester.pumpAndSettle();
+    await replay(tester, again, find.byKey(const ValueKey('bookmark-item-0')));
     expect(again.playbackRequests, [(audio, const Duration(seconds: 12), 100)]);
   });
 
@@ -475,6 +476,136 @@ void main() {
     await reloaded.load();
     expect(reloaded.forRecording(c.recordingKeyFor(ref)), isEmpty);
   });
+
+  test('算音频指纹期间资料被删除，书签不会在删除后写入', () async {
+    final file = File('${temp.path}/b.json');
+    final store = RecordingBookmarkStore(file: file);
+    await store.load();
+    final c = _HashGateController(store);
+    addTearDown(c.dispose);
+    await c.waitForBookmarks();
+    c.exportedPaths.add(audio);
+
+    final adding = c.addBookmark(ref, position: const Duration(seconds: 3));
+    await c.hashing.future;
+    final result = await c.deleteLocalExports([audio]);
+    expect(result.deleted, 1);
+    c.gate.complete();
+    await expectLater(
+      adding,
+      throwsA(
+        isA<BookmarkSaveException>().having(
+          (e) => e.message,
+          'message',
+          contains('已被删除'),
+        ),
+      ),
+    );
+
+    expect(c.bookmarksFor(ref), isEmpty);
+    final reloaded = RecordingBookmarkStore(file: file);
+    await reloaded.load();
+    expect(reloaded.forRecording(c.recordingKeyFor(ref)), isEmpty);
+  });
+
+  testWidgets('无法确认原音频时不保存，旧的无指纹书签不当作来源已确认', (tester) async {
+    final file = File('${temp.path}/b.json');
+    final c = await start(tester, () => RecordingBookmarkStore(file: file));
+    await show(tester, c..shown = ref, ref);
+    c.audioUnreadable = true;
+    c.setPlayback(audio, const Duration(seconds: 14));
+    await tester.pump();
+    await tester.tap(find.byTooltip('为当前片段加书签'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('bookmark-note-field')),
+      '想记下这句',
+    );
+    await tester.tap(find.text('保存'));
+    await until(
+      tester,
+      () => find
+          .byKey(const ValueKey('bookmark-save-error'))
+          .evaluate()
+          .isNotEmpty,
+    );
+    expect(find.textContaining('无法读取原音频'), findsOneWidget);
+    expect(find.text('想记下这句'), findsOneWidget);
+    expect(c.bookmarksFor(ref), isEmpty);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(const SizedBox());
+    final now = DateTime(2026, 10, 1).toIso8601String();
+    file.writeAsStringSync(
+      '{"version":1,"showMarkers":true,"bookmarks":[{"id":"old",'
+      '"recordingKey":"file:100","positionMs":14000,'
+      '"segmentText":"第二句，预算要再确认","segmentStartMs":12000,'
+      '"segmentEndMs":20000,"note":"旧书签",'
+      '"createdAt":"$now","updatedAt":"$now"}]}',
+    );
+    final again = await start(tester, () => RecordingBookmarkStore(file: file));
+    await show(tester, again..shown = ref, ref);
+    expect(marker(0), findsNothing);
+    await openList(tester);
+    expect(find.text('旧书签'), findsOneWidget);
+    expect(find.textContaining('没有记录原音频版本'), findsOneWidget);
+    await replay(tester, again, find.byKey(const ValueKey('bookmark-item-0')));
+    expect(again.playbackRequests, isEmpty);
+  });
+
+  testWidgets('重转写后同文句段变短，越出新范围的书签不跳到下一句', (tester) async {
+    final c = await start(
+      tester,
+      () => RecordingBookmarkStore(file: File('${temp.path}/b.json')),
+    );
+    await show(tester, c..shown = ref, ref);
+    await addAt(tester, c, const Duration(seconds: 19));
+
+    c.views[ref.key] = _view(ref, [
+      _segment('第一句', 0, 5000),
+      _segment('第二句，预算要再确认', 13000, 18000),
+      _segment('紧接着的下一句', 18000, 24000),
+      _segment('第三句', 25000, 31000),
+    ]);
+    c.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(marker(0), findsNothing);
+    expect(find.byKey(const ValueKey('segment-bookmark-1')), findsNothing);
+    await openList(tester);
+    expect(find.textContaining('超出原片段的新范围'), findsOneWidget);
+    await replay(tester, c, find.byKey(const ValueKey('bookmark-item-0')));
+    expect(c.playbackRequests, isEmpty);
+  });
+
+  testWidgets('原音频被同大小同修改时间替换，点击回听时重新核验不放行', (tester) async {
+    final c = await start(
+      tester,
+      () => RecordingBookmarkStore(file: File('${temp.path}/b.json')),
+    );
+    await show(tester, c..shown = ref, ref);
+    await addAt(tester, c, const Duration(seconds: 14));
+
+    final original = File(audio);
+    final modified = original.lastModifiedSync();
+    final length = original.lengthSync();
+    await tester.runAsync(() async {
+      await original.writeAsBytes(List<int>.filled(length, 9), flush: true);
+      await original.setLastModified(modified);
+    });
+    expect(original.lengthSync(), length);
+    c.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(marker(0), findsOneWidget, reason: '仅凭大小与时间无法看出替换');
+    tester
+        .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+        .removeCurrentSnackBar();
+    await tester.pumpAndSettle();
+
+    await replay(tester, c, marker(0));
+    expect(c.playbackRequests, isEmpty);
+    expect(find.textContaining('原音频已变化'), findsOneWidget);
+  });
 }
 
 class _BookmarkController extends RecorderController {
@@ -484,6 +615,11 @@ class _BookmarkController extends RecorderController {
   final views = <String, RecordingViewData>{};
   final playbackRequests = <(String, Duration, int?)>[];
   late RecordingReference shown;
+  bool audioUnreadable = false;
+
+  @override
+  Future<String?> readBookmarkAudioVersion(String path) async =>
+      audioUnreadable ? null : super.readBookmarkAudioVersion(path);
 
   @override
   RecordingViewData recordingView(RecordingReference reference) =>
@@ -511,6 +647,24 @@ class _BookmarkController extends RecorderController {
 }
 
 /// Holds a real write open so the save queue can be observed mid-flight.
+/// Holds the audio digest read open: the window before the store queue.
+class _HashGateController extends RecorderController {
+  _HashGateController(RecordingBookmarkStore store)
+    : super(loadPersistedState: false, bookmarkStore: store);
+
+  final gate = Completer<void>();
+  final hashing = Completer<void>();
+
+  @override
+  Future<String?> readBookmarkAudioVersion(String path) async {
+    // The digest is read before the delete; only the hand-back is delayed.
+    final version = await super.readBookmarkAudioVersion(path);
+    if (!hashing.isCompleted) hashing.complete();
+    await gate.future;
+    return version;
+  }
+}
+
 class _GatedStore extends RecordingBookmarkStore {
   _GatedStore(File file) : super(file: file);
 
