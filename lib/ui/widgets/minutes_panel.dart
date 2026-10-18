@@ -367,7 +367,10 @@ class _MinutesPanelState extends State<MinutesPanel> {
       final busy = manager.busy(key);
       final running = manager.running(key);
       final sourceMatches = <int, TranscriptSourceMatch>{};
-      if (result != null && view.originalPresent && view.path != null) {
+      if (result != null &&
+          result.sourceHash == analysisFingerprint(view.text) &&
+          view.originalPresent &&
+          view.path != null) {
         final aliases = widget.controller.speakerAliasesForPath(view.path!);
         final timed =
             transcriptSegmentsMatchText(

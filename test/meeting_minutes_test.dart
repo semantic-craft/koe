@@ -51,9 +51,14 @@ class Service implements AnalysisService {
 }
 
 class Controller extends RecorderController {
-  Controller(RecordingAnalysis manager, {this.segments = const []})
+  Controller(
+    RecordingAnalysis manager, {
+    this.segments = const [],
+    this.text = '讨论发布，请核对发布。',
+  })
     : super(loadPersistedState: false, analysisController: manager);
   final List<TranscriptSegment> segments;
+  String text;
   @override
   String get analysisApiKey => 'test-key';
   @override
@@ -62,7 +67,7 @@ class Controller extends RecorderController {
   RecordingViewData recordingView(RecordingReference ref) => RecordingViewData(
     reference: ref,
     title: '短录音',
-    text: '讨论发布，请核对发布。',
+    text: text,
     path: '/1.wav',
     segments: segments,
   );
@@ -266,6 +271,51 @@ void main() {
     expect(jump, isNull);
     expect(find.text('无法可靠定位到原声；以下是模型使用的原文片段。'), findsOneWidget);
     expect(find.text('讨论发布，请核对发布。'), findsWidgets);
+  });
+
+  testWidgets('stale minutes never expose playable source links', (
+    tester,
+  ) async {
+    final manager = RecordingAnalysis(inMemory: true, service: Service());
+    final controller = Controller(
+      manager,
+      segments: const [
+        TranscriptSegment(
+          text: '讨论发布，',
+          start: Duration.zero,
+          end: Duration(seconds: 4),
+        ),
+        TranscriptSegment(
+          text: '请核对发布。',
+          start: Duration(seconds: 8),
+          end: Duration(seconds: 12),
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    TranscriptJump? jump;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MinutesPanel(
+          controller: controller,
+          reference: const RecordingReference(fileId: 1),
+          onOpenSource: (value) => jump = value,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('生成纪要'));
+    await tester.pumpAndSettle();
+
+    controller.text = '讨论发布，请核对发布日期。';
+    controller.notifyListeners();
+    await tester.pump();
+    expect(find.text('原文已更新，这份纪要已过期，请重新生成。'), findsOneWidget);
+    await tester.tap(find.text('出处 [S1]').first);
+    await tester.pumpAndSettle();
+
+    expect(jump, isNull);
+    expect(find.text('无法可靠定位到原声；以下是模型使用的原文片段。'), findsOneWidget);
   });
 
   testWidgets('regeneration keeps the previous minutes for comparison', (

@@ -110,6 +110,33 @@ void main() {
     expect(matches.single.start, const Duration(seconds: 10));
   });
 
+  test('ambiguous source prefixes do not seek to the first occurrence', () {
+    const segments = [
+      TranscriptSegment(
+        text: '今天讨论发布安排',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+      ),
+      TranscriptSegment(
+        text: '今天讨论预算安排',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 15),
+      ),
+    ];
+
+    expect(
+      matchTranscriptSources(sources: const ['今天讨论'], segments: segments),
+      isEmpty,
+    );
+    final matches = matchTranscriptSources(
+      sources: const ['今天讨论预算安排'],
+      segments: segments,
+    );
+    expect(matches, hasLength(1));
+    expect(matches.single.segmentIndex, 1);
+    expect(matches.single.start, const Duration(seconds: 10));
+  });
+
   test('edited or untimed transcripts produce no source match', () {
     expect(
       matchTranscriptSources(

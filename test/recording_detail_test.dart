@@ -6,6 +6,7 @@ import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/theme/app_theme.dart';
+import 'package:koe/ui/recording_navigation.dart';
 import 'package:koe/ui/screens/recording_detail_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:koe/ui/shell.dart';
@@ -68,7 +69,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
+      ChangeNotifierProvider<RecorderController>.value(
         value: controller,
         child: MaterialApp(
           theme: previewDirectory.isEmpty
@@ -1339,6 +1340,70 @@ void main() {
       ('/tmp/100.wav', const Duration(seconds: 12), 100),
     ]);
     expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
+  });
+
+  testWidgets('focused source has a back control on wide layouts', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '来源回跳',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: [
+        TranscriptSegment(
+          text: '第一句',
+          start: Duration.zero,
+          end: Duration(seconds: 5),
+        ),
+        TranscriptSegment(
+          text: '第二句',
+          start: Duration(seconds: 12),
+          end: Duration(seconds: 20),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: RecordingNavigation(
+            wide: true,
+            onOpen: (_, {initialParagraph}) {},
+            child: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const RecordingDetailScreen(
+                        reference: reference,
+                        focusedSource: true,
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开来源'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开来源'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('返回纪要'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('返回纪要'));
+    await tester.pumpAndSettle();
+    expect(find.text('打开来源'), findsOneWidget);
   });
 
   testWidgets('sentence highlight follows audio and yields to manual scroll', (

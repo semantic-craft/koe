@@ -29,11 +29,13 @@ class RecordingDetailScreen extends StatefulWidget {
     required this.reference,
     this.initialHighlightedParagraph,
     this.initialPlaybackStart,
+    this.focusedSource = false,
   });
 
   final RecordingReference reference;
   final int? initialHighlightedParagraph;
   final Duration? initialPlaybackStart;
+  final bool focusedSource;
 
   @override
   State<RecordingDetailScreen> createState() => _RecordingDetailScreenState();
@@ -77,8 +79,9 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
   void _notice(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _jumpTo(TranscriptJump jump) {
@@ -103,6 +106,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           reference: widget.reference,
           initialHighlightedParagraph: jump.segmentIndex,
           initialPlaybackStart: jump.start,
+          focusedSource: true,
         ),
       ),
     );
@@ -547,6 +551,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       backgroundColor: AppColors.bgElevated,
       appBar: AppBar(
         backgroundColor: AppColors.bgElevated,
+        leading: widget.focusedSource
+            ? IconButton(
+                tooltip: '返回纪要',
+                onPressed: () => Navigator.maybePop(context),
+                icon: const Icon(Icons.arrow_back_rounded),
+              )
+            : null,
         automaticallyImplyLeading:
             !(RecordingNavigation.of(context)?.wide ?? false),
         toolbarHeight: (RecordingNavigation.of(context)?.wide ?? false)

@@ -132,11 +132,30 @@ List<TranscriptSourceMatch> matchTranscriptSources({
 }
 
 int? _locate(String haystack, String source) {
-  for (final length in [40, 24, 12, 8, 4]) {
-    if (source.runes.length < length) continue;
-    final needle = String.fromCharCodes(source.runes.take(length));
+  final runes = source.runes.toList();
+  final lengths =
+      <int>{
+          runes.length,
+          240,
+          160,
+          120,
+          80,
+          40,
+          24,
+          16,
+          12,
+          8,
+          4,
+        }.where((length) => length <= runes.length).toList()
+        ..sort((a, b) => b.compareTo(a));
+  for (final length in lengths) {
+    final needle = String.fromCharCodes(runes.take(length));
     final at = haystack.indexOf(needle);
-    if (at >= 0) return at;
+    if (at < 0) continue;
+    // A prefix repeated elsewhere cannot identify which sentence the model
+    // used. Try a longer prefix before giving up rather than seeking to the
+    // first occurrence and attaching the wrong recording position.
+    if (haystack.indexOf(needle, at + 1) < 0) return at;
   }
   return null;
 }
