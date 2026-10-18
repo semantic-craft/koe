@@ -54,7 +54,7 @@ class _AppShellState extends State<AppShell> {
         leftData.path != null && leftData.path == rightData.path;
   }
 
-  void _openRecording(RecordingReference reference) {
+  void _openRecording(RecordingReference reference, {int? initialParagraph}) {
     final navigator = _navigator.currentState;
     if (navigator == null) return;
     if (_wide && _index != 0) {
@@ -63,7 +63,10 @@ class _AppShellState extends State<AppShell> {
         _index = 0;
       });
     }
-    if (_sameRecording(_routes.visibleReference, reference)) return;
+    if (initialParagraph == null &&
+        _sameRecording(_routes.visibleReference, reference)) {
+      return;
+    }
     final existing = _routes.routes
         .where(
           (route) =>
@@ -76,7 +79,8 @@ class _AppShellState extends State<AppShell> {
         .firstOrNull;
     if (existing != null) {
       navigator.popUntil((route) => route == existing);
-      return;
+      if (initialParagraph == null) return;
+      navigator.removeRoute(existing);
     }
     final controller = context.read<RecorderController>();
     final data = controller.recordingView(reference);
@@ -87,7 +91,10 @@ class _AppShellState extends State<AppShell> {
       ),
       builder: (_) => data.mode == SttDisplayMode.conversation && data.live
           ? CommunicationScreen(reference: reference)
-          : RecordingDetailScreen(reference: reference),
+          : RecordingDetailScreen(
+              reference: reference,
+              initialHighlightedParagraph: initialParagraph,
+            ),
     );
     if (_wide && _routes.routes.length > 1) {
       navigator.pushReplacement(route);

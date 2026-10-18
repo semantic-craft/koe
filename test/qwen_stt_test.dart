@@ -177,6 +177,44 @@ void main() {
     );
   });
 
+  test('sentence times become replay segments only when complete', () {
+    final parsed = parseQwenTranscript({
+      'transcripts': [
+        {
+          'sentences': [
+            {'text': '你好', 'speaker_id': 0, 'begin_time': 0, 'end_time': 620},
+            {
+              'text': '世界',
+              'speaker_id': 1,
+              'begin_time': 1240,
+              'end_time': 2100,
+            },
+          ],
+        },
+      ],
+    });
+    expect(parsed.text, '说话人 0：你好\n说话人 1：世界');
+    expect(parsed.segments, hasLength(2));
+    expect(parsed.segments[0].startMs, 0);
+    expect(parsed.segments[0].endMs, 620);
+    expect(parsed.segments[0].speakerChanged, isTrue);
+    expect(parsed.segments[1].startMs, 1240);
+    expect(parsed.segments[1].speakerChanged, isTrue);
+
+    final incomplete = parseQwenTranscript({
+      'transcripts': [
+        {
+          'sentences': [
+            {'text': '有起点', 'begin_time': 0, 'end_time': 500},
+            {'text': '缺终点', 'begin_time': 500},
+          ],
+        },
+      ],
+    });
+    expect(incomplete.text, '有起点\n缺终点');
+    expect(incomplete.segments, isEmpty);
+  });
+
   test(
     'file transcription uploads, polls, and reads transcription_url',
     () async {
