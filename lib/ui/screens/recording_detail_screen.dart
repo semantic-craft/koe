@@ -528,8 +528,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         : null;
     final hasRecoverableCache =
         recording.path != null &&
-        (recording.path!.endsWith('.opus') ||
-            recording.path!.endsWith('.opus.bin'));
+        c.hasRecoverableCacheForPath(recording.path!);
 
     return Scaffold(
       key: ValueKey('recording-detail-${widget.reference.key}'),

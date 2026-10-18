@@ -280,6 +280,19 @@ void main() {
     );
   });
 
+  test('回收站资料不会被后续传输重新登记到资料库', () async {
+    final source = await sourceAudio('传输后移入回收站');
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importLocalAudio(source.path);
+    await c.trashLocalExports([imported.path]);
+
+    await c.completeWifiTransfer([imported.path], decrypted: false);
+
+    expect(c.exportedPaths, isNot(contains(imported.path)));
+    expect(c.trashedAssets.single.path, imported.path);
+  });
+
   test('清理缓存只删除派生播放文件，不删除原件', () async {
     const id = '1783917000';
     final original = File('${temp.path}/$id.opus.bin');
@@ -307,6 +320,60 @@ void main() {
     expect(await wav.exists(), isFalse);
     expect(await ogg.exists(), isFalse);
     expect(c.exportedPaths, contains(original.path));
+  });
+
+  test('设备传输的 WAV 能通过同名原始流清理可恢复缓存', () async {
+    const id = '1783917002';
+    final wav = File('${temp.path}/$id.wav');
+    final raw = File('${temp.path}/$id.opus');
+    final ogg = File('${temp.path}/$id.ogg');
+    await wav.writeAsBytes([1, 2, 3, 4]);
+    await raw.writeAsBytes([5, 6, 7, 8]);
+    await ogg.writeAsBytes([9, 10, 11, 12]);
+    final c = controller();
+    addTearDown(c.dispose);
+    c.exportedPaths.add(wav.path);
+    await c.library.upsert(
+      RecordingAsset(
+        path: wav.path,
+        displayName: '设备传输',
+        source: RecordingSource.device,
+        importedAt: DateTime(2026, 10, 1),
+      ),
+    );
+
+    expect(c.hasRecoverableCacheForPath(wav.path), isTrue);
+    final result = await c.clearRecoverableCache(wav.path);
+
+    expect(result.removed, 2);
+    expect(await wav.exists(), isTrue);
+    expect(await raw.exists(), isFalse);
+    expect(await ogg.exists(), isFalse);
+  });
+
+  test('彻底删除改名录音时一并删除源文件派生的 Ogg sidecar', () async {
+    final raw = File('${temp.path}/1783917003_会议.opus');
+    final sidecar = File('${temp.path}/1783917003_会议.ogg');
+    await raw.writeAsBytes([1, 2, 3, 4]);
+    await sidecar.writeAsBytes([5, 6, 7, 8]);
+    final c = controller();
+    addTearDown(c.dispose);
+    c.exportedPaths.add(raw.path);
+    await c.library.upsert(
+      RecordingAsset(
+        path: raw.path,
+        displayName: '会议',
+        source: RecordingSource.device,
+        importedAt: DateTime(2026, 10, 1),
+      ),
+    );
+
+    final result = await c.deleteLocalExports([raw.path]);
+
+    expect(result.deleted, 1);
+    expect(await raw.exists(), isFalse);
+    expect(await sidecar.exists(), isFalse);
+    expect(c.exportedPaths, isNot(contains(raw.path)));
   });
 
   test('导入未提供发生时间时不会把微秒文件名当成日期', () async {

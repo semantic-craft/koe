@@ -5125,6 +5125,13 @@ class RecorderController extends ChangeNotifier {
               p.join(p.dirname(path), '$id.ogg'),
               p.join(p.dirname(path), '$id.opus.bin'),
             };
+      for (final candidate in logicalPaths.toList()) {
+        logicalPaths.add(
+          candidate.endsWith('.opus')
+              ? '${candidate.substring(0, candidate.length - 5)}.ogg'
+              : '$candidate.ogg',
+        );
+      }
       try {
         _requireFinishedRecording(path);
         if (_fileJobKey == _recordingKey(path: path)) {
@@ -5385,9 +5392,6 @@ class RecorderController extends ChangeNotifier {
     await _libraryLoaded;
     final asset = library.assetForPath(path);
     final original = asset?.path ?? path;
-    if (!original.endsWith('.opus') && !original.endsWith('.opus.bin')) {
-      return (removed: 0, bytes: 0, skipped: <String>['这条资料没有可重建的播放缓存']);
-    }
     final id = ExportCatalog.fileIdFromPath(original);
     if (id == null) {
       return (removed: 0, bytes: 0, skipped: <String>['无法确认缓存归属，已保留全部文件']);
@@ -5396,10 +5400,22 @@ class RecorderController extends ChangeNotifier {
       return (removed: 0, bytes: 0, skipped: <String>['原件不在本机，未清理任何文件']);
     }
     final directory = p.dirname(original);
+    final hasRawSource =
+        original.endsWith('.opus') ||
+        original.endsWith('.opus.bin') ||
+        await File(p.join(directory, '$id.opus')).exists() ||
+        await File(p.join(directory, '$id.opus.bin')).exists();
+    if (!hasRawSource) {
+      return (removed: 0, bytes: 0, skipped: <String>['这条资料没有可重建的播放缓存']);
+    }
     final candidates = <String>{
       p.join(directory, '$id.wav'),
       p.join(directory, '$id.ogg'),
+      if (original.endsWith('.wav')) p.join(directory, '$id.opus'),
+      if (original.endsWith('.wav')) p.join(directory, '$id.opus.bin'),
       '$original.ogg',
+      if (original.endsWith('.opus'))
+        '${original.substring(0, original.length - 5)}.ogg',
     }..remove(original);
     var removed = 0;
     var bytes = 0;
@@ -5423,6 +5439,30 @@ class RecorderController extends ChangeNotifier {
     errorMessage = skipped.isEmpty ? null : skipped.join('\n');
     notifyListeners();
     return (removed: removed, bytes: bytes, skipped: skipped);
+  }
+
+  bool hasRecoverableCacheForPath(String path) {
+    final asset = library.assetForPath(path);
+    final original = asset?.path ?? path;
+    final id = ExportCatalog.fileIdFromPath(original);
+    if (id == null || !File(original).existsSync()) return false;
+    final directory = p.dirname(original);
+    if (!original.endsWith('.opus') &&
+        !original.endsWith('.opus.bin') &&
+        !File(p.join(directory, '$id.opus')).existsSync() &&
+        !File(p.join(directory, '$id.opus.bin')).existsSync()) {
+      return false;
+    }
+    final candidates = <String>{
+      p.join(directory, '$id.wav'),
+      p.join(directory, '$id.ogg'),
+      if (original.endsWith('.wav')) p.join(directory, '$id.opus'),
+      if (original.endsWith('.wav')) p.join(directory, '$id.opus.bin'),
+      '$original.ogg',
+      if (original.endsWith('.opus'))
+        '${original.substring(0, original.length - 5)}.ogg',
+    }..remove(original);
+    return candidates.any((candidate) => File(candidate).existsSync());
   }
 
   /// Unassigns one material from its project/topic without deleting notes.
@@ -5501,9 +5541,22 @@ class RecorderController extends ChangeNotifier {
   }
 
   void _registerExportedPaths(Iterable<String> paths) {
+    final trashedPaths = <String>{};
+    final trashedIds = <int>{};
+    for (final asset in library.assets.where((asset) => asset.trashed)) {
+      trashedPaths.add(asset.path);
+      final id = ExportCatalog.fileIdFromPath(asset.path);
+      if (id != null) trashedIds.add(id);
+    }
+    final accepted = <String>[];
+    for (final path in [...exportedPaths, ...paths]) {
+      if (trashedPaths.contains(path)) continue;
+      final id = ExportCatalog.fileIdFromPath(path);
+      if (id != null && trashedIds.contains(id)) continue;
+      accepted.add(path);
+    }
     exportedPaths = ExportCatalog.newestPathsFirst([
-      ...exportedPaths,
-      ...paths,
+      ...accepted,
     ]);
     localPathsByFileId.clear();
     for (final path in exportedPaths) {
