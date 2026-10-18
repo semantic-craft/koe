@@ -13,9 +13,11 @@ import '../../ai/stt_types.dart';
 import '../../state/export_catalog.dart';
 import '../../state/recorder_controller.dart';
 import '../../state/recording_bookmarks.dart';
+import '../../state/transcript_chapters.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../transcript_layout.dart';
+import '../transcript_jump.dart';
 import '../widgets/analysis_panel.dart';
 import '../widgets/inline_player.dart';
 import '../widgets/scan_sheet.dart';
@@ -28,10 +30,14 @@ class RecordingDetailScreen extends StatefulWidget {
     super.key,
     required this.reference,
     this.initialHighlightedParagraph,
+    this.initialPlaybackStart,
+    this.focusedSource = false,
   });
 
   final RecordingReference reference;
   final int? initialHighlightedParagraph;
+  final Duration? initialPlaybackStart;
+  final bool focusedSource;
 
   @override
   State<RecordingDetailScreen> createState() => _RecordingDetailScreenState();
@@ -47,6 +53,22 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   void initState() {
     super.initState();
     _highlightedParagraph = widget.initialHighlightedParagraph;
+    final start = widget.initialPlaybackStart;
+    if (start != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final controller = context.read<RecorderController>();
+        if (controller.recordingAudioChanged(widget.reference)) return;
+        final recording = controller.recordingView(widget.reference);
+        final path = recording.path;
+        if (path == null ||
+            !recording.originalPresent ||
+            recording.audioLocked) {
+          return;
+        }
+        controller.playFrom(path, start, fileId: widget.reference.fileId);
+      });
+    }
   }
 
   @override
@@ -63,6 +85,88 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _jumpTo(TranscriptJump jump) {
+    final controller = context.read<RecorderController>();
+    final recording = controller.recordingView(widget.reference);
+    if (controller.recordingAudioChanged(widget.reference)) {
+      _notice('录音已更换，旧时码无法定位');
+      return;
+    }
+    setState(() {
+      _showTranslation = false;
+      _highlightedParagraph = jump.segmentIndex;
+    });
+    final path = recording.path;
+    if (path != null && recording.originalPresent && !recording.audioLocked) {
+      controller.playFrom(path, jump.start, fileId: widget.reference.fileId);
+    }
+  }
+
+  /// Opens a focused copy of this recording so closing it returns to minutes.
+  void _openSource(TranscriptJump jump) {
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingDetailScreen(
+          reference: widget.reference,
+          initialHighlightedParagraph: jump.segmentIndex,
+          initialPlaybackStart: jump.start,
+          focusedSource: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openChapters(List<TranscriptSegment> segments) async {
+    final chapters = buildTranscriptChapters(segments);
+    if (chapters.isEmpty) {
+      _notice('没有可靠的时码，无法生成章节');
+      return;
+    }
+    final selected = await showModalBottomSheet<TranscriptChapter>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          children: [
+            Text('章节', style: Theme.of(sheetContext).textTheme.titleLarge),
+            const SizedBox(height: 4),
+            const Text('按发言人变化和较长停顿整理；仅显示有可靠时码的段落。'),
+            const SizedBox(height: 8),
+            for (final chapter in chapters)
+              ListTile(
+                key: ValueKey('chapter-${chapter.firstSegmentIndex}'),
+                contentPadding: EdgeInsets.zero,
+                leading: Text(
+                  _formatSegmentTime(chapter.start),
+                  style: const TextStyle(
+                    color: AppColors.accent,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+                title: Text(chapter.title),
+                subtitle: chapter.summary.isEmpty
+                    ? null
+                    : Text(chapter.summary),
+                onTap: () => Navigator.pop(sheetContext, chapter),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      _jumpTo(
+        TranscriptJump(
+          segmentIndex: selected.firstSegmentIndex,
+          start: selected.start,
+          snippet: selected.title,
+        ),
+      );
+    }
   }
 
   /// Segments the reader can locate; bookmarks resolve against the same list
@@ -940,6 +1044,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         : const <TranscriptSegment>[];
     final segmentsLocatable =
         recording.originalPresent &&
+        !c.recordingAudioChanged(widget.reference) &&
         transcriptSegmentsLocatable(
           segmentText,
           duration: path == null ? null : c.localDurationForPath(path),
@@ -983,6 +1088,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       backgroundColor: AppColors.bgElevated,
       appBar: AppBar(
         backgroundColor: AppColors.bgElevated,
+        leading: widget.focusedSource
+            ? IconButton(
+                tooltip: '返回纪要',
+                onPressed: () => Navigator.maybePop(context),
+                icon: const Icon(Icons.arrow_back_rounded),
+              )
+            : null,
         automaticallyImplyLeading:
             !(RecordingNavigation.of(context)?.wide ?? false),
         toolbarHeight: (RecordingNavigation.of(context)?.wide ?? false)
@@ -1030,6 +1142,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   _transcribe(recording);
                 case 'speakers':
                   _speakers(recording);
+                case 'chapters':
+                  _openChapters(segmentText);
                 case 'info':
                   _showInfo(recording);
                 case 'remove-topic':
@@ -1066,6 +1180,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   enabled: fileReady && !recording.processing,
                   child: const Text('说话人姓名'),
                 ),
+              if (source.isNotEmpty && !recording.live && segmentsLocatable)
+                const PopupMenuItem(value: 'chapters', child: Text('章节')),
               if (topicPlacement != null)
                 PopupMenuItem(
                   value: 'remove-topic',
@@ -1177,6 +1293,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             builder: (_) => AnalysisPanel(
                               controller: c,
                               reference: widget.reference,
+                              onOpenSource: _openSource,
                             ),
                           ),
                         ),
