@@ -1696,6 +1696,18 @@ class RecorderController extends ChangeNotifier {
         _finalizingRecordings.contains(_recordingKey(fileId: id, path: path));
   }
 
+  bool _isTrashedPath(String path) {
+    final id = ExportCatalog.fileIdFromPath(path);
+    for (final asset in library.assets) {
+      if (!asset.trashed) continue;
+      if (asset.path == path) return true;
+      if (id != null && ExportCatalog.fileIdFromPath(asset.path) == id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void _requireFinishedRecording(String path) {
     if (_isRecordingAudioLocked(fileIdFromPath(path), path)) {
       throw StateError('录音保存后再试');
@@ -3015,7 +3027,7 @@ class RecorderController extends ChangeNotifier {
     await _libraryLoaded;
     await _fileJobsLoaded;
     final key = _recordingKey(path: path);
-    if (library.assetForPath(path)?.trashed == true) {
+    if (_isTrashedPath(path)) {
       await _fileJobs.discard(key);
       _deferredJobs.discard(key);
       return true;
@@ -3170,7 +3182,7 @@ class RecorderController extends ChangeNotifier {
           if (_disposed || revision != _fileJobRevision) return true;
         }
       }
-      if (library.assetForPath(path)?.trashed == true) {
+      if (_isTrashedPath(path)) {
         await _fileJobs.discard(key);
         return true;
       }
@@ -4782,7 +4794,16 @@ class RecorderController extends ChangeNotifier {
       // Restores the persisted incomplete-retrieval ids after a restart.
       await _fileJobs.load();
     } catch (_) {}
+    final trashedIds = <int>{};
+    for (final asset in library.assets.where((asset) => asset.trashed)) {
+      final id = ExportCatalog.fileIdFromPath(asset.path);
+      if (id != null) trashedIds.add(id);
+    }
     for (final file in deviceFiles) {
+      if (trashedIds.contains(file.fileId)) {
+        complete.add(file.fileId);
+        continue;
+      }
       // A partial transfer converts to a full-size WAV header, so its size
       // alone would pass the threshold below; retrieve it again instead.
       if (_incompleteRetrievalIds.contains(file.fileId)) continue;
@@ -4800,6 +4821,11 @@ class RecorderController extends ChangeNotifier {
     }
     return complete;
   }
+
+  @visibleForTesting
+  Future<Set<int>> completeLocalExportIdsForTesting(
+    Iterable<OfflineFileEntry> deviceFiles,
+  ) => _completeLocalExportIds(deviceFiles);
 
   Future<Directory> _localExportDirectory() async {
     Directory base;

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/transcript_store.dart';
 import 'package:koe/ui/screens/files_screen.dart';
@@ -291,6 +292,30 @@ void main() {
 
     expect(c.exportedPaths, isNot(contains(imported.path)));
     expect(c.trashedAssets.single.path, imported.path);
+  });
+
+  test('回收站里的设备录音算作已传输，不再自动补传', () async {
+    const id = '1783917005';
+    final renamed = File('${temp.path}/${id}_旧名字.wav');
+    await renamed.writeAsBytes([1, 2, 3, 4]);
+    final c = controller();
+    addTearDown(c.dispose);
+    await c.library.upsert(
+      RecordingAsset(
+        path: renamed.path,
+        displayName: '旧名字',
+        source: RecordingSource.device,
+        importedAt: DateTime(2026, 10, 1),
+        archived: true,
+        deletedAt: DateTime(2026, 10, 1),
+      ),
+    );
+
+    final complete = await c.completeLocalExportIdsForTesting([
+      OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4),
+    ]);
+
+    expect(complete, contains(int.parse(id)));
   });
 
   test('清理缓存只删除派生播放文件，不删除原件', () async {
