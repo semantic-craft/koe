@@ -5048,7 +5048,9 @@ class RecorderController extends ChangeNotifier {
   List<String> get archiveOnlyPaths {
     final paths = <String>[];
     for (final record in archive.records) {
-      if (!record.verified || !record.hasVersion) continue;
+      final currentVerified = record.verified && record.hasVersion;
+      final hasReceipt = record.receipts.isNotEmpty;
+      if (!currentVerified && !hasReceipt) continue;
       if (File(record.localPath).existsSync()) continue;
       if (_isTrashedPath(record.localPath)) continue;
       paths.add(record.localPath);
@@ -5325,10 +5327,15 @@ class RecorderController extends ChangeNotifier {
   Future<({int deleted, List<String> failed})> deleteLocalExports(
     Iterable<String> paths,
   ) async {
+    final selected = paths.toSet();
+    // Invalidate an in-flight restore before any asynchronous side effect, so
+    // this explicit user action is the final writer for the path.
+    for (final path in selected) {
+      archive.invalidateRestore(path);
+    }
     // Permanent deletion must run after persisted transcripts have loaded;
     // otherwise the load can repopulate the maps and save the entry back.
     await _transcriptsLoaded;
-    final selected = paths.toSet();
     final removed = <String>{};
     var deleted = 0;
     final failed = <String>[];
@@ -5484,12 +5491,16 @@ class RecorderController extends ChangeNotifier {
     Iterable<String> paths, {
     DateTime? now,
   }) async {
+    final selected = paths.toSet();
+    for (final path in selected) {
+      archive.invalidateRestore(path);
+    }
     await _libraryLoaded;
     final stamp = now ?? DateTime.now();
     var trashed = 0;
     final failed = <String>[];
     final queued = <String>{};
-    for (final path in paths.toSet()) {
+    for (final path in selected) {
       try {
         _requireFinishedRecording(path);
         if (_fileJobKey == _recordingKey(path: path)) {
@@ -5512,7 +5523,6 @@ class RecorderController extends ChangeNotifier {
               importedAt: _localFileTimestamp(path) ?? stamp,
             );
         await library.upsert(asset.copyWith(archived: true, deletedAt: stamp));
-        archive.invalidateRestore(path);
         final key = _recordingKey(path: path);
         analysis.suspendRecording(key);
         _discardTrashedFileJob(key);
@@ -5739,6 +5749,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<String> renameLocalExport(String path, String label) async {
+    archive.invalidateRestore(path);
     _requireFinishedRecording(path);
     if (_fileJobKey == _recordingKey(path: path)) throw StateError('处理完成后再重命名');
     final source = File(path);
@@ -5747,6 +5758,7 @@ class RecorderController extends ChangeNotifier {
     final targetName = ExportCatalog.renamedFileName(path, label);
     final targetPath = p.join(p.dirname(path), targetName);
     if (targetPath == path) return path;
+    archive.invalidateRestore(targetPath);
     final target = File(targetPath);
     if (await target.exists()) throw StateError('同名文件已存在');
 
@@ -7551,33 +7563,43 @@ class _RecorderArchiveSource implements ArchiveSource {
   }
 
   @override
-  Future<void> archiveDidRestore(
+  Future<bool> archiveDidRestore(
     ArchivePhoneRecord record,
     String path, {
     required int length,
     required String contentHash,
+    required bool Function() isCurrent,
   }) async {
-    final asset = controller.library.assetForPath(path);
-    if (asset == null) {
-      await controller.library.upsert(
-        RecordingAsset(
-          path: path,
-          displayName: record.displayName,
-          source: RecordingSource.localImport,
-          recordedAt: record.recordedAt,
-          importedAt: DateTime.now(),
-          contentHash: contentHash,
-        ),
-      );
-    } else {
-      await controller.library.upsert(
-        asset.copyWith(contentHash: contentHash, originalComplete: true),
-      );
+    if (!isCurrent()) return false;
+    final existing = controller.library.assetForPath(path);
+    final asset = existing == null
+        ? RecordingAsset(
+            path: path,
+            displayName: record.displayName,
+            source: RecordingSource.localImport,
+            recordedAt: record.recordedAt,
+            importedAt: DateTime.now(),
+            contentHash: contentHash,
+          )
+        : existing.copyWith(contentHash: contentHash, originalComplete: true);
+    await controller.library.upsert(asset);
+    if (!isCurrent()) {
+      // Only remove the exact object this restore wrote; a later user write
+      // (trash rename/new file) must win and is not rolled back from a stale
+      // snapshot.
+      final stored = controller.library.assetForPath(path);
+      if (identical(stored, asset)) {
+        try {
+          await controller.library.remove(path, strict: false);
+        } catch (_) {}
+      }
+      return false;
     }
     controller._registerExportedPaths([...controller.exportedPaths, path]);
     controller._invalidateLocalDuration(path);
     controller.statusMessage = '已从 Mac 恢复并校验原件';
     controller.errorMessage = null;
     controller.notifyListeners();
+    return true;
   }
 }

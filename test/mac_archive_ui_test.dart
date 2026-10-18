@@ -41,13 +41,16 @@ class _UiSource implements ArchiveSource {
       record.localPath;
 
   @override
-  Future<void> archiveDidRestore(
+  Future<bool> archiveDidRestore(
     ArchivePhoneRecord record,
     String path, {
     required int length,
     required String contentHash,
+    required bool Function() isCurrent,
   }) async {
+    if (!isCurrent()) return false;
     paths.add(path);
+    return true;
   }
 }
 
@@ -451,4 +454,87 @@ void main() {
     expect(find.text('Mac 副本'), findsOneWidget);
     expect(find.textContaining('已校验'), findsWidgets);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets(
+    'a missing original with another Mac receipt stays visible and explains recovery',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const currentDesk = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const oldDesk = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      final missing = '${root.path}/other-mac.wav';
+      final pair = await pumpArchive(
+        tester,
+        seed: (store) async {
+          await store.setConfiguration(
+            pairing: ArchivePairing(
+              deskId: currentDesk,
+              key: ArchivePairing.generateKey(),
+              hosts: const <String>['127.0.0.1'],
+              port: 47831,
+            ),
+            autoArchive: false,
+            autoArchiveFrom: DateTime(2026, 10, 18),
+          );
+          await store.upsert(
+            ArchivePhoneRecord(
+              localPath: missing,
+              displayName: '另一台 Mac 的资料',
+              originalExtension: '.wav',
+              deskId: currentDesk,
+              phase: MacArchivePhase.failed,
+              length: 0,
+              sourceModifiedMs: 1,
+              error: '当前 Mac 没有副本',
+              receipts: <String, ArchiveDeskReceipt>{
+                oldDesk: ArchiveDeskReceipt(
+                  contentHash: archiveHashBytes(<int>[7, 8, 9]),
+                  length: 3,
+                  extension: '.wav',
+                  verifiedAt: DateTime(2026, 10, 17),
+                  sourceLength: 3,
+                  sourceModifiedMs: 1,
+                ),
+              },
+              updatedAt: DateTime(2026, 10, 18),
+            ),
+          );
+        },
+      );
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: pair.recorder,
+          child: const MaterialApp(home: Scaffold(body: FilesBody())),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(ValueKey('recording-row-$missing')), findsOneWidget);
+      expect(find.textContaining('原件在另一台 Mac'), findsWidgets);
+
+      await openInfo(tester, missing);
+      expect(find.text('Mac 副本'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('other-mac-archive-notice')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('open-archive-settings')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('restore-from-mac')), findsNothing);
+      expect(find.textContaining('原件已彻底缺失'), findsNothing);
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('open-archive-settings')),
+      );
+      await tester.tap(find.byKey(const ValueKey('open-archive-settings')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(SettingsScreen), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 }

@@ -3,11 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:koe/archive/archive_pairing.dart';
 import 'package:koe/archive/archive_service.dart';
-import 'package:koe/archive/archive_store.dart';
-import 'package:koe/archive/archive_wire.dart';
-import 'package:koe/archive/mac_archive_controller.dart';
+import 'package:koe/state/recorder_controller.dart';
 
 class _TestSource implements ArchiveSource {
   final Set<String> paths = <String>{};
@@ -50,14 +47,17 @@ class _TestSource implements ArchiveSource {
       record.localPath;
 
   @override
-  Future<void> archiveDidRestore(
+  Future<bool> archiveDidRestore(
     ArchivePhoneRecord record,
     String path, {
     required int length,
     required String contentHash,
+    required bool Function() isCurrent,
   }) async {
+    if (!isCurrent()) return false;
     paths.add(path);
     restored.add(path);
+    return true;
   }
 }
 
@@ -573,6 +573,70 @@ void main() {
         MacArchivePhase.verified,
       );
       expect(deskStore.entries, hasLength(2));
+    },
+  );
+
+  test(
+    'a preserved other-Mac receipt keeps a missing material visible after restart',
+    () async {
+      const currentDesk = 'dddddddddddddddddddddddddddddddd';
+      const oldDesk = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+      final path = '${root.path}/receipt-only.wav';
+      final store = ArchivePhoneStore(
+        directory: Directory('${root.path}/receipt-phone'),
+      );
+      await store.load();
+      await store.setConfiguration(
+        pairing: ArchivePairing(
+          deskId: currentDesk,
+          key: ArchivePairing.generateKey(),
+          hosts: const <String>['127.0.0.1'],
+          port: 47831,
+        ),
+        autoArchive: false,
+        autoArchiveFrom: DateTime(2026, 10, 18),
+      );
+      await store.upsert(
+        ArchivePhoneRecord(
+          localPath: path,
+          displayName: '旧 Mac 资料',
+          originalExtension: '.wav',
+          deskId: currentDesk,
+          phase: MacArchivePhase.failed,
+          length: 0,
+          sourceModifiedMs: 1,
+          receipts: <String, ArchiveDeskReceipt>{
+            oldDesk: ArchiveDeskReceipt(
+              contentHash: archiveHashBytes(<int>[4, 5, 6]),
+              length: 3,
+              extension: '.wav',
+              verifiedAt: DateTime(2026, 10, 17),
+              sourceLength: 3,
+              sourceModifiedMs: 1,
+            ),
+          },
+          updatedAt: DateTime(2026, 10, 18),
+        ),
+      );
+
+      for (var restart = 0; restart < 2; restart++) {
+        final archive = MacArchiveController(
+          source: _TestSource(),
+          isDesk: false,
+          phoneStore: store,
+          deskStore: ArchiveDeskStore(inMemory: true),
+        );
+        await archive.initialize();
+        final recorder = RecorderController(
+          loadPersistedState: false,
+          archiveController: archive,
+        );
+        expect(recorder.archiveOnlyPaths, contains(path));
+        expect(archive.statusForPath(path), contains('另一台 Mac'));
+        recorder.dispose();
+        archive.dispose();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
     },
   );
 }

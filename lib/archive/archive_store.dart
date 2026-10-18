@@ -500,6 +500,34 @@ class ArchivePhoneStore {
         }
       });
 
+  /// Conditional restore commit. The test and update run inside the same
+  /// serialized mutation, against the latest published record, so a delete or
+  /// rename that happened while the file was being fetched cannot be undone by
+  /// an older snapshot.
+  Future<bool> completeRestore({
+    required String fromPath,
+    required String targetPath,
+    required bool Function(ArchivePhoneRecord current) test,
+    required ArchivePhoneRecord Function(ArchivePhoneRecord current) update,
+  }) => _serializedMutation(() async {
+    final current = _records[fromPath];
+    if (current == null || !test(current)) return false;
+    final updated = update(current);
+    final next = Map<String, ArchivePhoneRecord>.of(_records)
+      ..remove(fromPath)
+      ..[targetPath] = updated;
+    await _writeSnapshot(
+      records: next,
+      pairing: pairing,
+      autoArchive: autoArchive,
+      autoArchiveFrom: autoArchiveFrom,
+    );
+    _records
+      ..remove(fromPath)
+      ..[targetPath] = updated;
+    return true;
+  });
+
   Future<void> remove(String path) => _serializedMutation(() async {
     if (!_records.containsKey(path)) return;
     final next = Map<String, ArchivePhoneRecord>.of(_records)..remove(path);

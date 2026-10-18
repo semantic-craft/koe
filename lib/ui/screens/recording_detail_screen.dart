@@ -21,6 +21,7 @@ import '../widgets/inline_player.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/topic_note_panel.dart';
 import 'files_screen.dart';
+import 'settings_screen.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({
@@ -701,6 +702,21 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   ? null
                   : archive.recordForPath(path);
               final archiveVerified = archiveRecord?.verified == true;
+              final verifiedForCurrent =
+                  archiveVerified &&
+                  (archive.pairing == null ||
+                      archiveRecord?.deskId == null ||
+                      archiveRecord!.deskId == archive.pairing!.deskId);
+              final currentReceipt = archiveRecord == null
+                  ? null
+                  : archive.receiptForCurrentDesk(archiveRecord);
+              final otherDesk = archiveRecord == null
+                  ? null
+                  : archive.otherDeskWithReceipt(archiveRecord);
+              final hasRemote =
+                  archiveVerified ||
+                  currentReceipt != null ||
+                  otherDesk != null;
               return SafeArea(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -776,13 +792,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           label: 'Mac 说明',
                           value: archive.detailForPath(path!),
                         ),
-                      if (archiveVerified)
+                      if (hasRemote)
                         _InfoRow(
                           label: 'Mac 副本',
-                          value:
-                              '已校验 · ${size(archiveRecord!.verifiedLength ?? archiveRecord.length)}',
+                          value: verifiedForCurrent || currentReceipt != null
+                              ? '已校验 · ${size(archiveRecord?.verifiedLength ?? currentReceipt?.length ?? archiveRecord?.length ?? 0)}'
+                              : '原件在另一台 Mac',
                         ),
-                      if (!recording.originalPresent && !archiveVerified)
+                      if (!recording.originalPresent && !hasRemote)
                         const Padding(
                           padding: EdgeInsets.only(top: 4, bottom: 8),
                           child: Text(
@@ -793,6 +810,41 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             ),
                           ),
                         ),
+                      if (!recording.originalPresent &&
+                          !verifiedForCurrent &&
+                          otherDesk != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          '原件在另一台 Mac（${otherDesk.substring(0, 8)}）；当前 Mac 没有这份副本。请配回原 Mac 后恢复。',
+                          key: const ValueKey('other-mac-archive-notice'),
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          key: const ValueKey('open-archive-settings'),
+                          onPressed: busy
+                              ? null
+                              : () {
+                                  final navigator = Navigator.of(context);
+                                  Navigator.pop(sheetContext);
+                                  navigator.push(
+                                    MaterialPageRoute<void>(
+                                      settings: const RouteSettings(
+                                        name: 'settings',
+                                      ),
+                                      builder: (_) =>
+                                          const SettingsScreen(showBack: true),
+                                    ),
+                                  );
+                                },
+                          icon: const Icon(Icons.settings_outlined),
+                          label: const Text('去设置更换配对'),
+                        ),
+                      ],
                       if (busy) ...[
                         const SizedBox(height: 8),
                         const LinearProgressIndicator(minHeight: 2),
@@ -808,7 +860,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           ),
                         ),
                       ],
-                      if (archiveVerified && !recording.originalPresent) ...[
+                      if (verifiedForCurrent && !recording.originalPresent) ...[
                         const SizedBox(height: 12),
                         FilledButton.icon(
                           key: const ValueKey('restore-from-mac'),
@@ -824,9 +876,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       ],
                       if (recording.originalPresent &&
                           archive.pairing != null &&
-                          (archiveRecord == null ||
-                              archiveRecord.phase ==
-                                  MacArchivePhase.failed)) ...[
+                          !verifiedForCurrent) ...[
                         const SizedBox(height: 12),
                         OutlinedButton.icon(
                           key: const ValueKey('archive-to-mac'),

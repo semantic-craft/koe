@@ -20,12 +20,15 @@ class _NoopSource implements ArchiveSource {
       record.localPath;
 
   @override
-  Future<void> archiveDidRestore(
+  Future<bool> archiveDidRestore(
     ArchivePhoneRecord record,
     String path, {
     required int length,
     required String contentHash,
-  }) async {}
+    required bool Function() isCurrent,
+  }) async {
+    return isCurrent();
+  }
 }
 
 void main() {
