@@ -9,8 +9,8 @@ import audio_service
 import audio_session
 import file_selector_macos
 import flutter_blue_plus_darwin
-import flutter_opus
 import just_audio
+import opus_codec_macos
 import package_info_plus
 import share_plus
 import sqflite_darwin
@@ -21,8 +21,8 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   AudioSessionPlugin.register(with: registry.registrar(forPlugin: "AudioSessionPlugin"))
   FileSelectorPlugin.register(with: registry.registrar(forPlugin: "FileSelectorPlugin"))
   FlutterBluePlusPlugin.register(with: registry.registrar(forPlugin: "FlutterBluePlusPlugin"))
-  FlutterOpusPlugin.register(with: registry.registrar(forPlugin: "FlutterOpusPlugin"))
   JustAudioPlugin.register(with: registry.registrar(forPlugin: "JustAudioPlugin"))
+  OpusFlutterMacosPlugin.register(with: registry.registrar(forPlugin: "OpusFlutterMacosPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   SharePlusMacosPlugin.register(with: registry.registrar(forPlugin: "SharePlusMacosPlugin"))
   SqflitePlugin.register(with: registry.registrar(forPlugin: "SqflitePlugin"))
