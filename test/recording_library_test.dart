@@ -318,6 +318,39 @@ void main() {
     expect(complete, contains(int.parse(id)));
   });
 
+  test('彻底删除设备录音后重启仍保留墓碑，不会自动补传', () async {
+    const id = '1783917006';
+    final audio = File('${temp.path}/$id.wav');
+    await audio.writeAsBytes(wavBytes([1, 2, 3, 4]));
+    final first = controller();
+    await first.library.upsert(
+      RecordingAsset(
+        path: audio.path,
+        displayName: '设备原件',
+        source: RecordingSource.device,
+        importedAt: DateTime(2026, 10, 1),
+      ),
+    );
+    await first.trashLocalExports([audio.path]);
+
+    final removed = await first.emptyTrash(paths: [audio.path]);
+
+    expect(removed.deleted, 1);
+    expect(await audio.exists(), isFalse);
+    expect(first.trashedAssets, isEmpty);
+    first.dispose();
+
+    final restarted = controller();
+    addTearDown(restarted.dispose);
+    await restarted.waitForRecordingLibrary();
+    final complete = await restarted.completeLocalExportIdsForTesting([
+      OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4),
+    ]);
+
+    expect(restarted.trashedAssets, isEmpty);
+    expect(complete, contains(int.parse(id)));
+  });
+
   test('清理缓存只删除派生播放文件，不删除原件', () async {
     const id = '1783917000';
     final original = File('${temp.path}/$id.opus.bin');

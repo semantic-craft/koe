@@ -363,8 +363,8 @@ class RecorderController extends ChangeNotifier {
       _topicsLoaded,
       analysis.load(),
     ]);
-    if (_disposed || !topicsEnabled) return;
     final key = _referenceKey(ref);
+    if (_disposed || !topicsEnabled || _isTrashedRecordingKey(key)) return;
     final topic = topics.topicOf(key);
     if (topic == null) return;
     final view = recordingView(ref);
@@ -386,7 +386,8 @@ class RecorderController extends ChangeNotifier {
         hasPriorNotes: priorNotes.isNotEmpty,
         audioSignature: audioSig,
       ),
-      currentSource: () => recordingView(ref).text,
+      currentSource: () =>
+          _isTrashedRecordingKey(key) ? '' : recordingView(ref).text,
     );
   }
 
@@ -410,7 +411,7 @@ class RecorderController extends ChangeNotifier {
       _topicsLoaded,
       analysis.load(),
     ]);
-    if (_disposed || !topicsEnabled) return;
+    if (_disposed || !topicsEnabled || _isTrashedRecordingKey(key)) return;
     final topic = topics.topicOf(key);
     if (topic == null) return;
     final ref = _referenceFromKey(key, pathHint: pathHint);
@@ -786,6 +787,29 @@ class RecorderController extends ChangeNotifier {
     return null;
   }
 
+  bool _isTrashedRecordingKey(String recordingKey) {
+    final int? fileId;
+    final String? path;
+    if (recordingKey.startsWith('file:')) {
+      fileId = int.tryParse(recordingKey.substring('file:'.length));
+      path = null;
+    } else if (recordingKey.startsWith('path:')) {
+      fileId = null;
+      path = recordingKey.substring('path:'.length);
+    } else {
+      return false;
+    }
+    for (final asset in library.assets) {
+      if (!asset.trashed) continue;
+      if (path != null && asset.path == path) return true;
+      if (fileId != null &&
+          ExportCatalog.fileIdFromPath(asset.path) == fileId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Transcript currently stored for [recordingKey], via [transcriptForPath]
   /// when the path is known.
   String? _transcriptForTopicAssist(String recordingKey) {
@@ -811,6 +835,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   bool _topicExcerptStill(String recordingKey, String excerptHash) =>
+      !_isTrashedRecordingKey(recordingKey) &&
       _currentTopicExcerptHash(recordingKey) == excerptHash;
 
   bool _pendingAssistCurrent(String recordingKey, String excerptHash) =>
@@ -5142,6 +5167,14 @@ class RecorderController extends ChangeNotifier {
 
     for (final path in selected) {
       final id = ExportCatalog.fileIdFromPath(path);
+      final existing = library.assetForPath(path);
+      final keepDeviceTombstone =
+          id != null &&
+          existing?.trashed == true &&
+          existing?.source == RecordingSource.device;
+      final tombstone = keepDeviceTombstone
+          ? existing!.copyWith(permanentlyDeleted: true)
+          : null;
       final logicalPaths = id == null
           ? <String>{path}
           : <String>{
@@ -5166,10 +5199,13 @@ class RecorderController extends ChangeNotifier {
         if (playingPath == path || (id != null && playingFileId == id)) {
           await stopPlayback();
         }
+        if (tombstone != null) await library.upsert(tombstone);
         for (final candidate in logicalPaths) {
           final file = File(candidate);
           if (await file.exists()) await file.delete();
-          await library.remove(candidate, strict: false);
+          if (candidate != tombstone?.path) {
+            await library.remove(candidate, strict: false);
+          }
           transcriptsByPath.remove(candidate);
           speakerAliasesByPath.remove(candidate);
           _localDurations.remove(candidate);
@@ -5198,6 +5234,9 @@ class RecorderController extends ChangeNotifier {
         removed.add(path);
         deleted++;
       } catch (error) {
+        if (tombstone != null && existing != null) {
+          await library.upsert(existing, strict: false);
+        }
         failed.add('${p.basename(path)}：无法删除，请稍后重试');
       }
     }
@@ -5226,7 +5265,9 @@ class RecorderController extends ChangeNotifier {
   static const trashRetention = Duration(days: 30);
 
   List<RecordingAsset> get trashedAssets {
-    final items = library.assets.where((asset) => asset.trashed).toList();
+    final items = library.assets
+        .where((asset) => asset.trashed && !asset.permanentlyDeleted)
+        .toList();
     items.sort((a, b) {
       final left = a.deletedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
       final right = b.deletedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -5280,7 +5321,9 @@ class RecorderController extends ChangeNotifier {
             );
         await library.upsert(asset.copyWith(archived: true, deletedAt: stamp));
         final key = _recordingKey(path: path);
+        analysis.suspendRecording(key);
         _discardTrashedFileJob(key);
+        _topicAssistLatest.remove(key);
         queued.add(path);
         trashed++;
       } catch (error) {
@@ -5324,6 +5367,9 @@ class RecorderController extends ChangeNotifier {
     if (asset == null || !asset.trashed) {
       throw StateError('资料不在回收站中');
     }
+    if (asset.permanentlyDeleted) {
+      throw StateError('资料已彻底删除，无法恢复');
+    }
     final deletedAt = asset.deletedAt;
     if (deletedAt != null &&
         (now ?? DateTime.now()).difference(deletedAt) >= trashRetention) {
@@ -5333,6 +5379,7 @@ class RecorderController extends ChangeNotifier {
       throw StateError('原件已丢失，无法恢复');
     }
     await library.upsert(asset.copyWith(archived: false, clearDeletedAt: true));
+    analysis.resumeRecording(_recordingKey(path: path));
     _registerExportedPaths([...exportedPaths, path]);
     statusMessage = '已从回收站恢复';
     errorMessage = null;
@@ -5397,6 +5444,7 @@ class RecorderController extends ChangeNotifier {
         .where(
           (asset) =>
               asset.trashed &&
+              !asset.permanentlyDeleted &&
               asset.deletedAt != null &&
               stamp.difference(asset.deletedAt!) >= trashRetention,
         )

@@ -24,6 +24,7 @@ class RecordingAsset {
     this.originalComplete = true,
     this.archived = false,
     this.deletedAt,
+    this.permanentlyDeleted = false,
   });
 
   final String path;
@@ -39,6 +40,10 @@ class RecordingAsset {
   /// When this asset was moved to the 30-day trash. Null means it is live.
   final DateTime? deletedAt;
 
+  /// A hidden marker for a device recording the user permanently deleted.
+  /// It prevents automatic transfer from recreating the same material.
+  final bool permanentlyDeleted;
+
   bool get trashed => deletedAt != null || archived;
 
   RecordingAsset copyWith({
@@ -53,6 +58,7 @@ class RecordingAsset {
     bool? archived,
     DateTime? deletedAt,
     bool clearDeletedAt = false,
+    bool? permanentlyDeleted,
   }) => RecordingAsset(
     path: path ?? this.path,
     displayName: displayName ?? this.displayName,
@@ -64,6 +70,7 @@ class RecordingAsset {
     originalComplete: originalComplete ?? this.originalComplete,
     archived: archived ?? this.archived,
     deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
+    permanentlyDeleted: permanentlyDeleted ?? this.permanentlyDeleted,
   );
 
   Map<String, Object?> toJson() => {
@@ -77,6 +84,7 @@ class RecordingAsset {
     'originalComplete': originalComplete,
     'archived': archived,
     if (deletedAt != null) 'deletedAt': deletedAt!.toIso8601String(),
+    if (permanentlyDeleted) 'permanentlyDeleted': true,
   };
 
   static RecordingAsset? decode(Object? value) {
@@ -116,6 +124,7 @@ class RecordingAsset {
       originalComplete: value['originalComplete'] != false,
       archived: value['archived'] == true || deletedAt != null,
       deletedAt: deletedAt,
+      permanentlyDeleted: value['permanentlyDeleted'] == true,
     );
   }
 }
