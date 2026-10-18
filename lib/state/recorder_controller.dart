@@ -3583,6 +3583,7 @@ class RecorderController extends ChangeNotifier {
           if (_switchingAudio) return;
           final completedPath = playingPath;
           final completedId = playingFileId;
+          final completedIntent = _playbackIntent;
           isPlaying = false;
           // Keep the final position and mark completion so the UI never looks
           // like it is still playing or silently restarts at zero.
@@ -3599,6 +3600,7 @@ class RecorderController extends ChangeNotifier {
                 () => _advanceQueueAfterCompletion(
                   path: completedPath,
                   fileId: completedId,
+                  intent: completedIntent,
                 ),
               ),
             );
@@ -6458,9 +6460,15 @@ class RecorderController extends ChangeNotifier {
   Future<void> _advanceQueueAfterCompletion({
     required String path,
     int? fileId,
+    required int intent,
   }) async {
     await _listeningQueueLoaded;
     if (_disposed) return;
+    // The completion event was captured before this action reached the front
+    // of the queue chain. A restart or seek of the same finished track bumps
+    // the intent without changing path/id/current, so compare the captured
+    // value, not the current one.
+    if (intent != _playbackIntent) return;
     final current = listeningQueue.current;
     if (current == null) return;
     // The user or the system may have started another track before this queued
@@ -6476,10 +6484,12 @@ class RecorderController extends ChangeNotifier {
         ? listeningQueue.entries[index + 1].key
         : null;
     if (nextKey == null) {
+      if (intent != _playbackIntent) return;
       queueNotice = '收听队列已播完。';
       notifyListeners();
       return;
     }
+    if (intent != _playbackIntent) return;
     await _playQueueKey(nextKey);
   }
 

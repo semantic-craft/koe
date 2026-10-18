@@ -561,6 +561,65 @@ void main() {
     );
   });
 
+  test('自动续播等待队列动作时重播同一段，不再跳到下一项', () async {
+    final first = await audio('100.wav');
+    final next = await audio('178.wav');
+    final third = await audio('200.wav');
+    final queueFile = File('${temp.path}/listening_queue.json');
+    final queue = _GatedQueueStore(file: queueFile);
+    await queue.load();
+    await queue.add(entry(first, fileId: 100, title: '第一段'));
+    await queue.add(entry(next, fileId: 178, title: '第二段'));
+    await queue.add(entry(third, fileId: 200, title: '第三段'));
+    final player = _QueuePlayer({
+      first.path: const Duration(minutes: 5),
+      next.path: const Duration(minutes: 5),
+      third.path: const Duration(minutes: 5),
+    });
+    final controller = RecorderController(
+      loadPersistedState: false,
+      listeningQueueStore: queue,
+      playbackHistoryStore: PlaybackHistoryStore(inMemory: true),
+      player: player,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForListeningQueue();
+    await controller.waitForPlaybackHistory();
+
+    await controller.playQueueEntry('id:100');
+    await settleQueue(controller);
+    player.emitState(playing: true);
+
+    // Hold the queue action chain with a non-current removal, so the
+    // completion event has to wait before its auto-advance runs.
+    queue.gateNextWrite();
+    final removingThird = controller.removeFromListeningQueue('id:200');
+    await queue.entered.timeout(const Duration(seconds: 5));
+    player.emitCompleted();
+    for (var i = 0; i < 10; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    await controller.playFrom(first.path, Duration.zero, fileId: 100);
+    player.emitState(playing: true);
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(controller.playingPath, first.path);
+    expect(controller.isPlaying, isTrue);
+
+    queue.release();
+    await removingThird;
+    await controller.waitForQueueIdle();
+    await controller.waitForQueueIdle();
+
+    expect(controller.playingPath, first.path, reason: '重播的同一段不能被自动续播覆盖');
+    expect(controller.isPlaying, isTrue);
+    expect(player.sources, [first.path]);
+    expect(controller.queueCurrentKey, 'id:100');
+    expect(queue.entries.map((item) => item.fileId), [100, 178]);
+  });
+
   test('上一段播完后移除缺失的当前项并选下一项，仍会播放下一项', () async {
     final first = await audio('100.wav');
     final missing = File('${temp.path}/178.wav');
