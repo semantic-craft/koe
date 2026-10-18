@@ -9,6 +9,7 @@ import '../widgets/mobile_header.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
 import 'new_recording_sheet.dart';
+import 'trash_screen.dart';
 
 /// Phone "Materials" section (#131).
 ///
@@ -61,6 +62,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           letterSpacing: -0.6,
                         ),
                       ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('library-trash'),
+                      tooltip: '回收站',
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const TrashScreen(),
+                        ),
+                      ),
+                      icon: const Icon(Icons.delete_outline_rounded),
                     ),
                     TextButton.icon(
                       key: const ValueKey('library-import'),

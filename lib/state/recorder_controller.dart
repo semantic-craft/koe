@@ -363,8 +363,8 @@ class RecorderController extends ChangeNotifier {
       _topicsLoaded,
       analysis.load(),
     ]);
-    if (_disposed || !topicsEnabled) return;
     final key = _referenceKey(ref);
+    if (_disposed || !topicsEnabled || _isTrashedRecordingKey(key)) return;
     final topic = topics.topicOf(key);
     if (topic == null) return;
     final view = recordingView(ref);
@@ -386,7 +386,8 @@ class RecorderController extends ChangeNotifier {
         hasPriorNotes: priorNotes.isNotEmpty,
         audioSignature: audioSig,
       ),
-      currentSource: () => recordingView(ref).text,
+      currentSource: () =>
+          _isTrashedRecordingKey(key) ? '' : recordingView(ref).text,
     );
   }
 
@@ -410,7 +411,7 @@ class RecorderController extends ChangeNotifier {
       _topicsLoaded,
       analysis.load(),
     ]);
-    if (_disposed || !topicsEnabled) return;
+    if (_disposed || !topicsEnabled || _isTrashedRecordingKey(key)) return;
     final topic = topics.topicOf(key);
     if (topic == null) return;
     final ref = _referenceFromKey(key, pathHint: pathHint);
@@ -692,6 +693,7 @@ class RecorderController extends ChangeNotifier {
         );
       }
     }
+    unawaited(_purgeTrashWhenReady());
     if (this.topicsEnabled && loadPersistedState) {
       _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
     }
@@ -717,12 +719,20 @@ class RecorderController extends ChangeNotifier {
   @visibleForTesting
   Future<void> waitForTopicAssist() async {
     await _deferredJobs.pump();
-    while (_activeFileJobCompleter != null || _topicAssistTasks.isNotEmpty) {
+    while (_deferredJobs.busy ||
+        _activeFileJobCompleter != null ||
+        _topicAssistTasks.isNotEmpty) {
       final inflight = <Future<void>>[
         if (_activeFileJobCompleter != null) _activeFileJobCompleter!.future,
         ..._topicAssistTasks.values,
       ];
-      if (inflight.isEmpty) break;
+      if (inflight.isEmpty) {
+        // The pump can be waiting between queue acceptance and registering its
+        // completer; yield so the test observes that progress instead of
+        // returning before the job has actually run.
+        await Future<void>.delayed(Duration.zero);
+        continue;
+      }
       await Future.wait(inflight);
     }
   }
@@ -777,6 +787,29 @@ class RecorderController extends ChangeNotifier {
     return null;
   }
 
+  bool _isTrashedRecordingKey(String recordingKey) {
+    final int? fileId;
+    final String? path;
+    if (recordingKey.startsWith('file:')) {
+      fileId = int.tryParse(recordingKey.substring('file:'.length));
+      path = null;
+    } else if (recordingKey.startsWith('path:')) {
+      fileId = null;
+      path = recordingKey.substring('path:'.length);
+    } else {
+      return false;
+    }
+    for (final asset in library.assets) {
+      if (!asset.trashed) continue;
+      if (path != null && asset.path == path) return true;
+      if (fileId != null &&
+          ExportCatalog.fileIdFromPath(asset.path) == fileId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Transcript currently stored for [recordingKey], via [transcriptForPath]
   /// when the path is known.
   String? _transcriptForTopicAssist(String recordingKey) {
@@ -802,6 +835,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   bool _topicExcerptStill(String recordingKey, String excerptHash) =>
+      !_isTrashedRecordingKey(recordingKey) &&
       _currentTopicExcerptHash(recordingKey) == excerptHash;
 
   bool _pendingAssistCurrent(String recordingKey, String excerptHash) =>
@@ -1600,9 +1634,7 @@ class RecorderController extends ChangeNotifier {
         : id == null
         ? '当前录音'
         : _recordingDateTitle(id);
-    final recordedAt =
-        asset?.recordedAt ??
-        (id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000));
+    final recordedAt = asset?.recordedAt ?? _recordedAtFromFileId(id);
     // Device recordings have no library entry until they are renamed or
     // archived; their retrieval time is still the local file timestamp.
     final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
@@ -1649,15 +1681,23 @@ class RecorderController extends ChangeNotifier {
       originalComplete:
           (asset?.originalComplete ?? true) &&
           (id == null || !_incompleteRetrievalIds.contains(id)),
-      archived: asset?.archived ?? false,
+      archived: asset?.trashed ?? false,
       segments: path == null ? const [] : transcriptSegmentsForPath(path),
     );
   }
 
   String _recordingDateTitle(int id) {
-    final date = DateTime.fromMillisecondsSinceEpoch(id * 1000);
+    final date = _recordedAtFromFileId(id);
+    if (date == null) return '当前录音';
     String pad(int value) => value.toString().padLeft(2, '0');
     return '${date.year}/${pad(date.month)}/${pad(date.day)} ${pad(date.hour)}:${pad(date.minute)}';
+  }
+
+  /// Device file ids are Unix seconds. Imported originals use a microsecond
+  /// timestamp prefix, which must never be treated as a recording date.
+  DateTime? _recordedAtFromFileId(int? id) {
+    if (id == null || id < 1000000000 || id > 4102444800) return null;
+    return DateTime.fromMillisecondsSinceEpoch(id * 1000);
   }
 
   DateTime? _localFileTimestamp(String? path) {
@@ -1679,6 +1719,18 @@ class RecorderController extends ChangeNotifier {
             (recording || realtimeState.active || current.finalizing) ||
         (id != null && recording && realtimeState.fileId == id) ||
         _finalizingRecordings.contains(_recordingKey(fileId: id, path: path));
+  }
+
+  bool _isTrashedPath(String path) {
+    final id = ExportCatalog.fileIdFromPath(path);
+    for (final asset in library.assets) {
+      if (!asset.trashed) continue;
+      if (asset.path == path) return true;
+      if (id != null && ExportCatalog.fileIdFromPath(asset.path) == id) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _requireFinishedRecording(String path) {
@@ -2979,6 +3031,7 @@ class RecorderController extends ChangeNotifier {
         ? settings.withSourceLanguage(sourceLanguage.trim())
         : settings;
     await _fileJobsLoaded;
+    await _libraryLoaded;
     // Manual retry runs straight through the deferred mechanism's executor so
     // the engine answers a busy start with its own readable error.
     await _deferredJobs.runNow(
@@ -2996,7 +3049,14 @@ class RecorderController extends ChangeNotifier {
     bool fromQueue = false,
   }) async {
     if (_disposed) return true;
+    await _libraryLoaded;
+    await _fileJobsLoaded;
     final key = _recordingKey(path: path);
+    if (_isTrashedPath(path)) {
+      await _fileJobs.discard(key);
+      _deferredJobs.discard(key);
+      return true;
+    }
     if (fileProcessingBusy ||
         _isRecordingAudioLocked(fileIdFromPath(path), path)) {
       if (!fromQueue) {
@@ -3146,6 +3206,10 @@ class RecorderController extends ChangeNotifier {
           );
           if (_disposed || revision != _fileJobRevision) return true;
         }
+      }
+      if (_isTrashedPath(path)) {
+        await _fileJobs.discard(key);
+        return true;
       }
       final result = job.stage == 'result'
           ? SttResult(
@@ -4755,7 +4819,16 @@ class RecorderController extends ChangeNotifier {
       // Restores the persisted incomplete-retrieval ids after a restart.
       await _fileJobs.load();
     } catch (_) {}
+    final trashedIds = <int>{};
+    for (final asset in library.assets.where((asset) => asset.trashed)) {
+      final id = ExportCatalog.fileIdFromPath(asset.path);
+      if (id != null) trashedIds.add(id);
+    }
     for (final file in deviceFiles) {
+      if (trashedIds.contains(file.fileId)) {
+        complete.add(file.fileId);
+        continue;
+      }
       // A partial transfer converts to a full-size WAV header, so its size
       // alone would pass the threshold below; retrieve it again instead.
       if (_incompleteRetrievalIds.contains(file.fileId)) continue;
@@ -4773,6 +4846,11 @@ class RecorderController extends ChangeNotifier {
     }
     return complete;
   }
+
+  @visibleForTesting
+  Future<Set<int>> completeLocalExportIdsForTesting(
+    Iterable<OfflineFileEntry> deviceFiles,
+  ) => _completeLocalExportIds(deviceFiles);
 
   Future<Directory> _localExportDirectory() async {
     Directory base;
@@ -4801,6 +4879,7 @@ class RecorderController extends ChangeNotifier {
     await library.load();
     final present = <String>[];
     for (final asset in library.assets) {
+      if (asset.trashed) continue;
       if (File(asset.path).existsSync()) present.add(asset.path);
     }
     if (present.isNotEmpty && !_disposed) {
@@ -4814,6 +4893,9 @@ class RecorderController extends ChangeNotifier {
 
   @visibleForTesting
   Future<void> waitForRecordingLibrary() => _libraryLoaded;
+
+  @visibleForTesting
+  Future<void> waitForTranscripts() => _transcriptsLoaded;
 
   DateTime? recordingRecordedAtForPath(String path) {
     final asset = library.assetForPath(path);
@@ -4857,11 +4939,24 @@ class RecorderController extends ChangeNotifier {
 
     final existing = library.assetForHash(contentHash);
     if (existing != null) {
+      final restored = existing.trashed;
+      if (restored) {
+        await library.upsert(
+          existing.copyWith(archived: false, clearDeletedAt: true),
+        );
+        analysis.resumeRecording(_recordingKey(path: existing.path));
+      }
       _registerExportedPaths([...exportedPaths, existing.path]);
-      statusMessage = '这条音频已在资料库中';
+      statusMessage = restored ? '这条音频在回收站中，已恢复' : '这条音频已在资料库中';
       errorMessage = null;
       notifyListeners();
-      return (path: existing.path, duplicate: true, asset: existing);
+      return (
+        path: existing.path,
+        duplicate: true,
+        asset: restored
+            ? existing.copyWith(archived: false, clearDeletedAt: true)
+            : existing,
+      );
     }
 
     final now = DateTime.now();
@@ -4921,6 +5016,7 @@ class RecorderController extends ChangeNotifier {
 
   Future<void> _loadLocalExports({bool notify = true}) async {
     try {
+      await _libraryLoaded;
       final dir = await _localExportDirectory();
       if (!await dir.exists()) {
         if (notify) notifyListeners();
@@ -4934,6 +5030,18 @@ class RecorderController extends ChangeNotifier {
           paths.add(entity.path);
         }
       }
+      final trashedPaths = <String>{};
+      final trashedIds = <int>{};
+      for (final asset in library.assets.where((asset) => asset.trashed)) {
+        trashedPaths.add(asset.path);
+        final id = ExportCatalog.fileIdFromPath(asset.path);
+        if (id != null) trashedIds.add(id);
+      }
+      paths.removeWhere((path) {
+        final id = ExportCatalog.fileIdFromPath(path);
+        return trashedPaths.contains(path) ||
+            (id != null && trashedIds.contains(id));
+      });
       _registerExportedPaths([...exportedPaths, ...paths]);
       final wavIds = paths
           .where((path) => path.endsWith('.wav'))
@@ -5050,6 +5158,9 @@ class RecorderController extends ChangeNotifier {
   Future<({int deleted, List<String> failed})> deleteLocalExports(
     Iterable<String> paths,
   ) async {
+    // Permanent deletion must run after persisted transcripts have loaded;
+    // otherwise the load can repopulate the maps and save the entry back.
+    await _transcriptsLoaded;
     final selected = paths.toSet();
     final removed = <String>{};
     var deleted = 0;
@@ -5057,6 +5168,14 @@ class RecorderController extends ChangeNotifier {
 
     for (final path in selected) {
       final id = ExportCatalog.fileIdFromPath(path);
+      final existing = library.assetForPath(path);
+      final keepDeviceTombstone =
+          id != null &&
+          existing?.trashed == true &&
+          existing?.source == RecordingSource.device;
+      final tombstone = keepDeviceTombstone
+          ? existing!.copyWith(permanentlyDeleted: true)
+          : null;
       final logicalPaths = id == null
           ? <String>{path}
           : <String>{
@@ -5066,6 +5185,13 @@ class RecorderController extends ChangeNotifier {
               p.join(p.dirname(path), '$id.ogg'),
               p.join(p.dirname(path), '$id.opus.bin'),
             };
+      for (final candidate in logicalPaths.toList()) {
+        logicalPaths.add(
+          candidate.endsWith('.opus')
+              ? '${candidate.substring(0, candidate.length - 5)}.ogg'
+              : '$candidate.ogg',
+        );
+      }
       try {
         _requireFinishedRecording(path);
         if (_fileJobKey == _recordingKey(path: path)) {
@@ -5074,10 +5200,13 @@ class RecorderController extends ChangeNotifier {
         if (playingPath == path || (id != null && playingFileId == id)) {
           await stopPlayback();
         }
+        if (tombstone != null) await library.upsert(tombstone);
         for (final candidate in logicalPaths) {
           final file = File(candidate);
           if (await file.exists()) await file.delete();
-          await library.remove(candidate, strict: false);
+          if (candidate != tombstone?.path) {
+            await library.remove(candidate, strict: false);
+          }
           transcriptsByPath.remove(candidate);
           speakerAliasesByPath.remove(candidate);
           _localDurations.remove(candidate);
@@ -5106,6 +5235,9 @@ class RecorderController extends ChangeNotifier {
         removed.add(path);
         deleted++;
       } catch (error) {
+        if (tombstone != null && existing != null) {
+          await library.upsert(existing, strict: false);
+        }
         failed.add('${p.basename(path)}：无法删除，请稍后重试');
       }
     }
@@ -5127,6 +5259,291 @@ class RecorderController extends ChangeNotifier {
     errorMessage = failed.isEmpty ? null : failed.join('\n');
     notifyListeners();
     return (deleted: deleted, failed: failed);
+  }
+
+  /// Moving a material to the trash keeps the original file, transcript,
+  /// speaker names, topics and notes. Only its visibility is changed.
+  static const trashRetention = Duration(days: 30);
+
+  List<RecordingAsset> get trashedAssets {
+    final items = library.assets
+        .where((asset) => asset.trashed && !asset.permanentlyDeleted)
+        .toList();
+    items.sort((a, b) {
+      final left = a.deletedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final right = b.deletedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return right.compareTo(left);
+    });
+    return List.unmodifiable(items);
+  }
+
+  int trashDaysRemaining(RecordingAsset asset, {DateTime? now}) {
+    final deletedAt = asset.deletedAt;
+    if (deletedAt == null) return trashRetention.inDays;
+    final elapsed = (now ?? DateTime.now()).difference(deletedAt);
+    final remaining = trashRetention - elapsed;
+    if (remaining <= Duration.zero) return 0;
+    // A partial final day still allows restore; round up instead of
+    // truncating 1 hour left to zero and disabling the action.
+    return (remaining.inMinutes / Duration.minutesPerDay).ceil();
+  }
+
+  /// Hides materials from the library while keeping their only original.
+  Future<({int trashed, List<String> failed})> trashLocalExports(
+    Iterable<String> paths, {
+    DateTime? now,
+  }) async {
+    await _libraryLoaded;
+    final stamp = now ?? DateTime.now();
+    var trashed = 0;
+    final failed = <String>[];
+    final queued = <String>{};
+    for (final path in paths.toSet()) {
+      try {
+        _requireFinishedRecording(path);
+        if (_fileJobKey == _recordingKey(path: path)) {
+          throw StateError('处理完成后再删除');
+        }
+        final id = ExportCatalog.fileIdFromPath(path);
+        if (playingPath == path || (id != null && playingFileId == id)) {
+          await stopPlayback();
+        }
+        final existing = library.assetForPath(path);
+        final asset =
+            existing ??
+            RecordingAsset(
+              path: path,
+              displayName: _trashDisplayName(path),
+              source: RecordingSource.device,
+              recordedAt: id == null
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(id * 1000),
+              importedAt: _localFileTimestamp(path) ?? stamp,
+            );
+        await library.upsert(asset.copyWith(archived: true, deletedAt: stamp));
+        final key = _recordingKey(path: path);
+        analysis.suspendRecording(key);
+        _discardTrashedFileJob(key);
+        _topicAssistLatest.remove(key);
+        queued.add(path);
+        trashed++;
+      } catch (error) {
+        failed.add('${p.basename(path)}：无法移到回收站，请稍后重试');
+      }
+    }
+    if (queued.isNotEmpty) {
+      exportedPaths.removeWhere((path) {
+        if (queued.contains(path)) return true;
+        final id = ExportCatalog.fileIdFromPath(path);
+        return id != null &&
+            queued.any((item) => ExportCatalog.fileIdFromPath(item) == id);
+      });
+      _registerExportedPaths(exportedPaths);
+    }
+    statusMessage = failed.isEmpty
+        ? '已移到回收站，30 天内可恢复'
+        : '已移到回收站 $trashed 个，${failed.length} 个失败';
+    errorMessage = failed.isEmpty ? null : failed.join('\n');
+    notifyListeners();
+    return (trashed: trashed, failed: failed);
+  }
+
+  void _discardTrashedFileJob(String key) {
+    _deferredJobs.discard(key);
+    unawaited(
+      _fileJobsLoaded
+          .then((_) => _fileJobs.discard(key))
+          .catchError((Object _) {}),
+    );
+  }
+
+  String _trashDisplayName(String path) {
+    final label = ExportCatalog.editableLabelFromPath(path).trim();
+    return label.isEmpty ? p.basename(path) : label;
+  }
+
+  Future<void> restoreTrashed(String path, {DateTime? now}) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    if (asset == null || !asset.trashed) {
+      throw StateError('资料不在回收站中');
+    }
+    if (asset.permanentlyDeleted) {
+      throw StateError('资料已彻底删除，无法恢复');
+    }
+    final deletedAt = asset.deletedAt;
+    if (deletedAt != null &&
+        (now ?? DateTime.now()).difference(deletedAt) >= trashRetention) {
+      throw StateError('已超过 30 天保留期，无法恢复');
+    }
+    if (!await File(path).exists()) {
+      throw StateError('原件已丢失，无法恢复');
+    }
+    await library.upsert(asset.copyWith(archived: false, clearDeletedAt: true));
+    analysis.resumeRecording(_recordingKey(path: path));
+    _registerExportedPaths([...exportedPaths, path]);
+    statusMessage = '已从回收站恢复';
+    errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Explicit, irreversible removal. Callers must confirm first.
+  Future<({int deleted, List<String> failed})> emptyTrash({
+    Iterable<String>? paths,
+  }) async {
+    await _libraryLoaded;
+    final targets = (paths ?? trashedAssets.map((asset) => asset.path)).toSet();
+    var deleted = 0;
+    final failed = <String>[];
+    for (final path in targets) {
+      final result = await deleteLocalExports([path]);
+      deleted += result.deleted;
+      failed.addAll(result.failed);
+    }
+    if (deleted > 0) {
+      statusMessage = '已彻底删除 $deleted 个资料';
+    }
+    notifyListeners();
+    return (deleted: deleted, failed: failed);
+  }
+
+  Future<int> purgeExpiredTrash({DateTime? now}) async {
+    await _libraryLoaded;
+    await _topicsLoaded;
+    await _transcriptsLoaded;
+    return _purgeExpiredTrash(now: now);
+  }
+
+  Future<void> _purgeTrashWhenReady() async {
+    await _libraryLoaded;
+    await _topicsLoaded;
+    await _transcriptsLoaded;
+    if (_disposed) return;
+    await _purgeExpiredTrash();
+  }
+
+  Future<int>? _trashPurgeInFlight;
+
+  Future<int> _purgeExpiredTrash({DateTime? now}) async {
+    final running = _trashPurgeInFlight;
+    if (running != null) return running;
+    final task = _runPurgeExpiredTrash(now: now);
+    _trashPurgeInFlight = task;
+    unawaited(
+      task.whenComplete(() {
+        if (identical(_trashPurgeInFlight, task)) {
+          _trashPurgeInFlight = null;
+        }
+      }),
+    );
+    return task;
+  }
+
+  Future<int> _runPurgeExpiredTrash({DateTime? now}) async {
+    final stamp = now ?? DateTime.now();
+    final expired = library.assets
+        .where(
+          (asset) =>
+              asset.trashed &&
+              !asset.permanentlyDeleted &&
+              asset.deletedAt != null &&
+              stamp.difference(asset.deletedAt!) >= trashRetention,
+        )
+        .map((asset) => asset.path)
+        .toList();
+    var purged = 0;
+    for (final path in expired) {
+      if (_disposed) break;
+      final result = await deleteLocalExports([path]);
+      purged += result.deleted;
+    }
+    return purged;
+  }
+
+  /// Removes only derived playback files. The library original is never a
+  /// candidate, even when the archive was not verified.
+  Future<({int removed, int bytes, List<String> skipped})>
+  clearRecoverableCache(String path) async {
+    await _libraryLoaded;
+    final asset = library.assetForPath(path);
+    final original = asset?.path ?? path;
+    final id = ExportCatalog.fileIdFromPath(original);
+    if (id == null) {
+      return (removed: 0, bytes: 0, skipped: <String>['无法确认缓存归属，已保留全部文件']);
+    }
+    if (!await File(original).exists()) {
+      return (removed: 0, bytes: 0, skipped: <String>['原件不在本机，未清理任何文件']);
+    }
+    final directory = p.dirname(original);
+    final hasRawSource =
+        original.endsWith('.opus') ||
+        original.endsWith('.opus.bin') ||
+        await File(p.join(directory, '$id.opus')).exists() ||
+        await File(p.join(directory, '$id.opus.bin')).exists();
+    if (!hasRawSource) {
+      return (removed: 0, bytes: 0, skipped: <String>['这条资料没有可重建的播放缓存']);
+    }
+    final candidates = <String>{
+      p.join(directory, '$id.wav'),
+      p.join(directory, '$id.ogg'),
+      '$original.ogg',
+      if (original.endsWith('.opus'))
+        '${original.substring(0, original.length - 5)}.ogg',
+    }..remove(original);
+    var removed = 0;
+    var bytes = 0;
+    final skipped = <String>[];
+    for (final candidate in candidates) {
+      final file = File(candidate);
+      if (!await file.exists()) continue;
+      try {
+        final length = await file.length();
+        await file.delete();
+        removed++;
+        bytes += length;
+        _invalidateLocalDuration(candidate);
+      } catch (error) {
+        skipped.add('${p.basename(candidate)}：无法清理');
+      }
+    }
+    statusMessage = removed == 0
+        ? '没有可清理的播放缓存，原件已保留'
+        : '已清理 $removed 个可重建缓存，原件与原文字保留';
+    errorMessage = skipped.isEmpty ? null : skipped.join('\n');
+    notifyListeners();
+    return (removed: removed, bytes: bytes, skipped: skipped);
+  }
+
+  bool hasRecoverableCacheForPath(String path) {
+    final asset = library.assetForPath(path);
+    final original = asset?.path ?? path;
+    final id = ExportCatalog.fileIdFromPath(original);
+    if (id == null || !File(original).existsSync()) return false;
+    final directory = p.dirname(original);
+    if (!original.endsWith('.opus') &&
+        !original.endsWith('.opus.bin') &&
+        !File(p.join(directory, '$id.opus')).existsSync() &&
+        !File(p.join(directory, '$id.opus.bin')).existsSync()) {
+      return false;
+    }
+    final candidates = <String>{
+      p.join(directory, '$id.wav'),
+      p.join(directory, '$id.ogg'),
+      '$original.ogg',
+      if (original.endsWith('.opus'))
+        '${original.substring(0, original.length - 5)}.ogg',
+    }..remove(original);
+    return candidates.any((candidate) => File(candidate).existsSync());
+  }
+
+  /// Unassigns one material from its project/topic without deleting notes.
+  Future<void> removeRecordingFromTopics(String path) async {
+    final key = _recordingKey(path: path);
+    await topics.removeFromTopic(key);
+    _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
+    statusMessage = '已移出项目/主题，资料与笔记仍保留';
+    errorMessage = null;
+    notifyListeners();
   }
 
   Future<String> renameLocalExport(String path, String label) async {
@@ -5195,10 +5612,21 @@ class RecorderController extends ChangeNotifier {
   }
 
   void _registerExportedPaths(Iterable<String> paths) {
-    exportedPaths = ExportCatalog.newestPathsFirst([
-      ...exportedPaths,
-      ...paths,
-    ]);
+    final trashedPaths = <String>{};
+    final trashedIds = <int>{};
+    for (final asset in library.assets.where((asset) => asset.trashed)) {
+      trashedPaths.add(asset.path);
+      final id = ExportCatalog.fileIdFromPath(asset.path);
+      if (id != null) trashedIds.add(id);
+    }
+    final accepted = <String>[];
+    for (final path in [...exportedPaths, ...paths]) {
+      if (trashedPaths.contains(path)) continue;
+      final id = ExportCatalog.fileIdFromPath(path);
+      if (id != null && trashedIds.contains(id)) continue;
+      accepted.add(path);
+    }
+    exportedPaths = ExportCatalog.newestPathsFirst([...accepted]);
     localPathsByFileId.clear();
     for (final path in exportedPaths) {
       final id = ExportCatalog.fileIdFromPath(path);
