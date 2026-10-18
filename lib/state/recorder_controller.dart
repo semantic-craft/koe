@@ -42,6 +42,7 @@ import 'transcript_store.dart';
 import 'recording.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
+import 'minutes_document.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
 import 'file_job_journal.dart';
@@ -499,6 +500,7 @@ class RecorderController extends ChangeNotifier {
     this.blePullInactivityTimeout = const Duration(seconds: 90),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    MinutesDocumentStore? minutesStore,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -514,6 +516,9 @@ class RecorderController extends ChangeNotifier {
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
     _libraryLoaded = _loadRecordingLibrary();
+    minutes =
+        minutesStore ?? MinutesDocumentStore(inMemory: !loadPersistedState);
+    _minutesLoaded = _loadMinutesDocuments();
     _subs.add(
       _ble.scanResults.listen((list) {
         devices = list;
@@ -707,6 +712,8 @@ class RecorderController extends ChangeNotifier {
   final bool topicsEnabled;
   late final RecordingLibraryStore library;
   late final Future<void> _libraryLoaded;
+  late final MinutesDocumentStore minutes;
+  late final Future<void> _minutesLoaded;
   final Directory? _libraryDirectoryOverride;
   late final TopicStore topics;
   late final Future<void> _topicsLoaded;
@@ -1601,8 +1608,7 @@ class RecorderController extends ChangeNotifier {
         ? '当前录音'
         : _recordingDateTitle(id);
     final recordedAt =
-        asset?.recordedAt ??
-        (id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000));
+        asset?.recordedAt ?? _recordedAtFromFileId(id);
     // Device recordings have no library entry until they are renamed or
     // archived; their retrieval time is still the local file timestamp.
     final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
@@ -1655,9 +1661,17 @@ class RecorderController extends ChangeNotifier {
   }
 
   String _recordingDateTitle(int id) {
-    final date = DateTime.fromMillisecondsSinceEpoch(id * 1000);
+    final date = _recordedAtFromFileId(id);
+    if (date == null) return '当前录音';
     String pad(int value) => value.toString().padLeft(2, '0');
     return '${date.year}/${pad(date.month)}/${pad(date.day)} ${pad(date.hour)}:${pad(date.minute)}';
+  }
+
+  /// Device ids are Unix seconds. Imported originals use a microsecond
+  /// timestamp prefix, which must never be treated as a recording date.
+  DateTime? _recordedAtFromFileId(int? id) {
+    if (id == null || id < 1000000000 || id > 4102444800) return null;
+    return DateTime.fromMillisecondsSinceEpoch(id * 1000);
   }
 
   DateTime? _localFileTimestamp(String? path) {
@@ -4815,11 +4829,135 @@ class RecorderController extends ChangeNotifier {
   @visibleForTesting
   Future<void> waitForRecordingLibrary() => _libraryLoaded;
 
+  Future<void> _loadMinutesDocuments() async {
+    await minutes.load();
+    if (!_disposed) notifyListeners();
+  }
+
+  @visibleForTesting
+  Future<void> waitForMinutesDocuments() => _minutesLoaded;
+
+  List<MinutesDocument> get minutesDocuments => minutes.documents;
+
+  MinutesDocument? minutesDocumentById(String id) => minutes.byId(id);
+
+  /// Imports a 妙记-style JSON/TXT export. Equal source content is reused so a
+  /// repeated import does not create a second text record.
+  Future<MinutesImportOutcome> importMinutesText(
+    String fileName,
+    String contents,
+  ) async {
+    await _minutesLoaded;
+    final parsed = parseMinutesDocument(fileName, contents);
+    final existing = minutes.byId(parsed.document.id);
+    if (existing != null) {
+      return MinutesImportOutcome(document: existing, duplicate: true);
+    }
+    try {
+      await minutes.upsert(parsed.document, strict: true);
+    } catch (_) {
+      throw StateError('文字保存失败，请重试');
+    }
+    notifyListeners();
+    return MinutesImportOutcome(document: parsed.document, duplicate: false);
+  }
+
+  /// Attaches an original audio file to a text-only import.
+  ///
+  /// A declared hash must match. Otherwise the audio must be long enough for
+  /// the last segment; a short file is reported as a wrong pairing and the
+  /// text record keeps its previous state. Unreliable timecodes still allow
+  /// whole-file playback but never claim sentence seeking.
+  Future<MinutesAttachOutcome> attachMinutesAudio(
+    String documentId,
+    String sourcePath,
+  ) async {
+    await _minutesLoaded;
+    final document = minutes.byId(documentId);
+    if (document == null) {
+      return const MinutesAttachOutcome(ok: false, message: '找不到这条导入文字');
+    }
+    final ({String path, bool duplicate, RecordingAsset asset}) imported;
+    try {
+      imported = await importLocalAudio(sourcePath);
+    } catch (error) {
+      return MinutesAttachOutcome(
+        ok: false,
+        message: error is StateError ? error.message : '无法读取所选音频，请重试',
+      );
+    }
+    Future<void> discardNewCopy() async {
+      if (imported.duplicate) return;
+      try {
+        await library.remove(imported.path, strict: false);
+        exportedPaths.remove(imported.path);
+        final file = File(imported.path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {
+        // The rejected copy stays on disk but is not linked to the text record.
+      }
+    }
+
+    if (document.audioHash != null &&
+        document.audioHash!.isNotEmpty &&
+        imported.asset.contentHash != document.audioHash) {
+      await discardNewCopy();
+      return const MinutesAttachOutcome(
+        ok: false,
+        message: '音频内容与导入文字声明的来源不一致，未建立配对',
+      );
+    }
+    var duration = localDurationForPath(imported.path);
+    duration ??= await _localDurationReader(imported.path);
+    final required = document.lastEnd;
+    if (document.timingReliable && duration == null) {
+      await discardNewCopy();
+      return const MinutesAttachOutcome(
+        ok: false,
+        message: '无法读取音频时长，未建立配对',
+      );
+    }
+    if (document.timingReliable &&
+        required != null &&
+        duration != null &&
+        required > duration + const Duration(seconds: 1)) {
+      await discardNewCopy();
+      return const MinutesAttachOutcome(
+        ok: false,
+        message: '音频比文字时码短，无法覆盖最后一段；未建立配对',
+      );
+    }
+    final updated = document.copyWith(
+      audioPath: imported.path,
+      audioDuration: duration,
+    );
+    try {
+      await minutes.upsert(updated, strict: true);
+    } catch (_) {
+      return const MinutesAttachOutcome(ok: false, message: '配对保存失败，请重试');
+    }
+    notifyListeners();
+    return MinutesAttachOutcome(
+      ok: true,
+      document: updated,
+      message: updated.unaligned
+          ? '已取得音频，但时码不可靠；只能整段播放'
+          : '已配对原音频，可按句回听',
+    );
+  }
+
+  Future<void> detachMinutesAudio(String documentId) async {
+    final document = minutes.byId(documentId);
+    if (document == null) return;
+    await minutes.upsert(document.copyWith(clearAudio: true), strict: true);
+    notifyListeners();
+  }
+
   DateTime? recordingRecordedAtForPath(String path) {
     final asset = library.assetForPath(path);
     if (asset?.recordedAt != null) return asset!.recordedAt;
     final id = fileIdFromPath(path);
-    return id == null ? null : DateTime.fromMillisecondsSinceEpoch(id * 1000);
+    return _recordedAtFromFileId(id);
   }
 
   /// Copies a user-selected audio file into the app's original-audio library.
