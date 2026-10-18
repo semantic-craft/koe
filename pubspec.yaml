@@ -41,14 +41,19 @@ dependencies:
   path: ^1.9.1
   web_socket_channel: ^3.0.2
   pointycastle: ^4.0.0
+  ffi: ^2.2.0
   just_audio: ^0.10.6
   http: ^1.6.0
-  flutter_opus: ^1.0.4
+  # libopus xcframework includes an arm64 simulator slice (flutter_opus 1.0.4 did not).
+  opus_codec: ^3.0.5
+  opus_codec_dart: ^3.0.5
   file_selector: ^1.1.0
   share_plus: ^13.2.0
   url_launcher: ^6.3.1
   graphview: 1.5.1
   package_info_plus: ^10.2.2
+  audio_session: ^0.2.4
+  just_audio_background: ^0.0.1-beta.17
   geolocator: ^14.1.1
   geocoding: ^5.0.0
 
@@ -68,6 +73,13 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+
+  # opus_codec_ios ships a Package.swift whose binaryTarget points at
+  # ../opus.xcframework; Flutter's SPM staging copies the manifest without
+  # that artifact. Its podspec vendors the same xcframework correctly, so keep
+  # this project on CocoaPods (project-local; global Flutter config untouched).
+  config:
+    enable-swift-package-manager: false
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

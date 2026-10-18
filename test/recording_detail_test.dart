@@ -6,6 +6,7 @@ import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/theme/app_theme.dart';
+import 'package:koe/ui/recording_navigation.dart';
 import 'package:koe/ui/screens/recording_detail_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:koe/ui/shell.dart';
@@ -68,7 +69,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
-      ChangeNotifierProvider.value(
+      ChangeNotifierProvider<RecorderController>.value(
         value: controller,
         child: MaterialApp(
           theme: previewDirectory.isEmpty
@@ -1214,6 +1215,270 @@ void main() {
     ]);
   });
 
+  testWidgets('chapter list starts playback at a timed segment', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+        speaker: '1',
+        speakerChanged: true,
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 12),
+        end: Duration(seconds: 20),
+        speaker: '1',
+      ),
+      TranscriptSegment(
+        text: '第三句',
+        start: Duration(seconds: 25),
+        end: Duration(seconds: 31),
+        speaker: '2',
+        speakerChanged: true,
+      ),
+    ];
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '访谈录音',
+      path: '/tmp/100.wav',
+      text: '第一句第二句第三句',
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('章节'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chapter-2')), findsOneWidget);
+    expect(find.text('第三句'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('chapter-2')));
+    await tester.pumpAndSettle();
+
+    expect(c.playbackRequests.last, (
+      '/tmp/100.wav',
+      const Duration(seconds: 25),
+      100,
+    ));
+    expect(find.byKey(const ValueKey('highlighted-segment-2')), findsOneWidget);
+  });
+
+  testWidgets('chapter action is hidden without reliable timecodes', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '没有时码',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: [
+        TranscriptSegment(
+          text: '第一句',
+          start: Duration.zero,
+          end: Duration(seconds: 5),
+        ),
+        TranscriptSegment(
+          text: '第二句',
+          start: Duration.zero,
+          end: Duration(seconds: 9),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    expect(find.text('章节'), findsNothing);
+  });
+
+  testWidgets('replaced audio hides chapter navigation and stale jumps', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+        speaker: '1',
+        speakerChanged: true,
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 12),
+        end: Duration(seconds: 20),
+        speaker: '1',
+      ),
+    ];
+    final c = _RecordingController()..audioReplaced = true;
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '录音已更换',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('章节'), findsNothing);
+  });
+
+  testWidgets('focused source opening restores and starts its position', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 12),
+        end: Duration(seconds: 20),
+      ),
+    ];
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '来源回跳',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(
+      tester,
+      c,
+      const RecordingDetailScreen(
+        reference: reference,
+        initialHighlightedParagraph: 1,
+        initialPlaybackStart: Duration(seconds: 12),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(c.playbackRequests, [
+      ('/tmp/100.wav', const Duration(seconds: 12), 100),
+    ]);
+    expect(find.byKey(const ValueKey('highlighted-segment-1')), findsOneWidget);
+  });
+
+  testWidgets('focused source does not start stale audio', (tester) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final c = _RecordingController()..audioReplaced = true;
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '来源回跳',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: [
+        TranscriptSegment(
+          text: '第一句',
+          start: Duration.zero,
+          end: Duration(seconds: 5),
+        ),
+        TranscriptSegment(
+          text: '第二句',
+          start: Duration(seconds: 12),
+          end: Duration(seconds: 20),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    await pump(
+      tester,
+      c,
+      const RecordingDetailScreen(
+        reference: reference,
+        initialHighlightedParagraph: 1,
+        initialPlaybackStart: Duration(seconds: 12),
+        focusedSource: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(c.playbackRequests, isEmpty);
+  });
+
+  testWidgets('focused source has a back control on wide layouts', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    final c = _RecordingController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '来源回跳',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: [
+        TranscriptSegment(
+          text: '第一句',
+          start: Duration.zero,
+          end: Duration(seconds: 5),
+        ),
+        TranscriptSegment(
+          text: '第二句',
+          start: Duration(seconds: 12),
+          end: Duration(seconds: 20),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: RecordingNavigation(
+            wide: true,
+            onOpen: (_, {initialParagraph}) {},
+            child: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const RecordingDetailScreen(
+                        reference: reference,
+                        focusedSource: true,
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开来源'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开来源'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('返回纪要'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('返回纪要'));
+    await tester.pumpAndSettle();
+    expect(find.text('打开来源'), findsOneWidget);
+  });
+
   testWidgets('sentence highlight follows audio and yields to manual scroll', (
     tester,
   ) async {
@@ -1450,6 +1715,7 @@ class _RecordingController extends RecorderController {
   final playbackRequests = <(String, Duration, int?)>[];
   int togglePlaybackCalls = 0;
   String? transcriptionFailure;
+  bool audioReplaced = false;
   (String, String)? preparedTranslation;
   RecordingReference? _current;
   @override
@@ -1481,6 +1747,9 @@ class _RecordingController extends RecorderController {
       views[reference.key] ?? super.recordingView(reference);
 
   @override
+  bool recordingAudioChanged(RecordingReference ref) => audioReplaced;
+
+  @override
   Future<void> playFrom(String path, Duration start, {int? fileId}) async {
     playbackRequests.add((path, start, fileId));
   }
@@ -1489,12 +1758,12 @@ class _RecordingController extends RecorderController {
   Future<void> playExported(
     String path, {
     int? fileId,
-    Duration startAt = Duration.zero,
+    Duration? startAt,
   }) async {
     if (playingPath == path) return togglePlayPause();
     playingPath = path;
     playingFileId = fileId;
-    position = startAt;
+    position = startAt ?? Duration.zero;
     playbackCompleted = false;
     isPlaying = true;
     notifyListeners();

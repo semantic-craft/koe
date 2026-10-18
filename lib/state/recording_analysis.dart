@@ -352,6 +352,9 @@ class RecordingAnalysis extends ChangeNotifier {
   final bool inMemory;
   String? model = 'qwen3.8-flash';
   final Map<String, AnalysisResult> results = {};
+
+  /// Last replaced version per slot, kept so regenerated minutes can compare.
+  final Map<String, AnalysisResult> previousResults = {};
   final Map<String, String> errors = {};
   final Map<String, String> customInstructions = {};
   final List<PromptTemplate> _customTemplates = [];
@@ -362,6 +365,7 @@ class RecordingAnalysis extends ChangeNotifier {
   final Map<String, String> _unconfirmedNodes = {};
   final Map<String, Completer<void>> _running = {};
   final Set<String> _pendingClaims = {};
+  final Set<String> _suspendedRecordings = {};
   final Map<String, String> progress = {};
   int _templateSequence = 0;
   Future<void>? _loading;
@@ -581,6 +585,11 @@ class RecordingAnalysis extends ChangeNotifier {
         customInstructions.putIfAbsent(rec, () => decoded.instruction);
       }
     }
+    for (final e in (j['previousResults'] as Map? ?? {}).entries) {
+      previousResults[e.key as String] = AnalysisResult.fromJson(
+        Map<String, dynamic>.from(e.value as Map),
+      );
+    }
     for (final e in (j['customInstructions'] as Map? ?? {}).entries) {
       final value = e.value;
       if (value is String && value.trim().isNotEmpty) {
@@ -634,6 +643,7 @@ class RecordingAnalysis extends ChangeNotifier {
       'version': 1,
       'model': model,
       'results': results.map((k, v) => MapEntry(k, v.toJson())),
+      'previousResults': previousResults.map((k, v) => MapEntry(k, v.toJson())),
       'customInstructions': customInstructions,
       'customTemplates': _customTemplates.map((t) => t.toJson()).toList(),
       'checkpoints': _checkpoints,
@@ -729,7 +739,36 @@ class RecordingAnalysis extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// Stops all work for a recording without discarding completed results.
+  /// Trash must prevent queued chunks from reaching a model provider, while
+  /// restoring the material may reuse the notes already generated.
+  void suspendRecording(String recording) {
+    _suspendedRecordings.add(recording);
+    final prefix = '$recording/';
+    var changed = false;
+    for (final k
+        in _running.keys.where((key) => key.startsWith(prefix)).toList()) {
+      final abort = _running.remove(k);
+      if (abort != null && !abort.isCompleted) abort.complete();
+      progress.remove(k);
+      changed = true;
+    }
+    final pendingBefore = _pendingClaims.length;
+    _pendingClaims.removeWhere((key) => key.startsWith(prefix));
+    changed |= _pendingClaims.length != pendingBefore;
+    if (changed) {
+      unawaited(save().catchError((Object _) {}));
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  void resumeRecording(String recording) {
+    if (!_suspendedRecordings.remove(recording)) return;
+    if (!_disposed) notifyListeners();
+  }
+
   Future<void> forgetRecording(String recording) async {
+    _suspendedRecordings.remove(recording);
     await load();
     final prefix = '$recording/';
     bool matches(String k) => k.startsWith(prefix);
@@ -738,6 +777,7 @@ class RecordingAnalysis extends ChangeNotifier {
       if (abort != null && !abort.isCompleted) abort.complete();
     }
     results.removeWhere((k, _) => matches(k));
+    previousResults.removeWhere((k, _) => matches(k));
     errors.removeWhere((k, _) => matches(k));
     progress.removeWhere((k, _) => matches(k));
     _checkpoints.removeWhere((k, _) => matches(k));
@@ -762,6 +802,7 @@ class RecordingAnalysis extends ChangeNotifier {
     }
 
     moveMap(results);
+    moveMap(previousResults);
     moveMap(errors);
     moveMap(progress);
     moveMap(_checkpoints);
@@ -798,6 +839,10 @@ class RecordingAnalysis extends ChangeNotifier {
       resultSlot: resultSlot,
     );
     if (!slotClaimed && !claim(k)) return;
+    if (_suspendedRecordings.contains(recording)) {
+      releaseClaim(k);
+      return;
+    }
     try {
       await load();
     } catch (_) {
@@ -910,6 +955,7 @@ class RecordingAnalysis extends ChangeNotifier {
     String? finalNodeId;
     bool current() =>
         !_disposed &&
+        !_suspendedRecordings.contains(recording) &&
         identical(_running[k], abort) &&
         analysisFingerprint(currentSource()) == sourceHash;
     void check() {
@@ -1023,6 +1069,8 @@ class RecordingAnalysis extends ChangeNotifier {
         templateVersion: templateVersion,
       );
       final previous = results[k];
+      final previousVersion = previousResults[k];
+      if (previous != null) previousResults[k] = previous;
       results[k] = result;
       try {
         await save();
@@ -1032,6 +1080,11 @@ class RecordingAnalysis extends ChangeNotifier {
             results.remove(k);
           } else {
             results[k] = previous;
+          }
+          if (previousVersion == null) {
+            previousResults.remove(k);
+          } else {
+            previousResults[k] = previousVersion;
           }
         }
         rethrow;

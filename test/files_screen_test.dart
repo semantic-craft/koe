@@ -79,6 +79,36 @@ void main() async {
     );
   });
 
+  testWidgets('bulk delete moves library recordings to the trash', (
+    tester,
+  ) async {
+    final directory = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('koe-bulk-trash-'),
+    ))!;
+    addTearDown(() => directory.delete(recursive: true));
+    final audio = File('${directory.path}/1783917051.wav');
+    await tester.runAsync(() => audio.writeAsBytes([1, 2, 3, 4]));
+    final controller = RecorderController(loadPersistedState: false)
+      ..exportedPaths = [audio.path];
+    addTearDown(controller.dispose);
+    await pumpFiles(tester, controller);
+
+    await tester.longPress(find.byKey(ValueKey('recording-row-${audio.path}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('删除所选'));
+    await tester.pumpAndSettle();
+    expect(find.text('移到回收站？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '移到回收站'));
+    await tester.pumpAndSettle();
+
+    expect(await tester.runAsync(() => audio.exists()), isTrue);
+    expect(controller.exportedPaths, isNot(contains(audio.path)));
+    expect(
+      controller.trashedAssets.map((asset) => asset.path),
+      contains(audio.path),
+    );
+  });
+
   testWidgets(
     'device download stays available while another file auto transfers',
     (tester) async {

@@ -1,0 +1,582 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:koe/state/minutes_document.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/screens/library_screen.dart';
+import 'package:koe/ui/screens/minutes_document_screen.dart';
+import 'package:provider/provider.dart';
+
+import 'support/wav_fixture.dart';
+
+void main() {
+  late Directory temp;
+  late File minutesFile;
+  late File libraryFile;
+  late Directory imports;
+
+  setUp(() async {
+    temp = await Directory.systemTemp.createTemp('koe-minutes-');
+    minutesFile = File('${temp.path}/minutes_documents.json');
+    libraryFile = File('${temp.path}/recording_library.json');
+    imports = Directory('${temp.path}/imports');
+  });
+
+  tearDown(() async {
+    if (await temp.exists()) await temp.delete(recursive: true);
+  });
+
+  RecorderController controller() => RecorderController(
+    loadPersistedState: false,
+    libraryStore: RecordingLibraryStore(file: libraryFile),
+    libraryDirectory: imports,
+    minutesStore: MinutesDocumentStore(file: minutesFile),
+  );
+
+  const json = '''
+{
+  "title": "产品讨论",
+  "recordedAt": "2026-10-17T09:30:00+08:00",
+  "segments": [
+    {"speaker": "林舟", "start": "00:00", "text": "先做手机上的录音与回听。"},
+    {"speaker": "我", "start": "00:12", "text": "保留原音频，再点字定位。"},
+    {"speaker": "林舟", "start": "00:26", "text": "外部 AI 放到后面。"}
+  ]
+}
+''';
+
+  Future<File> audio(String name, Duration duration) async {
+    final file = File('${temp.path}/$name.wav');
+    final samples = (16000 * duration.inMilliseconds / 1000).round();
+    await file.writeAsBytes(wavBytes(List<int>.filled(samples * 2, 0)));
+    return file;
+  }
+
+  test('妙记 JSON 保留发言人与真实发生时间，重复导入不新增资料', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final first = await c.importMinutesText('讨论.json', json);
+
+    expect(first.duplicate, isFalse);
+    expect(first.document.title, '产品讨论');
+    expect(
+      first.document.capturedAt,
+      DateTime.parse('2026-10-17T09:30:00+08:00'),
+    );
+    expect(
+      first.document.importedAt.difference(first.document.capturedAt!).inHours,
+      greaterThan(1),
+    );
+    expect(first.document.segments[1].speaker, '我');
+    expect(first.document.segments[1].start, const Duration(seconds: 12));
+    expect(first.document.timingReliable, isTrue);
+    expect(first.document.textOnly, isTrue);
+
+    final second = await c.importMinutesText('讨论.json', json);
+    expect(second.duplicate, isTrue);
+    expect(second.document.id, first.document.id);
+    expect(c.minutesDocuments, hasLength(1));
+  });
+
+  test('全零或缺失时码只保留阅读，不显示可定位', () async {
+    final zero = parseMinutesDocument(
+      'zero.json',
+      '{"title":"只有文字","segments":[{"start":0,"text":"第一句"},{"start":0,"text":"第二句"}]}',
+    );
+    expect(zero.document.timingReliable, isFalse);
+    expect(zero.document.textOnly, isTrue);
+    expect(zero.document.warning, isNotNull);
+
+    final text = parseMinutesDocument('plain.txt', '第一行没有时间\n第二行也没有');
+    expect(text.document.timingReliable, isFalse);
+    expect(text.document.segments.single.text, contains('第二行'));
+
+    final speakers = parseMinutesDocument('speakers.txt', '林舟：第一句\n我：第二句');
+    expect(speakers.document.segments, hasLength(2));
+    expect(speakers.document.segments[0].speaker, '林舟');
+    expect(speakers.document.segments[1].speaker, '我');
+
+    expect(
+      () => parseMinutesDocument('empty.json', '{"title":"空记录","segments":[]}'),
+      throwsFormatException,
+    );
+  });
+
+  test('混合秒与毫秒键时按实际选中的时间键换算', () {
+    final parsed = parseMinutesDocument(
+      'mixed.json',
+      '{"segments":[{"start":12,"endMs":13000,"text":"混合单位"}]}',
+    );
+
+    expect(parsed.document.segments.single.start, const Duration(seconds: 12));
+    expect(parsed.document.segments.single.end, const Duration(seconds: 13));
+  });
+
+  test('JSON begin_time 与 end_time 按毫秒换算', () {
+    final parsed = parseMinutesDocument(
+      'qwen.json',
+      jsonEncode({
+        'segments': [
+          {'begin_time': 12000, 'end_time': 15000, 'text': '第一句'},
+          {'begin_time': 20000, 'end_time': 23000, 'text': '第二句'},
+        ],
+      }),
+    );
+
+    expect(parsed.document.segments.first.start, const Duration(seconds: 12));
+    expect(parsed.document.segments.first.end, const Duration(seconds: 15));
+    expect(parsed.document.segments[1].start, const Duration(seconds: 20));
+    expect(parsed.document.timingReliable, isTrue);
+  });
+
+  test('JSON 缺少时码的段落不提供逐句定位', () {
+    final parsed = parseMinutesDocument(
+      'partial.json',
+      jsonEncode({
+        'segments': [
+          {'text': '前言'},
+          {'start': 12, 'text': '正文'},
+        ],
+      }),
+    );
+
+    expect(parsed.document.segments.first.start, Duration.zero);
+    expect(parsed.document.timingReliable, isFalse);
+    expect(parsed.document.warning, isNotNull);
+  });
+
+  test('TXT 开头无时码时不把后续时码视为完整对齐', () {
+    final parsed = parseMinutesDocument('partial.txt', '前言\n[00:12] 正文');
+
+    expect(parsed.document.segments, hasLength(2));
+    expect(parsed.document.timingReliable, isFalse);
+    expect(parsed.document.warning, isNotNull);
+  });
+
+  test('逆序结束时码被丢弃，重启后不丢整份文档', () {
+    final parsed = parseMinutesDocument(
+      'bad-end.json',
+      jsonEncode({
+        'segments': [
+          {'start': 10, 'end': 5, 'text': '段落'},
+        ],
+      }),
+    );
+
+    expect(parsed.document.segments.single.end, isNull);
+    final decoded = MinutesDocumentStore.decode(
+      jsonEncode(MinutesDocumentStore.encode([parsed.document])),
+    );
+    expect(decoded, isNotNull);
+    expect(decoded!.values.single.segments.single.text, '段落');
+  });
+
+  test('时间行单独一行时并入下一句且重启后仍可读', () async {
+    final parsed = parseMinutesDocument(
+      'speaker.txt',
+      '[00:00]\n林舟：先做手机录音。\n[00:12]\n我：保留原音频。',
+    );
+
+    expect(parsed.document.segments, hasLength(2));
+    expect(parsed.document.segments.first.text, '先做手机录音。');
+    expect(parsed.document.segments.first.speaker, '林舟');
+    expect(parsed.document.segments.first.start, Duration.zero);
+    expect(parsed.document.segments[1].start, const Duration(seconds: 12));
+    expect(
+      parsed.document.segments.every((segment) => segment.text.isNotEmpty),
+      isTrue,
+    );
+
+    final decoded = MinutesDocumentStore.decode(
+      jsonEncode(MinutesDocumentStore.encode([parsed.document])),
+    );
+    expect(decoded, isNotNull);
+    expect(decoded!.values.single.segments, hasLength(2));
+  });
+
+  test('补配音频覆盖最后时码才建立配对，过短音频被拒绝且不留下资料', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final short = await audio('short', const Duration(seconds: 3));
+
+    final rejected = await c.attachMinutesAudio(
+      imported.document.id,
+      short.path,
+    );
+    expect(rejected.ok, isFalse);
+    expect(rejected.message, contains('比文字时码短'));
+    expect(c.minutesDocuments.single.audioPath, isNull);
+    expect(c.exportedPaths, isEmpty);
+
+    final long = await audio('long', const Duration(seconds: 40));
+    final accepted = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    expect(accepted.ok, isTrue);
+    expect(accepted.document!.audioPath, isNotNull);
+    expect(accepted.document!.unaligned, isFalse);
+    expect(c.exportedPaths, contains(accepted.document!.audioPath));
+  });
+
+  test('重启恢复导入文字与原音频配对', () async {
+    final first = controller();
+    final imported = await first.importMinutesText('讨论.json', json);
+    final long = await audio('long', const Duration(seconds: 40));
+    final attached = await first.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    expect(attached.ok, isTrue);
+    final audioPath = attached.document!.audioPath;
+    first.dispose();
+
+    final restarted = controller();
+    addTearDown(restarted.dispose);
+    await restarted.waitForMinutesDocuments();
+    await restarted.waitForRecordingLibrary();
+
+    final restored = restarted.minutesDocuments.single;
+    expect(restored.title, '产品讨论');
+    expect(restored.audioPath, audioPath);
+    expect(restored.timingReliable, isTrue);
+    expect(File(audioPath!).existsSync(), isTrue);
+  });
+
+  testWidgets('只有文字的资料不显示假播放器，配好音频后点句回听', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    late _PlaybackProbeController c;
+    late MinutesImportOutcome imported;
+    await tester.runAsync(() async {
+      c = _PlaybackProbeController(
+        libraryFile: libraryFile,
+        imports: imports,
+        minutesFile: minutesFile,
+      );
+      imported = await c.importMinutesText('讨论.json', json);
+    });
+    addTearDown(c.dispose);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: const MaterialApp(home: LibraryScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      find.byKey(ValueKey('minutes-row-${imported.document.id}')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('只有文字'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(ValueKey('minutes-row-${imported.document.id}')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(MinutesDocumentScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('minutes-text-only')), findsOneWidget);
+    expect(find.byKey(const ValueKey('minutes-play-all')), findsNothing);
+
+    await tester.runAsync(() async {
+      final long = await audio('long', const Duration(seconds: 40));
+      await c.attachMinutesAudio(imported.document.id, long.path);
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('minutes-play-all')), findsOneWidget);
+
+    await tester.tap(find.text('先做手机上的录音与回听。'));
+    await tester.pump();
+    expect(c.requests, hasLength(1));
+    expect(c.requests.single.$2, Duration.zero);
+    expect(c.requests.single.$1, c.minutesDocuments.single.audioPath);
+
+    await tester.runAsync(
+      () => File(c.minutesDocuments.single.audioPath!).delete(),
+    );
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: MaterialApp(
+          home: MinutesDocumentScreen(documentId: imported.document.id),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('已配对，但原件不可用'), findsOneWidget);
+    final play = tester.widget<OutlinedButton>(
+      find.byKey(const ValueKey('minutes-play-all')),
+    );
+    expect(play.onPressed, isNull);
+  });
+
+  test('保存失败会回滚内存文档，重试不会误报重复', () async {
+    final blocker = File('${temp.path}/blocked');
+    await blocker.writeAsString('not a directory');
+    final store = MinutesDocumentStore(
+      file: File('${blocker.path}/minutes.json'),
+    );
+    final document = parseMinutesDocument('a.txt', '一段文字').document;
+
+    await expectLater(
+      store.upsert(document),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.documents, isEmpty);
+  });
+
+  test('记录文件无法读取时停止写入，不覆盖原文件', () async {
+    await minutesFile.writeAsString('{"documents": [');
+    final before = await minutesFile.readAsString();
+    final store = MinutesDocumentStore(file: minutesFile);
+    await store.load();
+
+    expect(store.recoveryNotice, isNotNull);
+    await expectLater(
+      store.upsert(parseMinutesDocument('masked.txt', '不应落盘').document),
+      throwsA(isA<StateError>()),
+    );
+    expect(await minutesFile.readAsString(), before);
+  });
+
+  test('补配保存失败时删除新复制的音频并回滚资料', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('待补配.txt', '一段文字');
+    final audioFile = await audio(
+      'rejected-attach',
+      const Duration(seconds: 3),
+    );
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    final result = await c.attachMinutesAudio(
+      imported.document.id,
+      audioFile.path,
+    );
+
+    expect(result.ok, isFalse);
+    expect(c.minutesDocuments.single.audioPath, isNull);
+    expect(c.library.assets, isEmpty);
+    expect(
+      imports.existsSync()
+          ? imports.listSync().whereType<File>().where(
+              (file) => file.path.endsWith('.wav'),
+            )
+          : const <File>[],
+      isEmpty,
+    );
+  });
+
+  test('补配引用保存失败会抛出并回滚，不静默保留内存变化', () async {
+    final store = MinutesDocumentStore(file: minutesFile);
+    final document = parseMinutesDocument(
+      'a.txt',
+      '一段文字',
+    ).document.copyWith(audioPath: '/tmp/original.mp3');
+    await store.upsert(document);
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    await expectLater(
+      store.updateAudioPath('/tmp/original.mp3', '/tmp/renamed.mp3'),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.byId(document.id)!.audioPath, '/tmp/original.mp3');
+
+    await expectLater(
+      store.clearAudioForPaths({'/tmp/original.mp3'}),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.byId(document.id)!.audioPath, '/tmp/original.mp3');
+  });
+
+  test('MP3 等格式无法从文件头读时长时用播放器探测后完成配对', () async {
+    final c = RecorderController(
+      loadPersistedState: false,
+      libraryStore: RecordingLibraryStore(file: libraryFile),
+      libraryDirectory: imports,
+      minutesStore: MinutesDocumentStore(file: minutesFile),
+      localDurationReader: (_) async => null,
+      audioDurationProbe: (path) async =>
+          path.endsWith('.mp3') ? const Duration(seconds: 40) : null,
+    );
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final mp3 = File('${temp.path}/original.mp3');
+    await mp3.writeAsBytes([1, 2, 3, 4]);
+
+    final attached = await c.attachMinutesAudio(imported.document.id, mp3.path);
+
+    expect(attached.ok, isTrue);
+    expect(attached.document!.audioDuration, const Duration(seconds: 40));
+  });
+
+  test('改名或删除音频后同步补配引用', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final oldPath = attached.document!.audioPath!;
+
+    final renamed = await c.renameLocalExport(oldPath, '改名后的录音');
+    expect(c.minutesDocuments.single.audioPath, renamed);
+    expect(File(renamed).existsSync(), isTrue);
+
+    final removed = await c.deleteLocalExports([renamed]);
+    expect(removed.deleted, 1);
+    expect(c.minutesDocuments.single.audioPath, isNull);
+  });
+
+  test('配对写入失败时删除不先删掉音频', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long-delete', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    final result = await c.deleteLocalExports([path]);
+
+    expect(result.deleted, 0);
+    expect(result.failed, hasLength(1));
+    expect(await File(path).exists(), isTrue);
+    expect(c.minutesDocuments.single.audioPath, path);
+  });
+
+  test('配对写入失败时改名不移动文件', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long-rename', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    await minutesFile.delete();
+    await Directory(minutesFile.path).create();
+
+    await expectLater(
+      c.renameLocalExport(path, '改名后的录音'),
+      throwsA(isA<FileSystemException>()),
+    );
+
+    expect(await File(path).exists(), isTrue);
+    expect(
+      temp.listSync().whereType<File>().where(
+        (file) => file.path.contains('改名后的录音'),
+      ),
+      isEmpty,
+    );
+    expect(c.minutesDocuments.single.audioPath, path);
+  });
+
+  test('冷启动改名等待配对加载后再移动音频', () async {
+    final first = controller();
+    final imported = await first.importMinutesText('讨论.json', json);
+    final long = await audio('long-cold', const Duration(seconds: 40));
+    final attached = await first.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    first.dispose();
+
+    final gate = Completer<void>();
+    final c = RecorderController(
+      loadPersistedState: false,
+      libraryStore: RecordingLibraryStore(file: libraryFile),
+      libraryDirectory: imports,
+      minutesStore: _SlowMinutesStore(file: minutesFile, gate: gate),
+    );
+    addTearDown(c.dispose);
+
+    final rename = c.renameLocalExport(path, '冷启动改名');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    gate.complete();
+    final renamed = await rename;
+
+    await c.waitForMinutesDocuments();
+    expect(c.minutesDocuments.single.audioPath, renamed);
+    final persisted = MinutesDocumentStore(file: minutesFile);
+    await persisted.load();
+    expect(persisted.documents.single.audioPath, renamed);
+  });
+
+  test('删除音频失败时恢复补配引用', () async {
+    final c = controller();
+    addTearDown(c.dispose);
+    final imported = await c.importMinutesText('讨论.json', json);
+    final long = await audio('long-locked', const Duration(seconds: 40));
+    final attached = await c.attachMinutesAudio(
+      imported.document.id,
+      long.path,
+    );
+    final path = attached.document!.audioPath!;
+    await Process.run('chmod', ['500', imports.path]);
+    addTearDown(() => Process.run('chmod', ['700', imports.path]));
+
+    final result = await c.deleteLocalExports([path]);
+
+    expect(result.deleted, 0);
+    expect(result.failed, hasLength(1));
+    expect(await File(path).exists(), isTrue);
+    expect(c.minutesDocuments.single.audioPath, path);
+    final persisted = MinutesDocumentStore(file: minutesFile);
+    await persisted.load();
+    expect(persisted.documents.single.audioPath, path);
+  });
+}
+
+class _SlowMinutesStore extends MinutesDocumentStore {
+  _SlowMinutesStore({required super.file, required this.gate});
+
+  final Completer<void> gate;
+
+  @override
+  Future<void> load() async {
+    await gate.future;
+    await super.load();
+  }
+}
+
+class _PlaybackProbeController extends RecorderController {
+  _PlaybackProbeController({
+    required File libraryFile,
+    required Directory imports,
+    required File minutesFile,
+  }) : super(
+         loadPersistedState: false,
+         libraryStore: RecordingLibraryStore(file: libraryFile),
+         libraryDirectory: imports,
+         minutesStore: MinutesDocumentStore(file: minutesFile),
+       );
+
+  final requests = <(String, Duration, int?)>[];
+
+  @override
+  Future<void> playFrom(String path, Duration start, {int? fileId}) async {
+    requests.add((path, start, fileId));
+  }
+}
