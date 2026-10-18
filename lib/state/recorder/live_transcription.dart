@@ -56,6 +56,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
 
   _RecordingSession? get _currentRecording =>
       _recordingSessions[_currentSessionId];
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
   bool get _liveProcessing =>
       recording ||
       realtimeState.active ||
