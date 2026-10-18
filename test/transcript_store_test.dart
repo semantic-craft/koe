@@ -72,4 +72,52 @@ void main() {
       expect(malformed.translations, isEmpty);
     },
   );
+
+  test('timed segments round-trip while malformed groups are discarded', () {
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 4),
+        speaker: '1',
+        speakerChanged: true,
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 4),
+        end: Duration(seconds: 9),
+        speaker: '2',
+        speakerChanged: true,
+      ),
+    ];
+    final encoded = TranscriptStore.encode(
+      byPath: const {'/tmp/123.wav': '第一句第二句'},
+      byFileId: const {123: '第一句第二句'},
+      aliasesByPath: const {},
+      aliasesByFileId: const {},
+      segments: const {'file:123': segments},
+    );
+    expect(encoded['version'], 3);
+
+    final data = TranscriptStore.decode(encoded);
+    expect(data.segments['file:123'], segments);
+
+    final malformed = TranscriptStore.decode({
+      'segments': {
+        'file:missing-time': [
+          {'text': '没有起点'},
+        ],
+        'file:bad-end': [
+          {'text': '逆序', 'startMs': 900, 'endMs': 400},
+          {'text': '正常', 'startMs': 1000, 'endMs': 1400},
+        ],
+        'file:valid': [
+          {'text': '正常', 'startMs': 1000, 'endMs': 1400},
+        ],
+      },
+    });
+    expect(malformed.segments.containsKey('file:missing-time'), isFalse);
+    expect(malformed.segments.containsKey('file:bad-end'), isFalse);
+    expect(malformed.segments['file:valid'], hasLength(1));
+  });
 }

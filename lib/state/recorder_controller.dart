@@ -1664,6 +1664,7 @@ class RecorderController extends ChangeNotifier {
           (asset?.originalComplete ?? true) &&
           (id == null || !_incompleteRetrievalIds.contains(id)),
       archived: asset?.archived ?? false,
+      segments: path == null ? const [] : transcriptSegmentsForPath(path),
     );
   }
 
@@ -2006,6 +2007,12 @@ class RecorderController extends ChangeNotifier {
         _recordingTranslations.putIfAbsent(entry.key, () => entry.value);
       }
     }
+    for (final entry in saved.segments.entries) {
+      _transcriptSegments.putIfAbsent(
+        entry.key,
+        () => List<TranscriptSegment>.unmodifiable(entry.value),
+      );
+    }
     notifyListeners();
   }
 
@@ -2018,6 +2025,7 @@ class RecorderController extends ChangeNotifier {
       aliasesByFileId: speakerAliasesByFileId,
       metadata: _transcriptMetadata,
       translations: _recordingTranslations,
+      segments: _transcriptSegments,
       strict: strict,
     );
   }
@@ -2095,6 +2103,7 @@ class RecorderController extends ChangeNotifier {
     String text, {
     SttProvider? provider,
     String? sourceLanguage,
+    List<TranscriptSegment>? segments,
   }) {
     final t = normalizeSttText(text);
     if (path.isEmpty || t.isEmpty) return;
@@ -2108,6 +2117,7 @@ class RecorderController extends ChangeNotifier {
     if (changed) {
       _clearSpeakerAliases(path);
       _recordingTranslations.remove(key);
+      _transcriptSegments.remove(key);
     }
     _transcriptMetadata[key] = TranscriptMetadata(
       provider: provider ?? metadata?.provider ?? speechProvider,
@@ -2116,6 +2126,13 @@ class RecorderController extends ChangeNotifier {
     );
     transcriptsByPath[path] = t;
     _transcriptPathsByKey[key] = path;
+    if (segments == null) {
+      // Callers that only revise text or metadata keep existing sentence times.
+    } else if (segments.isEmpty) {
+      _transcriptSegments.remove(key);
+    } else {
+      _transcriptSegments[key] = List<TranscriptSegment>.unmodifiable(segments);
+    }
     // Also index by file id when known.
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
@@ -2128,6 +2145,21 @@ class RecorderController extends ChangeNotifier {
     }
   }
 
+  static List<TranscriptSegment> _rememberedSegments(
+    List<SttSegment> segments,
+  ) => [
+    for (final segment in segments)
+      TranscriptSegment(
+        text: segment.text,
+        start: Duration(milliseconds: segment.startMs),
+        end: segment.endMs == null
+            ? null
+            : Duration(milliseconds: segment.endMs!),
+        speaker: segment.speaker,
+        speakerChanged: segment.speakerChanged,
+      ),
+  ];
+
   String? transcriptForPath(String path) {
     final raw = _rawTranscriptForPath(path);
     if (raw == null) return null;
@@ -2136,6 +2168,13 @@ class RecorderController extends ChangeNotifier {
       _speakerAliasesForPath(path),
     );
   }
+
+  /// Provider-timed segments for [path], scoped to its transcript key.
+  List<TranscriptSegment> transcriptSegmentsForPath(String path) =>
+      _transcriptSegments[_recordingKey(path: path)] ?? const [];
+
+  Map<String, String> speakerAliasesForPath(String path) =>
+      Map<String, String>.unmodifiable(_speakerAliasesForPath(path));
 
   String? _rawTranscriptForPath(String path) {
     final direct = transcriptsByPath[path];
@@ -3123,7 +3162,12 @@ class RecorderController extends ChangeNotifier {
         }
       }
       final result = job.stage == 'result'
-          ? SttResult(text: job.text!, sourcePath: path, language: job.language)
+          ? SttResult(
+              text: job.text!,
+              sourcePath: path,
+              language: job.language,
+              segments: job.segments,
+            )
           : await _transcribePath(
               path,
               configuration: config,
@@ -3149,13 +3193,19 @@ class RecorderController extends ChangeNotifier {
         job.stage = 'result';
         job.text = result.text;
         job.language = result.language;
+        job.segments = result.segments;
         await _fileJobs.save();
         final currentPath =
             recordingView(RecordingReference(path: path)).path ?? path;
+        final rememberedSegments = _rememberedSegments(result.segments);
         final remembered =
             transcriptForPath(currentPath) != result.text ||
             _transcriptMetadata[key]?.provider != config.provider ||
-            _transcriptMetadata[key]?.sourceLanguage != config.sourceLanguage;
+            _transcriptMetadata[key]?.sourceLanguage != config.sourceLanguage ||
+            !listEquals(
+              transcriptSegmentsForPath(currentPath),
+              rememberedSegments,
+            );
         if (remembered) {
           rememberTranscript(
             currentPath,
@@ -3164,6 +3214,7 @@ class RecorderController extends ChangeNotifier {
             sourceLanguage: config.provider == SttProvider.apple
                 ? config.sourceLanguage
                 : result.language ?? config.sourceLanguage,
+            segments: rememberedSegments,
           );
         }
         try {
@@ -3389,10 +3440,11 @@ class RecorderController extends ChangeNotifier {
       _player.processingStateStream.listen((state) {
         if (state == ProcessingState.completed) {
           isPlaying = false;
-          // Leave file loaded so user can scrub / replay from start.
-          position = Duration.zero;
+          // Keep the final position and mark completion so the UI never looks
+          // like it is still playing or silently restarts at zero.
+          playbackCompleted = true;
+          if (duration > Duration.zero) position = duration;
           _clearPlayingStatus();
-          unawaited(_player.seek(Duration.zero));
           unawaited(_player.pause());
           unawaited(_persistPlayback(completed: true));
           notifyListeners();
@@ -3644,6 +3696,9 @@ class RecorderController extends ChangeNotifier {
   /// fileId → STT text (device list + local).
   final Map<int, String> transcriptsByFileId = {};
 
+  /// Recording key → provider-timed transcript segments.
+  final Map<String, List<TranscriptSegment>> _transcriptSegments = {};
+
   /// Local recording path → provider speaker id → custom display name.
   final Map<String, Map<String, String>> speakerAliasesByPath = {};
 
@@ -3659,6 +3714,7 @@ class RecorderController extends ChangeNotifier {
   /// File id of the currently loaded local track (if parseable from path).
   int? playingFileId;
   bool isPlaying = false;
+  bool playbackCompleted = false;
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
   double playbackSpeed = 1.0;
@@ -5063,6 +5119,7 @@ class RecorderController extends ChangeNotifier {
         _deferredJobs.discard(key);
         _transcriptMetadata.remove(key);
         _recordingTranslations.remove(key);
+        _transcriptSegments.remove(key);
         _recordingErrors.remove(key);
         _recordingSessions.removeWhere(
           (_, session) =>
@@ -5122,6 +5179,10 @@ class RecorderController extends ChangeNotifier {
     await analysis.renameRecordingKey(oldKey, newKey);
     if (_transcriptPathsByKey.remove(oldKey) != null) {
       _transcriptPathsByKey[newKey] = targetPath;
+    }
+    if (oldKey != newKey) {
+      final segments = _transcriptSegments.remove(oldKey);
+      if (segments != null) _transcriptSegments[newKey] = segments;
     }
     _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
     final transcript = transcriptsByPath.remove(path);
@@ -5573,7 +5634,11 @@ class RecorderController extends ChangeNotifier {
   ///
   /// Completed exports are standard WAV. Legacy raw Opus files are still muxed
   /// to Ogg on demand for playback compatibility.
-  Future<void> playExported(String path, {int? fileId}) async {
+  Future<void> playExported(
+    String path, {
+    int? fileId,
+    Duration startAt = Duration.zero,
+  }) async {
     if (_isRecordingAudioLocked(fileId ?? fileIdFromPath(path), path)) {
       errorMessage = '录音保存后即可播放';
       notifyListeners();
@@ -5638,15 +5703,16 @@ class RecorderController extends ChangeNotifier {
         await Future<void>.delayed(const Duration(milliseconds: 80));
         duration = _player.duration ?? Duration.zero;
       }
-      final resume = resumePositionFor(
-        path,
-        fileId: logicalId,
-        total: duration,
-      );
+      final resume = startAt > Duration.zero
+          ? (duration > Duration.zero && startAt > duration
+                ? duration
+                : startAt)
+          : resumePositionFor(path, fileId: logicalId, total: duration);
       position = resume;
       if (resume > Duration.zero) {
         await _player.seek(resume);
       }
+      playbackCompleted = false;
       await _player.play();
       final sec = duration.inMilliseconds / 1000.0;
       statusMessage = resume > Duration.zero
@@ -5661,6 +5727,7 @@ class RecorderController extends ChangeNotifier {
       playingPath = null;
       playingFileId = null;
       isPlaying = false;
+      playbackCompleted = false;
       duration = Duration.zero;
       notifyListeners();
     }
@@ -5670,6 +5737,25 @@ class RecorderController extends ChangeNotifier {
     final minutes = value.inMinutes;
     final seconds = value.inSeconds % 60;
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  /// Load [path] when needed, jump to [start] and play.
+  Future<void> playFrom(String path, Duration start, {int? fileId}) async {
+    final logicalId = fileId ?? _fileIdFromPath(path);
+    final sameTrack =
+        playingPath == path ||
+        (logicalId != null && playingFileId == logicalId);
+    if (sameTrack) {
+      await seekTo(start);
+      if (playingPath == null) return;
+      if (!isPlaying) {
+        playbackCompleted = false;
+        await _player.play();
+        notifyListeners();
+      }
+      return;
+    }
+    await playExported(path, fileId: fileId, startAt: start);
   }
 
   int? _fileIdFromPath(String path) => ExportCatalog.fileIdFromPath(path);
@@ -5682,10 +5768,10 @@ class RecorderController extends ChangeNotifier {
         await _persistPlayback();
         _clearPlayingStatus();
       } else {
-        // Restart if finished.
-        if (duration > Duration.zero &&
-            position >= duration - const Duration(milliseconds: 200)) {
+        if (playbackCompleted) {
           await _player.seek(Duration.zero);
+          position = Duration.zero;
+          playbackCompleted = false;
         }
         await _player.play();
         final sec = duration.inMilliseconds / 1000.0;
@@ -5730,6 +5816,7 @@ class RecorderController extends ChangeNotifier {
     try {
       await _player.seek(target);
       position = target;
+      playbackCompleted = duration > Duration.zero && target >= duration;
       notifyListeners();
     } catch (e) {
       errorMessage = '无法跳转，请重试';
@@ -5757,6 +5844,7 @@ class RecorderController extends ChangeNotifier {
     playingPath = null;
     playingFileId = null;
     isPlaying = false;
+    playbackCompleted = false;
     position = Duration.zero;
     duration = Duration.zero;
     _clearPlayingStatus();

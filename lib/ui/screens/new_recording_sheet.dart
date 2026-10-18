@@ -202,7 +202,7 @@ Future<void> showAskKoeSheet(
             ),
             const SizedBox(height: 8),
             const Text(
-              '连续问答尚未开放。现在可以在「资料」里按标题搜索、打开原文并回听原件。',
+              '连续问答尚未开放。现在可以在「资料」里按标题和正文搜索、打开原文并回听原件。',
               style: TextStyle(color: AppColors.textSecondary, height: 1.45),
             ),
             const SizedBox(height: 18),

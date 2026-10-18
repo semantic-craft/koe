@@ -25,21 +25,30 @@ SpeechConfiguration config({
   },
 );
 void main() {
-  test('retired pending jobs never resume while saved results retain provenance', () {
-    for (final provider in ['moss', 'soniox']) {
-      final original = FileJob(key: 'k', path: '/recording.wav', config: {...FileJob.snapshot(config()), 'provider': provider});
-      original.stage = 'running'; original.taskId = 'paid-remote-task';
-      final stopped = FileJob.fromJson(original.toJson());
-      expect(stopped.recoverable, isFalse);
-      expect(stopped.taskId, 'paid-remote-task');
-      expect(stopped.error, contains('已停用'));
-      original.stage = 'result'; original.text = 'Saved text';
-      final saved = FileJob.fromJson(original.toJson());
-      expect(saved.recoverable, isTrue);
-      expect(saved.text, 'Saved text');
-      expect(saved.config['provider'], provider);
-    }
-  });
+  test(
+    'retired pending jobs never resume while saved results retain provenance',
+    () {
+      for (final provider in ['moss', 'soniox']) {
+        final original = FileJob(
+          key: 'k',
+          path: '/recording.wav',
+          config: {...FileJob.snapshot(config()), 'provider': provider},
+        );
+        original.stage = 'running';
+        original.taskId = 'paid-remote-task';
+        final stopped = FileJob.fromJson(original.toJson());
+        expect(stopped.recoverable, isFalse);
+        expect(stopped.taskId, 'paid-remote-task');
+        expect(stopped.error, contains('已停用'));
+        original.stage = 'result';
+        original.text = 'Saved text';
+        final saved = FileJob.fromJson(original.toJson());
+        expect(saved.recoverable, isTrue);
+        expect(saved.text, 'Saved text');
+        expect(saved.config['provider'], provider);
+      }
+    },
+  );
 
   late Directory directory;
   late File file;
@@ -135,5 +144,38 @@ void main() {
       throwsFormatException,
     );
     expect(await file.readAsString(), '{broken');
+  });
+  test('completed result keeps provider times across restart', () async {
+    final journal = FileJobJournal(file: file);
+    final job = await journal.enqueue('timed', '/timed.wav', config());
+    job.stage = 'result';
+    job.text = '第一句第二句';
+    job.segments = const [
+      SttSegment(
+        text: '第一句',
+        startMs: 0,
+        endMs: 4200,
+        speaker: '1',
+        speakerChanged: true,
+      ),
+      SttSegment(
+        text: '第二句',
+        startMs: 4200,
+        endMs: 9000,
+        speaker: '2',
+        speakerChanged: true,
+      ),
+    ];
+    await journal.save();
+
+    final recovered = FileJobJournal(file: file);
+    await recovered.load();
+    final timed = recovered.jobs['timed']!;
+    expect(timed.text, '第一句第二句');
+    expect(timed.segments, hasLength(2));
+    expect(timed.segments[1].text, '第二句');
+    expect(timed.segments[1].startMs, 4200);
+    expect(timed.segments[1].speaker, '2');
+    expect(timed.segments[1].speakerChanged, isTrue);
   });
 }

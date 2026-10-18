@@ -12,8 +12,8 @@ import 'new_recording_sheet.dart';
 
 /// Phone "Materials" section (#131).
 ///
-/// Title search and type filters are real. Full-text hits and source jumps are
-/// added by their own tickets; this page never fabricates a search result.
+/// Title and transcript search are real; full-text hits keep their source
+/// paragraph or timed sentence. This page never fabricates a search result.
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
 
@@ -89,7 +89,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   textInputAction: TextInputAction.search,
                   onChanged: (value) => setState(() => _query = value),
                   decoration: InputDecoration(
-                    hintText: '搜索资料标题',
+                    hintText: '搜索标题或正文',
                     prefixIcon: const Icon(Icons.search_rounded),
                     suffixIcon: _query.isEmpty
                         ? null
