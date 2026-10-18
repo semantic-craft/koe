@@ -49,22 +49,32 @@ TranscriptSearchHit? findTranscriptSearchHit({
   required List<TranscriptSegment> segments,
   required String query,
   Map<String, String> aliases = const {},
+  Duration? duration,
 }) {
   final needle = query.trim().toLowerCase();
   if (needle.isEmpty) return null;
   final timed =
       transcriptSegmentsMatchText(segments, text, aliases: aliases) &&
-          transcriptSegmentsLocatable(segments)
+          transcriptSegmentsLocatable(segments, duration: duration)
       ? segments
       : const <TranscriptSegment>[];
   if (timed.isNotEmpty) {
     for (var index = 0; index < timed.length; index++) {
       final segment = timed[index];
-      final at = segment.text.toLowerCase().indexOf(needle);
-      if (at < 0) continue;
+      final rendered = transcriptSegmentLabel(segment, aliases: aliases);
+      final canonical = segment.speaker == null
+          ? segment.text
+          : '说话人 ${segment.speaker}：${segment.text}';
+      final source = rendered.toLowerCase().contains(needle)
+          ? rendered
+          : canonical.toLowerCase().contains(needle)
+          ? canonical
+          : null;
+      if (source == null) continue;
+      final at = source.toLowerCase().indexOf(needle);
       return TranscriptSearchHit(
         index: index,
-        snippet: _snippet(segment.text, at, needle.length),
+        snippet: _snippet(source, at, needle.length),
         timecode: segment.start,
       );
     }

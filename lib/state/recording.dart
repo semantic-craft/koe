@@ -131,7 +131,8 @@ bool transcriptSegmentsLocatable(
   Duration? duration,
 }) {
   if (segments.length < 2) return false;
-  final starts = <int>{};
+  var previousStart = -1;
+  var distinctStarts = 0;
   const tolerance = Duration(milliseconds: 1000);
   for (final segment in segments) {
     if (segment.start < Duration.zero) return false;
@@ -142,9 +143,12 @@ bool transcriptSegmentsLocatable(
         return false;
       }
     }
-    starts.add(segment.start.inMilliseconds);
+    final start = segment.start.inMilliseconds;
+    if (start <= previousStart) return false;
+    previousStart = start;
+    distinctStarts++;
   }
-  return starts.length >= 2;
+  return distinctStarts >= 2;
 }
 
 /// Detect stale segment data left over from a previous transcript revision.
