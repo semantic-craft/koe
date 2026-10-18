@@ -106,6 +106,44 @@ void main() {
     );
   });
 
+  test('显式指定 0:00 时不恢复断点，只有未指定起点才续听', () async {
+    final store = PlaybackHistoryStore(inMemory: true);
+    await store.record(point('/tmp/100.wav', fileId: 100, seconds: 30));
+    final controller = RecorderController(
+      loadPersistedState: false,
+      playbackHistoryStore: store,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForPlaybackHistory();
+
+    expect(
+      controller.resolvePlaybackStart(
+        path: '/tmp/100.wav',
+        fileId: 100,
+        total: const Duration(seconds: 120),
+        requested: Duration.zero,
+      ),
+      Duration.zero,
+    );
+    expect(
+      controller.resolvePlaybackStart(
+        path: '/tmp/100.wav',
+        fileId: 100,
+        total: const Duration(seconds: 120),
+      ),
+      const Duration(seconds: 30),
+    );
+    expect(
+      controller.resolvePlaybackStart(
+        path: '/tmp/100.wav',
+        fileId: 100,
+        total: const Duration(seconds: 10),
+        requested: const Duration(seconds: 30),
+      ),
+      const Duration(seconds: 10),
+    );
+  });
+
   testWidgets('重启后今日页从持久化记录显示继续回听并调用真实播放入口', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -149,7 +187,7 @@ class _PlaybackProbeController extends RecorderController {
   Future<void> playExported(
     String path, {
     int? fileId,
-    Duration startAt = Duration.zero,
+    Duration? startAt,
   }) async {
     played.add(path);
     notifyListeners();

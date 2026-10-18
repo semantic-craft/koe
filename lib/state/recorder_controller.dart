@@ -5651,7 +5651,7 @@ class RecorderController extends ChangeNotifier {
   Future<void> playExported(
     String path, {
     int? fileId,
-    Duration startAt = Duration.zero,
+    Duration? startAt,
   }) async {
     if (_isRecordingAudioLocked(fileId ?? fileIdFromPath(path), path)) {
       errorMessage = '录音保存后即可播放';
@@ -5719,23 +5719,24 @@ class RecorderController extends ChangeNotifier {
           await Future<void>.delayed(const Duration(milliseconds: 80));
           duration = _player.duration ?? Duration.zero;
         }
-        final resume = startAt > Duration.zero
-            ? (duration > Duration.zero && startAt > duration
-                  ? duration
-                  : startAt)
-            : resumePositionFor(path, fileId: logicalId, total: duration);
+        final resume = resolvePlaybackStart(
+          path: path,
+          fileId: logicalId,
+          total: duration,
+          requested: startAt,
+        );
         position = resume;
         if (resume > Duration.zero) {
           await _player.seek(resume);
         }
         playbackCompleted = false;
-        await _player.play();
         final sec = duration.inMilliseconds / 1000.0;
         statusMessage = resume > Duration.zero
             ? '已从 ${_clock(resume)} 继续回听'
             : duration > Duration.zero
             ? '正在播放 · ${sec.toStringAsFixed(1)}s'
             : '正在播放 ${path.split('/').last}';
+        _startPlayback();
         notifyListeners();
       } finally {
         _switchingAudio = false;
@@ -5769,7 +5770,7 @@ class RecorderController extends ChangeNotifier {
       if (playingPath == null) return;
       if (!isPlaying) {
         playbackCompleted = false;
-        await _player.play();
+        _startPlayback();
         notifyListeners();
       }
       return;
@@ -5778,6 +5779,31 @@ class RecorderController extends ChangeNotifier {
   }
 
   int? _fileIdFromPath(String path) => ExportCatalog.fileIdFromPath(path);
+
+  @visibleForTesting
+  Duration resolvePlaybackStart({
+    required String path,
+    required Duration total,
+    int? fileId,
+    Duration? requested,
+  }) {
+    if (requested == null) {
+      return resumePositionFor(path, fileId: fileId, total: total);
+    }
+    return total > Duration.zero && requested > total ? total : requested;
+  }
+
+  void _startPlayback() {
+    unawaited(
+      _player.play().catchError((Object error, StackTrace stack) {
+        if (_disposed) return;
+        errorMessage = '无法播放录音，请重新下载后重试';
+        statusMessage = '无法播放';
+        isPlaying = false;
+        notifyListeners();
+      }),
+    );
+  }
 
   Future<void> togglePlayPause() async {
     if (playingPath == null) return;
@@ -5793,7 +5819,7 @@ class RecorderController extends ChangeNotifier {
           position = Duration.zero;
           playbackCompleted = false;
         }
-        await _player.play();
+        _startPlayback();
         final sec = duration.inMilliseconds / 1000.0;
         statusMessage = duration > Duration.zero
             ? '正在播放 · ${sec.toStringAsFixed(1)}s'
