@@ -407,6 +407,201 @@ void main() {
     expect(controller.queueNotice, contains('缺失'));
   });
 
+  test('移除暂停写盘期间用户改播队列外资料，不会误停或替换新播放', () async {
+    final first = await audio('100.wav');
+    final next = await audio('178.wav');
+    final outside = await audio('200.wav');
+    final historyFile = File('${temp.path}/playback_history.json');
+    final history = _BlockingHistoryStore(file: historyFile);
+    await history.load();
+    await history.record(
+      PlaybackPoint(
+        path: outside.path,
+        fileId: 200,
+        position: const Duration(seconds: 30),
+        duration: const Duration(minutes: 5),
+        completed: false,
+        updatedAt: DateTime(2026, 10, 18, 9),
+      ),
+    );
+    final queue = ListeningQueueStore(inMemory: true);
+    await queue.load();
+    await queue.add(entry(first, fileId: 100, title: '第一段'));
+    await queue.add(entry(next, fileId: 178, title: '第二段'));
+    final player = _QueuePlayer({
+      first.path: const Duration(minutes: 5),
+      next.path: const Duration(minutes: 5),
+      outside.path: const Duration(minutes: 5),
+    });
+    final controller = RecorderController(
+      loadPersistedState: false,
+      listeningQueueStore: queue,
+      playbackHistoryStore: history,
+      player: player,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForListeningQueue();
+    await controller.waitForPlaybackHistory();
+
+    await controller.playQueueEntry('id:100');
+    await settleQueue(controller);
+    player.emitState(playing: true);
+    player.emitPosition(const Duration(seconds: 10));
+    await settleQueue(controller);
+
+    history.gateNextRecord();
+    final remove = controller.removeFromListeningQueue('id:100');
+    await history.entered.timeout(const Duration(seconds: 5));
+
+    final outsidePlay = controller.playExported(outside.path, fileId: 200);
+    for (var i = 0; i < 200 && controller.playingPath != outside.path; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(controller.playingPath, outside.path);
+    player.emitState(playing: true);
+    history.release();
+    await remove;
+    await outsidePlay;
+    await controller.waitForQueueIdle();
+    await controller.waitForQueueIdle();
+
+    expect(controller.playingPath, outside.path);
+    expect(controller.isPlaying, isTrue);
+    expect(player.sources, [first.path, outside.path]);
+    expect(queue.entries.map((item) => item.fileId), [178]);
+    expect(controller.queueCurrentKey, isNull);
+
+    player.emitPosition(const Duration(seconds: 45));
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await controller.pauseForInterruption();
+    expect(
+      history.forRecording(fileId: 200, path: outside.path)?.position,
+      const Duration(seconds: 45),
+      reason: '移除不能污染新播放的断点',
+    );
+  });
+
+  test('移除写盘期间用户改播队列外资料，旧playNext不能替换新播放', () async {
+    final first = await audio('100.wav');
+    final next = await audio('178.wav');
+    final outside = await audio('200.wav');
+    final queueFile = File('${temp.path}/listening_queue.json');
+    final queue = _GatedQueueStore(file: queueFile);
+    await queue.load();
+    await queue.add(entry(first, fileId: 100, title: '第一段'));
+    await queue.add(entry(next, fileId: 178, title: '第二段'));
+    final history = PlaybackHistoryStore(inMemory: true);
+    await history.load();
+    await history.record(
+      PlaybackPoint(
+        path: outside.path,
+        fileId: 200,
+        position: const Duration(seconds: 30),
+        duration: const Duration(minutes: 5),
+        completed: false,
+        updatedAt: DateTime(2026, 10, 18, 9),
+      ),
+    );
+    final player = _QueuePlayer({
+      first.path: const Duration(minutes: 5),
+      next.path: const Duration(minutes: 5),
+      outside.path: const Duration(minutes: 5),
+    });
+    final controller = RecorderController(
+      loadPersistedState: false,
+      listeningQueueStore: queue,
+      playbackHistoryStore: history,
+      player: player,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForListeningQueue();
+    await controller.waitForPlaybackHistory();
+
+    await controller.playQueueEntry('id:100');
+    await settleQueue(controller);
+    player.emitState(playing: true);
+
+    queue.gateNextWrite();
+    final remove = controller.removeFromListeningQueue(
+      'id:100',
+      playNext: true,
+    );
+    await queue.entered.timeout(const Duration(seconds: 5));
+
+    final outsidePlay = controller.playExported(outside.path, fileId: 200);
+    for (var i = 0; i < 200 && controller.playingPath != outside.path; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(controller.playingPath, outside.path);
+    player.emitState(playing: true);
+    queue.release();
+
+    await remove;
+    await outsidePlay;
+    await controller.waitForQueueIdle();
+    await controller.waitForQueueIdle();
+
+    expect(controller.playingPath, outside.path, reason: '旧移除动作不能播放下一项');
+    expect(controller.isPlaying, isTrue);
+    expect(player.sources, [first.path, outside.path]);
+    expect(queue.entries.map((item) => item.fileId), [178]);
+    expect(controller.queueCurrentKey, isNull);
+
+    player.emitPosition(const Duration(seconds: 45));
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await controller.pauseForInterruption();
+    expect(
+      history.forRecording(fileId: 200, path: outside.path)?.position,
+      const Duration(seconds: 45),
+      reason: '移除不能污染新播放的断点',
+    );
+  });
+
+  test('上一段播完后移除缺失的当前项并选下一项，仍会播放下一项', () async {
+    final first = await audio('100.wav');
+    final missing = File('${temp.path}/178.wav');
+    final third = await audio('200.wav');
+    final queue = ListeningQueueStore(inMemory: true);
+    await queue.load();
+    await queue.add(entry(first, fileId: 100, title: '第一段'));
+    await queue.add(entry(missing, fileId: 178, title: '缺失'));
+    await queue.add(entry(third, fileId: 200, title: '第三段'));
+    final player = _QueuePlayer({
+      first.path: const Duration(minutes: 5),
+      third.path: const Duration(minutes: 5),
+    });
+    final controller = RecorderController(
+      loadPersistedState: false,
+      listeningQueueStore: queue,
+      playbackHistoryStore: PlaybackHistoryStore(inMemory: true),
+      player: player,
+    );
+    addTearDown(controller.dispose);
+    await controller.waitForListeningQueue();
+    await controller.waitForPlaybackHistory();
+
+    await controller.playQueueEntry('id:100');
+    await settleQueue(controller);
+    player.emitCompleted();
+    await settleQueue(controller);
+    expect(controller.queueCurrentKey, 'id:178');
+    expect(controller.queueNotice, contains('缺失'));
+    expect(controller.playingPath, first.path, reason: 'A 仍暂停在结尾');
+
+    await controller.removeFromListeningQueue('id:178', playNext: true);
+    await settleQueue(controller);
+
+    expect(queue.entries.map((item) => item.fileId), [100, 200]);
+    expect(queue.currentKey, 'id:200');
+    expect(controller.playingPath, third.path);
+    expect(player.sources, [first.path, third.path]);
+    expect(controller.queueNotice, isNull);
+  });
+
   test('自动续播写当前项时用户改播队列外资料，最新选择胜出', () async {
     final first = await audio('100.wav');
     final next = await audio('178.wav');
@@ -683,6 +878,33 @@ void main() {
     expect(deletedStatus.playable, isFalse);
     expect(deletedStatus.reason, contains('删除'));
   });
+}
+
+class _BlockingHistoryStore extends PlaybackHistoryStore {
+  _BlockingHistoryStore({super.file});
+
+  Completer<void>? _entered;
+  Completer<void>? _release;
+  bool _gateNext = false;
+
+  void gateNextRecord() {
+    _gateNext = true;
+    _entered = Completer<void>();
+    _release = Completer<void>();
+  }
+
+  Future<void> get entered => _entered!.future;
+  void release() => _release!.complete();
+
+  @override
+  Future<void> record(PlaybackPoint point, {bool makeLatest = true}) async {
+    if (_gateNext) {
+      _gateNext = false;
+      _entered!.complete();
+      await _release!.future;
+    }
+    await super.record(point, makeLatest: makeLatest);
+  }
 }
 
 class _GatedQueueStore extends ListeningQueueStore {

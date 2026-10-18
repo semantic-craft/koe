@@ -3496,6 +3496,15 @@ class RecorderController extends ChangeNotifier {
   /// a queued auto-advance checks it across async boundaries and abandons when
   /// the user has chosen something newer.
   int _playbackIntent = 0;
+
+  /// Queue entry that asked for the next real audio load; consumed by
+  /// [playExported]. Null means the load was started outside the queue.
+  String? _pendingQueuePlaybackKey;
+
+  /// Queue entry that owns the audio loaded now, or null when the user started
+  /// it outside the queue. A missing current item can leave the previous queue
+  /// entry's paused audio loaded, which is not an external playback intent.
+  String? _playbackQueueEntryKey;
   bool _pausePersistArmed = false;
   Duration _confirmedPosition = Duration.zero;
   bool _playbackStartedSinceSource = false;
@@ -6197,33 +6206,51 @@ class RecorderController extends ChangeNotifier {
       if (index < 0) return;
       final entry = _queueEntry(key);
       if (entry == null) return;
+      final intent = _playbackIntent;
       final wasCurrent = listeningQueue.currentKey == key;
       // The stored current can lag behind a just-started outside material
       // while its clear write is still queued. Only audio that really belongs
       // to the removed entry may be paused.
       final playsRemoved = _queueEntryIsPlaying(entry);
+      final externalPlayback =
+          playingPath != null && _playbackQueueEntryKey == null;
       final nextKey = index + 1 < listeningQueue.entries.length
           ? listeningQueue.entries[index + 1].key
           : null;
-      if (playsRemoved) await _pauseQueueAudio();
+      // A missing current item can leave the previous queue entry paused at
+      // its end. That is still queue audio, so "play next" is allowed; a
+      // genuinely new outside selection must never be replaced.
+      final canAdvance =
+          wasCurrent && playNext && (playsRemoved || !externalPlayback);
+      final paused = playsRemoved
+          ? await _pauseQueueAudio(expectedIntent: intent, onlyFor: entry)
+          : false;
+      final intentBeforeRemove = _playbackIntent;
+      final mayAdvance = canAdvance && intentBeforeRemove == intent;
       removed = await listeningQueue.remove(
         key,
-        nextCurrentKey: wasCurrent && playsRemoved && playNext ? nextKey : null,
+        nextCurrentKey: mayAdvance ? nextKey : null,
       );
       if (!removed) return;
-      if (wasCurrent && playsRemoved) {
-        if (playNext) {
-          if (nextKey == null) {
-            queueNotice = '已移除当前项，收听队列没有下一项。';
-          } else {
-            await _playQueueKey(nextKey);
-          }
+      if (intentBeforeRemove != _playbackIntent || intent != _playbackIntent) {
+        await _reconcileQueueCurrent();
+        queueNotice = '已移出该队列项；新的播放未被中断。';
+        notifyListeners();
+        return;
+      }
+      if (canAdvance) {
+        if (nextKey == null) {
+          queueNotice = '已移除当前项，收听队列没有下一项。';
         } else {
-          queueNotice = '已移除当前项，播放已暂停。';
+          await _playQueueKey(nextKey);
         }
-      } else if (wasCurrent) {
+      } else if (wasCurrent && externalPlayback) {
         queueNotice = '已移出该队列项；正在播放的是其他资料，未中断。';
-      } else if (playsRemoved) {
+      } else if (wasCurrent && paused) {
+        queueNotice = '已移除当前项，播放已暂停。';
+      } else if (wasCurrent) {
+        queueNotice = '已移除当前项。';
+      } else if (paused) {
         queueNotice = '已移出该队列项，播放已暂停。';
       }
       notifyListeners();
@@ -6253,10 +6280,15 @@ class RecorderController extends ChangeNotifier {
     if (listeningQueue.currentKey != key) return;
     final index = listeningQueue.indexOf(key);
     if (index < 0) return;
+    final intent = _playbackIntent;
     final nextKey = index + 1 < listeningQueue.entries.length
         ? listeningQueue.entries[index + 1].key
         : null;
-    await _pauseQueueAudio();
+    await _pauseQueueAudio(expectedIntent: intent);
+    if (intent != _playbackIntent) {
+      await _reconcileQueueCurrent();
+      return;
+    }
     queueNotice = null;
     if (nextKey == null) {
       await listeningQueue.setCurrent(null);
@@ -6388,7 +6420,7 @@ class RecorderController extends ChangeNotifier {
       }
       // Selecting a broken item must not leave the previous track playing as
       // if it were still the queue's current material.
-      await _pauseQueueAudio();
+      await _pauseQueueAudio(expectedIntent: intent);
       if (intent != _playbackIntent) {
         await _reconcileQueueCurrent();
         return;
@@ -6409,6 +6441,7 @@ class RecorderController extends ChangeNotifier {
       return;
     }
     queueNotice = null;
+    _pendingQueuePlaybackKey = key;
     final play = playExported(availability.path!, fileId: availability.fileId);
     final ownIntent = _playbackIntent;
     await play;
@@ -6450,17 +6483,31 @@ class RecorderController extends ChangeNotifier {
     await _playQueueKey(nextKey);
   }
 
-  /// Persists the real point, then pauses. Removing the current queue item
-  /// must not leave audio playing under a different queue position.
-  Future<void> _pauseQueueAudio() async {
-    if (playingPath == null) return;
+  /// Persists the real point, then pauses the audio that was loaded when this
+  /// started. If the user starts something newer during the write, or the
+  /// loaded track is no longer [onlyFor], nothing is paused.
+  Future<bool> _pauseQueueAudio({
+    int? expectedIntent,
+    ListeningQueueEntry? onlyFor,
+  }) async {
+    final path = playingPath;
+    if (path == null) return false;
+    final fileId = playingFileId;
     await _persistPlayback(at: _confirmedPosition);
+    if (expectedIntent != null && expectedIntent != _playbackIntent) {
+      return false;
+    }
+    if (onlyFor != null && !_queueEntryIsPlaying(onlyFor)) return false;
+    if (playingPath != path || playingFileId != fileId) return false;
     try {
       await _player.pause();
-    } catch (_) {}
+    } catch (_) {
+      return false;
+    }
     _pausePersistArmed = false;
     isPlaying = false;
     _clearPlayingStatus();
+    return true;
   }
 
   /// Makes the persisted queue current match the material actually playing.
@@ -6705,6 +6752,8 @@ class RecorderController extends ChangeNotifier {
     Duration? startAt,
   }) async {
     final generation = ++_playbackIntent;
+    final queueKey = _pendingQueuePlaybackKey;
+    _pendingQueuePlaybackKey = null;
     if (_isRecordingAudioLocked(fileId ?? fileIdFromPath(path), path)) {
       errorMessage = '录音保存后即可播放';
       notifyListeners();
@@ -6738,6 +6787,7 @@ class RecorderController extends ChangeNotifier {
               playingFileId == logicalId && logicalId != null)) {
         await _applyPlayPause();
         if (generation != _playbackIntent) return;
+        _playbackQueueEntryKey = queueKey;
         await _syncQueueForPlayback(path: path, fileId: logicalId);
         return;
       }
@@ -6779,6 +6829,7 @@ class RecorderController extends ChangeNotifier {
         if (generation != _playbackIntent) return;
         playingPath = path; // keep UI key on original export path
         playingFileId = logicalId;
+        _playbackQueueEntryKey = queueKey;
         duration = durationFromFile ?? _player.duration ?? Duration.zero;
         // Duration may arrive async on some platforms.
         if (duration <= Duration.zero) {
@@ -6821,6 +6872,7 @@ class RecorderController extends ChangeNotifier {
       statusMessage = '无法播放';
       playingPath = null;
       playingFileId = null;
+      _playbackQueueEntryKey = null;
       isPlaying = false;
       playbackCompleted = false;
       _playbackStartedSinceSource = false;
@@ -6982,6 +7034,7 @@ class RecorderController extends ChangeNotifier {
     } catch (_) {}
     playingPath = null;
     playingFileId = null;
+    _playbackQueueEntryKey = null;
     isPlaying = false;
     playbackCompleted = false;
     _confirmedPosition = Duration.zero;
