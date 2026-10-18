@@ -369,6 +369,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
       final sourceMatches = <int, TranscriptSourceMatch>{};
       if (result != null &&
           result.sourceHash == analysisFingerprint(view.text) &&
+          !widget.controller.recordingAudioChanged(widget.reference) &&
           view.originalPresent &&
           view.path != null) {
         final aliases = widget.controller.speakerAliasesForPath(view.path!);

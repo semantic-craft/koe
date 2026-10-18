@@ -59,6 +59,7 @@ class Controller extends RecorderController {
     : super(loadPersistedState: false, analysisController: manager);
   final List<TranscriptSegment> segments;
   String text;
+  bool audioChanged = false;
   @override
   String get analysisApiKey => 'test-key';
   @override
@@ -73,6 +74,8 @@ class Controller extends RecorderController {
   );
   @override
   Duration? localDurationForPath(String path) => const Duration(seconds: 30);
+  @override
+  bool recordingAudioChanged(RecordingReference ref) => audioChanged;
 }
 
 Future<void> generate(RecordingAnalysis manager) => manager.run(
@@ -311,6 +314,49 @@ void main() {
     controller.notifyListeners();
     await tester.pump();
     expect(find.text('原文已更新，这份纪要已过期，请重新生成。'), findsOneWidget);
+    await tester.tap(find.text('出处 [S1]').first);
+    await tester.pumpAndSettle();
+
+    expect(jump, isNull);
+    expect(find.text('无法可靠定位到原声；以下是模型使用的原文片段。'), findsOneWidget);
+  });
+
+  testWidgets('音频内容变化后旧时码不再作为出处跳转', (tester) async {
+    final manager = RecordingAnalysis(inMemory: true, service: Service());
+    final controller = Controller(
+      manager,
+      segments: const [
+        TranscriptSegment(
+          text: '讨论发布，',
+          start: Duration.zero,
+          end: Duration(seconds: 4),
+        ),
+        TranscriptSegment(
+          text: '请核对发布。',
+          start: Duration(seconds: 8),
+          end: Duration(seconds: 12),
+        ),
+      ],
+    );
+    addTearDown(controller.dispose);
+    TranscriptJump? jump;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MinutesPanel(
+          controller: controller,
+          reference: const RecordingReference(fileId: 1),
+          onOpenSource: (value) => jump = value,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('生成纪要'));
+    await tester.pumpAndSettle();
+    expect(find.text('出处 [S1] 00:00'), findsWidgets);
+
+    controller.audioChanged = true;
+    controller.notifyListeners();
+    await tester.pump();
     await tester.tap(find.text('出处 [S1]').first);
     await tester.pumpAndSettle();
 
