@@ -27,6 +27,9 @@ import '../audio/retrieved_audio.dart';
 import '../audio/ogg_opus.dart';
 import '../audio/opus_pcm_decoder.dart';
 import '../audio/opus_wave.dart';
+import '../archive/mac_archive_controller.dart';
+import '../archive/archive_store.dart';
+import '../archive/archive_wire.dart';
 import '../ble/ble_service.dart';
 import '../ble/ble_file_pull.dart';
 import '../ble/realtime_stream.dart';
@@ -60,6 +63,10 @@ export 'playback_history.dart';
 export 'topic_store.dart';
 export 'topic_note.dart';
 export 'topic_summary.dart';
+export '../archive/mac_archive_controller.dart';
+export '../archive/archive_store.dart';
+export '../archive/archive_pairing.dart';
+export '../archive/archive_wire.dart';
 export '../ai/speech_provider.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
@@ -510,6 +517,9 @@ class RecorderController extends ChangeNotifier {
     ListeningQueueStore? listeningQueueStore,
     RecordingBookmarkStore? bookmarkStore,
     AudioPlayer? player,
+    MacArchiveController? archiveController,
+    ArchivePhoneStore? archivePhoneStore,
+    ArchiveDeskStore? archiveDeskStore,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -723,6 +733,18 @@ class RecorderController extends ChangeNotifier {
         );
       }
     }
+    _ownsArchive = archiveController == null;
+    archive =
+        archiveController ??
+        MacArchiveController(
+          source: _RecorderArchiveSource(this),
+          isDesk: !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS,
+          phoneStore: archivePhoneStore,
+          deskStore: archiveDeskStore,
+          inMemory: !loadPersistedState,
+        );
+    archive.addListener(_onArchiveChanged);
+    unawaited(archive.initialize());
     unawaited(_purgeTrashWhenReady());
     if (this.topicsEnabled && loadPersistedState) {
       _lifecycle = AppLifecycleListener(onResume: topics.checkDay);
@@ -738,6 +760,8 @@ class RecorderController extends ChangeNotifier {
   /// Whether topic notes (#49) are active. First version: iPhone only.
   final bool topicsEnabled;
   late final RecordingLibraryStore library;
+  late final MacArchiveController archive;
+  late final bool _ownsArchive;
   late final Future<void> _libraryLoaded;
   final Directory? _libraryDirectoryOverride;
   late final PlaybackHistoryStore playbackHistory;
@@ -1665,17 +1689,26 @@ class RecorderController extends ChangeNotifier {
               : null);
     final label = path == null ? '' : ExportCatalog.editableLabelFromPath(path);
     final asset = path == null ? null : library.assetForPath(path);
+    final archiveRecord = path == null ? null : archive.recordForPath(path);
     final title = asset?.displayName.isNotEmpty == true
         ? asset!.displayName
+        : archiveRecord?.displayName.isNotEmpty == true
+        ? archiveRecord!.displayName
         : label.isNotEmpty
         ? label
         : id == null
         ? '当前录音'
         : _recordingDateTitle(id);
-    final recordedAt = asset?.recordedAt ?? _recordedAtFromFileId(id);
+    final recordedAt =
+        asset?.recordedAt ??
+        archiveRecord?.recordedAt ??
+        _recordedAtFromFileId(id);
     // Device recordings have no library entry until they are renamed or
     // archived; their retrieval time is still the local file timestamp.
-    final importedAt = asset?.importedAt ?? _localFileTimestamp(path);
+    final importedAt =
+        asset?.importedAt ??
+        archiveRecord?.updatedAt ??
+        _localFileTimestamp(path);
     return RecordingViewData(
       reference: RecordingReference(
         sessionId: ref.sessionId,
@@ -5006,6 +5039,25 @@ class RecorderController extends ChangeNotifier {
   RecordingAsset? recordingAssetForPath(String path) =>
       library.assetForPath(path);
 
+  void _onArchiveChanged() {
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Verified Mac copies whose phone original is no longer present. These rows
+  /// remain visible so the user can explicitly restore and verify the original.
+  List<String> get archiveOnlyPaths {
+    final paths = <String>[];
+    for (final record in archive.records) {
+      final currentVerified = record.verified && record.hasVersion;
+      final hasReceipt = record.receipts.isNotEmpty;
+      if (!currentVerified && !hasReceipt) continue;
+      if (File(record.localPath).existsSync()) continue;
+      if (_isTrashedPath(record.localPath)) continue;
+      paths.add(record.localPath);
+    }
+    return ExportCatalog.newestPathsFirst(paths);
+  }
+
   @visibleForTesting
   Future<void> waitForRecordingLibrary() => _libraryLoaded;
 
@@ -5065,6 +5117,7 @@ class RecorderController extends ChangeNotifier {
       statusMessage = restored ? '这条音频在回收站中，已恢复' : '这条音频已在资料库中';
       errorMessage = null;
       notifyListeners();
+      unawaited(archive.onLocalLibraryChanged());
       return (
         path: existing.path,
         duplicate: true,
@@ -5116,6 +5169,7 @@ class RecorderController extends ChangeNotifier {
       statusMessage = '原件已保存';
       errorMessage = null;
       notifyListeners();
+      unawaited(archive.onLocalLibraryChanged());
       return (path: target.path, duplicate: false, asset: asset);
     } catch (error) {
       try {
@@ -5273,10 +5327,15 @@ class RecorderController extends ChangeNotifier {
   Future<({int deleted, List<String> failed})> deleteLocalExports(
     Iterable<String> paths,
   ) async {
+    final selected = paths.toSet();
+    // Invalidate an in-flight restore before any asynchronous side effect, so
+    // this explicit user action is the final writer for the path.
+    for (final path in selected) {
+      archive.invalidateRestore(path);
+    }
     // Permanent deletion must run after persisted transcripts have loaded;
     // otherwise the load can repopulate the maps and save the entry back.
     await _transcriptsLoaded;
-    final selected = paths.toSet();
     final removed = <String>{};
     var deleted = 0;
     final failed = <String>[];
@@ -5309,6 +5368,9 @@ class RecorderController extends ChangeNotifier {
               : '$candidate.ogg',
         );
       }
+      final preDeleted = archive.phoneStore.recordForPath(path);
+      var metadataForgotten = false;
+      var forgottenVersion = -1;
       try {
         _requireFinishedRecording(path);
         if (_fileJobKey == _recordingKey(path: path)) {
@@ -5317,6 +5379,9 @@ class RecorderController extends ChangeNotifier {
         if (playingPath == path || (id != null && playingFileId == id)) {
           await stopPlayback();
         }
+        await archive.forgetLocalPath(path);
+        metadataForgotten = true;
+        forgottenVersion = archive.localChangeVersion(path);
         if (tombstone != null) await library.upsert(tombstone);
         for (final candidate in logicalPaths) {
           final file = File(candidate);
@@ -5366,6 +5431,19 @@ class RecorderController extends ChangeNotifier {
         removed.add(path);
         deleted++;
       } catch (error) {
+        if (metadataForgotten && preDeleted != null) {
+          try {
+            final restored = await archive.recoverForgottenRecord(
+              preDeleted,
+              expectedVersion: forgottenVersion,
+            );
+            if (!restored) {
+              failed.add('${p.basename(path)}：删除失败，归档记录已有新操作，请检查资料状态');
+            }
+          } catch (_) {
+            failed.add('${p.basename(path)}：删除失败，且归档记录无法恢复；请重新归档修复');
+          }
+        }
         if (tombstone != null && existing != null) {
           await library.upsert(existing, strict: false);
         }
@@ -5386,7 +5464,7 @@ class RecorderController extends ChangeNotifier {
     await _persistTranscripts();
     statusMessage = failed.isEmpty
         ? '已删除 $deleted 个本地录音'
-        : '已删除 $deleted 个录音，${failed.length} 个失败';
+        : '已删除 $deleted 个本地录音，${failed.length} 个未完成';
     final errors = [
       ...failed,
       if (historyCleanupFailed) '录音已删除，但播放进度记录未能清理',
@@ -5429,12 +5507,16 @@ class RecorderController extends ChangeNotifier {
     Iterable<String> paths, {
     DateTime? now,
   }) async {
+    final selected = paths.toSet();
+    for (final path in selected) {
+      archive.invalidateRestore(path);
+    }
     await _libraryLoaded;
     final stamp = now ?? DateTime.now();
     var trashed = 0;
     final failed = <String>[];
     final queued = <String>{};
-    for (final path in paths.toSet()) {
+    for (final path in selected) {
       try {
         _requireFinishedRecording(path);
         if (_fileJobKey == _recordingKey(path: path)) {
@@ -5683,6 +5765,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   Future<String> renameLocalExport(String path, String label) async {
+    archive.invalidateRestore(path);
     _requireFinishedRecording(path);
     if (_fileJobKey == _recordingKey(path: path)) throw StateError('处理完成后再重命名');
     final source = File(path);
@@ -5691,6 +5774,7 @@ class RecorderController extends ChangeNotifier {
     final targetName = ExportCatalog.renamedFileName(path, label);
     final targetPath = p.join(p.dirname(path), targetName);
     if (targetPath == path) return path;
+    archive.invalidateRestore(targetPath);
     final target = File(targetPath);
     if (await target.exists()) throw StateError('同名文件已存在');
 
@@ -5698,53 +5782,108 @@ class RecorderController extends ChangeNotifier {
     if (playingPath == path || (id != null && playingFileId == id)) {
       await stopPlayback();
     }
-
     if (_fileJobs.jobs[_recordingKey(path: path)]?.recoverable == true) {
       throw StateError('转写完成后再重命名');
     }
-    await source.rename(targetPath);
-    final oldKey = _recordingKey(path: path);
-    final newKey = _recordingKey(path: targetPath);
-    await _fileJobs.rename(oldKey, newKey, targetPath);
-    await topics.renameRecordingKey(oldKey, newKey);
-    await analysis.renameRecordingKey(oldKey, newKey);
-    if (_transcriptPathsByKey.remove(oldKey) != null) {
-      _transcriptPathsByKey[newKey] = targetPath;
+
+    // Pre-commit archive metadata before touching the original file or the
+    // library. If this fails, the local rename has not happened and can be
+    // retried exactly as before.
+    try {
+      await archive.renameLocalPath(path, targetPath);
+    } catch (_) {
+      errorMessage = '归档状态预提交失败，未重命名本地原件；请检查存储空间后重试';
+      statusMessage = '重命名未开始，原件保持不变';
+      notifyListeners();
+      throw StateError('归档状态预提交失败，未重命名本地原件，请重试');
     }
-    if (oldKey != newKey) {
-      final segments = _transcriptSegments.remove(oldKey);
-      if (segments != null) _transcriptSegments[newKey] = segments;
+    final precommitted = archive.phoneStore.recordForPath(targetPath);
+    var physicalRenamed = false;
+    try {
+      await source.rename(targetPath);
+      physicalRenamed = true;
+      final oldKey = _recordingKey(path: path);
+      final newKey = _recordingKey(path: targetPath);
+      await _fileJobs.rename(oldKey, newKey, targetPath);
+      await topics.renameRecordingKey(oldKey, newKey);
+      await analysis.renameRecordingKey(oldKey, newKey);
+      if (_transcriptPathsByKey.remove(oldKey) != null) {
+        _transcriptPathsByKey[newKey] = targetPath;
+      }
+      if (oldKey != newKey) {
+        final segments = _transcriptSegments.remove(oldKey);
+        if (segments != null) _transcriptSegments[newKey] = segments;
+      }
+      _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
+      final transcript = transcriptsByPath.remove(path);
+      if (transcript != null) transcriptsByPath[targetPath] = transcript;
+      final aliases = speakerAliasesByPath.remove(path);
+      if (aliases != null) speakerAliasesByPath[targetPath] = aliases;
+      for (final session in _recordingSessions.values) {
+        if (session.path == path) session.path = targetPath;
+      }
+      final cachedDuration = _localDurations.remove(path);
+      if (cachedDuration != null) _localDurations[targetPath] = cachedDuration;
+      final asset = library.assetForPath(path);
+      if (asset != null) {
+        await library.rename(
+          path,
+          asset.copyWith(path: targetPath, displayName: label.trim()),
+          strict: false,
+        );
+      }
+      final renamedPaths = exportedPaths
+          .map((item) => item == path ? targetPath : item)
+          .toList();
+      exportedPaths = [];
+      _registerExportedPaths(renamedPaths);
+      if (expandedLocalPath == path) expandedLocalPath = targetPath;
+      await _persistTranscripts();
+    } catch (_) {
+      if (!physicalRenamed) {
+        final rolledBack = await _rollbackArchiveRename(
+          targetPath,
+          path,
+          precommitted,
+        );
+        if (!rolledBack && precommitted != null) {
+          errorMessage = '重命名未完成，但归档记录已预提交且无法安全回滚；请重新归档修复';
+          statusMessage = '本地原件未改名，归档记录需要修复';
+          notifyListeners();
+          throw StateError('本地原件未改名，归档记录需要修复，请重新归档');
+        }
+        errorMessage = '重命名失败，原件保持不变；请重试';
+        statusMessage = '重命名未生效，原件保持不变';
+        notifyListeners();
+        throw StateError('重命名失败，原件保持不变，请重试');
+      }
+      errorMessage = '文件已改名为 $targetName，但资料库/索引更新失败；请重试或重新归档';
+      statusMessage = '文件已改名，资料库更新失败';
+      notifyListeners();
+      throw StateError('文件已改名，但后续资料库更新失败，请重试');
     }
-    _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
-    final transcript = transcriptsByPath.remove(path);
-    if (transcript != null) transcriptsByPath[targetPath] = transcript;
-    final aliases = speakerAliasesByPath.remove(path);
-    if (aliases != null) speakerAliasesByPath[targetPath] = aliases;
-    for (final session in _recordingSessions.values) {
-      if (session.path == path) session.path = targetPath;
-    }
-    final cachedDuration = _localDurations.remove(path);
-    if (cachedDuration != null) _localDurations[targetPath] = cachedDuration;
-    final asset = library.assetForPath(path);
-    if (asset != null) {
-      await library.rename(
-        path,
-        asset.copyWith(path: targetPath, displayName: label.trim()),
-        strict: false,
-      );
-    }
-    final renamedPaths = exportedPaths
-        .map((item) => item == path ? targetPath : item)
-        .toList();
-    exportedPaths = [];
-    _registerExportedPaths(renamedPaths);
-    if (expandedLocalPath == path) expandedLocalPath = targetPath;
-    await _persistTranscripts();
 
     statusMessage = '已重命名为 $targetName';
     errorMessage = null;
     notifyListeners();
     return targetPath;
+  }
+
+  Future<bool> _rollbackArchiveRename(
+    String from,
+    String to,
+    ArchivePhoneRecord? precommitted,
+  ) async {
+    if (precommitted == null) return true;
+    try {
+      return await archive.phoneStore.rollbackRename(
+        from: from,
+        to: to,
+        expected: precommitted,
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   void _registerExportedPaths(Iterable<String> paths) {
@@ -7312,6 +7451,8 @@ class RecorderController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    archive.removeListener(_onArchiveChanged);
+    if (_ownsArchive) archive.dispose();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();
@@ -7407,4 +7548,134 @@ class _TranscriptSaveFailure implements Exception {
 
   @override
   String toString() => 'Transcript save failed: $cause';
+}
+
+/// Adapts the existing recording library to the archive coordinator without
+/// moving protocol or queue logic into [RecorderController].
+class _RecorderArchiveSource implements ArchiveSource {
+  _RecorderArchiveSource(this.controller);
+
+  final RecorderController controller;
+
+  @override
+  Future<List<ArchiveCandidate>> archiveCandidates() async {
+    await controller._libraryLoaded;
+    final paths = <String>{...controller.exportedPaths};
+    for (final asset in controller.library.assets) {
+      if (asset.trashed || asset.permanentlyDeleted) continue;
+      if (File(asset.path).existsSync()) paths.add(asset.path);
+    }
+    final candidates = <ArchiveCandidate>[];
+    for (final path in paths) {
+      final candidate = await archiveCandidate(path);
+      if (candidate != null) candidates.add(candidate);
+    }
+    return candidates;
+  }
+
+  @override
+  Future<ArchiveCandidate?> archiveCandidate(String path) async {
+    final lower = path.toLowerCase();
+    final extension = lower.endsWith('.opus.bin')
+        ? '.opus.bin'
+        : p.extension(lower);
+    if (!archiveAllowedSourceExtensions.contains(extension)) return null;
+    if (controller._isTrashedPath(path)) return null;
+    final id = controller.fileIdFromPath(path);
+    if (controller._isRecordingAudioLocked(id, path)) return null;
+    final asset = controller.library.assetForPath(path);
+    if (asset?.originalComplete == false) return null;
+    if (id != null && controller._incompleteRetrievalIds.contains(id)) {
+      return null;
+    }
+    if (controller._blePull.isIncomplete(path)) return null;
+    final file = File(path);
+    if (!await file.exists()) return null;
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
+    final label = ExportCatalog.editableLabelFromPath(path).trim();
+    final displayName = asset?.displayName.isNotEmpty == true
+        ? asset!.displayName
+        : label.isNotEmpty
+        ? label
+        : p.basenameWithoutExtension(path);
+    return ArchiveCandidate(
+      path: path,
+      displayName: displayName.isEmpty ? '录音' : displayName,
+      extension: extension,
+      length: stat.size,
+      modifiedMs: stat.modified.millisecondsSinceEpoch,
+      recordedAt: asset?.recordedAt ?? controller._recordedAtFromFileId(id),
+    );
+  }
+
+  @override
+  Future<String> archiveRestoreTarget(ArchivePhoneRecord record) async {
+    // Restore in place whenever possible: transcripts, bookmarks and topics
+    // are keyed by the original path and stay attached to the same material.
+    if (record.localPath.isNotEmpty &&
+        archiveIsAllowedSourceExtension(record.localPath)) {
+      return record.localPath;
+    }
+    final directory = await controller._importDirectory();
+    await directory.create(recursive: true);
+    final extension =
+        archiveAllowedSourceExtensions.contains(
+          record.originalExtension.toLowerCase(),
+        )
+        ? record.originalExtension.toLowerCase()
+        : '.wav';
+    final hash = (record.contentHash ?? 'unknown').padRight(12, '0');
+    return p.join(
+      directory.path,
+      '${DateTime.now().millisecondsSinceEpoch}_${hash.substring(0, 12)}_restored$extension',
+    );
+  }
+
+  @override
+  Future<bool> archiveDidRestore(
+    ArchivePhoneRecord record,
+    String path, {
+    required int length,
+    required String contentHash,
+    required bool Function() isCurrent,
+  }) async {
+    if (!isCurrent()) return false;
+    final existing = controller.library.assetForPath(path);
+    final asset = existing == null
+        ? RecordingAsset(
+            path: path,
+            displayName: record.displayName,
+            source: RecordingSource.localImport,
+            recordedAt: record.recordedAt,
+            importedAt: DateTime.now(),
+            contentHash: contentHash,
+          )
+        : existing.copyWith(contentHash: contentHash, originalComplete: true);
+    await controller.library.upsert(asset);
+    if (!isCurrent()) {
+      // Only remove the exact object this restore wrote; a later user write
+      // (trash rename/new file) must win and is not rolled back from a stale
+      // snapshot.
+      final stored = controller.library.assetForPath(path);
+      if (identical(stored, asset)) {
+        try {
+          if (existing != null) {
+            // Restore the exact pre-restore metadata; a failed/renamed/cancelled
+            // restore must not discard the user's original asset record.
+            await controller.library.upsert(existing, strict: false);
+          } else {
+            await controller.library.remove(path, strict: false);
+          }
+        } catch (_) {}
+      }
+      return false;
+    }
+    controller._registerExportedPaths([...controller.exportedPaths, path]);
+    controller._invalidateLocalDuration(path);
+    controller.statusMessage = '已从 Mac 恢复并校验原件';
+    controller.errorMessage = null;
+    controller.notifyListeners();
+    return true;
+  }
 }

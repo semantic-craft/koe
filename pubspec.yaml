@@ -41,6 +41,7 @@ dependencies:
   path: ^1.9.1
   web_socket_channel: ^3.0.2
   pointycastle: ^4.0.0
+  ffi: ^2.2.0
   just_audio: ^0.10.6
   http: ^1.6.0
   # libopus xcframework includes an arm64 simulator slice (flutter_opus 1.0.4 did not).

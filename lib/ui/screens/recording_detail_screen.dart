@@ -21,6 +21,7 @@ import '../widgets/inline_player.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/topic_note_panel.dart';
 import 'files_screen.dart';
+import 'settings_screen.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({
@@ -365,7 +366,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     try {
       await context.read<RecorderController>().renameLocalExport(path, label);
     } catch (error) {
-      _notice('无法重命名，请检查名称后重试');
+      _notice(error is StateError ? error.message : '无法重命名，请检查名称后重试');
     }
   }
 
@@ -642,73 +643,277 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           '${two(local.hour)}:${two(local.minute)}';
     }
 
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                '资料信息',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              _InfoRow(
-                label: '录音发生时间',
-                value: recording.recordedAt == null
-                    ? '未知（导入文件未提供）'
-                    : date(recording.recordedAt),
-              ),
-              _InfoRow(
-                label: '导入资料库',
-                value: recording.importedAt == null
-                    ? '未知'
-                    : date(recording.importedAt),
-              ),
-              _InfoRow(
-                label: '时长',
-                value: path == null
-                    ? '未知'
-                    : FilesBody.formatDuration(
-                        controller.localDurationForPath(path),
+    String size(int bytes) {
+      if (bytes < 1024) return '$bytes B';
+      if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+
+    var busy = false;
+    String? actionError;
+    StateSetter? sheetSetState;
+    void archiveListener() {
+      try {
+        sheetSetState?.call(() {});
+      } catch (_) {
+        // The sheet may be closing; a late archive notification is harmless.
+      }
+    }
+
+    controller.addListener(archiveListener);
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (sheetContext) {
+          Future<void> run(
+            Future<void> Function() action,
+            String success,
+          ) async {
+            if (busy) return;
+            busy = true;
+            actionError = null;
+            sheetSetState?.call(() {});
+            try {
+              await action();
+              if (!mounted || !sheetContext.mounted) return;
+              sheetSetState = null;
+              Navigator.pop(sheetContext);
+              _notice(success);
+            } on ArchiveException catch (error) {
+              if (!mounted) return;
+              busy = false;
+              actionError = error.message;
+              sheetSetState?.call(() {});
+            } catch (_) {
+              if (!mounted) return;
+              busy = false;
+              actionError = '操作失败，请重试';
+              sheetSetState?.call(() {});
+            }
+          }
+
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              sheetSetState = setSheetState;
+              final archive = controller.archive;
+              final archiveRecord = path == null
+                  ? null
+                  : archive.recordForPath(path);
+              final archiveVerified = archiveRecord?.verified == true;
+              final verifiedForCurrent =
+                  archiveVerified &&
+                  (archive.pairing == null ||
+                      archiveRecord?.deskId == null ||
+                      archiveRecord!.deskId == archive.pairing!.deskId);
+              final currentReceipt = archiveRecord == null
+                  ? null
+                  : archive.receiptForCurrentDesk(archiveRecord);
+              final otherDesk = archiveRecord == null
+                  ? null
+                  : archive.otherDeskWithReceipt(archiveRecord);
+              final hasRemote =
+                  archiveVerified ||
+                  currentReceipt != null ||
+                  otherDesk != null;
+              return SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        '资料信息',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-              ),
-              _InfoRow(
-                label: '来源',
-                value: recordingSourceLabel(recording.source),
-              ),
-              _InfoRow(
-                label: '原件状态',
-                value: !recording.originalPresent
-                    ? '找不到原件'
-                    : recording.originalComplete
-                    ? '已保留'
-                    : '已保留但不完整',
-              ),
-              _InfoRow(
-                label: '原件位置',
-                value: path ?? '尚未保存到本机',
-                selectable: true,
-              ),
-              if (recording.originalPath != null)
-                _InfoRow(
-                  label: '原始文件',
-                  value: recording.originalPath!,
-                  selectable: true,
+                      const SizedBox(height: 12),
+                      _InfoRow(
+                        label: '录音发生时间',
+                        value: recording.recordedAt == null
+                            ? '未知（导入文件未提供）'
+                            : date(recording.recordedAt),
+                      ),
+                      _InfoRow(
+                        label: '导入资料库',
+                        value: recording.importedAt == null
+                            ? '未知'
+                            : date(recording.importedAt),
+                      ),
+                      _InfoRow(
+                        label: '时长',
+                        value: path == null
+                            ? '未知'
+                            : FilesBody.formatDuration(
+                                controller.localDurationForPath(path),
+                              ),
+                      ),
+                      _InfoRow(
+                        label: '来源',
+                        value: recordingSourceLabel(recording.source),
+                      ),
+                      _InfoRow(
+                        label: '原件状态',
+                        value: !recording.originalPresent
+                            ? '找不到原件'
+                            : recording.originalComplete
+                            ? '已保留'
+                            : '已保留但不完整',
+                      ),
+                      _InfoRow(
+                        label: '原件位置',
+                        value: path ?? '尚未保存到本机',
+                        selectable: true,
+                      ),
+                      if (recording.originalPath != null)
+                        _InfoRow(
+                          label: '原始文件',
+                          value: recording.originalPath!,
+                          selectable: true,
+                        ),
+                      _InfoRow(
+                        label: '回收站状态',
+                        value: recording.archived ? '回收站' : '资料库',
+                      ),
+                      if (!kIsWeb &&
+                          (defaultTargetPlatform == TargetPlatform.iOS ||
+                              defaultTargetPlatform == TargetPlatform.macOS))
+                        _InfoRow(
+                          label: 'Mac 归档',
+                          value: path == null
+                              ? '没有可归档的原件'
+                              : archive.statusForPath(path),
+                        ),
+                      if (archiveRecord != null)
+                        _InfoRow(
+                          label: 'Mac 说明',
+                          value: archive.detailForPath(path!),
+                        ),
+                      if (hasRemote)
+                        _InfoRow(
+                          label: 'Mac 副本',
+                          value: verifiedForCurrent || currentReceipt != null
+                              ? '已校验 · ${size(archiveRecord?.verifiedLength ?? currentReceipt?.length ?? archiveRecord?.length ?? 0)}'
+                              : '原件在另一台 Mac',
+                        ),
+                      if (!recording.originalPresent && !hasRemote)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 4, bottom: 8),
+                          child: Text(
+                            '原件已彻底缺失（本机与 Mac 均无副本）。',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      if (!recording.originalPresent &&
+                          !verifiedForCurrent &&
+                          otherDesk != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          '原件在另一台 Mac（${otherDesk.substring(0, 8)}）；当前 Mac 没有这份副本。请配回原 Mac 后恢复。',
+                          key: const ValueKey('other-mac-archive-notice'),
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          key: const ValueKey('open-archive-settings'),
+                          onPressed: busy
+                              ? null
+                              : () {
+                                  final navigator = Navigator.of(context);
+                                  Navigator.pop(sheetContext);
+                                  navigator.push(
+                                    MaterialPageRoute<void>(
+                                      settings: const RouteSettings(
+                                        name: 'settings',
+                                      ),
+                                      builder: (_) =>
+                                          const SettingsScreen(showBack: true),
+                                    ),
+                                  );
+                                },
+                          icon: const Icon(Icons.settings_outlined),
+                          label: const Text('去设置更换配对'),
+                        ),
+                      ],
+                      if (busy) ...[
+                        const SizedBox(height: 8),
+                        const LinearProgressIndicator(minHeight: 2),
+                      ],
+                      if (actionError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          actionError!,
+                          key: const ValueKey('mac-archive-action-error'),
+                          style: const TextStyle(
+                            color: AppColors.coral,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      if (verifiedForCurrent && !recording.originalPresent) ...[
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          key: const ValueKey('restore-from-mac'),
+                          onPressed: busy
+                              ? null
+                              : () => run(
+                                  () => archive.restoreFromArchive(path!),
+                                  '已从 Mac 恢复并校验原件',
+                                ),
+                          icon: const Icon(Icons.download_rounded),
+                          label: const Text('从 Mac 恢复原件'),
+                        ),
+                      ],
+                      if (recording.originalPresent &&
+                          archive.pairing != null &&
+                          !verifiedForCurrent) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          key: const ValueKey('archive-to-mac'),
+                          onPressed: busy || path == null
+                              ? null
+                              : () => run(
+                                  () => archive.archiveNow(path),
+                                  '已加入 Mac 归档队列',
+                                ),
+                          icon: const Icon(Icons.upload_rounded),
+                          label: const Text('归档到 Mac'),
+                        ),
+                      ],
+                      if (archiveRecord?.phase == MacArchivePhase.failed &&
+                          recording.originalPresent) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          key: const ValueKey('retry-mac-archive'),
+                          onPressed: busy || path == null
+                              ? null
+                              : () => run(() => archive.retry(path), '已重新排队归档'),
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('重试归档'),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-              _InfoRow(
-                label: '归档状态',
-                value: recording.archived ? '回收站' : '资料库',
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      controller.removeListener(archiveListener);
+      sheetSetState = null;
+    }
   }
 
   @override

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,6 +12,7 @@ import '../../platform/credential_store.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import '../widgets/about_koe.dart';
+import '../widgets/mac_archive_settings.dart';
 import 'device_screen.dart';
 
 /// Processing choices apply to the next recording.
@@ -127,6 +129,13 @@ class SettingsScreen extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (!kIsWeb &&
+                    (defaultTargetPlatform == TargetPlatform.iOS ||
+                        defaultTargetPlatform == TargetPlatform.macOS)) ...[
+                  const SizedBox(height: 18),
+                  const SectionLabel('Mac 原件归档'),
+                  MacArchiveSettings(controller: c),
+                ],
                 const SizedBox(height: 18),
                 const SectionLabel('外部 AI'),
                 _SettingsGroup(
