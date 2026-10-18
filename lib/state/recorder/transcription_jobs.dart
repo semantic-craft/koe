@@ -11,7 +11,9 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   abstract final AppleSpeechService _appleSpeech;
   Future<String> _convertExportToWav(
     String path, {
+    // ignore: unused_element_parameter
     bool register = true,
+    // ignore: unused_element_parameter
     List<String>? conversionFailures,
   });
   abstract bool _disposed;
@@ -25,7 +27,8 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   Future<void> _persistTranscripts({bool strict = false});
   abstract final QwenSttService _qwenStt;
   abstract final Map<String, String> _recordingErrors;
-  String _recordingKey({String? path});
+  // ignore: unused_element_parameter
+  String _recordingKey({int? fileId, String? path});
   abstract final Map<String, RecordingTranslation> _recordingTranslations;
   String _referenceKey(RecordingReference ref);
   Future<void> _scheduleTopicAssist(String recordingKey, String transcript);
@@ -574,5 +577,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   int _fileJobRevision = 0;
   String? _fileJobKey;
   SttProvider? _fileJobProvider;
+  // Used by other parts through their abstract declarations.
+  // ignore: prefer_final_fields, unused_field
   Future<void> _fileCancellation = Future<void>.value();
 }
