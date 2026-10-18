@@ -81,9 +81,25 @@ flutter run -d android
 # iOS 真机安装（Xcode 签名）
 ./scripts/install-ios.sh
 
+# Apple Silicon iOS 模拟器（仅构建，不安装）
+flutter build ios --simulator --debug
 flutter build ios
 flutter build apk   # 或 appbundle
 ```
+
+Apple 原生依赖使用项目级 CocoaPods 配置：Opus 的 XCFramework 区分真机与模拟器；macOS 构建会在中间产物中整理 framework 目录，不修改 pub 缓存。若从旧 SPM 构建迁移后出现 `local binary target opus ... does not contain a binary artifact`，先运行 `flutter clean`、`flutter pub get`，再构建。
+
+## 手机原件归档到 Mac
+
+1. 在 Mac 的「设置 → Mac 原件归档」开启「这台 Mac 接收原件」。展开配对信息后复制给自己的手机；这串信息包含配对凭据，只交给要配对的设备。
+2. 手机在同一局域网进入「设置 → Mac 原件归档 → 配对 Mac」，粘贴配对信息。配对后新原件自动排队，已有资料可用「归档现有资料」加入队列。
+3. 资料行与「资料信息」显示等待连接、传输中、校验中、已校验归档或失败可重试。Mac 离线时原件继续留在手机，录音和回听照常使用；「断开」暂停归档，「连接」继续。
+4. 手机原件缺失而有已校验的 Mac 副本时，在「资料信息」选择「从 Mac 恢复原件」。恢复后重新校验才加入本机资料库。切换 Mac 保留旧副本的校验凭据；要取回旧 Mac 的副本，重新配对原 Mac。
+5. 要使旧设备或旧配对信息失效，在 Mac 选择「重置配对凭据」。确认后所有已连接设备断开，归档原件保留；其他设备需使用新信息重新配对。接收关闭时也能重置，再次开启后可复制新信息。手机的「取消配对」只清除本机连接。
+
+两端使用配对密钥认证与分块加密直连；Mac 校验落盘字节的 SHA-256 与长度并保存索引后才确认。归档不会自动删除手机原件，回收站规则保持独立。归档状态与接收文件保存在应用私有 Application Support 的 `KoeArchive` 下；隔离运行模式使用 `KoeArchiveDevelopment`，目录不可用时停止归档配置读写。配对信息、源文件与恢复凭据请随应用私有数据一起保留。
+
+此功能的真实双端安装、系统本地网络权限、锁屏与真实录音回听需要设备验收；本机合成文件与 loopback 验证不替代这些步骤。
 
 ## 测试
 
