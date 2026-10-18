@@ -46,6 +46,7 @@ List<TranscriptChapter> buildTranscriptChapters(
   if (!transcriptSegmentsLocatable(segments, duration: duration)) {
     return const [];
   }
+  if (maxChapters <= 0) return const [];
   final groups = <List<(int, TranscriptSegment)>>[];
   for (var index = 0; index < segments.length; index++) {
     final segment = segments[index];
@@ -62,9 +63,23 @@ List<TranscriptChapter> buildTranscriptChapters(
       groups.last.add((index, segment));
     }
   }
+  final chapterGroups = <List<(int, TranscriptSegment)>>[];
+  if (groups.length <= maxChapters) {
+    chapterGroups.addAll(groups);
+  } else {
+    // Keep every part of the timeline reachable: distribute groups across
+    // chapters instead of silently dropping the tail after the cap.
+    for (var index = 0; index < maxChapters; index++) {
+      final start = index * groups.length ~/ maxChapters;
+      final end = (index + 1) * groups.length ~/ maxChapters;
+      if (start >= end) continue;
+      chapterGroups.add([
+        for (var group = start; group < end; group++) ...groups[group],
+      ]);
+    }
+  }
   final chapters = <TranscriptChapter>[];
-  for (final group in groups) {
-    if (chapters.length >= maxChapters) break;
+  for (final group in chapterGroups) {
     final first = group.first.$2;
     final last = group.last.$2;
     chapters.add(

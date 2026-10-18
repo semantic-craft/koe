@@ -1300,6 +1300,42 @@ void main() {
     expect(find.text('章节'), findsNothing);
   });
 
+  testWidgets('replaced audio hides chapter navigation and stale jumps', (
+    tester,
+  ) async {
+    const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+    const segments = [
+      TranscriptSegment(
+        text: '第一句',
+        start: Duration.zero,
+        end: Duration(seconds: 5),
+        speaker: '1',
+        speakerChanged: true,
+      ),
+      TranscriptSegment(
+        text: '第二句',
+        start: Duration(seconds: 12),
+        end: Duration(seconds: 20),
+        speaker: '1',
+      ),
+    ];
+    final c = _RecordingController()..audioReplaced = true;
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '录音已更换',
+      path: '/tmp/100.wav',
+      text: '第一句第二句',
+      segments: segments,
+    );
+    addTearDown(c.dispose);
+    await pump(tester, c, const RecordingDetailScreen(reference: reference));
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('章节'), findsNothing);
+  });
+
   testWidgets('focused source opening restores and starts its position', (
     tester,
   ) async {
@@ -1642,6 +1678,7 @@ class _RecordingController extends RecorderController {
   final playbackRequests = <(String, Duration, int?)>[];
   int togglePlaybackCalls = 0;
   String? transcriptionFailure;
+  bool audioReplaced = false;
   (String, String)? preparedTranslation;
   RecordingReference? _current;
   @override
@@ -1671,6 +1708,9 @@ class _RecordingController extends RecorderController {
   @override
   RecordingViewData recordingView(RecordingReference reference) =>
       views[reference.key] ?? super.recordingView(reference);
+
+  @override
+  bool recordingAudioChanged(RecordingReference ref) => audioReplaced;
 
   @override
   Future<void> playFrom(String path, Duration start, {int? fileId}) async {

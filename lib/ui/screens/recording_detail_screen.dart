@@ -87,6 +87,10 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   void _jumpTo(TranscriptJump jump) {
     final controller = context.read<RecorderController>();
     final recording = controller.recordingView(widget.reference);
+    if (controller.recordingAudioChanged(widget.reference)) {
+      _notice('录音已更换，旧时码无法定位');
+      return;
+    }
     setState(() {
       _showTranslation = false;
       _highlightedParagraph = jump.segmentIndex;
@@ -521,6 +525,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         : const <TranscriptSegment>[];
     final segmentsLocatable =
         recording.originalPresent &&
+        !c.recordingAudioChanged(widget.reference) &&
         transcriptSegmentsLocatable(
           segmentText,
           duration: path == null ? null : c.localDurationForPath(path),

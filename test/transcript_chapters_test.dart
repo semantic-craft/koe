@@ -86,6 +86,30 @@ void main() {
     expect(chapters.first.title, '开场介绍');
   });
 
+  test('chapter cap keeps the rest of the timeline reachable', () {
+    final segments = [
+      for (var index = 0; index < 20; index++)
+        TranscriptSegment(
+          text: '第 $index 段',
+          start: Duration(seconds: index * 30),
+          end: Duration(seconds: index * 30 + 20),
+          speaker: '${index % 2}',
+          speakerChanged: true,
+        ),
+    ];
+
+    final chapters = buildTranscriptChapters(segments, maxChapters: 6);
+
+    expect(chapters, hasLength(6));
+    expect(chapters.first.start, Duration.zero);
+    expect(chapters.last.end, segments.last.end);
+    expect(chapters.last.firstSegmentIndex, greaterThan(0));
+    expect(
+      chapters.map((chapter) => chapter.firstSegmentIndex).toSet(),
+      hasLength(6),
+    );
+  });
+
   test('analysis sources map back to the segment where they start', () {
     const segments = [
       TranscriptSegment(
