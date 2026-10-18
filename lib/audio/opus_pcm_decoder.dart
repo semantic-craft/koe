@@ -1,7 +1,9 @@
+import 'dart:ffi';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_opus/flutter_opus.dart';
+import 'package:opus_codec_dart/opus_codec_dart.dart';
 
 import 'ogg_opus.dart';
 
@@ -17,16 +19,20 @@ class OpusPcmDecoder {
   final int outputSampleRate;
   final int channels;
 
-  OpusDecoder? _decoder;
+  SimpleOpusDecoder? _decoder;
   bool _initFailed = false;
   int _framesOk = 0;
   int _framesFail = 0;
+
+  /// libopus symbols live in the app process (Apple) or the packaged
+  /// `libopus.so` (Android), so the FFI bindings are initialized once.
+  static bool _nativeInitialized = false;
 
   /// Samples per 20 ms channel at [outputSampleRate].
   int get samplesPerFrame =>
       (outputSampleRate * OggOpus.samplesPerFrame) ~/ OggOpus.sampleRate;
 
-  bool get isReady => _decoder != null && !_decoder!.isDisposed;
+  bool get isReady => _decoder != null && !_decoder!.destroyed;
   bool get initFailed => _initFailed;
   int get framesDecoded => _framesOk;
   int get framesFailed => _framesFail;
@@ -36,18 +42,14 @@ class OpusPcmDecoder {
     if (isReady) return true;
     if (_initFailed) return false;
     try {
-      _decoder = OpusDecoder.create(
+      _ensureNativeLibrary();
+      _decoder = SimpleOpusDecoder(
         sampleRate: outputSampleRate,
         channels: channels,
       );
-      if (_decoder == null) {
-        _initFailed = true;
-        debugPrint('[OpusPcm] create failed (null)');
-        return false;
-      }
       debugPrint(
         '[OpusPcm] ready rate=$outputSampleRate ch=$channels '
-        'frameSamples=$samplesPerFrame opus=${OpusDecoder.getVersion()}',
+        'frameSamples=$samplesPerFrame opus=${getOpusVersion()}',
       );
       return true;
     } catch (e) {
@@ -64,16 +66,14 @@ class OpusPcmDecoder {
     if (packet.isEmpty) return null;
 
     try {
-      // frameSize = max samples/channel; 20 ms D3200 frames → samplesPerFrame.
-      // Allow up to 120 ms in case of multi-frame packets (libopus max).
-      final maxSamples = samplesPerFrame * 6;
-      final pcm = _decoder!.decode(packet, maxSamples);
-      if (pcm == null || pcm.isEmpty) {
+      // The wrapper decodes up to libopus' 120 ms packet maximum internally.
+      final pcm = _decoder!.decode(input: packet);
+      if (pcm.isEmpty) {
         _framesFail++;
         return null;
       }
       _framesOk++;
-      return pcm;
+      return _pcm16Le(pcm);
     } catch (e) {
       _framesFail++;
       if (_framesFail <= 5 || _framesFail % 50 == 0) {
@@ -110,7 +110,7 @@ class OpusPcmDecoder {
   }
 
   void reset() {
-    _decoder?.dispose();
+    _decoder?.destroy();
     _decoder = null;
     _initFailed = false;
     _framesOk = 0;
@@ -118,7 +118,7 @@ class OpusPcmDecoder {
   }
 
   void dispose() {
-    _decoder?.dispose();
+    _decoder?.destroy();
     _decoder = null;
   }
 
@@ -130,5 +130,47 @@ class OpusPcmDecoder {
     }
     if (n <= 0) return Uint8List(0);
     return n == f.length ? f : Uint8List.sublistView(f, 0, n);
+  }
+
+  /// Load the native library synchronously.
+  ///
+  /// `opus_codec`'s `load()` is async, but on Koe's targets it only wraps the
+  /// same calls below. [ensureStarted] is invoked from the BLE frame callback
+  /// and must stay synchronous so live transcription never drops frames.
+  static void _ensureNativeLibrary() {
+    if (_nativeInitialized) return;
+    initOpus(_openNativeOpus());
+    _nativeInitialized = true;
+  }
+
+  static DynamicLibrary _openNativeOpus() {
+    if (Platform.isAndroid) {
+      return DynamicLibrary.open('libopus.so');
+    }
+    if (Platform.isIOS || Platform.isMacOS) {
+      return DynamicLibrary.process();
+    }
+    throw UnsupportedError(
+      'Opus decoding is not supported on ${Platform.operatingSystem}',
+    );
+  }
+
+  /// Test-only: bind an already-loaded libopus so native decoding can be
+  /// exercised in `flutter test`, where the app's embedded framework is absent.
+  @visibleForTesting
+  static void debugUseOpusLibrary(DynamicLibrary library) {
+    initOpus(library);
+    _nativeInitialized = true;
+  }
+
+  /// `opus_codec_dart` returns host-endian Int16 samples; the streaming STT
+  /// protocol and WAV writer expect little-endian bytes.
+  static Uint8List _pcm16Le(Int16List samples) {
+    final bytes = Uint8List(samples.length * 2);
+    final view = ByteData.sublistView(bytes);
+    for (var i = 0; i < samples.length; i++) {
+      view.setInt16(i * 2, samples[i], Endian.little);
+    }
+    return bytes;
   }
 }

@@ -1,21 +1,85 @@
 PODS:
+  - audio_service (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - audio_session (0.0.1):
+    - Flutter
+  - file_selector_ios (0.0.1):
+    - Flutter
   - Flutter (1.0.0)
-  - flutter_opus (0.0.1):
+  - flutter_blue_plus_darwin (0.0.2):
+    - Flutter
+    - FlutterMacOS
+  - just_audio (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - opus_codec_ios (3.0.5):
+    - Flutter
+  - package_info_plus (0.4.5):
+    - Flutter
+  - permission_handler_apple (9.4.8):
+    - Flutter
+  - share_plus (0.0.1):
+    - Flutter
+  - sqflite_darwin (0.0.4):
+    - Flutter
+    - FlutterMacOS
+  - url_launcher_ios (0.0.1):
     - Flutter
 
 DEPENDENCIES:
+  - audio_service (from `.symlinks/plugins/audio_service/darwin`)
+  - audio_session (from `.symlinks/plugins/audio_session/ios`)
+  - file_selector_ios (from `.symlinks/plugins/file_selector_ios/ios`)
   - Flutter (from `Flutter`)
-  - flutter_opus (from `.symlinks/plugins/flutter_opus/ios`)
+  - flutter_blue_plus_darwin (from `.symlinks/plugins/flutter_blue_plus_darwin/darwin`)
+  - just_audio (from `.symlinks/plugins/just_audio/darwin`)
+  - opus_codec_ios (from `.symlinks/plugins/opus_codec_ios/ios`)
+  - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
+  - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
+  - share_plus (from `.symlinks/plugins/share_plus/ios`)
+  - sqflite_darwin (from `.symlinks/plugins/sqflite_darwin/darwin`)
+  - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
 
 EXTERNAL SOURCES:
+  audio_service:
+    :path: ".symlinks/plugins/audio_service/darwin"
+  audio_session:
+    :path: ".symlinks/plugins/audio_session/ios"
+  file_selector_ios:
+    :path: ".symlinks/plugins/file_selector_ios/ios"
   Flutter:
     :path: Flutter
-  flutter_opus:
-    :path: ".symlinks/plugins/flutter_opus/ios"
+  flutter_blue_plus_darwin:
+    :path: ".symlinks/plugins/flutter_blue_plus_darwin/darwin"
+  just_audio:
+    :path: ".symlinks/plugins/just_audio/darwin"
+  opus_codec_ios:
+    :path: ".symlinks/plugins/opus_codec_ios/ios"
+  package_info_plus:
+    :path: ".symlinks/plugins/package_info_plus/ios"
+  permission_handler_apple:
+    :path: ".symlinks/plugins/permission_handler_apple/ios"
+  share_plus:
+    :path: ".symlinks/plugins/share_plus/ios"
+  sqflite_darwin:
+    :path: ".symlinks/plugins/sqflite_darwin/darwin"
+  url_launcher_ios:
+    :path: ".symlinks/plugins/url_launcher_ios/ios"
 
 SPEC CHECKSUMS:
+  audio_service: aa99a6ba2ae7565996015322b0bb024e1d25c6fd
+  audio_session: 9bb7f6c970f21241b19f5a3658097ae459681ba0
+  file_selector_ios: ec57ec07954363dd730b642e765e58f199bb621a
   Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
-  flutter_opus: 67e517db29860d407541fae63afadefe15236183
+  flutter_blue_plus_darwin: ee2377ea51a6c9e481f2ed76ec597717ef5d287d
+  just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
+  opus_codec_ios: 92a104ce4500126b25cf0abddf379af393846fd2
+  package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
+  permission_handler_apple: 92d754bbaa7361d436db2d6c3c1c2a0fdcec462e
+  share_plus: 50da8cb520a8f0f65671c6c6a99b3617ed10a58a
+  sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
+  url_launcher_ios: 7a95fa5b60cc718a708b8f2966718e93db0cef1b
 
 PODFILE CHECKSUM: 288656d4464589360115d6f81dd5d8f559352730
 

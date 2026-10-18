@@ -81,9 +81,13 @@ flutter run -d android
 # iOS 真机安装（Xcode 签名）
 ./scripts/install-ios.sh
 
+# Apple Silicon iOS 模拟器（仅构建，不安装）
+flutter build ios --simulator --debug
 flutter build ios
 flutter build apk   # 或 appbundle
 ```
+
+Apple 原生依赖使用项目级 CocoaPods 配置：Opus 的 XCFramework 区分真机与模拟器；macOS 构建会在中间产物中整理 framework 目录，不修改 pub 缓存。若从旧 SPM 构建迁移后出现 `local binary target opus ... does not contain a binary artifact`，先运行 `flutter clean`、`flutter pub get`，再构建。
 
 ## 测试
 
