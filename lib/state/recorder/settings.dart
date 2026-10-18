@@ -409,7 +409,11 @@ mixin _RecorderSettings on ChangeNotifier {
     unawaited(_persistSettings());
   }
 
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_field
   late final Future<void> _settingsLoaded;
+  // Used by other parts through their abstract declarations.
+  // ignore: prefer_final_fields
   bool _settingsReady = false;
 
   /// Auto BLE realtime transfer while device is recording (no SoftAP).
