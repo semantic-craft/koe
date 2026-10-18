@@ -29,6 +29,7 @@ class _AppShellState extends State<AppShell> {
   int _index = 0;
   int _mobileIndex = 0;
   bool _wide = false;
+  bool _trashOpen = false;
   bool? _renderedWide;
   int? _compactRestoreIndex;
   Route<void>? _compactSettingsRoute;
@@ -105,6 +106,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _selectDesktopTab(int index) {
+    if (_trashOpen) {
+      _trashOpen = false;
+      _navigator.currentState?.pop();
+    }
     setState(() {
       _index = index;
       _sectionVisible = index != 0 && (_wide || _sectionVisible);
@@ -114,19 +119,21 @@ class _AppShellState extends State<AppShell> {
     if (index == 1) c.refreshInfoOnDeviceTabEnter();
   }
 
-  void _openTrash() {
+  Future<void> _openTrash() async {
     final navigator = _navigator.currentState;
-    if (navigator == null) return;
+    if (navigator == null || _trashOpen) return;
+    _trashOpen = true;
     setState(() {
       _index = 0;
       _sectionVisible = false;
     });
-    navigator.push(
+    await navigator.push(
       MaterialPageRoute<void>(
         settings: const RouteSettings(name: 'trash'),
         builder: (_) => const TrashScreen(),
       ),
     );
+    if (mounted) setState(() => _trashOpen = false);
   }
 
   void _selectMobileTab(int index) {

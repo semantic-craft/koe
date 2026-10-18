@@ -289,6 +289,11 @@ void main() {
 
     expect(find.byKey(const ValueKey('trash-screen')), findsOneWidget);
     expect(find.byKey(ValueKey('trash-row-$path')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('nav-home')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('trash-screen')), findsNothing);
   });
 
   testWidgets('new recording keeps phone recording honest and import real', (
