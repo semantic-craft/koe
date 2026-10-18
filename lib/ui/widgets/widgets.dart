@@ -291,7 +291,9 @@ class AccentButton extends StatelessWidget {
       backgroundColor: filled ? foreground : tokens.bgPanel,
       minimumSize: const Size(44, 48),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.sm)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.sm),
+      ),
     );
     final content = Row(
       mainAxisSize: MainAxisSize.min,

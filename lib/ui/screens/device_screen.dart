@@ -7,13 +7,15 @@ import '../widgets/scan_sheet.dart';
 import '../widgets/widgets.dart';
 
 class DeviceScreen extends StatelessWidget {
-  const DeviceScreen({super.key});
+  const DeviceScreen({super.key, this.showBack = false});
+
+  final bool showBack;
 
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     if (!c.connected) {
-      return _OfflineDeviceView(controller: c);
+      return _OfflineDeviceView(controller: c, showBack: showBack);
     }
 
     final info = c.info;
@@ -21,6 +23,7 @@ class DeviceScreen extends StatelessWidget {
     final caseBat = info?.boxBattery;
     return GradientScaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: showBack,
         title: Row(
           children: [
             Image.asset(
@@ -378,9 +381,10 @@ class _DeviceInfoRow extends StatelessWidget {
 
 /// Disconnected Device tab: still show last known / bound unit.
 class _OfflineDeviceView extends StatelessWidget {
-  const _OfflineDeviceView({required this.controller});
+  const _OfflineDeviceView({required this.controller, this.showBack = false});
 
   final RecorderController controller;
+  final bool showBack;
 
   @override
   Widget build(BuildContext context) {
@@ -392,6 +396,16 @@ class _OfflineDeviceView extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
           children: [
+            if (showBack)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  key: const ValueKey('device-back'),
+                  tooltip: '返回',
+                  onPressed: () => Navigator.maybePop(context),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+              ),
             if (d != null) ...[
               SurfaceCard(
                 glow: true,

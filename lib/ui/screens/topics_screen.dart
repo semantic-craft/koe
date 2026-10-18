@@ -15,7 +15,12 @@ import '../widgets/widgets.dart';
 /// Library entry for topics (#50). Rendered only where topics are enabled
 /// (first version: iPhone); the Mac library is unchanged.
 class TopicsEntry extends StatelessWidget {
-  const TopicsEntry({super.key});
+  const TopicsEntry({
+    super.key,
+    this.padding = const EdgeInsets.fromLTRB(20, 4, 20, 4),
+  });
+
+  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +32,7 @@ class TopicsEntry extends StatelessWidget {
         final current = c.topics.currentTopic;
         final pending = _existingKeys(c, c.topics.pendingRecordings).length;
         return Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+          padding: padding,
           child: SurfaceCard(
             key: const ValueKey('topics-entry'),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

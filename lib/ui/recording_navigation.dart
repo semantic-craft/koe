@@ -11,6 +11,7 @@ class RecordingNavigation extends InheritedWidget {
     this.tabIndex = 0,
     this.wide = false,
     this.selected,
+    this.onSelectTab,
     required super.child,
   });
 
@@ -18,6 +19,7 @@ class RecordingNavigation extends InheritedWidget {
   final int tabIndex;
   final bool wide;
   final RecordingReference? selected;
+  final ValueChanged<int>? onSelectTab;
 
   static RecordingNavigation? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<RecordingNavigation>();
@@ -49,5 +51,6 @@ class RecordingNavigation extends InheritedWidget {
       onOpen != oldWidget.onOpen ||
       tabIndex != oldWidget.tabIndex ||
       wide != oldWidget.wide ||
-      selected != oldWidget.selected;
+      selected != oldWidget.selected ||
+      onSelectTab != oldWidget.onSelectTab;
 }

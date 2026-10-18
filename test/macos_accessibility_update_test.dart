@@ -105,13 +105,23 @@ void main() {
     // Tier sanity: the shell must actually have switched layout, not just
     // resized by a few pixels.
     expect(
-      find.byKey(ValueKey(wide ? 'desktop-navigation' : 'bottom-navigation-bar')),
+      find.byKey(
+        ValueKey(wide ? 'desktop-navigation' : 'bottom-navigation-bar'),
+      ),
       findsOneWidget,
     );
     expect(
-      find.byKey(ValueKey(wide ? 'bottom-navigation-bar' : 'desktop-navigation')),
+      find.byKey(
+        ValueKey(wide ? 'bottom-navigation-bar' : 'desktop-navigation'),
+      ),
       findsNothing,
     );
+    if (!wide) {
+      // The compact shell opens on Today; the recording rows live under the
+      // Materials tab (#131).
+      await tester.tap(find.byKey(const ValueKey('nav-library')));
+      await tester.pumpAndSettle();
+    }
     Future<void> transitionFrames() async {
       // Inspect each transition frame: the settled tree alone stays clean
       // even when the native bridge has already rejected an earlier update.
@@ -121,9 +131,10 @@ void main() {
     }
 
     for (final id in [100, 101, 102]) {
-      await tester.tap(
-        find.byKey(ValueKey('recording-row-/tmp/ui-preview-$id.wav')),
-      );
+      final row = find.byKey(ValueKey('recording-row-/tmp/ui-preview-$id.wav'));
+      await tester.ensureVisible(row);
+      await tester.pumpAndSettle();
+      await tester.tap(row);
       await transitionFrames();
       // Narrow tier: the detail route covers the rows, so walk back to the
       // library before opening the next recording.
@@ -132,8 +143,28 @@ void main() {
         await transitionFrames();
       }
     }
-    for (final tab in ['settings', 'device', 'home']) {
-      await tester.tap(find.byKey(ValueKey('nav-$tab')));
+    if (wide) {
+      for (final tab in ['settings', 'device', 'home']) {
+        await tester.tap(find.byKey(ValueKey('nav-$tab')));
+        await tester.pumpAndSettle();
+      }
+    } else {
+      // Compact tier: settings opens from the header, the device section is a
+      // pushed route from settings, and Today is the bottom navigation entry.
+      await tester.tap(find.byKey(const ValueKey('nav-settings')));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('device-entry')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.byKey(const ValueKey('device-entry')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('device-back')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-back')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('nav-today')));
       await tester.pumpAndSettle();
     }
     final failures = List<int>.of(binding.orphans);
