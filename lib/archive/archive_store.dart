@@ -962,6 +962,17 @@ class ArchiveDeskStore {
         config = next;
       });
 
+  /// Explicitly replaces the Mac pairing secret while preserving desk id,
+  /// archive index, originals, receiving preference and port. The new key is
+  /// published only after the config write succeeds; a failed write leaves the
+  /// old key/config in place.
+  Future<void> rotatePairingKey() => _serializedConfig(() async {
+    final nextKey = ArchivePairing.generateKey();
+    final next = config.copyWith(pairingKey: nextKey);
+    await _writeConfig(next);
+    config = next;
+  });
+
   Future<void> updatePreferredPort(int port) async {
     if (config.preferredPort == port) return;
     try {

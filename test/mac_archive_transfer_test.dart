@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -381,4 +382,27 @@ void main() {
     expect(verify.verified, isFalse);
     await existing.ping();
   });
+  test(
+    'stopping during storage preparation cancels the late receiver start',
+    () async {
+      final entered = Completer<void>();
+      final directory = Completer<Directory>();
+      final delayedStore = ArchiveDeskStore(
+        supportDirectory: () {
+          if (!entered.isCompleted) entered.complete();
+          return directory.future;
+        },
+        developmentProfile: false,
+      );
+      final delayedServer = ArchiveDeskServer(store: delayedStore);
+      addTearDown(delayedServer.stop);
+      final starting = delayedServer.start(port: 0);
+      await entered.future;
+      await delayedServer.stop();
+      directory.complete(root);
+      await expectLater(starting, throwsA(isA<ArchiveException>()));
+      expect(delayedServer.running, isFalse);
+      expect(delayedServer.port, isNull);
+    },
+  );
 }

@@ -94,29 +94,25 @@ void main() {
     return (controller: controller, store: store, gate: gate);
   }
 
-  test(
-    'rename waits for archive persistence before reporting success',
-    () async {
-      final setup = await prepare();
-      final gate = Completer<void>();
-      setup.gate.gate = gate;
-      setup.gate.entered = Completer<void>();
-      final future = setup.controller.renameLocalExport(audio.path, 'renamed');
-      try {
-        await setup.gate.entered!.future;
-        var completed = false;
-        future.then<void>((_) => completed = true, onError: (Object _) {});
-        await Future<void>.delayed(Duration.zero);
-        expect(completed, isFalse);
-      } finally {
-        if (!gate.isCompleted) gate.complete();
-      }
-      final renamed = await future;
-      expect(renamed, isNot(audio.path));
-      expect(setup.controller.archive.recordForPath(audio.path), isNull);
-      expect(setup.controller.archive.recordForPath(renamed), isNotNull);
-    },
-  );
+  test('archive metadata commits before moving the local original', () async {
+    final setup = await prepare();
+    final gate = Completer<void>();
+    setup.gate.gate = gate;
+    setup.gate.entered = Completer<void>();
+    final future = setup.controller.renameLocalExport(audio.path, 'renamed');
+    try {
+      await setup.gate.entered!.future;
+      expect(await audio.exists(), isTrue);
+      expect(setup.controller.library.assetForPath(audio.path), isNotNull);
+      expect(setup.controller.exportedPaths, contains(audio.path));
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+    }
+    final renamed = await future;
+    expect(renamed, isNot(audio.path));
+    expect(setup.controller.archive.recordForPath(audio.path), isNull);
+    expect(setup.controller.archive.recordForPath(renamed), isNotNull);
+  });
 
   test(
     'rename metadata precommit failure leaves everything retryable',
@@ -152,7 +148,7 @@ void main() {
     },
   );
 
-  test('delete waits for archive cleanup before reporting success', () async {
+  test('archive cleanup commits before deleting the local original', () async {
     final setup = await prepare();
     final gate = Completer<void>();
     setup.gate.gate = gate;
@@ -160,10 +156,9 @@ void main() {
     final future = setup.controller.deleteLocalExports(<String>[audio.path]);
     try {
       await setup.gate.entered!.future;
-      var completed = false;
-      future.then<void>((_) => completed = true, onError: (Object _) {});
-      await Future<void>.delayed(Duration.zero);
-      expect(completed, isFalse);
+      expect(await audio.exists(), isTrue);
+      expect(setup.controller.library.assetForPath(audio.path), isNotNull);
+      expect(setup.controller.exportedPaths, contains(audio.path));
     } finally {
       if (!gate.isCompleted) gate.complete();
     }

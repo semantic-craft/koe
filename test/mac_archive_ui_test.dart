@@ -627,6 +627,7 @@ void main() {
     addTearDown(pair.archive.dispose);
     await pumpSettings(tester, pair.recorder);
     failNext = true;
+    expect(find.textContaining('仅清除本机保存的连接'), findsOneWidget);
     final action =
         tester
                 .widget<TextButton>(
@@ -635,8 +636,79 @@ void main() {
                 .onPressed
             as Future<void> Function();
     await tester.runAsync(action);
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.textContaining('保存取消配对失败'), findsOneWidget);
     expect(pair.archive.pairing, isNotNull);
+    await tester.runAsync(action);
+    await tester.pumpAndSettle();
+    expect(pair.archive.pairing, isNull);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets(
+    'Mac reset button confirms impact and exposes visible failure then succeeds',
+    (tester) async {
+      var failNext = false;
+      final pair = await tester.runAsync(() async {
+        final deskStore = ArchiveDeskStore(
+          directory: Directory('${root.path}/reset-desk'),
+          configWriteInterceptor: () async {
+            if (!failNext) return;
+            failNext = false;
+            throw const FileSystemException('synthetic reset write failure');
+          },
+        );
+        await deskStore.load();
+        final archive = MacArchiveController(
+          source: _UiSource(),
+          isDesk: true,
+          phoneStore: ArchivePhoneStore(inMemory: true),
+          deskStore: deskStore,
+        );
+        await archive.initialize();
+        await archive.setDeskReceiving(true);
+        final recorder = RecorderController(
+          loadPersistedState: false,
+          archiveController: archive,
+        );
+        return (recorder: recorder, archive: archive);
+      });
+      if (pair == null) fail('reset fixture did not start');
+      addTearDown(pair.recorder.dispose);
+      addTearDown(pair.archive.dispose);
+      await pumpSettings(tester, pair.recorder);
+      final oldKey = pair.archive.deskPairing!.key;
+      Future<void> resetThroughConfirmation(String notice) async {
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('mac-reset-pairing')),
+        );
+        await tester.tap(find.byKey(const ValueKey('mac-reset-pairing')));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('旧配对信息会立即失效'), findsOneWidget);
+        await tester.tap(
+          find.byKey(const ValueKey('mac-reset-pairing-confirm')),
+        );
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (DateTime.now().isBefore(deadline)) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 5)),
+          );
+          await tester.pump(const Duration(milliseconds: 16));
+          if (find.textContaining(notice).evaluate().isNotEmpty) return;
+        }
+        fail(
+          'reset did not show its result: $notice; changed=${pair.archive.deskPairing?.key != oldKey}, running=${pair.archive.deskRunning}, error=${pair.archive.deskError}',
+        );
+      }
+
+      failNext = true;
+      await resetThroughConfirmation('重置配对凭据未生效');
+      expect(pair.archive.deskPairing!.key, oldKey);
+      // Let the first visible snackbar expire before checking the retry result.
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      await resetThroughConfirmation('配对凭据已重置');
+      expect(pair.archive.deskPairing!.key, isNot(oldKey));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
 }

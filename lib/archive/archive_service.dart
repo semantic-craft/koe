@@ -31,6 +31,7 @@ class ArchiveDeskServer {
   static const Duration _preAuthTimeout = Duration(seconds: 4);
 
   ServerSocket? _serverSocket;
+  int _lifecycleVersion = 0;
   final Set<Socket> _sockets = <Socket>{};
   final Set<Socket> _authenticated = <Socket>{};
   final LinkedHashMap<Socket, DateTime> _preAuth =
@@ -57,9 +58,13 @@ class ArchiveDeskServer {
 
   Future<void> start({int? port}) async {
     if (running) return;
+    final version = _lifecycleVersion;
     lastError = null;
     await (await store.filesDirectory()).create(recursive: true);
     await (await store.incomingDirectory()).create(recursive: true);
+    if (version != _lifecycleVersion) {
+      throw const ArchiveException('接收启动已取消');
+    }
     final preferred = port ?? store.config.preferredPort;
     ServerSocket? socket;
     Object? bindError;
@@ -75,8 +80,15 @@ class ArchiveDeskServer {
     if (socket == null) {
       throw ArchiveException('无法启动 Mac 接收服务：$bindError');
     }
+    if (version != _lifecycleVersion) {
+      await socket.close();
+      throw const ArchiveException('接收启动已取消');
+    }
     _serverSocket = socket;
     _addresses = await _localAddresses();
+    if (version != _lifecycleVersion) {
+      throw const ArchiveException('接收启动已取消');
+    }
     socket.listen(
       _accept,
       onError: (Object error) {
@@ -92,6 +104,7 @@ class ArchiveDeskServer {
   }
 
   Future<void> stop() async {
+    _lifecycleVersion++;
     final socket = _serverSocket;
     _serverSocket = null;
     _addresses = const <String>[];

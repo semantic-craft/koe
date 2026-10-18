@@ -95,6 +95,7 @@ class MacArchiveController extends ChangeNotifier {
   int _connectionEpoch = 0;
   int _pairEpoch = 0;
   int _pauseIntent = 0;
+  Future<void> _deskMutation = Future<void>.value();
   ArchiveLinkPhase _linkPhase = ArchiveLinkPhase.unpaired;
   String? _phoneError;
   String? _deskError;
@@ -886,8 +887,18 @@ class MacArchiveController extends ChangeNotifier {
     unawaited(_kick());
   }
 
-  Future<void> setDeskReceiving(bool enabled) async {
+  Future<void> _serializeDesk(Future<void> Function() operation) {
+    final result = _deskMutation.then((_) => operation());
+    _deskMutation = result.catchError((Object _) {});
+    return result;
+  }
+
+  Future<void> setDeskReceiving(bool enabled) =>
+      _serializeDesk(() => _setDeskReceiving(enabled));
+
+  Future<void> _setDeskReceiving(bool enabled) async {
     await initialize();
+    _requireActive();
     if (!isDesk) throw const ArchiveException('只有 Mac 可以接收原件');
     if (deskStore.storageUnavailable) {
       throw ArchiveException(deskStore.loadError ?? '无法访问 Mac 私有归档目录');
@@ -899,6 +910,7 @@ class MacArchiveController extends ChangeNotifier {
         if (!server.running) {
           await server.start();
           started = true;
+          _requireActive();
         }
         await deskStore.setReceiving(enabled: true, preferredPort: server.port);
         _deskError = null;
@@ -934,8 +946,55 @@ class MacArchiveController extends ChangeNotifier {
     return detail.isEmpty ? fallback : '$fallback：$detail';
   }
 
-  Future<void> refreshDeskPairing() async {
+  /// Explicit Mac-side credential rotation. Existing sessions are closed by
+  /// stopping/restarting the receiver only after the new key is persisted. If
+  /// the write fails, the old key and running receiver stay untouched. A later
+  /// receiver start can never fall back to the old key.
+  Future<void> resetDeskPairing() => _serializeDesk(() => _resetDeskPairing());
+
+  Future<void> _resetDeskPairing() async {
     await initialize();
+    _requireActive();
+    if (!isDesk) throw const ArchiveException('只有 Mac 可以重置配对凭据');
+    if (deskStore.storageUnavailable) {
+      throw ArchiveException(deskStore.loadError ?? '无法访问 Mac 私有归档目录');
+    }
+    final server = _server!;
+    final wasRunning = server.running;
+    final receivingEnabled = deskStore.config.receivingEnabled;
+    try {
+      await deskStore.rotatePairingKey();
+    } catch (error) {
+      final detail = error is ArchiveException ? error.message : '$error';
+      _deskError = '重置配对凭据未生效，旧配对信息仍然有效：$detail';
+      _notify();
+      throw ArchiveException(_deskError!);
+    }
+    _deskError = null;
+    try {
+      _requireActive();
+      if (wasRunning) await server.stop();
+      _requireActive();
+      if (receivingEnabled) await server.start();
+      if (_disposed) {
+        await server.stop();
+        throw const ArchiveException('归档控制器已关闭');
+      }
+    } catch (error) {
+      final detail = error is ArchiveException ? error.message : '$error';
+      _deskError = '新配对凭据已保存，但接收服务未能重新启动：$detail';
+      _notify();
+      throw ArchiveException(_deskError!);
+    }
+    _notify();
+  }
+
+  Future<void> refreshDeskPairing() =>
+      _serializeDesk(() => _refreshDeskPairing());
+
+  Future<void> _refreshDeskPairing() async {
+    await initialize();
+    _requireActive();
     if (!isDesk || !deskReceivingEnabled) return;
     final server = _server!;
     if (server.running) {

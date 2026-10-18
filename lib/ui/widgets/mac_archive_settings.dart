@@ -182,7 +182,7 @@ class MacArchiveSettings extends StatelessWidget {
                   try {
                     await archive.unpair();
                     if (!context.mounted) return;
-                    _snack(context, '已取消配对');
+                    _snack(context, '已取消本机配对；Mac 原件保留');
                   } on ArchiveException catch (error) {
                     if (!context.mounted) return;
                     _snack(context, error.message);
@@ -192,6 +192,10 @@ class MacArchiveSettings extends StatelessWidget {
                 label: const Text('取消配对'),
               ),
             ],
+          ),
+          const Text(
+            '取消配对仅清除本机保存的连接。要撤销旧设备，请在 Mac 重置配对凭据。',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 11),
           ),
         ],
         if (archive.phoneError != null) ...[
@@ -251,10 +255,16 @@ class _MacReceiveStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final archive = controller.archive;
     if (!archive.deskReceivingEnabled) {
-      return const Text(
-        '接收已关闭。打开后手机才能配对和归档。',
-        key: ValueKey('mac-receive-off'),
-        style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+      return Column(
+        key: const ValueKey('mac-receive-off'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '接收已关闭。打开后手机才能配对和归档；重置配对凭据后，开启接收才会显示新信息。',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+          ),
+          _ResetPairingButton(controller: controller),
+        ],
       );
     }
     final pairing = archive.deskPairing;
@@ -336,6 +346,7 @@ class _MacReceiveStatus extends StatelessWidget {
             ),
           ),
         ],
+        _ResetPairingButton(controller: controller),
       ],
     );
   }
@@ -345,6 +356,63 @@ class _MacReceiveStatus extends StatelessWidget {
     String two(int number) => number.toString().padLeft(2, '0');
     return '${local.year}-${two(local.month)}-${two(local.day)} '
         '${two(local.hour)}:${two(local.minute)}';
+  }
+}
+
+class _ResetPairingButton extends StatelessWidget {
+  const _ResetPairingButton({required this.controller});
+
+  final RecorderController controller;
+
+  Future<void> _reset(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重置 Mac 配对凭据？'),
+        content: const Text(
+          '旧配对信息会立即失效，所有已连接设备会断开。'
+          '已归档原件会保留，接收开关保持原设置；其他设备需要使用新配对信息重新连接。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const ValueKey('mac-reset-pairing-confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('重置凭据'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await controller.archive.resetDeskPairing();
+      if (!messenger.mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('配对凭据已重置；旧配对信息失效，已归档原件保留')),
+      );
+    } on ArchiveException catch (error) {
+      if (!messenger.mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        key: const ValueKey('mac-reset-pairing'),
+        onPressed: () => _reset(context),
+        icon: const Icon(Icons.key_off_rounded, size: 18),
+        label: const Text('重置配对凭据'),
+      ),
+    );
   }
 }
 
