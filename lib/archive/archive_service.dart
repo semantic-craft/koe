@@ -20,10 +20,12 @@ class ArchiveDeskServer {
     required this.store,
     this.maxConnections = 8,
     this.onVerified,
-  });
+    Future<List<String>> Function()? addressResolver,
+  }) : _addressResolver = addressResolver ?? _localAddresses;
 
   final ArchiveDeskStore store;
   final int maxConnections;
+  final Future<List<String>> Function() _addressResolver;
   VoidCallback? onVerified;
 
   static const int _preAuthLimit = 3;
@@ -85,7 +87,7 @@ class ArchiveDeskServer {
       throw const ArchiveException('接收启动已取消');
     }
     _serverSocket = socket;
-    _addresses = await _localAddresses();
+    _addresses = _normalizeAddresses(await _addressResolver());
     if (version != _lifecycleVersion) {
       throw const ArchiveException('接收启动已取消');
     }
@@ -101,6 +103,18 @@ class ArchiveDeskServer {
     if (socket.port != store.config.preferredPort) {
       await store.updatePreferredPort(socket.port);
     }
+  }
+
+  List<String> _normalizeAddresses(Iterable<String> input) {
+    final addresses = <String>[];
+    for (final value in input) {
+      final host = value.trim();
+      if (host.isEmpty || addresses.contains(host)) continue;
+      addresses.add(host);
+      if (addresses.length == ArchivePairing.maxHosts) break;
+    }
+    if (addresses.isEmpty) addresses.add('127.0.0.1');
+    return addresses;
   }
 
   Future<void> stop() async {

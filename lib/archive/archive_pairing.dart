@@ -9,6 +9,8 @@ import 'archive_wire.dart';
 /// never appears in a query string, log line or share link. The Mac UI only
 /// renders it after the user expands the pairing panel.
 class ArchivePairing {
+  static const maxHosts = 8;
+
   ArchivePairing({
     required this.deskId,
     required this.key,
@@ -26,7 +28,12 @@ class ArchivePairing {
   Uint8List get keyBytes => decodeKey(key);
 
   static Uint8List decodeKey(String value) {
-    final decoded = base64Url.decode(base64Url.normalize(value));
+    final Uint8List decoded;
+    try {
+      decoded = base64Url.decode(base64Url.normalize(value));
+    } on FormatException {
+      throw const ArchiveProtocolException('配对密钥编码不正确');
+    }
     if (decoded.length != 32) {
       throw const ArchiveProtocolException('配对密钥长度不正确');
     }
@@ -98,7 +105,7 @@ class ArchivePairing {
         key is! String ||
         rawHosts is! List ||
         rawHosts.isEmpty ||
-        rawHosts.length > 8 ||
+        rawHosts.length > maxHosts ||
         port is! int ||
         port < 1 ||
         port > 65535) {
