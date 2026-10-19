@@ -324,61 +324,70 @@ class _RecordOption extends StatelessWidget {
     final enabled = onTap != null;
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: Material(
-        color: enabled ? AppColors.bgCard : AppColors.bgPanel,
-        borderRadius: BorderRadius.circular(AppRadii.card),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppRadii.card),
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 64),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: Row(
-                children: [
-                  Icon(
-                    icon,
-                    color: enabled
-                        ? AppColors.textPrimary
-                        : AppColors.textMuted,
+      child: MergeSemantics(
+        child: Semantics(
+          button: true,
+          enabled: enabled,
+          child: Material(
+            color: enabled ? AppColors.bgCard : AppColors.bgPanel,
+            borderRadius: BorderRadius.circular(AppRadii.card),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppRadii.card),
+              onTap: onTap,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 64),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          title,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: enabled
-                                ? AppColors.textPrimary
-                                : AppColors.textSecondary,
-                          ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        icon,
+                        color: enabled
+                            ? AppColors.textPrimary
+                            : AppColors.textMuted,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: enabled
+                                    ? AppColors.textPrimary
+                                    : AppColors.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              subtitle,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 2),
+                      ),
+                      if (trailing != null)
                         Text(
-                          subtitle,
+                          trailing!,
                           style: const TextStyle(
                             fontSize: 12,
                             color: AppColors.textSecondary,
                           ),
-                        ),
-                      ],
-                    ),
+                        )
+                      else
+                        const Icon(Icons.chevron_right_rounded),
+                    ],
                   ),
-                  if (trailing != null)
-                    Text(
-                      trailing!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                      ),
-                    )
-                  else
-                    const Icon(Icons.chevron_right_rounded),
-                ],
+                ),
               ),
             ),
           ),

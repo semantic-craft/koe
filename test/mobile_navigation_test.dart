@@ -70,7 +70,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('projects-topics-entry')));
     await tester.pumpAndSettle();
     expect(find.byType(TopicsScreen), findsOneWidget);
-    await tester.pageBack();
+    await tester.tap(find.byTooltip('返回'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('nav-library')));
@@ -167,7 +167,7 @@ void main() {
     );
     expect(find.byKey(const ValueKey('highlighted-segment-0')), findsNothing);
 
-    await tester.pageBack();
+    await tester.tap(find.byTooltip('返回'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(ValueKey('recording-row-$timed')));
     await tester.pumpAndSettle();
@@ -396,7 +396,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(ValueKey('trash-row-$path')), findsNothing);
 
-    await tester.pageBack();
+    await tester.tap(find.byTooltip('返回'));
     await tester.pumpAndSettle();
     expect(find.byKey(ValueKey('recording-row-$path')), findsOneWidget);
   });

@@ -352,34 +352,41 @@ class _OrganizeProgressCard extends StatelessWidget {
       if (progress.waiting > 0) '${progress.waiting} 条待整理',
       if (progress.attention > 0) '${progress.attention} 条需要你处理',
     ];
-    return Material(
-      key: const ValueKey('today-organize'),
-      color: AppColors.bgCard,
-      borderRadius: BorderRadius.circular(AppRadii.card),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadii.card),
-        onTap: onOpenLibrary,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            children: [
-              Icon(
-                progress.attention > 0
-                    ? Icons.error_outline_rounded
-                    : Icons.auto_awesome_outlined,
-                color: progress.attention > 0
-                    ? AppColors.coral
-                    : AppColors.textSecondary,
+    // InkWell alone reads as static text; MergeSemantics makes the row one
+    // named button for screen readers (#237).
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        child: Material(
+          key: const ValueKey('today-organize'),
+          color: AppColors.bgCard,
+          borderRadius: BorderRadius.circular(AppRadii.card),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadii.card),
+            onTap: onOpenLibrary,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  Icon(
+                    progress.attention > 0
+                        ? Icons.error_outline_rounded
+                        : Icons.auto_awesome_outlined,
+                    color: progress.attention > 0
+                        ? AppColors.coral
+                        : AppColors.textSecondary,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '自动整理：${parts.isEmpty ? '处理中' : parts.join(' · ')}',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '自动整理：${parts.isEmpty ? '处理中' : parts.join(' · ')}',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded),
-            ],
+            ),
           ),
         ),
       ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
+import 'package:koe/ui/localization.dart';
 import 'package:koe/ui/screens/todos_screen.dart';
 import 'package:koe/ui/widgets/inline_player.dart';
 import 'package:provider/provider.dart';
@@ -12,7 +13,12 @@ void main() {
   Widget wrap(RecorderController c, Widget home) =>
       ChangeNotifierProvider<RecorderController>.value(
         value: c,
-        child: MaterialApp(home: home),
+        child: MaterialApp(
+          locale: koeLocale,
+          supportedLocales: const [koeLocale],
+          localizationsDelegates: koeLocalizationsDelegates,
+          home: home,
+        ),
       );
 
   SemanticsNode node(WidgetTester tester, Pattern label) =>
@@ -86,6 +92,44 @@ void main() {
       node(tester, '完成：周五量房'),
       isSemantics(hasCheckedState: true, isChecked: false),
     );
+    semantics.dispose();
+  });
+
+  testWidgets('engine cards are buttons, and Material\'s own controls speak '
+      'Chinese', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    await tester.pumpWidget(wrap(c, const SettingsScreen()));
+    for (final provider in SttProvider.available) {
+      final card = find.byKey(
+        ValueKey('speech-provider-option-${provider.name}'),
+      );
+      await tester.ensureVisible(card);
+      final node = tester.getSemantics(card);
+      expect(
+        node,
+        isSemantics(isButton: true, hasTapAction: true),
+        reason: provider.name,
+      );
+      expect(node.label, startsWith(provider.label));
+    }
+
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    navigator.push(
+      MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar())),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('返回'), findsOneWidget);
+
+    showDatePicker(
+      context: navigator.context,
+      firstDate: DateTime(2026),
+      lastDate: DateTime(2027),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('取消'), findsOneWidget);
+    expect(find.text('Cancel'), findsNothing);
     semantics.dispose();
   });
 }

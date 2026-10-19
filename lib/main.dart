@@ -16,6 +16,7 @@ import 'state/container_paths.dart';
 import 'state/recorder_controller.dart';
 import 'platform/recording_shortcut_service.dart';
 import 'theme/app_theme.dart';
+import 'ui/localization.dart';
 import 'ui/shell.dart';
 
 Future<void> main() async {
@@ -111,6 +112,9 @@ class KoeApp extends StatelessWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.light,
+      locale: koeLocale,
+      supportedLocales: const [koeLocale],
+      localizationsDelegates: koeLocalizationsDelegates,
       builder: (context, child) {
         // iOS「减弱动态效果」only reaches Flutter as `reduceMotion`; fold it
         // into `disableAnimations` so AppMotion and every widget below honour

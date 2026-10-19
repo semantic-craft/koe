@@ -174,7 +174,7 @@ void main() {
     expect(find.textContaining('下周一开工'), findsWidgets);
 
     await tester.enterText(find.byKey(const ValueKey('ask-input')), '还没问完');
-    await tester.pageBack();
+    await tester.tap(find.byTooltip('返回'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('ask-koe')));
     await tester.pumpAndSettle();
