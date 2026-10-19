@@ -31,7 +31,6 @@ mixin _RecorderPlayback on ChangeNotifier {
   Future<void> _queueActions = Future<void>.value();
   String? queueNotice;
 
-  DateTime _lastPositionNotify = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastHistoryPersist = DateTime.fromMillisecondsSinceEpoch(0);
   int _audioSwitchDepth = 0;
   bool get _switchingAudio => _audioSwitchDepth > 0;
@@ -75,16 +74,13 @@ mixin _RecorderPlayback on ChangeNotifier {
         notifyListeners();
       }),
     );
-    // Throttle position UI updates (~8 Hz) to avoid rebuilding the whole tree.
+    // Position ticks only reach [positionListenable] (progress bar, time
+    // text, active sentence); the controller itself is not notified, so the
+    // rest of the tree does not rebuild while audio plays.
     _subs.add(
       _player.positionStream.listen((pos) {
         position = pos;
         final now = DateTime.now();
-        if (now.difference(_lastPositionNotify) >=
-            const Duration(milliseconds: 120)) {
-          _lastPositionNotify = now;
-          notifyListeners();
-        }
         if (_switchingAudio) return;
         final paused = !isPlaying && !playbackCompleted;
         final changed = pos != _confirmedPosition;
@@ -170,7 +166,13 @@ mixin _RecorderPlayback on ChangeNotifier {
   int? playingFileId;
   bool isPlaying = false;
   bool playbackCompleted = false;
-  Duration position = Duration.zero;
+
+  /// Current playback position. Frequent; listen to [positionListenable]
+  /// instead of the controller to follow it.
+  final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
+  ValueListenable<Duration> get positionListenable => _position;
+  Duration get position => _position.value;
+  set position(Duration value) => _position.value = value;
   Duration duration = Duration.zero;
   double playbackSpeed = 1.0;
 

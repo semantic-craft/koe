@@ -29,8 +29,15 @@ class PlaybackBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     if (!c.hasLoadedTrack) return const SizedBox.shrink();
+    // Position ticks notify [positionListenable] only, not the controller.
+    return ValueListenableBuilder<Duration>(
+      valueListenable: c.positionListenable,
+      builder: (context, position, _) => _bar(context, c, position),
+    );
+  }
 
-    final canSeek = c.duration > Duration.zero || c.position > Duration.zero;
+  Widget _bar(BuildContext context, RecorderController c, Duration position) {
+    final canSeek = c.duration > Duration.zero || position > Duration.zero;
 
     return SurfaceCard(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -98,7 +105,7 @@ class PlaybackBar extends StatelessWidget {
             child: Row(
               children: [
                 Text(
-                  _fmt(c.position),
+                  _fmt(position),
                   style: const TextStyle(
                     fontSize: 11,
                     color: AppColors.textMuted,

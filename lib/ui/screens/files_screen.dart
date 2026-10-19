@@ -800,7 +800,7 @@ class _LocalExportCard extends StatelessWidget {
     final recordedAt = c.recordingRecordedAtForPath(path);
     final source =
         c.recordingAssetForPath(path)?.source ?? RecordingSource.device;
-    final originalPresent = File(path).existsSync();
+    final originalPresent = recording.originalPresent;
     final organize = c.organizeStatusFor(path);
     final status = recording.audioLocked
         ? (recording.live ? '录音中' : '正在保存')
