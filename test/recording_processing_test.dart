@@ -21,9 +21,12 @@ import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/audio/audio_version.dart';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:provider/provider.dart';
 import 'support/wav_fixture.dart';
 import 'support/temp_dir.dart';
 
@@ -358,6 +361,46 @@ void main() async {
         expect(c.transcriptForPath(path), '通义文本');
       },
     );
+
+    testWidgets('补全变长的录音在详情提示需手动重新转写，正文校订过也一样，不重新计费', (tester) async {
+      final path = '${dir.path}/1700000007.wav';
+      await tester.runAsync(() async {
+        await File(path).writeAsBytes(wavBytes([1, 2, 3, 4]));
+        await c.processRetrievedRecording(path);
+        await settleUntil(
+          () => journal.jobs.values.any((j) => j.stage == 'complete'),
+        );
+        await c.saveManualTranscript(path, '校订后的正文');
+        // The recorder hands back the same recording, now longer, while the
+        // retrieval hook does not run its version check.
+        c.setAutoTranscribe(false);
+        await File(path).writeAsBytes(wavBytes([1, 2, 3, 4, 5, 6, 7, 8]));
+        await c.processRetrievedRecording(path);
+      });
+      final calls = qwen.calls;
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: c,
+          child: MaterialApp(
+            home: RecordingDetailScreen(
+              reference: RecordingReference(path: path),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 50; i++) {
+        if (find.textContaining('请手动重新转写').evaluate().isNotEmpty) break;
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+
+      expect(find.textContaining('请手动重新转写'), findsOneWidget);
+      expect(find.textContaining('正文已校订'), findsOneWidget);
+      expect(qwen.calls, calls);
+    });
 
     test('Wi-Fi export submits only complete decrypted files', () async {
       final full = '${dir.path}/1700000005.opus';

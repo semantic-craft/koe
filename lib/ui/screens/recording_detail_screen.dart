@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
@@ -61,6 +62,11 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   void initState() {
     super.initState();
     _highlightedParagraph = widget.initialHighlightedParagraph;
+    unawaited(
+      context.read<RecorderController>().verifyTranscriptAudio(
+        widget.reference,
+      ),
+    );
     final start = widget.initialPlaybackStart;
     if (start != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -78,6 +84,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   @override
   void didUpdateWidget(RecordingDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.reference.key != widget.reference.key) {
+      unawaited(
+        context.read<RecorderController>().verifyTranscriptAudio(
+          widget.reference,
+        ),
+      );
+    }
     if (oldWidget.initialHighlightedParagraph !=
         widget.initialHighlightedParagraph) {
       _highlightedParagraph = widget.initialHighlightedParagraph;
