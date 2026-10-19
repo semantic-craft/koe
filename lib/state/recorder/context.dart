@@ -17,6 +17,8 @@ mixin _RecorderContext on ChangeNotifier {
   abstract final TopicStore topics;
   abstract final bool topicsEnabled;
   abstract final QwenSttService _qwenStt;
+  List<TranscriptSegment> transcriptSegmentsForPath(String path);
+  String? transcriptForPath(String path);
   // END DEPS
 
   late final ContextStore contextItems;
@@ -89,6 +91,63 @@ mixin _RecorderContext on ChangeNotifier {
         source.path ?? (key.startsWith('path:') ? key.substring(5) : null);
     if (path == null) return null;
     return RecordingReference(fileId: fileIdFromPath(path), path: path);
+  }
+
+  /// Numbered transcript sentences of [items] for a model prompt, at most
+  /// about [maxChars] characters in all, shared fairly between items.
+  /// Items without text contribute nothing; callers report them separately.
+  List<SourceLine> contextSourceLines(
+    List<ContextItem> items, {
+    int maxChars = 12000,
+  }) {
+    final withText = [
+      for (final item in items)
+        if (_itemText(item).isNotEmpty) item,
+    ];
+    if (withText.isEmpty) return const [];
+    final share = (maxChars ~/ withText.length).clamp(400, maxChars);
+    final lines = <SourceLine>[];
+    for (final item in withText) {
+      final ref = contextReference(item)!;
+      final path = ref.path!;
+      final key = item.source!.recordingKey;
+      final timed = transcriptSegmentsForPath(path);
+      final segments = timed.isNotEmpty
+          ? timed
+          : [TranscriptSegment(text: _itemText(item), start: Duration.zero)];
+      var used = 0;
+      for (final segment in segments) {
+        if (used >= share) break;
+        final text = segment.text.length > share - used
+            ? '${segment.text.substring(0, share - used)}…'
+            : segment.text;
+        used += text.length;
+        lines.add(
+          SourceLine(
+            label: 'S${lines.length + 1}',
+            title: item.title,
+            text: text,
+            at: item.start?.add(segment.start),
+            source: ContextSource(
+              recordingKey: key,
+              path: path,
+              start: segment.start,
+              end: segment.end,
+            ),
+          ),
+        );
+      }
+    }
+    return lines;
+  }
+
+  /// Whether an item has transcript text Koe can read.
+  bool contextItemHasText(ContextItem item) => _itemText(item).isNotEmpty;
+
+  String _itemText(ContextItem item) {
+    final path = contextReference(item)?.path;
+    if (path == null) return '';
+    return transcriptForPath(path)?.trim() ?? '';
   }
 
   void _syncContextItems() {

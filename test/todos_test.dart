@@ -115,6 +115,8 @@ void main() {
     todoStore: store,
     systemTasks: system,
     contextAnalysisService: assistant ?? _Assistant(_answer),
+    // Transcripts stay in memory; nothing races the temp-dir cleanup.
+    transcriptPersister: ({bool strict = false}) async {},
     libraryDirectory: Directory('${directory.path}/imports'),
   );
 
