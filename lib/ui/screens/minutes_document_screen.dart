@@ -8,6 +8,7 @@ import '../../state/minutes_document.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../file_types.dart';
+import 'recording_detail_screen.dart';
 
 /// Read-only 妙记 text import with an optional audio pairing.
 ///
@@ -178,6 +179,24 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
       selected.path,
     );
     if (!mounted) return;
+    final restored = outcome.restoredPath;
+    if (restored != null) {
+      // The pack is complete again: the recording replaces this text record.
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text(outcome.message)));
+      final fileId = context.read<RecorderController>().fileIdFromPath(
+        restored,
+      );
+      await Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => RecordingDetailScreen(
+            reference: RecordingReference(fileId: fileId, path: restored),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() {
       _attaching = false;
       _notice = outcome.message;

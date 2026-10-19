@@ -68,6 +68,7 @@ class MinutesDocument {
     required this.segments,
     required this.timingReliable,
     this.warning,
+    this.restore,
   });
 
   final String id;
@@ -88,6 +89,12 @@ class MinutesDocument {
   /// Whether every segment has a usable, strictly increasing timecode.
   final bool timingReliable;
   final String? warning;
+
+  /// For a material pack imported without its audio: the pack's manifest,
+  /// applied in full once the matching original audio is paired.
+  final Map<String, Object?>? restore;
+
+  bool get fromPack => restore != null;
 
   bool get textOnly => audioPath == null;
 
@@ -125,6 +132,7 @@ class MinutesDocument {
     segments: segments,
     timingReliable: timingReliable,
     warning: warning,
+    restore: restore,
   );
 
   Map<String, Object?> toJson() => {
@@ -139,6 +147,7 @@ class MinutesDocument {
     if (audioHash != null) 'audioHash': audioHash,
     'timingReliable': timingReliable,
     if (warning != null) 'warning': warning,
+    if (restore != null) 'restore': restore,
     'segments': segments.map((segment) => segment.toJson()).toList(),
   };
 
@@ -184,6 +193,9 @@ class MinutesDocument {
       segments: segments,
       timingReliable: value['timingReliable'] == true,
       warning: value['warning'] is String ? value['warning'] as String : null,
+      restore: value['restore'] is Map
+          ? Map<String, Object?>.from(value['restore'] as Map)
+          : null,
     );
   }
 }
@@ -204,10 +216,15 @@ class MinutesAttachOutcome {
     required this.ok,
     required this.message,
     this.document,
+    this.restoredPath,
   });
   final bool ok;
   final String message;
   final MinutesDocument? document;
+
+  /// The recording a material pack was restored onto after pairing; the
+  /// text record it replaced is gone.
+  final String? restoredPath;
 }
 
 /// Parses a 妙记-style JSON/TXT export.

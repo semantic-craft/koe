@@ -62,6 +62,8 @@ import 'recording.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
 import 'listening_queue.dart';
+import 'atomic_file.dart';
+import 'material_pack.dart';
 import 'minutes_document.dart';
 import 'playback_history.dart';
 import 'recording_bookmarks.dart';
@@ -84,6 +86,7 @@ export 'device_copies.dart' show DeviceCopies, DeviceCopyStatus;
 export 'recording.dart';
 export 'recording_library.dart';
 export 'listening_queue.dart';
+export 'material_pack.dart';
 export 'playback_history.dart';
 export 'topic_store.dart';
 export 'topic_note.dart';
@@ -106,6 +109,7 @@ part 'recorder/diary.dart';
 part 'recorder/ask.dart';
 part 'recorder/brief.dart';
 part 'recorder/context_export.dart';
+part 'recorder/material_pack.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
@@ -152,6 +156,7 @@ class RecorderController extends ChangeNotifier
         _RecorderAsk,
         _RecorderBrief,
         _RecorderContextExport,
+        _RecorderMaterialPack,
         _RecorderArchive,
         _RecorderTopics,
         _RecorderTranscriptionJobs,

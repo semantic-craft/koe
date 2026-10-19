@@ -21,6 +21,7 @@ import '../transcript_layout.dart';
 import '../transcript_jump.dart';
 import '../widgets/analysis_panel.dart';
 import '../widgets/inline_player.dart';
+import '../widgets/material_export_sheet.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/topic_note_panel.dart';
 import 'files_screen.dart';
@@ -1430,6 +1431,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       _rename(recording);
                     case 'save':
                       _save(recording);
+                    case 'export':
+                      showMaterialExportSheet(context, widget.reference);
                     case 'transcribe':
                       _transcribe(recording);
                     case 'edit':
@@ -1460,6 +1463,11 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     value: 'save',
                     enabled: fileReady,
                     child: const Text('保存录音'),
+                  ),
+                  PopupMenuItem(
+                    value: 'export',
+                    enabled: !recording.live && !recording.audioLocked,
+                    child: const Text('导出…'),
                   ),
                   if (source.isNotEmpty)
                     PopupMenuItem(
@@ -1702,6 +1710,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   recording.hasPendingTranscript &&
                   path != null)
                 _PendingTranscriptBanner(
+                  edited: recording.manuallyEdited,
                   onView: () => _viewIncoming(recording),
                   onAdopt: () => _adoptIncoming(recording),
                   onKeep: () => _keepManualTranscript(recording),
@@ -3325,11 +3334,13 @@ class _OrganizeBanner extends StatelessWidget {
 
 class _PendingTranscriptBanner extends StatelessWidget {
   const _PendingTranscriptBanner({
+    required this.edited,
     required this.onView,
     required this.onAdopt,
     required this.onKeep,
   });
 
+  final bool edited;
   final VoidCallback onView;
   final VoidCallback onAdopt;
   final VoidCallback onKeep;
@@ -3348,8 +3359,10 @@ class _PendingTranscriptBanner extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '转写服务返回了新版本，未覆盖你的校订。',
+            Text(
+              edited
+                  ? '有新版本正文（重新转写或导入的资料包），未覆盖你的校订。'
+                  : '导入的资料包带来另一个版本的正文，未覆盖当前正文。',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 4),
@@ -3358,7 +3371,10 @@ class _PendingTranscriptBanner extends StatelessWidget {
               children: [
                 TextButton(onPressed: onView, child: const Text('查看新版本')),
                 TextButton(onPressed: onAdopt, child: const Text('采用新版本')),
-                TextButton(onPressed: onKeep, child: const Text('保留校订')),
+                TextButton(
+                  onPressed: onKeep,
+                  child: Text(edited ? '保留校订' : '保留当前'),
+                ),
               ],
             ),
           ],

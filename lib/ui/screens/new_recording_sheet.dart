@@ -6,11 +6,12 @@ import 'package:provider/provider.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../import_audio.dart';
+import '../import_pack.dart';
 import '../recording_navigation.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/status_indicators.dart';
 
-enum NewRecordingAction { phone, importAudio, retrieveDevice }
+enum NewRecordingAction { phone, importAudio, importPack, retrieveDevice }
 
 Future<void> handleNewRecordingAction(
   BuildContext context,
@@ -19,6 +20,9 @@ Future<void> handleNewRecordingAction(
   switch (action) {
     case NewRecordingAction.importAudio:
       await pickAndImportLocalAudio(context);
+      break;
+    case NewRecordingAction.importPack:
+      await pickAndImportMaterialPack(context);
       break;
     case NewRecordingAction.retrieveDevice:
       final controller = context.read<RecorderController>();
@@ -285,6 +289,14 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
               subtitle: '从文件中选择 WAV、M4A、MP3 等',
               onTap: () =>
                   Navigator.pop(sheetContext, NewRecordingAction.importAudio),
+            ),
+            _RecordOption(
+              key: const ValueKey('new-record-pack'),
+              icon: Icons.inventory_2_outlined,
+              title: '导入资料包',
+              subtitle: '恢复 Koe 导出的 .koepack，已有的资料不会重复',
+              onTap: () =>
+                  Navigator.pop(sheetContext, NewRecordingAction.importPack),
             ),
             _RecordOption(
               key: const ValueKey('new-record-device'),
