@@ -423,7 +423,13 @@ void main() {
     expect(calls.single.model, 'qwen3.8-flash');
     final noteResultA = analysis.results[TopicNote.slotKey(keyA)];
     expect(noteResultA, isNotNull);
-    final parsedA = TopicNote.parse(noteResultA!.text, 1);
+    final bookTemplate = analysis.requireTemplate(bookNoteTemplateId);
+    expect(calls.single.instruction, contains(bookTemplate.prompt));
+    expect(noteResultA!.templateId, bookNoteTemplateId);
+    expect(noteResultA.templateVersion, bookTemplate.version);
+    expect(noteResultA.templateFingerprint, bookTemplate.fingerprint);
+    expect(analysis.isTemplateStale(noteResultA), isFalse);
+    final parsedA = TopicNote.parse(noteResultA.text, 1);
     expect(parsedA.kind, TopicKind.book);
     expect(parsedA.excerpts.single.page, '第18页');
     expect(controller.isTopicNoteStale(refA), isFalse);
@@ -434,7 +440,12 @@ void main() {
     expect(calls, hasLength(2));
     final noteResultB = analysis.results[TopicNote.slotKey(keyB)];
     expect(noteResultB, isNotNull);
-    expect(TopicNote.parse(noteResultB!.text, 1).kind, TopicKind.general);
+    final thinkingTemplate = analysis.requireTemplate(thinkingNoteTemplateId);
+    expect(calls[1].instruction, contains(thinkingTemplate.prompt));
+    expect(noteResultB!.templateId, thinkingNoteTemplateId);
+    expect(noteResultB.templateVersion, thinkingTemplate.version);
+    expect(noteResultB.templateFingerprint, thinkingTemplate.fingerprint);
+    expect(TopicNote.parse(noteResultB.text, 1).kind, TopicKind.general);
 
     // 5. 从主题 A 移到主题 B：只标过期，不自动重跑计费
     await store.moveRecording(keyA, generalTopic.id);
@@ -497,7 +508,9 @@ void main() {
   });
 
   test('重复导入恢复回收站资料后可继续生成主题笔记', () async {
-    final dir = await Directory.systemTemp.createTemp('koe-topic-notes-restore-');
+    final dir = await Directory.systemTemp.createTemp(
+      'koe-topic-notes-restore-',
+    );
     addTearDown(() => dir.delete(recursive: true));
     final source = File('${dir.path}/source.wav')
       ..writeAsBytesSync(wavBytes([1, 2, 3, 4]));
@@ -540,6 +553,71 @@ void main() {
 
     expect(calls, 1);
     expect(analysis.results[TopicNote.slotKey(key)], isNotNull);
+  });
+
+  test('转写或模板身份变化只把既有主题笔记标为过期，不自动重新收费', () async {
+    const ref = RecordingReference(fileId: 1760009001, path: '/1760009001.wav');
+    const original = '第一版转写，讨论订阅制的长期现金流。';
+    var calls = 0;
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      calls++;
+      return _generalNoteJson('自动生成的笔记');
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    final topic = await store.createTopic(
+      title: '长期现金流',
+      kind: TopicKind.general,
+    );
+    final key = controller.analysisKey(ref);
+    await store.moveRecording(key, topic.id);
+
+    controller.rememberTranscript(ref.path!, original);
+    await controller.settleTopicNoteWork();
+    expect(calls, 1);
+    expect(controller.isTopicNoteStale(ref), isFalse);
+
+    controller.rememberTranscript(ref.path!, '第二版转写，补充了年付续费风险。');
+    await controller.settleTopicNoteWork();
+    expect(calls, 1);
+    expect(controller.isTopicNoteStale(ref), isTrue);
+
+    final template = analysis.requireTemplate(thinkingNoteTemplateId);
+    final note = TopicNote(
+      kind: TopicKind.general,
+      topicId: topic.id,
+      overview: '旧模板生成的笔记',
+      ideas: const [
+        TopicIdea(text: '旧观点', sources: ['S1']),
+      ],
+    );
+    analysis.results[TopicNote.slotKey(key)] = AnalysisResult(
+      text: note.encode(),
+      sourceHash: analysisFingerprint('第二版转写，补充了年付续费风险。'),
+      model: TopicNote.defaultModel,
+      instruction: template.prompt,
+      sources: const ['s1'],
+      createdAt: DateTime(2026, 10, 16),
+      templateId: thinkingNoteTemplateId,
+      templateVersion: template.version - 1,
+      templateFingerprint: 'old-template-fingerprint',
+    );
+    expect(controller.isTopicNoteStale(ref), isTrue);
+    await controller.settleTopicNoteWork();
+    expect(calls, 1);
   });
 
   test('重复完成通知、重启恢复、长转写分段断点续跑与音频变更后不重复计费', () async {
@@ -652,6 +730,9 @@ void main() {
     failChunk2 = true;
     controllerRestarted.rememberTranscript(audioFile.path, longText);
     await controllerRestarted.settleTopicNoteWork();
+    // 原文变化只标过期，不自动重新收费；用户确认后才重生成。
+    expect(calls, 1);
+    await controllerRestarted.generateTopicNote(ref);
     // chunk 1 成功 (calls=2)，chunk 2 失败 (calls=3)
     expect(calls, 3);
     expect(analysisRestarted.errors[TopicNote.slotKey(key)], isNotNull);
@@ -824,16 +905,8 @@ void main() {
         TopicIdea(text: '核心观点', reason: '因为如此', sources: ['S1']),
       ],
     );
-    analysis.results[TopicNote.slotKey(
-      controller.analysisKey(ref),
-    )] = AnalysisResult(
-      text: note.encode(),
-      sourceHash: analysisFingerprint(transcript),
-      model: TopicNote.defaultModel,
-      instruction: '已保存',
-      sources: const ['s1'],
-      createdAt: DateTime(2026, 10, 16),
-    );
+    analysis.results[TopicNote.slotKey(controller.analysisKey(ref))] =
+        _noteResult(note, transcript, templateId: thinkingNoteTemplateId);
     await tester.runAsync(
       () => controller.refreshCachedAudioVersion(ref, force: true),
     );
@@ -864,7 +937,7 @@ void main() {
       () => controller.refreshCachedAudioVersion(ref, force: true),
     );
     await tester.pump();
-    expect(find.textContaining('原文或所属主题已变化，当前笔记可能已过期'), findsOneWidget);
+    expect(find.textContaining('原文、所属主题或模板已变化，当前笔记可能已过期'), findsOneWidget);
   });
 
   testWidgets('迁移后编辑概要仍保留原主题编号，过期标记不消失', (tester) async {
@@ -1271,6 +1344,284 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('读书笔记的全部结构化文字可编辑、持久化并保留来源关联', (tester) async {
+    final dir = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('koe-topic-note-edit-book-'),
+    ))!;
+    addTearDown(() => dir.delete(recursive: true));
+    final analysisFile = File('${dir.path}/analysis.json');
+    const ref = RecordingReference(fileId: 1760010001, path: '/1760010001.wav');
+    const transcript = '第24页说系统1快速且无意识。\n\n我觉得这在开会定价时很明显。\n\n最后还要查原始实验。';
+    var calls = 0;
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      calls++;
+      return jsonEncode({
+        'overview': '不应重新生成',
+        'excerpts': [],
+        'comments': [],
+        'questions': [],
+        'associations': [],
+        'toCheck': [],
+      });
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(file: analysisFile, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    final topic = await store.createTopic(
+      title: '《思考，快与慢》',
+      kind: TopicKind.book,
+    );
+    final key = controller.analysisKey(ref);
+    await store.moveRecording(key, topic.id);
+    controller.transcriptsByPath[ref.path!] = transcript;
+    controller.transcriptsByFileId[ref.fileId!] = transcript;
+    final note = TopicNote(
+      kind: TopicKind.book,
+      topicId: topic.id,
+      overview: '原来的概要',
+      excerpts: const [
+        TopicExcerpt(text: '系统1快速且无意识。', page: '第24页', sources: ['S1']),
+      ],
+      comments: const [
+        TopicComment(text: '开会定价很明显。', excerpt: '系统1快速且无意识。', sources: ['S1']),
+      ],
+      questions: const [
+        TopicNoteItem('怎样避免锚定？', ['S1']),
+      ],
+      associations: const [
+        TopicNoteItem('联想到上次预算会。', ['S1']),
+      ],
+      toCheck: const [
+        TopicNoteItem('查原始实验。', ['S1']),
+      ],
+    );
+    analysis.results[TopicNote.slotKey(key)] = _noteResult(
+      note,
+      transcript,
+      templateId: bookNoteTemplateId,
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: MaterialApp(
+          home: Scaffold(
+            body: TopicNotePanel(controller: controller, reference: ref),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('编辑'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-overview')),
+      '修订后的概要',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-excerpt-0')),
+      '修订后的摘录',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-excerpt-page-0')),
+      '第25页',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-comment-0')),
+      '修订后的评论',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-comment-excerpt-0')),
+      '修订后的配对摘录',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-question-0')),
+      '修订后的疑问',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-association-0')),
+      '修订后的联想',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-to-check-0')),
+      '修订后的待查',
+    );
+    final save = tester
+        .widget<FilledButton>(find.widgetWithText(FilledButton, '保存'))
+        .onPressed!;
+    await tester.runAsync(() async {
+      save();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pumpAndSettle();
+
+    final saved = TopicNote.parse(
+      analysis.results[TopicNote.slotKey(key)]!.text,
+      1,
+    );
+    expect(saved.overview, '修订后的概要');
+    expect(saved.excerpts.single.text, '修订后的摘录');
+    expect(saved.excerpts.single.page, '第25页');
+    expect(saved.excerpts.single.sources, ['S1']);
+    expect(saved.comments.single.text, '修订后的评论');
+    expect(saved.comments.single.excerpt, '修订后的配对摘录');
+    expect(saved.comments.single.sources, ['S1']);
+    expect(saved.questions.single.text, '修订后的疑问');
+    expect(saved.associations.single.text, '修订后的联想');
+    expect(saved.toCheck.single.text, '修订后的待查');
+    expect(analysis.results[TopicNote.slotKey(key)]!.editedAt, isNotNull);
+
+    final reloaded = RecordingAnalysis(file: analysisFile, service: service);
+    addTearDown(reloaded.dispose);
+    await tester.runAsync(reloaded.load);
+    final persisted = TopicNote.parse(
+      reloaded.results[TopicNote.slotKey(key)]!.text,
+      1,
+    );
+    expect(persisted.overview, '修订后的概要');
+    expect(persisted.excerpts.single.text, '修订后的摘录');
+    expect(persisted.comments.single.text, '修订后的评论');
+    expect(persisted.toCheck.single.text, '修订后的待查');
+    expect(calls, 0);
+  });
+
+  testWidgets('思考笔记的全部结构化文字可编辑并保留来源关联', (tester) async {
+    const ref = RecordingReference(fileId: 1760010002, path: '/1760010002.wav');
+    const transcript = '先试用再年付，能降低首次付费门槛。\n\n但续费提醒要做好。';
+    var calls = 0;
+    final service = _CallbackAnalysisService((
+      model,
+      instruction,
+      source,
+    ) async {
+      calls++;
+      return _generalNoteJson('不应重新生成');
+    });
+    final store = TopicStore(
+      inMemory: true,
+      now: () => DateTime(2026, 10, 16, 10),
+    );
+    await store.load();
+    final analysis = RecordingAnalysis(inMemory: true, service: service);
+    final controller = _InMemoryUiController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    final topic = await store.createTopic(
+      title: '订阅策略',
+      kind: TopicKind.general,
+    );
+    final key = controller.analysisKey(ref);
+    await store.moveRecording(key, topic.id);
+    controller.transcriptsByPath[ref.path!] = transcript;
+    controller.transcriptsByFileId[ref.fileId!] = transcript;
+    final note = TopicNote(
+      kind: TopicKind.general,
+      topicId: topic.id,
+      overview: '原来的概要',
+      ideas: const [
+        TopicIdea(text: '先试用再年付', reason: '降低门槛', sources: ['S1']),
+      ],
+      changes: const [
+        TopicNoteItem('从直接年付改为试用后年付', ['S1']),
+      ],
+      questions: const [
+        TopicNoteItem('试用多长？', ['S1']),
+      ],
+      associations: const [
+        TopicNoteItem('联想到同类工具', ['S1']),
+      ],
+      todos: const [
+        TopicNoteItem('补续费提醒', ['S1']),
+      ],
+      conclusion: const TopicNoteItem('首版采用试用后年付', ['S1']),
+    );
+    analysis.results[TopicNote.slotKey(key)] = _noteResult(
+      note,
+      transcript,
+      templateId: thinkingNoteTemplateId,
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: MaterialApp(
+          home: Scaffold(
+            body: TopicNotePanel(controller: controller, reference: ref),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('编辑'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-overview')),
+      '修订后的思考概要',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-idea-0')),
+      '修订后的观点',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-idea-reason-0')),
+      '修订后的理由',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-change-0')),
+      '修订后的变化',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-question-0')),
+      '修订后的疑问',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-association-0')),
+      '修订后的联想',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-todo-0')),
+      '修订后的待办',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('topic-note-edit-conclusion')),
+      '修订后的结论',
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    final saved = TopicNote.parse(
+      analysis.results[TopicNote.slotKey(key)]!.text,
+      1,
+    );
+    expect(saved.overview, '修订后的思考概要');
+    expect(saved.ideas.single.text, '修订后的观点');
+    expect(saved.ideas.single.reason, '修订后的理由');
+    expect(saved.ideas.single.sources, ['S1']);
+    expect(saved.changes.single.text, '修订后的变化');
+    expect(saved.questions.single.text, '修订后的疑问');
+    expect(saved.associations.single.text, '修订后的联想');
+    expect(saved.todos.single.text, '修订后的待办');
+    expect(saved.conclusion?.text, '修订后的结论');
+    expect(saved.conclusion?.sources, ['S1']);
+    expect(calls, 0);
+  });
 }
 
 Future<void> _pumpUntilTopicNotesIdle(
@@ -1298,6 +1649,25 @@ String _generalNoteJson(String overview) => jsonEncode({
   'associations': [],
   'todos': [],
 });
+
+AnalysisResult _noteResult(
+  TopicNote note,
+  String transcript, {
+  required String templateId,
+}) {
+  final template = builtInTemplateById(templateId)!;
+  return AnalysisResult(
+    text: note.encode(),
+    sourceHash: analysisFingerprint(transcript),
+    model: TopicNote.defaultModel,
+    instruction: template.prompt,
+    sources: const ['s1'],
+    createdAt: DateTime(2026, 10, 16),
+    templateId: template.id,
+    templateVersion: template.version,
+    templateFingerprint: template.fingerprint,
+  );
+}
 
 class _InMemoryUiController extends RecorderController {
   _InMemoryUiController({

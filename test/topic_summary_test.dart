@@ -23,24 +23,39 @@ void main() {
     ],
   );
 
-  AnalysisResult noteResult(TopicNote note) => AnalysisResult(
-    text: note.encode(),
-    sourceHash: 'synthetic-note-hash',
-    model: TopicNote.defaultModel,
-    instruction: 'synthetic note',
-    sources: const ['synthetic source block'],
-    createdAt: DateTime(2026, 10, 16),
-  );
+  AnalysisResult noteResult(TopicNote note) {
+    final template = builtInTemplateById(
+      note.kind == TopicKind.book ? bookNoteTemplateId : thinkingNoteTemplateId,
+    )!;
+    return AnalysisResult(
+      text: note.encode(),
+      sourceHash: 'synthetic-note-hash',
+      model: TopicNote.defaultModel,
+      instruction: 'synthetic note',
+      sources: const ['synthetic source block'],
+      createdAt: DateTime(2026, 10, 16),
+      templateId: template.id,
+      templateVersion: template.version,
+      templateFingerprint: template.fingerprint,
+    );
+  }
 
-  AnalysisResult noteResultForSource(String source, TopicNote note) =>
-      AnalysisResult(
-        text: note.encode(),
-        sourceHash: analysisFingerprint(source),
-        model: TopicNote.defaultModel,
-        instruction: 'synthetic note',
-        sources: [source],
-        createdAt: DateTime(2026, 10, 16),
-      );
+  AnalysisResult noteResultForSource(String source, TopicNote note) {
+    final template = builtInTemplateById(
+      note.kind == TopicKind.book ? bookNoteTemplateId : thinkingNoteTemplateId,
+    )!;
+    return AnalysisResult(
+      text: note.encode(),
+      sourceHash: analysisFingerprint(source),
+      model: TopicNote.defaultModel,
+      instruction: 'synthetic note',
+      sources: [source],
+      createdAt: DateTime(2026, 10, 16),
+      templateId: template.id,
+      templateVersion: template.version,
+      templateFingerprint: template.fingerprint,
+    );
+  }
 
   test('书籍按口述页码排序，无页码按录音时间；普通主题全按时间', () {
     final book = Topic(
