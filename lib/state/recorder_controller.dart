@@ -53,6 +53,7 @@ import 'context/context_store.dart';
 import 'context/diary_store.dart';
 import 'context/project_store.dart';
 import 'context/todo_store.dart';
+import 'context/todo_system_sync.dart';
 import 'device_store.dart';
 import 'export_catalog.dart';
 import 'organize_store.dart';
@@ -301,7 +302,10 @@ class RecorderController extends ChangeNotifier
     todos = todoStore ?? TodoStore(inMemory: !loadPersistedState);
     todos.addListener(notifyListeners);
     unawaited(todos.load());
-    _systemTasks = systemTasks ?? const ChannelSystemTasks();
+    _todoSync = TodoSystemSync(
+      todos,
+      systemTasks ?? const ChannelSystemTasks(),
+    );
     _ownsProjects = projectStore == null;
     projects = projectStore ?? ProjectStore(inMemory: !loadPersistedState);
     projects.addListener(notifyListeners);
