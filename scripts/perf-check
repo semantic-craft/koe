@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Automated performance scenarios (integration_test/perf) in profile mode on
+# this Mac, checked against integration_test/perf/thresholds.json.
+# Not part of `check`: it builds a profile app and takes about two minutes.
+#
+#   scripts/perf-check            run and check
+#   scripts/perf-check --report   run and print numbers without failing
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+report_only=0
+[[ "${1:-}" == "--report" ]] && report_only=1
+
+# No provider credentials in this process; the profile build is ad-hoc signed,
+# so the app's credential store stays isolated from the personal Keychain.
+unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_TTS_API_KEY || true
+
+rm -rf build/perf
+flutter drive --profile -d macos \
+  --driver=test_driver/perf_driver.dart \
+  --target=integration_test/perf/perf_scenarios_test.dart &
+drive=$!
+
+# macOS gives a window that never reached the foreground no frames, and the
+# scenarios then wait forever. Stop after a bounded time instead of hanging.
+deadline=$((SECONDS + ${KOE_PERF_TIMEOUT:-480}))
+while kill -0 "$drive" 2>/dev/null; do
+  if (( SECONDS > deadline )); then
+    kill "$drive" 2>/dev/null || true
+    pkill -f 'Build/Products/Profile/Koe.app/Contents/MacOS/Koe' || true
+    echo "perf-check: timed out; the Koe profile window probably never came to the foreground, so macOS rendered no frames. Rerun with the screen unlocked." >&2
+    exit 3
+  fi
+  sleep 2
+done
+wait "$drive"
+
+python3 - "$report_only" <<'PY'
+import json, sys
+report_only = sys.argv[1] == "1"
+results = json.load(open("build/perf/results.json"))
+limits = json.load(open("integration_test/perf/thresholds.json"))
+failed = []
+for name, metrics in results.items():
+    print(f"{name}: " + ", ".join(f"{k}={v}" for k, v in metrics.items()))
+    for key, bound in limits.get(name, {}).items():
+        value = metrics.get(key)
+        if value is None or value > bound:
+            failed.append(f"{name}.{key} = {value} > {bound}")
+missing = sorted(set(k for k in limits if not k.startswith("_")) - set(results))
+failed += [f"{name}: scenario did not report" for name in missing]
+if failed:
+    print("\nperf-check: over threshold\n  " + "\n  ".join(failed))
+    sys.exit(0 if report_only else 1)
+print("\nperf-check: all scenarios within thresholds")
+PY
