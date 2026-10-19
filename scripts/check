@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+# Static analysis and unit tests. Device, install and signing acceptance stay manual (see AGENTS.md).
+flutter analyze
+flutter test
