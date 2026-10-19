@@ -1,128 +1,216 @@
-> **Private mirror — self-use only.** Source: https://github.com/tacshi/Soundcore (upstream author: [tacshi](https://github.com/tacshi)). Upstream has **no license**; all rights remain with the author. Private personal use only — **not for redistribution**; do not make this repository public.
+<p align="center">
+  <img src="macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_128.png" alt="Koe" width="96" height="96">
+</p>
 
-# Koe — 安克录音豆录音与转写工具
+<h1 align="center">Koe</h1>
 
-**Koe** 适配 **soundcore Work**（安克 AI 录音豆 / **D3200**）。基于逆向出的设备协议（见 [`PROTOCOL.md`](PROTOCOL.md)）用 Flutter 实现，脱离飞书 App 独立使用：BLE 配对连接、录音管理、AI 实时/批量转写、Wi‑Fi SoftAP 批量导出。产品身份以本标题和 [pubspec.yaml](pubspec.yaml) 的 `description` 为准。
+<p align="center"><strong>不用飞书，直接用安克录音豆录音、转写，并把每天的事整理成能交给 AI 的个人记录。</strong></p>
 
-## 开发状态
+<p align="center">
+  <a href="https://flutter.dev"><img alt="Flutter 3.47.7" src="https://img.shields.io/badge/Flutter-3.47.7-02569B?style=flat-square&logo=flutter&logoColor=white"></a>
+  <img alt="iOS 15+" src="https://img.shields.io/badge/iOS-15%2B-000000?style=flat-square&logo=apple&logoColor=white">
+  <img alt="macOS 12+" src="https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white">
+  <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <img alt="License pending" src="https://img.shields.io/badge/License-pending-lightgrey?style=flat-square">
+</p>
 
-当前做什么、下一步、什么冻结见 [ROADMAP](ROADMAP.md)；开发计划与验收以 [GitHub 总工单 #6](https://github.com/semantic-craft/koe/issues/6) 为入口。当前包含多引擎转写和暖色双端布局；已接入千问长录音上传及 Qwen3.8-Flash 摘要/自定义分析，摘要、结构化纪要和思维导图已有双端短录音验收；剩余范围见 [当前进度](docs/product-progress.md)。双端同步和跨录音问答暂不实施。代码、自动测试、真实服务和真机验收分别记录，平台目录存在不代表整条使用流程已经验收。
+<p align="center">
+  <strong>简体中文</strong> · <a href="README.en.md">English</a>
+</p>
 
-## 支持平台
+---
 
-| 平台 | 状态 |
-|------|------|
-| Android | BLE 扫描 / GATT。启动器名称和后台同步通知仍是改名前的「安克录音豆」，本次未验收（[#38](https://github.com/semantic-craft/koe/issues/38) 未合并） |
-| iOS | BLE 扫描 / GATT。主屏幕、权限说明和快捷指令展示名为 Koe |
-| macOS | BLE 扫描 / GATT（需 Bluetooth entitlement）。应用包、菜单和权限说明为 Koe，安装到 `/Applications/Koe.app` |
+> [!IMPORTANT]
+> Koe 建立在 [tacshi/Soundcore](https://github.com/tacshi/Soundcore) 的原始 D3200 应用和协议逆向之上。上游项目目前没有许可证，本仓库在原作者授权前不会公开发布。详见 [致谢](#致谢) 与 [许可](#许可)。
+
+## 为什么做 Koe
+
+安克 soundcore Work（录音豆，型号 D3200）是一枚可以别在衣服上的小录音器。官方使用方式绑定在飞书里：录音要上传到飞书妙记才能转写，整理结果也留在飞书。
+
+Koe 让这枚录音豆脱离飞书独立工作：手机或 Mac 通过蓝牙直接连接录音豆，取回原始录音，用你自己选的模型（Apple 设备端、通义千问或豆包）转写和整理。原音频永久留在本机，每一句文字都能点回原声。
+
+在此之上，Koe 逐步长成一个手机优先的个人记录工具：录音、地点、待办和日记按天汇总，可以按项目持续跟进，最后整理成文件交给外部 AI。
 
 ## 功能
 
-- **首页**：浏览本地与设备端录音，下拉刷新、长按批量选择；点开详情阅读全文、翻译、播放、分享或重命名
-- **录音详情**：实时转写与保存后的文本使用同一详情页；返回首页不停止录音，暂停后保留当前页面。向上滚动可阅读旧内容，点「最新内容」恢复跟随
-- **设备**：电量（耳机 + 充电盒）、录音控制、配对绑定 / 解绑、恢复出厂设置
-- **设置**：选择 Apple 设备端、通义 Qwen 或豆包，准备语言、自动转写、API Key 管理与诊断日志
-- **扫描**：首页顶部按钮触发底部弹窗（非独立 Tab）搜索并连接 BLE 设备
-- **Wi‑Fi 批量导出**：SoftAP 直连 + AES 解密，导出文件本地播放
-- **iPhone 操作按钮**：从锁屏或其他 App 打开本应用，并让已绑定的 D3200 立即开始录音
+### 录音与转写
 
-## 配置 iPhone 操作按钮
+- 蓝牙扫描、配对和绑定录音豆；查看录音豆与充电盒电量，远程开始、暂停、停止录音
+- 实时转写：录音时边说边出文字，可选实时翻译（Apple 设备端）
+- 从录音豆取回录音（蓝牙或 Wi‑Fi 直连批量导出），续录变长的录音会自动补取
+- iPhone 麦克风也能直接录音，来电自动暂停，进程被杀后下次启动找回
+- 文件转写：千问长录音分块上传，豆包极速版；提交后的任务在重启后继续查询
+- iPhone 操作按钮 / 快捷指令一键让录音豆开始录音
 
-安装并至少连接一次录音豆后，在支持操作按钮的 iPhone 上打开：
+### 回听与校订
 
-1. **设置 → 操作按钮 → 快捷指令**。
-2. 选择 **Koe → 开始录音**（快捷指令里的动作标题是「用 Koe 开始录音」）。
-3. 长按操作按钮。Koe 会打开；如果录音豆暂时离线，会先自动重连再开始录音。
+- 逐字稿按句段点击回听原声，锁屏也能继续播放
+- 校订文字、标注发言人后仍保留到原声的对应关系
+- 片段批注与书签，原声连续收听队列
+- 发言人分布：按时间线查看每个人说了多久，点片段直达原句
+- 译文与原文逐句对应，点译文听原句
+- 摘要、自定义分析、结构化纪要（议题 / 决策 / 待办）和思维导图，每条结论都能回到原文出处
 
-录音已经进行时再次运行快捷指令只会回到当前实时会话，不会重复发送开始命令。若 30 秒内找不到已绑定设备，请唤醒并靠近录音豆后重试。
+### 今日 · 项目 · 待办
 
-## 项目结构
+- 「今日」时间线汇总当天的录音和记录，可纠正它们所属的主题
+- 项目跨天持续跟进；主题笔记与主题汇总
+- 从对话里的承诺自动生成待办，可导出到 iPhone 的提醒事项和日历
+- 录音自动记录大致地点，也可手动补充
+- 新录音自动整理：转写 → 摘要 → 提取待办，中断后可恢复
 
-```
-lib/
-├── ai/          # Apple / 千问 / 豆包转写（实时 + 文件）
-├── audio/       # Ogg/Opus 封装、Opus→PCM 解码
-├── ble/         # 扫描广播解析、GATT 服务、离线文件拉取、实时音频流
-├── crypto/      # 设备端 ECDH / AES 会话加解密
-├── protocol/    # 帧格式、命令字、数据模型
-├── state/       # Provider 状态：设备连接、录音、转写、导出目录、App 设置
-├── theme/       # 主题与配色
-├── ui/          # 首页 / 设备 / 设置页面与组件
-└── wifi/        # SoftAP 连接与批量导出服务
-```
+### 日记 · 问 Koe · 晨报
 
-## 运行
+- 每条都带来源的日记和周小结
+- 「问 Koe」：在手机上对自己的记录连续提问，可以按住说话提问，回答可选朗读
+- 晨报：按需生成昨天的要点
+
+### 导出给 AI
+
+- 按天、项目或主题导出 Markdown，交给你常用的外部 AI
+- 资料包（`.koepack`）导出与重新导入：在另一台设备或重装后恢复校订、时码、发言人、书签、地点和主题，原音频可选是否带上
+- 手机原件自动归档到自己的 Mac（局域网加密直连，校验后才确认）
+
+## 截图
+
+> 截图待补：公开发布前用演示数据重新截取，不使用真实录音与地点。
+
+| 今日 | 录音详情 | 问 Koe |
+| --- | --- | --- |
+| _待补_ | _待补_ | _待补_ |
+
+## 支持的硬件
+
+| 设备 | 型号 | 状态 |
+| --- | --- | --- |
+| 安克 soundcore Work（AI 录音豆） | D3200 | 支持：蓝牙连接与控制、实时音频、离线文件取回、Wi‑Fi SoftAP 批量导出 |
+
+其他 soundcore 录音设备未测试。设备协议细节见 [PROTOCOL.md](PROTOCOL.md)。
+
+| 平台 | 状态 |
+| --- | --- |
+| iOS 15+ | 主力平台。Apple 设备端转写与翻译需要 iOS 26+ |
+| macOS 12+ | 辅助阅读与原件归档端 |
+| Android | 代码目录保留，当前冻结，不维护 |
+
+## 快速开始
+
+### 准备
+
+- macOS 与 Xcode（含 iOS 平台），CocoaPods
+- Flutter 3.47.7（与 CI 一致）
+- 一枚 soundcore Work D3200 录音豆（没有录音豆也能用手机录音、导入音频和其余功能）
+- 可选：[通义千问（DashScope）](https://dashscope.aliyun.com/) 或 [豆包语音](https://www.volcengine.com/product/voice-tech) 的 API Key
+
+### 安装依赖并运行
 
 ```bash
-# macOS（推荐用脚本）
-./scripts/debug-mac.sh              # flutter run -d macos --debug
-./scripts/debug-mac.sh --build-only # 仅构建 debug .app
-./scripts/debug-mac.sh --open       # 构建 debug .app 并打开
+git clone https://github.com/semantic-craft/koe.git
+cd koe
+flutter pub get
+```
 
-# 其他平台
+```bash
+flutter run -d macos
+```
+
+```bash
 flutter run -d ios
-flutter run -d android
 ```
 
-## 构建
+iOS 真机需要在 Xcode 里为 `ios/Runner.xcworkspace` 选择你自己的开发团队。仓库里的 `scripts/install-ios.sh`、`scripts/install-macos.sh` 和 `scripts/build-dmg.sh` 是维护者的安装与打包脚本，运行前先看清目标设备和签名身份。
+
+如果从旧的 SPM 构建切换过来，遇到 `local binary target opus ... does not contain a binary artifact`，先运行 `flutter clean` 再 `flutter pub get`。
+
+### 安装到 Mac
 
 ```bash
-# macOS 本机安装到 /Applications/Koe.app（固定 Developer ID 签名，升级后保留 Keychain 访问）
-# 若仍有改名前的 /Applications/Soundcore Manager.app，安装成功后会先打包再移除，避免误启动旧副本。
-# Bundle ID 与 Documents/AnkerRecorder 数据目录不变，已有录音和配置留在原处。
-./scripts/install-macos.sh           # 先退出已安装 App，再构建并安装
-./scripts/install-macos.sh --skip-build # 安装已有 Release 构建
-
-# macOS release + DMG → dist/koe-<version>-macos.dmg
-./scripts/build-dmg.sh
-./scripts/build-dmg.sh --open       # 构建后在 Finder 中显示 DMG
-./scripts/build-dmg.sh --skip-build # 打包已有的 Release .app
-
-# iOS 真机安装（Xcode 签名）
-./scripts/install-ios.sh
-
-# Apple Silicon iOS 模拟器（仅构建，不安装）
-flutter build ios --simulator --debug
-flutter build ios
-flutter build apk   # 或 appbundle
+./scripts/install-macos.sh
 ```
 
-Apple 原生依赖使用项目级 CocoaPods 配置：Opus 的 XCFramework 区分真机与模拟器；macOS 构建会在中间产物中整理 framework 目录，不修改 pub 缓存。若从旧 SPM 构建迁移后出现 `local binary target opus ... does not contain a binary artifact`，先运行 `flutter clean`、`flutter pub get`，再构建。
+构建 Release 并安装到 `/Applications/Koe.app`（需要 Developer ID 签名身份）。`./scripts/build-dmg.sh` 打包到 `dist/koe-<version>-macos.dmg`。
 
-## 手机原件归档到 Mac
+### 配置 iPhone 操作按钮
 
-1. 在 Mac 的「设置 → Mac 原件归档」开启「这台 Mac 接收原件」。展开配对信息后复制给自己的手机；这串信息包含配对凭据，只交给要配对的设备。
-2. 手机在同一局域网进入「设置 → Mac 原件归档 → 配对 Mac」，粘贴配对信息。配对后新原件自动排队，已有资料可用「归档现有资料」加入队列。
-3. 资料行与「资料信息」显示等待连接、传输中、校验中、已校验归档或失败可重试。Mac 离线时原件继续留在手机，录音和回听照常使用；「断开」暂停归档，「连接」继续。
-4. 手机原件缺失而有已校验的 Mac 副本时，在「资料信息」选择「从 Mac 恢复原件」。恢复后重新校验才加入本机资料库。切换 Mac 保留旧副本的校验凭据；要取回旧 Mac 的副本，重新配对原 Mac。
-5. 要使旧设备或旧配对信息失效，在 Mac 选择「重置配对凭据」。确认后所有已连接设备断开，归档原件保留；其他设备需使用新信息重新配对。接收关闭时也能重置，再次开启后可复制新信息。手机的「取消配对」只清除本机连接。
+装好 Koe 并至少连接一次录音豆后：
 
-两端使用配对密钥认证与分块加密直连；Mac 校验落盘字节的 SHA-256 与长度并保存索引后才确认。归档不会自动删除手机原件，回收站规则保持独立。归档状态与接收文件保存在应用私有 Application Support 的 `KoeArchive` 下；隔离运行模式使用 `KoeArchiveDevelopment`，目录不可用时停止归档配置读写。配对信息、源文件与恢复凭据请随应用私有数据一起保留。
+1. 打开 iPhone 的「设置 → 操作按钮 → 快捷指令」。
+2. 选择 **Koe → 开始录音**（快捷指令里的动作标题是「用 Koe 开始录音」）。
+3. 长按操作按钮：Koe 会打开，录音豆离线时先自动重连再开始录音。
 
-此功能的真实双端安装、系统本地网络权限、锁屏与真实录音回听需要设备验收；本机合成文件与 loopback 验证不替代这些步骤。
+### 配置千问 / 豆包 API Key
 
-## 测试
+1. 打开 Koe 的「设置 → 语音服务」。
+2. 选择服务商：
+   - **通义千问**：填写 API Key，Workspace ID 可选。摘要、纪要、问 Koe 等整理功能也使用千问。
+   - **豆包**：只填写 API Key（使用极速版文件转写和流式识别）。
+   - **Apple 设备端**：不需要 Key，iOS 26+ 可用，处理全部在本机完成。
+3. 保存后自动启用。服务地址和模型由程序选择。
+
+Key 保存在系统 Keychain 中，不写入设置文件。开发与调试构建默认使用隔离的内存存储，不会读写你个人 Keychain 里的 Key。
+
+### 测试
+
+```bash
+flutter analyze
+```
 
 ```bash
 flutter test
 ```
 
-覆盖协议帧编解码、设备加解密、Opus/Ogg 处理、导出目录、STT 数据模型等核心逻辑（`test/`）。
+## 架构
 
-## 说明
+Koe 是一个 Flutter 应用，状态由 Provider 管理的 `RecorderController` 统一协调，按功能拆成多个 part 文件；个人记录（时间线、待办、项目、日记、问答）是一组独立的 JSON 存储。
 
-- **Apple 设备端处理**（iOS 26+，取决于设备和语言）：D3200 实时音频与已保存录音可在 iPhone 上转写；支持实时单向翻译及已有转写文本的翻译。实时录音语言在设置中选择；已有录音可在转写或重新转写时选择语言，并按提示下载资源。Apple 处理失败不会自动切换到云端。云端 ASR 当前不提供翻译或双向交流。
-- **密钥存储**：iPhone/Mac 用户 Key 使用系统 Keychain，旧配置验证迁移后移除明文；可清除已保存 Key，安全存储异常可从设置重读。开发/验证构建默认使用进程内隔离存储，读写都不触达个人 Keychain，设置也存在独立目录；开发环境注入不回写。见 [迁移与验证](docs/credential-storage-validation.md)。
-- **配置**：豆包只填写 API Key；千问填写 API Key 和可选 Workspace ID。程序自动选择服务地址与模型，首次保存后自动启用并关闭配置窗口。
-- **摘要与分析**：录音详情点击“摘要与分析”，手动生成摘要或输入自定义要求；使用 Qwen3.8-Flash 与已有千问 Key。结果独立保存，可复制、导出和查看原文依据；长文分段处理并保留完成进度。
-- **结构化纪要**：在“摘要与分析”进入纪要，使用千问生成议题、决策、待办及未决问题；支持编辑、来源回溯与 Markdown 导出。验证范围见 [交付记录](docs/structured-minutes-validation.md)。
-- **思维导图**：从结构化纪要直接生成，可缩放、折叠、查看原文并导出完整 PNG；不再次调用模型。大图限制与验证见 [交付记录](docs/mind-map-validation.md)。
-- **豆包极速版上传**：按 100 MB / 2 小时分别检查，优先使用匹配的压缩录音；分块 Base64 上传，可停止等待，结果未知时不自动重发。范围及验证见 [交付记录](docs/doubao-upload-validation.md)。
-- **千问长录音**：支持范围以模型规格与当前临时上传限制共同约束；分块封装与上传，保留已提交任务供重启后查询。短录音链路验收及长时使用边界见 [交付记录](docs/qwen-long-recording-analysis.md)。
-- **文件转写**：千问默认 `qwen-audio-3.1-asr-flash-filetrans`；豆包使用极速版 `volc.bigasr.auc_turbo`，本地文件直接上传，上限为 100,000,000 字节及 2 小时，优先选择匹配的压缩录音。按当前产品决定，不接入豆包标准版；超过豆包支持范围时明确提示，用户可手动选择已配置的千问，不自动切换供应商。
-- **实时转写**：BLE Opus → PCM16 → 服务商 WebSocket。千问使用 `qwen-audio-3.1-asr-flash-streaming`；豆包使用 `volc.seedasr.sauc.duration`，优化双向流式接口开启 `enable_nonstream` 二遍识别。成功的实时结果不再自动重复提交文件；实时未完成时由同一服务的文件任务补齐。
-- **配置与验收**：在设置中保存服务商 Key。Helios 开发可参考 `.envrc.example`，通过 `direnv exec . python3 scripts/run-with-secrets.py macos` 给已安装 Mac App 注入凭据；凭据不会编入产物。iPhone 普通使用仍通过设置保存 Key。真实样本、接口限制与双端验收见 [语音服务替换验证](docs/speech-provider-validation.md)。
-- **Wi‑Fi SoftAP 批量导出 + 解密**：BLE 连接后先做 ECDH 握手（`0x2E/0x01`）生成会话密钥；导出时打开设备 SoftAP → 加入 → WebSocket 拉取，每 160 字节分片用 `1A07` 头（`soundcored3200` magic）中的单文件密钥做 AES‑CTR 解密。导出文件保存在 `Documents/AnkerRecorder/exports` 下，命名为 `{fileId}.opus`（握手失败则为 `.opus.bin`）。本地**播放**使用 `just_audio` 播放已导出文件。
-- 设备协议细节（服务/特征 UUID、命令字、加密流程等）见 [`PROTOCOL.md`](PROTOCOL.md)。
-- 请保持蓝牙开启；旧版 Android 扫描需授予定位权限。
-- 录音进行中修改处理服务、模式或语言，将在下次录音生效。旧服务的历史文本和来源保留，旧密钥不再读写，未完成的旧任务不会自动改投新服务。有效的已选服务优先；否则优先已配置的千问，再考虑 Apple。
+```
+录音豆 D3200 ──BLE/Wi‑Fi──▶ ble/ wifi/ protocol/ crypto/
+                                  │  取回的 Opus 音频
+                                  ▼
+                              audio/ ──▶ ai/（Apple / 千问 / 豆包 转写）
+                                  │
+                                  ▼
+                 state/（录音库、转写任务、个人记录）──▶ ui/
+                                  │
+                                  ▼
+                   导出 Markdown / 资料包 · Mac 归档（archive/）
+```
+
+| 目录 | 内容 |
+| --- | --- |
+| [lib/ble](lib/ble/) | 广播解析、GATT 服务、离线文件拉取、实时音频流 |
+| [lib/protocol](lib/protocol/) | 帧格式、命令字、数据模型 |
+| [lib/crypto](lib/crypto/) | 设备 ECDH / AES 会话加解密 |
+| [lib/wifi](lib/wifi/) | SoftAP 连接与批量导出 |
+| [lib/audio](lib/audio/) | Ogg/Opus 封装、Opus→PCM 解码、音频转换 |
+| [lib/ai](lib/ai/) | 转写服务：Apple 设备端、千问、豆包 |
+| [lib/state](lib/state/) | 控制器与持久化；[recorder/](lib/state/recorder/) 按功能分块，[context/](lib/state/context/) 是个人记录 |
+| [lib/archive](lib/archive/) | 手机到 Mac 的原件归档 |
+| [lib/platform](lib/platform/) | 钥匙串、地点、提醒事项、快捷指令等平台接入 |
+| [lib/ui](lib/ui/) | 页面与组件 |
+| [darwin](darwin/)、[ios](ios/)、[macos](macos/) | Apple 原生代码 |
+| [test](test/)、[integration_test](integration_test/) | 单元、组件与性能测试 |
+
+术语见 [GLOSSARY](GLOSSARY.md)，设计决策见 [docs/adr](docs/adr/)，界面规范见 [docs/design/ui-guidelines.md](docs/design/ui-guidelines.md)。
+
+## 路线图
+
+当前做什么、下一步、什么暂不做，见 [ROADMAP.md](ROADMAP.md)；版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 参与贡献
+
+欢迎提 Issue 和 PR。开始前请读 [CONTRIBUTING.md](CONTRIBUTING.md)：只经分支和 PR 交付，PR 要写清三项验收（回退测试、真实使用情况、没跑到的项目）。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，**不要在 Issue 里贴任何 API Key**。
+
+## 致谢
+
+**Koe 的起点是 [tacshi](https://github.com/tacshi)（Rocky Shi）的 [tacshi/Soundcore](https://github.com/tacshi/Soundcore)。** 这个项目最早写出了脱离飞书使用 D3200 的应用，并完成了录音豆蓝牙与 Wi‑Fi 协议的逆向：服务与特征 UUID、帧格式和命令字、ECDH 握手与 AES 解密、离线文件拉取、SoftAP 批量导出。[PROTOCOL.md](PROTOCOL.md) 就是这份逆向工作的记录。没有它，就没有 Koe。
+
+Koe 的蓝牙、协议、加解密、音频和 Wi‑Fi 模块仍有相当部分源自上游代码。
+
+结构化纪要的整理规则参考了 Meetily 与 Ownscribe（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 许可
+
+**License pending：上游项目目前还没有许可证；在原作者授权之前，本仓库不会公开发布。**
+
+在此之前，上游代码的全部权利归原作者所有，本仓库仅供私人使用，请勿再分发。
