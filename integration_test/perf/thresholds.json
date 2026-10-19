@@ -1,0 +1,22 @@
+{
+  "_comment": "Upper bounds checked by scripts/perf-check. Measured on the M-series Mac CI runner in profile mode; the 'before' values (main before #216) and 'after' values are in the PR that added this file. Bounds sit between the two with margin for noise.",
+  "ble_slices": {
+    "controller_notifications": 20,
+    "janky_frames": 10
+  },
+  "playback": {
+    "controller_notifications": 5,
+    "janky_frames": 10
+  },
+  "first_play": {
+    "longest_frame_gap_ms": 150,
+    "rss_growth_mb": 50
+  },
+  "transcript_save": {
+    "longest_frame_gap_ms": 80,
+    "janky_frames": 8
+  },
+  "ask_rank": {
+    "longest_frame_gap_ms": 50
+  }
+}

@@ -61,6 +61,12 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Automated performance scenarios (integration_test/perf, scripts/perf-check).
+  integration_test:
+    sdk: flutter
+  flutter_driver:
+    sdk: flutter
+  path_provider_platform_interface: ^2.1.2
   # Tests run the iOS picker's own filter validation (see file_types_test).
   file_selector_ios: ^0.5.3
 
