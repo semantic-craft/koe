@@ -226,6 +226,29 @@ void main() {
     expect(store.todoById(milk.id)?.title, '买两盒牛奶');
   });
 
+  test('a calendar event keeps the time picked for a date-only todo', () async {
+    final system = _System();
+    final store = TodoStore(inMemory: true);
+    final c = controller(store: store, system: system);
+    addTearDown(c.dispose);
+    final path = await recording(c, 1760850000, _firstTalk);
+    await c.extractTodos(RecordingReference(path: path));
+    final papers = store.todos.singleWhere((t) => t.kind == TodoKind.others);
+    expect(papers.dueHasTime, isFalse);
+
+    final start = DateTime(2026, 10, 23, 10);
+    await c.exportTodoToCalendar(
+      papers.id,
+      start: start,
+      end: start.add(const Duration(hours: 1)),
+    );
+    // Returning to the app reconciles links; the picked time must survive.
+    await c.syncSystemLinks();
+    final id = store.todoById(papers.id)!.calendar!.externalId;
+    expect(system.items[id]?.start, start);
+    expect(system.items[id]?.end, start.add(const Duration(hours: 1)));
+  });
+
   testWidgets('nothing is written to Reminders until the user confirms', (
     tester,
   ) async {

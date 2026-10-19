@@ -207,7 +207,7 @@ mixin _RecorderTodos on ChangeNotifier {
       _export(id, SystemTaskTarget.reminder, null, null);
 
   /// Writes the todo into Calendar for [start]–[end] after the user
-  /// confirmed it. A todo without a due date takes [start] as its due time.
+  /// confirmed it. A todo without a due time takes [start] as its due time.
   Future<void> exportTodoToCalendar(
     String id, {
     required DateTime start,
@@ -239,7 +239,10 @@ mixin _RecorderTodos on ChangeNotifier {
               : '没有访问日历的权限；Koe 里的待办不受影响',
         );
       }
-      if (target == SystemTaskTarget.event && todo.due == null) {
+      // The time picked for the event becomes the todo's time; otherwise
+      // the next sync pushes the date-only due back as midnight.
+      if (target == SystemTaskTarget.event &&
+          (todo.due == null || !todo.dueHasTime)) {
         await todos.put(todo.copyWith(due: start, dueHasTime: true));
         todo = todos.todoById(id)!;
       }
