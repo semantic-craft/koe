@@ -1,11 +1,15 @@
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import '../file_types.dart';
 
 /// Hands a finished export file to the system share/save sheet. Returns
 /// false when the user closed the sheet without sending it.
@@ -26,6 +30,23 @@ Future<bool> _systemShare(BuildContext context, File file, String title) async {
   return result.status != ShareResultStatus.dismissed;
 }
 
+/// The Mac share menu offers AirDrop and Mail but no "save to Files", so the
+/// Mac also gets a save panel that keeps the file itself.
+Future<bool> _saveToFile(BuildContext context, File file, String title) async {
+  final name = p.basename(file.path);
+  final location = await getSaveLocation(
+    suggestedName: name,
+    acceptedTypeGroups: [
+      name.endsWith(MaterialPack.extension)
+          ? materialPackFileTypes
+          : const XTypeGroup(label: 'Markdown', extensions: ['md']),
+    ],
+  );
+  if (location == null) return false;
+  await file.copy(location.path);
+  return true;
+}
+
 enum MaterialExportKind { reading, pack }
 
 /// 资料详情 → 更多 → 导出 (#145): choose a reading copy or a restorable
@@ -34,6 +55,7 @@ Future<void> showMaterialExportSheet(
   BuildContext context,
   RecordingReference reference, {
   MaterialShare? share,
+  MaterialShare? save,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -44,6 +66,9 @@ Future<void> showMaterialExportSheet(
       child: MaterialExportPanel(
         reference: reference,
         share: share ?? _systemShare,
+        save: defaultTargetPlatform == TargetPlatform.macOS
+            ? save ?? _saveToFile
+            : null,
       ),
     ),
   );
@@ -54,10 +79,14 @@ class MaterialExportPanel extends StatefulWidget {
     super.key,
     required this.reference,
     required this.share,
+    this.save,
   });
 
   final RecordingReference reference;
   final MaterialShare share;
+
+  /// Writes the export to a place the user picks; null hides the option.
+  final MaterialShare? save;
 
   @override
   State<MaterialExportPanel> createState() => _MaterialExportPanelState();
@@ -70,7 +99,10 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
   bool _cancelled = false;
   String? _error;
 
-  Future<void> _export(MaterialExportPreview preview) async {
+  Future<void> _export(
+    MaterialExportPreview preview,
+    MaterialShare deliver,
+  ) async {
     final c = context.read<RecorderController>();
     final messenger = ScaffoldMessenger.maybeOf(context);
     void toast(String message) =>
@@ -110,13 +142,13 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
     }
     bool sent;
     try {
-      sent = await widget.share(context, file, preview.title);
+      sent = await deliver(context, file, preview.title);
     } catch (_) {
       await _discard(file);
       if (!mounted) return;
       setState(() {
         _preparing = false;
-        _error = '分享失败，文件没有发出；请重试';
+        _error = deliver == widget.save ? '存储失败，没有写入文件；请重试' : '分享失败，文件没有发出；请重试';
       });
       return;
     }
@@ -321,10 +353,30 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
                 ),
               ],
             )
-          else
+          else if (widget.save case final save?) ...[
+            FilledButton.icon(
+              key: const ValueKey('material-export-save'),
+              onPressed: packBlocked != null
+                  ? null
+                  : () => _export(preview, save),
+              icon: const Icon(Icons.save_alt_rounded, size: 18),
+              label: const Text('存储为文件…'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const ValueKey('material-export-share'),
+              onPressed: packBlocked != null
+                  ? null
+                  : () => _export(preview, widget.share),
+              icon: const Icon(Icons.ios_share_rounded, size: 18),
+              label: const Text('分享…'),
+            ),
+          ] else
             FilledButton.icon(
               key: const ValueKey('material-export-share'),
-              onPressed: packBlocked != null ? null : () => _export(preview),
+              onPressed: packBlocked != null
+                  ? null
+                  : () => _export(preview, widget.share),
               icon: const Icon(Icons.ios_share_rounded, size: 18),
               label: Text(pack ? '导出资料包' : '导出阅读稿'),
             ),

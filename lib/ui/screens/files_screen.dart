@@ -15,6 +15,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../../wifi/wifi_export_service.dart';
 import '../import_audio.dart';
+import '../import_pack.dart';
 import '../library_filter.dart';
 import '../recording_navigation.dart';
 import '../transcript_layout.dart';
@@ -239,11 +240,11 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
   bool _deleting = false;
   bool _importing = false;
 
-  Future<void> _importLocalAudio(BuildContext context) async {
+  Future<void> _import(Future<void> Function(BuildContext) pick) async {
     if (_importing) return;
     setState(() => _importing = true);
     try {
-      await pickAndImportLocalAudio(context);
+      await pick(context);
     } finally {
       if (mounted) setState(() => _importing = false);
     }
@@ -353,19 +354,35 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (!_selecting)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              key: const ValueKey('import-local-audio'),
-              onPressed: _importing ? null : () => _importLocalAudio(context),
-              icon: _importing
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.add_rounded, size: 20),
-              label: Text(_importing ? '正在保存原件…' : '导入本地音频'),
-            ),
+          Wrap(
+            alignment: WrapAlignment.end,
+            children: [
+              // The phone reaches 导入资料包 from the new-recording sheet; the
+              // desktop shell has no such sheet, so the library column offers
+              // it here.
+              if (RecordingNavigation.of(context)?.wide ?? false)
+                TextButton.icon(
+                  key: const ValueKey('import-material-pack'),
+                  onPressed: _importing
+                      ? null
+                      : () => _import(pickAndImportMaterialPack),
+                  icon: const Icon(Icons.unarchive_outlined, size: 20),
+                  label: const Text('导入资料包'),
+                ),
+              TextButton.icon(
+                key: const ValueKey('import-local-audio'),
+                onPressed: _importing
+                    ? null
+                    : () => _import(pickAndImportLocalAudio),
+                icon: _importing
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_rounded, size: 20),
+                label: Text(_importing ? '正在导入…' : '导入本地音频'),
+              ),
+            ],
           ),
         if (!_selecting &&
             widget.paths.isNotEmpty &&
