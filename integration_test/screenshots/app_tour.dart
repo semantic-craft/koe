@@ -10,6 +10,7 @@
 // Everything lives in a temporary folder and in-memory stores; no BLE device,
 // credential or personal data is touched.
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,7 @@ import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/ui/screens/ask_koe_screen.dart';
 import 'package:koe/ui/screens/new_recording_sheet.dart';
+import 'package:koe/ui/screens/recording_detail_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:koe/ui/screens/todos_screen.dart';
 import 'package:koe/ui/widgets/scan_sheet.dart';
@@ -74,6 +76,39 @@ void main() {
       }
       return path;
     }
+
+    // A 90 s silent WAV with diarized segments for the speaker view: two
+    // people overlap once and one sentence has no speaker.
+    final meetingAt = now.subtract(const Duration(hours: 5));
+    final meeting =
+        '${directory.path}/${meetingAt.millisecondsSinceEpoch ~/ 1000}.wav';
+    await File(meeting).writeAsBytes(_silentWav(const Duration(seconds: 90)));
+    c.exportedPaths.add(meeting);
+    TranscriptSegment line(String text, int from, int to, String? who) =>
+        TranscriptSegment(
+          text: text,
+          start: Duration(seconds: from),
+          end: Duration(seconds: to),
+          speaker: who,
+          speakerChanged: who != null,
+        );
+    final meetingLines = [
+      line('这周先把厨房的水电定下来。', 0, 9, '1'),
+      line('水电我周三能出图。', 7, 15, '2'),
+      line('瓷砖样品明天到。', 18, 24, '1'),
+      line('那我周四去看样品。', 25, 31, '2'),
+      line('（听不清）', 33, 36, null),
+      line('预算先按二十万算。', 40, 52, '1'),
+      line('可以，超出的部分再商量。', 55, 66, '2'),
+    ];
+    c.rememberTranscript(
+      meeting,
+      meetingLines
+          .map((s) => s.speaker == null ? s.text : '说话人 ${s.speaker}：${s.text}')
+          .join('\n'),
+      segments: meetingLines,
+    );
+    await c.renameTranscriptSpeaker(meeting, '1', '林舟');
 
     final morning = now.subtract(const Duration(hours: 3));
     final a = await add(morning, '装修师傅说下周一开工。预算控制在二十万以内。');
@@ -168,8 +203,76 @@ void main() {
     Navigator.of(shell()).pop();
     await tester.pumpAndSettle();
 
+    final meetingRef = RecordingReference(
+      fileId: meetingAt.millisecondsSinceEpoch ~/ 1000,
+      path: meeting,
+    );
+    Navigator.of(shell()).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingDetailScreen(reference: meetingRef),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('发言人'));
+    await shot('11-speakers');
+    await tester.drag(find.byType(Scrollable).last, const Offset(0, -600));
+    await shot('12-speakers-segments');
+    await tester.ensureVisible(find.byKey(const ValueKey('speaker-segment-3')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('speaker-segment-3')));
+    await shot('13-speakers-source');
+    await tester.tap(find.byTooltip('返回发言人'));
+    await tester.pumpAndSettle();
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
+    final empty = RecordingReference(path: '${directory.path}/散步.wav');
+    Navigator.of(shell()).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingDetailScreen(reference: empty),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('发言人'));
+    await shot('14-speakers-no-transcript');
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
+
     c.dispose();
     topics.dispose();
     await directory.delete(recursive: true);
   });
+}
+
+/// 8 kHz 8-bit mono silence, so the app can read a real duration.
+Uint8List _silentWav(Duration length) {
+  const rate = 8000;
+  final samples = rate * length.inSeconds;
+  final bytes = ByteData(44 + samples);
+  void text(int at, String value) {
+    for (var i = 0; i < value.length; i++) {
+      bytes.setUint8(at + i, value.codeUnitAt(i));
+    }
+  }
+
+  text(0, 'RIFF');
+  bytes.setUint32(4, 36 + samples, Endian.little);
+  text(8, 'WAVE');
+  text(12, 'fmt ');
+  bytes.setUint32(16, 16, Endian.little);
+  bytes.setUint16(20, 1, Endian.little);
+  bytes.setUint16(22, 1, Endian.little);
+  bytes.setUint32(24, rate, Endian.little);
+  bytes.setUint32(28, rate, Endian.little);
+  bytes.setUint16(32, 1, Endian.little);
+  bytes.setUint16(34, 8, Endian.little);
+  text(36, 'data');
+  bytes.setUint32(40, samples, Endian.little);
+  for (var i = 0; i < samples; i++) {
+    bytes.setUint8(44 + i, 128);
+  }
+  return bytes.buffer.asUint8List();
 }

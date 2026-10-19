@@ -24,6 +24,7 @@ import '../widgets/scan_sheet.dart';
 import '../widgets/topic_note_panel.dart';
 import 'files_screen.dart';
 import 'settings_screen.dart';
+import 'speaker_distribution_screen.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({
@@ -32,12 +33,16 @@ class RecordingDetailScreen extends StatefulWidget {
     this.initialHighlightedParagraph,
     this.initialPlaybackStart,
     this.focusedSource = false,
+    this.focusedReturnLabel = '返回纪要',
   });
 
   final RecordingReference reference;
   final int? initialHighlightedParagraph;
   final Duration? initialPlaybackStart;
   final bool focusedSource;
+
+  /// Tooltip of the back control on a focused source, naming where it goes.
+  final String focusedReturnLabel;
 
   @override
   State<RecordingDetailScreen> createState() => _RecordingDetailScreenState();
@@ -104,8 +109,9 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     }
   }
 
-  /// Opens a focused copy of this recording so closing it returns to minutes.
-  void _openSource(TranscriptJump jump) {
+  /// Opens a focused copy of this recording so closing it returns to the
+  /// page that asked for the source (minutes, or the speaker view).
+  void _openSource(TranscriptJump jump, {String returnLabel = '返回纪要'}) {
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -114,6 +120,18 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           initialHighlightedParagraph: jump.segmentIndex,
           initialPlaybackStart: jump.start,
           focusedSource: true,
+          focusedReturnLabel: returnLabel,
+        ),
+      ),
+    );
+  }
+
+  void _openSpeakers() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SpeakerDistributionScreen(
+          reference: widget.reference,
+          onOpenSource: (jump) => _openSource(jump, returnLabel: '返回发言人'),
         ),
       ),
     );
@@ -1261,7 +1279,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         backgroundColor: AppColors.bgElevated,
         leading: widget.focusedSource
             ? IconButton(
-                tooltip: '返回纪要',
+                tooltip: widget.focusedReturnLabel,
                 onPressed: () => Navigator.maybePop(context),
                 icon: const Icon(Icons.arrow_back_rounded),
               )
@@ -1317,6 +1335,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   _speakers(recording);
                 case 'chapters':
                   _openChapters(segmentText);
+                case 'speaker-distribution':
+                  _openSpeakers();
                 case 'info':
                   _showInfo(recording);
                 case 'remove-topic':
@@ -1361,6 +1381,11 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 ),
               if (source.isNotEmpty && !recording.live && segmentsLocatable)
                 const PopupMenuItem(value: 'chapters', child: Text('章节')),
+              if (!recording.live)
+                const PopupMenuItem(
+                  value: 'speaker-distribution',
+                  child: Text('发言人'),
+                ),
               if (topicPlacement != null)
                 PopupMenuItem(
                   value: 'remove-topic',
