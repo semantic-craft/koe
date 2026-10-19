@@ -145,6 +145,8 @@ void main() {
       250,
       scrollable: find.byType(Scrollable).first,
     );
+    await tester.ensureVisible(find.text('关于 Koe'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('关于 Koe'));
     await tester.pumpAndSettle();
     expect(find.text('Koe'), findsOneWidget);

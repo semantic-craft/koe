@@ -103,6 +103,14 @@ class TodayScreen extends StatelessWidget {
                   onOpenLibrary: () =>
                       RecordingNavigation.of(context)?.onSelectTab?.call(2),
                 ),
+                if (c.organizeStore.queued.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _OrganizeProgressCard(
+                    progress: c.organizeProgress,
+                    onOpenLibrary: () =>
+                        RecordingNavigation.of(context)?.onSelectTab?.call(2),
+                  ),
+                ],
                 const SizedBox(height: 22),
                 const SectionLabel('下一步行动'),
                 _ActionsSection(
@@ -321,6 +329,58 @@ class _FocusCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Automatic organizing at a glance; the library rows carry the detail.
+class _OrganizeProgressCard extends StatelessWidget {
+  const _OrganizeProgressCard({
+    required this.progress,
+    required this.onOpenLibrary,
+  });
+
+  final ({int waiting, int working, int attention}) progress;
+  final VoidCallback onOpenLibrary;
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = [
+      if (progress.working > 0) '${progress.working} 条整理中',
+      if (progress.waiting > 0) '${progress.waiting} 条待整理',
+      if (progress.attention > 0) '${progress.attention} 条需要你处理',
+    ];
+    return Material(
+      key: const ValueKey('today-organize'),
+      color: AppColors.bgCard,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onOpenLibrary,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Icon(
+                progress.attention > 0
+                    ? Icons.error_outline_rounded
+                    : Icons.auto_awesome_outlined,
+                color: progress.attention > 0
+                    ? AppColors.coral
+                    : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '自动整理：${parts.isEmpty ? '处理中' : parts.join(' · ')}',
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
       ),
     );
   }

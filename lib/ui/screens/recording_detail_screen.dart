@@ -1536,6 +1536,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
               ),
             ),
           ),
+          if (path != null) _OrganizeBanner(path: path),
           if (!_showTranslation &&
               recording.hasPendingTranscript &&
               path != null)
@@ -2918,6 +2919,87 @@ class _PlaceEditDialogState extends State<_PlaceEditDialog> {
         ),
       ],
     );
+  }
+}
+
+/// Shows an automatic-organizing step that needs the user (#133): a failure
+/// to retry, or an unknown paid request to confirm before it is resent.
+class _OrganizeBanner extends StatelessWidget {
+  const _OrganizeBanner({required this.path});
+
+  final String path;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.watch<RecorderController>();
+    final status = c.organizeStatusFor(path);
+    final needsCheck = status.stage == OrganizeStage.needsCheck;
+    if (!needsCheck && status.stage != OrganizeStage.failed) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      child: Container(
+        key: const ValueKey('organize-banner'),
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        decoration: BoxDecoration(
+          color: AppColors.bgSubtle,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              needsCheck ? '自动整理暂停：结果待核实' : '自动整理没有完成',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            if (status.message != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                status.message!,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                  height: 1.4,
+                ),
+              ),
+            ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                key: const ValueKey('organize-retry'),
+                onPressed: () => needsCheck
+                    ? _confirmRetry(context, c)
+                    : c.retryOrganize(path),
+                child: Text(needsCheck ? '确认后重新整理' : '重试'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmRetry(BuildContext context, RecorderController c) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重新发送这一步？'),
+        content: const Text('上次请求可能已经被服务处理过，重新发送可能会再收一次费。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('先不'),
+          ),
+          TextButton(
+            key: const ValueKey('organize-retry-confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('重新发送'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await c.retryOrganize(path);
   }
 }
 
