@@ -1,0 +1,112 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:record/record.dart';
+
+/// What the microphone is doing, as reported by the platform.
+enum PhoneMicState { recording, paused, stopped }
+
+/// Isolates the phone microphone behind the controller-facing calls Koe uses.
+abstract class PhoneRecorder {
+  Future<bool> requestPermission();
+
+  /// Platform-driven changes, such as an incoming call pausing the take.
+  Stream<PhoneMicState> get states;
+
+  /// Starts writing a 16-bit PCM WAV file at [path].
+  Future<void> start(String path);
+  Future<void> pause();
+  Future<void> resume();
+  Future<void> stop();
+
+  /// Stops and deletes the take.
+  Future<void> cancel();
+  Future<void> dispose();
+}
+
+class DevicePhoneRecorder implements PhoneRecorder {
+  DevicePhoneRecorder();
+
+  final AudioRecorder _recorder = AudioRecorder();
+
+  /// WAV keeps every sample written before a crash readable; speech-rate mono
+  /// keeps an hour near 115 MB.
+  static const config = RecordConfig(
+    encoder: AudioEncoder.wav,
+    sampleRate: 16000,
+    numChannels: 1,
+    audioInterruption: AudioInterruptionMode.pause,
+  );
+
+  @override
+  Future<bool> requestPermission() => _recorder.hasPermission();
+
+  @override
+  Stream<PhoneMicState> get states => _recorder.onStateChanged().map(
+    (state) => switch (state) {
+      RecordState.record => PhoneMicState.recording,
+      RecordState.pause => PhoneMicState.paused,
+      RecordState.stop => PhoneMicState.stopped,
+    },
+  );
+
+  @override
+  Future<void> start(String path) => _recorder.start(config, path: path);
+
+  @override
+  Future<void> pause() => _recorder.pause();
+
+  @override
+  Future<void> resume() => _recorder.resume();
+
+  @override
+  Future<void> stop() async {
+    await _recorder.stop();
+  }
+
+  @override
+  Future<void> cancel() => _recorder.cancel();
+
+  @override
+  Future<void> dispose() => _recorder.dispose();
+}
+
+/// Rewrites the RIFF and data chunk sizes of a PCM WAV file from its actual
+/// length, so a take cut off by a crash plays back to its last written sample.
+/// Walks the chunk list because platform writers may pad before `data`.
+/// Returns false when the file is not a WAV or has no audio after the header.
+Future<bool> repairWavSizes(String path) async {
+  final raf = await File(path).open(mode: FileMode.append);
+  try {
+    final length = await raf.length();
+    await raf.setPosition(0);
+    final head = await raf.read(length < 16384 ? length : 16384);
+    if (head.length < 12) return false;
+    final view = ByteData.sublistView(head);
+    String tag(int at) => String.fromCharCodes(head.sublist(at, at + 4));
+    if (tag(0) != 'RIFF' || tag(8) != 'WAVE') return false;
+    var offset = 12;
+    while (offset + 8 <= head.length) {
+      if (tag(offset) == 'data') {
+        final dataStart = offset + 8;
+        if (length <= dataStart) return false;
+        await _writeUint32(raf, 4, length - 8);
+        await _writeUint32(raf, offset + 4, length - dataStart);
+        await raf.flush();
+        return true;
+      }
+      final size = view.getUint32(offset + 4, Endian.little);
+      offset += 8 + size + (size.isOdd ? 1 : 0);
+    }
+    return false;
+  } finally {
+    await raf.close();
+  }
+}
+
+Future<void> _writeUint32(RandomAccessFile raf, int at, int value) async {
+  final bytes = ByteData(4)..setUint32(0, value, Endian.little);
+  await raf.setPosition(at);
+  await raf.writeFrom(bytes.buffer.asUint8List());
+}

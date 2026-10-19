@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -30,15 +32,207 @@ Future<void> handleNewRecordingAction(
       ).showSnackBar(const SnackBar(content: Text('在「设备端」标签选择要取回的录音')));
       break;
     case NewRecordingAction.phone:
+      await showPhoneRecordingSheet(context);
       break;
+  }
+}
+
+/// Records from the phone microphone until the user saves or discards.
+///
+/// The sheet cannot be swiped away mid-take, so a running recording always
+/// has visible controls.
+Future<void> showPhoneRecordingSheet(BuildContext context) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final saved = await showModalBottomSheet<String>(
+    context: context,
+    isDismissible: false,
+    enableDrag: false,
+    builder: (_) => const PhoneRecordingPanel(),
+  );
+  if (saved != null) {
+    messenger.showSnackBar(const SnackBar(content: Text('手机录音已保存为原件')));
+  }
+}
+
+class PhoneRecordingPanel extends StatefulWidget {
+  const PhoneRecordingPanel({super.key});
+
+  @override
+  State<PhoneRecordingPanel> createState() => _PhoneRecordingPanelState();
+}
+
+class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
+  Timer? _ticker;
+  bool _stopping = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (mounted) setState(() {});
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final controller = context.read<RecorderController>();
+      if (!controller.phoneRecordingActive) {
+        unawaited(controller.startPhoneRecording());
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _stop() async {
+    setState(() => _stopping = true);
+    final path = await context.read<RecorderController>().stopPhoneRecording();
+    if (!mounted) return;
+    setState(() => _stopping = false);
+    if (path != null) Navigator.of(context).pop(path);
+  }
+
+  Future<void> _discard() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('放弃这段录音？'),
+        content: const Text('录音文件会被删除，无法恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('继续录音'),
+          ),
+          TextButton(
+            key: const ValueKey('confirm-discard-phone-recording'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('放弃'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await context.read<RecorderController>().discardPhoneRecording();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  String _clock(Duration d) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    final hours = d.inHours;
+    final rest =
+        '${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
+    return hours > 0 ? '$hours:$rest' : rest;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<RecorderController>();
+    final active = controller.phoneRecordingActive;
+    final paused = controller.phoneRecordingPaused;
+    final error = controller.phoneRecordingError;
+    return PopScope(
+      canPop: !active,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                active ? (paused ? '已暂停' : '手机录音中') : '手机录音',
+                key: const ValueKey('phone-recording-title'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _clock(controller.phoneRecordingElapsed),
+                key: const ValueKey('phone-recording-elapsed'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 40,
+                  fontWeight: FontWeight.w300,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  error,
+                  key: const ValueKey('phone-recording-error'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppColors.textSecondary),
+                ),
+              ],
+              const SizedBox(height: 20),
+              if (active) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: ValueKey(
+                          paused
+                              ? 'resume-phone-recording'
+                              : 'pause-phone-recording',
+                        ),
+                        onPressed: _stopping
+                            ? null
+                            : paused
+                            ? controller.resumePhoneRecording
+                            : controller.pausePhoneRecording,
+                        icon: Icon(
+                          paused
+                              ? Icons.fiber_manual_record_rounded
+                              : Icons.pause_rounded,
+                        ),
+                        label: Text(paused ? '继续' : '暂停'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        key: const ValueKey('stop-phone-recording'),
+                        onPressed: _stopping ? null : _stop,
+                        icon: const Icon(Icons.stop_rounded),
+                        label: const Text('结束并保存'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                TextButton(
+                  key: const ValueKey('discard-phone-recording'),
+                  onPressed: _stopping ? null : _discard,
+                  child: const Text('放弃这段录音'),
+                ),
+              ] else
+                TextButton(
+                  key: const ValueKey('close-phone-recording'),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('关闭'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
 /// Entry sheet for a new material (#131).
 ///
-/// Phone recording is not implemented until its own ticket, so the row stays
-/// visible but disabled with an honest label instead of a fake recording state.
+/// Phone recording is iPhone-only; elsewhere the row stays visible but
+/// disabled with an honest label instead of a fake recording state.
 Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
+  final phoneRecording = context
+      .read<RecorderController>()
+      .phoneRecordingEnabled;
   return showModalBottomSheet<NewRecordingAction>(
     context: context,
     showDragHandle: true,
@@ -61,6 +255,18 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
             ),
             const SizedBox(height: 12),
             _RecordOption(
+              key: const ValueKey('new-record-phone'),
+              icon: Icons.mic_none_rounded,
+              title: '手机录音',
+              subtitle: phoneRecording
+                  ? '用手机麦克风录下来，保存为原件'
+                  : '只在 iPhone 上提供；这里请用录音豆或导入音频',
+              trailing: phoneRecording ? null : '仅 iPhone',
+              onTap: phoneRecording
+                  ? () => Navigator.pop(sheetContext, NewRecordingAction.phone)
+                  : null,
+            ),
+            _RecordOption(
               key: const ValueKey('new-record-import'),
               icon: Icons.audio_file_outlined,
               title: '导入本地音频',
@@ -77,13 +283,6 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
                 sheetContext,
                 NewRecordingAction.retrieveDevice,
               ),
-            ),
-            _RecordOption(
-              key: const ValueKey('new-record-phone'),
-              icon: Icons.mic_none_rounded,
-              title: '手机录音',
-              subtitle: '尚未开放；当前请用录音豆或导入音频',
-              trailing: '尚未开放',
             ),
           ],
         ),

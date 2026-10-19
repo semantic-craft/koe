@@ -56,6 +56,7 @@ dependencies:
   just_audio_background: ^0.0.1-beta.17
   geolocator: ^14.1.1
   geocoding: ^5.0.0
+  record: ^7.1.2
 
 dev_dependencies:
   flutter_test:

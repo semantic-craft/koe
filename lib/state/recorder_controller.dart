@@ -36,6 +36,7 @@ import '../ble/ble_file_pull.dart';
 import '../ble/realtime_stream.dart';
 import '../crypto/device_crypto.dart';
 import '../platform/background_sync_service.dart';
+import '../platform/phone_recorder.dart';
 import '../platform/place_capture.dart';
 import '../platform/system_tasks.dart';
 import '../protocol/commands.dart';
@@ -91,6 +92,7 @@ export '../ai/speech_provider.dart';
 part 'recorder/playback.dart';
 part 'recorder/library.dart';
 part 'recorder/place.dart';
+part 'recorder/phone_recording.dart';
 part 'recorder/context.dart';
 part 'recorder/todos.dart';
 part 'recorder/projects.dart';
@@ -135,6 +137,7 @@ class RecorderController extends ChangeNotifier
         _RecorderPlayback,
         _RecorderLibrary,
         _RecorderPlace,
+        _RecorderPhoneRecording,
         _RecorderContext,
         _RecorderTodos,
         _RecorderProjects,
@@ -216,6 +219,8 @@ class RecorderController extends ChangeNotifier
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
     PlaceCapture? placeCapture,
+    PhoneRecorder? phoneRecorder,
+    bool? phoneRecordingEnabled,
     MinutesDocumentStore? minutesStore,
     TranscriptPersister? transcriptPersister,
     PlaybackHistoryStore? playbackHistoryStore,
@@ -246,6 +251,9 @@ class RecorderController extends ChangeNotifier
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
        _libraryDirectoryOverride = libraryDirectory,
        _placeCapture = placeCapture ?? const DevicePlaceCapture(),
+       _phoneRecorderOverride = phoneRecorder,
+       phoneRecordingEnabled =
+           phoneRecordingEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        // Keep the injection seam public while the field stays private.
        // ignore: prefer_initializing_formals
        _transcriptPersister = transcriptPersister,
@@ -272,6 +280,7 @@ class RecorderController extends ChangeNotifier
       if (!_disposed) notifyListeners();
     });
     _libraryLoaded = _loadRecordingLibrary();
+    _phoneTakesRecovered = _recoverInterruptedPhoneTakes();
     _ownsContextItems = contextStore == null;
     contextItems = contextStore ?? ContextStore(inMemory: !loadPersistedState);
     contextItems.addListener(notifyListeners);
@@ -518,6 +527,20 @@ class RecorderController extends ChangeNotifier
   final Directory? _libraryDirectoryOverride;
   @override
   final PlaceCapture _placeCapture;
+  final PhoneRecorder? _phoneRecorderOverride;
+  PhoneRecorder? _devicePhoneRecorder;
+  @override
+  PhoneRecorder get _phoneRecorder =>
+      _phoneRecorderOverride ??
+      (_devicePhoneRecorder ??= DevicePhoneRecorder());
+
+  /// Phone microphone takes are an iPhone feature; the Mac reads and archives.
+  @override
+  final bool phoneRecordingEnabled;
+  late final Future<void> _phoneTakesRecovered;
+
+  @visibleForTesting
+  Future<void> waitForPhoneTakeRecovery() => _phoneTakesRecovered;
 
   /// How long a retrieved WAV must keep the same size and modification time
   /// before it can be submitted; see [incompleteRetrievedAudioReason].
@@ -857,6 +880,8 @@ class RecorderController extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_phoneMicStates?.cancel());
+    unawaited(_devicePhoneRecorder?.dispose());
     archive.removeListener(_onArchiveChanged);
     if (_ownsArchive) archive.dispose();
     contextItems.removeListener(notifyListeners);
