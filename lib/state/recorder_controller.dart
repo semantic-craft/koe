@@ -41,6 +41,7 @@ import '../protocol/frame.dart';
 import '../protocol/models.dart';
 import '../wifi/wifi_export_service.dart';
 import 'app_settings_store.dart';
+import 'context/context_store.dart';
 import 'device_store.dart';
 import 'export_catalog.dart';
 import 'transcript_store.dart';
@@ -58,6 +59,7 @@ import 'topic_store.dart';
 import 'topic_note.dart';
 import 'topic_summary.dart';
 
+export 'context/context_store.dart';
 export 'recording.dart';
 export 'recording_library.dart';
 export 'listening_queue.dart';
@@ -74,6 +76,7 @@ export '../ai/speech_provider.dart';
 part 'recorder/playback.dart';
 part 'recorder/library.dart';
 part 'recorder/place.dart';
+part 'recorder/context.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
@@ -111,6 +114,7 @@ class RecorderController extends ChangeNotifier
         _RecorderPlayback,
         _RecorderLibrary,
         _RecorderPlace,
+        _RecorderContext,
         _RecorderArchive,
         _RecorderTopics,
         _RecorderTranscriptionJobs,
@@ -194,6 +198,7 @@ class RecorderController extends ChangeNotifier
     MacArchiveController? archiveController,
     ArchivePhoneStore? archivePhoneStore,
     ArchiveDeskStore? archiveDeskStore,
+    ContextStore? contextStore,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -234,6 +239,10 @@ class RecorderController extends ChangeNotifier
       if (!_disposed) notifyListeners();
     });
     _libraryLoaded = _loadRecordingLibrary();
+    _ownsContextItems = contextStore == null;
+    contextItems = contextStore ?? ContextStore(inMemory: !loadPersistedState);
+    contextItems.addListener(notifyListeners);
+    unawaited(contextItems.load());
     minutes =
         minutesStore ?? MinutesDocumentStore(inMemory: !loadPersistedState);
     _minutesLoaded = _loadMinutesDocuments();
@@ -438,6 +447,8 @@ class RecorderController extends ChangeNotifier
       _persistedDeviceLoaded = Future<void>.value();
     }
   }
+
+  bool _ownsContextItems = true;
 
   /// Whether topic notes (#49) are active. First version: iPhone only.
   @override
@@ -787,6 +798,8 @@ class RecorderController extends ChangeNotifier
     _disposed = true;
     archive.removeListener(_onArchiveChanged);
     if (_ownsArchive) archive.dispose();
+    contextItems.removeListener(notifyListeners);
+    if (_ownsContextItems) contextItems.dispose();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();
