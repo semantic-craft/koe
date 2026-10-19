@@ -226,7 +226,9 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
     final busy = _sessionId != null && c.askBusy(_sessionId!);
     final scope = c.askScope();
     final messages = session?.messages ?? const <AskMessage>[];
-    final voice = session?.voice;
+    // While the finger is down the clip is still being recorded, not waiting.
+    final holding = c.voiceHoldTarget == VoiceTarget.ask;
+    final voice = holding ? null : session?.voice;
     final recognizing = _sessionId != null && c.voiceRecognizing(_sessionId!);
     final voiceError = c.voiceInputErrors[VoiceTarget.ask];
     final readAloud = c.asks.readAloud && _speaker.available;

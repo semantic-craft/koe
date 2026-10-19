@@ -11,6 +11,7 @@ import 'package:koe/platform/answer_speaker.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
+import 'package:koe/ui/widgets/hold_to_talk.dart';
 
 /// Hold-to-talk (#142): the entry decides what a take becomes, cancel sends
 /// nothing, and a spoken question survives failures and restarts.
@@ -147,7 +148,18 @@ void main() {
     // A synthetic voice reads nothing unless the user turned it on.
     expect(speaker.spoken, isEmpty);
 
-    await hold(tester, c, askButton, slide: const Offset(0, -120));
+    // Mid-hold the take is being recorded, not a waiting question: no
+    // retry card, and the button stays live under the finger.
+    final gesture = await tester.startGesture(tester.getCenter(askButton));
+    await settle(tester, () => c.asks.sessions.first.voice != null);
+    expect(find.byKey(const ValueKey('ask-voice-clip')), findsNothing);
+    expect(tester.widget<HoldToTalkButton>(askButton).enabled, isTrue);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 350)),
+    );
+    await gesture.moveBy(const Offset(0, -120));
+    await tester.pump();
+    await gesture.up();
     await settle(
       tester,
       () => mic.cancelled == 1 && !File(mic.path!).existsSync(),
