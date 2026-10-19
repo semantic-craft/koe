@@ -22,6 +22,7 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 - 验证：`check`（运行 `scripts/check`：`flutter analyze` 与 `flutter test`；依赖先按上条 `flutter pub get` 装好，真机、签名与安装验收不在其中）。
 - 构建、真机运行与安装脚本按 [README](README.md)；[scripts](scripts/) 运行前核对目标设备和副作用。
 - 实现、评审或验收前先读 [lessons](lessons.md) 顶部的十条规则。
+- 写 BLE、录音、音频或记忆/待办类代码前，先用 `scripts/ref search` 检索上游、omi 和锁定版本依赖的同类实现，引用 `路径:行号` 再写；何时用、语料和存放位置见 [reference-code](docs/agents/reference-code.md)。
 
 ## 硬规则
 
