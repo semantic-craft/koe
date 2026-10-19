@@ -116,4 +116,48 @@ void main() {
     expect(day, contains('【整理】定了预算 [S1]'));
     expect(day, isNot(contains('和师傅约好周五量房')));
   });
+
+  test('after the user corrects a timed transcript, exports, diary and Ask '
+      'quote the corrected text instead of the old segments', () async {
+    final directory = await Directory.systemTemp.createTemp('koe-export-');
+    addTearDown(() => directory.delete(recursive: true));
+    final c = RecorderController(
+      loadPersistedState: false,
+      analysisController: RecordingAnalysis(inMemory: true),
+      transcriptPersister: ({bool strict = false}) async {},
+      libraryDirectory: Directory('${directory.path}/imports'),
+    );
+    addTearDown(c.dispose);
+    final at = DateTime(2026, 10, 19, 9);
+    final path = '${directory.path}/${at.millisecondsSinceEpoch ~/ 1000}.wav';
+    await File(path).writeAsBytes([1, 2, 3, 4]);
+    c.exportedPaths.add(path);
+    c.rememberTranscript(
+      path,
+      '说话人 1：录音豆今天到了。\n说话人 2：明天试一下。',
+      segments: const [
+        TranscriptSegment(text: '录音豆今天到了。', start: Duration.zero, speaker: '1'),
+        TranscriptSegment(
+          text: '明天试一下。',
+          start: Duration(seconds: 5),
+          speaker: '2',
+        ),
+      ],
+    );
+    await c.contextItems.load();
+    await c.saveManualTranscript(path, '说话人 1：录音笔今天到了。\n说话人 2：明天试一下（校）。');
+    await c.renameTranscriptSpeaker(path, '1', '老王');
+
+    final lines = c.contextSourceLines(c.contextItemsForDay(at));
+    expect(
+      [for (final line in lines) line.text],
+      ['老王：录音笔今天到了。', '说话人 2：明天试一下（校）。'],
+    );
+    expect(lines.every((line) => line.source.start == Duration.zero), isTrue);
+
+    final (day, _) = c.exportContextMarkdown(DayExport(at));
+    expect(day, contains('老王：录音笔今天到了。'));
+    expect(day, contains('明天试一下（校）。'));
+    expect(day, isNot(contains('录音豆')));
+  });
 }
