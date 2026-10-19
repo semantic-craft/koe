@@ -297,7 +297,19 @@ void main() {
       await tester.pump();
     }
     expect(saved, isTrue);
-    await tester.pumpAndSettle();
+    // The dialog closes only once the save resolves, which can be after the
+    // file is visible on disk; until then its barrier swallows taps.
+    for (
+      var i = 0;
+      i < 300 && find.byType(AlertDialog).evaluate().isNotEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(AlertDialog), findsNothing);
 
     Future<void> expectStale(_TranslationController c) async {
       await tester.tap(find.text('译文'));
