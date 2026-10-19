@@ -66,6 +66,7 @@ class TodoRow extends StatelessWidget {
             Checkbox(
               key: ValueKey('todo-check-${todo.id}'),
               value: done,
+              semanticLabel: '完成：${todo.title}',
               onChanged: todo.status == TodoStatus.cancelled
                   ? null
                   : (checked) => _guard(
