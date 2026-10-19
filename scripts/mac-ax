@@ -6,14 +6,18 @@
 //
 // Usage:
 //   scripts/mac-ax dump [PID]            print the window's element tree
-//   scripts/mac-ax press "LABEL" [PID]   press the first element whose label
-//                                        starts with LABEL
+//   scripts/mac-ax press "LABEL" [PID]   press the first element labeled
+//                                        exactly LABEL, else the first whose
+//                                        label starts with LABEL
 //   scripts/mac-ax type "LABEL" "TEXT" [PID]
 //                                        set the value of the first text
 //                                        field whose label starts with LABEL
 //
 // A modal panel (such as the file picker) blocks presses in the window
-// behind it; close it first. PID defaults to the running /Applications/Koe.app. The calling process
+// behind it; close it first. `type` changes what the accessibility API
+// reports but not the Flutter text field behind it: saving keeps the old
+// text, so type with System Events keystrokes instead. While Koe is in the
+// background the tree can lag the screen; activate Koe before dumping. PID defaults to the running /Applications/Koe.app. The calling process
 // needs Accessibility permission (System Settings → Privacy & Security).
 import AppKit
 import ApplicationServices
@@ -81,7 +85,8 @@ case "dump":
   dump(app)
 case "press":
   let wanted = args[0]
-  guard let hit = find(app, { label($0).hasPrefix(wanted) }) else {
+  guard let hit = find(app, { label($0) == wanted })
+    ?? find(app, { label($0).hasPrefix(wanted) }) else {
     fail("no element labeled \(wanted)")
   }
   let result = AXUIElementPerformAction(hit, kAXPressAction as CFString)
