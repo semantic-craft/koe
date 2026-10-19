@@ -1,10 +1,12 @@
 import 'package:flutter/semantics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:koe/main.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:koe/ui/localization.dart';
 import 'package:koe/ui/screens/todos_screen.dart';
+import 'package:koe/ui/screens/trash_screen.dart';
 import 'package:koe/ui/widgets/inline_player.dart';
 import 'package:provider/provider.dart';
 
@@ -130,6 +132,42 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('取消'), findsOneWidget);
     expect(find.text('Cancel'), findsNothing);
+    semantics.dispose();
+  });
+
+  testWidgets('navigation buttons can be activated by VoiceOver and Voice '
+      'Control, on the phone and on the Mac sidebar', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final c = RecorderController(loadPersistedState: false);
+    addTearDown(c.dispose);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+
+    tester.view.physicalSize = const Size(1280, 900);
+    await tester.pumpWidget(KoeApp(controller: c));
+    await tester.pumpAndSettle();
+    tester.semantics.tap(find.semantics.byLabel('设置'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    tester.semantics.tap(find.semantics.byLabel('回收站'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TrashScreen), findsOneWidget);
+
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(KoeApp(controller: c));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('nav-library')), findsOneWidget);
+    final libraryTab = find.semantics.byPredicate(
+      (node) => node.label == '资料' && node.flagsCollection.isButton,
+    );
+    tester.semantics.tap(libraryTab);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('nav-library'))),
+      isSemantics(isSelected: true),
+    );
     semantics.dispose();
   });
 }

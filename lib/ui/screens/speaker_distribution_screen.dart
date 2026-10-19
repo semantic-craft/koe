@@ -619,6 +619,7 @@ class _SegmentTime extends StatelessWidget {
     return Semantics(
       label: '$semantics，打开原句并回听',
       button: true,
+      onTap: tap,
       excludeSemantics: true,
       child: TextButton(
         onPressed: tap,

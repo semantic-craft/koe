@@ -121,7 +121,8 @@ void main() {
     await tester.pumpAndSettle();
     await openAsk(tester, c);
 
-    stt.reply = '装修师傅说什么时候开工';
+    // A diarizing engine labels the speaker; the question is only the words.
+    stt.reply = '说话人 1：装修师傅说什么时候开工';
     assistant.reply = '下周一开工 [S1]。';
     await hold(tester, c, askButton);
     await settle(
