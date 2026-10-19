@@ -23,6 +23,7 @@ import 'package:koe/ai/stt_types.dart';
 import 'package:koe/main.dart';
 import 'package:koe/platform/answer_speaker.dart';
 import 'package:koe/platform/phone_recorder.dart';
+import 'package:koe/platform/place_capture.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
@@ -135,6 +136,12 @@ class _TourMic implements PhoneRecorder {
   Future<void> dispose() async {}
 }
 
+/// Keeps the tour off the system location prompt.
+class _TourPlace implements PlaceCapture {
+  @override
+  Future<RecordingPlace?> capture() async => null;
+}
+
 class _TourSpeaker implements AnswerSpeaker {
   final Completer<void> _done = Completer<void>();
 
@@ -180,6 +187,7 @@ void main() {
       phoneRecorder: _TourMic(),
       phoneRecordingEnabled: true,
       answerSpeaker: _TourSpeaker(),
+      placeCapture: _TourPlace(),
     );
 
     final now = DateTime.now();
