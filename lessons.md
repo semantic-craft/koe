@@ -265,3 +265,12 @@
 - 修复与证据：#187 起统一保留完整签名，在报警行上方加 `// ignore: <诊断名>`，成员定义处另加「Used by other parts through their abstract declarations.」说明；各 PR flutter analyze 无问题、79 个测试文件 / 645 条测试通过。
 - 正确做法（Done right）：给某块加成员、或让一块调用另一块的私有成员时，在调用方 mixin 顶部「Provided by…」段加与原定义完全一致的抽象声明；分析器报上述三种诊断时按本条加 ignore。静态成员不继承，别块用时写 `RecorderController.` 前缀或随所属块移动。
 - 复发记录：Seen 1x (2026-10-19)。
+
+### 高频事件和随历史增长的计算不能压在 UI 线程上
+
+**① BLE 包、播放进度这类高频事件不直接 `notifyListeners()` 全局控制器，改用只有相关组件监听的独立 listenable；② 随历史增长的计算（长录音转换、整份 JSON 编码、问答检索）走 `lib/util/off_ui.dart` 的 `runOffUi`。**
+
+- 起因与后果：2026-10-19 对照 omi 做性能调研（报告第 1、2、5–7 项）发现：每个 BLE 包和每 120 ms 的播放进度都通知 `RecorderController`，全 App 40 多处 `watch` 跟着重建；长录音封装、Opus 转 WAV、`transcripts.json` 编码和问答检索都在 UI 线程上随历史变慢。均为代码推算，未在真机测量。
+- 修复与证据：#216（诊断日志改独立 listenable，音频切片汇总记录）、#221（`positionListenable`）、#223（新增 `runOffUi`，封装与转换进后台）、#226（JSON 去缩进、合并写入、后台编码）、#224（检索进后台）。回退测试：`ble_log_volume_test`、`playback_position_notify_test` 断言控制器通知次数；`off_ui_test`、`opus_wave_background_test` 等断言大输入在后台执行且 `offUiFallbacks == 0`。真机效果待 #225。
+- 正确做法（Done right）：新增每秒多次的事件时，给它单独的 `ValueNotifier`，只让显示它的组件监听；新增与录音时长、历史条数成正比的计算时，用 `runOffUi(work, size:, threshold:)`，work 里不碰插件和 UI 线程上初始化的状态（原生库在子 isolate 里重新初始化，失败要退回当前线程并计数）。只改一定在屏幕上的几处，不全量把 `watch` 改成 `select`。
+- 复发记录：Seen 1x (2026-10-19)。
