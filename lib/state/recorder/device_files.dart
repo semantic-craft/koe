@@ -12,16 +12,19 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   void _bindCurrentRecording({int? fileId, String? path});
   abstract final BleService _ble;
   abstract final BleFilePull _blePull;
+  ({bool known, String? version}) bookmarkAudioVersion(String path);
   abstract bool _catalogConversionRunning;
   Future<String> _convertExportToWav(
     String path, {
     bool register = true,
     List<String>? conversionFailures,
   });
+  String? _audioPathFor(RecordingReference ref);
   _RecordingSession? get _currentRecording;
   abstract final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   abstract bool _disposed;
   abstract bool _explicitDisconnect;
+  abstract String? _fileJobKey;
   abstract final FileJobJournal _fileJobs;
   abstract final Future<void> _fileJobsLoaded;
   abstract final Set<String> _finalizingRecordings;
@@ -34,6 +37,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   abstract final Map<String, String> _recordingErrors;
   // ignore: unused_element_parameter
   String _recordingKey({int? fileId, String? path});
+  String _referenceKey(RecordingReference ref);
   void _registerExportedPaths(Iterable<String> paths);
   Future<void> _scheduleTopicAssist(String recordingKey, String transcript);
   Future<void> _send(List<int> frame, {String? label});
@@ -69,6 +73,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   abstract final TopicStore topics;
   abstract final bool topicsEnabled;
   String? transcriptForPath(String path);
+  Future<String?> verifyBookmarkAudio(String path);
   // END DEPS
 
   /// Completeness and retrievability of every device file's local copy.
@@ -265,7 +270,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       if (previous != null) {
         if (previous.audioHash != null && previous.audioHash != version) {
           previous.audioChanged = true;
-          previous.error = '音频内容已变化，已有文字和分析保留；请手动重新转写';
+          previous.error = _audioChangedSinceTranscript;
           _recordingErrors[key] = previous.error!;
           await _fileJobs.save();
           notifyListeners();
@@ -302,6 +307,52 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     } catch (_) {
       _recordingErrors[key] = '录音已保存，但无法保存转写任务，请重试';
     }
+    notifyListeners();
+  }
+
+  static const _audioChangedSinceTranscript = '音频内容已变化，已有文字和分析保留；请手动重新转写';
+
+  /// Checks, when a recording is opened, that its audio is still the version
+  /// its finished transcript came from. A retrieval normally flags a change,
+  /// but a copy replaced while that hook returned early (auto-transcribe off,
+  /// the take still locked or finalizing) kept showing the old text as if it
+  /// covered the longer audio (#288). Only marks; nothing is resubmitted.
+  Future<void> verifyTranscriptAudio(RecordingReference ref) async {
+    await Future.wait([_transcriptsLoaded, _fileJobsLoaded]);
+    if (_disposed) return;
+    final key = _referenceKey(ref);
+    final job = _fileJobs.jobs[key];
+    bool settled(FileJob? job) =>
+        job != null &&
+        job.stage == 'complete' &&
+        !job.audioChanged &&
+        job.audioHash != null &&
+        _fileJobKey != key;
+    if (!settled(job)) return;
+    final path = _audioPathFor(ref);
+    // A job hashed another file (an Opus copy since converted to WAV) cannot
+    // be compared byte for byte.
+    if (path == null ||
+        path != job!.path ||
+        !_copies.usableForProcessing(
+          fileId: fileIdFromPath(path),
+          path: path,
+          recordingKey: key,
+        )) {
+      return;
+    }
+    // Shares the stat-keyed digest with bookmarks: one read per file version.
+    final cached = bookmarkAudioVersion(path);
+    final version = cached.known
+        ? cached.version
+        : await verifyBookmarkAudio(path);
+    if (_disposed || version == null || version == job.audioHash) return;
+    if (!identical(_fileJobs.jobs[key], job) || !settled(job)) return;
+    job.audioChanged = true;
+    job.error = _audioChangedSinceTranscript;
+    try {
+      await _fileJobs.save();
+    } catch (_) {}
     notifyListeners();
   }
 
