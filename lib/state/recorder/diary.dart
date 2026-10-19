@@ -51,6 +51,9 @@ mixin _RecorderDiary on ChangeNotifier {
   bool diaryGenerating(DiaryPeriod period) =>
       _diaryInFlight.contains(period.key);
 
+  /// Used by other parts through their abstract declarations.
+  bool diaryKeyBusy(String key) => _diaryInFlight.contains(key);
+
   DiaryMaterial diaryMaterial(DiaryPeriod period) {
     final items = [for (final day in period.days) ...contextItemsForDay(day)];
     return DiaryMaterial(
@@ -69,20 +72,39 @@ mixin _RecorderDiary on ChangeNotifier {
     DiaryPeriod period, {
     bool confirmRetry = false,
   }) async {
-    if (!_diaryInFlight.add(period.key)) return;
+    if (_diaryInFlight.contains(period.key)) return;
+    final material = diaryMaterial(period);
+    if (material.sources.isEmpty) {
+      throw StateError(
+        material.items.isEmpty ? '这段时间还没有资料' : '这段时间的录音还没有文字，转写后再生成',
+      );
+    }
+    await _generateCited(
+      key: period.key,
+      material: material,
+      fingerprint: material.fingerprint(period.weekly),
+      instruction: _diaryInstruction(period),
+      confirmRetry: confirmRetry,
+    );
+  }
+
+  /// One paid, cited generation stored under [key]: skipped when the same
+  /// material was already used, marked pending while the request is out, and
+  /// kept beside a user edit instead of over it.
+  Future<void> _generateCited({
+    required String key,
+    required DiaryMaterial material,
+    required String fingerprint,
+    required String instruction,
+    required bool confirmRetry,
+  }) async {
+    if (!_diaryInFlight.add(key)) return;
     notifyListeners();
     try {
       await diary.load();
-      final material = diaryMaterial(period);
-      if (material.sources.isEmpty) {
-        throw StateError(
-          material.items.isEmpty ? '这段时间还没有资料' : '这段时间的录音还没有文字，转写后再生成',
-        );
-      }
       final apiKey = analysisApiKey;
       if (apiKey.isEmpty) throw StateError('先在设置里配置通义千问');
-      final fingerprint = material.fingerprint(period.weekly);
-      final entry = diary.entryFor(period.key) ?? DiaryEntry(key: period.key);
+      final entry = diary.entryFor(key) ?? DiaryEntry(key: key);
       if (entry.current?.fingerprint == fingerprint ||
           entry.newer?.fingerprint == fingerprint) {
         return;
@@ -97,7 +119,7 @@ mixin _RecorderDiary on ChangeNotifier {
           model: analysis.model ?? 'qwen3.8-flash',
           apiKey: apiKey,
           source: renderSourceLines(material.sources),
-          instruction: _diaryInstruction(period),
+          instruction: instruction,
           abort: Completer<void>().future,
         );
       } on TimeoutException {
@@ -126,7 +148,7 @@ mixin _RecorderDiary on ChangeNotifier {
               ),
       );
     } finally {
-      _diaryInFlight.remove(period.key);
+      _diaryInFlight.remove(key);
       notifyListeners();
     }
   }
