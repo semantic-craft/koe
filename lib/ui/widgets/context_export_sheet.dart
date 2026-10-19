@@ -18,6 +18,7 @@ Future<void> showContextExportSheet(
   final (markdown, count) = c.exportContextMarkdown(scope);
   return showModalBottomSheet<void>(
     context: context,
+    sheetAnimationStyle: AppMotion.sheetStyle(context),
     showDragHandle: true,
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
@@ -47,7 +48,7 @@ Future<void> showContextExportSheet(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   border: Border.all(color: AppColors.borderStrong),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppRadii.panel),
                 ),
                 child: SingleChildScrollView(
                   child: SelectableText(

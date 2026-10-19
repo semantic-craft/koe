@@ -239,7 +239,7 @@ class _BatteryProductCard extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(AppRadii.xs),
           child: LinearProgressIndicator(
             value: p / 100.0,
             minHeight: 6,
@@ -366,7 +366,7 @@ class _TipStep extends StatelessWidget {
                 height: 6,
                 decoration: BoxDecoration(
                   color: on ? AppColors.accent : AppColors.border,
-                  borderRadius: BorderRadius.circular(3),
+                  borderRadius: BorderRadius.circular(AppRadii.xs),
                 ),
               );
             }),

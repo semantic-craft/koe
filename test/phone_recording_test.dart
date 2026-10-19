@@ -135,13 +135,13 @@ void main() {
     final path = mic.path!;
 
     await tester.tap(find.byKey(const ValueKey('discard-phone-recording')));
-    await tester.pumpAndSettle();
+    await pumpDialog(tester);
     await tester.tap(find.text('继续录音'));
-    await tester.pumpAndSettle();
+    await pumpDialog(tester);
     expect(controller.phoneRecordingActive, isTrue);
 
     await tester.tap(find.byKey(const ValueKey('discard-phone-recording')));
-    await tester.pumpAndSettle();
+    await pumpDialog(tester);
     await tester.tap(
       find.byKey(const ValueKey('confirm-discard-phone-recording')),
     );
@@ -267,4 +267,11 @@ class _FakePhoneRecorder implements PhoneRecorder {
 
   @override
   Future<void> dispose() async => states$.close();
+}
+
+/// The recording sheet's breathing dot never settles, so dialog transitions
+/// over it are pumped for a fixed time instead of `pumpAndSettle`.
+Future<void> pumpDialog(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }

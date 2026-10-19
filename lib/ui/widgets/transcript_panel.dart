@@ -113,8 +113,6 @@ class TranscriptPanel extends StatelessWidget {
               const SizedBox(width: 6),
               Switch.adaptive(
                 value: c.autoTranscribe,
-                activeTrackColor: AppColors.violet.withValues(alpha: 0.45),
-                activeThumbColor: AppColors.violet,
                 onChanged: c.setAutoTranscribe,
               ),
             ],
@@ -148,7 +146,7 @@ class TranscriptPanel extends StatelessWidget {
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: AppColors.bgElevated,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(AppRadii.panel),
                 border: Border.all(color: AppColors.border),
               ),
               child: SingleChildScrollView(

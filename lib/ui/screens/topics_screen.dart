@@ -861,6 +861,7 @@ Future<Topic?> pickOpenTopic(
   String? suggestedTopicId,
 }) => showModalBottomSheet<Topic>(
   context: context,
+  sheetAnimationStyle: AppMotion.sheetStyle(context),
   builder: (sheetContext) {
     final choices = [
       for (final t in store.openTopics)
@@ -1360,6 +1361,7 @@ class TopicDetailScreen extends StatelessWidget {
     ];
     final key = await showModalBottomSheet<String>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       builder: (sheetContext) => SafeArea(
         child: ListView(
           shrinkWrap: true,

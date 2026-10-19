@@ -9,6 +9,7 @@ import '../widgets/context_timeline.dart';
 import '../widgets/mobile_header.dart';
 import '../widgets/morning_brief_card.dart';
 import '../widgets/scan_sheet.dart';
+import '../widgets/status_indicators.dart';
 import '../widgets/widgets.dart';
 import 'diary_screen.dart';
 import 'new_recording_sheet.dart';
@@ -269,7 +270,7 @@ class _FocusCard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       decoration: BoxDecoration(
         color: AppColors.accent,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(AppRadii.sheet),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -354,9 +355,9 @@ class _OrganizeProgressCard extends StatelessWidget {
     return Material(
       key: const ValueKey('today-organize'),
       color: AppColors.bgCard,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(AppRadii.card),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadii.card),
         onTap: onOpenLibrary,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -574,10 +575,7 @@ class _ActionsSectionState extends State<_ActionsSection> {
                 key: const ValueKey('today-extract-todos'),
                 onPressed: _extracting ? null : _extract,
                 icon: _extracting
-                    ? const SizedBox.square(
-                        dimension: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const ThinkingDots()
                     : const Icon(Icons.auto_awesome_outlined, size: 18),
                 label: Text(_extracting ? '提取中…' : '提取待办'),
               ),

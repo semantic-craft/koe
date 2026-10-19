@@ -55,8 +55,6 @@ class MacArchiveSettings extends StatelessWidget {
                 Switch.adaptive(
                   key: const ValueKey('mac-receive-switch'),
                   value: archive.deskReceivingEnabled,
-                  activeTrackColor: AppColors.accent.withValues(alpha: 0.45),
-                  activeThumbColor: AppColors.accent,
                   onChanged: (value) async {
                     try {
                       await archive.setDeskReceiving(value);
@@ -97,8 +95,6 @@ class MacArchiveSettings extends StatelessWidget {
             title: const Text('新原件自动归档'),
             subtitle: const Text('Mac 不在线时排队等待，不影响手机录音、查看和回放'),
             value: archive.autoArchive,
-            activeTrackColor: AppColors.accent.withValues(alpha: 0.45),
-            activeThumbColor: AppColors.accent,
             onChanged: (value) async {
               try {
                 await archive.setAutoArchive(value);

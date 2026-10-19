@@ -117,6 +117,7 @@ Future<void> showContextLinksSheet(BuildContext context, ContextItem item) {
   final c = context.read<RecorderController>();
   return showModalBottomSheet<void>(
     context: context,
+    sheetAnimationStyle: AppMotion.sheetStyle(context),
     showDragHandle: true,
     isScrollControlled: true,
     builder: (sheetContext) => _ContextLinksSheet(controller: c, item: item),

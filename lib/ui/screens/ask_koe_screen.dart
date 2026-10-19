@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/cited_text.dart';
+import '../widgets/status_indicators.dart';
 
 void openAskKoe(BuildContext context) {
   Navigator.of(context).push(
@@ -116,6 +117,7 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
     final c = context.read<RecorderController>();
     showModalBottomSheet<void>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: ListView(
@@ -274,14 +276,7 @@ class _Bubble extends StatelessWidget {
       body = live
           ? const Row(
               mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox.square(
-                  dimension: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                SizedBox(width: 8),
-                Text('正在查你的资料…'),
-              ],
+              children: [ThinkingDots(), SizedBox(width: 8), Text('正在查你的资料…')],
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,7 +336,7 @@ class _Bubble extends StatelessWidget {
           color: mine
               ? AppColors.accentSoft
               : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppRadii.card),
         ),
         child: body,
       ),

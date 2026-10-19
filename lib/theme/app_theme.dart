@@ -1,5 +1,7 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 
 /// Spacing scale adapted from nexu-io/open-design (`tokens.css` `--s-*`).
 class AppSpacing {
@@ -21,7 +23,7 @@ class AppSpacing {
   static const double s48 = 48;
 }
 
-/// Corner radius scale adapted from nexu-io/open-design (`tokens.css` `--r-*`).
+/// Corner radius scale (docs/design/ui-guidelines.md「圆角」).
 class AppRadii {
   AppRadii._();
 
@@ -31,19 +33,108 @@ class AppRadii {
   static const double lg = 12;
   static const double xl = 16;
   static const double pill = 999;
+
+  /// Buttons and inputs.
+  static const double button = sm;
+
+  /// Sub-panels inside a page: tool strips, attachments, segmented tracks.
+  static const double panel = md;
+
+  /// Cards and list groups.
+  static const double card = lg;
+
+  /// Hero cards, dialogs and bottom sheets.
+  static const double sheet = xl;
 }
 
-/// Motion durations and easing curves adapted from nexu-io/open-design.
+/// Motion durations and spring curves (docs/design/ui-guidelines.md「动效」).
+///
+/// Three durations and three springs; no default ease or linear curves.
+/// Everything that moves goes through [duration] or [sheetStyle] so iOS
+/// Reduce Motion (Flutter's `disableAnimations`) turns it off.
 class AppMotion {
   AppMotion._();
 
-  static const Duration fast = Duration(milliseconds: 120);
-  static const Duration normal = Duration(milliseconds: 200);
-  static const Duration exit = Duration(milliseconds: 140);
-  static const Duration slow = Duration(milliseconds: 280);
+  /// Focus rings, hover and press feedback.
+  static const Duration micro = Duration(milliseconds: 70);
 
-  /// Open-design deceleration curve (`cubic-bezier(0.23, 1, 0.32, 1)`).
-  static const Curve easeOut = Cubic(0.23, 1.0, 0.32, 1.0);
+  /// Buttons, tabs, segmented controls, chips.
+  static const Duration snap = Duration(milliseconds: 120);
+
+  /// Panels, dialogs and sheets.
+  static const Duration sheet = Duration(milliseconds: 300);
+
+  /// Buttons, tabs and segmented switches: quick with a small overshoot.
+  static const Curve snappy = SpringCurve(stiffness: 600, damping: 30);
+
+  /// Panels and dialogs: settles with almost no overshoot.
+  static const Curve gentle = SpringCurve(stiffness: 320, damping: 28);
+
+  /// Closing drawers and snapping into place: overdamped, no overshoot.
+  static const Curve heavySnap = SpringCurve(
+    stiffness: 1200,
+    damping: 80,
+    mass: 0.1,
+  );
+
+  static bool reduced(BuildContext context) =>
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+
+  /// [base], or zero when the system asks for reduced motion.
+  static Duration duration(BuildContext context, Duration base) =>
+      reduced(context) ? Duration.zero : base;
+
+  /// Bottom sheets open with [gentle] and close with [heavySnap].
+  static AnimationStyle sheetStyle(BuildContext context) => reduced(context)
+      ? AnimationStyle.noAnimation
+      : AnimationStyle(
+          curve: gentle,
+          duration: sheet,
+          reverseCurve: heavySnap,
+          reverseDuration: snap,
+        );
+}
+
+/// A damped spring from 0 to 1, stretched over the animation's duration.
+///
+/// The spring is simulated until it settles; the curve maps the animation's
+/// 0..1 onto that span, so an underdamped spring overshoots past 1 and comes
+/// back, and an overdamped one arrives without overshoot.
+class SpringCurve extends Curve {
+  const SpringCurve({
+    required this.stiffness,
+    required this.damping,
+    this.mass = 1,
+  });
+
+  final double stiffness;
+  final double damping;
+  final double mass;
+
+  static const _tolerance = Tolerance(distance: 0.001, velocity: 0.01);
+
+  SpringSimulation _simulation() => SpringSimulation(
+    SpringDescription(mass: mass, stiffness: stiffness, damping: damping),
+    0,
+    1,
+    0,
+    tolerance: _tolerance,
+  );
+
+  static final _settleTimes = <(double, double, double), double>{};
+
+  double get _settleTime =>
+      _settleTimes.putIfAbsent((stiffness, damping, mass), () {
+        final simulation = _simulation();
+        var time = 0.0;
+        while (!simulation.isDone(time) && time < 5) {
+          time += 0.004;
+        }
+        return time;
+      });
+
+  @override
+  double transformInternal(double t) => _simulation().x(t * _settleTime);
 }
 
 /// Warm mainline color tokens. The light workspace palette below is the
@@ -52,10 +143,23 @@ class AppMotion {
 class AppColors {
   AppColors._();
 
-  // Light workspace surfaces.
-  static const bg = Color(0xFFF5F5F3);
-  static const bgElevated = Color(0xFFFCFCFB);
-  static const bgCard = Color(0xFFFFFFFF);
+  // Surface 0–3, from the canvas up (docs/design/ui-guidelines.md「表面」).
+  /// Surface 0: page canvas behind everything.
+  static const surface0 = Color(0xFFF5F5F3);
+
+  /// Surface 1: bars, sheets and the area a page scrolls on.
+  static const surface1 = Color(0xFFFCFCFB);
+
+  /// Surface 2: cards and list groups.
+  static const surface2 = Color(0xFFFFFFFF);
+
+  /// Surface 3: inputs, popovers and dialogs above a card.
+  static const surface3 = Color(0xFFFFFFFF);
+
+  // Older names for the same surfaces.
+  static const bg = surface0;
+  static const bgElevated = surface1;
+  static const bgCard = surface2;
   static const bgCardHover = Color(0xFFECEBE6);
   static const bgPanel = Color(0xFFECEBE6);
   static const bgSubtle = Color(0xFFE7E5DE);
@@ -68,17 +172,19 @@ class AppColors {
   static const borderSelected = Color(0xFFB5AFA5);
   static const borderFocus = Color(0xFFA4472B);
 
-  // Typography ink ladder.
+  // Three text levels. Muted still meets WCAG AA (4.5:1) on surfaces 0–3;
+  // on bgPanel/bgSubtle use secondary for small text.
   static const textPrimary = Color(0xFF252521);
-  static const textBody = Color(0xFF454540);
   static const textSecondary = Color(0xFF686860);
-  static const textMuted = Color(0xFF75756D);
-  static const textFaint = Color(0xFF9C9C93);
+  static const textMuted = Color(0xFF6F6F67);
 
   // Primary ink & semantic status colors.
   static const inkAccent = Color(0xFFA4472B);
   static const onInkAccent = Colors.white;
   static const accent = Color(0xFFA4472B);
+
+  /// Pressed state of a filled accent control (white text 7.7:1).
+  static const accentPressed = Color(0xFF8A3B23);
   static const accentSoft = Color(0xFFF6E9E2);
   static const accentBorder = Color(0xFFD8B7A8);
 
@@ -140,13 +246,12 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     required this.borderStrong,
     required this.borderSelected,
     required this.textPrimary,
-    required this.textBody,
     required this.textSecondary,
     required this.textMuted,
-    required this.textFaint,
     required this.inkAccent,
     required this.onInkAccent,
     required this.accent,
+    required this.accentPressed,
     required this.accentSoft,
     required this.accentBorder,
     required this.amber,
@@ -173,13 +278,12 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
   final Color borderStrong;
   final Color borderSelected;
   final Color textPrimary;
-  final Color textBody;
   final Color textSecondary;
   final Color textMuted;
-  final Color textFaint;
   final Color inkAccent;
   final Color onInkAccent;
   final Color accent;
+  final Color accentPressed;
   final Color accentSoft;
   final Color accentBorder;
   final Color amber;
@@ -207,13 +311,12 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     borderStrong: AppColors.borderStrong,
     borderSelected: AppColors.borderSelected,
     textPrimary: AppColors.textPrimary,
-    textBody: AppColors.textBody,
     textSecondary: AppColors.textSecondary,
     textMuted: AppColors.textMuted,
-    textFaint: AppColors.textFaint,
     inkAccent: AppColors.inkAccent,
     onInkAccent: AppColors.onInkAccent,
     accent: AppColors.accent,
+    accentPressed: AppColors.accentPressed,
     accentSoft: AppColors.accentSoft,
     accentBorder: AppColors.accentBorder,
     amber: AppColors.amber,
@@ -244,13 +347,12 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     borderStrong: const Color(0xFF5A5048),
     borderSelected: const Color(0xFF6E635A),
     textPrimary: const Color(0xFFF5F1EC),
-    textBody: const Color(0xFFE4DED7),
     textSecondary: const Color(0xFFC9C2B9),
     textMuted: const Color(0xFF9C948A),
-    textFaint: const Color(0xFF6E675F),
     inkAccent: const Color(0xFFF5F1EC),
     onInkAccent: const Color(0xFF221E1B),
     accent: const Color(0xFFC97B54),
+    accentPressed: const Color(0xFFB0683F),
     accentSoft: const Color(0xFF3D2B22),
     accentBorder: const Color(0xFF5A3B2C),
     amber: const Color(0xFFD9A05B),
@@ -295,13 +397,12 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     Color? borderStrong,
     Color? borderSelected,
     Color? textPrimary,
-    Color? textBody,
     Color? textSecondary,
     Color? textMuted,
-    Color? textFaint,
     Color? inkAccent,
     Color? onInkAccent,
     Color? accent,
+    Color? accentPressed,
     Color? accentSoft,
     Color? accentBorder,
     Color? amber,
@@ -328,13 +429,12 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
       borderStrong: borderStrong ?? this.borderStrong,
       borderSelected: borderSelected ?? this.borderSelected,
       textPrimary: textPrimary ?? this.textPrimary,
-      textBody: textBody ?? this.textBody,
       textSecondary: textSecondary ?? this.textSecondary,
       textMuted: textMuted ?? this.textMuted,
-      textFaint: textFaint ?? this.textFaint,
       inkAccent: inkAccent ?? this.inkAccent,
       onInkAccent: onInkAccent ?? this.onInkAccent,
       accent: accent ?? this.accent,
+      accentPressed: accentPressed ?? this.accentPressed,
       accentSoft: accentSoft ?? this.accentSoft,
       accentBorder: accentBorder ?? this.accentBorder,
       amber: amber ?? this.amber,
@@ -366,13 +466,12 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
       borderStrong: Color.lerp(borderStrong, other.borderStrong, t)!,
       borderSelected: Color.lerp(borderSelected, other.borderSelected, t)!,
       textPrimary: Color.lerp(textPrimary, other.textPrimary, t)!,
-      textBody: Color.lerp(textBody, other.textBody, t)!,
       textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,
       textMuted: Color.lerp(textMuted, other.textMuted, t)!,
-      textFaint: Color.lerp(textFaint, other.textFaint, t)!,
       inkAccent: Color.lerp(inkAccent, other.inkAccent, t)!,
       onInkAccent: Color.lerp(onInkAccent, other.onInkAccent, t)!,
       accent: Color.lerp(accent, other.accent, t)!,
+      accentPressed: Color.lerp(accentPressed, other.accentPressed, t)!,
       accentSoft: Color.lerp(accentSoft, other.accentSoft, t)!,
       accentBorder: Color.lerp(accentBorder, other.accentBorder, t)!,
       amber: Color.lerp(amber, other.amber, t)!,
@@ -442,45 +541,84 @@ class AppTheme {
       extensions: [t],
     );
 
+    // iPhone keeps Apple's 44pt touch target; the Mac uses the denser
+    // pointer size (docs/design/ui-guidelines.md「按钮尺寸」).
+    final compact = defaultTargetPlatform == TargetPlatform.macOS;
+    final control = compact ? 32.0 : 44.0;
+    final controlSize = Size(control, control);
     final buttonShape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(AppRadii.sm),
+      borderRadius: BorderRadius.circular(AppRadii.button),
+    );
+    // Keyboard focus draws an accent ring outside the control (mainly macOS);
+    // nothing else gets an outline, per the one-border rule.
+    final focusRing = WidgetStateProperty.resolveWith<BorderSide?>(
+      (states) => states.contains(WidgetState.focused)
+          ? BorderSide(
+              color: t.accent,
+              width: 2,
+              strokeAlign: BorderSide.strokeAlignOutside,
+            )
+          : null,
+    );
+    final motion = ButtonStyle(
+      side: focusRing,
+      animationDuration: AppMotion.snap,
+      splashFactory: InkRipple.splashFactory,
     );
     return base.copyWith(
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(44, 44),
-          shape: buttonShape,
-          elevation: 0,
-          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        ),
+        style:
+            FilledButton.styleFrom(
+                  minimumSize: controlSize,
+                  shape: buttonShape,
+                  elevation: 0,
+                  textStyle: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                )
+                .merge(motion)
+                .copyWith(
+                  backgroundColor: WidgetStateProperty.resolveWith(
+                    (states) => states.contains(WidgetState.disabled)
+                        ? t.bgSubtle
+                        : states.contains(WidgetState.pressed)
+                        ? t.accentPressed
+                        : t.accent,
+                  ),
+                  overlayColor: const WidgetStatePropertyAll(
+                    Colors.transparent,
+                  ),
+                ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          minimumSize: const Size(44, 44),
+          minimumSize: controlSize,
           shape: buttonShape,
           foregroundColor: t.textSecondary,
-        ),
+        ).merge(motion),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size(44, 44),
+          minimumSize: controlSize,
           shape: buttonShape,
           foregroundColor: t.textPrimary,
           backgroundColor: t.bgPanel,
-          side: BorderSide.none,
-        ),
+        ).merge(motion),
       ),
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(
-          minimumSize: const Size(44, 44),
+          minimumSize: controlSize,
           shape: buttonShape,
           foregroundColor: t.textSecondary,
-        ),
+        ).merge(motion),
       ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(
-          minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
+          minimumSize: WidgetStatePropertyAll(controlSize),
+          shape: const WidgetStatePropertyAll(StadiumBorder()),
           side: const WidgetStatePropertyAll(BorderSide.none),
+          animationDuration: AppMotion.snap,
           backgroundColor: WidgetStateProperty.resolveWith(
             (states) => states.contains(WidgetState.selected)
                 ? t.accentSoft
@@ -489,10 +627,56 @@ class AppTheme {
           foregroundColor: WidgetStateProperty.resolveWith(
             (states) => states.contains(WidgetState.disabled)
                 ? t.textMuted
+                : states.contains(WidgetState.selected)
+                ? t.accent
                 : t.textPrimary,
           ),
           textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 14)),
         ),
+      ),
+      chipTheme: ChipThemeData(
+        // Chips sit inside cards and lists; fill alone shows state.
+        side: BorderSide.none,
+        shape: const StadiumBorder(),
+        backgroundColor: t.bgPanel,
+        selectedColor: t.accentSoft,
+        secondarySelectedColor: t.accentSoft,
+        labelStyle: TextStyle(color: t.textSecondary, fontSize: 14),
+        secondaryLabelStyle: TextStyle(color: t.accent, fontSize: 14),
+        checkmarkColor: t.accent,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: const WidgetStatePropertyAll(Colors.white),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected) ? t.accent : t.bgMuted,
+        ),
+        trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+      ),
+      checkboxTheme: CheckboxThemeData(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.xs),
+        ),
+        side: BorderSide(color: t.borderStrong, width: 1.5),
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: t.accent,
+        linearTrackColor: t.accentSoft,
+        circularTrackColor: Colors.transparent,
+      ),
+      sliderTheme: SliderThemeData(
+        activeTrackColor: t.accent,
+        inactiveTrackColor: t.border,
+        thumbColor: t.accent,
+        overlayColor: t.accent.withValues(alpha: 0.12),
+      ),
+      listTileTheme: ListTileThemeData(
+        minVerticalPadding: AppSpacing.s10,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.card),
+        ),
+        iconColor: t.textSecondary,
+        textColor: t.textPrimary,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -518,8 +702,8 @@ class AppTheme {
         color: t.bgCard,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.lg),
-          side: BorderSide(color: t.border),
+          borderRadius: BorderRadius.circular(AppRadii.card),
+          side: BorderSide(color: t.border, width: 0),
         ),
         elevation: 4,
       ),
@@ -527,12 +711,17 @@ class AppTheme {
         backgroundColor: t.bgCard,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.xl),
+          borderRadius: BorderRadius.circular(AppRadii.sheet),
         ),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: t.bgElevated,
         surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AppRadii.sheet),
+          ),
+        ),
       ),
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -547,52 +736,55 @@ class AppTheme {
         ),
         iconTheme: IconThemeData(color: t.textPrimary),
       ),
-      textTheme: TextTheme(
-        displayLarge: TextStyle(
-          fontSize: 34,
-          fontWeight: FontWeight.w700,
-          color: t.textPrimary,
-          letterSpacing: -1,
-          height: 1.1,
-        ),
-        headlineMedium: TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-          color: t.textPrimary,
-          letterSpacing: -0.4,
-        ),
-        titleMedium: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-          color: t.textPrimary,
-        ),
-        bodyLarge: TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w400,
-          color: t.textPrimary,
-          height: 1.4,
-        ),
-        bodyMedium: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w400,
-          color: t.textSecondary,
-          height: 1.4,
-        ),
-        labelLarge: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.2,
-          color: t.textPrimary,
+      textTheme: _tabular(
+        TextTheme(
+          displayLarge: TextStyle(
+            fontSize: 34,
+            fontWeight: FontWeight.w700,
+            color: t.textPrimary,
+            letterSpacing: -1,
+            height: 1.1,
+          ),
+          headlineMedium: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            color: t.textPrimary,
+            letterSpacing: -0.4,
+          ),
+          titleMedium: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: t.textPrimary,
+          ),
+          bodyLarge: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w400,
+            color: t.textPrimary,
+            height: 1.4,
+          ),
+          bodyMedium: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: t.textSecondary,
+            height: 1.4,
+          ),
+          labelLarge: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
+            color: t.textPrimary,
+          ),
         ),
       ),
-      dividerTheme: DividerThemeData(color: t.border, thickness: 1, space: 1),
+      // thickness 0 draws a one-physical-pixel hairline on every screen.
+      dividerTheme: DividerThemeData(color: t.border, thickness: 0, space: 1),
       cardTheme: CardThemeData(
         color: t.bgCard,
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.lg),
-          side: BorderSide(color: t.border),
+          borderRadius: BorderRadius.circular(AppRadii.card),
+          side: BorderSide(color: t.border, width: 0),
         ),
       ),
       snackBarTheme: SnackBarThemeData(
@@ -607,6 +799,31 @@ class AppTheme {
       dropdownMenuTheme: DropdownMenuThemeData(
         menuStyle: MenuStyle(backgroundColor: WidgetStatePropertyAll(t.bgCard)),
       ),
+    );
+  }
+
+  /// Every text style uses tabular figures, so timers, durations and counts
+  /// keep their width as digits change; Chinese text is unaffected.
+  static TextTheme _tabular(TextTheme theme) {
+    const features = [FontFeature.tabularFigures()];
+    TextStyle? apply(TextStyle? style) =>
+        style?.copyWith(fontFeatures: features);
+    return theme.copyWith(
+      displayLarge: apply(theme.displayLarge),
+      displayMedium: apply(theme.displayMedium),
+      displaySmall: apply(theme.displaySmall),
+      headlineLarge: apply(theme.headlineLarge),
+      headlineMedium: apply(theme.headlineMedium),
+      headlineSmall: apply(theme.headlineSmall),
+      titleLarge: apply(theme.titleLarge),
+      titleMedium: apply(theme.titleMedium),
+      titleSmall: apply(theme.titleSmall),
+      bodyLarge: apply(theme.bodyLarge),
+      bodyMedium: apply(theme.bodyMedium),
+      bodySmall: apply(theme.bodySmall),
+      labelLarge: apply(theme.labelLarge),
+      labelMedium: apply(theme.labelMedium),
+      labelSmall: apply(theme.labelSmall),
     );
   }
 }

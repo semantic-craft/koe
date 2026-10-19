@@ -251,7 +251,7 @@ class _QueueTile extends StatelessWidget {
               Expanded(
                 child: InkWell(
                   key: ValueKey('queue-open-${entry.key}'),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppRadii.panel),
                   onTap: () => RecordingNavigation.open(
                     context,
                     controller.recordingView(reference).reference,
@@ -275,7 +275,9 @@ class _QueueTile extends StatelessWidget {
                                 ),
                                 decoration: BoxDecoration(
                                   color: AppColors.accent,
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadii.button,
+                                  ),
                                 ),
                                 child: const Text(
                                   '当前',

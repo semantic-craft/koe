@@ -404,7 +404,7 @@ class _ActiveRecordingBar extends StatelessWidget {
       child: Container(
         key: const ValueKey('active-recording-bar'),
         decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border)),
+          border: Border(top: BorderSide(color: AppColors.border, width: 0)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: Row(
@@ -412,10 +412,11 @@ class _ActiveRecordingBar extends StatelessWidget {
             Expanded(
               child: TextButton.icon(
                 onPressed: onOpen,
-                icon: Icon(
-                  Icons.mic_rounded,
-                  color: c.recording ? AppColors.coral : AppColors.textMuted,
-                ),
+                // A still dot: this bar can stay up for hours of recording,
+                // so only the recording sheet itself breathes.
+                icon: c.recording
+                    ? const _RecordingDot()
+                    : const Icon(Icons.mic_rounded, color: AppColors.textMuted),
                 label: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(c.recording ? '录音中 · 打开' : '录音已暂停 · 打开'),
@@ -433,6 +434,24 @@ class _ActiveRecordingBar extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RecordingDot extends StatelessWidget {
+  const _RecordingDot();
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.square(
+    dimension: 24,
+    child: Center(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.accent,
+          shape: BoxShape.circle,
+        ),
+        child: SizedBox.square(dimension: 10),
+      ),
+    ),
+  );
 }
 
 class _CompactPlayer extends StatelessWidget {
@@ -454,7 +473,7 @@ class _CompactPlayer extends StatelessWidget {
       child: Container(
         key: const ValueKey('compact-player'),
         decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border)),
+          border: Border(top: BorderSide(color: AppColors.border, width: 0)),
         ),
         child: Row(
           children: [
@@ -508,7 +527,7 @@ class _MobileNavBar extends StatelessWidget {
           key: const ValueKey('bottom-navigation-bar'),
           padding: const EdgeInsets.fromLTRB(12, 5, 12, 3),
           decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: AppColors.border)),
+            border: Border(top: BorderSide(color: AppColors.border, width: 0)),
           ),
           child: Row(
             children: [
@@ -567,7 +586,8 @@ class _NavItem extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
+            duration: AppMotion.duration(context, AppMotion.snap),
+            curve: AppMotion.snappy,
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -585,7 +605,8 @@ class _NavItem extends StatelessWidget {
                 const SizedBox(height: 3),
                 AnimatedContainer(
                   key: selected ? const ValueKey('active-tab-indicator') : null,
-                  duration: const Duration(milliseconds: 180),
+                  duration: AppMotion.duration(context, AppMotion.snap),
+                  curve: AppMotion.snappy,
                   width: selected ? 22 : 0,
                   height: 2,
                   color: selected ? AppColors.accent : Colors.transparent,

@@ -139,7 +139,7 @@ class PlaybackBar extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: BoxDecoration(
                   color: AppColors.bgElevated,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppRadii.panel),
                   border: Border.all(color: AppColors.border),
                 ),
                 child: DropdownButtonHideUnderline(

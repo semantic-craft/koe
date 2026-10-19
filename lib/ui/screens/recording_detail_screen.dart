@@ -127,6 +127,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     }
     final selected = await showModalBottomSheet<TranscriptChapter>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: ListView(
@@ -277,6 +278,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final segment = index == null ? null : segments[index];
     final saved = await showModalBottomSheet<bool>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       isScrollControlled: true,
       enableDrag: false,
       builder: (_) => _BookmarkEditor(
@@ -304,6 +306,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final c = context.read<RecorderController>();
     final saved = await showModalBottomSheet<bool>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       isScrollControlled: true,
       enableDrag: false,
       builder: (_) => _BookmarkEditor(
@@ -352,6 +355,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final c = context.read<RecorderController>();
     await showModalBottomSheet<void>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       isScrollControlled: true,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
@@ -634,6 +638,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final controller = context.read<RecorderController>();
     final speaker = await showModalBottomSheet<TranscriptSpeaker>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       showDragHandle: true,
       isScrollControlled: true,
       builder: (context) => SafeArea(
@@ -763,6 +768,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final speakers = controller.transcriptSpeakersForPath(path);
     final selected = await showModalBottomSheet<String>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: ListView(
@@ -875,6 +881,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     try {
       await showModalBottomSheet<void>(
         context: context,
+        sheetAnimationStyle: AppMotion.sheetStyle(context),
         showDragHandle: true,
         isScrollControlled: true,
         builder: (sheetContext) {
@@ -1432,6 +1439,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       TextButton.icon(
                         onPressed: () => showModalBottomSheet<void>(
                           context: context,
+                          sheetAnimationStyle: AppMotion.sheetStyle(context),
                           isScrollControlled: true,
                           showDragHandle: true,
                           builder: (sheetContext) => SafeArea(
@@ -2122,7 +2130,9 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                                     'segment-speaker-$paragraphIndex',
                                                   ),
                                                   borderRadius:
-                                                      BorderRadius.circular(12),
+                                                      BorderRadius.circular(
+                                                        AppRadii.card,
+                                                      ),
                                                   onTap: () =>
                                                       widget
                                                           .onSegmentSpeakerTap!(
@@ -2168,7 +2178,9 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                         setState(() => _following = true);
                                         tap(paragraphIndex);
                                       },
-                                      borderRadius: BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadii.button,
+                                      ),
                                       child: content,
                                     ),
                                   );
@@ -3009,7 +3021,7 @@ class _OrganizeBanner extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
         decoration: BoxDecoration(
           color: AppColors.bgSubtle,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.panel),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3088,7 +3100,7 @@ class _PendingTranscriptBanner extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
         decoration: BoxDecoration(
           color: AppColors.bgSubtle,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.panel),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

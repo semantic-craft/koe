@@ -271,6 +271,7 @@ class ProjectDetailScreen extends StatelessWidget {
     final initial = {...chosen};
     final ok = await showModalBottomSheet<bool>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       showDragHandle: true,
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
