@@ -33,6 +33,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   bool get _liveProcessing;
   Future<void> _loadLocalExports({bool notify = true});
   abstract final RealtimeBleStream _realtime;
+  abstract int _recordWireStatus;
   abstract final Map<String, String> _recordingErrors;
   // ignore: unused_element_parameter
   String _recordingKey({int? fileId, String? path});
@@ -78,6 +79,41 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   /// retrieval pulls them again instead of reusing the partial file. Kept in
   /// the file-job journal directory so this survives a restart.
   Set<int> get _incompleteRetrievalIds => _fileJobs.incompleteRetrievals;
+
+  /// Whether the local copy of device [file] holds everything the device has:
+  /// retrieved, not marked incomplete, and not outgrown by the device file
+  /// since (#92). Only such a copy may be shown as downloaded (#231).
+  bool localCopyComplete(OfflineFileEntry file) {
+    if (localPathFor(file.fileId) == null) return false;
+    if (_incompleteRetrievalIds.contains(file.fileId)) return false;
+    final retrievedAt = _fileJobs.retrievedSizes[file.fileId];
+    return retrievedAt == null || file.sizeBytes <= retrievedAt;
+  }
+
+  /// The link dropped while the recorder was recording or paused (it can
+  /// continue on its own). Audio it captures meanwhile exists only in the
+  /// device file, and reconnecting does not reliably stream that gap, so the
+  /// live copy is marked incomplete: it is not shown as downloaded and is
+  /// pulled again in full once the recording ends (#231).
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  void _markInterruptedLiveTake() {
+    if (_recordWireStatus != 1 && _recordWireStatus != 2) return;
+    final take = _currentRecording;
+    if (take == null || take.ended) return;
+    final fileId = take.fileId ?? realtimeState.fileId;
+    if (fileId == null || fileId <= 0) return;
+    unawaited(
+      _fileJobs.markRetrieval(fileId, complete: false).catchError((
+        Object error,
+      ) {
+        logs = [
+          'INCOMPLETE MARK $fileId not saved: $error',
+          ...logs,
+        ].take(80).toList();
+      }),
+    );
+  }
 
   /// Recording keys whose current error was set by the completeness gate, so
   /// a later complete retrieval can clear exactly that message.
@@ -339,6 +375,8 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         owner.paused ||
         !owner.ended ||
         _finalizingRecordings.contains(_recordingKey(path: path)) ||
+        // A live copy with a gap waits for the full retrieval instead.
+        _incompleteRetrievalIds.contains(fileIdFromPath(path)) ||
         !owner.configuration.provider.defersTranscription ||
         !owner.configuration.enabled ||
         !_isConfigured(owner.configuration)) {
@@ -459,10 +497,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       files.where((f) => selectedFileIds.contains(f.fileId)).toList();
 
   List<OfflineFileEntry> get unexportedFiles =>
-      files.where((f) => localPathFor(f.fileId) == null).toList();
+      files.where((f) => !localCopyComplete(f)).toList();
 
   List<OfflineFileEntry> get selectedUnexportedFiles =>
-      selectedFiles.where((f) => localPathFor(f.fileId) == null).toList();
+      selectedFiles.where((f) => !localCopyComplete(f)).toList();
 
   void _kickRealtimeFromFileList(OfflineFileList list) {
     if (!connected) return;
