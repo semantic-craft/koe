@@ -41,6 +41,16 @@ final RegExp _transcriptSpeakerPrefix = RegExp(
   multiLine: true,
 );
 
+/// The spoken words alone: canonical `说话人 N：` line prefixes removed and
+/// lines joined, for text that is used as what the user said (a spoken
+/// question) rather than shown as a transcript.
+String stripTranscriptSpeakerPrefixes(String transcript) => transcript
+    .replaceAll(_transcriptSpeakerPrefix, '')
+    .split(RegExp(r'\s*\n\s*'))
+    .where((line) => line.isNotEmpty)
+    .join(' ')
+    .trim();
+
 /// Extract diarized speakers in first-appearance order.
 List<TranscriptSpeaker> extractTranscriptSpeakers(
   String transcript, {

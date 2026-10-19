@@ -582,6 +582,9 @@ class _NavItem extends StatelessWidget {
         button: true,
         selected: selected,
         label: label,
+        // Excluding the child's semantics also drops its tap; restore it so
+        // VoiceOver and Voice Control can activate the tab.
+        onTap: onTap,
         excludeSemantics: true,
         child: InkWell(
           onTap: onTap,
@@ -762,6 +765,7 @@ class _DesktopSidebar extends StatelessWidget {
                   button: true,
                   selected: !trashOpen && index == i,
                   label: label,
+                  onTap: () => onSelect(i),
                   excludeSemantics: true,
                   child: TextButton.icon(
                     key: ValueKey('nav-${['home', 'device', 'settings'][i]}'),
@@ -789,6 +793,7 @@ class _DesktopSidebar extends StatelessWidget {
                 button: true,
                 selected: trashOpen,
                 label: '回收站',
+                onTap: onOpenTrash,
                 excludeSemantics: true,
                 child: TextButton.icon(
                   key: const ValueKey('nav-trash'),

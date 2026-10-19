@@ -316,6 +316,7 @@ class _MarkerStrip extends StatelessWidget {
                     button: true,
                     label:
                         '回听书签 ${InlinePlayer._fmt(marker.at)} ${marker.label}',
+                    onTap: onTap == null ? null : () => onTap!(marker),
                     excludeSemantics: true,
                     child: InkResponse(
                       key: ValueKey('player-marker-$index'),

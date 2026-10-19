@@ -314,7 +314,8 @@ mixin _RecorderVoiceInput on ChangeNotifier {
             clip.path,
             configuration: config,
           );
-          final text = result.text.trim();
+          // Diarized engines label the speaker; a question is just the words.
+          final text = stripTranscriptSpeakerPrefixes(result.text);
           if (text.isEmpty) {
             failure = '没听清，这句话已保留；可以重试或直接输入文字';
           } else {
