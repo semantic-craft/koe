@@ -51,7 +51,8 @@ class AppRadii {
 ///
 /// Three durations and three springs; no default ease or linear curves.
 /// Everything that moves goes through [duration] or [sheetStyle] so iOS
-/// Reduce Motion (Flutter's `disableAnimations`) turns it off.
+/// Reduce Motion turns it off: `KoeApp` folds iOS `reduceMotion` into
+/// Flutter's `disableAnimations`, which is what [reduced] reads.
 class AppMotion {
   AppMotion._();
 
@@ -550,7 +551,8 @@ class AppTheme {
       borderRadius: BorderRadius.circular(AppRadii.button),
     );
     // Keyboard focus draws an accent ring outside the control (mainly macOS);
-    // nothing else gets an outline, per the one-border rule.
+    // nothing else gets an outline, per the one-border rule. `none` rather
+    // than null: null lets OutlinedButton fall back to Material's outline.
     final focusRing = WidgetStateProperty.resolveWith<BorderSide?>(
       (states) => states.contains(WidgetState.focused)
           ? BorderSide(
@@ -558,7 +560,7 @@ class AppTheme {
               width: 2,
               strokeAlign: BorderSide.strokeAlignOutside,
             )
-          : null,
+          : BorderSide.none,
     );
     final motion = ButtonStyle(
       side: focusRing,
