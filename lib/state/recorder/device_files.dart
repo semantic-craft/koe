@@ -13,9 +13,6 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   abstract final BleService _ble;
   abstract final BleFilePull _blePull;
   abstract bool _catalogConversionRunning;
-  Future<Set<int>> _completeLocalExportIds(
-    Iterable<OfflineFileEntry> deviceFiles,
-  );
   Future<String> _convertExportToWav(
     String path, {
     bool register = true,
@@ -74,46 +71,19 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   String? transcriptForPath(String path);
   // END DEPS
 
-  /// Device file ids whose latest transfer was kept without the done signal /
-  /// every byte. They do not count as exported, so a manual or automatic
-  /// retrieval pulls them again instead of reusing the partial file. Kept in
-  /// the file-job journal directory so this survives a restart.
-  Set<int> get _incompleteRetrievalIds => _fileJobs.incompleteRetrievals;
+  /// Completeness and retrievability of every device file's local copy.
+  late final DeviceCopies _copies;
 
-  /// Whether the local copy of device [file] holds everything the device has:
-  /// retrieved, not marked incomplete, and not outgrown by the device file
-  /// since (#92). Only such a copy may be shown as downloaded (#231).
-  bool localCopyComplete(OfflineFileEntry file) {
-    if (localPathFor(file.fileId) == null) return false;
-    if (_incompleteRetrievalIds.contains(file.fileId)) return false;
-    final retrievedAt = _fileJobs.retrievedSizes[file.fileId];
-    return retrievedAt == null || file.sizeBytes <= retrievedAt;
-  }
-
-  /// Device files the recorder answered with an unknown size: it is still
-  /// recording or paused on them, so a BLE pull cannot succeed (#253).
-  /// Forgotten when the recorder reports a stop.
-  final Set<int> _unfinishedDeviceFileIds = {};
-
-  /// Whether device [file] is a recording the recorder has not finished yet.
-  /// Only a stopped recording can be pulled, so such a file is not requested;
-  /// the user is told how to end it instead ([unfinishedDeviceFileMessage]).
-  bool deviceFileUnfinished(OfflineFileEntry file) {
-    if (file.sizeBytes == BleFilePull.unfinishedFileSize) return true;
-    if ((info?.recordingStatus ?? 0) == 0) return false;
-    return _unfinishedDeviceFileIds.contains(file.fileId) ||
-        _currentRecording?.fileId == file.fileId;
-  }
+  /// What the local copy of device [file] amounts to; only
+  /// [DeviceCopyStatus.downloaded] may be shown as downloaded (#231).
+  DeviceCopyStatus copyStatusOf(OfflineFileEntry file) =>
+      _copies.statusOf(file);
 
   /// The App has no command that ends a recording (only start and pause,
   /// PROTOCOL.md §5.2), so the recorder's own button has to end it.
   String get unfinishedDeviceFileMessage => autoRealtime
       ? '录音豆上这段还没结束：按一下录音豆按键结束录音，结束后会自动补取'
       : '录音豆上这段还没结束：按一下录音豆按键结束录音，再重新取回';
-
-  // Used by other parts through their abstract declarations.
-  // ignore: unused_element
-  void _forgetUnfinishedDeviceFiles() => _unfinishedDeviceFileIds.clear();
 
   /// The link dropped while the recorder was recording or paused (it can
   /// continue on its own). Audio it captures meanwhile exists only in the
@@ -129,9 +99,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     final fileId = take.fileId ?? realtimeState.fileId;
     if (fileId == null || fileId <= 0) return;
     unawaited(
-      _fileJobs.markRetrieval(fileId, complete: false).catchError((
-        Object error,
-      ) {
+      _copies.markInterrupted(fileId).catchError((Object error) {
         logs = [
           'INCOMPLETE MARK $fileId not saved: $error',
           ...logs,
@@ -139,10 +107,6 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       }),
     );
   }
-
-  /// Recording keys whose current error was set by the completeness gate, so
-  /// a later complete retrieval can clear exactly that message.
-  final Map<String, String> _completenessErrors = {};
 
   /// The single completion point for every device transfer (BLE automatic,
   /// BLE manual, Wi-Fi export). Converts the raw transfer to WAV, registers it
@@ -178,7 +142,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       final fileId = ExportCatalog.fileIdFromPath(path);
       if (fileId != null) {
         try {
-          await _fileJobs.markRetrieval(
+          await _copies.recordRetrieval(
             fileId,
             complete: complete,
             listedBytes: listedSizes[fileId],
@@ -272,7 +236,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     // changed recording that invalidates existing text.
     void blockIncomplete(String reason) {
       _recordingErrors[key] = reason;
-      _completenessErrors[key] = reason;
+      _copies.blockForCompleteness(key, reason);
       notifyListeners();
     }
 
@@ -290,7 +254,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         return;
       }
       // A complete retrieval clears only a message the gate itself left.
-      final stale = _completenessErrors.remove(key);
+      final stale = _copies.clearCompleteness(key);
       if (stale != null && _recordingErrors[key] == stale) {
         _recordingErrors.remove(key);
         notifyListeners();
@@ -401,7 +365,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         !owner.ended ||
         _finalizingRecordings.contains(_recordingKey(path: path)) ||
         // A live copy with a gap waits for the full retrieval instead.
-        _incompleteRetrievalIds.contains(fileIdFromPath(path)) ||
+        !_copies.usableForProcessing(
+          fileId: fileIdFromPath(path),
+          recordingKey: _recordingKey(path: path),
+        ) ||
         !owner.configuration.provider.defersTranscription ||
         !owner.configuration.enabled ||
         !_isConfigured(owner.configuration)) {
@@ -522,10 +489,24 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       files.where((f) => selectedFileIds.contains(f.fileId)).toList();
 
   List<OfflineFileEntry> get unexportedFiles =>
-      files.where((f) => !localCopyComplete(f)).toList();
+      files.where(_notDownloaded).toList();
 
   List<OfflineFileEntry> get selectedUnexportedFiles =>
-      selectedFiles.where((f) => !localCopyComplete(f)).toList();
+      selectedFiles.where(_notDownloaded).toList();
+
+  bool _notDownloaded(OfflineFileEntry file) =>
+      copyStatusOf(file) != DeviceCopyStatus.downloaded;
+
+  /// Device files a retrieval should skip: already complete locally, or
+  /// in the trash.
+  Set<int> _retrievedOrDismissedIds(Iterable<OfflineFileEntry> files) => {
+    for (final file in files)
+      if (const {
+        DeviceCopyStatus.downloaded,
+        DeviceCopyStatus.dismissed,
+      }.contains(copyStatusOf(file)))
+        file.fileId,
+  };
 
   void _kickRealtimeFromFileList(OfflineFileList list) {
     if (!connected) return;
@@ -734,7 +715,13 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   }
 
   void _scheduleAutoTransferMissing() {
-    if (_disposed || !autoRealtime || _autoTransferRunning) return;
+    if (_disposed) return;
+    unawaited(
+      _copies.reconcile(files).then((changed) {
+        if (changed) notifyListeners();
+      }),
+    );
+    if (!autoRealtime || _autoTransferRunning) return;
     unawaited(
       Future<void>.delayed(
         const Duration(milliseconds: 200),
@@ -761,11 +748,11 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     final failed = <int>[];
     try {
       await _loadLocalExports(notify: false);
-      final completeIds = await _completeLocalExportIds(files);
-      final missing = ExportCatalog.unexportedNewestFirst(
-        files,
-        completeIds,
-      ).where((file) => !deviceFileUnfinished(file)).toList();
+      await _copies.reconcile(files);
+      final completeIds = _retrievedOrDismissedIds(files);
+      final missing = ExportCatalog.unexportedNewestFirst(files, completeIds)
+          .where((file) => copyStatusOf(file) != DeviceCopyStatus.unfinished)
+          .toList();
       if (_shouldYieldAutoTransfer) return;
       if (missing.isEmpty) {
         statusMessage = '已导出录音已是最新';
@@ -789,32 +776,34 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         try {
           statusMessage = progressMessage();
           notifyListeners();
-          final rawPath = await _blePull.pullFile(
-            file,
-            timeout: blePullInactivityTimeout,
-            onProgress: (received, expected) {
-              if (_shouldYieldAutoTransfer) return;
-              final now = DateTime.now();
-              if (now.difference(lastProgressAt) <
-                  const Duration(milliseconds: 250)) {
-                return;
-              }
-              lastProgressAt = now;
-              final progress = expected > 0
-                  ? ' ${(received * 100 / expected).clamp(0, 100).floor()}%'
-                  : '';
-              statusMessage = progressMessage(progress);
-              notifyListeners();
-            },
-          );
-          await _completeRetrievedRecordings(
-            [rawPath],
-            decrypted: true,
-            transferComplete: (raw) => !_blePull.isIncomplete(raw),
-            listedSizes: {file.fileId: file.sizeBytes},
-          );
+          await _copies.retrieving(file.fileId, () async {
+            final rawPath = await _blePull.pullFile(
+              file,
+              timeout: blePullInactivityTimeout,
+              onProgress: (received, expected) {
+                if (_shouldYieldAutoTransfer) return;
+                final now = DateTime.now();
+                if (now.difference(lastProgressAt) <
+                    const Duration(milliseconds: 250)) {
+                  return;
+                }
+                lastProgressAt = now;
+                final progress = expected > 0
+                    ? ' ${(received * 100 / expected).clamp(0, 100).floor()}%'
+                    : '';
+                statusMessage = progressMessage(progress);
+                notifyListeners();
+              },
+            );
+            await _completeRetrievedRecordings(
+              [rawPath],
+              decrypted: true,
+              transferComplete: (raw) => !_blePull.isIncomplete(raw),
+              listedSizes: {file.fileId: file.sizeBytes},
+            );
+          });
           // A partial file is kept but not reported as transferred.
-          if (!_incompleteRetrievalIds.contains(file.fileId)) {
+          if (!_copies.isPartial(file.fileId)) {
             completeIds.add(file.fileId);
             exported++;
           }
@@ -824,7 +813,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
           break;
         } on BleFileUnfinished {
           // Pulled again automatically once the recorder reports a stop.
-          _unfinishedDeviceFileIds.add(file.fileId);
+          _copies.noteUnfinished(file.fileId);
           notifyListeners();
         } catch (error) {
           failed.add(file.fileId);
@@ -883,7 +872,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (deviceFileUnfinished(file)) {
+    if (copyStatusOf(file) == DeviceCopyStatus.unfinished) {
       errorMessage = unfinishedDeviceFileMessage;
       notifyListeners();
       return;
@@ -903,7 +892,8 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     try {
       await _yieldAutoTransfer();
       // The auto transfer may have finished this file while yielding.
-      if ((await _completeLocalExportIds([file])).contains(file.fileId)) {
+      await _copies.reconcile([file]);
+      if (_retrievedOrDismissedIds([file]).isNotEmpty) {
         statusMessage = '已下载 ${file.title}';
         return;
       }
@@ -912,34 +902,36 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
 
       phase = AppPhase.busy;
       notifyListeners();
-      final rawPath = await _blePull.pullFile(
-        file,
-        timeout: blePullInactivityTimeout,
-        onProgress: (received, expected) {
-          final now = DateTime.now();
-          if (now.difference(lastProgressAt) <
-              const Duration(milliseconds: 250)) {
-            return;
-          }
-          lastProgressAt = now;
-          final progress = expected > 0
-              ? ' ${(received * 100 / expected).clamp(0, 100).floor()}%'
-              : '';
-          statusMessage = '正在下载$progress · ${file.title}';
-          notifyListeners();
-        },
-      );
-      await _completeRetrievedRecordings(
-        [rawPath],
-        decrypted: true,
-        transferComplete: (raw) => !_blePull.isIncomplete(raw),
-        listedSizes: {file.fileId: file.sizeBytes},
-      );
+      await _copies.retrieving(file.fileId, () async {
+        final rawPath = await _blePull.pullFile(
+          file,
+          timeout: blePullInactivityTimeout,
+          onProgress: (received, expected) {
+            final now = DateTime.now();
+            if (now.difference(lastProgressAt) <
+                const Duration(milliseconds: 250)) {
+              return;
+            }
+            lastProgressAt = now;
+            final progress = expected > 0
+                ? ' ${(received * 100 / expected).clamp(0, 100).floor()}%'
+                : '';
+            statusMessage = '正在下载$progress · ${file.title}';
+            notifyListeners();
+          },
+        );
+        await _completeRetrievedRecordings(
+          [rawPath],
+          decrypted: true,
+          transferComplete: (raw) => !_blePull.isIncomplete(raw),
+          listedSizes: {file.fileId: file.sizeBytes},
+        );
+      });
       statusMessage = '已下载 ${file.title}';
     } on BleFilePullCancelled {
       statusMessage = '已取消下载';
     } on BleFileUnfinished {
-      _unfinishedDeviceFileIds.add(file.fileId);
+      _copies.noteUnfinished(file.fileId);
       errorMessage = unfinishedDeviceFileMessage;
       statusMessage = '录音豆上这段还没结束';
     } catch (e) {
@@ -1021,7 +1013,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         (selectedFileIds.isNotEmpty ? selectedUnexportedFiles : unexportedFiles)
             .where(
               (file) =>
-                  !deviceFileUnfinished(file) &&
+                  copyStatusOf(file) != DeviceCopyStatus.unfinished &&
                   !_isRecordingAudioLocked(
                     file.fileId,
                     localPathFor(file.fileId),

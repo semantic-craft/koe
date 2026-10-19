@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/protocol/models.dart';
-import 'package:koe/state/file_job_journal.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/transcript_store.dart';
 import 'package:koe/ui/screens/files_screen.dart';
@@ -440,37 +439,10 @@ void main() {
       ),
     );
 
-    final complete = await c.completeLocalExportIdsForTesting([
-      OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4),
-    ]);
-
-    expect(complete, contains(int.parse(id)));
-  });
-
-  test('设备上同一录音续录变长后，本地旧副本不再算已取全，重启后仍记得', () async {
-    const id = 1783917010;
-    final wav = File('${temp.path}/$id.wav');
-    // A decoded WAV is far larger than the compressed device listing.
-    await wav.writeAsBytes(wavBytes(List.filled(50000, 1)));
-    final journal = File('${temp.path}/file_jobs.json');
-    RecorderController open() => RecorderController(
-      loadPersistedState: false,
-      libraryStore: RecordingLibraryStore(file: storeFile),
-      libraryDirectory: imports,
-      fileJobJournal: FileJobJournal(file: journal),
-    )..localPathsByFileId[id] = wav.path;
-
-    final first = open();
-    final listed = OfflineFileEntry(fileId: id, sizeBytes: 2000);
-    expect(await first.completeLocalExportIdsForTesting([listed]), {id});
-    first.dispose();
-
-    // Recording resumed on the device and appended to the same file.
-    final restarted = open();
-    addTearDown(restarted.dispose);
-    final grown = OfflineFileEntry(fileId: id, sizeBytes: 3500);
-    expect(await restarted.completeLocalExportIdsForTesting([grown]), isEmpty);
-    expect(await restarted.completeLocalExportIdsForTesting([listed]), {id});
+    expect(
+      c.copyStatusOf(OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4)),
+      DeviceCopyStatus.dismissed,
+    );
   });
 
   test('彻底删除设备录音后重启仍保留墓碑，不会自动补传', () async {
@@ -498,12 +470,13 @@ void main() {
     final restarted = controller();
     addTearDown(restarted.dispose);
     await restarted.waitForRecordingLibrary();
-    final complete = await restarted.completeLocalExportIdsForTesting([
-      OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4),
-    ]);
-
     expect(restarted.trashedAssets, isEmpty);
-    expect(complete, contains(int.parse(id)));
+    expect(
+      restarted.copyStatusOf(
+        OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4),
+      ),
+      DeviceCopyStatus.dismissed,
+    );
   });
 
   test('清理缓存只删除派生播放文件，不删除原件', () async {

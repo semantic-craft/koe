@@ -713,8 +713,9 @@ class _DeviceFilesTab extends StatelessWidget {
                       final f = c.files[i];
                       final selected = c.selectedFileIds.contains(f.fileId);
                       final hasLocal = c.localPathFor(f.fileId) != null;
-                      final complete = c.localCopyComplete(f);
-                      final unfinished = !complete && c.deviceFileUnfinished(f);
+                      final status = c.copyStatusOf(f);
+                      final complete = status == DeviceCopyStatus.downloaded;
+                      final unfinished = status == DeviceCopyStatus.unfinished;
                       final downloading = c.activeBleDownloadFileId == f.fileId;
                       final locked = c
                           .recordingView(

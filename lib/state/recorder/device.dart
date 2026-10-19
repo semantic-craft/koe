@@ -18,7 +18,7 @@ mixin _RecorderDevice on ChangeNotifier {
   _RecordingSession? get _currentRecording;
   abstract bool _disposed;
   Future<void> _enqueueDeferredRecording(_RecordingSession owner, String path);
-  void _forgetUnfinishedDeviceFiles();
+  abstract final DeviceCopies _copies;
   void _handleFileListPage(OfflineFileList list);
   void _kickRealtimeFromFileList(OfflineFileList list);
   void _markInterruptedLiveTake();
@@ -780,7 +780,7 @@ mixin _RecorderDevice on ChangeNotifier {
       if (status == 0) {
         _currentRecording?.ended = true;
         // The recorder closed its file: it can be pulled now (#253).
-        _forgetUnfinishedDeviceFiles();
+        _copies.recorderStopped();
       }
       _currentRecording?.finalizing =
           status == 0 && (realtimeState.active || _sttStream != null);

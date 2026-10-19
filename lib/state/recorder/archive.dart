@@ -66,13 +66,11 @@ class _RecorderArchiveSource implements ArchiveSource {
     if (!archiveAllowedSourceExtensions.contains(extension)) return null;
     if (controller._isTrashedPath(path)) return null;
     final id = controller.fileIdFromPath(path);
-    if (controller._isRecordingAudioLocked(id, path)) return null;
-    final asset = controller.library.assetForPath(path);
-    if (asset?.originalComplete == false) return null;
-    if (id != null && controller._incompleteRetrievalIds.contains(id)) {
+    if (!controller._copies.usableForProcessing(fileId: id, path: path)) {
       return null;
     }
-    if (controller._blePull.isIncomplete(path)) return null;
+    final asset = controller.library.assetForPath(path);
+    if (asset?.originalComplete == false) return null;
     final file = File(path);
     if (!await file.exists()) return null;
     final stat = await file.stat();

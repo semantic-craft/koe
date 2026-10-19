@@ -65,6 +65,7 @@ import 'playback_history.dart';
 import 'recording_bookmarks.dart';
 import 'speech_configuration.dart';
 import 'deferred_file_jobs.dart';
+import 'device_copies.dart';
 import 'file_job_journal.dart';
 import 'topic_store.dart';
 import 'topic_note.dart';
@@ -77,6 +78,7 @@ export 'context/diary_store.dart';
 export 'context/ask_store.dart';
 export 'context/context_export.dart';
 export '../platform/system_tasks.dart';
+export 'device_copies.dart' show DeviceCopies, DeviceCopyStatus;
 export 'recording.dart';
 export 'recording_library.dart';
 export 'listening_queue.dart';
@@ -210,6 +212,7 @@ class RecorderController extends ChangeNotifier
     QwenSttService? qwenSpeech,
     DoubaoSttService? doubaoSpeech,
     FileJobJournal? fileJobJournal,
+    DeviceCopies? deviceCopies,
     RecordingAnalysis? analysisController,
     AnalysisService? topicRecommendationService,
     TopicStore? topicStore,
@@ -444,6 +447,9 @@ class RecorderController extends ChangeNotifier
     _subs.add(_realtime.stateStream.listen(_onRealtimeState));
     _wirePlayer();
     _fileJobs = fileJobJournal ?? FileJobJournal(inMemory: !loadPersistedState);
+    _copies = (deviceCopies ?? DeviceCopies(inMemory: !loadPersistedState))
+      ..bind(_ControllerCopyContext(this));
+    unawaited(_copies.load());
     _deferredJobs = DeferredFileJobs<SpeechConfiguration>(
       canStart: () =>
           !_disposed &&
@@ -698,8 +704,7 @@ class RecorderController extends ChangeNotifier
       originalPath: asset?.originalPath,
       originalPresent: path == null ? false : File(path).existsSync(),
       originalComplete:
-          (asset?.originalComplete ?? true) &&
-          (id == null || !_incompleteRetrievalIds.contains(id)),
+          (asset?.originalComplete ?? true) && !_copies.isPartial(id),
       archived: asset?.trashed ?? false,
       segments: path == null ? const [] : transcriptSegmentsForPath(path),
       manuallyEdited:
@@ -985,6 +990,31 @@ class _RecordingSession {
 /// origin, and [transcribe] dispatches one file transcription. [grouped]
 /// marks engines persisted through the shared `engines` trio map rather
 /// than a legacy key field.
+/// What [DeviceCopies] reads from the controller.
+class _ControllerCopyContext implements DeviceCopyContext {
+  _ControllerCopyContext(this._c);
+  final RecorderController _c;
+
+  @override
+  String? localPathFor(int fileId) => _c.localPathFor(fileId);
+
+  @override
+  bool isDismissed(int fileId) => _c.library.assets.any(
+    (asset) =>
+        asset.trashed && ExportCatalog.fileIdFromPath(asset.path) == fileId,
+  );
+
+  @override
+  int get recorderStatus => _c.info?.recordingStatus ?? 0;
+
+  @override
+  int? get currentRecordingFileId => _c._currentRecording?.fileId;
+
+  @override
+  bool isAudioLocked(int? fileId, String? path) =>
+      _c._isRecordingAudioLocked(fileId, path);
+}
+
 class _EngineAdapter {
   const _EngineAdapter({
     required this.load,

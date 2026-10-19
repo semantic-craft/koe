@@ -17,7 +17,6 @@ mixin _RecorderLibrary on ChangeNotifier {
   abstract final FileJobJournal _fileJobs;
   abstract final Future<void> _fileJobsLoaded;
   abstract final Map<String, String> _incomingTranscripts;
-  Set<int> get _incompleteRetrievalIds;
   abstract final Directory? _libraryDirectoryOverride;
   abstract final Future<Duration?> Function(String path) _localDurationReader;
   DateTime? _localFileTimestamp(String? path);
@@ -76,56 +75,6 @@ mixin _RecorderLibrary on ChangeNotifier {
 
   /// fileId → local path after Wi‑Fi export.
   final Map<int, String> localPathsByFileId = {};
-
-  Future<Set<int>> _completeLocalExportIds(
-    Iterable<OfflineFileEntry> deviceFiles,
-  ) async {
-    final complete = <int>{};
-    try {
-      // Restores the persisted incomplete-retrieval ids after a restart.
-      await _fileJobs.load();
-    } catch (_) {}
-    final trashedIds = <int>{};
-    for (final asset in library.assets.where((asset) => asset.trashed)) {
-      final id = ExportCatalog.fileIdFromPath(asset.path);
-      if (id != null) trashedIds.add(id);
-    }
-    for (final file in deviceFiles) {
-      if (trashedIds.contains(file.fileId)) {
-        complete.add(file.fileId);
-        continue;
-      }
-      // A partial transfer converts to a full-size WAV header, so its size
-      // alone would pass the threshold below; retrieve it again instead.
-      if (_incompleteRetrievalIds.contains(file.fileId)) continue;
-      // Pause/resume appends to the same device file. The local copy is a
-      // decoded WAV, far larger than the compressed listing, so its size
-      // alone cannot reveal that the device file grew; compare listings.
-      final retrievedAt = _fileJobs.retrievedSizes[file.fileId];
-      if (retrievedAt != null && file.sizeBytes > retrievedAt) continue;
-      final path = localPathsByFileId[file.fileId];
-      if (path == null) continue;
-      try {
-        final local = File(path);
-        if (!await local.exists()) continue;
-        final size = await local.length();
-        final minimum = (file.sizeBytes * 0.95).floor();
-        if (size > 0 && (file.sizeBytes <= 0 || size >= minimum)) {
-          complete.add(file.fileId);
-          // Copies from before sizes were recorded start their baseline now.
-          if (retrievedAt == null && file.sizeBytes > 0) {
-            await _fileJobs.noteRetrievedSize(file.fileId, file.sizeBytes);
-          }
-        }
-      } catch (_) {}
-    }
-    return complete;
-  }
-
-  @visibleForTesting
-  Future<Set<int>> completeLocalExportIdsForTesting(
-    Iterable<OfflineFileEntry> deviceFiles,
-  ) => _completeLocalExportIds(deviceFiles);
 
   Future<Directory> _localExportDirectory() async {
     Directory base;

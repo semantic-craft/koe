@@ -65,6 +65,26 @@ void main() {
     expect(ble.downloads.first, 103);
   }
 
+  test('a copy saved before retrieved sizes were recorded that holds less '
+      'than the device lists is not shown as downloaded', () async {
+    controller.autoRealtime = false;
+    final exports = await Directory(
+      '${directory.path}/AnkerRecorder/exports',
+    ).create(recursive: true);
+    await File('${exports.path}/101.wav').writeAsBytes(List.filled(100, 0));
+    await controller.refreshLocalFiles();
+    expect(controller.localPathFor(101), isNotNull);
+
+    await controller.listFiles();
+    ble.filePage([101], size: 400);
+    await _until(() => controller.files.isNotEmpty);
+    await _until(() => controller.unexportedFiles.isNotEmpty);
+    expect(
+      controller.copyStatusOf(controller.files.single),
+      DeviceCopyStatus.partial,
+    );
+  });
+
   test('a take the recorder kept recording through a link drop is not shown '
       'as downloaded and is retrieved again in full (#231)', () async {
     controller.dispose();
@@ -152,10 +172,8 @@ void main() {
     expect(ble.downloads.where((id) => id == 105), hasLength(1));
     expect(controller.errorMessage, contains('按一下录音豆按键结束录音'));
     expect(
-      controller.deviceFileUnfinished(
-        OfflineFileEntry(fileId: 105, sizeBytes: 160),
-      ),
-      isTrue,
+      controller.copyStatusOf(OfflineFileEntry(fileId: 105, sizeBytes: 160)),
+      DeviceCopyStatus.unfinished,
     );
 
     // Ended on the recorder: it is pulled automatically.
@@ -351,6 +369,7 @@ void main() {
               ble: link,
               qwenSpeech: qwen,
               fileJobJournal: FileJobJournal(file: journalFile),
+              deviceCopies: DeviceCopies(directory: journalFile.parent),
               retrievedAudioSettleTime: Duration.zero,
               blePullInactivityTimeout: const Duration(milliseconds: 200),
               rawExportConverter: (raw) async {
