@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
@@ -6,9 +7,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import 'app_identity.dart';
+import 'state/container_paths.dart';
 import 'state/recorder_controller.dart';
 import 'platform/recording_shortcut_service.dart';
 import 'theme/app_theme.dart';
@@ -51,6 +55,19 @@ Future<void> main() async {
       systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    // Before any store loads: saved absolute paths may name the container
+    // of a previous install.
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      await relocateStoredPaths(
+        Directory(p.join(docs.path, 'AnkerRecorder')),
+        docs.path,
+      );
+    } catch (error) {
+      debugPrint('[ContainerPaths] relocation skipped: $error');
+    }
+  }
   final controller = RecorderController();
   if (defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.android) {
