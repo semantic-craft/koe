@@ -714,6 +714,7 @@ class _DeviceFilesTab extends StatelessWidget {
                       final selected = c.selectedFileIds.contains(f.fileId);
                       final hasLocal = c.localPathFor(f.fileId) != null;
                       final complete = c.localCopyComplete(f);
+                      final unfinished = !complete && c.deviceFileUnfinished(f);
                       final downloading = c.activeBleDownloadFileId == f.fileId;
                       final locked = c
                           .recordingView(
@@ -729,6 +730,7 @@ class _DeviceFilesTab extends StatelessWidget {
                         selected: selected,
                         hasLocal: hasLocal,
                         complete: complete,
+                        unfinished: unfinished,
                         downloading: downloading,
                         onTap: c.selecting
                             ? (busy || locked
@@ -751,11 +753,14 @@ class _DeviceFilesTab extends StatelessWidget {
                                   c.toggleFileSelected(f.fileId);
                                 }
                               },
-                        onExport:
-                            !c.canDownloadOverBle ||
-                                downloading ||
-                                complete ||
-                                locked
+                        // Tapping an unfinished one explains how to end it
+                        // instead of starting a pull that cannot succeed.
+                        onExport: unfinished && !locked
+                            ? () => c.downloadFileOverBle(f)
+                            : !c.canDownloadOverBle ||
+                                  downloading ||
+                                  complete ||
+                                  locked
                             ? null
                             : () => c.downloadFileOverBle(f),
                         onDelete: busy || locked
@@ -1607,6 +1612,7 @@ class _DeviceFileTile extends StatelessWidget {
     required this.selected,
     required this.hasLocal,
     required this.complete,
+    this.unfinished = false,
     required this.downloading,
     this.onTap,
     this.onLongPress,
@@ -1622,6 +1628,10 @@ class _DeviceFileTile extends StatelessWidget {
   /// The local copy holds the whole device file; a partial one is
   /// labelled 未完整 and can be retrieved again (#231).
   final bool complete;
+
+  /// The recorder is still recording or paused on this file, so it cannot be
+  /// pulled until the recording ends (#253).
+  final bool unfinished;
   final bool downloading;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
@@ -1691,6 +1701,8 @@ class _DeviceFileTile extends StatelessWidget {
                       Text(
                         '${file.sizeLabel}${complete
                             ? ' · 已下载'
+                            : unfinished
+                            ? ' · 录音豆上未结束'
                             : hasLocal
                             ? ' · 未完整'
                             : ''}',
@@ -1709,6 +1721,8 @@ class _DeviceFileTile extends StatelessWidget {
                         ? '已下载'
                         : downloading
                         ? '正在下载'
+                        : unfinished
+                        ? '录音豆上这段还没结束，结束后才能取回'
                         : hasLocal
                         ? '未完整，通过蓝牙重新取回'
                         : '通过蓝牙下载',
@@ -1724,8 +1738,10 @@ class _DeviceFileTile extends StatelessWidget {
                         : Icon(
                             complete
                                 ? Icons.download_done_rounded
+                                : unfinished
+                                ? Icons.hourglass_top_rounded
                                 : Icons.download_rounded,
-                            color: complete || onExport == null
+                            color: complete || unfinished || onExport == null
                                 ? AppColors.textMuted
                                 : AppColors.mint,
                           ),

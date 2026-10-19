@@ -1277,6 +1277,38 @@ void main() async {
     },
   );
 
+  test('continuing a paused take stops playback of its settled copy, which '
+      'the next pause rewrites (#252)', () async {
+    final directory = await Directory.systemTemp.createTemp('paused-play-');
+    addTearDown(() => directory.delete(recursive: true));
+    final audio = File('${directory.path}/44.wav');
+    await audio.writeAsBytes([1, 2, 3]);
+    final ble = _Ble();
+    final c = controller(_Apple(), ble: ble);
+    await c.startRecord();
+    c.handleRealtimeStateForTesting(
+      const RealtimeStreamState(active: true, fileId: 44),
+    );
+    final ref = c.currentRecordingReference!;
+    await c.pauseRecord();
+    ble.deviceStatus(2);
+    c.handleRealtimeStateForTesting(
+      RealtimeStreamState(fileId: 44, path: audio.path, bytesReceived: 320),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(c.recordingView(ref).paused, isTrue);
+    expect(c.recordingView(ref).audioLocked, isFalse);
+    c
+      ..playingPath = audio.path
+      ..playingFileId = 44;
+
+    await c.startRecord();
+    ble.deviceStatus(1);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.recordingView(ref).audioLocked, isTrue);
+    expect(c.playingPath, isNull);
+  });
+
   test(
     'a disconnected paused take becomes a saved detail rather than a dead continue control',
     () async {

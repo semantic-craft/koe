@@ -1680,53 +1680,68 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           ),
         ],
       ),
-      bottomNavigationBar:
-          recording.live || recording.paused || recording.audioLocked
-          ? _LiveControls(recording: recording)
-          : fileReady
-          ? Material(
-              color: AppColors.bgCard,
-              child: SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                  child: Center(
-                    heightFactor: 1,
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 720),
-                      child: InlinePlayer(
-                        path: recording.path!,
-                        fileId: recording.reference.fileId,
-                        markers: showMarkers
-                            ? [
-                                for (final target in bookmarkTargets)
-                                  if (target.seekTo != null)
-                                    InlinePlayerMarker(
-                                      id: target.bookmark.id,
-                                      at: target.seekTo!,
-                                      label: markerLabel(target.bookmark),
-                                    ),
-                              ]
-                            : const [],
-                        onMarkerTap: (marker) {
-                          for (final target in bookmarkTargets) {
-                            if (target.bookmark.id == marker.id) {
-                              _openBookmark(target);
-                              return;
+      // A paused take whose copy has settled plays back (#252); the live
+      // controls stay above the player so it can still be continued.
+      bottomNavigationBar: fileReady && !recording.live
+          ? _withPausedControls(
+              recording,
+              Material(
+                color: AppColors.bgCard,
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                    child: Center(
+                      heightFactor: 1,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: InlinePlayer(
+                          path: recording.path!,
+                          fileId: recording.reference.fileId,
+                          markers: showMarkers
+                              ? [
+                                  for (final target in bookmarkTargets)
+                                    if (target.seekTo != null)
+                                      InlinePlayerMarker(
+                                        id: target.bookmark.id,
+                                        at: target.seekTo!,
+                                        label: markerLabel(target.bookmark),
+                                      ),
+                                ]
+                              : const [],
+                          onMarkerTap: (marker) {
+                            for (final target in bookmarkTargets) {
+                              if (target.bookmark.id == marker.id) {
+                                _openBookmark(target);
+                                return;
+                              }
                             }
-                          }
-                        },
-                        onAddBookmark: _addBookmark,
+                          },
+                          onAddBookmark: _addBookmark,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             )
+          : recording.live || recording.paused || recording.audioLocked
+          ? _LiveControls(recording: recording)
           : null,
     );
   }
 }
+
+Widget _withPausedControls(RecordingViewData recording, Widget player) =>
+    recording.paused
+    ? Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _LiveControls(recording: recording, bottomSafeArea: false),
+          player,
+        ],
+      )
+    : player;
 
 /// Follows playback position ticks and rebuilds [builder] only when the
 /// playing sentence changes, so the detail screen does not rebuild per tick.
@@ -2207,8 +2222,9 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
 }
 
 class _LiveControls extends StatelessWidget {
-  const _LiveControls({required this.recording});
+  const _LiveControls({required this.recording, this.bottomSafeArea = true});
   final RecordingViewData recording;
+  final bool bottomSafeArea;
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -2216,6 +2232,7 @@ class _LiveControls extends StatelessWidget {
       color: AppColors.bgCard,
       child: SafeArea(
         top: false,
+        bottom: bottomSafeArea,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           child: Row(

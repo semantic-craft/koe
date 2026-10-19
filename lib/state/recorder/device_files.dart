@@ -90,6 +90,31 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     return retrievedAt == null || file.sizeBytes <= retrievedAt;
   }
 
+  /// Device files the recorder answered with an unknown size: it is still
+  /// recording or paused on them, so a BLE pull cannot succeed (#253).
+  /// Forgotten when the recorder reports a stop.
+  final Set<int> _unfinishedDeviceFileIds = {};
+
+  /// Whether device [file] is a recording the recorder has not finished yet.
+  /// Only a stopped recording can be pulled, so such a file is not requested;
+  /// the user is told how to end it instead ([unfinishedDeviceFileMessage]).
+  bool deviceFileUnfinished(OfflineFileEntry file) {
+    if (file.sizeBytes == BleFilePull.unfinishedFileSize) return true;
+    if ((info?.recordingStatus ?? 0) == 0) return false;
+    return _unfinishedDeviceFileIds.contains(file.fileId) ||
+        _currentRecording?.fileId == file.fileId;
+  }
+
+  /// The App has no command that ends a recording (only start and pause,
+  /// PROTOCOL.md §5.2), so the recorder's own button has to end it.
+  String get unfinishedDeviceFileMessage => autoRealtime
+      ? '录音豆上这段还没结束：按一下录音豆按键结束录音，结束后会自动补取'
+      : '录音豆上这段还没结束：按一下录音豆按键结束录音，再重新取回';
+
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  void _forgetUnfinishedDeviceFiles() => _unfinishedDeviceFileIds.clear();
+
   /// The link dropped while the recorder was recording or paused (it can
   /// continue on its own). Audio it captures meanwhile exists only in the
   /// device file, and reconnecting does not reliably stream that gap, so the
@@ -737,7 +762,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     try {
       await _loadLocalExports(notify: false);
       final completeIds = await _completeLocalExportIds(files);
-      final missing = ExportCatalog.unexportedNewestFirst(files, completeIds);
+      final missing = ExportCatalog.unexportedNewestFirst(
+        files,
+        completeIds,
+      ).where((file) => !deviceFileUnfinished(file)).toList();
       if (_shouldYieldAutoTransfer) return;
       if (missing.isEmpty) {
         statusMessage = '已导出录音已是最新';
@@ -794,6 +822,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
           notifyListeners();
         } on BleFilePullCancelled {
           break;
+        } on BleFileUnfinished {
+          // Pulled again automatically once the recorder reports a stop.
+          _unfinishedDeviceFileIds.add(file.fileId);
+          notifyListeners();
         } catch (error) {
           failed.add(file.fileId);
           logs = [
@@ -851,6 +883,11 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (deviceFileUnfinished(file)) {
+      errorMessage = unfinishedDeviceFileMessage;
+      notifyListeners();
+      return;
+    }
     if (!canDownloadOverBle) {
       errorMessage = '当前传输结束后再下载';
       notifyListeners();
@@ -901,6 +938,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       statusMessage = '已下载 ${file.title}';
     } on BleFilePullCancelled {
       statusMessage = '已取消下载';
+    } on BleFileUnfinished {
+      _unfinishedDeviceFileIds.add(file.fileId);
+      errorMessage = unfinishedDeviceFileMessage;
+      statusMessage = '录音豆上这段还没结束';
     } catch (e) {
       errorMessage = '下载失败，请重新连接设备后重试';
       statusMessage = '下载失败';
@@ -979,10 +1020,12 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     final targets =
         (selectedFileIds.isNotEmpty ? selectedUnexportedFiles : unexportedFiles)
             .where(
-              (file) => !_isRecordingAudioLocked(
-                file.fileId,
-                localPathFor(file.fileId),
-              ),
+              (file) =>
+                  !deviceFileUnfinished(file) &&
+                  !_isRecordingAudioLocked(
+                    file.fileId,
+                    localPathFor(file.fileId),
+                  ),
             )
             .toList();
     if (targets.isEmpty) {
