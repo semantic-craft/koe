@@ -22,7 +22,6 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 - 验证：`check`（运行 `scripts/check`：`flutter analyze` 与 `flutter test`；依赖先按上条 `flutter pub get` 装好，真机、签名与安装验收不在其中）。
 - 性能：`scripts/perf-check`（约 2 分钟，不在 `check` 里）在本机以 profile 模式跑 [integration_test/perf](integration_test/perf/) 的场景，按 `thresholds.json` 判定；屏幕需解锁，窗口进不了前台时超时退出。改动 BLE、播放、音频转换、JSON 存储或问答检索时跑一次，把数字写进 PR。
 - 构建、真机运行与安装脚本按 [README](README.md)；[scripts](scripts/) 运行前核对目标设备和副作用。
-- 硬件：`KOE_HW_TESTS=1 scripts/hw-check` 让本机 Mac 连真实录音豆跑 [integration_test/hw](integration_test/hw/) 的探针（现有：BLE 续传偏移）。不设变量时直接跳过；录音豆不在线、正在录音或被别的设备连着时记为「跳过」，不算已验证。会暂时挤掉 iPhone 上 Koe 的连接；第一次运行需允许 Koe 使用蓝牙。
 - 实现、评审或验收前先读 [lessons](lessons.md) 顶部的十条规则。
 - 写 BLE、录音、音频或记忆/待办类代码前，先用 `scripts/ref search` 检索上游、omi 和锁定版本依赖的同类实现，引用 `路径:行号` 再写；何时用、语料和存放位置见 [reference-code](docs/agents/reference-code.md)。
 

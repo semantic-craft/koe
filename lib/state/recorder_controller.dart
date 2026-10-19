@@ -821,10 +821,6 @@ class RecorderController extends ChangeNotifier
   late final Future<void> _persistedDeviceLoaded;
   @override
   final DeviceCrypto _crypto = DeviceCrypto();
-
-  /// The session crypto, for the hardware resume probe (integration_test/hw).
-  @visibleForTesting
-  DeviceCrypto get debugCrypto => _crypto;
   @override
   late final WifiExportService _wifi;
   @override
