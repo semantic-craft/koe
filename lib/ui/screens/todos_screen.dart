@@ -265,11 +265,26 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
       if (todo.owner != null) ('承诺人', todo.owner!),
       ('时间', todoDueLabel(todo)),
       ('状态', todoStatusLabel(todo.status)),
+      (
+        '项目',
+        todo.projectIds.isEmpty
+            ? '未关联'
+            : [
+                for (final id in todo.projectIds)
+                  ?c.projects.projectById(id)?.title,
+              ].join('、'),
+      ),
     ];
     return Scaffold(
       appBar: AppBar(
         title: const Text('待办详情'),
         actions: [
+          IconButton(
+            key: const ValueKey('todo-projects'),
+            tooltip: '关联项目',
+            onPressed: () => _pickProjects(context, todo),
+            icon: const Icon(Icons.folder_open_outlined),
+          ),
           IconButton(
             key: const ValueKey('todo-edit'),
             tooltip: '纠正',
@@ -381,6 +396,62 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
     await _guard(
       context,
       () => c.editTodo(todo.id, due: picked.$1, dueHasTime: picked.$2),
+    );
+  }
+
+  Future<void> _pickProjects(BuildContext context, Todo todo) async {
+    final c = context.read<RecorderController>();
+    final chosen = {...todo.projectIds};
+    final choices = [
+      for (final project in c.projects.projects)
+        if (project.status == ProjectStatus.active ||
+            chosen.contains(project.id))
+          project,
+    ];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('关联项目'),
+          content: choices.isEmpty
+              ? const Text('还没有项目。先在「项目」页新建。')
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final project in choices)
+                      CheckboxListTile(
+                        value: chosen.contains(project.id),
+                        title: Text(project.title),
+                        onChanged: (checked) => setDialogState(() {
+                          if (checked == true) {
+                            chosen.add(project.id);
+                          } else {
+                            chosen.remove(project.id);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    await _guard(
+      context,
+      () => c.setTodoProjects(todo.id, [
+        for (final project in c.projects.projects)
+          if (chosen.contains(project.id)) project.id,
+      ]),
     );
   }
 

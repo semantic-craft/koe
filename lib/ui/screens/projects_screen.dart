@@ -6,18 +6,23 @@ import '../../theme/app_theme.dart';
 import '../widgets/mobile_header.dart';
 import '../widgets/widgets.dart';
 import 'new_recording_sheet.dart';
+import 'project_detail_screen.dart';
 import 'topics_screen.dart';
 
 /// Phone "Projects" section (#131).
 ///
-/// Cross-day projects belong to a later ticket. This page keeps the existing
-/// book/topic flow reachable and describes the empty project list honestly.
+/// Cross-day projects (#135): each lists its latest linked material and the
+/// next step said so far. Books and topics stay reachable below.
 class ProjectsScreen extends StatelessWidget {
   const ProjectsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    final closed = [
+      for (final project in c.projects.projects)
+        if (project.status != ProjectStatus.active) project,
+    ];
     return GradientScaffold(
       child: ListView(
         padding: const EdgeInsets.only(bottom: 108),
@@ -50,52 +55,67 @@ class ProjectsScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 22),
-                const SectionLabel('进行中项目'),
-                SurfaceCard(
-                  key: const ValueKey('projects-empty'),
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '还没有进行中的项目',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        '跨天项目会在后续版本接入。现在可以先用主题把录音归到一起，'
-                        '书籍和普通主题仍可继续使用。',
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.45,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          FilledButton(
-                            key: const ValueKey('create-project'),
-                            onPressed: () => _showProjectNotice(context),
-                            child: const Text('新建项目'),
-                          ),
-                          if (c.topicsEnabled)
-                            OutlinedButton(
-                              key: const ValueKey('create-topic'),
-                              onPressed: () =>
-                                  showCreateTopicDialog(context, c.topics),
-                              child: const Text('新建主题'),
-                            ),
-                        ],
-                      ),
-                    ],
+                SectionLabel(
+                  '进行中项目',
+                  trailing: TextButton(
+                    key: const ValueKey('create-project'),
+                    onPressed: () => _createProject(context),
+                    child: const Text('新建项目'),
                   ),
                 ),
+                if (c.projects.active.isEmpty)
+                  SurfaceCard(
+                    key: const ValueKey('projects-empty'),
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '还没有进行中的项目',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          '新建一个目标项目，再把不同日子的录音和待办关联进来。',
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.45,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton(
+                              key: const ValueKey('create-project-empty'),
+                              onPressed: () => _createProject(context),
+                              child: const Text('新建项目'),
+                            ),
+                            if (c.topicsEnabled)
+                              OutlinedButton(
+                                key: const ValueKey('create-topic'),
+                                onPressed: () =>
+                                    showCreateTopicDialog(context, c.topics),
+                                child: const Text('新建主题'),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  for (final project in c.projects.active)
+                    _ProjectCard(project: project),
+                if (closed.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  const SectionLabel('已完成或归档'),
+                  for (final project in closed) _ProjectCard(project: project),
+                ],
                 const SizedBox(height: 22),
                 const SectionLabel('书籍与主题'),
                 if (c.topicsEnabled)
@@ -128,33 +148,86 @@ class ProjectsScreen extends StatelessWidget {
     await handleNewRecordingAction(context, action);
   }
 
-  Future<void> _showProjectNotice(BuildContext context) {
-    return showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('项目尚未开放'),
-        content: const Text(
-          '跨天项目、行动和承诺会在后续版本接入。现在可以用主题归档录音，'
-          '待归类与当前主题不会丢失。',
+  Future<void> _createProject(BuildContext context) async {
+    final created = await showProjectDialog(context);
+    if (created == null || !context.mounted) return;
+    final c = context.read<RecorderController>();
+    try {
+      final project = await c.createProject(created.$1, goal: created.$2);
+      if (context.mounted) openProject(context, project.id);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error is StateError ? error.message.toString() : '保存失败，请重试',
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('知道了'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  settings: const RouteSettings(name: 'topics'),
-                  builder: (_) => const TopicsScreen(),
-                ),
-              );
-            },
-            child: const Text('打开主题'),
-          ),
-        ],
+      );
+    }
+  }
+}
+
+class _ProjectCard extends StatelessWidget {
+  const _ProjectCard({required this.project});
+
+  final Project project;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.watch<RecorderController>();
+    final progress = c.projectProgress(project.id);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: SurfaceCard(
+        key: ValueKey('project-${project.id}'),
+        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        onTap: () => openProject(context, project.id),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    project.title,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (project.goal.isNotEmpty)
+                    Text(
+                      project.goal,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  const SizedBox(height: 4),
+                  Text(
+                    projectLatestLabel(progress),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  Text(
+                    projectNextLabel(progress),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded),
+          ],
+        ),
       ),
     );
   }

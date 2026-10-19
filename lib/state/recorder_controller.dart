@@ -44,6 +44,7 @@ import '../wifi/wifi_export_service.dart';
 import 'app_settings_store.dart';
 import 'context/commitments.dart';
 import 'context/context_store.dart';
+import 'context/project_store.dart';
 import 'context/todo_store.dart';
 import 'device_store.dart';
 import 'export_catalog.dart';
@@ -64,6 +65,7 @@ import 'topic_summary.dart';
 
 export 'context/context_store.dart';
 export 'context/todo_store.dart';
+export 'context/project_store.dart';
 export '../platform/system_tasks.dart';
 export 'recording.dart';
 export 'recording_library.dart';
@@ -83,6 +85,7 @@ part 'recorder/library.dart';
 part 'recorder/place.dart';
 part 'recorder/context.dart';
 part 'recorder/todos.dart';
+part 'recorder/projects.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
@@ -122,6 +125,7 @@ class RecorderController extends ChangeNotifier
         _RecorderPlace,
         _RecorderContext,
         _RecorderTodos,
+        _RecorderProjects,
         _RecorderArchive,
         _RecorderTopics,
         _RecorderTranscriptionJobs,
@@ -207,6 +211,7 @@ class RecorderController extends ChangeNotifier
     ArchiveDeskStore? archiveDeskStore,
     ContextStore? contextStore,
     TodoStore? todoStore,
+    ProjectStore? projectStore,
     SystemTasks? systemTasks,
     AnalysisService? contextAnalysisService,
   }) : _analysisOverride = analysisController,
@@ -259,6 +264,10 @@ class RecorderController extends ChangeNotifier
     todos.addListener(notifyListeners);
     unawaited(todos.load());
     _systemTasks = systemTasks ?? const ChannelSystemTasks();
+    _ownsProjects = projectStore == null;
+    projects = projectStore ?? ProjectStore(inMemory: !loadPersistedState);
+    projects.addListener(notifyListeners);
+    unawaited(projects.load());
     if (loadPersistedState) {
       _todoLifecycle = AppLifecycleListener(
         onResume: () => unawaited(syncSystemLinks()),
@@ -471,6 +480,7 @@ class RecorderController extends ChangeNotifier
 
   bool _ownsContextItems = true;
   bool _ownsTodos = true;
+  bool _ownsProjects = true;
   AppLifecycleListener? _todoLifecycle;
 
   /// Whether topic notes (#49) are active. First version: iPhone only.
@@ -825,6 +835,8 @@ class RecorderController extends ChangeNotifier
     if (_ownsContextItems) contextItems.dispose();
     todos.removeListener(notifyListeners);
     if (_ownsTodos) todos.dispose();
+    projects.removeListener(notifyListeners);
+    if (_ownsProjects) projects.dispose();
     _todoLifecycle?.dispose();
     _disposeContextServices();
     _lifecycle?.dispose();

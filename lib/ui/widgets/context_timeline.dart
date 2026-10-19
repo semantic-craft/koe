@@ -32,6 +32,9 @@ class ContextTimelineRow extends StatelessWidget {
     final topicTitles = [
       for (final id in item.topicIds) ?c.topics.topicById(id)?.title,
     ];
+    final projectTitles = [
+      for (final id in item.projectIds) ?c.projects.projectById(id)?.title,
+    ];
     final details = [contextTimeLabel(item), ?item.location];
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -63,7 +66,7 @@ class ContextTimelineRow extends StatelessWidget {
                       color: AppColors.textSecondary,
                     ),
                   ),
-                  if (topicTitles.isNotEmpty) ...[
+                  if (topicTitles.isNotEmpty || projectTitles.isNotEmpty) ...[
                     const SizedBox(height: 6),
                     Wrap(
                       spacing: 6,
@@ -77,19 +80,26 @@ class ContextTimelineRow extends StatelessWidget {
                               color: AppColors.mint,
                             ),
                           ),
+                        for (final title in projectTitles)
+                          Text(
+                            '▸ $title',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
                       ],
                     ),
                   ],
                 ],
               ),
             ),
-            if (c.topicsEnabled)
-              IconButton(
-                key: ValueKey('timeline-links-${item.id}'),
-                tooltip: '修改关联',
-                onPressed: () => showContextLinksSheet(context, item),
-                icon: const Icon(Icons.sell_outlined, size: 20),
-              ),
+            IconButton(
+              key: ValueKey('timeline-links-${item.id}'),
+              tooltip: '修改关联',
+              onPressed: () => showContextLinksSheet(context, item),
+              icon: const Icon(Icons.sell_outlined, size: 20),
+            ),
           ],
         ),
       ),
@@ -97,8 +107,9 @@ class ContextTimelineRow extends StatelessWidget {
   }
 }
 
-/// Lets the user correct which topics an item belongs to. Saving changes
-/// only this item's links; the recording keeps its own single topic.
+/// Lets the user correct which topics and projects an item belongs to.
+/// Saving changes only this item's links; the recording keeps its own single
+/// topic and is never copied.
 Future<void> showContextLinksSheet(BuildContext context, ContextItem item) {
   final c = context.read<RecorderController>();
   return showModalBottomSheet<void>(
@@ -121,6 +132,7 @@ class _ContextLinksSheet extends StatefulWidget {
 
 class _ContextLinksSheetState extends State<_ContextLinksSheet> {
   late final Set<String> _topics = {...widget.item.topicIds};
+  late final Set<String> _projects = {...widget.item.projectIds};
   bool _saving = false;
   String? _error;
 
@@ -129,12 +141,23 @@ class _ContextLinksSheetState extends State<_ContextLinksSheet> {
       _saving = true;
       _error = null;
     });
-    final topics = widget.controller.topics;
+    final c = widget.controller;
+    final item = widget.item;
+    final topics = [
+      for (final topic in c.topics.topics)
+        if (_topics.contains(topic.id)) topic.id,
+    ];
+    final projects = [
+      for (final project in c.projects.projects)
+        if (_projects.contains(project.id)) project.id,
+    ];
     try {
-      await widget.controller.setContextItemTopics(widget.item.id, [
-        for (final topic in topics.topics)
-          if (_topics.contains(topic.id)) topic.id,
-      ]);
+      if (c.topicsEnabled && !sameIds(topics, item.topicIds)) {
+        await c.setContextItemTopics(item.id, topics);
+      }
+      if (!sameIds(projects, item.projectIds)) {
+        await c.setContextItemProjects(item.id, projects);
+      }
       if (mounted) Navigator.pop(context);
     } catch (_) {
       if (!mounted) return;
@@ -145,12 +168,36 @@ class _ContextLinksSheetState extends State<_ContextLinksSheet> {
     }
   }
 
+  Widget _choice(String key, String title, Set<String> chosen, String id) =>
+      CheckboxListTile(
+        key: ValueKey(key),
+        value: chosen.contains(id),
+        title: Text(title),
+        onChanged: _saving
+            ? null
+            : (checked) => setState(() {
+                if (checked == true) {
+                  chosen.add(id);
+                } else {
+                  chosen.remove(id);
+                }
+              }),
+      );
+
   @override
   Widget build(BuildContext context) {
-    final store = widget.controller.topics;
-    final choices = [
-      for (final topic in store.topics)
-        if (!topic.closed || _topics.contains(topic.id)) topic,
+    final c = widget.controller;
+    final topics = c.topicsEnabled
+        ? [
+            for (final topic in c.topics.topics)
+              if (!topic.closed || _topics.contains(topic.id)) topic,
+          ]
+        : const <Topic>[];
+    final projects = [
+      for (final project in c.projects.projects)
+        if (project.status == ProjectStatus.active ||
+            _projects.contains(project.id))
+          project,
     ];
     return SafeArea(
       child: Padding(
@@ -160,46 +207,53 @@ class _ContextLinksSheetState extends State<_ContextLinksSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              '关联主题',
+              '关联主题和项目',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
             Text(
-              '只改「${widget.item.title}」在时间线里的关联，不移动录音本身的主题，也不复制录音。',
+              '只改「${widget.item.title}」的关联，不移动录音本身的主题，也不复制录音。',
               style: const TextStyle(
                 fontSize: 13,
                 color: AppColors.textSecondary,
               ),
             ),
             const SizedBox(height: 8),
-            if (choices.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('还没有主题。先在「项目 › 书籍与主题」里新建。'),
-              )
-            else
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    for (final topic in choices)
-                      CheckboxListTile(
-                        key: ValueKey('link-topic-${topic.id}'),
-                        value: _topics.contains(topic.id),
-                        title: Text(topic.title),
-                        onChanged: _saving
-                            ? null
-                            : (checked) => setState(() {
-                                if (checked == true) {
-                                  _topics.add(topic.id);
-                                } else {
-                                  _topics.remove(topic.id);
-                                }
-                              }),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  if (c.topicsEnabled) ...[
+                    const SectionLabel('主题'),
+                    if (topics.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('还没有主题。'),
+                      ),
+                    for (final topic in topics)
+                      _choice(
+                        'link-topic-${topic.id}',
+                        topic.title,
+                        _topics,
+                        topic.id,
                       ),
                   ],
-                ),
+                  const SectionLabel('项目'),
+                  if (projects.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text('还没有项目。在「项目」页新建后可在这里关联。'),
+                    ),
+                  for (final project in projects)
+                    _choice(
+                      'link-project-${project.id}',
+                      project.title,
+                      _projects,
+                      project.id,
+                    ),
+                ],
               ),
+            ),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -211,7 +265,9 @@ class _ContextLinksSheetState extends State<_ContextLinksSheet> {
             const SizedBox(height: 8),
             FilledButton(
               key: const ValueKey('save-context-links'),
-              onPressed: _saving || choices.isEmpty ? null : _save,
+              onPressed: _saving || (topics.isEmpty && projects.isEmpty)
+                  ? null
+                  : _save,
               child: Text(_saving ? '保存中…' : '保存'),
             ),
           ],
