@@ -641,18 +641,11 @@ class RecorderController extends ChangeNotifier
         : (savedTranslation?.sourceRevision == metadata?.revision
               ? savedTranslation
               : null);
-    final label = path == null ? '' : ExportCatalog.editableLabelFromPath(path);
     final asset = path == null ? null : library.assetForPath(path);
     final archiveRecord = path == null ? null : archive.recordForPath(path);
-    final title = asset?.displayName.isNotEmpty == true
-        ? asset!.displayName
-        : archiveRecord?.displayName.isNotEmpty == true
-        ? archiveRecord!.displayName
-        : label.isNotEmpty
-        ? label
-        : id == null
-        ? '当前录音'
-        : _recordingDateTitle(id);
+    final title = path == null
+        ? (id == null ? '当前录音' : _recordingDateTitle(id))
+        : _recordingTitleForPath(path, archiveName: archiveRecord?.displayName);
     final recordedAt =
         asset?.recordedAt ??
         archiveRecord?.recordedAt ??
@@ -715,6 +708,33 @@ class RecorderController extends ChangeNotifier
           path != null &&
           _incomingTranscripts.containsKey(_recordingKey(path: path)),
     );
+  }
+
+  /// The one title a local recording shows everywhere: the name the user or
+  /// the import gave it, else a renamed file's label, else the recording time
+  /// read from the device file id.
+  ///
+  /// A stored name that is only this file's own name (`1792377669.wav`) says
+  /// nothing and is skipped: older builds wrote it when adding a place or
+  /// moving a recording to the trash created the library entry (#232).
+  @override
+  String _recordingTitleForPath(String path, {String? archiveName}) {
+    final id = fileIdFromPath(path);
+    final ownNames = {
+      p.basename(path),
+      p.basenameWithoutExtension(path),
+      if (id != null) '$id',
+    };
+    for (final stored in [
+      library.assetForPath(path)?.displayName,
+      archiveName,
+    ]) {
+      final name = stored?.trim() ?? '';
+      if (name.isNotEmpty && !ownNames.contains(name)) return name;
+    }
+    final label = ExportCatalog.editableLabelFromPath(path).trim();
+    if (label.isNotEmpty) return label;
+    return id == null ? '当前录音' : _recordingDateTitle(id);
   }
 
   String _recordingDateTitle(int id) {

@@ -77,12 +77,7 @@ class _RecorderArchiveSource implements ArchiveSource {
     if (!await file.exists()) return null;
     final stat = await file.stat();
     if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
-    final label = ExportCatalog.editableLabelFromPath(path).trim();
-    final displayName = asset?.displayName.isNotEmpty == true
-        ? asset!.displayName
-        : label.isNotEmpty
-        ? label
-        : p.basenameWithoutExtension(path);
+    final displayName = controller._recordingTitleForPath(path);
     return ArchiveCandidate(
       path: path,
       displayName: displayName.isEmpty ? '录音' : displayName,
