@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../state/minutes_document.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import '../file_types.dart';
 
 /// Read-only 妙记 text import with an optional audio pairing.
 ///
@@ -166,11 +167,7 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
   }
 
   Future<void> _attach(MinutesDocument document) async {
-    const group = XTypeGroup(
-      label: '音频',
-      extensions: ['wav', 'm4a', 'mp3', 'aac', 'flac', 'ogg', 'opus'],
-    );
-    final selected = await openFile(acceptedTypeGroups: const [group]);
+    final selected = await openFile(acceptedTypeGroups: const [audioFileTypes]);
     if (selected == null || !mounted) return;
     setState(() {
       _attaching = true;

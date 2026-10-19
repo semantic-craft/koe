@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/recorder_controller.dart';
+import 'file_types.dart';
 
 /// Picks one audio file and commits it to the original-audio library.
 ///
@@ -11,13 +12,7 @@ import '../state/recorder_controller.dart';
 Future<void> pickAndImportLocalAudio(BuildContext context) async {
   final selected = await openFile(
     confirmButtonText: '导入',
-    acceptedTypeGroups: const [
-      XTypeGroup(
-        label: '音频',
-        extensions: ['wav', 'm4a', 'mp3', 'aac', 'flac', 'ogg', 'opus'],
-        mimeTypes: ['audio/*'],
-      ),
-    ],
+    acceptedTypeGroups: const [audioFileTypes],
   );
   if (selected == null || !context.mounted) return;
   final messenger = ScaffoldMessenger.of(context);
