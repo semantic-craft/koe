@@ -1,6 +1,6 @@
 # Koe 路线图
 
-更新：2026-10-19（核对 main@f42af90 与 GitHub 工单）。本文是 [#6 总工单](https://github.com/semantic-craft/koe/issues/6)、[#106 产品路线](https://github.com/semantic-craft/koe/issues/106) 与 [#124 手机优先规格](https://github.com/semantic-craft/koe/issues/124) 的一页摘要；需求细节和验收条件以工单为准，本文只回答「做完了什么、下一步做什么、什么先不做」。
+更新：2026-10-19（核对 main@46500e0 与 GitHub 工单）。本文是 [#6 总工单](https://github.com/semantic-craft/koe/issues/6)、[#106 产品路线](https://github.com/semantic-craft/koe/issues/106) 与 [#124 手机优先规格](https://github.com/semantic-craft/koe/issues/124) 的一页摘要；需求细节和验收条件以工单为准，本文只回答「做完了什么、下一步做什么、什么先不做」。
 
 **方向：** 手机优先的个人记录与持续事项工具。原音频永久保留、文字可点回原声；在此之上整理今日事件、项目、待办、地点和日记，最后再开放给外部 AI。主导航为「今日 / 项目 / 资料」。Mac 是辅助阅读与归档端，不阻塞手机。
 
@@ -37,7 +37,9 @@
 
 - #133 新录音自动整理及中断恢复——已合并（转写→摘要→提取待办，历史按范围回填，未知请求不自动重发），待真机验收
 
-同属 P1、仍待处理：#92 录音重启时长异常。#135 跨天项目持续跟进已提前合并，待真机验收。
+#92 录音重启时长异常：已找到并修复「录音豆续录变长后手机副本不再取回」（PR #208）；历史观察是否同因仍待真机（final-device-pass 第 15 步），工单保持 OPEN。#135 跨天项目持续跟进已提前合并，待真机验收。
+
+**3. 下一步：统一真机验收。** P1 代码已全部合并，验收前不开新功能。由 Codex computer use 按 [codex-final-acceptance-prompt](docs/acceptance/codex-final-acceptance-prompt.md) 一次跑完 iPhone 清单与 final-device-pass；FAIL 修完后再按 #143 → #147 → #145 → #142 解冻 P2。安排见 [推进计划](docs/plans/koe-plan-2026-10-19.md)。
 
 ## 冻结（暂不开工，除非用户重新排期）
 
