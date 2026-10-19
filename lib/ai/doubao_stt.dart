@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../audio/ogg_opus.dart';
 import '../audio/audio_duration.dart';
+import '../audio/audio_transcoder.dart';
 import '../audio/upload_source.dart';
 import 'streaming_audio_json.dart';
 import 'cloud_stt_service.dart';
@@ -43,9 +44,12 @@ class DoubaoSttService extends CloudFileSttService {
   DoubaoSttService({
     http.Client? client,
     this.requestTimeout = const Duration(minutes: 10),
-  }) : _client = client ?? http.Client();
+    AudioTranscoder? transcoder,
+  }) : _client = client ?? http.Client(),
+       _transcoder = transcoder ?? const PlatformAudioTranscoder();
 
   final http.Client _client;
+  final AudioTranscoder _transcoder;
   final Duration requestTimeout;
 
   static const defaultBaseUrl = 'https://openspeech.bytedance.com';
@@ -54,6 +58,9 @@ class DoubaoSttService extends CloudFileSttService {
   // The official page says MB without defining the byte convention. Use
   // decimal MB conservatively, and expose this exact boundary to the user.
   static const maxDirectUploadBytes = 100000000;
+
+  /// 16 kHz mono PCM16, the WAV imported m4a/aac/flac is converted to.
+  static const wavBytesPerSecond = 32000;
   Completer<void>? _activeAbort;
   void cancelCurrent() {
     final abort = _activeAbort;
@@ -108,6 +115,7 @@ class DoubaoSttService extends CloudFileSttService {
     final abort = Completer<void>();
     _activeAbort = abort;
     var submitted = false;
+    File? converted;
     bool current() => !abort.isCompleted && (isCurrent?.call() ?? true);
     final timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (!(isCurrent?.call() ?? true) && !abort.isCompleted) abort.complete();
@@ -121,33 +129,16 @@ class DoubaoSttService extends CloudFileSttService {
         length: await File(selected).length(),
         duration: sourceDuration,
       );
-      final String audioPath;
-      try {
-        audioPath = await OggOpus.prepareUpload(selected, isCurrent: current);
-      } on StateError catch (e) {
-        throw DoubaoSttException(
-          current() ? '无法准备音频：${e.message}' : '已取消，原录音已保留',
-        );
-      }
-      final file = File(audioPath);
+      final prepared = await _prepareAudio(
+        selected,
+        sourceDuration: sourceDuration,
+        isCurrent: current,
+      );
+      final format = prepared.format;
+      final file = File(prepared.path);
+      converted = prepared.converted ? file : null;
       final length = await file.length();
       validateDoubaoAudio(length: length, duration: sourceDuration);
-      final input = await file.open();
-      final List<int> header;
-      try {
-        header = await input.read(128);
-      } finally {
-        await input.close();
-      }
-      final format = OggOpus.isWav(header)
-          ? 'wav'
-          : OggOpus.isOgg(header) &&
-                ascii.decode(header, allowInvalid: true).contains('OpusHead')
-          ? 'ogg'
-          : null;
-      if (format == null) {
-        throw const DoubaoSttException('音频格式无效，需要 WAV 或 OGG Opus');
-      }
       final request =
           StreamingAudioJsonRequest(
               Uri.parse('$origin/api/v3/auc/bigmodel/recognize/flash'),
@@ -241,7 +232,99 @@ class DoubaoSttService extends CloudFileSttService {
       if (!abort.isCompleted) abort.complete();
       timer.cancel();
       if (identical(_activeAbort, abort)) _activeAbort = null;
+      if (converted != null) {
+        try {
+          await converted.parent.delete(recursive: true);
+        } catch (_) {}
+      }
     }
+  }
+
+  /// Flash accepts WAV, MP3 and Ogg Opus. Device originals are wrapped in
+  /// Ogg; other imported containers (m4a/aac/flac) are decoded to 16 kHz
+  /// mono WAV in a temporary folder the caller removes (#233).
+  Future<({String path, String format, bool converted})> _prepareAudio(
+    String path, {
+    required Duration? sourceDuration,
+    required bool Function() isCurrent,
+  }) async {
+    final container = await AudioContainer.read(path);
+    switch (container) {
+      case AudioContainer.mp3:
+        return (path: path, format: 'mp3', converted: false);
+      case AudioContainer.mp4:
+      case AudioContainer.adts:
+      case AudioContainer.flac:
+        return _convertToWav(path, sourceDuration, isCurrent);
+      case AudioContainer.wav:
+      case AudioContainer.ogg:
+      case AudioContainer.unknown:
+        break;
+    }
+    final String prepared;
+    try {
+      prepared = await OggOpus.prepareUpload(path, isCurrent: isCurrent);
+    } on StateError catch (e) {
+      throw DoubaoSttException(
+        !isCurrent()
+            ? '已取消，原录音已保留'
+            : e.message == '不支持的音频格式'
+            ? '无法准备音频：不支持的音频格式，请导入 M4A、MP3、WAV 或 AAC'
+            : '无法准备音频：${e.message}',
+      );
+    }
+    final input = await File(prepared).open();
+    final List<int> header;
+    try {
+      header = await input.read(128);
+    } finally {
+      await input.close();
+    }
+    final format = OggOpus.isWav(header)
+        ? 'wav'
+        : OggOpus.isOgg(header) &&
+              ascii.decode(header, allowInvalid: true).contains('OpusHead')
+        ? 'ogg'
+        : null;
+    if (format == null) {
+      throw const DoubaoSttException('音频格式无效，需要 WAV、MP3 或 OGG Opus');
+    }
+    return (path: prepared, format: format, converted: false);
+  }
+
+  Future<({String path, String format, bool converted})> _convertToWav(
+    String path,
+    Duration? sourceDuration,
+    bool Function() isCurrent,
+  ) async {
+    if (sourceDuration != null &&
+        sourceDuration.inMilliseconds * wavBytesPerSecond ~/ 1000 + 44 >
+            maxDirectUploadBytes) {
+      throw const DoubaoSttException(
+        '这段音频转成豆包可读的 WAV 后会超过 100 MB（约 52 分钟以上）；'
+        '请在设置中改用千问转写',
+      );
+    }
+    final dir = await Directory.systemTemp.createTemp('koe-doubao-');
+    final output = '${dir.path}/audio.wav';
+    try {
+      await _transcoder.toWav(path, output);
+    } on AudioTranscodeException catch (e) {
+      await dir.delete(recursive: true);
+      throw DoubaoSttException(
+        isCurrent()
+            ? '无法把这段音频转成豆包可读的格式：${e.message}；可在设置中改用千问转写'
+            : '已取消，原录音已保留',
+      );
+    } catch (_) {
+      await dir.delete(recursive: true);
+      rethrow;
+    }
+    if (!isCurrent()) {
+      await dir.delete(recursive: true);
+      throw const DoubaoSttException('已取消，原录音已保留');
+    }
+    return (path: output, format: 'wav', converted: true);
   }
 
   Map<String, dynamic> _decodeObject(http.Response response) {

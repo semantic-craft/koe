@@ -18,6 +18,7 @@ import 'support/wav_fixture.dart';
 class _Apple extends AppleSpeechService {
   int calls = 0;
   Completer<void>? hold;
+  Object? failure;
 
   @override
   Future<AppleSpeechCapabilities> capabilities({
@@ -38,6 +39,7 @@ class _Apple extends AppleSpeechService {
   }) async {
     calls++;
     await hold?.future;
+    if (failure != null) throw failure!;
     return SttResult(text: '我明天去买牛奶。', language: sourceLanguage);
   }
 }
@@ -169,6 +171,19 @@ void main() {
     expect(apple.calls, 1);
     expect(summarizer.calls, 1);
     expect(extractor.calls, 1);
+  });
+
+  test('a failed manual transcription is not reported as organizing '
+      'when automatic organizing is off', () async {
+    final c = await build();
+    final path = await importAudio(c, 'manual');
+    await c.waitForOrganize();
+    apple.failure = StateError('无法读取录音');
+
+    await c.transcribeLocalFile(path, sourceLanguage: 'zh-CN');
+
+    expect(c.recordingView(RecordingReference(path: path)).error, isNotNull);
+    expect(c.organizeStatusFor(path).stage, OrganizeStage.none);
   });
 
   test(

@@ -14,6 +14,7 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     CredentialBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
+    AudioTranscodeBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
   }

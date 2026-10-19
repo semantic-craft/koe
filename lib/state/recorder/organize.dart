@@ -241,8 +241,12 @@ mixin _RecorderOrganize on ChangeNotifier {
         );
       }
       if (failure != null) return OrganizeStatus(OrganizeStage.failed, failure);
+      // A manual transcription that failed outside automatic organizing
+      // shows its own error on the recording, not as an organizing step.
       if (job != null && job.stage == 'failed') {
-        return OrganizeStatus(OrganizeStage.failed, job.error ?? '转写失败');
+        return queued
+            ? OrganizeStatus(OrganizeStage.failed, job.error ?? '转写失败')
+            : const OrganizeStatus(OrganizeStage.none);
       }
       if (job != null ||
           _organizeTranscribeRequested.contains(path) && queued) {

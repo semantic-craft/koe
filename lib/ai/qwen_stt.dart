@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
+import '../audio/audio_transcoder.dart';
 import '../audio/ogg_opus.dart';
 import '../audio/audio_duration.dart';
 import '../audio/upload_source.dart';
@@ -131,10 +132,7 @@ class QwenSttService extends CloudFileSttService {
         length: await File(uploadSource).length(),
         duration: duration,
       );
-      final audioPath = await OggOpus.prepareUpload(
-        uploadSource,
-        isCurrent: isCurrent,
-      );
+      final audioPath = await qwenUploadAudio(uploadSource, isCurrent);
       final file = File(audioPath);
       final length = await file.length();
       if (!await file.exists() || length < 64) {
@@ -834,6 +832,34 @@ class QwenTaskFailedException extends QwenSttException {
 /// Prefer the original compressed recording only when its measured duration
 /// matches the generated playback file. Never substitute unrelated audio.
 Future<String> qwenUploadSource(String path) => compressedUploadSource(path);
+
+/// Qwen file transcription reads common containers itself (aac, m4a, mp3,
+/// flac, wav, ogg), so imported files upload as they are; only device
+/// originals (bare Opus frames) are wrapped in Ogg first (#233).
+Future<String> qwenUploadAudio(String path, bool Function() isCurrent) async {
+  final container = await AudioContainer.read(path);
+  switch (container) {
+    case AudioContainer.mp3:
+    case AudioContainer.mp4:
+    case AudioContainer.adts:
+    case AudioContainer.flac:
+      return path;
+    case AudioContainer.wav:
+    case AudioContainer.ogg:
+    case AudioContainer.unknown:
+      break;
+  }
+  try {
+    return await OggOpus.prepareUpload(path, isCurrent: isCurrent);
+  } on StateError catch (e) {
+    if (!isCurrent()) throw const QwenSttException('处理已取消，可重试');
+    throw QwenSttException(
+      e.message == '不支持的音频格式'
+          ? '无法准备音频：不支持的音频格式，请导入 M4A、MP3、WAV 或 AAC'
+          : '无法准备音频：${e.message}',
+    );
+  }
+}
 
 void validateQwenAudio({required int length, Duration? duration}) {
   if (length > QwenSttService.maxUploadBytes) {

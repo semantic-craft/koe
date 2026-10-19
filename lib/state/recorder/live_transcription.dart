@@ -147,6 +147,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   String _speechErrorMessage(Object error) {
     if (error is CloudSttException) return error.message;
     if (error is AudioVersionException) return error.message;
+    if (error is StateError) return '处理失败：${error.message}';
+    if (error is SocketException) return '网络连接失败，请检查网络后重试';
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
       'unsupported' => '此设备不支持设备端处理，请在设置中选择云端语音服务',
