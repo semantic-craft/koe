@@ -977,6 +977,53 @@ void main() {
     expect(calls, 0);
   });
 
+  testWidgets('导入录音的读书笔记尚无汇总时，书籍主题页显示可汇总与生成按钮', (tester) async {
+    final store = TopicStore(inMemory: true);
+    await store.load();
+    final topic = await store.createTopic(
+      kind: TopicKind.book,
+      title: '验收书',
+      author: '验收',
+    );
+    // Imported originals use a microsecond timestamp as their file id.
+    const key = 'file:1760850000123456';
+    await store.moveRecording(key, topic.id);
+    final analysis = RecordingAnalysis(
+      inMemory: true,
+      service: _SummaryService((source, instruction) async => '{}'),
+    );
+    analysis.results[TopicNote.slotKey(key)] = noteResult(
+      TopicNote(
+        kind: TopicKind.book,
+        topicId: topic.id,
+        overview: '读书概要',
+        excerpts: const [
+          TopicExcerpt(text: '摘录', page: 'p.12', sources: ['S1']),
+        ],
+      ),
+    );
+    final RecorderController controller = _SummaryController(
+      topicStore: store,
+      analysisController: analysis,
+    );
+    addTearDown(controller.dispose);
+    await controller.settleTopicNoteWork();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: TopicDetailScreen(topicId: topic.id),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('已有 1 条笔记可汇总'), findsOneWidget);
+    final generate = find.byKey(const ValueKey('topic-summary-generate'));
+    expect(tester.widget<FilledButton>(generate).onPressed, isNotNull);
+    expect(find.text('添加录音'), findsOneWidget);
+  });
+
   testWidgets('主题详情手动生成、覆盖确认与逐条编辑', (tester) async {
     final store = TopicStore(inMemory: true);
     await store.load();
