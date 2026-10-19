@@ -269,6 +269,7 @@ class TodoClarification {
     required this.source,
     this.due,
     this.dueHasTime = false,
+    this.candidateIds = const [],
   });
 
   final String id;
@@ -279,6 +280,10 @@ class TodoClarification {
   final ContextSource source;
   final DateTime? due;
   final bool dueHasTime;
+
+  /// Todos the sentence may refer to, most likely first; empty when Koe
+  /// has no guess and the user picks from every open todo.
+  final List<String> candidateIds;
 
   String get actionLabel => switch (action) {
     'done' => '可能已完成',
@@ -293,6 +298,7 @@ class TodoClarification {
     'source': source.toJson(),
     if (due != null) 'due': due!.toIso8601String(),
     if (dueHasTime) 'dueHasTime': true,
+    if (candidateIds.isNotEmpty) 'candidates': candidateIds,
   };
 
   static TodoClarification? decode(Object? value) {
@@ -314,6 +320,10 @@ class TodoClarification {
       source: source,
       due: decodeTime(value['due']),
       dueHasTime: value['dueHasTime'] == true,
+      candidateIds: [
+        for (final id in value['candidates'] as List? ?? const [])
+          if (id is String) id,
+      ],
     );
   }
 }

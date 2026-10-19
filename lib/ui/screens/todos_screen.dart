@@ -182,6 +182,12 @@ class _ClarificationCard extends StatelessWidget {
       for (final todo in c.todos.todos)
         if (todo.open) todo,
     ];
+    // The todos the sentence may mean come first, then the rest.
+    open.sort(
+      (a, b) =>
+          (item.candidateIds.contains(a.id) ? 0 : 1) -
+          (item.candidateIds.contains(b.id) ? 0 : 1),
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: SurfaceCard(
