@@ -18,7 +18,22 @@ unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_TTS_API_KEY || true
 rm -rf build/perf
 flutter drive --profile -d macos \
   --driver=test_driver/perf_driver.dart \
-  --target=integration_test/perf/perf_scenarios_test.dart
+  --target=integration_test/perf/perf_scenarios_test.dart &
+drive=$!
+
+# macOS gives a window that never reached the foreground no frames, and the
+# scenarios then wait forever. Stop after a bounded time instead of hanging.
+deadline=$((SECONDS + ${KOE_PERF_TIMEOUT:-480}))
+while kill -0 "$drive" 2>/dev/null; do
+  if (( SECONDS > deadline )); then
+    kill "$drive" 2>/dev/null || true
+    pkill -f 'Build/Products/Profile/Koe.app/Contents/MacOS/Koe' || true
+    echo "perf-check: timed out; the Koe profile window probably never came to the foreground, so macOS rendered no frames. Rerun with the screen unlocked." >&2
+    exit 3
+  fi
+  sleep 2
+done
+wait "$drive"
 
 python3 - "$report_only" <<'PY'
 import json, sys
