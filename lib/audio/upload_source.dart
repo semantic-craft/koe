@@ -1,10 +1,12 @@
 import 'dart:io';
+
 import 'audio_duration.dart';
+import 'recording_audio.dart';
 
 /// Only substitute the matching compressed recording, never unrelated audio.
 Future<String> compressedUploadSource(String path) async {
-  if (!path.endsWith('.wav')) return path;
-  final raw = '${path.substring(0, path.length - 4)}.opus';
+  final raw = RecordingAudio.of(path).framesForWav;
+  if (raw == null) return path;
   if (!await File(raw).exists()) return path;
   final playbackDuration = await AudioDuration.read(path);
   final rawDuration = await AudioDuration.read(raw);

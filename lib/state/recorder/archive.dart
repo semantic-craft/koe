@@ -59,10 +59,7 @@ class _RecorderArchiveSource implements ArchiveSource {
 
   @override
   Future<ArchiveCandidate?> archiveCandidate(String path) async {
-    final lower = path.toLowerCase();
-    final extension = lower.endsWith('.opus.bin')
-        ? '.opus.bin'
-        : p.extension(lower);
+    final extension = RecordingAudio.of(path).extension;
     if (!archiveAllowedSourceExtensions.contains(extension)) return null;
     if (controller._isTrashedPath(path)) return null;
     final id = controller.fileIdFromPath(path);

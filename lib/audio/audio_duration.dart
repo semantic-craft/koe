@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'ogg_opus.dart';
+import 'recording_audio.dart';
 
 /// Reads duration metadata from the local audio formats produced by the app.
 class AudioDuration {
@@ -32,7 +33,7 @@ class AudioDuration {
             String.fromCharCodes(header, 4, 8) == 'ftyp') {
           return await _mp4Duration(input, length);
         }
-        if (path.endsWith('.opus') || path.endsWith('.opus.bin')) {
+        if (RecordingAudio.of(path).isDeviceFrames) {
           final frames = (length + OggOpus.frameSize - 1) ~/ OggOpus.frameSize;
           return Duration(milliseconds: frames * 20);
         }

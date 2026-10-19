@@ -1,4 +1,5 @@
 import '../protocol/models.dart';
+import '../audio/recording_audio.dart';
 
 /// Pure ordering/deduplication helpers for device and local recording lists.
 class ExportCatalog {
@@ -114,11 +115,13 @@ class ExportCatalog {
   }
 
   static bool _prefer(String candidate, String current) {
-    final candidatePlayable = candidate.endsWith('.wav');
-    final currentPlayable = current.endsWith('.wav');
+    final candidateKind = RecordingAudio.of(candidate).kind;
+    final currentKind = RecordingAudio.of(current).kind;
+    final candidatePlayable = candidateKind == RecordingAudioKind.wav;
+    final currentPlayable = currentKind == RecordingAudioKind.wav;
     if (candidatePlayable != currentPlayable) return candidatePlayable;
-    final candidateRaw = candidate.endsWith('.opus.bin');
-    final currentRaw = current.endsWith('.opus.bin');
+    final candidateRaw = candidateKind == RecordingAudioKind.deviceRaw;
+    final currentRaw = currentKind == RecordingAudioKind.deviceRaw;
     if (candidateRaw != currentRaw) return !candidateRaw;
     return candidate.compareTo(current) > 0;
   }

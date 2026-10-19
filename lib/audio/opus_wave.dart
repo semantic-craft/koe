@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'ogg_opus.dart';
 import 'opus_pcm_decoder.dart';
 import '../util/off_ui.dart';
+import 'recording_audio.dart';
 
 /// Converts the D3200's raw fixed-size Opus frames to a standard PCM WAV file.
 class OpusWave {
@@ -19,9 +20,13 @@ class OpusWave {
   static const backgroundThreshold = 256 * 1024;
 
   static Future<String> convertRawFile(String path) async {
-    if (path.endsWith('.wav')) return path;
-    if (path.endsWith('.opus.bin')) {
-      throw StateError('加密的原始文件无法转换');
+    switch (RecordingAudio.of(path).kind) {
+      case RecordingAudioKind.wav:
+        return path;
+      case RecordingAudioKind.deviceRaw:
+        throw StateError('加密的原始文件无法转换');
+      case RecordingAudioKind.deviceOpus || RecordingAudioKind.container:
+        break;
     }
 
     final source = File(path);
@@ -63,9 +68,7 @@ class OpusWave {
       await input.close();
       throw const _DecoderUnavailable();
     }
-    final wavPath = path.endsWith('.opus')
-        ? '${path.substring(0, path.length - 5)}.wav'
-        : '$path.wav';
+    final wavPath = RecordingAudio.of(path).convertedWav;
     final partial = File('$wavPath.part');
     final output = await partial.open(mode: FileMode.write);
     var completed = false;
