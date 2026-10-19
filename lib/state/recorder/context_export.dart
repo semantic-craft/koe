@@ -12,6 +12,7 @@ mixin _RecorderContextExport on ChangeNotifier {
   List<ContextItem> contextItemsForDay(DateTime day);
   List<ContextItem> contextItemsForProject(String projectId);
   List<SourceLine> contextSourceLines(List<ContextItem> items, {int maxChars});
+  DiaryMaterial diaryMaterial(DiaryPeriod period);
   abstract final DiaryStore diary;
   abstract final ProjectStore projects;
   abstract final TodoStore todos;
@@ -61,10 +62,22 @@ mixin _RecorderContextExport on ChangeNotifier {
       ],
     };
     String? diaryText;
+    var diaryOutdated = false;
     if (scope case DayExport(:final day)) {
-      final current = diary.entryFor(DiaryPeriod.day(day).key)?.current;
-      if (current != null) {
-        diaryText = relabelCitations(current.text, current.sources, lines);
+      // Only a diary written from today's material goes along: an older one
+      // may quote recordings since trashed or miss newer ones (#254), the
+      // same check that shows 「有新资料，更新日记」 on the diary page.
+      final period = DiaryPeriod.day(day);
+      final entry = diary.entryFor(period.key);
+      final fingerprint = diaryMaterial(period).fingerprint(false);
+      final fresh = [
+        entry?.current,
+        entry?.newer,
+      ].where((draft) => draft?.fingerprint == fingerprint).firstOrNull;
+      if (fresh != null) {
+        diaryText = relabelCitations(fresh.text, fresh.sources, lines);
+      } else {
+        diaryOutdated = entry?.current != null;
       }
     }
     final markdown = buildContextMarkdown(
@@ -88,6 +101,7 @@ mixin _RecorderContextExport on ChangeNotifier {
       ],
       todos: relatedTodos,
       diary: diaryText,
+      diaryOutdated: diaryOutdated,
     );
     return (markdown, items.length);
   }

@@ -105,7 +105,9 @@ void main() {
               source: ContextSource(recordingKey: b),
             ),
           ],
-          fingerprint: 'f',
+          fingerprint: c
+              .diaryMaterial(DiaryPeriod.day(tuesday))
+              .fingerprint(false),
           generatedAt: now,
         ),
       ),
@@ -115,6 +117,65 @@ void main() {
     expect(day, contains('- [S1] 00:00 预算先按二十万算。'));
     expect(day, contains('【整理】定了预算 [S1]'));
     expect(day, isNot(contains('和师傅约好周五量房')));
+  });
+
+  test('a day export leaves out a diary written before the day changed, so '
+      'every [S#] resolves to this export\'s own sources (#254)', () async {
+    final directory = await Directory.systemTemp.createTemp('koe-export-');
+    addTearDown(() => directory.delete(recursive: true));
+    final c = RecorderController(
+      loadPersistedState: false,
+      analysisController: RecordingAnalysis(inMemory: true),
+      transcriptPersister: ({bool strict = false}) async {},
+      libraryDirectory: Directory('${directory.path}/imports'),
+    );
+    addTearDown(c.dispose);
+    final day = DateTime(2026, 10, 19);
+    Future<String> add(int hour, String text) async {
+      final id = DateTime(2026, 10, 19, hour).millisecondsSinceEpoch ~/ 1000;
+      final path = '${directory.path}/$id.wav';
+      await File(path).writeAsBytes([1, 2, 3, 4]);
+      c.exportedPaths.add(path);
+      c.rememberTranscript(
+        path,
+        text,
+        segments: [TranscriptSegment(text: text, start: Duration.zero)],
+      );
+      return path;
+    }
+
+    final morning = await add(9, '上午和房东确认了退租。');
+    await add(10, '中午订了搬家车。');
+    await c.contextItems.load();
+    final period = DiaryPeriod.day(day);
+    final material = c.diaryMaterial(period);
+    await c.diary.put(
+      DiaryEntry(
+        key: period.key,
+        current: DiaryDraft(
+          text: '【整理】退租谈妥 [S1]，搬家车订好 [S2]',
+          sources: material.sources,
+          fingerprint: material.fingerprint(false),
+          generatedAt: DateTime(2026, 10, 19, 11),
+        ),
+      ),
+    );
+
+    // Afternoon: the morning recording goes to the trash, a new one arrives.
+    await c.trashLocalExports([morning]);
+    await add(15, '下午去看了新房。');
+    final (markdown, _) = c.exportContextMarkdown(DayExport(day));
+
+    expect(markdown, isNot(contains('退租谈妥')));
+    expect(markdown, contains('已过期'));
+    final sources = markdown.split('## 出处').last;
+    final cited = {
+      for (final match in RegExp(r'\[(S\d+)\]').allMatches(markdown))
+        match.group(1),
+    };
+    for (final label in cited) {
+      expect(sources, contains('[$label] '), reason: '$label has no source');
+    }
   });
 
   test('after the user corrects a timed transcript, exports, diary and Ask '
