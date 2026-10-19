@@ -82,6 +82,11 @@ void main() {
     return job;
   }
 
+  /// The single job's stage, or null while a reopened journal is still being
+  /// read from disk: `open` returns before the controller finishes loading it.
+  String? stageOf(FileJobJournal journal) =>
+      journal.jobs.values.singleOrNull?.stage;
+
   RecordingViewData view(RecorderController c) =>
       c.recordingView(RecordingReference(path: audio.path));
 
@@ -106,7 +111,7 @@ void main() {
           disposeOnTearDown: false,
         );
         await c.processRetrievedRecording(audio.path);
-        await settleUntil(() => first.jobs.values.single.stage == 'running');
+        await settleUntil(() => stageOf(first) == 'running');
         c.dispose();
         // Rewind the on-disk record to "queued" as if the app died before the
         // pump started, then remove the audio before relaunch.
@@ -121,7 +126,7 @@ void main() {
         final qwen = _StagedQwen();
         final restarted = FileJobJournal(file: journalFile);
         final r = await open(restarted, qwen: qwen);
-        await settleUntil(() => restarted.jobs.values.single.stage == 'failed');
+        await settleUntil(() => stageOf(restarted) == 'failed');
         expect(qwen.calls, 0, reason: 'no request for a missing recording');
         expect(view(r).error, isNotNull);
         await onDisk('failed');
@@ -142,7 +147,7 @@ void main() {
         final journal = FileJobJournal(file: journalFile);
         final c = await open(journal, qwen: qwen);
         await c.processRetrievedRecording(audio.path);
-        await settleUntil(() => journal.jobs.values.single.stage == 'failed');
+        await settleUntil(() => stageOf(journal) == 'failed');
         expect(qwen.calls, 1);
         expect(view(c).error, isNotNull);
         expect(view(c).text, isEmpty);
@@ -217,9 +222,7 @@ void main() {
       // The complete stage is published before its final disk write ends.
       // Do not dispose or remove the journal directory while it is still busy.
       await settleUntil(
-        () =>
-            reopened.jobs.values.single.stage == 'complete' &&
-            !r.fileProcessingBusy,
+        () => stageOf(reopened) == 'complete' && !r.fileProcessingBusy,
       );
       expect(resumed.calls, 1);
       expect(resumed.uploads, 0, reason: 'only GET on the saved task');
@@ -234,7 +237,7 @@ void main() {
         final journal = FileJobJournal(file: journalFile);
         final c = await open(journal, qwen: qwen);
         await c.processRetrievedRecording(audio.path);
-        await settleUntil(() => journal.jobs.values.single.stage == 'failed');
+        await settleUntil(() => stageOf(journal) == 'failed');
         expect(view(c).error, contains('通义转写失败'));
         expect((await onDisk('failed')).taskId, isNull);
 
@@ -274,7 +277,7 @@ void main() {
       final resumed = _StagedQwen();
       final reopened = FileJobJournal(file: journalFile);
       final r = await open(reopened, qwen: resumed);
-      await settleUntil(() => reopened.jobs.values.single.stage == 'complete');
+      await settleUntil(() => stageOf(reopened) == 'complete');
       expect(resumed.calls, 0, reason: 'saved result is reused');
       expect(r.transcriptForPath(audio.path), '通义文本 task-1');
       await settleUntil(() => r.statusMessage == '转写已保存');
@@ -299,8 +302,11 @@ void main() {
 
       final resumed = _StagedQwen();
       final reopened = FileJobJournal(file: journalFile);
-      await open(reopened, qwen: resumed);
-      await settleUntil(() => reopened.jobs.values.single.stage == 'complete');
+      final r = await open(reopened, qwen: resumed);
+      // As in the poll test: wait for the final disk write, not just the stage.
+      await settleUntil(
+        () => stageOf(reopened) == 'complete' && !r.fileProcessingBusy,
+      );
       expect(resumed.uploads, 0);
       expect(resumed.seenTaskIds, ['task-1']);
     });
