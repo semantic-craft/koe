@@ -21,7 +21,7 @@ class AudioDuration {
           await input.read(math.min(length, 44)),
         );
         if (OggOpus.isWav(header)) {
-          return _wavDuration(header, length);
+          return await _wavDuration(input, length);
         }
         if (OggOpus.isOgg(header)) {
           final tailLength = math.min(length, 64 * 1024);
@@ -39,19 +39,39 @@ class AudioDuration {
     return null;
   }
 
-  static Duration? _wavDuration(Uint8List header, int fileLength) {
-    if (header.length < 44) return null;
-    final data = ByteData.sublistView(header);
-    final byteRate = data.getUint32(28, Endian.little);
-    if (byteRate <= 0) return null;
-    final declaredDataLength = data.getUint32(40, Endian.little);
-    final availableDataLength = math.max(0, fileLength - 44);
-    final dataLength = math.min(declaredDataLength, availableDataLength);
-    if (dataLength <= 0) return null;
-    return Duration(
-      microseconds: (dataLength * Duration.microsecondsPerSecond / byteRate)
-          .round(),
-    );
+  /// Walks RIFF chunks instead of assuming the 44-byte layout: iPhone
+  /// recordings put JUNK and FLLR chunks before `fmt ` and `data`.
+  static Future<Duration?> _wavDuration(
+    RandomAccessFile input,
+    int fileLength,
+  ) async {
+    int? byteRate;
+    var offset = 12;
+    while (offset + 8 <= fileLength) {
+      await input.setPosition(offset);
+      final header = Uint8List.fromList(await input.read(8));
+      if (header.length < 8) return null;
+      final id = String.fromCharCodes(header, 0, 4);
+      final size = ByteData.sublistView(header).getUint32(4, Endian.little);
+      final body = offset + 8;
+      if (id == 'fmt ') {
+        if (size < 12 || body + 12 > fileLength) return null;
+        await input.setPosition(body + 8);
+        final rate = Uint8List.fromList(await input.read(4));
+        byteRate = ByteData.sublistView(rate).getUint32(0, Endian.little);
+      } else if (id == 'data') {
+        final rate = byteRate;
+        if (rate == null || rate <= 0) return null;
+        final dataLength = math.min(size, math.max(0, fileLength - body));
+        if (dataLength <= 0) return null;
+        return Duration(
+          microseconds: (dataLength * Duration.microsecondsPerSecond / rate)
+              .round(),
+        );
+      }
+      offset = body + size + (size.isOdd ? 1 : 0);
+    }
+    return null;
   }
 
   static Duration? _oggDuration(Uint8List tail) {

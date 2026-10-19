@@ -5,6 +5,8 @@ import 'package:koe/audio/audio_duration.dart';
 import 'package:koe/audio/ogg_opus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/wav_fixture.dart';
+
 void main() {
   late Directory directory;
 
@@ -17,19 +19,33 @@ void main() {
   });
 
   test('reads duration from generated PCM WAV metadata', () async {
-    const byteRate = 48000 * 2;
-    const dataLength = byteRate * 2;
-    final bytes = Uint8List(44 + dataLength);
-    final header = ByteData.sublistView(bytes);
-    bytes.setAll(0, 'RIFF'.codeUnits);
-    bytes.setAll(8, 'WAVE'.codeUnits);
-    header.setUint32(28, byteRate, Endian.little);
-    header.setUint32(40, dataLength, Endian.little);
     final file = File('${directory.path}/1.wav');
-    await file.writeAsBytes(bytes);
+    // The fixture is 16 kHz mono 16-bit: 32000 bytes per second.
+    await file.writeAsBytes(wavBytes(Uint8List(32000 * 2)));
 
     expect(await AudioDuration.read(file.path), const Duration(seconds: 2));
   });
+
+  test(
+    'reads duration when iPhone recording adds JUNK and FLLR chunks',
+    () async {
+      // AVAudioRecorder writes JUNK before `fmt ` and pads with FLLR before
+      // `data`; the fixed 44-byte layout read a zero byte rate and showed --:--.
+      final wav = wavBytes(
+        Uint8List(32000 * 3),
+        extraChunk: (id: 'FLLR', body: Uint8List(4000)),
+      );
+      final junk = [...'JUNK'.codeUnits, 28, 0, 0, 0, ...Uint8List(28)];
+      final file = File('${directory.path}/phone.wav');
+      await file.writeAsBytes([
+        ...wav.sublist(0, 12),
+        ...junk,
+        ...wav.sublist(12),
+      ]);
+
+      expect(await AudioDuration.read(file.path), const Duration(seconds: 3));
+    },
+  );
 
   test('estimates duration from raw Opus frame count', () async {
     final file = File('${directory.path}/1.opus');
