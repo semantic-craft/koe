@@ -46,7 +46,10 @@ class ContextTimelineRow extends StatelessWidget {
             : () => RecordingNavigation.open(context, ref),
         child: Row(
           children: [
-            const Icon(Icons.graphic_eq_rounded, color: AppColors.mint),
+            const Icon(
+              Icons.graphic_eq_rounded,
+              color: AppColors.textSecondary,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -77,7 +80,7 @@ class ContextTimelineRow extends StatelessWidget {
                             '# $title',
                             style: const TextStyle(
                               fontSize: 12,
-                              color: AppColors.mint,
+                              color: AppColors.textSecondary,
                             ),
                           ),
                         for (final title in projectTitles)

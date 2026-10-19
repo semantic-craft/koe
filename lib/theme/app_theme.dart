@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 /// Spacing scale adapted from nexu-io/open-design (`tokens.css` `--s-*`).
@@ -81,10 +82,6 @@ class AppColors {
   static const accentSoft = Color(0xFFF6E9E2);
   static const accentBorder = Color(0xFFD8B7A8);
 
-  static const mint = Color(0xFF37674D);
-  static const mintSoft = Color(0xFFE7EFE9);
-  static const mintBorder = Color(0xFFB9CFBF);
-
   static const amber = Color(0xFF966018);
   static const amberSoft = Color(0xFFF7ECDD);
   static const amberBorder = Color(0xFFDFC49E);
@@ -152,9 +149,6 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     required this.accent,
     required this.accentSoft,
     required this.accentBorder,
-    required this.mint,
-    required this.mintSoft,
-    required this.mintBorder,
     required this.amber,
     required this.amberSoft,
     required this.amberBorder,
@@ -188,9 +182,6 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
   final Color accent;
   final Color accentSoft;
   final Color accentBorder;
-  final Color mint;
-  final Color mintSoft;
-  final Color mintBorder;
   final Color amber;
   final Color amberSoft;
   final Color amberBorder;
@@ -225,9 +216,6 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     accent: AppColors.accent,
     accentSoft: AppColors.accentSoft,
     accentBorder: AppColors.accentBorder,
-    mint: AppColors.mint,
-    mintSoft: AppColors.mintSoft,
-    mintBorder: AppColors.mintBorder,
     amber: AppColors.amber,
     amberSoft: AppColors.amberSoft,
     amberBorder: AppColors.amberBorder,
@@ -265,9 +253,6 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     accent: const Color(0xFFC97B54),
     accentSoft: const Color(0xFF3D2B22),
     accentBorder: const Color(0xFF5A3B2C),
-    mint: const Color(0xFF7BA98C),
-    mintSoft: const Color(0xFF1F2C23),
-    mintBorder: const Color(0xFF2F4738),
     amber: const Color(0xFFD9A05B),
     amberSoft: const Color(0xFF33281C),
     amberBorder: const Color(0xFF57432B),
@@ -319,9 +304,6 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     Color? accent,
     Color? accentSoft,
     Color? accentBorder,
-    Color? mint,
-    Color? mintSoft,
-    Color? mintBorder,
     Color? amber,
     Color? amberSoft,
     Color? amberBorder,
@@ -355,9 +337,6 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
       accent: accent ?? this.accent,
       accentSoft: accentSoft ?? this.accentSoft,
       accentBorder: accentBorder ?? this.accentBorder,
-      mint: mint ?? this.mint,
-      mintSoft: mintSoft ?? this.mintSoft,
-      mintBorder: mintBorder ?? this.mintBorder,
       amber: amber ?? this.amber,
       amberSoft: amberSoft ?? this.amberSoft,
       amberBorder: amberBorder ?? this.amberBorder,
@@ -396,9 +375,6 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
       accent: Color.lerp(accent, other.accent, t)!,
       accentSoft: Color.lerp(accentSoft, other.accentSoft, t)!,
       accentBorder: Color.lerp(accentBorder, other.accentBorder, t)!,
-      mint: Color.lerp(mint, other.mint, t)!,
-      mintSoft: Color.lerp(mintSoft, other.mintSoft, t)!,
-      mintBorder: Color.lerp(mintBorder, other.mintBorder, t)!,
       amber: Color.lerp(amber, other.amber, t)!,
       amberSoft: Color.lerp(amberSoft, other.amberSoft, t)!,
       amberBorder: Color.lerp(amberBorder, other.amberBorder, t)!,
@@ -431,7 +407,11 @@ class AppTheme {
         ? ColorScheme.dark(
             surface: t.bgElevated,
             primary: t.accent,
-            secondary: t.mint,
+            // Koe has one accent: Material's secondary roles (selected
+            // chips, progress tracks, switches) resolve to the same brick red.
+            secondary: t.accent,
+            secondaryContainer: t.accentSoft,
+            onSecondaryContainer: t.accent,
             error: t.coral,
             onPrimary: Colors.white,
             onSurface: t.textPrimary,
@@ -440,7 +420,11 @@ class AppTheme {
         : ColorScheme.light(
             surface: t.bgElevated,
             primary: t.accent,
-            secondary: t.mint,
+            // Koe has one accent: Material's secondary roles (selected
+            // chips, progress tracks, switches) resolve to the same brick red.
+            secondary: t.accent,
+            secondaryContainer: t.accentSoft,
+            onSecondaryContainer: t.accent,
             error: t.coral,
             onPrimary: Colors.white,
             onSurface: t.textPrimary,
@@ -452,6 +436,9 @@ class AppTheme {
       brightness: brightness,
       scaffoldBackgroundColor: t.bg,
       colorScheme: colorScheme,
+      // Adaptive switches on iOS/macOS otherwise fall back to system green
+      // when a call site sets no colors; let them take the accent instead.
+      cupertinoOverrideTheme: const CupertinoThemeData(applyThemeToAll: true),
       extensions: [t],
     );
 
@@ -598,11 +585,7 @@ class AppTheme {
           color: t.textPrimary,
         ),
       ),
-      dividerTheme: DividerThemeData(
-        color: t.border,
-        thickness: 1,
-        space: 1,
-      ),
+      dividerTheme: DividerThemeData(color: t.border, thickness: 1, space: 1),
       cardTheme: CardThemeData(
         color: t.bgCard,
         elevation: 0,
@@ -622,9 +605,7 @@ class AppTheme {
         elevation: 4,
       ),
       dropdownMenuTheme: DropdownMenuThemeData(
-        menuStyle: MenuStyle(
-          backgroundColor: WidgetStatePropertyAll(t.bgCard),
-        ),
+        menuStyle: MenuStyle(backgroundColor: WidgetStatePropertyAll(t.bgCard)),
       ),
     );
   }

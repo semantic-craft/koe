@@ -115,9 +115,9 @@ class _ConnectionHeader extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: (online ? AppColors.mint : AppColors.accent).withValues(
-                alpha: 0.12,
-              ),
+              color: online
+                  ? AppColors.bgSubtle
+                  : AppColors.accent.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             clipBehavior: Clip.antiAlias,
@@ -127,7 +127,7 @@ class _ConnectionHeader extends StatelessWidget {
                     fit: BoxFit.contain,
                     errorBuilder: (_, _, _) => const Icon(
                       Icons.headphones_rounded,
-                      color: AppColors.mint,
+                      color: AppColors.textSecondary,
                     ),
                   )
                 : const Icon(Icons.link_off_rounded, color: AppColors.accent),

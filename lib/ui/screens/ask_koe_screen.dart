@@ -339,7 +339,7 @@ class _Bubble extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 520),
         decoration: BoxDecoration(
           color: mine
-              ? AppColors.mint.withValues(alpha: 0.15)
+              ? AppColors.accentSoft
               : Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(14),
         ),

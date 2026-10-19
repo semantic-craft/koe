@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../state/recording_analysis.dart';
+import '../../theme/app_theme.dart';
 import '../transcript_jump.dart';
 import 'minutes_panel.dart';
 
@@ -370,7 +371,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                     sourceStale
                         ? '原文已更新，这份结果已过期，请重新生成。'
                         : '模板已更新，这份结果已过期，请重新生成。',
-                    style: const TextStyle(color: Colors.orange),
+                    style: const TextStyle(color: AppColors.amber),
                   ),
                 Text(
                   '${result.model} · ${result.createdAt.toLocal().toString().split('.').first}',

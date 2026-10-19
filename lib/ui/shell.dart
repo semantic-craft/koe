@@ -610,7 +610,7 @@ class _AskKoeButton extends StatelessWidget {
       key: const ValueKey('ask-koe'),
       onPressed: onPressed,
       style: FilledButton.styleFrom(
-        backgroundColor: AppColors.mint,
+        backgroundColor: AppColors.accent,
         foregroundColor: Colors.white,
         minimumSize: const Size(44, 48),
         padding: const EdgeInsets.symmetric(horizontal: 16),

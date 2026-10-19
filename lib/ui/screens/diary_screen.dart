@@ -254,8 +254,7 @@ class _DiaryLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final (tag, body) = diaryLineTag(line);
     final color = switch (tag) {
-      '原话' => AppColors.mint,
-      '建议' => Colors.orange.shade700,
+      '原话' => AppColors.accent,
       _ => AppColors.textSecondary,
     };
     return Padding(

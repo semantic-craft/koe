@@ -323,7 +323,7 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
             onTap: () => openContextSource(context, todo.source),
             child: Row(
               children: [
-                const Icon(Icons.format_quote_rounded, color: AppColors.mint),
+                const Icon(Icons.format_quote_rounded, color: AppColors.accent),
                 const SizedBox(width: 10),
                 Expanded(child: Text(todo.quote)),
                 Text(
@@ -574,7 +574,7 @@ class _LinkCard extends StatelessWidget {
             children: [
               Icon(
                 _reminder ? Icons.checklist_rounded : Icons.event_outlined,
-                color: AppColors.mint,
+                color: AppColors.textSecondary,
               ),
               const SizedBox(width: 10),
               Expanded(child: Text('$name · $status')),

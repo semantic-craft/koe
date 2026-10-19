@@ -1015,7 +1015,7 @@ class _ExportBanner extends StatelessWidget {
         color = AppColors.coral;
         icon = Icons.error_outline_rounded;
       case ExportPhase.done:
-        color = AppColors.mint;
+        color = AppColors.textSecondary;
         icon = Icons.check_circle_outline_rounded;
       case ExportPhase.awaitJoin:
         color = AppColors.amber;
@@ -1398,13 +1398,16 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                 children: [
                   Icon(
                     Icons.check_circle_rounded,
-                    color: AppColors.mint,
+                    color: AppColors.textSecondary,
                     size: 16,
                   ),
                   SizedBox(width: 6),
                   Text(
                     '已检测到设备网络，正在开始导出…',
-                    style: TextStyle(color: AppColors.mint, fontSize: 12),
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -1419,7 +1422,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                       : null,
                   minHeight: 6,
                   backgroundColor: AppColors.border,
-                  color: AppColors.mint,
+                  color: AppColors.accent,
                 ),
               ),
               if (p.totalFiles > 0) ...[
@@ -1449,7 +1452,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                   ? '开始导出'
                   : '我已加入 Wi‑Fi — 继续',
               icon: Icons.download_done_rounded,
-              color: AppColors.mint,
+              color: AppColors.accent,
               onPressed: transferring ? null : _continueExport,
             ),
             const SizedBox(height: 10),
@@ -1487,7 +1490,7 @@ class _ExportStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = done
-        ? AppColors.mint
+        ? AppColors.textSecondary
         : active
         ? AppColors.accent
         : AppColors.textMuted;
@@ -1501,7 +1504,7 @@ class _ExportStep extends StatelessWidget {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: done
-                  ? AppColors.mint.withValues(alpha: 0.15)
+                  ? AppColors.bgSubtle
                   : active
                   ? AppColors.accent.withValues(alpha: 0.12)
                   : AppColors.bgElevated,
@@ -1512,7 +1515,7 @@ class _ExportStep extends StatelessWidget {
                 ? const Icon(
                     Icons.check_rounded,
                     size: 14,
-                    color: AppColors.mint,
+                    color: AppColors.textSecondary,
                   )
                 : Text(
                     '$index',
@@ -1654,7 +1657,7 @@ class _DeviceFileTile extends StatelessWidget {
                     selected
                         ? Icons.check_circle_rounded
                         : Icons.circle_outlined,
-                    color: selected ? AppColors.mint : AppColors.textMuted,
+                    color: selected ? AppColors.accent : AppColors.textMuted,
                     size: 22,
                   ),
                   const SizedBox(width: 10),
@@ -1718,7 +1721,7 @@ class _DeviceFileTile extends StatelessWidget {
                             dimension: 20,
                             child: CircularProgressIndicator(
                               strokeWidth: 2.5,
-                              color: AppColors.mint,
+                              color: AppColors.accent,
                             ),
                           )
                         : Icon(
@@ -1727,7 +1730,7 @@ class _DeviceFileTile extends StatelessWidget {
                                 : Icons.download_rounded,
                             color: complete || onExport == null
                                 ? AppColors.textMuted
-                                : AppColors.mint,
+                                : AppColors.accent,
                           ),
                   ),
                   IconButton(

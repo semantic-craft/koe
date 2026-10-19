@@ -266,7 +266,7 @@ class _ProviderSelector extends StatelessWidget {
         statusColor: !caps.supported
             ? tokens.textMuted
             : ready
-            ? (selected ? tokens.accent : tokens.mint)
+            ? (selected ? tokens.accent : tokens.textSecondary)
             : tokens.amber,
       );
     }
@@ -277,7 +277,7 @@ class _ProviderSelector extends StatelessWidget {
       statusLabel: !configured ? '需密钥' : (selected ? '使用中' : '已配置'),
       statusColor: !configured
           ? tokens.amber
-          : (selected ? tokens.accent : tokens.mint),
+          : (selected ? tokens.accent : tokens.textSecondary),
     );
   }
 
