@@ -13,6 +13,8 @@ mixin _RecorderPlace on ChangeNotifier {
   abstract final PlaceCapture _placeCapture;
   DateTime? _recordedAtFromFileId(int? id);
   int? fileIdFromPath(String path);
+  // ignore: unused_element_parameter
+  String _recordingTitleForPath(String path, {String? archiveName});
   abstract final RecordingLibraryStore library;
   // END DEPS
 
@@ -27,7 +29,7 @@ mixin _RecorderPlace on ChangeNotifier {
         library.assetForPath(path) ??
         RecordingAsset(
           path: path,
-          displayName: _placeDisplayName(path),
+          displayName: _recordingTitleForPath(path),
           source: RecordingSource.device,
           recordedAt: _recordedAtFromFileId(id),
           importedAt: _localFileTimestamp(path) ?? DateTime.now(),
@@ -42,11 +44,6 @@ mixin _RecorderPlace on ChangeNotifier {
       ),
     );
     notifyListeners();
-  }
-
-  String _placeDisplayName(String path) {
-    final label = ExportCatalog.editableLabelFromPath(path).trim();
-    return label.isEmpty ? p.basename(path) : label;
   }
 
   /// Removes the place note without touching the original audio.

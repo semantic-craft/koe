@@ -17,7 +17,7 @@ mixin _RecorderContext on ChangeNotifier {
   abstract final TopicStore topics;
   abstract final bool topicsEnabled;
   abstract final QwenSttService _qwenStt;
-  List<TranscriptSegment> transcriptSegmentsForPath(String path);
+  List<TranscriptSegment> quotableSegmentsForPath(String path);
   String? transcriptForPath(String path);
   // END DEPS
 
@@ -117,10 +117,7 @@ mixin _RecorderContext on ChangeNotifier {
       final ref = contextReference(item)!;
       final path = ref.path!;
       final key = item.source!.recordingKey;
-      final timed = transcriptSegmentsForPath(path);
-      final segments = timed.isNotEmpty
-          ? timed
-          : [TranscriptSegment(text: _itemText(item), start: Duration.zero)];
+      final segments = quotableSegmentsForPath(path);
       var used = 0;
       for (final segment in segments) {
         if (used >= share) break;

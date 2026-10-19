@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -141,6 +142,67 @@ void main() {
     expect(asset?.source, RecordingSource.device);
     expect(asset?.place?.label, '南京 鼓楼');
     expect(asset?.place?.source, RecordingPlaceSource.manual);
+  });
+
+  // #232: 录音豆录音补地点、重启、删除恢复后，标题仍是录音时间，不变成文件名。
+  test('设备录音补地点、重启、回收站恢复后标题仍是录音时间', () async {
+    final file = File('${temp.path}/1792377669.wav');
+    await file.writeAsBytes(wavBytes([1, 2, 3, 4]));
+    String title(RecorderController c) => c
+        .recordingView(RecordingReference(fileId: 1792377669, path: file.path))
+        .title;
+
+    final c = controller();
+    final before = title(c);
+    expect(before, matches(RegExp(r'^\d{4}/\d{2}/\d{2} \d{2}:\d{2}$')));
+    await c.setRecordingPlace(file.path, '上海市徐汇区');
+    expect(title(c), before);
+    c.dispose();
+
+    final restarted = controller();
+    addTearDown(restarted.dispose);
+    await restarted.waitForRecordingLibrary();
+    expect(title(restarted), before);
+
+    await restarted.trashLocalExports([file.path]);
+    await restarted.restoreTrashed(file.path);
+    expect(title(restarted), before);
+  });
+
+  test('旧版本存成文件名标题的设备录音恢复为录音时间', () async {
+    final file = File('${temp.path}/1792377669.wav');
+    await file.writeAsBytes(wavBytes([1, 2, 3, 4]));
+    final expected = controller();
+    final dateTitle = expected
+        .recordingView(RecordingReference(fileId: 1792377669, path: file.path))
+        .title;
+    expected.dispose();
+    await libraryFile.writeAsString(
+      jsonEncode(
+        RecordingLibraryStore.encode([
+          RecordingAsset(
+            path: file.path,
+            displayName: '1792377669.wav',
+            source: RecordingSource.device,
+            recordedAt: DateTime.fromMillisecondsSinceEpoch(1792377669000),
+            importedAt: DateTime(2026, 10, 19, 10, 52),
+          ),
+        ]),
+      ),
+    );
+
+    final c = controller();
+    addTearDown(c.dispose);
+    await c.waitForRecordingLibrary();
+
+    expect(
+      c
+          .recordingView(
+            RecordingReference(fileId: 1792377669, path: file.path),
+          )
+          .title,
+      dateTitle,
+    );
   });
 
   test('粗粒度地点去掉街道级细节', () {

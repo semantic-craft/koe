@@ -201,6 +201,26 @@ mixin _RecorderTranscripts on ChangeNotifier {
     return effective;
   }
 
+  /// The pieces of [path]'s text that other features quote and cite.
+  ///
+  /// Provider-timed segments while they still match the visible text. Once
+  /// the user corrects the transcript the old segments no longer say what the
+  /// text says, so the corrected text is quoted paragraph by paragraph from
+  /// the start of the recording instead; the same holds for untimed text.
+  List<TranscriptSegment> quotableSegmentsForPath(String path) {
+    final edited = _manualTranscripts.containsKey(_recordingKey(path: path));
+    final timed = edited
+        ? const <TranscriptSegment>[]
+        : transcriptSegmentsForPath(path);
+    if (timed.isNotEmpty) return timed;
+    final text = transcriptForPath(path)?.trim() ?? '';
+    return [
+      for (final paragraph in text.split('\n'))
+        if (paragraph.trim().isNotEmpty)
+          TranscriptSegment(text: paragraph.trim(), start: Duration.zero),
+    ];
+  }
+
   /// Manual text last saved by the user, before display aliases are applied.
   String? manualTranscriptForPath(String path) =>
       _manualTranscripts[_recordingKey(path: path)];

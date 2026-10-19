@@ -27,6 +27,8 @@ mixin _RecorderLibrary on ChangeNotifier {
   Future<void> _persistTranscripts({bool strict = false});
   abstract final Future<String> Function(String rawPath) _rawExportConverter;
   DateTime? _recordedAtFromFileId(int? id);
+  // ignore: unused_element_parameter
+  String _recordingTitleForPath(String path, {String? archiveName});
   abstract final Map<String, String> _recordingErrors;
   // ignore: unused_element_parameter
   String _recordingKey({int? fileId, String? path});
@@ -776,7 +778,7 @@ mixin _RecorderLibrary on ChangeNotifier {
             existing ??
             RecordingAsset(
               path: path,
-              displayName: _trashDisplayName(path),
+              displayName: _recordingTitleForPath(path),
               source: RecordingSource.device,
               recordedAt: id == null
                   ? null
@@ -818,11 +820,6 @@ mixin _RecorderLibrary on ChangeNotifier {
           .then((_) => _fileJobs.discard(key))
           .catchError((Object _) {}),
     );
-  }
-
-  String _trashDisplayName(String path) {
-    final label = ExportCatalog.editableLabelFromPath(path).trim();
-    return label.isEmpty ? p.basename(path) : label;
   }
 
   Future<void> restoreTrashed(String path, {DateTime? now}) async {

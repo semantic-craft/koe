@@ -83,7 +83,7 @@ String _answer(String source) {
   if (source.contains('牛奶已经')) {
     final milk = RegExp(r'\[(T\d+)\] 买牛奶').firstMatch(source)!.group(1);
     return '{"items":[],"updates":['
-        '{"todo":"$milk","action":"done","segment":1},'
+        '{"todo":"$milk","mention":"牛奶","sure":true,"action":"done","segment":1},'
         '{"todo":null,"action":"reschedule","due":"2026-10-27","segment":2}]}';
   }
   return '```json\n{"items":['
@@ -172,6 +172,64 @@ void main() {
     await reopened.load();
     expect(reopened.todoById(milk.id)?.status, TodoStatus.done);
     expect(reopened.clarifications, hasLength(1));
+  });
+
+  test('a vague or uncertain update waits for the user even when the model '
+      'picks a todo (#234)', () async {
+    const plan = [
+      TranscriptSegment(text: '今天下午整理一下这周的事情。', start: Duration.zero),
+      TranscriptSegment(text: '我明天去买牛奶。', start: Duration(seconds: 3)),
+    ];
+    String ref(String source, String title) =>
+        RegExp('\\[(T\\d+)\\] $title').firstMatch(source)!.group(1)!;
+    // What the real model did in F9, then other ways it can be unsure.
+    final vagueAnswers = <String Function(String)>[
+      (s) =>
+          '{"items":[],"updates":[{"todo":"${ref(s, '整理本周事情')}",'
+          '"action":"reschedule","due":"2026-10-26","segment":2}]}',
+      (s) =>
+          '{"items":[],"updates":[{"todo":"${ref(s, '整理本周事情')}",'
+          '"mention":"那件事","action":"reschedule","due":"2026-10-26",'
+          '"segment":2}]}',
+      (s) =>
+          '{"items":[],"updates":[{"todo":"${ref(s, '整理本周事情')}",'
+          '"mention":"那件事","candidates":["T1","T2"],"sure":false,'
+          '"action":"reschedule","due":"2026-10-26","segment":2}]}',
+    ];
+    for (final vague in vagueAnswers) {
+      final store = TodoStore(inMemory: true);
+      final c = controller(
+        store: store,
+        assistant: _Assistant((source) {
+          if (source.contains('那件事')) return vague(source);
+          return '{"items":['
+              '{"type":"mine","title":"整理本周事情","due":"2026-10-19","segment":1},'
+              '{"type":"mine","title":"买牛奶","due":"2026-10-20","segment":2}'
+              '],"updates":[]}';
+        }),
+      );
+      addTearDown(c.dispose);
+      final first = await recording(c, 1760850000, plan);
+      final later = await recording(c, 1760936400, const [
+        TranscriptSegment(text: '牛奶已经买好了。', start: Duration.zero),
+        TranscriptSegment(text: '那件事改到下周吧。', start: Duration(seconds: 4)),
+      ]);
+      await c.extractTodos(RecordingReference(path: first));
+      final before = {for (final t in store.todos) t.id: t.due};
+
+      await c.extractTodos(RecordingReference(path: later));
+      for (final todo in store.todos) {
+        expect(todo.due, before[todo.id], reason: todo.title);
+        expect(todo.status, TodoStatus.open, reason: todo.title);
+      }
+      final ask = store.clarifications.single;
+      expect(ask.quote, '那件事改到下周吧。');
+      expect(ask.due, DateTime(2026, 10, 26));
+      expect(
+        ask.candidateIds.map((id) => store.todoById(id)!.title),
+        containsAll(['整理本周事情']),
+      );
+    }
   });
 
   test('a reminder is created once and stays in step with Reminders', () async {

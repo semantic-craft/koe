@@ -55,7 +55,7 @@ class ExportCatalog {
     return stem.startsWith(prefix) ? stem.substring(prefix.length) : '';
   }
 
-  /// One local row per recording, ordered by the timestamp-shaped file id.
+  /// One local row per recording, newest first by the time in its filename.
   static List<String> newestPathsFirst(Iterable<String> paths) {
     final byId = <int, String>{};
     final withoutId = <String>{};
@@ -69,9 +69,33 @@ class ExportCatalog {
       if (current == null || _prefer(path, current)) byId[id] = path;
     }
 
-    final ids = byId.keys.toList()..sort((a, b) => b.compareTo(a));
-    final fallback = withoutId.toList()..sort((a, b) => b.compareTo(a));
-    return [...ids.map((id) => byId[id]!), ...fallback];
+    final rows = [...byId.values, ...withoutId];
+    final times = {for (final path in rows) path: _filenameSeconds(path)};
+    rows.sort((a, b) {
+      final left = times[a];
+      final right = times[b];
+      if (left != right) {
+        if (left == null) return 1;
+        if (right == null) return -1;
+        return right.compareTo(left);
+      }
+      return b.compareTo(a);
+    });
+    return rows;
+  }
+
+  /// Device files start with Unix seconds, imports with microseconds, Mac
+  /// restores with milliseconds and phone takes with `phone_` + microseconds.
+  /// Comparing the raw numbers put every import above every device recording
+  /// (#232), so each is scaled back to seconds first.
+  static int? _filenameSeconds(String path) {
+    final name = path.split('/').last;
+    final match = RegExp(r'^(?:phone_)?(\d+)').firstMatch(name);
+    final value = match == null ? null : int.tryParse(match.group(1)!);
+    if (value == null) return null;
+    if (value >= 100000000000000) return value ~/ 1000000;
+    if (value >= 100000000000) return value ~/ 1000;
+    return value;
   }
 
   static List<OfflineFileEntry> unexportedNewestFirst(

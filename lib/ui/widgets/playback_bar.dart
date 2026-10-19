@@ -88,16 +88,23 @@ class PlaybackBar extends StatelessWidget {
               thumbColor: AppColors.accent,
               overlayColor: AppColors.accent.withValues(alpha: 0.15),
             ),
-            child: Slider(
-              value: c.playbackProgress,
-              onChanged: canSeek
-                  ? (v) {
-                      final totalMs = c.duration.inMilliseconds > 0
-                          ? c.duration.inMilliseconds
-                          : 1;
-                      c.seekTo(Duration(milliseconds: (v * totalMs).round()));
-                    }
-                  : null,
+            child: MergeSemantics(
+              child: Semantics(
+                label: '播放进度',
+                child: Slider(
+                  value: c.playbackProgress,
+                  onChanged: canSeek
+                      ? (v) {
+                          final totalMs = c.duration.inMilliseconds > 0
+                              ? c.duration.inMilliseconds
+                              : 1;
+                          c.seekTo(
+                            Duration(milliseconds: (v * totalMs).round()),
+                          );
+                        }
+                      : null,
+                ),
+              ),
             ),
           ),
           Padding(

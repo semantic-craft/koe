@@ -249,6 +249,8 @@ session, not continuation across a hardware stop, disconnect, or App restart.
 
 When `realtimeFlag == 1`, transfer prefers non-SPP path (`preferSpp=false`).
 
+**`already_transferred_size` is a byte offset into the slice record stream (verified 2026-10-19).** Each slice record is 166 bytes: `u32 LE sequence`, 1 flag byte, 160 audio bytes, 1 separator. Resuming after N slices means sending `166 × N`; the recorder then starts at sequence N, and the decrypted audio equals bytes `160 × N…` of a full pull. Offsets in 160- or 165-byte units land mid-record: slices arrive misaligned and their sequences decode as garbage. Evidence: `KOE_HW_TESTS=1 scripts/hw-check` (integration_test/hw/resume_probe_test.dart) on a real soundcore Work, file 1792377669 (1 047 680 audio bytes): offset 16 600 → first sequence 100, audio matches from byte 16 000; offsets 16 000 and 16 500 → misaligned (#218).
+
 **RX (type 0x1A) — `FileTransportDispatch` / `AudioMessageDispatch`:**
 
 | cmdId | Meaning |

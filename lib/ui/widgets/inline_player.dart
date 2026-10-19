@@ -93,17 +93,29 @@ class InlinePlayer extends StatelessWidget {
           child: Overlay.wrap(
             alwaysSizeToContent: true,
             clipBehavior: Clip.none,
-            child: Slider(
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              value: progress,
-              onChanged: canSeek
-                  ? (v) {
-                      final totalMs = c.duration.inMilliseconds > 0
-                          ? c.duration.inMilliseconds
-                          : 1;
-                      c.seekTo(Duration(milliseconds: (v * totalMs).round()));
-                    }
-                  : null,
+            child: MergeSemantics(
+              child: Semantics(
+                label: '播放进度',
+                child: Slider(
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  value: progress,
+                  semanticFormatterCallback: (v) => _fmt(
+                    Duration(
+                      milliseconds: (v * c.duration.inMilliseconds).round(),
+                    ),
+                  ),
+                  onChanged: canSeek
+                      ? (v) {
+                          final totalMs = c.duration.inMilliseconds > 0
+                              ? c.duration.inMilliseconds
+                              : 1;
+                          c.seekTo(
+                            Duration(milliseconds: (v * totalMs).round()),
+                          );
+                        }
+                      : null,
+                ),
+              ),
             ),
           ),
         ),
@@ -190,29 +202,39 @@ class InlinePlayer extends StatelessWidget {
                       : null,
                 ),
                 const SizedBox(width: 2),
-                Material(
-                  color: AppColors.accent,
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: () => c.playExported(path, fileId: fileId),
-                    child: SizedBox(
-                      width: 52,
-                      height: 52,
-                      child: Tooltip(
-                        message: playing
-                            ? '暂停播放'
-                            : completed
-                            ? '重新播放'
-                            : '播放录音',
-                        child: Icon(
-                          playing
-                              ? Icons.pause_rounded
+                Semantics(
+                  button: true,
+                  label: playing
+                      ? '暂停播放'
+                      : completed
+                      ? '重新播放'
+                      : '播放录音',
+                  onTap: () => c.playExported(path, fileId: fileId),
+                  excludeSemantics: true,
+                  child: Material(
+                    color: AppColors.accent,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => c.playExported(path, fileId: fileId),
+                      child: SizedBox(
+                        width: 52,
+                        height: 52,
+                        child: Tooltip(
+                          message: playing
+                              ? '暂停播放'
                               : completed
-                              ? Icons.replay_rounded
-                              : Icons.play_arrow_rounded,
-                          color: Colors.white,
-                          size: 28,
+                              ? '重新播放'
+                              : '播放录音',
+                          child: Icon(
+                            playing
+                                ? Icons.pause_rounded
+                                : completed
+                                ? Icons.replay_rounded
+                                : Icons.play_arrow_rounded,
+                            color: Colors.white,
+                            size: 28,
+                          ),
                         ),
                       ),
                     ),
@@ -320,14 +342,14 @@ class _IconBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon, size: size),
-        color: onPressed == null ? AppColors.textMuted : AppColors.textPrimary,
-        constraints: const BoxConstraints(minWidth: 52, minHeight: 52),
-      ),
+    // IconButton's own tooltip names the button for screen readers; an
+    // outer Tooltip left the label on a separate, role-less node.
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(icon, size: size),
+      color: onPressed == null ? AppColors.textMuted : AppColors.textPrimary,
+      constraints: const BoxConstraints(minWidth: 52, minHeight: 52),
     );
   }
 }
