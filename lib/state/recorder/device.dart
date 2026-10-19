@@ -864,6 +864,11 @@ mixin _RecorderDevice on ChangeNotifier {
       _send(DeviceCommands.setFindMy(on), label: on ? '正在开启查找…' : '正在关闭查找…');
 
   void _onPacket(DecodedPacket p) {
+    // Audio slices arrive hundreds of times a second during retrieval and
+    // live recording. Their consumers (file pull, realtime stream) listen to
+    // the packet stream themselves and throttle progress, so they must not
+    // rebuild every controller listener here.
+    if (BleService.isAudioSlice(p)) return;
     // Device info family (type 0x01)
     if (p.cmdType == RxCmd.deviceInfoType) {
       if (p.cmdId == RxCmd.deviceInfoId) {
