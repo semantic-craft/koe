@@ -12,7 +12,7 @@ DISPLAY_NAME="Koe"
 RELEASE_APP="build/macos/Build/Products/Release/${DISPLAY_NAME}.app"
 DIST_DIR="${ROOT}/dist"
 VERSION="$(
-  # pubspec: version: 1.2.1+4 → 1.2.1
+  # pubspec: version: 1.2.2+5 → 1.2.2
   grep -E '^version:' pubspec.yaml | head -1 | sed -E 's/^version:[[:space:]]*//; s/\+.*//; s/[[:space:]]//g'
 )"
 VERSION="${VERSION:-0.0.0}"
