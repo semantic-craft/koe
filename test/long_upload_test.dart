@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/audio/ogg_opus.dart';
 import 'package:koe/ai/qwen_stt.dart';
 
+import 'support/wav_fixture.dart';
+
 void main() {
   late Directory dir;
   setUp(() async => dir = await Directory.systemTemp.createTemp('long-upload'));
@@ -84,13 +86,8 @@ void main() {
   );
   test('only matching WAV sidecar selects raw source', () async {
     final wav = File('${dir.path}/sample.wav');
-    final bytes = Uint8List(44 + 96000);
-    bytes.setRange(0, 4, 'RIFF'.codeUnits);
-    bytes.setRange(8, 12, 'WAVE'.codeUnits);
-    final data = ByteData.sublistView(bytes);
-    data.setUint32(28, 96000, Endian.little);
-    data.setUint32(40, 96000, Endian.little);
-    await wav.writeAsBytes(bytes);
+    // One second of 16 kHz mono PCM.
+    await wav.writeAsBytes(wavBytes(Uint8List(32000)));
     final raw = File('${dir.path}/sample.opus');
     await raw.writeAsBytes(Uint8List(160 * 50));
     expect(await qwenUploadSource(wav.path), raw.path);

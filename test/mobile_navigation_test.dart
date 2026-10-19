@@ -344,6 +344,22 @@ void main() {
     expect(find.text('仅 iPhone'), findsOneWidget);
   });
 
+  testWidgets('ask Koe button does not cover an open sheet', (tester) async {
+    await pump(tester);
+    expect(find.byKey(const ValueKey('ask-koe')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('new-recording')));
+    await tester.pumpAndSettle();
+    // The floating button sat above the sheet and hid its last row.
+    expect(find.text('取回设备录音'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ask-koe')), findsNothing);
+
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.text('取回设备录音'), findsNothing);
+    expect(find.byKey(const ValueKey('ask-koe')), findsOneWidget);
+  });
+
   testWidgets('trash hides a material and restores it from the library', (
     tester,
   ) async {

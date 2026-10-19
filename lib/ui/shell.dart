@@ -276,7 +276,7 @@ class _AppShellState extends State<AppShell> {
                         offstage: !covered,
                         child: _DesktopPages(index: _index),
                       ),
-                    if (!_wide && !detailVisible)
+                    if (!_wide && !detailVisible && _routes.popups.isEmpty)
                       Positioned(
                         right: 16,
                         bottom: 12,
@@ -346,6 +346,9 @@ class _RecordingRouteObserver extends NavigatorObserver {
   _RecordingRouteObserver(this.changed);
   final VoidCallback changed;
   final List<Route<dynamic>> routes = [];
+  // Sheets and dialogs open inside this navigator, below the shell's
+  // floating Ask Koe button; the shell hides the button while one is up.
+  final List<Route<dynamic>> popups = [];
   RecordingReference? get visibleReference {
     final value = routes.lastOrNull?.settings.arguments;
     return value is RecordingReference ? value : null;
@@ -356,18 +359,23 @@ class _RecordingRouteObserver extends NavigatorObserver {
     if (route is PageRoute) {
       routes.add(route);
       changed();
+    } else if (route is PopupRoute) {
+      popups.add(route);
+      changed();
     }
   }
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     routes.remove(route);
+    popups.remove(route);
     changed();
   }
 
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
     routes.remove(route);
+    popups.remove(route);
     changed();
   }
 
