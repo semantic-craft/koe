@@ -340,7 +340,8 @@ void main() {
     expect(find.text('导入本地音频'), findsOneWidget);
     expect(find.text('取回设备录音'), findsOneWidget);
     expect(find.text('手机录音'), findsOneWidget);
-    expect(find.text('尚未开放'), findsOneWidget);
+    // Off iPhone the row stays visible but disabled.
+    expect(find.text('仅 iPhone'), findsOneWidget);
   });
 
   testWidgets('trash hides a material and restores it from the library', (
