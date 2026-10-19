@@ -580,9 +580,9 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         controller.fileProcessingBusy) {
       return;
     }
-    final apple = controller.speechProvider == SttProvider.apple;
+    final chooseLanguage = controller.speechProvider.requiresSourceLanguage;
     if (recording.text.isNotEmpty) {
-      if (apple) {
+      if (chooseLanguage) {
         final choice = await showDialog<(String, bool)>(
           context: context,
           builder: (dialogContext) => AlertDialog(
@@ -638,11 +638,11 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         if (confirmed != true || !mounted) return;
       }
     }
-    if (apple && sourceLanguage == null) return;
+    if (chooseLanguage && sourceLanguage == null) return;
     await controller.transcribeRecording(
       widget.reference,
-      sourceLanguage: apple ? sourceLanguage : null,
-      prepareLanguages: apple && prepareLanguages,
+      sourceLanguage: chooseLanguage ? sourceLanguage : null,
+      prepareLanguages: chooseLanguage && prepareLanguages,
     );
   }
 
@@ -1408,10 +1408,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 tooltip: c.queueContainsRecording(widget.reference)
                     ? '已在收听队列中'
                     : '加入收听队列',
-                onPressed:
-                    recording.listenable
-                    ? _addToQueue
-                    : null,
+                onPressed: recording.listenable ? _addToQueue : null,
                 icon: Icon(
                   c.queueContainsRecording(widget.reference)
                       ? Icons.playlist_add_check_rounded
@@ -1474,7 +1471,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       value: 'transcribe',
                       enabled:
                           canProcess &&
-                          (c.speechProvider == SttProvider.apple ||
+                          (c.speechProvider.requiresSourceLanguage ||
                               c.sttConfigured),
                       child: const Text('重新转写'),
                     ),
@@ -1831,15 +1828,17 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                                         recording: recording,
                                         canTranscribe:
                                             canProcess &&
-                                            (c.speechProvider ==
-                                                    SttProvider.apple ||
+                                            (c
+                                                    .speechProvider
+                                                    .requiresSourceLanguage ||
                                                 c.sttConfigured),
                                         configured: c.sttConfigured,
                                         onTranscribe: () =>
                                             _transcribe(recording),
                                         appleForm:
-                                            c.speechProvider ==
-                                                SttProvider.apple
+                                            c
+                                                .speechProvider
+                                                .requiresSourceLanguage
                                             ? _AppleTranscriptionForm(
                                                 reference: widget.reference,
                                                 initialLanguage:
@@ -2563,9 +2562,9 @@ class _EmptyRecording extends StatelessWidget {
         ? (!recording.transcriptionEnabled
               ? '自动转写已关闭'
               : !recording.speechReady
-              ? (recording.provider == SttProvider.apple
-                    ? '在设置中下载并准备语音语言'
-                    : '请在设置中配置 ${recording.provider.label}')
+              ? (recording.provider.needsCredentials
+                    ? '请在设置中配置 ${recording.provider.label}'
+                    : '在设置中下载并准备语音语言')
               : recording.provider.retired
               ? '录音结束后生成文字'
               : '开始说话后，文字会显示在这里')
@@ -2723,7 +2722,7 @@ class _AppleTranscriptionFormState extends State<_AppleTranscriptionForm> {
     if (!widget.enabled ||
         c.fileProcessingBusy ||
         c.recordingView(widget.reference).audioLocked ||
-        c.speechProvider != SttProvider.apple) {
+        !c.speechProvider.requiresSourceLanguage) {
       return;
     }
     widget.onLanguageChanged(language);
@@ -2756,7 +2755,7 @@ class _AppleTranscriptionFormState extends State<_AppleTranscriptionForm> {
         widget.enabled &&
         !c.fileProcessingBusy &&
         !c.recordingView(widget.reference).audioLocked &&
-        c.speechProvider == SttProvider.apple;
+        c.speechProvider.requiresSourceLanguage;
     final canSubmit =
         enabled &&
         selected != null &&

@@ -9,16 +9,9 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
   SpeechConfiguration get _activeConfiguration;
   abstract final AppleSpeechService _appleSpeech;
-  Future<String> _convertExportToWav(
-    String path, {
-    // ignore: unused_element_parameter
-    bool register = true,
-    // ignore: unused_element_parameter
-    List<String>? conversionFailures,
-  });
   abstract bool _disposed;
   abstract final DoubaoSttService _doubaoStt;
-  abstract final Map<SttProvider, _EngineAdapter> _engineAdapters;
+  abstract final Map<SttProvider, _SttEngine> _sttEngines;
   bool _isConfigured(SpeechConfiguration config);
   bool _isRecordingAudioLocked(int? id, String? path);
   bool _isTrashedPath(String path);
@@ -132,7 +125,8 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       view.path!,
       sourceLanguage:
           sourceLanguage ??
-          (speechProvider == SttProvider.apple && view.sourceLanguage != 'auto'
+          (speechProvider.requiresSourceLanguage &&
+                  view.sourceLanguage != 'auto'
               ? view.sourceLanguage
               : null),
       prepareLanguages: prepareLanguages,
@@ -149,7 +143,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     if (_disposed) return;
     final settings = _settingsConfiguration;
     final config =
-        settings.provider == SttProvider.apple && sourceLanguage != null
+        settings.provider.requiresSourceLanguage && sourceLanguage != null
         ? settings.withSourceLanguage(sourceLanguage.trim())
         : settings;
     await _fileJobsLoaded;
@@ -188,12 +182,12 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       return !fromQueue;
     }
     if (_fileJobs.jobs[key]?.stage != 'result' &&
-        (config.provider == SttProvider.apple
-            ? config.sourceLanguage.isEmpty
-            : !_isConfigured(config))) {
-      _recordingErrors[key] = config.provider == SttProvider.apple
-          ? '请选择录音语言'
-          : '请在设置中配置 ${config.provider.label}';
+        (config.provider.needsCredentials
+            ? !_isConfigured(config)
+            : config.sourceLanguage.isEmpty)) {
+      _recordingErrors[key] = config.provider.needsCredentials
+          ? '请在设置中配置 ${config.provider.label}'
+          : '请选择录音语言';
       final pending = _fileJobs.jobs[key];
       if (pending != null) {
         pending.error = _recordingErrors[key];
@@ -253,7 +247,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       }
       config = job.resolve(config);
       if (job.stage != 'result' &&
-          config.provider != SttProvider.apple &&
+          config.provider.needsCredentials &&
           !_isConfigured(config)) {
         _fileJobPreparing = false;
         job.error = '任务使用的服务地址已变更，请恢复原配置后重试';
@@ -276,7 +270,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       return true;
     }
     if (_isRecordingAudioLocked(fileIdFromPath(path), path) ||
-        config.provider == SttProvider.apple && _liveProcessing) {
+        config.provider.onDevice && _liveProcessing) {
       _recordingErrors[key] = '处理因录音暂停，可在录音结束后重试';
       finishJobCompleter();
       notifyListeners();
@@ -385,7 +379,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
             currentPath,
             result.text,
             provider: config.provider,
-            sourceLanguage: config.provider == SttProvider.apple
+            sourceLanguage: config.provider.requiresSourceLanguage
                 ? config.sourceLanguage
                 : result.language ?? config.sourceLanguage,
             segments: rememberedSegments,
@@ -591,24 +585,9 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     bool Function()? isCurrent,
   }) async {
     final config = configuration ?? _activeConfiguration;
-    if (config.provider == SttProvider.apple) {
-      final wavPath = await _convertExportToWav(path);
-      if (isCurrent != null && !isCurrent()) {
-        throw PlatformException(code: 'cancelled');
-      }
-      if (!wavPath.endsWith('.wav')) {
-        throw PlatformException(code: 'audio_invalid');
-      }
-      return _appleSpeech.transcribePath(
-        wavPath,
-        sourceLanguage: config.sourceLanguage,
-        onProgress: onProgress,
-      );
-    }
-    return _engineAdapters[config.provider]!.transcribe(
+    return _sttEngines[config.provider]!.transcribe(
       path,
-      config.engineConfig(config.provider),
-      language: config.sourceLanguage == 'auto' ? null : config.sourceLanguage,
+      config,
       onProgress: onProgress,
       isCurrent: isCurrent,
     );

@@ -12,6 +12,13 @@ mixin _RecorderSettings on ChangeNotifier {
   abstract final AppleSpeechService _appleSpeech;
   abstract bool _autoTransferRunning;
   abstract final BleFilePull _blePull;
+  Future<String> _convertExportToWav(
+    String path, {
+    // ignore: unused_element_parameter
+    bool register = true,
+    // ignore: unused_element_parameter
+    List<String>? conversionFailures,
+  });
   abstract bool _disposed;
   abstract final DoubaoSttService _doubaoStt;
   bool _isConfigured(SpeechConfiguration config);
@@ -73,9 +80,7 @@ mixin _RecorderSettings on ChangeNotifier {
       appleSupported: appleCapabilities.supported,
       qwenConfigured: _engineAdapters[SttProvider.qwen]!.isReady(),
     );
-    if (speechProvider.defersTranscription ||
-        (speechProvider == SttProvider.apple &&
-            sttMode == SttDisplayMode.conversation)) {
+    if (!speechProvider.supportsMode(sttMode)) {
       sttMode = SttDisplayMode.transcription;
     }
     if (s.speechProvider == null && s.storageError == null) {
@@ -214,14 +219,12 @@ mixin _RecorderSettings on ChangeNotifier {
   void setSpeechProvider(SttProvider provider) {
     if (provider.retired || provider == speechProvider) return;
     speechProvider = provider;
-    if (provider.defersTranscription ||
-        (provider == SttProvider.apple &&
-            sttMode == SttDisplayMode.conversation)) {
+    if (!provider.supportsMode(sttMode)) {
       sttMode = SttDisplayMode.transcription;
     }
     notifyListeners();
     unawaited(_persistSettings());
-    if (provider == SttProvider.apple) unawaited(refreshAppleCapabilities());
+    if (provider.onDevice) unawaited(refreshAppleCapabilities());
   }
 
   void setAppleSourceLanguage(String language) {
@@ -234,15 +237,15 @@ mixin _RecorderSettings on ChangeNotifier {
 
   SpeechConfiguration get _settingsConfiguration => SpeechConfiguration(
     provider: speechProvider,
-    sourceLanguage: speechProvider == SttProvider.apple
+    sourceLanguage: speechProvider.requiresSourceLanguage
         ? appleSourceLanguage
         : transcriptLanguage,
     targetLanguage: translationTargetLanguage,
     ownerLanguage: ownerLanguage,
     guestLanguage: guestLanguage,
-    mode: speechProvider.defersTranscription
-        ? SttDisplayMode.transcription
-        : sttMode,
+    mode: speechProvider.supportsMode(sttMode)
+        ? sttMode
+        : SttDisplayMode.transcription,
     enabled: autoTranscribe,
     appleReady: appleSpeechReady,
     appleTranslationReady: appleTranslationAvailable,
@@ -297,10 +300,8 @@ mixin _RecorderSettings on ChangeNotifier {
   /// The saved credential trio for [provider] (key-only engines expose just
   /// their key; Apple has none). This is the data source the engine lineup
   /// renders from.
-  EngineConfig engineConfig(SttProvider provider) => switch (provider) {
-    SttProvider.apple => const EngineConfig(),
-    _ => _engineAdapters[provider]?.readSaved() ?? const EngineConfig(),
-  };
+  EngineConfig engineConfig(SttProvider provider) =>
+      _engineAdapters[provider]?.readSaved() ?? const EngineConfig();
 
   /// Whether [provider] is ready to be selected and used.
   bool engineConfigured(SttProvider provider) => switch (provider) {
@@ -346,10 +347,7 @@ mixin _RecorderSettings on ChangeNotifier {
       _settingsReady && _isConfigured(_settingsConfiguration);
 
   void setSttMode(SttDisplayMode mode) {
-    if (speechProvider.defersTranscription &&
-        mode != SttDisplayMode.transcription) {
-      return;
-    }
+    if (!speechProvider.supportsMode(mode)) return;
     if (mode != SttDisplayMode.transcription &&
         (!autoTranscribe ||
             (mode == SttDisplayMode.conversation &&
@@ -428,11 +426,10 @@ mixin _RecorderSettings on ChangeNotifier {
   String ownerLanguage = 'zh';
   String guestLanguage = 'en';
 
-  /// How every non-Apple engine plugs into this controller: loading and
-  /// saving its credentials, readiness, the resolved snapshot a take
-  /// freezes, and its file-transcription dispatch. The provider switches
-  /// elsewhere collapse to one lookup here; adding a cloud engine is a
-  /// service plus one entry in this map.
+  /// How every credentialed engine keeps its credentials: loading and
+  /// saving them, readiness, and the resolved snapshot a take freezes.
+  /// Running speech goes through [_sttEngines]; adding a cloud engine is a
+  /// service plus one entry in each map.
   late final Map<SttProvider, _EngineAdapter> _engineAdapters = {
     SttProvider.qwen: _EngineAdapter(
       load: (settings) => settings.engineConfig(SttProvider.qwen),
@@ -454,16 +451,6 @@ mixin _RecorderSettings on ChangeNotifier {
       ),
       grouped: true,
       normalizeBaseUrl: normalizeDashScopeBaseUrl,
-      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
-          _qwenStt.transcribePath(
-            path,
-            apiKey: engine.apiKey,
-            baseUrl: engine.baseUrl,
-            model: engine.model,
-            language: language,
-            onProgress: onProgress,
-            isCurrent: isCurrent,
-          ),
     ),
     SttProvider.doubao: _EngineAdapter(
       load: (settings) => settings.engineConfig(SttProvider.doubao),
@@ -485,19 +472,87 @@ mixin _RecorderSettings on ChangeNotifier {
       ),
       grouped: true,
       normalizeBaseUrl: normalizeDoubaoBaseUrl,
-      // The service maps ISO short codes (`zh`) to Volcano BCP-47 (`zh-CN`).
-      transcribe: (path, engine, {language, onProgress, isCurrent}) =>
-          _doubaoStt.transcribePath(
-            path,
-            apiKey: engine.apiKey,
-            baseUrl: engine.baseUrl,
-            model: engine.model,
-            language: language,
-            onProgress: onProgress,
-            isCurrent: isCurrent,
-          ),
     ),
   };
+
+  /// How each available engine runs a file job and a live stream. Retired
+  /// engines have no entry.
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_field
+  late final Map<SttProvider, _SttEngine> _sttEngines = {
+    SttProvider.apple: _SttEngine(
+      transcribe: (path, config, {onProgress, isCurrent}) async {
+        final wavPath = await _convertExportToWav(path);
+        if (isCurrent != null && !isCurrent()) {
+          throw PlatformException(code: 'cancelled');
+        }
+        if (!wavPath.endsWith('.wav')) {
+          throw PlatformException(code: 'audio_invalid');
+        }
+        return _appleSpeech.transcribePath(
+          wavPath,
+          sourceLanguage: config.sourceLanguage,
+          onProgress: onProgress,
+        );
+      },
+      openStream: (config) => _appleSpeech.createStreamSession(
+        sourceLanguage: config.sourceLanguage,
+        targetLanguage:
+            config.mode == SttDisplayMode.translation &&
+                config.appleTranslationReady
+            ? config.targetLanguage
+            : null,
+      ),
+    ),
+    SttProvider.qwen: _SttEngine(
+      transcribe: (path, config, {onProgress, isCurrent}) {
+        final engine = config.engineConfig(SttProvider.qwen);
+        return _qwenStt.transcribePath(
+          path,
+          apiKey: engine.apiKey,
+          baseUrl: engine.baseUrl,
+          model: engine.model,
+          language: _cloudLanguage(config),
+          onProgress: onProgress,
+          isCurrent: isCurrent,
+        );
+      },
+      openStream: (config) {
+        final engine = config.engineConfig(SttProvider.qwen);
+        return QwenSttStreamSession(
+          apiKey: engine.apiKey!,
+          baseUrl: engine.baseUrl,
+          language: config.sourceLanguage,
+        );
+      },
+    ),
+    SttProvider.doubao: _SttEngine(
+      // The service maps ISO short codes (`zh`) to Volcano BCP-47 (`zh-CN`).
+      transcribe: (path, config, {onProgress, isCurrent}) {
+        final engine = config.engineConfig(SttProvider.doubao);
+        return _doubaoStt.transcribePath(
+          path,
+          apiKey: engine.apiKey,
+          baseUrl: engine.baseUrl,
+          model: engine.model,
+          language: _cloudLanguage(config),
+          onProgress: onProgress,
+          isCurrent: isCurrent,
+        );
+      },
+      openStream: (config) {
+        final engine = config.engineConfig(SttProvider.doubao);
+        return DoubaoSttStreamSession(
+          apiKey: engine.apiKey!,
+          baseUrl: engine.baseUrl,
+          language: config.sourceLanguage,
+        );
+      },
+    ),
+  };
+
+  static String? _cloudLanguage(SpeechConfiguration config) =>
+      config.sourceLanguage == 'auto' ? null : config.sourceLanguage;
 
   SttProvider speechProvider = SttProvider.qwen;
   String appleSourceLanguage = '';

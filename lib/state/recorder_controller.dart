@@ -1040,7 +1040,6 @@ class _EngineAdapter {
     required this.snapshot,
     required this.grouped,
     required this.normalizeBaseUrl,
-    required this.transcribe,
   });
 
   final EngineConfig Function(AppSettings settings) load;
@@ -1050,15 +1049,21 @@ class _EngineAdapter {
   final EngineConfig Function() snapshot;
   final bool grouped;
   final String Function(String raw) normalizeBaseUrl;
+}
+
+/// How every available engine, Apple included, runs speech: a recorded
+/// file and a live stream, both from the configuration a take or job froze.
+class _SttEngine {
+  const _SttEngine({required this.transcribe, required this.openStream});
 
   final Future<SttResult> Function(
     String path,
-    EngineConfig engine, {
-    String? language,
+    SpeechConfiguration config, {
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   })
   transcribe;
+  final SttStreamSession Function(SpeechConfiguration config) openStream;
 }
 
 /// Local transcript persistence failed after the cloud result was received.

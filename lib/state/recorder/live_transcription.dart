@@ -11,6 +11,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   bool get _activeAutoTranscribe;
   bool get _activeSttConfigured;
   abstract final AppleSpeechService _appleSpeech;
+  abstract final Map<SttProvider, _SttEngine> _sttEngines;
   Future<String> _convertExportToWav(
     String path, {
     // ignore: unused_element_parameter
@@ -72,10 +73,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       _liveConfiguration ?? _settingsConfiguration;
   bool _isConfigured(SpeechConfiguration config) {
     if (config.provider.retired) return false;
-    if (config.provider == SttProvider.apple) {
-      return config.appleReady && config.sourceLanguage.isNotEmpty;
+    if (config.provider.needsCredentials) {
+      return config.engineKey(config.provider)?.isNotEmpty == true;
     }
-    return config.engineKey(config.provider)?.isNotEmpty == true;
+    return config.appleReady && config.sourceLanguage.isNotEmpty;
   }
 
   RecordingReference? get currentRecordingReference {
@@ -278,8 +279,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     }
     if (_streamSttStarting) return false;
     final config = _activeConfiguration;
-    if (config.provider == SttProvider.apple &&
-        config.mode == SttDisplayMode.translation &&
+    if (config.mode == SttDisplayMode.translation &&
         !config.appleTranslationReady) {
       transcriptError = '请在设置中下载翻译语言';
       _snapshotLiveText();
@@ -309,7 +309,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       await previousSession?.dispose();
       if (revision != _sttLifecycleRevision) return false;
 
-      if (config.provider == SttProvider.apple) {
+      if (config.provider.onDevice) {
         await _fileCancellation;
         if (revision != _sttLifecycleRevision) return false;
       }
@@ -329,8 +329,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       streamingSttActive = true;
       _preferStreamStt = true;
       transcriptError =
-          config.provider == SttProvider.apple &&
-              config.mode == SttDisplayMode.translation &&
+          config.mode == SttDisplayMode.translation &&
               !config.appleTranslationReady
           ? '请在设置中下载翻译语言，下次录音生效'
           : null;
@@ -345,7 +344,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       streamingSttActive = false;
       _preferStreamStt = false;
       _pendingPcm.clear();
-      transcriptError = config.provider == SttProvider.apple
+      transcriptError = config.provider.onDevice
           ? _speechErrorMessage(e)
           : '实时转写失败，可在录音保存后重试';
       _snapshotLiveText();
@@ -364,30 +363,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   }
 
   SttStreamSession _createStreamSession(SpeechConfiguration config) {
-    if (config.provider == SttProvider.apple) {
-      return _appleSpeech.createStreamSession(
-        sourceLanguage: config.sourceLanguage,
-        targetLanguage:
-            config.mode == SttDisplayMode.translation &&
-                config.appleTranslationReady
-            ? config.targetLanguage
-            : null,
-      );
-    }
-    final engine = config.engineConfig(config.provider);
-    return switch (config.provider) {
-      SttProvider.qwen => QwenSttStreamSession(
-        apiKey: engine.apiKey!,
-        baseUrl: engine.baseUrl,
-        language: config.sourceLanguage,
-      ),
-      SttProvider.doubao => DoubaoSttStreamSession(
-        apiKey: engine.apiKey!,
-        baseUrl: engine.baseUrl,
-        language: config.sourceLanguage,
-      ),
-      _ => throw StateError('该语音服务已停用'),
-    };
+    final engine = _sttEngines[config.provider];
+    if (engine == null) throw StateError('该语音服务已停用');
+    return engine.openStream(config);
   }
 
   void _flushPendingPcm() {
@@ -460,22 +438,13 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         }
         final incoming = _streamText(e.text);
         if (incoming.isEmpty) return;
-        if (_activeConfiguration.provider == SttProvider.apple) {
-          if (e.speechFinal) {
-            transcript = incoming;
-            transcriptPartial = null;
-          } else {
-            transcriptPartial = incoming;
-          }
+        // Every engine emits cumulative snapshots; revisions may be shorter
+        // than a draft, so never append or prefer the longest text.
+        if (e.speechFinal) {
+          transcript = incoming;
+          transcriptPartial = null;
         } else {
-          // Both cloud adapters emit cumulative snapshots; revisions may be
-          // shorter than a draft, so never append or prefer the longest text.
-          if (e.speechFinal) {
-            transcript = incoming;
-            transcriptPartial = null;
-          } else {
-            transcriptPartial = incoming;
-          }
+          transcriptPartial = incoming;
         }
         transcribing = true;
         _snapshotLiveText();
@@ -489,7 +458,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         _snapshotLiveText();
         notifyListeners();
       case 'error':
-        transcriptError = _activeConfiguration.provider == SttProvider.apple
+        transcriptError = _activeConfiguration.provider.onDevice
             ? _speechErrorMessage(
                 PlatformException(code: e.error ?? 'processing_failed'),
               )
@@ -645,7 +614,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
 
   bool get translationModeAvailable =>
       autoTranscribe &&
-      (speechProvider == SttProvider.apple && appleTranslationAvailable);
+      speechProvider.supportsMode(SttDisplayMode.translation) &&
+      appleTranslationAvailable;
 
   bool get translationModeActive =>
       _activeConfiguration.enabled &&
@@ -706,7 +676,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     if (appleLanguagePreparationBusy) {
       _fileCancellation = _appleSpeech.cancelFileProcessing();
     }
-    if (_fileJobKey != null && _fileJobProvider == SttProvider.apple) {
+    // Live capture takes the on-device recognizer back from file work.
+    if (_fileJobKey != null && _fileJobProvider?.onDevice == true) {
       _fileJobRevision++;
       if (_fileJobKey != null) {
         _recordingErrors[_fileJobKey!] = '处理因录音暂停，可在录音结束后重试';
@@ -723,9 +694,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     transcriptError = null;
     transcribing = _fileJobKey != null;
     if (config.enabled && !_isConfigured(config)) {
-      transcriptError = config.provider == SttProvider.apple
-          ? '请在设置中选择并下载录音语言，下次录音生效'
-          : '请在设置中配置 ${config.provider.label}，下次录音生效';
+      transcriptError = config.provider.needsCredentials
+          ? '请在设置中配置 ${config.provider.label}，下次录音生效'
+          : '请在设置中选择并下载录音语言，下次录音生效';
       _currentRecording?.error = transcriptError;
     }
     _resetTranslationTurns();
