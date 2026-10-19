@@ -77,6 +77,38 @@ void main() {
     expect(notifications, 0);
     expect(controller.logs.first, 'line 199');
   });
+
+  test('audio slices do not rebuild controller listeners', () async {
+    final ble = _QuietBleService();
+    final controller = RecorderController(
+      ble: ble,
+      loadPersistedState: false,
+      persistedDeviceLoader: () async =>
+          (bound: false, manuallyDisconnected: false, device: null, info: null),
+    );
+    addTearDown(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      controller.dispose();
+      await Future<void>.delayed(Duration.zero);
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    for (var sequence = 0; sequence < 500; sequence++) {
+      ble.handleNotification(_sliceFrame(sequence));
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications, 0);
+
+    // Other packets still update the controller.
+    ble.handleNotification(
+      _frame(RxCmd.batteryId, const [5, 7], type: RxCmd.deviceInfoType),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications, 1);
+    expect(controller.info?.battery, isNotNull);
+  });
 }
 
 Uint8List _sliceFrame(int sequence) {
@@ -85,10 +117,14 @@ Uint8List _sliceFrame(int sequence) {
   return _frame(RxCmd.fileSliceId, slice);
 }
 
-Uint8List _frame(int cmdId, List<int> payload) {
+Uint8List _frame(
+  int cmdId,
+  List<int> payload, {
+  int type = RxCmd.transportType,
+}) {
   final length = 9 + payload.length + 1;
   final body = [
-    0x09, 0xFF, 0x00, 0x00, 0x01, RxCmd.transportType, cmdId, //
+    0x09, 0xFF, 0x00, 0x00, 0x01, type, cmdId, //
     length & 0xFF, (length >> 8) & 0xFF,
     ...payload,
   ];
@@ -139,4 +175,24 @@ class _LogOnlyBleService extends BleService {
     await _connectionState.close();
     await _logs.close();
   }
+}
+
+/// Real packet decoding, but never scans or connects.
+class _QuietBleService extends BleService {
+  @override
+  bool get isConnected => false;
+
+  @override
+  bool get isConnecting => false;
+
+  @override
+  Future<bool> isD3200ConnectedToSystem(String remoteId) async => false;
+
+  @override
+  Future<void> startScan({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {}
+
+  @override
+  Future<void> stopScan() async {}
 }

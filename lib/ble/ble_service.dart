@@ -576,7 +576,7 @@ class BleService {
     _rxBuffer.addAll(data);
     final packets = ProtocolFrame.processBuffer(_rxBuffer);
     for (final p in packets) {
-      if (_isAudioSlice(p)) {
+      if (isAudioSlice(p)) {
         // Retrieval and live recording deliver slices many times a second;
         // a hex line per slice outruns debugPrint's throttle and queues in
         // memory, so only a running count is logged.
@@ -593,7 +593,8 @@ class BleService {
   static const _audioSliceLogInterval = 500;
   int _audioSlicesSeen = 0;
 
-  static bool _isAudioSlice(DecodedPacket p) =>
+  /// File-transfer and live audio slices (the high-rate packets).
+  static bool isAudioSlice(DecodedPacket p) =>
       (p.cmdType == RxCmd.transportType ||
           p.cmdType == RxCmd.transportTypeAlt) &&
       (p.cmdId == RxCmd.fileSliceId || p.cmdId == RxCmd.fileSliceMarkId);
