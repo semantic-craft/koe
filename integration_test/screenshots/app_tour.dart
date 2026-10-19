@@ -9,6 +9,7 @@
 // PNGs land in build/screenshots/ (override with KOE_SCREENSHOT_DIR).
 // Everything lives in a temporary folder and in-memory stores; no BLE device,
 // credential or personal data is touched.
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -18,7 +19,11 @@ import 'package:integration_test/integration_test.dart';
 import 'package:provider/provider.dart';
 import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/qwen_stt.dart';
+import 'package:koe/ai/stt_types.dart';
 import 'package:koe/main.dart';
+import 'package:koe/platform/answer_speaker.dart';
+import 'package:koe/platform/phone_recorder.dart';
+import 'package:koe/platform/place_capture.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
@@ -77,6 +82,81 @@ class _Translator extends AppleSpeechService {
       'We talked about moving over dinner with friends.';
 }
 
+/// Speech recognition stand-in for hold-to-talk: never reaches the network.
+class _TourStt extends QwenSttService {
+  String reply = '';
+  Object? failure;
+
+  @override
+  Future<SttResult> transcribePath(
+    String path, {
+    String? apiKey,
+    String? baseUrl,
+    String? model,
+    String? language,
+    SttFileProgressCallback? onProgress,
+    bool Function()? isCurrent,
+  }) async {
+    if (failure != null) throw failure!;
+    return SttResult(text: reply, sourcePath: path);
+  }
+}
+
+/// Microphone stand-in: writes a second of silence on stop.
+class _TourMic implements PhoneRecorder {
+  String? path;
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Stream<PhoneMicState> get states => const Stream.empty();
+
+  @override
+  Future<void> start(String path) async {
+    this.path = path;
+    await File(path).writeAsBytes(_silentWav(Duration.zero));
+  }
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> resume() async {}
+
+  @override
+  Future<void> stop() async {
+    await File(path!).writeAsBytes(_silentWav(const Duration(seconds: 2)));
+  }
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+/// Keeps the tour off the system location prompt.
+class _TourPlace implements PlaceCapture {
+  @override
+  Future<RecordingPlace?> capture() async => null;
+}
+
+class _TourSpeaker implements AnswerSpeaker {
+  final Completer<void> _done = Completer<void>();
+
+  @override
+  bool get available => true;
+
+  @override
+  Future<void> speak(String text) => _done.future;
+
+  @override
+  Future<void> stop() async {
+    if (!_done.isCompleted) _done.complete();
+  }
+}
+
 const _capabilities = AppleSpeechCapabilities(
   supported: true,
   speechStatus: SpeechResourceStatus.ready,
@@ -93,16 +173,21 @@ void main() {
   testWidgets('phone page tour', (tester) async {
     final directory = await Directory.systemTemp.createTemp('koe-tour-');
     final topics = TopicStore(inMemory: true);
+    final stt = _TourStt();
     final c = RecorderController(
       loadPersistedState: false,
       topicsEnabled: true,
       topicStore: topics,
       analysisController: RecordingAnalysis(inMemory: true),
-      qwenSpeech: QwenSttService()..apiKeyOverride = 'tour-key',
+      qwenSpeech: stt..apiKeyOverride = 'tour-key',
       appleSpeech: _Translator(),
       contextAnalysisService: _Assistant(),
       transcriptPersister: ({bool strict = false}) async {},
       libraryDirectory: Directory('${directory.path}/imports'),
+      phoneRecorder: _TourMic(),
+      phoneRecordingEnabled: true,
+      answerSpeaker: _TourSpeaker(),
+      placeCapture: _TourPlace(),
     );
 
     final now = DateTime.now();
@@ -426,6 +511,97 @@ void main() {
     await tester.pumpAndSettle();
     restoredPhone.dispose();
     textPhone.dispose();
+
+    // Hold-to-talk (#142).
+    Future<TestGesture> press(Finder button) async {
+      final gesture = await tester.startGesture(tester.getCenter(button));
+      for (var i = 0; i < 20 && c.voiceHoldTarget == null; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.pump(const Duration(milliseconds: 600));
+      return gesture;
+    }
+
+    Future<void> waitFor(bool Function() done) async {
+      for (var i = 0; i < 60 && !done(); i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    // Holding animations never settle, so these shots pump a fixed time.
+    Future<void> heldShot(String name) async {
+      await tester.pump(const Duration(milliseconds: 300));
+      await binding.takeScreenshot(name);
+    }
+
+    showNewRecordingSheet(shell());
+    await shot('24-new-record-voice');
+    final noteButton = find.byKey(const ValueKey('new-record-hold-to-talk'));
+    var gesture = await press(noteButton);
+    await heldShot('25-new-record-holding');
+    stt.reply = '记一下，旅行预算暂定五千。';
+    await gesture.up();
+    await waitFor(() => find.text('已保存为原件 · 已转写').evaluate().isNotEmpty);
+    await shot('26-new-record-saved');
+    await tester.tap(find.byKey(const ValueKey('new-record-type')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('new-record-text')),
+      '周六上午去看瓷砖样品',
+    );
+    await shot('27-new-record-typed');
+    Navigator.of(shell()).pop();
+    await tester.pumpAndSettle();
+
+    Navigator.of(
+      shell(),
+    ).push(MaterialPageRoute<void>(builder: (_) => const AskKoeScreen()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('ask-new-session')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('ask-voice-toggle')));
+    await shot('28-ask-voice-mode');
+    final askButton = find.byKey(const ValueKey('ask-hold-to-talk'));
+    gesture = await press(askButton);
+    await heldShot('29-ask-holding');
+    await gesture.moveBy(const Offset(0, -120));
+    await heldShot('30-ask-cancel-zone');
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    stt.failure = const SocketException('offline');
+    gesture = await press(askButton);
+    await gesture.up();
+    await waitFor(
+      () => find.byKey(const ValueKey('ask-voice-retry')).evaluate().isNotEmpty,
+    );
+    await shot('31-ask-voice-kept');
+    stt
+      ..failure = null
+      ..reply = '装修师傅说什么时候开工？';
+    await tester.tap(find.byKey(const ValueKey('ask-voice-retry')));
+    await waitFor(
+      () =>
+          find.text('语音识别 · 已发送').evaluate().isNotEmpty &&
+          find.textContaining('下周一开工').evaluate().isNotEmpty,
+    );
+    await shot('32-ask-voice-answered');
+    stt.reply = '把装修的事交给代理去办';
+    gesture = await press(askButton);
+    await gesture.up();
+    await waitFor(() => find.textContaining('外部交办暂未开放').evaluate().isNotEmpty);
+    await shot('33-ask-delegation-closed');
+    await tester.tap(find.byKey(const ValueKey('ask-read-aloud')));
+    await tester.pumpAndSettle();
+    final answer = c.asks.sessions.first.messages.firstWhere(
+      (m) => m.role == AskRole.koe && !m.notice,
+    );
+    await tester.tap(find.byKey(ValueKey('ask-speak-${answer.id}')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await binding.takeScreenshot('34-ask-read-aloud');
+    await tester.tap(find.byKey(const ValueKey('ask-stop-speaking')));
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
 
     c.dispose();
     topics.dispose();

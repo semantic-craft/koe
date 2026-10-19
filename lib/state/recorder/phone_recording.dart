@@ -177,7 +177,11 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeElapsed = Duration.zero;
   }
 
-  Future<String?> _adoptPhoneTake(String path, DateTime recordedAt) async {
+  Future<String?> _adoptPhoneTake(
+    String path,
+    DateTime recordedAt, {
+    String label = '手机录音',
+  }) async {
     final file = File(path);
     var length = 0;
     var repaired = false;
@@ -201,7 +205,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       final hash = await audioVersion(path);
       final asset = RecordingAsset(
         path: path,
-        displayName: '手机录音 ${_takeLabel(recordedAt)}',
+        displayName: '$label ${_takeLabel(recordedAt)}',
         source: RecordingSource.phone,
         recordedAt: recordedAt,
         importedAt: DateTime.now(),

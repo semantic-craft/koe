@@ -18,6 +18,9 @@ import UIKit
     AppleSpeechBridge.shared.configure(
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
+    AnswerSpeechBridge.shared.configure(
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
     RecordingShortcutBridge.shared.configure(
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )

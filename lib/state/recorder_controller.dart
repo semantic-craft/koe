@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleListener;
+import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path/path.dart' as p;
@@ -36,6 +37,7 @@ import '../ble/ble_service.dart';
 import '../ble/ble_file_pull.dart';
 import '../ble/realtime_stream.dart';
 import '../crypto/device_crypto.dart';
+import '../platform/answer_speaker.dart';
 import '../platform/background_sync_service.dart';
 import '../platform/phone_recorder.dart';
 import '../platform/place_capture.dart';
@@ -102,6 +104,7 @@ part 'recorder/library.dart';
 part 'recorder/place.dart';
 part 'recorder/organize.dart';
 part 'recorder/phone_recording.dart';
+part 'recorder/voice_input.dart';
 part 'recorder/context.dart';
 part 'recorder/todos.dart';
 part 'recorder/projects.dart';
@@ -149,6 +152,7 @@ class RecorderController extends ChangeNotifier
         _RecorderPlace,
         _RecorderOrganize,
         _RecorderPhoneRecording,
+        _RecorderVoiceInput,
         _RecorderContext,
         _RecorderTodos,
         _RecorderProjects,
@@ -235,6 +239,7 @@ class RecorderController extends ChangeNotifier
     PlaceCapture? placeCapture,
     OrganizeStore? organizeStore,
     PhoneRecorder? phoneRecorder,
+    AnswerSpeaker? answerSpeaker,
     bool? phoneRecordingEnabled,
     MinutesDocumentStore? minutesStore,
     TranscriptPersister? transcriptPersister,
@@ -267,6 +272,7 @@ class RecorderController extends ChangeNotifier
        _libraryDirectoryOverride = libraryDirectory,
        _placeCapture = placeCapture ?? const DevicePlaceCapture(),
        _phoneRecorderOverride = phoneRecorder,
+       answerSpeaker = answerSpeaker ?? SystemAnswerSpeaker(),
        phoneRecordingEnabled =
            phoneRecordingEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
        // Keep the injection seam public while the field stays private.
@@ -559,6 +565,9 @@ class RecorderController extends ChangeNotifier
   PhoneRecorder get _phoneRecorder =>
       _phoneRecorderOverride ??
       (_devicePhoneRecorder ??= DevicePhoneRecorder());
+
+  /// Reads Ask Koe answers aloud when the user turns it on.
+  final AnswerSpeaker answerSpeaker;
 
   /// Phone microphone takes are an iPhone feature; the Mac reads and archives.
   @override

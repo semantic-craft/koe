@@ -801,3 +801,54 @@ private struct ApplePrepareTranslationView: View {
     completion(error)
   }
 }
+
+/// Reads Ask Koe answers aloud with the system's synthetic voice (#142).
+/// `speak` replies when the utterance finishes or `stop` cuts it off; a new
+/// `speak` stops the previous one first.
+@MainActor
+final class AnswerSpeechBridge: NSObject, @preconcurrency AVSpeechSynthesizerDelegate {
+  static let shared = AnswerSpeechBridge()
+  private let synthesizer = AVSpeechSynthesizer()
+  private var pending: FlutterResult?
+
+  func configure(binaryMessenger: FlutterBinaryMessenger) {
+    synthesizer.delegate = self
+    let channel = FlutterMethodChannel(name: "koe/answer_speech", binaryMessenger: binaryMessenger)
+    channel.setMethodCallHandler { [weak self] call, reply in
+      guard let self else { return reply(nil) }
+      switch call.method {
+      case "speak":
+        let arguments = call.arguments as? [String: Any]
+        let text = arguments?["text"] as? String ?? ""
+        let language = arguments?["language"] as? String ?? "zh-CN"
+        self.finish()
+        self.synthesizer.stopSpeaking(at: .immediate)
+        guard !text.isEmpty else { return reply(nil) }
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: language)
+        self.pending = reply
+        self.synthesizer.speak(utterance)
+      case "stop":
+        self.synthesizer.stopSpeaking(at: .immediate)
+        self.finish()
+        reply(nil)
+      default:
+        reply(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func finish() {
+    let reply = pending
+    pending = nil
+    reply?(nil)
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    finish()
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+    finish()
+  }
+}

@@ -8,6 +8,7 @@ import '../../theme/app_theme.dart';
 import '../import_audio.dart';
 import '../import_pack.dart';
 import '../recording_navigation.dart';
+import '../widgets/hold_to_talk.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/status_indicators.dart';
 
@@ -243,19 +244,88 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
 /// Entry sheet for a new material (#131).
 ///
 /// Phone recording is iPhone-only; elsewhere the row stays visible but
-/// disabled with an honest label instead of a fake recording state.
+/// disabled with an honest label instead of a fake recording state. The top
+/// of the sheet records a quick note by holding to talk (#142), with typing
+/// as the alternative; either one is saved as material and nothing in it is
+/// ever carried out.
 Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
-  final phoneRecording = context
-      .read<RecorderController>()
-      .phoneRecordingEnabled;
   return showModalBottomSheet<NewRecordingAction>(
     context: context,
     sheetAnimationStyle: AppMotion.sheetStyle(context),
     showDragHandle: true,
     isScrollControlled: true,
-    builder: (sheetContext) => SafeArea(
+    builder: (_) => const _NewRecordingPanel(),
+  );
+}
+
+class _NewRecordingPanel extends StatefulWidget {
+  const _NewRecordingPanel();
+
+  @override
+  State<_NewRecordingPanel> createState() => _NewRecordingPanelState();
+}
+
+class _NewRecordingPanelState extends State<_NewRecordingPanel> {
+  final _text = TextEditingController();
+  bool _typing = false;
+  bool _savingText = false;
+  String? _savedPath;
+  String? _savedText;
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendVoice() async {
+    final path = await context.read<RecorderController>().finishVoiceNote();
+    if (!mounted || path == null) return;
+    setState(() {
+      _savedPath = path;
+      _savedText = null;
+    });
+  }
+
+  Future<void> _saveText() async {
+    setState(() => _savingText = true);
+    try {
+      final document = await context.read<RecorderController>().saveTextNote(
+        _text.text,
+      );
+      if (!mounted) return;
+      _text.clear();
+      setState(() {
+        _savedText = document.title;
+        _savedPath = null;
+        _typing = false;
+      });
+    } on StateError catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _savingText = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<RecorderController>();
+    final phoneRecording = controller.phoneRecordingEnabled;
+    final voiceError = controller.voiceInputErrors[VoiceTarget.note];
+    final saved = _savedPath == null
+        ? null
+        : controller.recordingView(RecordingReference(path: _savedPath));
+    return SafeArea(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        padding: EdgeInsets.fromLTRB(
+          20,
+          0,
+          20,
+          20 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -269,7 +339,68 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
               '原件先保存到手机，再决定是否转写或整理。',
               style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
+            if (_typing) ...[
+              TextField(
+                key: const ValueKey('new-record-text'),
+                controller: _text,
+                autofocus: true,
+                minLines: 2,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  hintText: '写下要记的事',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => setState(() => _typing = false),
+                    child: const Text('改用语音'),
+                  ),
+                  const Spacer(),
+                  ValueListenableBuilder(
+                    valueListenable: _text,
+                    builder: (context, value, _) => FilledButton(
+                      key: const ValueKey('new-record-text-save'),
+                      onPressed: _savingText || value.text.trim().isEmpty
+                          ? null
+                          : _saveText,
+                      child: const Text('保存'),
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              HoldToTalkButton(
+                key: const ValueKey('new-record-hold-to-talk'),
+                label: phoneRecording ? '按住说话记一条' : '按住说话仅在 iPhone 上提供',
+                enabled: phoneRecording,
+                onStart: () => controller.startVoiceHold(VoiceTarget.note),
+                onSend: _sendVoice,
+                onCancel: controller.cancelVoiceHold,
+              ),
+              TextButton(
+                key: const ValueKey('new-record-type'),
+                onPressed: () => setState(() => _typing = true),
+                child: const Text('改用文字记一条'),
+              ),
+            ],
+            if (voiceError != null && !_typing)
+              Text(
+                voiceError,
+                key: const ValueKey('new-record-voice-error'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            if (saved != null) _SavedNote(view: saved),
+            if (_savedText != null)
+              _SavedNote(title: _savedText!, line: '文字已保存到资料'),
+            const SizedBox(height: 8),
             _RecordOption(
               key: const ValueKey('new-record-phone'),
               icon: Icons.mic_none_rounded,
@@ -279,7 +410,7 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
                   : '只在 iPhone 上提供；这里请用录音豆或导入音频',
               trailing: phoneRecording ? null : '仅 iPhone',
               onTap: phoneRecording
-                  ? () => Navigator.pop(sheetContext, NewRecordingAction.phone)
+                  ? () => Navigator.pop(context, NewRecordingAction.phone)
                   : null,
             ),
             _RecordOption(
@@ -288,7 +419,7 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
               title: '导入本地音频',
               subtitle: '从文件中选择 WAV、M4A、MP3 等',
               onTap: () =>
-                  Navigator.pop(sheetContext, NewRecordingAction.importAudio),
+                  Navigator.pop(context, NewRecordingAction.importAudio),
             ),
             _RecordOption(
               key: const ValueKey('new-record-pack'),
@@ -296,23 +427,83 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
               title: '导入资料包',
               subtitle: '恢复 Koe 导出的 .koepack，已有的资料不会重复',
               onTap: () =>
-                  Navigator.pop(sheetContext, NewRecordingAction.importPack),
+                  Navigator.pop(context, NewRecordingAction.importPack),
             ),
             _RecordOption(
               key: const ValueKey('new-record-device'),
               icon: Icons.headphones_rounded,
               title: '取回设备录音',
               subtitle: '从已连接的录音豆下载',
-              onTap: () => Navigator.pop(
-                sheetContext,
-                NewRecordingAction.retrieveDevice,
-              ),
+              onTap: () =>
+                  Navigator.pop(context, NewRecordingAction.retrieveDevice),
             ),
           ],
         ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+/// What became of the note just made: saved, then its transcript as it
+/// arrives, or why there is none yet.
+class _SavedNote extends StatelessWidget {
+  const _SavedNote({this.view, this.title, this.line});
+
+  final RecordingViewData? view;
+  final String? title;
+  final String? line;
+
+  @override
+  Widget build(BuildContext context) {
+    final view = this.view;
+    final String status;
+    String? text;
+    if (view == null) {
+      status = line!;
+    } else if (view.text.trim().isNotEmpty) {
+      status = '已保存为原件 · 已转写';
+      text = view.text.trim();
+    } else if (view.error != null) {
+      status = '已保存为原件 · ${view.error}';
+    } else if (view.processing) {
+      status = '已保存为原件 · 正在转写';
+    } else if (view.speechReady) {
+      status = '已保存为原件 · 等待转写';
+    } else {
+      status = '已保存为原件 · 配置语音服务后可转写';
+    }
+    return Container(
+      key: const ValueKey('new-record-saved'),
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.bgPanel,
+        borderRadius: BorderRadius.circular(AppRadii.card),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            view?.title ?? title!,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            status,
+            key: const ValueKey('new-record-saved-status'),
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          if (text != null) ...[
+            const SizedBox(height: 6),
+            Text(text, maxLines: 4, overflow: TextOverflow.ellipsis),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _RecordOption extends StatelessWidget {
