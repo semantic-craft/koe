@@ -30,8 +30,10 @@ class _Device {
   late final BleFilePull puller;
   int slices = 0;
   bool done = false;
+  final requests = <List<int>>[];
 
-  Future<void> _write(List<int> _) async {
+  Future<void> _write(List<int> frame) async {
+    requests.add(frame);
     _packets.add(_packet(RxCmd.fileHeadId, Uint8List(10)));
     for (var i = 0; i < slices; i++) {
       _scheduled.add(
@@ -49,10 +51,15 @@ class _Device {
     }
   }
 
-  Future<String> pull(int fileId, int sizeBytes) async {
+  Future<String> pull(
+    int fileId,
+    int sizeBytes, {
+    int alreadyTransferred = 0,
+  }) async {
     final path = await puller.pullFile(
       OfflineFileEntry(fileId: fileId, sizeBytes: sizeBytes),
       timeout: const Duration(milliseconds: 150),
+      alreadyTransferred: alreadyTransferred,
     );
     await Future.wait(_scheduled);
     return path;
@@ -97,6 +104,26 @@ void main() {
     device.slices = 2;
     final path = await device.pull(fileId, 330);
     expect(await File(path).length(), 320, reason: 'file kept for playback');
+    expect(device.puller.isIncomplete(path), isTrue);
+  });
+
+  test('a pull from an offset asks for it and completes on the rest', () async {
+    device.slices = 2;
+    final path = await device.pull(
+      fileId,
+      960,
+      alreadyTransferred: 4 * BleFilePull.sliceRecordBytes,
+    );
+
+    expect(
+      device.requests.single,
+      DeviceCommands.startTransportAudioFile(
+        fileId: fileId,
+        alreadyTransferred: 4 * BleFilePull.sliceRecordBytes,
+      ),
+    );
+    expect(await File(path).length(), 320);
+    // The file holds only the tail, so it is not a finished recording.
     expect(device.puller.isIncomplete(path), isTrue);
   });
 
