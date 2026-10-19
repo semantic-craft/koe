@@ -283,6 +283,30 @@ void main() {
     expect(await File(imported.path).exists(), isTrue);
   });
 
+  test('没有资料条目的导入原件也能移到回收站，重启后仍在回收站', () async {
+    final source = await sourceAudio('缺条目原件', seed: 61);
+    final first = controller();
+    final imported = await first.importLocalAudio(source.path);
+    // 导入原件文件名以微秒时间戳开头；资料条目丢失时要按路径新建条目。
+    await first.library.remove(imported.path);
+    expect(first.recordingAssetForPath(imported.path), isNull);
+    addTearDown(first.dispose);
+
+    final trashed = await first.trashLocalExports([imported.path]);
+
+    expect(trashed.failed, isEmpty);
+    expect(trashed.trashed, 1);
+    expect(first.trashedAssets.single.path, imported.path);
+    expect(first.trashedAssets.single.recordedAt, isNull);
+
+    final restarted = controller();
+    addTearDown(restarted.dispose);
+    await restarted.waitForRecordingLibrary();
+
+    expect(restarted.trashedAssets.single.path, imported.path);
+    expect(restarted.exportedPaths, isNot(contains(imported.path)));
+  });
+
   test('回收站标记保存失败时回滚内存状态', () async {
     final blocker = File('${temp.path}/blocked');
     await blocker.writeAsString('not a directory');
