@@ -18,6 +18,7 @@ mixin _RecorderDevice on ChangeNotifier {
   _RecordingSession? get _currentRecording;
   abstract bool _disposed;
   Future<void> _enqueueDeferredRecording(_RecordingSession owner, String path);
+  void _forgetUnfinishedDeviceFiles();
   void _handleFileListPage(OfflineFileList list);
   void _kickRealtimeFromFileList(OfflineFileList list);
   void _markInterruptedLiveTake();
@@ -42,6 +43,8 @@ mixin _RecorderDevice on ChangeNotifier {
   Future<void> listFiles();
   bool get needsWifiJoin;
   abstract int pcmFramesDecoded;
+  abstract int? playingFileId;
+  abstract String? playingPath;
   abstract RealtimeStreamState realtimeState;
   abstract final Duration recordingShortcutScanTimeout;
   abstract String? statusMessage;
@@ -737,6 +740,16 @@ mixin _RecorderDevice on ChangeNotifier {
           (source == 'app_start' && !wasRecording && !resuming)) {
         unawaited(_beginNewLiveTranscriptSession());
       }
+      if (resuming) {
+        // A paused take's settled copy may be playing (#252). Continuing
+        // appends to the device file and the next pause rewrites the copy, so
+        // playback of it stops here; the new pause plays the longer copy.
+        final path = current.path;
+        if ((path != null && playingPath == path) ||
+            (current.fileId != null && playingFileId == current.fileId)) {
+          unawaited(stopPlayback());
+        }
+      }
       _bindCurrentRecording(fileId: fileId);
       _currentRecording?.active = true;
       _currentRecording?.paused = false;
@@ -764,7 +777,11 @@ mixin _RecorderDevice on ChangeNotifier {
       _snapshotLiveText();
       _currentRecording?.active = false;
       _currentRecording?.paused = status == 2;
-      if (status == 0) _currentRecording?.ended = true;
+      if (status == 0) {
+        _currentRecording?.ended = true;
+        // The recorder closed its file: it can be pulled now (#253).
+        _forgetUnfinishedDeviceFiles();
+      }
       _currentRecording?.finalizing =
           status == 0 && (realtimeState.active || _sttStream != null);
       final label = status == 2 ? '已暂停' : '已停止录音';

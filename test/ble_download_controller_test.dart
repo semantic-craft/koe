@@ -125,6 +125,50 @@ void main() {
     );
   });
 
+  test('a file the recorder is still paused on is not pulled until it ends, '
+      'and the user is told how to end it (#253)', () async {
+    controller.autoRealtime = true;
+    ble.unfinished.add(105);
+    ble.deviceStatus(2);
+    await _until(() => controller.info?.recordingStatus == 2);
+    await controller.listFiles();
+    ble.filePage([105, 104]);
+
+    // The recorder answers 105 with an unknown size; the backlog moves on.
+    await _until(() => ble.downloads.contains(104));
+    expect(ble.downloads, [105, 104]);
+    ble.finish();
+    await _until(() => !controller.autoTransferActive);
+    expect(
+      controller.errorMessage ?? '',
+      isNot(contains('自动传输失败')),
+      reason: 'not a transfer failure',
+    );
+
+    // Tapping it again explains instead of waiting for a pull to time out.
+    await controller.downloadFileOverBle(
+      OfflineFileEntry(fileId: 105, sizeBytes: 160),
+    );
+    expect(ble.downloads.where((id) => id == 105), hasLength(1));
+    expect(controller.errorMessage, contains('按一下录音豆按键结束录音'));
+    expect(
+      controller.deviceFileUnfinished(
+        OfflineFileEntry(fileId: 105, sizeBytes: 160),
+      ),
+      isTrue,
+    );
+
+    // Ended on the recorder: it is pulled automatically.
+    ble.unfinished.remove(105);
+    ble.deviceStatus(0);
+    await _until(() => controller.info?.recordingStatus == 0);
+    ble.filePage([105, 104]);
+    await _until(() => ble.downloads.where((id) => id == 105).length == 2);
+    ble.finish();
+    await _until(() => !controller.autoTransferActive);
+    expect(controller.unexportedFiles, isEmpty);
+  });
+
   test(
     'auto transfer counts completed device recordings, not batch attempts',
     () async {
@@ -404,6 +448,23 @@ class _Ble extends BleService {
   final downloads = <int>[];
   final failDownloads = <int>{};
 
+  /// Files the recorder has not finished: their head reports an unknown size.
+  final unfinished = <int>{};
+
+  /// Device info carrying recording status 0 stopped, 1 recording, 2 paused.
+  void deviceStatus(int status) {
+    final raw = Uint8List(75)..[59] = status;
+    _packets.add(
+      DecodedPacket(
+        raw: raw,
+        statusByte: 1,
+        cmdType: 1,
+        cmdId: 1,
+        payload: Uint8List.sublistView(raw, 9, 74),
+      ),
+    );
+  }
+
   final _connection = StreamController<bool>.broadcast();
 
   void link(bool up) => _connection.add(up);
@@ -479,6 +540,13 @@ class _Ble extends BleService {
       final id = readU32Le(Uint8List.fromList(frame), 13);
       downloads.add(id);
       if (failDownloads.contains(id)) throw StateError('BLE request failed');
+      if (unfinished.contains(id)) {
+        final head = Uint8List(97)
+          ..buffer.asByteData().setUint32(9, id, Endian.little);
+        head.buffer.asByteData().setUint32(13, 0xFFFFFFFF, Endian.little);
+        _emit(0x07, head);
+        return;
+      }
       _emit(0x07, Uint8List(10));
     }
   }

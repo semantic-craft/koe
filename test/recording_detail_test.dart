@@ -368,6 +368,47 @@ void main() {
     );
   });
 
+  testWidgets('a paused take whose copy has settled can be played back while '
+      'still offering continue (#252)', (tester) async {
+    final c = _RecordingController()..connected = true;
+    addTearDown(c.dispose);
+    c.start('continuation', 'First section');
+    final current = c.currentRecordingReference!;
+    final ref = RecordingReference(
+      sessionId: current.sessionId,
+      fileId: 100,
+      path: '/tmp/100.wav',
+    );
+    c._current = ref;
+    c.recording = false;
+    c.views[ref.key] = RecordingViewData(
+      reference: ref,
+      path: '/tmp/100.wav',
+      title: 'Current take',
+      text: 'First section',
+      paused: true,
+    );
+    await pump(tester, c, RecordingDetailScreen(reference: ref));
+    expect(find.byType(InlinePlayer), findsOneWidget);
+    expect(find.byKey(const ValueKey('resume-recording')), findsOneWidget);
+    expect(find.text('正在保存录音'), findsNothing);
+
+    // Recording again: the copy is still growing, so no playback.
+    c.recording = true;
+    c.views[ref.key] = RecordingViewData(
+      reference: ref,
+      path: '/tmp/100.wav',
+      title: 'Current take',
+      text: 'First section',
+      live: true,
+      audioLocked: true,
+    );
+    c.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(find.byType(InlinePlayer), findsNothing);
+    expect(find.byKey(const ValueKey('pause-recording')), findsOneWidget);
+  });
+
   testWidgets('an older detail keeps its own text across a newer session', (
     tester,
   ) async {
