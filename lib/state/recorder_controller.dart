@@ -28,6 +28,7 @@ import '../audio/retrieved_audio.dart';
 import '../audio/ogg_opus.dart';
 import '../audio/opus_pcm_decoder.dart';
 import '../audio/opus_wave.dart';
+import '../audio/recording_audio.dart';
 import '../archive/mac_archive_controller.dart';
 import '../archive/archive_store.dart';
 import '../archive/archive_wire.dart';

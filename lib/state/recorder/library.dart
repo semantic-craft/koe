@@ -387,7 +387,9 @@ mixin _RecorderLibrary on ChangeNotifier {
       });
       _registerExportedPaths([...exportedPaths, ...paths]);
       final wavIds = paths
-          .where((path) => path.endsWith('.wav'))
+          .where(
+            (path) => RecordingAudio.of(path).kind == RecordingAudioKind.wav,
+          )
           .map(ExportCatalog.fileIdFromPath)
           .whereType<int>()
           .toSet();
@@ -405,7 +407,9 @@ mixin _RecorderLibrary on ChangeNotifier {
     if (_catalogConversionRunning) return;
     _catalogConversionRunning = true;
     try {
-      for (final path in paths.where((path) => path.endsWith('.opus'))) {
+      for (final path in paths.where(
+        (path) => RecordingAudio.of(path).kind == RecordingAudioKind.deviceOpus,
+      )) {
         final id = ExportCatalog.fileIdFromPath(path);
         if (id == null || !wavIds.contains(id)) {
           await _convertExportToWav(path);
@@ -529,21 +533,8 @@ mixin _RecorderLibrary on ChangeNotifier {
           ? existing!.copyWith(permanentlyDeleted: true)
           : null;
       final logicalPaths = id == null
-          ? <String>{path}
-          : <String>{
-              path,
-              p.join(p.dirname(path), '$id.wav'),
-              p.join(p.dirname(path), '$id.opus'),
-              p.join(p.dirname(path), '$id.ogg'),
-              p.join(p.dirname(path), '$id.opus.bin'),
-            };
-      for (final candidate in logicalPaths.toList()) {
-        logicalPaths.add(
-          candidate.endsWith('.opus')
-              ? '${candidate.substring(0, candidate.length - 5)}.ogg'
-              : '$candidate.ogg',
-        );
-      }
+          ? <String>{path, RecordingAudio.of(path).oggSidecar}
+          : RecordingAudio.of(path).familyFor(id);
       final pairedBefore = [
         for (final document in minutes.documents)
           if (document.audioPath != null &&
@@ -885,22 +876,18 @@ mixin _RecorderLibrary on ChangeNotifier {
     if (!await File(original).exists()) {
       return (removed: 0, bytes: 0, skipped: <String>['原件不在本机，未清理任何文件']);
     }
-    final directory = p.dirname(original);
-    final hasRawSource =
-        original.endsWith('.opus') ||
-        original.endsWith('.opus.bin') ||
-        await File(p.join(directory, '$id.opus')).exists() ||
-        await File(p.join(directory, '$id.opus.bin')).exists();
+    final audio = RecordingAudio.of(original);
+    var hasRawSource = false;
+    for (final source in audio.rebuildSourcesFor(id)) {
+      if (await File(source).exists()) {
+        hasRawSource = true;
+        break;
+      }
+    }
     if (!hasRawSource) {
       return (removed: 0, bytes: 0, skipped: <String>['这条资料没有可重建的播放缓存']);
     }
-    final candidates = <String>{
-      p.join(directory, '$id.wav'),
-      p.join(directory, '$id.ogg'),
-      '$original.ogg',
-      if (original.endsWith('.opus'))
-        '${original.substring(0, original.length - 5)}.ogg',
-    }..remove(original);
+    final candidates = audio.rebuildableCacheFor(id);
     var removed = 0;
     var bytes = 0;
     final skipped = <String>[];
@@ -930,21 +917,13 @@ mixin _RecorderLibrary on ChangeNotifier {
     final original = asset?.path ?? path;
     final id = ExportCatalog.fileIdFromPath(original);
     if (id == null || !File(original).existsSync()) return false;
-    final directory = p.dirname(original);
-    if (!original.endsWith('.opus') &&
-        !original.endsWith('.opus.bin') &&
-        !File(p.join(directory, '$id.opus')).existsSync() &&
-        !File(p.join(directory, '$id.opus.bin')).existsSync()) {
+    final audio = RecordingAudio.of(original);
+    if (!audio.rebuildSourcesFor(id).any((s) => File(s).existsSync())) {
       return false;
     }
-    final candidates = <String>{
-      p.join(directory, '$id.wav'),
-      p.join(directory, '$id.ogg'),
-      '$original.ogg',
-      if (original.endsWith('.opus'))
-        '${original.substring(0, original.length - 5)}.ogg',
-    }..remove(original);
-    return candidates.any((candidate) => File(candidate).existsSync());
+    return audio
+        .rebuildableCacheFor(id)
+        .any((candidate) => File(candidate).existsSync());
   }
 
   Future<String> renameLocalExport(String path, String label) async {
@@ -1143,7 +1122,9 @@ mixin _RecorderLibrary on ChangeNotifier {
     bool register = true,
     List<String>? conversionFailures,
   }) async {
-    if (!path.endsWith('.opus')) return path;
+    if (RecordingAudio.of(path).kind != RecordingAudioKind.deviceOpus) {
+      return path;
+    }
     final existing = _wavConversions[path];
     final ownsConversion = existing == null;
     final conversion = existing ?? _rawExportConverter(path);

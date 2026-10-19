@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../util/off_ui.dart';
+import 'recording_audio.dart';
 
 /// Wrap D3200 raw AES-decrypted Opus frames (fixed 160-byte slices) into an
 /// Ogg Opus file playable by AVFoundation / just_audio.
@@ -52,8 +53,9 @@ class OggOpus {
     // Only device originals are bare Opus frames. Imported m4a/mp3/aac are
     // containers the player opens as they are; a sidecar left by an older
     // build must not be reused for them.
-    if (!path.endsWith('.opus') && !path.endsWith('.opus.bin')) return path;
-    final oggPath = _sidecarPath(path);
+    final audio = RecordingAudio.of(path);
+    if (!audio.isDeviceFrames) return path;
+    final oggPath = audio.oggSidecar;
     // Rebuild if missing or older/smaller than source.
     final oggStat = await File(oggPath).stat();
     if (oggStat.type == FileSystemEntityType.file &&
@@ -98,20 +100,15 @@ class OggOpus {
     }
     if (header.isEmpty) throw StateError('文件为空');
     if (isWav(header) || isOgg(header)) return path;
-    if (!path.endsWith('.opus') && !path.endsWith('.opus.bin')) {
-      throw StateError('不支持的音频格式');
-    }
+    final audio = RecordingAudio.of(path);
+    if (!audio.isDeviceFrames) throw StateError('不支持的音频格式');
     return _muxFile(
       path,
-      _sidecarPath(path),
+      audio.oggSidecar,
       partSuffix: '.upload-part',
       check: check,
     );
   }
-
-  static String _sidecarPath(String path) => path.endsWith('.opus')
-      ? '${path.substring(0, path.length - 5)}.ogg'
-      : '$path.ogg';
 
   /// Streams raw frames from [path] into an Ogg file at [destination],
   /// writing to a partial file first so an interrupted run is never reused.
