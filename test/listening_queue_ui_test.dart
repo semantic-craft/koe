@@ -122,7 +122,7 @@ void main() {
     final backups = directory
         .listSync()
         .whereType<File>()
-        .where((item) => item.path.contains('.unreadable-'))
+        .where((item) => item.path.contains('.corrupt-'))
         .toList();
     expect(backups, isNotEmpty);
   });

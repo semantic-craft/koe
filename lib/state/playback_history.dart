@@ -2,8 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'context/context_file.dart';
 
 /// One real listening position. Positions are keyed by device file id when
 /// available so renaming a material does not move another recording's point.
@@ -78,7 +77,8 @@ class PlaybackPoint {
 ///
 /// A corrupt file only loses resume points; audio originals are never touched.
 class PlaybackHistoryStore {
-  PlaybackHistoryStore({this.file, this.inMemory = false});
+  PlaybackHistoryStore({this.file, this.inMemory = false})
+    : _doc = ContextFile(fileName, file: file, inMemory: inMemory);
 
   static const fileName = 'playback_history.json';
 
@@ -87,7 +87,7 @@ class PlaybackHistoryStore {
   final Map<String, PlaybackPoint> _points = {};
   String? _lastKey;
   double speed = 1;
-  Future<void> _pendingSave = Future<void>.value();
+  final ContextFile _doc;
 
   String? recoveryNotice;
   String? saveError;
@@ -111,35 +111,26 @@ class PlaybackHistoryStore {
     return null;
   }
 
-  Future<File> _file() async {
-    if (file != null) return file!;
-    Directory base;
-    try {
-      base = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory(p.join(base.path, 'AnkerRecorder'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return File(p.join(dir.path, fileName));
-  }
-
   Future<void> load() async {
     if (inMemory) return;
     try {
-      final target = await _file();
-      if (!await target.exists()) return;
-      final decoded = decode(await target.readAsString());
-      if (decoded == null) {
-        recoveryNotice = '回听进度无法读取，原音频仍保留';
-        return;
-      }
+      final raw = await _doc.readText();
+      if (raw == null) return;
+      final decoded = decode(raw);
+      if (decoded == null) throw const FormatException('playback history');
       _points.addAll(decoded.points);
       _lastKey = decoded.lastKey;
       speed = decoded.speed;
     } catch (error) {
       recoveryNotice = '回听进度无法读取，原音频仍保留';
       debugPrint('[PlaybackHistory] load failed: $error');
+      // Resume points are cheap to lose, but the file is still kept aside
+      // like every other store's.
+      try {
+        await _doc.setAside();
+      } catch (backupError) {
+        debugPrint('[PlaybackHistory] backup failed: $backupError');
+      }
     }
   }
 
@@ -218,11 +209,9 @@ class PlaybackHistoryStore {
     final snapshot = List<PlaybackPoint>.of(_points.values);
     final lastKey = _lastKey;
     final speedSnapshot = speed;
-    final operation = _pendingSave.then(
-      (_) => _write(snapshot, lastKey: lastKey, speed: speedSnapshot),
+    return _doc.serialize(
+      () => _write(snapshot, lastKey: lastKey, speed: speedSnapshot),
     );
-    _pendingSave = operation.catchError((Object _) {});
-    return operation;
   }
 
   Future<void> _write(
@@ -231,15 +220,11 @@ class PlaybackHistoryStore {
     required double speed,
   }) async {
     try {
-      final target = await _file();
-      final temporary = File('${target.path}.tmp');
-      await temporary.writeAsString(
+      await _doc.replace(
         const JsonEncoder.withIndent(
           '  ',
         ).convert(encode(snapshot, lastKey: lastKey, speed: speed)),
-        flush: true,
       );
-      await temporary.rename(target.path);
       saveError = null;
     } catch (error) {
       saveError = '回听进度保存失败';

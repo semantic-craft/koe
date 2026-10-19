@@ -458,7 +458,7 @@ void main() {
     final backups = temp
         .listSync()
         .whereType<File>()
-        .where((f) => f.path.contains('b.json.unreadable'))
+        .where((f) => f.path.contains('b.json.corrupt-'))
         .toList();
     expect(backups, hasLength(1));
     expect(backups.single.readAsStringSync(), contains('坏条目里的批注'));

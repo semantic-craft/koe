@@ -80,7 +80,7 @@ void main() {
     final backups = temp
         .listSync()
         .whereType<File>()
-        .where((file) => file.path.contains('listening_queue.json.unreadable-'))
+        .where((file) => file.path.contains('listening_queue.json.corrupt-'))
         .toList();
     expect(backups, isNotEmpty);
   });

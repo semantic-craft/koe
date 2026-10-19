@@ -9,6 +9,7 @@ import '../ai/stt_types.dart';
 import '../platform/credential_store.dart';
 import '../ai/speech_provider.dart';
 import '../ai/engine_config.dart';
+import 'atomic_file.dart';
 
 /// Settings metadata on disk; user credentials live only in system Keychain.
 class AppSettingsStore {
@@ -44,9 +45,7 @@ class AppSettingsStore {
 
   static Future<void> _write(File file, AppSettings settings) async {
     await file.parent.create(recursive: true);
-    final temporary = File('${file.path}.tmp');
-    await temporary.writeAsString(jsonEncode(settings.toJson()), flush: true);
-    await temporary.rename(file.path);
+    await writeFileAtomically(file, jsonEncode(settings.toJson()));
   }
 
   static Future<AppSettings> load() => _serial(() async {

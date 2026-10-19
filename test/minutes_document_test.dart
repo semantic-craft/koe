@@ -336,18 +336,24 @@ void main() {
     expect(store.documents, isEmpty);
   });
 
-  test('记录文件无法读取时停止写入，不覆盖原文件', () async {
+  test('记录文件无法读取时另存原文件，之后的导入照常保存', () async {
     await minutesFile.writeAsString('{"documents": [');
     final before = await minutesFile.readAsString();
     final store = MinutesDocumentStore(file: minutesFile);
     await store.load();
 
     expect(store.recoveryNotice, isNotNull);
-    await expectLater(
-      store.upsert(parseMinutesDocument('masked.txt', '不应落盘').document),
-      throwsA(isA<StateError>()),
-    );
-    expect(await minutesFile.readAsString(), before);
+    await store.upsert(parseMinutesDocument('new.txt', '新导入').document);
+    final kept = minutesFile.parent
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('.corrupt-'))
+        .toList();
+    expect(kept, hasLength(1));
+    expect(await kept.single.readAsString(), before);
+    final reloaded = MinutesDocumentStore(file: minutesFile);
+    await reloaded.load();
+    expect(reloaded.documents, hasLength(1));
   });
 
   test('补配保存失败时删除新复制的音频并回滚资料', () async {

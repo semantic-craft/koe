@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'context/context_file.dart';
 
 /// One imported transcript segment. Timings are optional because a text-only
 /// import must stay readable without pretending that it can be replayed.
@@ -588,14 +588,15 @@ String _contentId(String raw) {
 }
 
 class MinutesDocumentStore {
-  MinutesDocumentStore({this.file, this.inMemory = false});
+  MinutesDocumentStore({this.file, this.inMemory = false})
+    : _doc = ContextFile(fileName, file: file, inMemory: inMemory);
 
   static const fileName = 'minutes_documents.json';
 
   final File? file;
   final bool inMemory;
   final Map<String, MinutesDocument> _documents = {};
-  Future<void> _pendingSave = Future<void>.value();
+  final ContextFile _doc;
   bool _loadFailed = false;
 
   String? recoveryNotice;
@@ -605,35 +606,24 @@ class MinutesDocumentStore {
 
   MinutesDocument? byId(String id) => _documents[id];
 
-  Future<File> _file() async {
-    if (file != null) return file!;
-    Directory base;
-    try {
-      base = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory(p.join(base.path, 'AnkerRecorder'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return File(p.join(dir.path, fileName));
-  }
-
   Future<void> load() async {
     if (inMemory) return;
     try {
-      final target = await _file();
-      if (!await target.exists()) return;
-      final decoded = decode(await target.readAsString());
-      if (decoded == null) {
-        _loadFailed = true;
-        recoveryNotice = '导入文字记录无法读取，原文字文件仍保留';
-        return;
-      }
+      final raw = await _doc.readText();
+      if (raw == null) return;
+      final decoded = decode(raw);
+      if (decoded == null) throw const FormatException('minutes documents');
       _documents.addAll(decoded);
     } catch (error) {
-      _loadFailed = true;
-      recoveryNotice = '导入文字记录无法读取，原文字文件仍保留';
       debugPrint('[MinutesDocumentStore] load failed: $error');
+      try {
+        await _doc.setAside();
+        recoveryNotice = '导入文字记录无法读取，已另存原文件；原文字文件仍保留';
+      } catch (backupError) {
+        debugPrint('[MinutesDocumentStore] backup failed: $backupError');
+        _loadFailed = true;
+        recoveryNotice = '导入文字记录无法读取，原文字文件仍保留';
+      }
     }
   }
 
@@ -731,20 +721,14 @@ class MinutesDocumentStore {
       return Future<void>.error(StateError('导入文字记录无法读取，已停止写入以保护原文件'));
     }
     final snapshot = List<MinutesDocument>.of(_documents.values);
-    final operation = _pendingSave.then((_) => _write(snapshot, strict));
-    _pendingSave = operation.catchError((Object _) {});
-    return operation;
+    return _doc.serialize(() => _write(snapshot, strict));
   }
 
   Future<void> _write(List<MinutesDocument> snapshot, bool strict) async {
     try {
-      final target = await _file();
-      final temporary = File('${target.path}.tmp');
-      await temporary.writeAsString(
+      await _doc.replace(
         const JsonEncoder.withIndent('  ').convert(encode(snapshot)),
-        flush: true,
       );
-      await temporary.rename(target.path);
       saveError = null;
     } catch (error) {
       saveError = '导入文字保存失败';

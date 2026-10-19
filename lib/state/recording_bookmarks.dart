@@ -2,10 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import 'recording.dart';
+import 'context/context_file.dart';
 
 /// A personal bookmark (optionally with a note) on one material.
 ///
@@ -267,7 +266,8 @@ BookmarkTarget resolveBookmark(
 /// Every mutation writes first and only then changes memory, so a failed save
 /// never shows unsaved personal content as saved.
 class RecordingBookmarkStore {
-  RecordingBookmarkStore({this.file, this.inMemory = false});
+  RecordingBookmarkStore({this.file, this.inMemory = false})
+    : _doc = ContextFile(fileName, file: file, inMemory: inMemory);
 
   static const fileName = 'recording_bookmarks.json';
   final File? file;
@@ -275,7 +275,7 @@ class RecordingBookmarkStore {
   List<RecordingBookmark> _items = const [];
   bool _showMarkers = true;
   int _sequence = 0;
-  Future<void> _pendingSave = Future<void>.value();
+  final ContextFile _doc;
   String? recoveryNotice;
 
   bool get showMarkers => _showMarkers;
@@ -292,19 +292,6 @@ class RecordingBookmarkStore {
   String newId(DateTime now) =>
       '${now.microsecondsSinceEpoch.toRadixString(36)}-${(_sequence++).toRadixString(36)}';
 
-  Future<File> _file() async {
-    if (file != null) return file!;
-    Directory base;
-    try {
-      base = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory(p.join(base.path, 'AnkerRecorder'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return File(p.join(dir.path, fileName));
-  }
-
   /// True when an unreadable file could not be set aside; saving would then
   /// overwrite the only copy, so every mutation is refused.
   bool get writeBlocked => _writeBlocked;
@@ -315,7 +302,7 @@ class RecordingBookmarkStore {
     File? target;
     var broken = 0;
     try {
-      target = await _file();
+      target = await _doc.target();
       if (!await target.exists()) return;
       final raw = await target.readAsString();
       final value = jsonDecode(raw);
@@ -397,7 +384,7 @@ class RecordingBookmarkStore {
     List<RecordingBookmark>? Function(List<RecordingBookmark> items) change, {
     bool? showMarkers,
   }) {
-    final operation = _pendingSave.then((_) async {
+    return _doc.serialize(() async {
       if (_writeBlocked) {
         throw StateError('bookmark file unreadable and not backed up');
       }
@@ -408,8 +395,6 @@ class RecordingBookmarkStore {
       _items = List.unmodifiable(next);
       _showMarkers = markers;
     });
-    _pendingSave = operation.catchError((Object _) {});
-    return operation;
   }
 
   Future<void> _write(List<RecordingBookmark> items, bool showMarkers) =>
@@ -423,19 +408,11 @@ class RecordingBookmarkStore {
 
   /// Moves an unreadable bookmark file aside before anything can overwrite it.
   @visibleForOverriding
-  Future<void> backupUnreadable(File target, {bool keepOriginal = false}) {
-    final aside =
-        '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}';
-    return keepOriginal ? target.copy(aside) : target.rename(aside);
-  }
+  Future<void> backupUnreadable(File target, {bool keepOriginal = false}) =>
+      _doc.setAside(keepOriginal: keepOriginal);
 
   /// Atomically replaces the bookmark file. Overridable so tests can hold a
   /// write open and exercise the real save queue.
   @visibleForOverriding
-  Future<void> writeSnapshot(String json) async {
-    final target = await _file();
-    final temporary = File('${target.path}.tmp');
-    await temporary.writeAsString(json, flush: true);
-    await temporary.rename(target.path);
-  }
+  Future<void> writeSnapshot(String json) => _doc.replace(json);
 }

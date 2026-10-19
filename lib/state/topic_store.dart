@@ -3,10 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import 'topic_recommendation.dart';
+import 'context/context_file.dart';
 
 export 'topic_recommendation.dart';
 
@@ -101,11 +100,13 @@ class InTopicPlacement extends TopicPlacement {
 /// discarding this file can only lose placements, never a recording.
 class TopicStore extends ChangeNotifier {
   TopicStore({this.file, this.inMemory = false, DateTime Function()? now})
-    : _now = now ?? DateTime.now;
+    : _now = now ?? DateTime.now,
+      _doc = ContextFile('topics.json', file: file, inMemory: inMemory);
 
   final File? file;
   final bool inMemory;
   final DateTime Function() _now;
+  final ContextFile _doc;
 
   final List<Topic> _topics = [];
   final Map<String, TopicPlacement> _placements = {};
@@ -116,7 +117,6 @@ class TopicStore extends ChangeNotifier {
   String? _currentDay;
   Timer? _dayTimer;
   Future<void>? _loading;
-  Future<void> _pendingSave = Future<void>.value();
   bool _disposed = false;
 
   /// Set when the persisted record could not be read in full. The unreadable
@@ -338,12 +338,10 @@ class TopicStore extends ChangeNotifier {
   Future<void> load() => _loading ??= _load();
 
   Future<void> _load() async {
-    final target = inMemory ? null : (file ?? await _defaultFile());
-    if (target != null && await target.exists()) {
-      String? raw;
+    if (!inMemory) {
       try {
-        raw = await target.readAsString();
-        _decode(jsonDecode(raw));
+        final raw = await _doc.readText();
+        if (raw != null) _decode(jsonDecode(raw));
       } catch (error) {
         // Fail open: placements are not paid work, and refusing to start
         // would hide the library. Keep the unreadable bytes for inspection
@@ -355,7 +353,7 @@ class TopicStore extends ChangeNotifier {
         _evaluatedAssist.clear();
         _currentTopicId = null;
         _currentDay = null;
-        await _preserveCorrupt(target);
+        await _preserveCorrupt();
         recoveryNotice = '主题记录无法读取，已备份原文件并重新开始；录音未受影响';
         debugPrint('[TopicStore] load failed: $error');
       }
@@ -466,25 +464,12 @@ class TopicStore extends ChangeNotifier {
     }
   }
 
-  Future<void> _preserveCorrupt(File target) async {
+  Future<void> _preserveCorrupt() async {
     try {
-      final stamp = _now().millisecondsSinceEpoch;
-      await target.rename('${target.path}.corrupt-$stamp');
+      await _doc.setAside(at: _now());
     } catch (error) {
       debugPrint('[TopicStore] could not back up corrupt record: $error');
     }
-  }
-
-  static Future<File> _defaultFile() async {
-    Directory base;
-    try {
-      base = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory(p.join(base.path, 'AnkerRecorder'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return File(p.join(dir.path, 'topics.json'));
   }
 
   Map<String, Object?> toJson() => {
@@ -518,21 +503,15 @@ class TopicStore extends ChangeNotifier {
   Future<void> save() {
     if (inMemory) return Future<void>.value();
     final snapshot = const JsonEncoder.withIndent('  ').convert(toJson());
-    final operation = _pendingSave.then((_) async {
+    return _doc.serialize(() async {
       try {
-        final target = file ?? await _defaultFile();
-        await target.parent.create(recursive: true);
-        final temporary = File('${target.path}.tmp');
-        await temporary.writeAsString(snapshot, flush: true);
-        await temporary.rename(target.path);
+        await _doc.replace(snapshot);
         saveError = null;
       } catch (error) {
         saveError = '主题记录保存失败，请检查存储空间';
         debugPrint('[TopicStore] save failed: $error');
       }
     });
-    _pendingSave = operation;
-    return operation;
   }
 
   // ---- Day boundary ------------------------------------------------------

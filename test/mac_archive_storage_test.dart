@@ -216,10 +216,12 @@ void main() {
       expect(controller.deskRunning, isTrue);
       expect(controller.deskReceivingEnabled, isTrue);
 
-      final blockedWrite = Directory(
-        '${directory.path}/${ArchiveDeskStore.configFileName}.tmp',
+      // A folder where the config file belongs makes the final rename fail.
+      final config = File(
+        '${directory.path}/${ArchiveDeskStore.configFileName}',
       );
-      await blockedWrite.create();
+      await config.delete();
+      await Directory(config.path).create();
       await expectLater(
         controller.setDeskReceiving(false),
         throwsA(isA<ArchiveException>()),
@@ -229,7 +231,7 @@ void main() {
       expect(controller.deskReceivingEnabled, isTrue);
       expect(controller.deskError, isNotNull);
 
-      await blockedWrite.delete();
+      await Directory(config.path).delete();
       await controller.setDeskReceiving(false);
       expect(store.config.receivingEnabled, isFalse);
       expect(controller.deskRunning, isFalse);
