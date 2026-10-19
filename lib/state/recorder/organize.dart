@@ -55,9 +55,8 @@ mixin _RecorderOrganize on ChangeNotifier {
   abstract final Future<void> _fileJobsLoaded;
   abstract final Future<void> _libraryLoaded;
   abstract final Map<String, String> _recordingErrors;
-  abstract final Map<String, String> _completenessErrors;
+  abstract final DeviceCopies _copies;
   abstract String? _fileJobKey;
-  Set<int> get _incompleteRetrievalIds;
   abstract final Future<void> _settingsLoaded;
   abstract Future<void> _transcriptsLoaded;
   abstract final RecordingAnalysis analysis;
@@ -66,7 +65,6 @@ mixin _RecorderOrganize on ChangeNotifier {
   SpeechConfiguration get _settingsConfiguration;
   String get analysisApiKey;
   bool _isConfigured(SpeechConfiguration config);
-  bool _isRecordingAudioLocked(int? id, String? path);
   bool _isTrashedPath(String path);
   String analysisKey(RecordingReference ref);
   Future<int> extractTodos(RecordingReference ref, {bool confirmRetry = false});
@@ -366,10 +364,12 @@ mixin _RecorderOrganize on ChangeNotifier {
     if (_transcriptOf(path).isEmpty) {
       // A device recording still being retrieved, or cut short, waits for
       // the retrieval path's own completeness check.
-      if (_isRecordingAudioLocked(ref.fileId, path) ||
-          recordingAudioChanged(ref) ||
-          ref.fileId != null && _incompleteRetrievalIds.contains(ref.fileId) ||
-          _completenessErrors.containsKey(analysisKey(ref))) {
+      if (!_copies.usableForProcessing(
+            fileId: ref.fileId,
+            path: path,
+            recordingKey: analysisKey(ref),
+          ) ||
+          recordingAudioChanged(ref)) {
         return;
       }
       if (!_isConfigured(_settingsConfiguration)) {
