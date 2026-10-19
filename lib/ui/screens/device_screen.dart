@@ -145,7 +145,6 @@ class DeviceScreen extends StatelessWidget {
                               ? '继续'
                               : '开始',
                           icon: Icons.mic_rounded,
-                          color: AppColors.coral,
                           onPressed: c.recording || c.blocksRecordingControl
                               ? null
                               : c.startRecord,
@@ -157,7 +156,6 @@ class DeviceScreen extends StatelessWidget {
                           label: '暂停',
                           icon: Icons.pause_rounded,
                           filled: false,
-                          color: AppColors.amber,
                           onPressed: !c.recording || c.phase == AppPhase.busy
                               ? null
                               : c.pauseRecord,

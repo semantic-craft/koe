@@ -111,6 +111,20 @@ class KoeApp extends StatelessWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.light,
+      builder: (context, child) {
+        // iOS「减弱动态效果」only reaches Flutter as `reduceMotion`; fold it
+        // into `disableAnimations` so AppMotion and every widget below honour
+        // it the same way as Android's「移除动画」.
+        final media = MediaQuery.of(context);
+        final reduceMotion = View.of(
+          context,
+        ).platformDispatcher.accessibilityFeatures.reduceMotion;
+        if (!reduceMotion || media.disableAnimations) return child!;
+        return MediaQuery(
+          data: media.copyWith(disableAnimations: true),
+          child: child!,
+        );
+      },
       home: const AppShell(),
     );
     final controller = this.controller;

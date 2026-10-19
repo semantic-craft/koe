@@ -446,9 +446,6 @@ class _EngineOptionCard extends StatelessWidget {
                               borderRadius: BorderRadius.circular(
                                 AppRadii.pill,
                               ),
-                              border: Border.all(
-                                color: meta.statusColor.withValues(alpha: 0.28),
-                              ),
                             ),
                             child: Text(
                               meta.statusLabel,
