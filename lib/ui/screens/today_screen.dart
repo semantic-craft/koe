@@ -16,6 +16,7 @@ import 'new_recording_sheet.dart';
 import 'project_detail_screen.dart';
 import 'todos_screen.dart';
 import 'topics_screen.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// Phone "Today" section (#131).
 ///
@@ -182,7 +183,7 @@ class TodayScreen extends StatelessWidget {
                       : Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            IconButton(
+                            KoeIconButton(
                               key: const ValueKey('today-export'),
                               tooltip: '导出给外部 AI',
                               onPressed: () => showContextExportSheet(
@@ -688,7 +689,7 @@ class _ContinueListeningCard extends StatelessWidget {
       onTap: onOpen,
       child: Row(
         children: [
-          IconButton(
+          KoeIconButton(
             tooltip: playing ? '暂停播放' : '继续播放',
             onPressed: onToggle,
             style: IconButton.styleFrom(minimumSize: const Size(48, 48)),

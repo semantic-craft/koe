@@ -8,6 +8,7 @@ import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
 import 'topics_screen.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// A stable recording library; live and saved reading happens in detail routes.
 class HomeScreen extends StatefulWidget {
@@ -50,7 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 if (RecordingNavigation.of(context)?.wide ?? false)
                   Consumer<RecorderController>(
-                    builder: (_, c, _) => IconButton(
+                    builder: (_, c, _) => KoeIconButton(
                       tooltip: '刷新录音库',
                       onPressed:
                           c.isLiveSession ||
@@ -170,7 +171,7 @@ class _ConnectionHeader extends StatelessWidget {
             ),
           ),
           if (!online)
-            IconButton(
+            KoeIconButton(
               tooltip: '扫描',
               onPressed: onScan,
               style: IconButton.styleFrom(

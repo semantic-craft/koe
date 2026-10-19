@@ -5,6 +5,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/widgets.dart';
+import '../widgets/koe_icon_button.dart';
 
 class DeviceScreen extends StatelessWidget {
   const DeviceScreen({super.key, this.showBack = false});
@@ -54,12 +55,12 @@ class DeviceScreen extends StatelessWidget {
           ],
         ),
         actions: [
-          IconButton(
+          KoeIconButton(
             tooltip: '刷新',
             onPressed: c.phase == AppPhase.busy ? null : c.refreshInfo,
             icon: const Icon(Icons.refresh_rounded),
           ),
-          IconButton(
+          KoeIconButton(
             tooltip: '断开连接',
             onPressed: c.disconnect,
             icon: const Icon(Icons.link_off_rounded, color: AppColors.coral),
@@ -397,7 +398,7 @@ class _OfflineDeviceView extends StatelessWidget {
             if (showBack)
               Align(
                 alignment: Alignment.centerLeft,
-                child: IconButton(
+                child: KoeIconButton(
                   key: const ValueKey('device-back'),
                   tooltip: '返回',
                   onPressed: () => Navigator.maybePop(context),

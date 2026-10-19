@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../state/recorder_controller.dart';
 import '../../state/recording_analysis.dart';
 import '../../theme/app_theme.dart';
+import 'koe_icon_button.dart';
 
 class TopicNotePanel extends StatefulWidget {
   const TopicNotePanel({
@@ -471,7 +472,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                             onPressed: () => _confirmRegenerate(context),
                             child: const Text('重生成'),
                           ),
-                          IconButton(
+                          KoeIconButton(
                             tooltip: '复制笔记',
                             icon: const Icon(Icons.copy_outlined),
                             onPressed: () => Clipboard.setData(
@@ -480,7 +481,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                               ),
                             ),
                           ),
-                          IconButton(
+                          KoeIconButton(
                             tooltip: '分享笔记',
                             icon: const Icon(Icons.ios_share_rounded),
                             onPressed: () => _shareNote(result!, note, topic),

@@ -5,6 +5,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import 'widgets.dart';
+import 'koe_icon_button.dart';
 
 String _two(int value) => value.toString().padLeft(2, '0');
 
@@ -97,7 +98,7 @@ class ContextTimelineRow extends StatelessWidget {
                 ],
               ),
             ),
-            IconButton(
+            KoeIconButton(
               key: ValueKey('timeline-links-${item.id}'),
               tooltip: '修改关联',
               onPressed: () => showContextLinksSheet(context, item),

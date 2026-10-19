@@ -28,6 +28,7 @@ import '../widgets/topic_note_panel.dart';
 import 'files_screen.dart';
 import 'settings_screen.dart';
 import 'speaker_distribution_screen.dart';
+import '../widgets/koe_icon_button.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({
@@ -1378,7 +1379,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           appBar: AppBar(
             backgroundColor: AppColors.bgElevated,
             leading: widget.focusedSource
-                ? IconButton(
+                ? KoeIconButton(
                     tooltip: widget.focusedReturnLabel,
                     onPressed: () => Navigator.maybePop(context),
                     icon: const Icon(Icons.arrow_back_rounded),
@@ -1416,7 +1417,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     ),
                   ),
             actions: [
-              IconButton(
+              KoeIconButton(
                 key: const ValueKey('add-to-queue'),
                 tooltip: c.queueContainsRecording(widget.reference)
                     ? '已在收听队列中'
@@ -1428,107 +1429,112 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       : Icons.playlist_add_rounded,
                 ),
               ),
-              IconButton(
+              KoeIconButton(
                 tooltip: '分享录音',
                 onPressed: fileReady ? () => _share(recording) : null,
                 icon: const Icon(Icons.ios_share_rounded),
               ),
-              PopupMenuButton<String>(
-                tooltip: '更多操作',
-                onSelected: (action) {
-                  switch (action) {
-                    case 'rename':
-                      _rename(recording);
-                    case 'save':
-                      _save(recording);
-                    case 'export':
-                      showMaterialExportSheet(context, widget.reference);
-                    case 'transcribe':
-                      _transcribe(recording);
-                    case 'edit':
-                      _editTranscript(recording);
-                    case 'speakers':
-                      _speakers(recording);
-                    case 'chapters':
-                      _openChapters(segmentText);
-                    case 'speaker-distribution':
-                      _openSpeakers();
-                    case 'info':
-                      _showInfo(recording);
-                    case 'remove-topic':
-                      _removeFromTopics(recording);
-                    case 'clear-cache':
-                      _clearCache(recording);
-                    case 'trash':
-                      _trash(recording);
-                  }
-                },
-                itemBuilder: (_) => [
-                  PopupMenuItem(
-                    value: 'rename',
-                    enabled: fileReady,
-                    child: const Text('重命名'),
-                  ),
-                  PopupMenuItem(
-                    value: 'save',
-                    enabled: fileReady,
-                    child: const Text('保存录音'),
-                  ),
-                  PopupMenuItem(
-                    value: 'export',
-                    enabled: !recording.live && !recording.audioLocked,
-                    child: const Text('导出…'),
-                  ),
-                  if (source.isNotEmpty)
+              macAccessibleName(
+                '更多操作',
+                PopupMenuButton<String>(
+                  tooltip: '更多操作',
+                  onSelected: (action) {
+                    switch (action) {
+                      case 'rename':
+                        _rename(recording);
+                      case 'save':
+                        _save(recording);
+                      case 'export':
+                        showMaterialExportSheet(context, widget.reference);
+                      case 'transcribe':
+                        _transcribe(recording);
+                      case 'edit':
+                        _editTranscript(recording);
+                      case 'speakers':
+                        _speakers(recording);
+                      case 'chapters':
+                        _openChapters(segmentText);
+                      case 'speaker-distribution':
+                        _openSpeakers();
+                      case 'info':
+                        _showInfo(recording);
+                      case 'remove-topic':
+                        _removeFromTopics(recording);
+                      case 'clear-cache':
+                        _clearCache(recording);
+                      case 'trash':
+                        _trash(recording);
+                    }
+                  },
+                  itemBuilder: (_) => [
                     PopupMenuItem(
-                      value: 'transcribe',
-                      enabled:
-                          canProcess &&
-                          (c.speechProvider.requiresSourceLanguage ||
-                              c.sttConfigured),
-                      child: const Text('重新转写'),
-                    ),
-                  if (source.isNotEmpty)
-                    PopupMenuItem(
-                      value: 'edit',
-                      enabled: fileReady && !recording.processing,
-                      child: const Text('编辑正文'),
-                    ),
-                  if (hasSpeakers)
-                    PopupMenuItem(
-                      value: 'speakers',
-                      enabled: fileReady && !recording.processing,
-                      child: const Text('说话人姓名'),
-                    ),
-                  if (source.isNotEmpty && !recording.live && segmentsLocatable)
-                    const PopupMenuItem(value: 'chapters', child: Text('章节')),
-                  if (!recording.live)
-                    const PopupMenuItem(
-                      value: 'speaker-distribution',
-                      child: Text('发言人'),
-                    ),
-                  if (topicPlacement != null)
-                    PopupMenuItem(
-                      value: 'remove-topic',
+                      value: 'rename',
                       enabled: fileReady,
-                      child: const Text('移出项目/主题'),
+                      child: const Text('重命名'),
                     ),
-                  if (hasRecoverableCache)
                     PopupMenuItem(
-                      value: 'clear-cache',
+                      value: 'save',
+                      enabled: fileReady,
+                      child: const Text('保存录音'),
+                    ),
+                    PopupMenuItem(
+                      value: 'export',
+                      enabled: !recording.live && !recording.audioLocked,
+                      child: const Text('导出…'),
+                    ),
+                    if (source.isNotEmpty)
+                      PopupMenuItem(
+                        value: 'transcribe',
+                        enabled:
+                            canProcess &&
+                            (c.speechProvider.requiresSourceLanguage ||
+                                c.sttConfigured),
+                        child: const Text('重新转写'),
+                      ),
+                    if (source.isNotEmpty)
+                      PopupMenuItem(
+                        value: 'edit',
+                        enabled: fileReady && !recording.processing,
+                        child: const Text('编辑正文'),
+                      ),
+                    if (hasSpeakers)
+                      PopupMenuItem(
+                        value: 'speakers',
+                        enabled: fileReady && !recording.processing,
+                        child: const Text('说话人姓名'),
+                      ),
+                    if (source.isNotEmpty &&
+                        !recording.live &&
+                        segmentsLocatable)
+                      const PopupMenuItem(value: 'chapters', child: Text('章节')),
+                    if (!recording.live)
+                      const PopupMenuItem(
+                        value: 'speaker-distribution',
+                        child: Text('发言人'),
+                      ),
+                    if (topicPlacement != null)
+                      PopupMenuItem(
+                        value: 'remove-topic',
+                        enabled: fileReady,
+                        child: const Text('移出项目/主题'),
+                      ),
+                    if (hasRecoverableCache)
+                      PopupMenuItem(
+                        value: 'clear-cache',
+                        enabled: fileReady && !recording.processing,
+                        child: const Text('清理可恢复缓存'),
+                      ),
+                    PopupMenuItem(
+                      value: 'trash',
                       enabled: fileReady && !recording.processing,
-                      child: const Text('清理可恢复缓存'),
+                      child: const Text(
+                        '删除资料…',
+                        style: TextStyle(color: AppColors.coral),
+                      ),
                     ),
-                  PopupMenuItem(
-                    value: 'trash',
-                    enabled: fileReady && !recording.processing,
-                    child: const Text(
-                      '删除资料…',
-                      style: TextStyle(color: AppColors.coral),
-                    ),
-                  ),
-                  const PopupMenuItem(value: 'info', child: Text('资料信息')),
-                ],
+                    const PopupMenuItem(value: 'info', child: Text('资料信息')),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1624,7 +1630,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             label: const Text('主题笔记'),
                           ),
                         if (source.isNotEmpty && !recording.live)
-                          IconButton(
+                          KoeIconButton(
                             tooltip: '摘要与分析',
                             icon: const Icon(Icons.auto_awesome_outlined),
                             onPressed: () => Navigator.of(context).push(
@@ -1650,7 +1656,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         if (canOfferTranslation) ...[
                           const SizedBox(width: 8),
                           if (hasTranslation)
-                            IconButton(
+                            KoeIconButton(
                               tooltip: '翻译为其他语言',
                               onPressed: canProcess
                                   ? () => _translate(recording)
@@ -1668,7 +1674,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         ],
                         if (!recording.live &&
                             (path != null || bookmarkTargets.isNotEmpty))
-                          IconButton(
+                          KoeIconButton(
                             key: const ValueKey('bookmark-list-button'),
                             tooltip: '书签与批注',
                             onPressed: _openBookmarkList,
@@ -1678,7 +1684,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                               child: const Icon(Icons.bookmarks_outlined),
                             ),
                           ),
-                        IconButton(
+                        KoeIconButton(
                           tooltip: _showTranslation && hasTranslation
                               ? '复制译文'
                               : '复制原文',
@@ -2507,7 +2513,7 @@ class _LiveControls extends StatelessWidget {
                 ),
               ),
               if (recording.error != null)
-                IconButton(
+                KoeIconButton(
                   tooltip: '查看处理错误',
                   color: AppColors.coral,
                   icon: const Icon(Icons.error_outline_rounded),
@@ -3785,12 +3791,12 @@ class _BookmarkListSheet extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                              IconButton(
+                              KoeIconButton(
                                 tooltip: '编辑批注',
                                 onPressed: () => onEdit(bookmark),
                                 icon: const Icon(Icons.edit_outlined),
                               ),
-                              IconButton(
+                              KoeIconButton(
                                 tooltip: '删除书签',
                                 onPressed: () => onRemove(bookmark),
                                 icon: const Icon(Icons.delete_outline),

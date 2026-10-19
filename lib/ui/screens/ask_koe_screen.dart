@@ -9,6 +9,7 @@ import '../../theme/app_theme.dart';
 import '../widgets/cited_text.dart';
 import '../widgets/hold_to_talk.dart';
 import '../widgets/status_indicators.dart';
+import '../widgets/koe_icon_button.dart';
 
 void openAskKoe(BuildContext context) {
   Navigator.of(context).push(
@@ -238,7 +239,7 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
         title: const Text('问 Koe'),
         actions: [
           if (_speaker.available)
-            IconButton(
+            KoeIconButton(
               key: const ValueKey('ask-read-aloud'),
               tooltip: readAloud ? '朗读回答：开（合成语音）' : '朗读回答：关',
               onPressed: _toggleReadAloud,
@@ -248,12 +249,12 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
                     : Icons.voice_over_off_outlined,
               ),
             ),
-          IconButton(
+          KoeIconButton(
             tooltip: '历史会话',
             onPressed: _history,
             icon: const Icon(Icons.history_rounded),
           ),
-          IconButton(
+          KoeIconButton(
             key: const ValueKey('ask-new-session'),
             tooltip: '新会话',
             onPressed: busy ? null : () => _ready = _open(fresh: true),
@@ -335,7 +336,7 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  IconButton(
+                  KoeIconButton(
                     key: const ValueKey('ask-voice-toggle'),
                     tooltip: _voiceMode ? '改用文字输入' : '按住说话提问',
                     onPressed: () => setState(() => _voiceMode = !_voiceMode),

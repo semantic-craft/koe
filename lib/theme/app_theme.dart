@@ -739,8 +739,11 @@ class AppTheme {
         ),
         iconTheme: IconThemeData(color: t.textPrimary),
       ),
+      // Start from the base theme so slots Koe doesn't restyle (headlineSmall
+      // for dialog titles, titleLarge, bodySmall…) keep a themed color; a bare
+      // TextTheme left them colorless and dialog titles drew blank (#306).
       textTheme: _tabular(
-        TextTheme(
+        base.textTheme.copyWith(
           displayLarge: TextStyle(
             fontSize: 34,
             fontWeight: FontWeight.w700,

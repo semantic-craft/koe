@@ -5,6 +5,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// 30-day trash for original materials (#132).
 ///
@@ -119,7 +120,7 @@ class TrashScreen extends StatelessWidget {
                             : null,
                         child: const Text('恢复'),
                       ),
-                      IconButton(
+                      KoeIconButton(
                         key: ValueKey('trash-delete-${asset.path}'),
                         tooltip: '彻底删除',
                         onPressed: () =>

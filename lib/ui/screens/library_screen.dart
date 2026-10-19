@@ -15,6 +15,7 @@ import 'minutes_document_screen.dart';
 import 'new_recording_sheet.dart';
 import 'trash_screen.dart';
 import '../file_types.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// Phone "Materials" section (#131).
 ///
@@ -85,7 +86,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 ),
                               ),
                             ),
-                            IconButton(
+                            KoeIconButton(
                               key: const ValueKey('library-queue'),
                               tooltip: '收听队列',
                               onPressed: () => Navigator.of(context).push(
@@ -99,7 +100,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 child: const Icon(Icons.queue_music_rounded),
                               ),
                             ),
-                            IconButton(
+                            KoeIconButton(
                               key: const ValueKey('library-trash'),
                               tooltip: '回收站',
                               onPressed: () => Navigator.of(context).push(
@@ -109,7 +110,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               ),
                               icon: const Icon(Icons.delete_outline_rounded),
                             ),
-                            IconButton(
+                            KoeIconButton(
                               key: const ValueKey('library-import'),
                               tooltip: '导入音频',
                               onPressed: () => handleNewRecordingAction(
@@ -121,7 +122,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 size: 20,
                               ),
                             ),
-                            IconButton(
+                            KoeIconButton(
                               key: const ValueKey('library-import-text'),
                               tooltip: '文字资料',
                               onPressed: () => _showTextLibrary(context),
@@ -152,7 +153,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             prefixIcon: const Icon(Icons.search_rounded),
                             suffixIcon: _query.isEmpty
                                 ? null
-                                : IconButton(
+                                : KoeIconButton(
                                     tooltip: '清除搜索',
                                     onPressed: () {
                                       _search.clear();
@@ -545,7 +546,7 @@ class _LibraryContinueCard extends StatelessWidget {
       onTap: onOpen,
       child: Row(
         children: [
-          IconButton(
+          KoeIconButton(
             tooltip: playing ? '暂停播放' : '继续播放',
             onPressed: onToggle,
             style: IconButton.styleFrom(minimumSize: const Size(48, 48)),

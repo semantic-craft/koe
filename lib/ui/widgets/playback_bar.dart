@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import 'widgets.dart';
+import 'koe_icon_button.dart';
 
 /// Sticky playback controls: play/pause, ±5s seek, speed dropdown, scrubber.
 class PlaybackBar extends StatelessWidget {
@@ -67,7 +68,7 @@ class PlaybackBar extends StatelessWidget {
                   ),
                 ),
               ),
-              IconButton(
+              KoeIconButton(
                 tooltip: '关闭播放器',
                 visualDensity: VisualDensity.compact,
                 onPressed: c.stopPlayback,

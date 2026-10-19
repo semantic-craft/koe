@@ -5,6 +5,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// Ordered continuous listening of original recordings.
 ///
@@ -226,7 +227,7 @@ class _QueueTile extends StatelessWidget {
                   ),
                 ),
               ),
-              IconButton(
+              KoeIconButton(
                 key: ValueKey('queue-play-${entry.key}'),
                 tooltip: playing ? '暂停播放' : '播放这一项',
                 onPressed: availability.playable
@@ -322,20 +323,20 @@ class _QueueTile extends StatelessWidget {
                 ),
               ),
               if (current && !availability.playable)
-                IconButton(
+                KoeIconButton(
                   key: ValueKey('queue-skip-${entry.key}'),
                   tooltip: '跳过这一项',
                   onPressed: () => controller.skipQueueEntry(entry.key),
                   icon: const Icon(Icons.skip_next_rounded),
                 ),
               if (!availability.playable)
-                IconButton(
+                KoeIconButton(
                   key: ValueKey('queue-retry-${entry.key}'),
                   tooltip: '重试',
                   onPressed: () => controller.retryQueueEntry(entry.key),
                   icon: const Icon(Icons.refresh_rounded),
                 ),
-              IconButton(
+              KoeIconButton(
                 key: ValueKey('queue-remove-${entry.key}'),
                 tooltip: '移出队列',
                 onPressed: () => _remove(context, reference),
