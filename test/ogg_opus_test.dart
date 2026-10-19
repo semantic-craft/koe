@@ -39,4 +39,25 @@ void main() {
     expect(OggOpus.isOgg(bytes), isTrue);
     expect(bytes.length, greaterThan(1000));
   });
+
+  test('已有较新的 Ogg 缓存时直接复用，不再读取原始文件', () async {
+    final dir = await Directory.systemTemp.createTemp('ogg-cache');
+    addTearDown(() async {
+      await Process.run('chmod', ['-R', 'u+rw', dir.path]);
+      await dir.delete(recursive: true);
+    });
+    final raw = File('${dir.path}/1783822462.opus');
+    await raw.writeAsBytes(
+      List.generate(OggOpus.frameSize * 20, (i) => (i % 251) + 1),
+    );
+    final first = await OggOpus.ensurePlayable(raw.path);
+    expect(first, '${dir.path}/1783822462.ogg');
+    await File(first).setLastModified(
+      (await raw.lastModified()).add(const Duration(seconds: 5)),
+    );
+    // The source can no longer be read; only its metadata is available.
+    await Process.run('chmod', ['000', raw.path]);
+
+    expect(await OggOpus.ensurePlayable(raw.path), first);
+  });
 }
