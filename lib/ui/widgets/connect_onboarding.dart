@@ -244,7 +244,7 @@ class _BatteryProductCard extends StatelessWidget {
             value: p / 100.0,
             minHeight: 6,
             backgroundColor: AppColors.border,
-            color: AppColors.mint,
+            color: AppColors.accent,
           ),
         ),
         const SizedBox(height: 6),

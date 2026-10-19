@@ -60,7 +60,7 @@ class _CitedTextState extends State<CitedText> {
               TextSpan(
                 text: '[$label]',
                 style: const TextStyle(
-                  color: AppColors.mint,
+                  color: AppColors.accent,
                   fontWeight: FontWeight.w600,
                 ),
                 recognizer: _tap(() => openContextSource(context, line.source)),

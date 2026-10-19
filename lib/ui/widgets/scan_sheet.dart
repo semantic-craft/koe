@@ -333,9 +333,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: widget.connecting
-                        ? AppColors.mint
-                        : AppColors.accent,
+                    color: AppColors.accent,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -344,7 +342,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                   style: TextStyle(
                     fontSize: 13,
                     color: widget.connecting
-                        ? AppColors.mint
+                        ? AppColors.accent
                         : AppColors.textMuted,
                   ),
                 ),
@@ -566,7 +564,7 @@ class _SheetDeviceTile extends StatelessWidget {
           if (connecting)
             const StatusPill(label: '连接中', color: AppColors.accent)
           else if (device.isD3200)
-            const StatusPill(label: 'D3200', color: AppColors.mint)
+            const StatusPill(label: 'D3200', color: AppColors.textSecondary)
           else
             StatusPill(label: '${device.rssi} dBm', color: AppColors.textMuted),
         ],

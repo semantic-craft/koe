@@ -166,7 +166,7 @@ class BatteryRing extends StatelessWidget {
     final tokens = KoeTokens.of(context);
     final p = percent.clamp(0, 100) / 100.0;
     final color = percent > 50
-        ? tokens.mint
+        ? tokens.textSecondary
         : percent > 20
         ? tokens.amber
         : tokens.coral;

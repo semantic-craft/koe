@@ -421,7 +421,10 @@ class _MinutesRow extends StatelessWidget {
       onTap: onTap,
       child: Row(
         children: [
-          const Icon(Icons.description_outlined, color: AppColors.mint),
+          const Icon(
+            Icons.description_outlined,
+            color: AppColors.textSecondary,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -448,7 +451,10 @@ class _MinutesRow extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   status,
-                  style: const TextStyle(fontSize: 12, color: AppColors.mint),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -493,13 +499,13 @@ class _FilterChip extends StatelessWidget {
       onSelected: (_) => onSelected(),
       materialTapTargetSize: MaterialTapTargetSize.padded,
       showCheckmark: false,
-      selectedColor: AppColors.mintSoft,
+      selectedColor: AppColors.accentSoft,
       side: BorderSide(
-        color: selected ? AppColors.mintBorder : AppColors.border,
+        color: selected ? AppColors.accentBorder : AppColors.border,
       ),
       labelStyle: TextStyle(
         fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-        color: selected ? AppColors.mint : AppColors.textSecondary,
+        color: selected ? AppColors.accent : AppColors.textSecondary,
       ),
     );
   }
@@ -534,7 +540,7 @@ class _LibraryContinueCard extends StatelessWidget {
             style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
             icon: Icon(
               playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              color: AppColors.mint,
+              color: AppColors.accent,
             ),
           ),
           Expanded(

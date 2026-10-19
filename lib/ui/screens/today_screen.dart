@@ -268,7 +268,7 @@ class _FocusCard extends StatelessWidget {
       key: const ValueKey('today-focus'),
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       decoration: BoxDecoration(
-        color: AppColors.mint,
+        color: AppColors.accent,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -279,7 +279,7 @@ class _FocusCard extends StatelessWidget {
             style: const TextStyle(
               fontSize: 12,
               letterSpacing: 0.4,
-              color: Color(0xFFD7E5DA),
+              color: AppColors.accentSoft,
             ),
           ),
           const SizedBox(height: 8),
@@ -298,7 +298,7 @@ class _FocusCard extends StatelessWidget {
             style: const TextStyle(
               fontSize: 13,
               height: 1.4,
-              color: Color(0xFFD7E5DA),
+              color: AppColors.accentSoft,
             ),
           ),
           const SizedBox(height: 8),
@@ -320,7 +320,7 @@ class _FocusCard extends StatelessWidget {
                 TextButton(
                   onPressed: onOpenTopic,
                   style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFD7E5DA),
+                    foregroundColor: AppColors.accentSoft,
                     minimumSize: const Size(44, 44),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
@@ -410,7 +410,7 @@ class _DeviceStatusCard extends StatelessWidget {
         children: [
           Icon(
             connected ? Icons.headphones_rounded : Icons.link_off_rounded,
-            color: connected ? AppColors.mint : AppColors.textMuted,
+            color: connected ? AppColors.textSecondary : AppColors.textMuted,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -689,7 +689,7 @@ class _ContinueListeningCard extends StatelessWidget {
             style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
             icon: Icon(
               playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              color: AppColors.mint,
+              color: AppColors.accent,
             ),
           ),
           Expanded(
