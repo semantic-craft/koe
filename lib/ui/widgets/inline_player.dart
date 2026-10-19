@@ -49,11 +49,23 @@ class InlinePlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
+    // Position ticks notify [positionListenable] only, not the controller.
+    return ValueListenableBuilder<Duration>(
+      valueListenable: c.positionListenable,
+      builder: (context, position, _) => _player(context, c, position),
+    );
+  }
+
+  Widget _player(
+    BuildContext context,
+    RecorderController c,
+    Duration position,
+  ) {
     final loaded = c.playingPath == path;
     final playing = loaded && c.isPlaying;
     final completed = loaded && c.playbackCompleted;
     final canSeek =
-        loaded && (c.duration > Duration.zero || c.position > Duration.zero);
+        loaded && (c.duration > Duration.zero || position > Duration.zero);
     final progress = loaded ? c.playbackProgress : 0.0;
     final total = loaded && c.duration > Duration.zero
         ? c.duration
@@ -98,7 +110,7 @@ class InlinePlayer extends StatelessWidget {
         Row(
           children: [
             Text(
-              loaded ? _fmt(c.position) : '00:00',
+              loaded ? _fmt(position) : '00:00',
               style: const TextStyle(
                 fontSize: 12,
                 color: AppColors.textSecondary,

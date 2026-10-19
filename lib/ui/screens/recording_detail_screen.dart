@@ -1215,10 +1215,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           segmentText,
           duration: path == null ? null : c.localDurationForPath(path),
         );
-    final activeSegment =
-        !_showTranslation && segmentsLocatable && c.playingPath == path
-        ? _segmentAt(segmentText, c.position)
-        : null;
+    final followsPlayback =
+        !_showTranslation && segmentsLocatable && c.playingPath == path;
     final bookmarkTargets = _bookmarkTargets(
       c,
       recording,
@@ -1557,118 +1555,127 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
               edited: recording.manuallyEdited,
             ),
           Expanded(
-            child: IndexedStack(
-              index: _showTranslation && hasTranslation ? 1 : 0,
-              children: [
-                for (final translation in [false, true])
-                  RecordingTextReader(
-                    key: ValueKey(
-                      translation ? 'translation-reader' : 'source-reader',
-                    ),
-                    text: translation ? translated : source,
-                    live: recording.live,
-                    visible:
-                        translation == (_showTranslation && hasTranslation),
-                    highlightedParagraph: translation
-                        ? null
-                        : _highlightedParagraph,
-                    segments: translation || !segmentsLocatable
-                        ? const []
-                        : segmentText,
-                    activeSegment: translation ? null : activeSegment,
-                    bookmarkedSegments: translation || !showMarkers
-                        ? const {}
-                        : {
-                            for (final target in bookmarkTargets)
-                              if (target.segmentIndex != null)
-                                target.segmentIndex!,
-                          },
-                    speakerAliases: translation
-                        ? const {}
-                        : recording.path == null
-                        ? const {}
-                        : c.speakerAliasesForPath(recording.path!),
-                    onSegmentTap: translation || !segmentsLocatable
-                        ? null
-                        : (index) {
-                            final target = segmentText[index].start;
-                            c.playFrom(
-                              recording.path!,
-                              target,
-                              fileId: recording.reference.fileId,
-                            );
-                          },
-                    onSegmentSpeakerTap: translation || !segmentsLocatable
-                        ? null
-                        : (index) => _correctSegmentSpeaker(recording, index),
-                    header: !hasReaderHeader || (translation && !hasTranslation)
-                        ? null
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (recording.processing)
-                                _ProcessingStatus(progress: recording.progress),
-                              if (recording.processing &&
-                                  c.speechProvider == SttProvider.qwen)
-                                TextButton(
-                                  onPressed: c.cancelQwenFileProcessing,
-                                  child: const Text('停止等待（保留已提交任务）'),
-                                ),
-                              if (recording.processing &&
-                                  c.doubaoFileProcessing)
-                                TextButton(
-                                  onPressed: c.cancelDoubaoFileProcessing,
-                                  child: const Text('停止等待（重试将重新上传）'),
-                                ),
-                              if (recording.error != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 16),
-                                  child: Text(
-                                    recording.error!,
-                                    style: const TextStyle(
-                                      color: AppColors.coral,
-                                      height: 1.4,
+            child: _ActiveSegmentScope(
+              position: c.positionListenable,
+              segments: segmentText,
+              enabled: followsPlayback,
+              builder: (context, activeSegment) => IndexedStack(
+                index: _showTranslation && hasTranslation ? 1 : 0,
+                children: [
+                  for (final translation in [false, true])
+                    RecordingTextReader(
+                      key: ValueKey(
+                        translation ? 'translation-reader' : 'source-reader',
+                      ),
+                      text: translation ? translated : source,
+                      live: recording.live,
+                      visible:
+                          translation == (_showTranslation && hasTranslation),
+                      highlightedParagraph: translation
+                          ? null
+                          : _highlightedParagraph,
+                      segments: translation || !segmentsLocatable
+                          ? const []
+                          : segmentText,
+                      activeSegment: translation ? null : activeSegment,
+                      bookmarkedSegments: translation || !showMarkers
+                          ? const {}
+                          : {
+                              for (final target in bookmarkTargets)
+                                if (target.segmentIndex != null)
+                                  target.segmentIndex!,
+                            },
+                      speakerAliases: translation
+                          ? const {}
+                          : recording.path == null
+                          ? const {}
+                          : c.speakerAliasesForPath(recording.path!),
+                      onSegmentTap: translation || !segmentsLocatable
+                          ? null
+                          : (index) {
+                              final target = segmentText[index].start;
+                              c.playFrom(
+                                recording.path!,
+                                target,
+                                fileId: recording.reference.fileId,
+                              );
+                            },
+                      onSegmentSpeakerTap: translation || !segmentsLocatable
+                          ? null
+                          : (index) => _correctSegmentSpeaker(recording, index),
+                      header:
+                          !hasReaderHeader || (translation && !hasTranslation)
+                          ? null
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (recording.processing)
+                                  _ProcessingStatus(
+                                    progress: recording.progress,
+                                  ),
+                                if (recording.processing &&
+                                    c.speechProvider == SttProvider.qwen)
+                                  TextButton(
+                                    onPressed: c.cancelQwenFileProcessing,
+                                    child: const Text('停止等待（保留已提交任务）'),
+                                  ),
+                                if (recording.processing &&
+                                    c.doubaoFileProcessing)
+                                  TextButton(
+                                    onPressed: c.cancelDoubaoFileProcessing,
+                                    child: const Text('停止等待（重试将重新上传）'),
+                                  ),
+                                if (recording.error != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 16),
+                                    child: Text(
+                                      recording.error!,
+                                      style: const TextStyle(
+                                        color: AppColors.coral,
+                                        height: 1.4,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              if (source.isEmpty && translated.isEmpty)
-                                _EmptyRecording(
-                                  key: const ValueKey('empty-recording'),
-                                  recording: recording,
-                                  canTranscribe:
-                                      canProcess &&
-                                      (c.speechProvider == SttProvider.apple ||
-                                          c.sttConfigured),
-                                  configured: c.sttConfigured,
-                                  onTranscribe: () => _transcribe(recording),
-                                  appleForm:
-                                      c.speechProvider == SttProvider.apple
-                                      ? _AppleTranscriptionForm(
-                                          reference: widget.reference,
-                                          initialLanguage:
-                                              _selectedRecordingLanguage ??
-                                              recording.sourceLanguage,
-                                          enabled: canProcess,
-                                          onLanguageChanged: (language) =>
-                                              _selectedRecordingLanguage =
-                                                  language,
-                                          onSubmit: (language, prepare) =>
-                                              _transcribe(
-                                                recording,
-                                                sourceLanguage: language,
-                                                prepareLanguages: prepare,
-                                              ),
-                                        )
-                                      : null,
-                                ),
-                              if (recording.path == null &&
-                                  !recording.live &&
-                                  !recording.audioLocked)
-                                _DeviceDownload(recording: recording),
-                            ],
-                          ),
-                  ),
-              ],
+                                if (source.isEmpty && translated.isEmpty)
+                                  _EmptyRecording(
+                                    key: const ValueKey('empty-recording'),
+                                    recording: recording,
+                                    canTranscribe:
+                                        canProcess &&
+                                        (c.speechProvider ==
+                                                SttProvider.apple ||
+                                            c.sttConfigured),
+                                    configured: c.sttConfigured,
+                                    onTranscribe: () => _transcribe(recording),
+                                    appleForm:
+                                        c.speechProvider == SttProvider.apple
+                                        ? _AppleTranscriptionForm(
+                                            reference: widget.reference,
+                                            initialLanguage:
+                                                _selectedRecordingLanguage ??
+                                                recording.sourceLanguage,
+                                            enabled: canProcess,
+                                            onLanguageChanged: (language) =>
+                                                _selectedRecordingLanguage =
+                                                    language,
+                                            onSubmit: (language, prepare) =>
+                                                _transcribe(
+                                                  recording,
+                                                  sourceLanguage: language,
+                                                  prepareLanguages: prepare,
+                                                ),
+                                          )
+                                        : null,
+                                  ),
+                                if (recording.path == null &&
+                                    !recording.live &&
+                                    !recording.audioLocked)
+                                  _DeviceDownload(recording: recording),
+                              ],
+                            ),
+                    ),
+                ],
+              ),
             ),
           ),
         ],
@@ -1719,6 +1726,64 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           : null,
     );
   }
+}
+
+/// Follows playback position ticks and rebuilds [builder] only when the
+/// playing sentence changes, so the detail screen does not rebuild per tick.
+class _ActiveSegmentScope extends StatefulWidget {
+  const _ActiveSegmentScope({
+    required this.position,
+    required this.segments,
+    required this.enabled,
+    required this.builder,
+  });
+
+  final ValueListenable<Duration> position;
+  final List<TranscriptSegment> segments;
+  final bool enabled;
+  final Widget Function(BuildContext context, int? activeSegment) builder;
+
+  @override
+  State<_ActiveSegmentScope> createState() => _ActiveSegmentScopeState();
+}
+
+class _ActiveSegmentScopeState extends State<_ActiveSegmentScope> {
+  int? _active;
+
+  int? _current() => widget.enabled
+      ? _segmentAt(widget.segments, widget.position.value)
+      : null;
+
+  void _onPosition() {
+    final next = _current();
+    if (next != _active) setState(() => _active = next);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _active = _current();
+    widget.position.addListener(_onPosition);
+  }
+
+  @override
+  void didUpdateWidget(_ActiveSegmentScope oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.position != widget.position) {
+      oldWidget.position.removeListener(_onPosition);
+      widget.position.addListener(_onPosition);
+    }
+    _active = _current();
+  }
+
+  @override
+  void dispose() {
+    widget.position.removeListener(_onPosition);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _active);
 }
 
 int? _segmentAt(List<TranscriptSegment> segments, Duration position) {
