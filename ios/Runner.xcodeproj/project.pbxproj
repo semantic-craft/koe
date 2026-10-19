@@ -20,6 +20,7 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		A10C71002F40000100A71001 /* RecordingShortcut.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10C71012F40000100A71001 /* RecordingShortcut.swift */; };
 		A11271002F40000100A71001 /* AppleSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11271012F40000100A71001 /* AppleSpeechBridge.swift */; };
+		B5C7A1002F40000100B71001 /* SystemTasksBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */; };
 		A11371002F40000100A71001 /* AppleSpeechNativeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11371012F40000100A71001 /* AppleSpeechNativeTests.swift */; };
 		A90C71012F40000000A71002 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000000A71001 /* KeychainStore.swift */; };
 		A90C71012F40000100A71002 /* CredentialBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000100A71001 /* CredentialBridge.swift */; };
@@ -74,6 +75,7 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10C71012F40000100A71001 /* RecordingShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingShortcut.swift; sourceTree = "<group>"; };
 		A11271012F40000100A71001 /* AppleSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechBridge.swift; sourceTree = "<group>"; };
+		B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemTasksBridge.swift; sourceTree = "<group>"; };
 		A11371012F40000100A71001 /* AppleSpeechNativeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechNativeTests.swift; sourceTree = "<group>"; };
 		A90C71012F40000000A71001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KeychainStore.swift; path = ../../darwin/KeychainStore.swift; sourceTree = "<group>"; };
 		A90C71012F40000100A71001 /* CredentialBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CredentialBridge.swift; path = ../../darwin/CredentialBridge.swift; sourceTree = "<group>"; };
@@ -182,6 +184,7 @@
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				A10C71012F40000100A71001 /* RecordingShortcut.swift */,
 				A11271012F40000100A71001 /* AppleSpeechBridge.swift */,
+				B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -429,6 +432,7 @@
 				A90C71012F40000000A71002 /* KeychainStore.swift in Sources */,
 				A10C71002F40000100A71001 /* RecordingShortcut.swift in Sources */,
 				A11271002F40000100A71001 /* AppleSpeechBridge.swift in Sources */,
+				B5C7A1002F40000100B71001 /* SystemTasksBridge.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);
