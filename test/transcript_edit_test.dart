@@ -512,6 +512,57 @@ void main() {
     expect(c.saved, ['失败时保留的草稿']);
   });
 
+  testWidgets('「新转写版本」点关闭只关对话框，停在录音详情', (tester) async {
+    const reference = RecordingReference(fileId: 128100, path: path);
+    final c = _EditProbeController();
+    c.views[reference.key] = const RecordingViewData(
+      reference: reference,
+      title: '新版本测试',
+      path: path,
+      text: '人工校订正文',
+      segments: [],
+      manuallyEdited: true,
+      hasPendingTranscript: true,
+    );
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        // Like the app shell: the library and detail live in a nested
+        // navigator, while dialogs go to the root navigator.
+        child: MaterialApp(
+          home: Navigator(
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          const RecordingDetailScreen(reference: reference),
+                    ),
+                  ),
+                  child: const Text('资料列表'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('资料列表'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('查看新版本'));
+    await tester.pumpAndSettle();
+    expect(find.text('新转写版本'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '关闭'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('新转写版本'), findsNothing);
+    expect(find.byType(RecordingDetailScreen), findsOneWidget);
+  });
+
   testWidgets('编辑正文时使用无别名的原始正文', (tester) async {
     const reference = RecordingReference(fileId: 128100, path: path);
     final c = _EditProbeController();
