@@ -25,6 +25,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/wav_fixture.dart';
+import 'support/temp_dir.dart';
 
 void main() async {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -106,7 +107,7 @@ void main() async {
       'controller restart recovers $stage without duplicate submission',
       () async {
         final dir = await Directory.systemTemp.createTemp('restart-test-');
-        addTearDown(() => dir.delete(recursive: true));
+        addTearDown(() => deleteTemporaryDirectory(dir));
         final audio = File('${dir.path}/998877.wav');
         await audio.writeAsBytes([1, 2, 3]);
         final file = File('${dir.path}/jobs.json');

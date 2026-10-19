@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'atomic_file.dart';
 import 'recording.dart';
 
 typedef TranscriptStoreData = ({
@@ -325,12 +326,10 @@ class TranscriptStore {
         incomingByKey: incomingByKey,
         segmentSpeakersByKey: segmentSpeakersByKey,
       );
-      final temporary = File('${file.path}.tmp');
-      await temporary.writeAsString(
+      await writeFileAtomically(
+        file,
         const JsonEncoder.withIndent('  ').convert(json),
-        flush: true,
       );
-      await temporary.rename(file.path);
     } catch (e) {
       debugPrint('[TranscriptStore] save failed: $e');
       if (strict) rethrow;
