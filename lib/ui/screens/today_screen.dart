@@ -9,6 +9,7 @@ import '../widgets/mobile_header.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/widgets.dart';
 import 'new_recording_sheet.dart';
+import 'project_detail_screen.dart';
 import 'todos_screen.dart';
 import 'topics_screen.dart';
 
@@ -25,6 +26,7 @@ class TodayScreen extends StatelessWidget {
     final now = DateTime.now();
     final today = c.contextItemsForDay(now);
     final currentTopic = c.topicsEnabled ? c.topics.currentTopic : null;
+    final focus = c.focusProject;
     final pending = c.topicsEnabled
         ? c.topics.pendingRecordings.where((key) {
             final path = c.exportedPaths.where((path) {
@@ -74,9 +76,12 @@ class TodayScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 _FocusCard(
+                  project: focus,
+                  progress: focus == null ? null : c.projectProgress(focus.id),
                   topicTitle: currentTopic?.title,
-                  onOpenProjects: () =>
-                      RecordingNavigation.of(context)?.onSelectTab?.call(1),
+                  onOpenProjects: () => focus == null
+                      ? RecordingNavigation.of(context)?.onSelectTab?.call(1)
+                      : openProject(context, focus.id),
                   onOpenTopic: c.topicsEnabled
                       ? () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
@@ -178,11 +183,15 @@ String _dateLine(DateTime now) {
 
 class _FocusCard extends StatelessWidget {
   const _FocusCard({
+    required this.project,
+    required this.progress,
     required this.topicTitle,
     required this.onOpenProjects,
     this.onOpenTopic,
   });
 
+  final Project? project;
+  final ProjectProgress? progress;
   final String? topicTitle;
   final VoidCallback onOpenProjects;
   final VoidCallback? onOpenTopic;
@@ -190,6 +199,22 @@ class _FocusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasTopic = topicTitle != null && topicTitle!.trim().isNotEmpty;
+    final String eyebrow;
+    final String title;
+    final String body;
+    if (project != null) {
+      eyebrow = '正在推进 · 最近有进展的项目';
+      title = project!.title;
+      body = projectNextLabel(progress!);
+    } else if (hasTopic) {
+      eyebrow = '正在推进 · 当前主题';
+      title = topicTitle!;
+      body = '录音归入主题后，可以在主题里继续找回原声。';
+    } else {
+      eyebrow = '当前重点项目';
+      title = '今天还没有重点项目';
+      body = '新建一个项目，把跨天的录音和待办放在一起。';
+    }
     return Container(
       key: const ValueKey('today-focus'),
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
@@ -201,7 +226,7 @@ class _FocusCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            hasTopic ? '正在推进 · 当前主题' : '当前重点项目',
+            eyebrow,
             style: const TextStyle(
               fontSize: 12,
               letterSpacing: 0.4,
@@ -210,7 +235,7 @@ class _FocusCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            hasTopic ? topicTitle! : '今天还没有重点项目',
+            title,
             style: const TextStyle(
               fontSize: 22,
               height: 1.25,
@@ -220,7 +245,7 @@ class _FocusCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            hasTopic ? '录音归入主题后，可以在项目里继续找回原声。' : '项目会在后续版本接入；现在先用主题归档今天的录音。',
+            body,
             style: const TextStyle(
               fontSize: 13,
               height: 1.4,
@@ -240,7 +265,7 @@ class _FocusCard extends StatelessWidget {
                   minimumSize: const Size(44, 44),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                 ),
-                child: const Text('打开项目 ›'),
+                child: Text(project == null ? '打开项目 ›' : '打开这个项目 ›'),
               ),
               if (onOpenTopic != null)
                 TextButton(
