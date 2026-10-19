@@ -87,7 +87,7 @@ void main() {
     expect(find.byType(ListeningQueueScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('queue-empty')), findsOneWidget);
 
-    await tester.pageBack();
+    await tester.tap(find.byTooltip('返回'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(ValueKey('recording-row-${file.path}')));
     await tester.pumpAndSettle();

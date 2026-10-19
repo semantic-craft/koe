@@ -385,104 +385,118 @@ class _EngineOptionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = KoeTokens.of(context);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        key: ValueKey('speech-provider-option-${provider.name}'),
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadii.md),
-        child: AnimatedContainer(
-          duration: AppMotion.duration(context, AppMotion.snap),
-          curve: AppMotion.snappy,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-          decoration: BoxDecoration(
-            color: selected ? tokens.bgCard : tokens.bgPanel,
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        selected: selected,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: ValueKey('speech-provider-option-${provider.name}'),
+            onTap: onTap,
             borderRadius: BorderRadius.circular(AppRadii.md),
-            border: Border.all(
-              color: selected ? tokens.inkAccent : tokens.border,
-              width: selected ? 1.4 : 1,
-            ),
-            boxShadow: selected ? tokens.cardShadow : const [],
-          ),
-          child: Opacity(
-            opacity: enabled ? 1 : 0.55,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                IconBadge(
-                  icon: meta.icon,
-                  size: 32,
-                  iconSize: 16,
-                  radius: 8,
-                  color: selected ? tokens.onInkAccent : tokens.textSecondary,
-                  backgroundColor: selected ? tokens.inkAccent : tokens.bgCard,
-                  borderColor: selected ? tokens.inkAccent : tokens.borderSoft,
+            child: AnimatedContainer(
+              duration: AppMotion.duration(context, AppMotion.snap),
+              curve: AppMotion.snappy,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              decoration: BoxDecoration(
+                color: selected ? tokens.bgCard : tokens.bgPanel,
+                borderRadius: BorderRadius.circular(AppRadii.md),
+                border: Border.all(
+                  color: selected ? tokens.inkAccent : tokens.border,
+                  width: selected ? 1.4 : 1,
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
+                boxShadow: selected ? tokens.cardShadow : const [],
+              ),
+              child: Opacity(
+                opacity: enabled ? 1 : 0.55,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    IconBadge(
+                      icon: meta.icon,
+                      size: 32,
+                      iconSize: 16,
+                      radius: 8,
+                      color: selected
+                          ? tokens.onInkAccent
+                          : tokens.textSecondary,
+                      backgroundColor: selected
+                          ? tokens.inkAccent
+                          : tokens.bgCard,
+                      borderColor: selected
+                          ? tokens.inkAccent
+                          : tokens.borderSoft,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            provider.label,
-                            style: TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                              color: tokens.textPrimary,
-                            ),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                provider.label,
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: tokens.textPrimary,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: meta.statusColor.withValues(
+                                    alpha: 0.12,
+                                  ),
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadii.pill,
+                                  ),
+                                ),
+                                child: Text(
+                                  meta.statusLabel,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: meta.statusColor,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: meta.statusColor.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(
-                                AppRadii.pill,
-                              ),
-                            ),
-                            child: Text(
-                              meta.statusLabel,
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                                color: meta.statusColor,
-                                height: 1.2,
-                              ),
+                          const SizedBox(height: 3),
+                          Text(
+                            meta.description,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: tokens.textSecondary,
+                              height: 1.35,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        meta.description,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: tokens.textSecondary,
-                          height: 1.35,
-                        ),
+                    ),
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Icon(
+                        selected
+                            ? Icons.radio_button_checked_rounded
+                            : Icons.radio_button_off_rounded,
+                        size: 18,
+                        color: selected ? tokens.inkAccent : tokens.textMuted,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Icon(
-                    selected
-                        ? Icons.radio_button_checked_rounded
-                        : Icons.radio_button_off_rounded,
-                    size: 18,
-                    color: selected ? tokens.inkAccent : tokens.textMuted,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),

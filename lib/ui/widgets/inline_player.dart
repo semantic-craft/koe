@@ -160,33 +160,43 @@ class InlinePlayer extends StatelessWidget {
           spacing: 8,
           runSpacing: 4,
           children: [
-            PopupMenuButton<double>(
-              tooltip: '播放速度',
-              initialValue: c.playbackSpeed,
-              onSelected: c.setPlaybackSpeed,
-              itemBuilder: (_) => [
-                for (final speed in RecorderController.playbackSpeeds)
-                  PopupMenuItem(value: speed, child: Text(_speedLabel(speed))),
-              ],
-              child: Container(
-                constraints: const BoxConstraints(minWidth: 72, minHeight: 48),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: AppColors.bgCardHover,
-                  borderRadius: BorderRadius.circular(AppRadii.button),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _speedLabel(c.playbackSpeed),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
+            // PopupMenuButton with a custom child has no button role.
+            Semantics(
+              button: true,
+              child: PopupMenuButton<double>(
+                tooltip: '播放速度',
+                initialValue: c.playbackSpeed,
+                onSelected: c.setPlaybackSpeed,
+                itemBuilder: (_) => [
+                  for (final speed in RecorderController.playbackSpeeds)
+                    PopupMenuItem(
+                      value: speed,
+                      child: Text(_speedLabel(speed)),
                     ),
-                    const Icon(Icons.expand_more_rounded, size: 20),
-                  ],
+                ],
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minWidth: 72,
+                    minHeight: 48,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.bgCardHover,
+                    borderRadius: BorderRadius.circular(AppRadii.button),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _speedLabel(c.playbackSpeed),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const Icon(Icons.expand_more_rounded, size: 20),
+                    ],
+                  ),
                 ),
               ),
             ),
