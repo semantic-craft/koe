@@ -9,6 +9,7 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 | BLE/Wi-Fi 通信、帧协议与解密 | [PROTOCOL](PROTOCOL.md)、[lib/ble](lib/ble/)、[lib/wifi](lib/wifi/)、[lib/protocol](lib/protocol/)、[lib/crypto](lib/crypto/) |
 | 录音、转写与状态 | [lib/audio](lib/audio/)、[lib/ai](lib/ai/)、[lib/state](lib/state/) |
 | RecorderController 的各块功能 | [lib/state/recorder](lib/state/recorder/)：每块一个 part 文件（播放、本机录音库、地点、Mac 归档、主题、转写任务、转写文字、实时转写、设置、录音豆连接、录音豆文件），类本体、构造与共享状态留在 [recorder_controller.dart](lib/state/recorder_controller.dart)。用到别块的成员，在该 mixin 顶部「Provided by…」段加抽象声明 |
+| 个人记录：时间线条目、待办、项目、日记、问答 | [lib/state/context](lib/state/context/)，控制器接线在 [lib/state/recorder/context.dart](lib/state/recorder/context.dart)；真机项写进 [final-device-pass](docs/acceptance/final-device-pass.md) |
 | 界面与平台接入 | [lib/ui](lib/ui/)、[lib/platform](lib/platform/)，再读 [ios](ios/)、[macos](macos/)、[darwin](darwin/) |
 | 签名、安装脚本、系统 Keychain 凭据 | [skills/verify-koe/SKILL.md](skills/verify-koe/SKILL.md)，验收含真实安装升级读取 |
 | 测试 | [test](test/) |
