@@ -82,6 +82,10 @@ class ContextStore extends ChangeNotifier {
   Iterable<ContextItem> get _visibleItems =>
       _items.values.where((item) => _visible(item) != null);
 
+  /// Every visible item, in time order.
+  List<ContextItem> get allItems =>
+      _visibleItems.toList()..sort(compareContextItems);
+
   /// Items that happened on [day] (local calendar day), in time order.
   /// Items with an unknown time are listed after the timed ones, on the day
   /// Koe received them.

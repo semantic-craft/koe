@@ -6,11 +6,11 @@ import '../ai/stt_types.dart';
 import '../state/recorder_controller.dart';
 import '../theme/app_theme.dart';
 import 'recording_navigation.dart';
+import 'screens/ask_koe_screen.dart';
 import 'screens/device_screen.dart';
 import 'screens/communication_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
-import 'screens/new_recording_sheet.dart';
 import 'screens/projects_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
@@ -281,10 +281,7 @@ class _AppShellState extends State<AppShell> {
                         right: 16,
                         bottom: 12,
                         child: _AskKoeButton(
-                          onPressed: () => showAskKoeSheet(
-                            context,
-                            onOpenLibrary: () => _selectMobileTab(2),
-                          ),
+                          onPressed: () => openAskKoe(context),
                         ),
                       ),
                   ],
