@@ -76,20 +76,31 @@ class TopicNote {
   static const defaultModel = 'qwen3.8-flash';
   static String slotKey(String recordingKey) => '$recordingKey/$slot';
 
-  TopicNote copyWith({String? overview}) => TopicNote(
+  TopicNote copyWith({
+    String? overview,
+    List<TopicExcerpt>? excerpts,
+    List<TopicComment>? comments,
+    List<TopicIdea>? ideas,
+    List<TopicNoteItem>? changes,
+    List<TopicNoteItem>? questions,
+    List<TopicNoteItem>? associations,
+    List<TopicNoteItem>? toCheck,
+    List<TopicNoteItem>? todos,
+    TopicNoteItem? conclusion,
+  }) => TopicNote(
     kind: kind,
     topicId: topicId,
     overview: overview ?? this.overview,
     audioSignature: audioSignature,
-    excerpts: excerpts,
-    comments: comments,
-    ideas: ideas,
-    changes: changes,
-    questions: questions,
-    associations: associations,
-    toCheck: toCheck,
-    todos: todos,
-    conclusion: conclusion,
+    excerpts: excerpts ?? this.excerpts,
+    comments: comments ?? this.comments,
+    ideas: ideas ?? this.ideas,
+    changes: changes ?? this.changes,
+    questions: questions ?? this.questions,
+    associations: associations ?? this.associations,
+    toCheck: toCheck ?? this.toCheck,
+    todos: todos ?? this.todos,
+    conclusion: conclusion ?? this.conclusion,
   );
 
   final TopicKind kind;
@@ -441,7 +452,11 @@ class TopicNote {
       }
     }
 
-    lines.add('模型：${result.model} · 模板：topic-${kind.name}-v1');
+    final templateName =
+        builtInTemplateById(result.templateId ?? '')?.name ?? '主题笔记';
+    lines.add(
+      '模型：${result.model} · 模板：$templateName v${result.templateVersion}',
+    );
     lines.add('生成时间：${result.createdAt.toIso8601String()}');
     if (result.editedAt != null) {
       lines.add('编辑时间：${result.editedAt!.toIso8601String()}');
@@ -469,13 +484,22 @@ String _stripCodeFence(String raw) {
 String topicNoteInstruction(
   Topic topic, {
   List<TopicNote> priorNotes = const [],
+  PromptTemplate? template,
 }) {
+  final selectedTemplate =
+      template ??
+      builtInTemplateById(
+        topic.kind == TopicKind.book
+            ? bookNoteTemplateId
+            : thinkingNoteTemplateId,
+      )!;
   final authorPart = topic.author.trim().isEmpty
       ? ''
       : '（作者：${topic.author.trim()}）';
   if (topic.kind == TopicKind.book) {
     return '''生成一本书的当次读书笔记（主题ID:${topic.id}，书名：${topic.title}$authorPart），仅输出 JSON，不要 Markdown 代码围栏。字段严格如下：
 {"overview":"本次概要","excerpts":[{"text":"录音里复述的书中内容","page":"第24页","sources":["S1"]}],"comments":[{"text":"我的评论","excerpt":"配对的摘录原文","sources":["S1"]}],"questions":[{"text":"疑问","sources":["S1"]}],"associations":[{"text":"联想","sources":["S1"]}],"toCheck":[{"text":"待查","sources":["S1"]}]}
+${selectedTemplate.prompt}
 规则：只整理用户亲口说出的内容，不替用户补观点，不编造页码或引用。口述了页码或章节才填 page，未口述省略 page。评论若针对某条摘录则在 excerpt 填对应摘录文字，独立评论省略 excerpt。没有某类条目用空数组。每项 sources 必须引用实际原文编号 [S1..Sn]。合并分段笔记时保持相同 JSON 结构。''';
   }
 
@@ -495,6 +519,7 @@ String topicNoteInstruction(
   return '''生成一般主题的当次思考笔记（主题ID:${topic.id}，主题：${topic.title}），仅输出 JSON，不要 Markdown 代码围栏。字段严格如下：
 {"overview":"本次概要","ideas":[{"text":"主要观点","reason":"理由","sources":["S1"]}],"changes":[{"text":"与该主题此前笔记相比的变化","sources":["S1"]}],"questions":[{"text":"疑问","sources":["S1"]}],"associations":[{"text":"联想","sources":["S1"]}],"todos":[{"text":"待办或待查","sources":["S1"]}],"conclusion":{"text":"明确表达的倾向结论","sources":["S1"]}}
 $priorBlock
+${selectedTemplate.prompt}
 规则：只整理用户亲口说出的内容，不替用户补观点或下结论。仅在录音明确表达倾向结论时填 conclusion，否则省略 conclusion。没有某类条目用空数组。每项 sources 必须引用实际原文编号 [S1..Sn]。合并分段笔记时保持相同 JSON 结构。''';
 }
 

@@ -430,7 +430,9 @@ class RecordingAnalysis extends ChangeNotifier {
       sourceHash: result.sourceHash,
       templateId: current.id,
       templateVersion: current.version,
-      instruction: current.prompt,
+      // 主题笔记会把模板正文并入更长的生成指令；模板身份由
+      // templateFingerprint 单独记录，这里核对实际使用的指令没有漂移。
+      instruction: result.instruction,
     );
     return result.templateFingerprint != current.fingerprint ||
         result.fingerprint != expected;
@@ -1067,6 +1069,7 @@ class RecordingAnalysis extends ChangeNotifier {
         createdAt: DateTime.now(),
         templateId: template?.id,
         templateVersion: templateVersion,
+        templateFingerprint: template?.fingerprint,
       );
       final previous = results[k];
       final previousVersion = previousResults[k];
