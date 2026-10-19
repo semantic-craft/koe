@@ -57,6 +57,12 @@ mixin _RecorderContext on ChangeNotifier {
     return contextItems.itemsForDay(day);
   }
 
+  /// Every context item, in time order.
+  List<ContextItem> allContextItems() {
+    _syncContextItems();
+    return contextItems.allItems;
+  }
+
   /// Items the user linked to [projectId], across days, in time order.
   List<ContextItem> contextItemsForProject(String projectId) {
     _syncContextItems();

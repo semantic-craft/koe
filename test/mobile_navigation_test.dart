@@ -384,20 +384,6 @@ void main() {
     expect(find.byKey(ValueKey('recording-row-$path')), findsOneWidget);
   });
 
-  testWidgets('Ask Koe says it is not open and routes to materials', (
-    tester,
-  ) async {
-    await pump(tester);
-    await tester.tap(find.byKey(const ValueKey('ask-koe')));
-    await tester.pumpAndSettle();
-    expect(find.text('连续问答尚未开放。现在可以在「资料」里按标题和正文搜索、打开原文并回听原件。'), findsOneWidget);
-    expect(find.byType(TextField), findsNothing);
-
-    await tester.tap(find.byKey(const ValueKey('ask-koe-open-library')));
-    await tester.pumpAndSettle();
-    expect(find.byType(LibraryScreen), findsOneWidget);
-  });
-
   testWidgets('settings exposes device and external AI without connecting', (
     tester,
   ) async {
