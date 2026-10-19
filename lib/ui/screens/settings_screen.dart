@@ -318,7 +318,7 @@ class _ProviderSelector extends StatelessWidget {
             selected: controller.speechProvider == SttProvider.available[i],
             meta: _metaFor(SttProvider.available[i], tokens),
             enabled:
-                SttProvider.available[i] == SttProvider.apple ||
+                !SttProvider.available[i].needsCredentials ||
                 controller.engineConfigured(SttProvider.available[i]),
             onTap: () => _tap(context, SttProvider.available[i]),
           ),
@@ -328,8 +328,7 @@ class _ProviderSelector extends StatelessWidget {
   }
 
   void _tap(BuildContext context, SttProvider provider) {
-    if (provider == SttProvider.apple ||
-        controller.engineConfigured(provider)) {
+    if (!provider.needsCredentials || controller.engineConfigured(provider)) {
       controller.setSpeechProvider(provider);
       return;
     }
@@ -752,11 +751,7 @@ class _SttModeSelector extends StatelessWidget {
             ButtonSegment(
               value: SttDisplayMode.translation,
               label: const Text('翻译'),
-              enabled:
-                  c.autoTranscribe &&
-                  (c.speechProvider == SttProvider.apple
-                      ? c.appleTranslationAvailable
-                      : c.translationModeAvailable),
+              enabled: c.translationModeAvailable,
             ),
           ],
           selected: {c.sttMode},

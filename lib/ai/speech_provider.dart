@@ -1,3 +1,5 @@
+import 'stt_types.dart';
+
 enum SttProvider {
   apple('Apple 设备端'),
   soniox('Soniox'),
@@ -12,6 +14,28 @@ enum SttProvider {
   bool get retired => this == soniox || this == moss;
   static const available = [apple, qwen, doubao];
   bool get defersTranscription => this != apple;
+
+  // Capabilities: callers ask what an engine can do, not which engine it is.
+
+  /// Runs in Apple's on-device recognizer: no credentials, one recognizer
+  /// shared by file work and live capture (capture pre-empts file work),
+  /// and failures arrive as platform error codes.
+  bool get onDevice => this == apple;
+
+  /// Needs an API key before it can be selected or run.
+  bool get needsCredentials => !onDevice;
+
+  /// Cannot auto-detect the spoken language: a source language is chosen
+  /// before transcribing, per recording, and kept as the transcript's
+  /// language instead of whatever the engine reports.
+  bool get requiresSourceLanguage => onDevice;
+
+  /// Live display modes this engine offers while recording. Deferred engines
+  /// only transcribe; Apple also translates, and no engine offers
+  /// conversation today.
+  bool supportsMode(SttDisplayMode mode) =>
+      mode == SttDisplayMode.transcription ||
+      mode == SttDisplayMode.translation && onDevice;
 
   /// Cloud engines whose credentials are the grouped (API key, base URL,
   /// model) trio saved through [EngineConfig]; key-only engines are not.
