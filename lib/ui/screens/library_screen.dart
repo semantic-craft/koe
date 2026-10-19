@@ -42,207 +42,226 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     final continuePath = c.continuePath;
+    // The header scrolls away with the list so the recordings keep the
+    // screen at large text sizes; the lists inside FilesBody drive it.
     return GradientScaffold(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          KoeMobileHeader(
-            onNewRecording: () => _newRecording(context),
-            onOpenSettings: () => openMobileSettings(context),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: NestedScrollView(
+        headerSliverBuilder: (context, _) => [
+          SliverToBoxAdapter(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          '资料',
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 30,
-                            height: 1.15,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.6,
+                KoeMobileHeader(
+                  onNewRecording: () => _newRecording(context),
+                  onOpenSettings: () => openMobileSettings(context),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                '资料',
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 30,
+                                  height: 1.15,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.6,
+                                ),
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            key: const ValueKey('library-queue'),
+                            tooltip: '收听队列',
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const ListeningQueueScreen(),
+                              ),
+                            ),
+                            icon: Badge(
+                              isLabelVisible: c.queueEntries.isNotEmpty,
+                              label: Text('${c.queueEntries.length}'),
+                              child: const Icon(Icons.queue_music_rounded),
+                            ),
+                          ),
+                          IconButton(
+                            key: const ValueKey('library-trash'),
+                            tooltip: '回收站',
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const TrashScreen(),
+                              ),
+                            ),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                          IconButton(
+                            key: const ValueKey('library-import'),
+                            tooltip: '导入音频',
+                            onPressed: () => handleNewRecordingAction(
+                              context,
+                              NewRecordingAction.importAudio,
+                            ),
+                            icon: const Icon(
+                              Icons.audio_file_outlined,
+                              size: 20,
+                            ),
+                          ),
+                          IconButton(
+                            key: const ValueKey('library-import-text'),
+                            tooltip: '文字资料',
+                            onPressed: () => _showTextLibrary(context),
+                            icon: const Icon(
+                              Icons.description_outlined,
+                              size: 20,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        '原声留在手机，标题、时间和文字都能找回同一条资料。',
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.45,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        key: const ValueKey('library-search'),
+                        controller: _search,
+                        textInputAction: TextInputAction.search,
+                        onChanged: (value) => setState(() => _query = value),
+                        decoration: InputDecoration(
+                          hintText: '搜索标题或正文',
+                          prefixIcon: const Icon(Icons.search_rounded),
+                          suffixIcon: _query.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: '清除搜索',
+                                  onPressed: () {
+                                    _search.clear();
+                                    setState(() => _query = '');
+                                  },
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                          filled: true,
+                          fillColor: AppColors.bgCard,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: AppColors.border,
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(
+                              color: AppColors.border,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      key: const ValueKey('library-queue'),
-                      tooltip: '收听队列',
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const ListeningQueueScreen(),
-                        ),
-                      ),
-                      icon: Badge(
-                        isLabelVisible: c.queueEntries.isNotEmpty,
-                        label: Text('${c.queueEntries.length}'),
-                        child: const Icon(Icons.queue_music_rounded),
-                      ),
-                    ),
-                    IconButton(
-                      key: const ValueKey('library-trash'),
-                      tooltip: '回收站',
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const TrashScreen(),
-                        ),
-                      ),
-                      icon: const Icon(Icons.delete_outline_rounded),
-                    ),
-                    IconButton(
-                      key: const ValueKey('library-import'),
-                      tooltip: '导入音频',
-                      onPressed: () => handleNewRecordingAction(
-                        context,
-                        NewRecordingAction.importAudio,
-                      ),
-                      icon: const Icon(Icons.audio_file_outlined, size: 20),
-                    ),
-                    IconButton(
-                      key: const ValueKey('library-import-text'),
-                      tooltip: '文字资料',
-                      onPressed: () => _showTextLibrary(context),
-                      icon: const Icon(Icons.description_outlined, size: 20),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  '原声留在手机，标题、时间和文字都能找回同一条资料。',
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.45,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  key: const ValueKey('library-search'),
-                  controller: _search,
-                  textInputAction: TextInputAction.search,
-                  onChanged: (value) => setState(() => _query = value),
-                  decoration: InputDecoration(
-                    hintText: '搜索标题或正文',
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: _query.isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: '清除搜索',
-                            onPressed: () {
-                              _search.clear();
-                              setState(() => _query = '');
-                            },
-                            icon: const Icon(Icons.close_rounded),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          _FilterChip(
+                            key: const ValueKey('library-filter-all'),
+                            label: '全部',
+                            selected: _filter == LibraryTypeFilter.all,
+                            onSelected: () =>
+                                setState(() => _filter = LibraryTypeFilter.all),
                           ),
-                    filled: true,
-                    fillColor: AppColors.bgCard,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: AppColors.border),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: AppColors.border),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    _FilterChip(
-                      key: const ValueKey('library-filter-all'),
-                      label: '全部',
-                      selected: _filter == LibraryTypeFilter.all,
-                      onSelected: () =>
-                          setState(() => _filter = LibraryTypeFilter.all),
-                    ),
-                    _FilterChip(
-                      key: const ValueKey('library-filter-audio'),
-                      label: '录音',
-                      selected: _filter == LibraryTypeFilter.audio,
-                      onSelected: () =>
-                          setState(() => _filter = LibraryTypeFilter.audio),
-                    ),
-                    _FilterChip(
-                      key: const ValueKey('library-filter-text'),
-                      label: '文字',
-                      selected: _filter == LibraryTypeFilter.text,
-                      onSelected: () =>
-                          setState(() => _filter = LibraryTypeFilter.text),
-                    ),
-                  ],
-                ),
-                if (continuePath != null) ...[
-                  const SizedBox(height: 10),
-                  _LibraryContinueCard(
-                    title: c
-                        .recordingView(
-                          RecordingReference(
-                            fileId: c.fileIdFromPath(continuePath),
-                            path: continuePath,
+                          _FilterChip(
+                            key: const ValueKey('library-filter-audio'),
+                            label: '录音',
+                            selected: _filter == LibraryTypeFilter.audio,
+                            onSelected: () => setState(
+                              () => _filter = LibraryTypeFilter.audio,
+                            ),
                           ),
-                        )
-                        .title,
-                    subtitle: c.continueDetail,
-                    playing: c.playingPath == continuePath && c.isPlaying,
-                    onToggle: () => c.playingPath == continuePath
-                        ? c.togglePlayPause()
-                        : c.toggleLatestPlayback(),
-                    onOpen: () => RecordingNavigation.open(
-                      context,
-                      RecordingReference(
-                        fileId: c.fileIdFromPath(continuePath),
-                        path: continuePath,
+                          _FilterChip(
+                            key: const ValueKey('library-filter-text'),
+                            label: '文字',
+                            selected: _filter == LibraryTypeFilter.text,
+                            onSelected: () => setState(
+                              () => _filter = LibraryTypeFilter.text,
+                            ),
+                          ),
+                        ],
                       ),
+                      if (continuePath != null) ...[
+                        const SizedBox(height: 10),
+                        _LibraryContinueCard(
+                          title: c
+                              .recordingView(
+                                RecordingReference(
+                                  fileId: c.fileIdFromPath(continuePath),
+                                  path: continuePath,
+                                ),
+                              )
+                              .title,
+                          subtitle: c.continueDetail,
+                          playing: c.playingPath == continuePath && c.isPlaying,
+                          onToggle: () => c.playingPath == continuePath
+                              ? c.togglePlayPause()
+                              : c.toggleLatestPlayback(),
+                          onOpen: () => RecordingNavigation.open(
+                            context,
+                            RecordingReference(
+                              fileId: c.fileIdFromPath(continuePath),
+                              path: continuePath,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+                if (_visibleMinutes(c).isNotEmpty)
+                  Padding(
+                    key: const ValueKey('library-minutes-list'),
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final document in _visibleMinutes(c))
+                          _MinutesRow(
+                            document: document,
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                settings: RouteSettings(
+                                  name: 'minutes/${document.id}',
+                                ),
+                                builder: (_) => MinutesDocumentScreen(
+                                  documentId: document.id,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                ],
-                const SizedBox(height: 8),
               ],
             ),
           ),
-          if (_visibleMinutes(c).isNotEmpty &&
-              MediaQuery.textScalerOf(context).scale(14) < 21)
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 200),
-              child: ListView.builder(
-                key: const ValueKey('library-minutes-list'),
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-                itemCount: _visibleMinutes(c).length,
-                itemBuilder: (context, index) {
-                  final document = _visibleMinutes(c)[index];
-                  return _MinutesRow(
-                    document: document,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        settings: RouteSettings(name: 'minutes/${document.id}'),
-                        builder: (_) =>
-                            MinutesDocumentScreen(documentId: document.id),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          Expanded(
-            child: FilesBody(
-              key: const ValueKey('library-files'),
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-              query: _query,
-              typeFilter: _filter,
-            ),
-          ),
         ],
+        body: FilesBody(
+          key: const ValueKey('library-files'),
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+          query: _query,
+          typeFilter: _filter,
+        ),
       ),
     );
   }

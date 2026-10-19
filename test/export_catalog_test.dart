@@ -18,6 +18,21 @@ void main() {
     ]);
   });
 
+  // #232: 录音豆录音（秒）、导入（微秒）、Mac 恢复（毫秒）、手机录音
+  // （phone_ 微秒）混在一起时，资料列表按真实先后排，不按数字位数排。
+  test('mixed timestamp units sort by actual time, newest first', () {
+    const device = '/exports/1792377669.wav'; // 10:41
+    const imported = '/imports/1792371609000000_abcdef123456_会议.m4a'; // 09:00
+    const restored =
+        '/imports/1792374069000_abcdef123456_restored.wav'; // 09:41
+    const phone = '/phone/phone_1792380789000000.wav'; // 11:33
+
+    expect(
+      ExportCatalog.newestPathsFirst([imported, device, restored, phone]),
+      [phone, device, restored, imported],
+    );
+  });
+
   test('standard WAV is preferred over raw Opus for the same recording', () {
     final result = ExportCatalog.newestPathsFirst([
       '/exports/1730000000.opus',

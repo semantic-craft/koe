@@ -23,7 +23,7 @@ mixin _RecorderTodos on ChangeNotifier {
   String get analysisApiKey;
   abstract final RecordingAnalysis analysis;
   RecordingViewData recordingView(RecordingReference ref);
-  List<TranscriptSegment> transcriptSegmentsForPath(String path);
+  List<TranscriptSegment> quotableSegmentsForPath(String path);
   String? transcriptForPath(String path);
   // END DEPS
 
@@ -68,10 +68,7 @@ mixin _RecorderTodos on ChangeNotifier {
     if (text.isEmpty) throw StateError('这条录音还没有文字，转写后再提取待办');
     final apiKey = analysisApiKey;
     if (apiKey.isEmpty) throw StateError('先在设置里配置通义千问，再提取待办');
-    final timed = transcriptSegmentsForPath(path);
-    final segments = timed.isNotEmpty
-        ? timed
-        : [TranscriptSegment(text: text, start: Duration.zero)];
+    final segments = quotableSegmentsForPath(path);
     final fingerprint = analysisFingerprint(text);
     final previous = todos.extractionFor(key);
     if (previous != null &&

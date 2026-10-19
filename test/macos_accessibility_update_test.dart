@@ -151,6 +151,13 @@ void main() {
     } else {
       // Compact tier: settings opens from the header, the device section is a
       // pushed route from settings, and Today is the bottom navigation entry.
+      // The library header scrolls away with the rows (#236); bring it back.
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('nav-settings')),
+        find.byKey(const ValueKey('local-recordings-refresh')),
+        const Offset(0, 300),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('nav-settings')));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
