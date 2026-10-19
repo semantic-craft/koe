@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:koe/ai/engine_config.dart';
 import 'package:koe/ai/speech_provider.dart';
@@ -57,6 +58,19 @@ void main() {
     file = File('${directory.path}/jobs.json');
   });
   tearDown(() => directory.delete(recursive: true));
+  test('two writers saving the same journal at once both succeed', () async {
+    // A relaunch can open a second journal on the same file while the first
+    // still writes; a shared temporary name let one rename the other's file
+    // away, so the slower save failed with "Cannot rename file".
+    final first = FileJobJournal(file: file);
+    final second = FileJobJournal(file: file);
+    await first.enqueue('a', '/a.wav', config());
+    await second.enqueue('b', '/b.wav', config());
+    for (var round = 0; round < 20; round++) {
+      await Future.wait([first.save(), second.save()]);
+    }
+    expect(jsonDecode(await file.readAsString()), isA<List<dynamic>>());
+  });
   test(
     'queued task survives restart without credentials and pins model',
     () async {

@@ -113,8 +113,12 @@ void main() {
     );
 
     expect(c.transcriptSegmentsForPath(path).map((s) => s.speaker), ['1', '1']);
-    await pumpEventQueue();
-    final saved = await TranscriptStore.load();
+    // The re-transcription save is not awaited; wait for it to reach disk.
+    var saved = await TranscriptStore.load();
+    for (var i = 0; i < 100 && saved.segmentSpeakersByKey[key] != null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      saved = await TranscriptStore.load();
+    }
     expect(saved.segmentSpeakersByKey[key], isNull);
   });
 

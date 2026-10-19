@@ -6,11 +6,13 @@ import 'package:koe/state/app_settings_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/temp_dir.dart';
+
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   final directories = <Directory>[];
   tearDownAll(() async {
     for (final directory in directories) {
-      if (await directory.exists()) await directory.delete(recursive: true);
+      await deleteTemporaryDirectory(directory);
     }
   });
   setUp(() async {

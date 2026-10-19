@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../ai/engine_config.dart';
 import '../ai/speech_provider.dart';
 import '../ai/stt_types.dart';
+import 'atomic_file.dart';
 import 'speech_configuration.dart';
 
 SttSegment? _decodeSegment(Object? value) {
@@ -242,9 +243,7 @@ class FileJobJournal {
       if (inMemory) return;
       final destination = await _file();
       await destination.parent.create(recursive: true);
-      final temporary = File('${destination.path}.tmp');
-      await temporary.writeAsString(snapshot, flush: true);
-      await temporary.rename(destination.path);
+      await writeFileAtomically(destination, snapshot);
     });
     _writing = operation.catchError((Object _) {});
     await operation;
@@ -275,9 +274,7 @@ class FileJobJournal {
     final operation = _writing.then((_) async {
       final destination = await _incompleteFile();
       await destination.parent.create(recursive: true);
-      final temporary = File('${destination.path}.tmp');
-      await temporary.writeAsString(snapshot, flush: true);
-      await temporary.rename(destination.path);
+      await writeFileAtomically(destination, snapshot);
     });
     _writing = operation.catchError((Object _) {});
     await operation;
@@ -300,9 +297,7 @@ class FileJobJournal {
     final operation = _writing.then((_) async {
       final destination = await _sizesFile();
       await destination.parent.create(recursive: true);
-      final temporary = File('${destination.path}.tmp');
-      await temporary.writeAsString(snapshot, flush: true);
-      await temporary.rename(destination.path);
+      await writeFileAtomically(destination, snapshot);
     });
     _writing = operation.catchError((Object _) {});
     await operation;
