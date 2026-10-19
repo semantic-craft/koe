@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/context_export_sheet.dart';
 import '../widgets/context_timeline.dart';
 import '../widgets/widgets.dart';
 import 'todos_screen.dart';
@@ -132,6 +133,7 @@ class ProjectDetailScreen extends StatelessWidget {
             onSelected: (value) => _menu(context, project, value),
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'edit', child: Text('编辑名称和目标')),
+              const PopupMenuItem(value: 'export', child: Text('导出给外部 AI')),
               for (final status in ProjectStatus.values)
                 if (status != project.status)
                   PopupMenuItem(
@@ -210,6 +212,10 @@ class ProjectDetailScreen extends StatelessWidget {
     String value,
   ) async {
     final c = context.read<RecorderController>();
+    if (value == 'export') {
+      await showContextExportSheet(context, ProjectExport(project.id));
+      return;
+    }
     if (value == 'edit') {
       final edited = await showProjectDialog(context, project: project);
       if (edited == null || !context.mounted) return;

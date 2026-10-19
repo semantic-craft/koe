@@ -46,6 +46,7 @@ import 'app_settings_store.dart';
 import 'context/commitments.dart';
 import 'context/ask_retrieval.dart';
 import 'context/ask_store.dart';
+import 'context/context_export.dart';
 import 'context/context_store.dart';
 import 'context/diary_store.dart';
 import 'context/project_store.dart';
@@ -72,6 +73,7 @@ export 'context/todo_store.dart';
 export 'context/project_store.dart';
 export 'context/diary_store.dart';
 export 'context/ask_store.dart';
+export 'context/context_export.dart';
 export '../platform/system_tasks.dart';
 export 'recording.dart';
 export 'recording_library.dart';
@@ -95,6 +97,7 @@ part 'recorder/projects.dart';
 part 'recorder/diary.dart';
 part 'recorder/ask.dart';
 part 'recorder/brief.dart';
+part 'recorder/context_export.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
@@ -138,6 +141,7 @@ class RecorderController extends ChangeNotifier
         _RecorderDiary,
         _RecorderAsk,
         _RecorderBrief,
+        _RecorderContextExport,
         _RecorderArchive,
         _RecorderTopics,
         _RecorderTranscriptionJobs,
