@@ -10,6 +10,7 @@ import '../../state/recording_analysis.dart';
 import '../../state/topic_export.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
+import '../widgets/context_export_sheet.dart';
 import '../widgets/widgets.dart';
 
 /// Library entry for topics (#50). Rendered only where topics are enabled
@@ -1216,6 +1217,13 @@ class TopicDetailScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(topic.title),
             actions: [
+              IconButton(
+                key: const ValueKey('topic-export-ai'),
+                tooltip: '导出给外部 AI',
+                onPressed: () =>
+                    showContextExportSheet(context, TopicExport(topicId)),
+                icon: const Icon(Icons.smart_toy_outlined),
+              ),
               IconButton(
                 key: const ValueKey('topic-export-copy'),
                 tooltip: '复制主题 Markdown',

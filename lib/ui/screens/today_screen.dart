@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
+import '../widgets/context_export_sheet.dart';
 import '../widgets/context_timeline.dart';
 import '../widgets/mobile_header.dart';
 import '../widgets/morning_brief_card.dart';
@@ -169,11 +170,28 @@ class TodayScreen extends StatelessWidget {
                   '今日时间线',
                   trailing: today.isEmpty
                       ? null
-                      : TextButton(
-                          onPressed: () => RecordingNavigation.of(
-                            context,
-                          )?.onSelectTab?.call(2),
-                          child: const Text('全部资料'),
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              key: const ValueKey('today-export'),
+                              tooltip: '导出给外部 AI',
+                              onPressed: () => showContextExportSheet(
+                                context,
+                                DayExport(now),
+                              ),
+                              icon: const Icon(
+                                Icons.ios_share_rounded,
+                                size: 20,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => RecordingNavigation.of(
+                                context,
+                              )?.onSelectTab?.call(2),
+                              child: const Text('全部资料'),
+                            ),
+                          ],
                         ),
                 ),
                 if (today.isEmpty)

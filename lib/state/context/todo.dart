@@ -256,18 +256,6 @@ class Todo {
       calendar: SystemLink.decode(value['calendar']),
     );
   }
-
-  /// The todo as a timeline item: placed at its due time, or, without one,
-  /// at the moment it was heard.
-  ContextItem toContextItem() => ContextItem(
-    id: 'todo:$id',
-    kind: ContextKind.todo,
-    title: title,
-    start: due,
-    addedAt: createdAt,
-    source: source,
-    projectIds: projectIds,
-  );
 }
 
 /// A later sentence that may change an existing todo, but Koe cannot tell
