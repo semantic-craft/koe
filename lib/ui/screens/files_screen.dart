@@ -19,6 +19,7 @@ import '../library_filter.dart';
 import '../recording_navigation.dart';
 import '../transcript_layout.dart';
 import '../widgets/widgets.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// On-device + local export file list (embedded in Home when not live recording).
 ///
@@ -510,7 +511,7 @@ class _SelectionToolbar extends StatelessWidget {
         key: const ValueKey('recording-selection-toolbar'),
         children: [
           if (compact)
-            IconButton(
+            KoeIconButton(
               tooltip: allSelected ? '清空' : '全选',
               style: iconButtonStyle,
               onPressed: allSelected ? onClear : onSelectAll,
@@ -545,13 +546,13 @@ class _SelectionToolbar extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
+          KoeIconButton(
             tooltip: saveLabel,
             style: iconButtonStyle,
             onPressed: onSave,
             icon: saving ? _progress() : const Icon(Icons.save_alt_rounded),
           ),
-          IconButton(
+          KoeIconButton(
             tooltip: deleting ? '删除中…' : '删除所选',
             onPressed: onDelete,
             style: iconButtonStyle,
@@ -560,7 +561,7 @@ class _SelectionToolbar extends StatelessWidget {
                 ? _progress()
                 : const Icon(Icons.delete_outline_rounded),
           ),
-          IconButton(
+          KoeIconButton(
             tooltip: '取消选择',
             style: iconButtonStyle,
             onPressed: onCancel,
@@ -1044,7 +1045,7 @@ class _ExportBanner extends StatelessWidget {
                 ),
               ),
               if (p.phase == ExportPhase.done || p.phase == ExportPhase.error)
-                IconButton(
+                KoeIconButton(
                   tooltip: '关闭',
                   onPressed: controller.clearExportState,
                   icon: const Icon(Icons.close, size: 18),
@@ -1588,7 +1589,7 @@ class _CredRow extends StatelessWidget {
             ),
           ),
         ),
-        IconButton(
+        KoeIconButton(
           tooltip: '复制',
           onPressed: onCopy,
           icon: const Icon(Icons.copy_rounded, size: 18),
@@ -1712,7 +1713,7 @@ class _DeviceFileTile extends StatelessWidget {
                   ),
                 ),
                 if (!selecting) ...[
-                  IconButton(
+                  KoeIconButton(
                     tooltip: complete
                         ? '已下载'
                         : downloading
@@ -1742,7 +1743,7 @@ class _DeviceFileTile extends StatelessWidget {
                                 : AppColors.accent,
                           ),
                   ),
-                  IconButton(
+                  KoeIconButton(
                     tooltip: '在设备上删除',
                     onPressed: onDelete,
                     icon: const Icon(

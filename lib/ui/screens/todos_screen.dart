@@ -5,6 +5,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../context_source.dart';
 import '../widgets/widgets.dart';
+import '../widgets/koe_icon_button.dart';
 
 void openTodo(BuildContext context, String id) {
   Navigator.of(context).push(
@@ -286,13 +287,13 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
       appBar: AppBar(
         title: const Text('待办详情'),
         actions: [
-          IconButton(
+          KoeIconButton(
             key: const ValueKey('todo-projects'),
             tooltip: '关联项目',
             onPressed: () => _pickProjects(context, todo),
             icon: const Icon(Icons.folder_open_outlined),
           ),
-          IconButton(
+          KoeIconButton(
             key: const ValueKey('todo-edit'),
             tooltip: '纠正',
             onPressed: () => _edit(context, todo),

@@ -8,6 +8,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import 'connect_onboarding.dart';
 import 'widgets.dart';
+import 'koe_icon_button.dart';
 
 /// Feishu-style connect sheet: scan nearby D3200 devices and let the user pick
 /// one. Persisted bound devices may still reconnect through the controller.
@@ -135,7 +136,7 @@ class _ScanDevicesSheetState extends State<ScanDevicesSheet> {
               child: Row(
                 children: [
                   const Spacer(),
-                  IconButton(
+                  KoeIconButton(
                     tooltip: '关闭',
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close_rounded),

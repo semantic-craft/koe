@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import 'koe_icon_button.dart';
 
 /// A replayable bookmark position drawn above the progress track.
 class InlinePlayerMarker {
@@ -355,7 +356,7 @@ class _IconBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     // IconButton's own tooltip names the button for screen readers; an
     // outer Tooltip left the label on a separate, role-less node.
-    return IconButton(
+    return KoeIconButton(
       tooltip: tooltip,
       onPressed: onPressed,
       icon: Icon(icon, size: size),

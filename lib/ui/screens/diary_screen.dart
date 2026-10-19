@@ -6,6 +6,7 @@ import '../../theme/app_theme.dart';
 import '../widgets/cited_text.dart';
 import '../widgets/status_indicators.dart';
 import '../widgets/widgets.dart';
+import '../widgets/koe_icon_button.dart';
 
 void openDiary(BuildContext context, {required bool weekly}) {
   final now = DateTime.now();
@@ -142,7 +143,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         title: Text(name),
         actions: [
           if (current != null)
-            IconButton(
+            KoeIconButton(
               key: const ValueKey('diary-edit'),
               tooltip: '修改',
               onPressed: busy ? null : () => _edit(entry!),
@@ -155,7 +156,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         children: [
           Row(
             children: [
-              IconButton(
+              KoeIconButton(
                 tooltip: _period.weekly ? '上一周' : '前一天',
                 onPressed: () => _shift(-1),
                 icon: const Icon(Icons.chevron_left_rounded),
@@ -170,7 +171,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   ),
                 ),
               ),
-              IconButton(
+              KoeIconButton(
                 tooltip: _period.weekly ? '下一周' : '后一天',
                 onPressed: () => _shift(1),
                 icon: const Icon(Icons.chevron_right_rounded),

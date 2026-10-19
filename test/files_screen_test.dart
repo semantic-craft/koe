@@ -8,6 +8,7 @@ import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/ui/screens/files_screen.dart';
 import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:koe/ui/widgets/koe_icon_button.dart';
 import 'package:koe/ui/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -355,7 +356,7 @@ void main() async {
         expect(
           tester
               .widget<IconButton>(
-                find.widgetWithIcon(IconButton, Icons.save_alt_rounded),
+                find.widgetWithIcon(KoeIconButton, Icons.save_alt_rounded),
               )
               .onPressed,
           isNull,

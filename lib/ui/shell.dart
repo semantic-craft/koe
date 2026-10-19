@@ -16,6 +16,7 @@ import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/today_screen.dart';
 import 'screens/trash_screen.dart';
+import 'widgets/koe_icon_button.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -424,7 +425,7 @@ class _ActiveRecordingBar extends StatelessWidget {
               ),
             ),
             if (c.recording)
-              IconButton(
+              KoeIconButton(
                 tooltip: '暂停录音',
                 onPressed: c.phase == AppPhase.busy ? null : c.pauseRecord,
                 icon: const Icon(Icons.pause_rounded),
@@ -492,14 +493,14 @@ class _CompactPlayer extends StatelessWidget {
                 ),
               ),
             ),
-            IconButton(
+            KoeIconButton(
               tooltip: c.isPlaying ? '暂停播放' : '继续播放',
               onPressed: c.togglePlayPause,
               icon: Icon(
                 c.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
               ),
             ),
-            IconButton(
+            KoeIconButton(
               tooltip: '关闭播放器',
               onPressed: c.stopPlayback,
               icon: const Icon(Icons.close_rounded),

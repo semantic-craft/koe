@@ -9,6 +9,7 @@ import 'package:graphview/GraphView.dart';
 import '../../state/meeting_minutes.dart';
 import '../../state/recording_analysis.dart';
 import '../../state/recorder_controller.dart';
+import 'koe_icon_button.dart';
 
 class MinuteMapNode {
   const MinuteMapNode(this.id, this.text, {this.parent, this.item});
@@ -354,7 +355,7 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
         appBar: AppBar(
           title: const Text('思维导图'),
           actions: [
-            IconButton(
+            KoeIconButton(
               tooltip: textView ? '图形视图' : '层级文本',
               icon: Icon(textView ? Icons.account_tree_outlined : Icons.list),
               onPressed: () => setState(() => textView = !textView),
@@ -372,13 +373,13 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
                 spacing: 8,
                 children: [
                   if (!tooLarge)
-                    IconButton(
+                    KoeIconButton(
                       tooltip: '放大',
                       onPressed: () => zoom(1.4),
                       icon: const Icon(Icons.zoom_in),
                     ),
                   if (!tooLarge)
-                    IconButton(
+                    KoeIconButton(
                       tooltip: '缩小',
                       onPressed: () => zoom(1 / 1.4),
                       icon: const Icon(Icons.zoom_out),

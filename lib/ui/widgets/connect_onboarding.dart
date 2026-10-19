@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import 'koe_icon_button.dart';
 
 /// Feishu-style post-connect success + tips carousel.
 ///
@@ -137,7 +138,7 @@ class _SuccessStep extends StatelessWidget {
         children: [
           Align(
             alignment: Alignment.centerRight,
-            child: IconButton(
+            child: KoeIconButton(
               onPressed: onClose,
               icon: const Icon(Icons.close_rounded),
             ),
@@ -284,7 +285,7 @@ class _TipStep extends StatelessWidget {
         children: [
           Align(
             alignment: Alignment.centerRight,
-            child: IconButton(
+            child: KoeIconButton(
               onPressed: onClose,
               icon: const Icon(Icons.close_rounded),
             ),

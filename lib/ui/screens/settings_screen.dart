@@ -14,6 +14,7 @@ import '../widgets/widgets.dart';
 import '../widgets/about_koe.dart';
 import '../widgets/mac_archive_settings.dart';
 import 'device_screen.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// Processing choices apply to the next recording.
 class SettingsScreen extends StatelessWidget {
@@ -188,7 +189,7 @@ class SettingsScreen extends StatelessWidget {
               Positioned(
                 left: 8,
                 top: 4,
-                child: IconButton(
+                child: KoeIconButton(
                   key: const ValueKey('settings-back'),
                   tooltip: '返回',
                   onPressed: () => Navigator.maybePop(context),

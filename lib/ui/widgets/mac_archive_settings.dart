@@ -26,45 +26,49 @@ class MacArchiveSettings extends StatelessWidget {
       children: [
         if (_isMac) ...[
           _SettingsGroup(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '这台 Mac 接收原件',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
+            // One node, so the switch is announced (and found by
+            // scripts/mac-ax) by its title rather than as an unnamed checkbox.
+            child: MergeSemantics(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '这台 Mac 接收原件',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
                         ),
-                      ),
-                      SizedBox(height: 3),
-                      Text(
-                        '只在同一局域网直连；需要手机配对后才能传输',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                          height: 1.3,
+                        SizedBox(height: 3),
+                        Text(
+                          '只在同一局域网直连；需要手机配对后才能传输',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.3,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                Switch.adaptive(
-                  key: const ValueKey('mac-receive-switch'),
-                  value: archive.deskReceivingEnabled,
-                  onChanged: (value) async {
-                    try {
-                      await archive.setDeskReceiving(value);
-                    } on ArchiveException catch (error) {
-                      if (!context.mounted) return;
-                      _snack(context, error.message);
-                    }
-                  },
-                ),
-              ],
+                  Switch.adaptive(
+                    key: const ValueKey('mac-receive-switch'),
+                    value: archive.deskReceivingEnabled,
+                    onChanged: (value) async {
+                      try {
+                        await archive.setDeskReceiving(value);
+                      } on ArchiveException catch (error) {
+                        if (!context.mounted) return;
+                        _snack(context, error.message);
+                      }
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 8),

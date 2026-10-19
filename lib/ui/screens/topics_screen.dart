@@ -12,6 +12,7 @@ import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../widgets/context_export_sheet.dart';
 import '../widgets/widgets.dart';
+import '../widgets/koe_icon_button.dart';
 
 /// Library entry for topics (#50). Rendered only where topics are enabled
 /// (first version: iPhone); the Mac library is unchanged.
@@ -105,7 +106,7 @@ class TopicsScreen extends StatelessWidget {
           appBar: AppBar(
             title: const Text('主题'),
             actions: [
-              IconButton(
+              KoeIconButton(
                 tooltip: '新建主题',
                 onPressed: () => showCreateTopicDialog(context, store),
                 icon: const Icon(Icons.add_rounded),
@@ -444,7 +445,7 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                             style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                         ),
-                        IconButton(
+                        KoeIconButton(
                           tooltip: '添加${TopicSummary.sectionLabel(section)}',
                           onPressed: busy
                               ? null
@@ -481,7 +482,7 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                                       if (source != null) _openSource(source);
                                     },
                                   ),
-                                IconButton(
+                                KoeIconButton(
                                   tooltip: '编辑条目',
                                   onPressed: busy
                                       ? null
@@ -496,7 +497,7 @@ class _TopicSummaryPanelState extends State<_TopicSummaryPanel> {
                                     size: 18,
                                   ),
                                 ),
-                                IconButton(
+                                KoeIconButton(
                                   tooltip: '删除条目',
                                   onPressed: busy
                                       ? null
@@ -923,13 +924,16 @@ class _RecordingRow extends StatelessWidget {
           leading: const Icon(Icons.graphic_eq_rounded),
           title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
           onTap: () => RecordingNavigation.open(context, reference),
-          trailing: PopupMenuButton<int>(
-            tooltip: '更多',
-            onSelected: (index) => actions[index].$2(),
-            itemBuilder: (_) => [
-              for (var i = 0; i < actions.length; i++)
-                PopupMenuItem(value: i, child: Text(actions[i].$1)),
-            ],
+          trailing: macAccessibleName(
+            '更多',
+            PopupMenuButton<int>(
+              tooltip: '更多',
+              onSelected: (index) => actions[index].$2(),
+              itemBuilder: (_) => [
+                for (var i = 0; i < actions.length; i++)
+                  PopupMenuItem(value: i, child: Text(actions[i].$1)),
+              ],
+            ),
           ),
         ),
         if (banner != null)
@@ -1218,66 +1222,73 @@ class TopicDetailScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(topic.title),
             actions: [
-              IconButton(
+              KoeIconButton(
                 key: const ValueKey('topic-export-ai'),
                 tooltip: '导出给外部 AI',
                 onPressed: () =>
                     showContextExportSheet(context, TopicExport(topicId)),
                 icon: const Icon(Icons.smart_toy_outlined),
               ),
-              IconButton(
+              KoeIconButton(
                 key: const ValueKey('topic-export-copy'),
                 tooltip: '复制主题 Markdown',
                 onPressed: () => _export(context, c, topic, share: false),
                 icon: const Icon(Icons.copy_outlined),
               ),
-              IconButton(
+              KoeIconButton(
                 key: const ValueKey('topic-export-share'),
                 tooltip: '分享主题 Markdown 文件',
                 onPressed: () => _export(context, c, topic, share: true),
                 icon: const Icon(Icons.ios_share_rounded),
               ),
-              PopupMenuButton<String>(
-                tooltip: '编辑主题',
-                onSelected: (value) async {
-                  switch (value) {
-                    case 'rename':
-                      final name = await _askText(
-                        context,
-                        title: '改名',
-                        label: topic.kind == TopicKind.book ? '书名' : '主题名',
-                        initial: topic.title,
-                      );
-                      if (name != null) await store.renameTopic(topicId, name);
-                    case 'author':
-                      final author = await _askText(
-                        context,
-                        title: '编辑作者',
-                        label: '作者',
-                        initial: topic.author,
-                        allowEmpty: true,
-                      );
-                      if (author != null) {
-                        await store.setAuthor(topicId, author);
-                      }
-                    case 'close':
-                      await store.closeTopic(topicId);
-                    case 'reopen':
-                      await store.reopenTopic(topicId);
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'rename', child: Text('改名')),
-                  if (topic.kind == TopicKind.book)
-                    const PopupMenuItem(value: 'author', child: Text('编辑作者')),
-                  if (topic.closed)
-                    const PopupMenuItem(value: 'reopen', child: Text('重新打开'))
-                  else
-                    PopupMenuItem(
-                      value: 'close',
-                      child: Text(topic.kind == TopicKind.book ? '标为读完' : '归档'),
-                    ),
-                ],
+              macAccessibleName(
+                '编辑主题',
+                PopupMenuButton<String>(
+                  tooltip: '编辑主题',
+                  onSelected: (value) async {
+                    switch (value) {
+                      case 'rename':
+                        final name = await _askText(
+                          context,
+                          title: '改名',
+                          label: topic.kind == TopicKind.book ? '书名' : '主题名',
+                          initial: topic.title,
+                        );
+                        if (name != null) {
+                          await store.renameTopic(topicId, name);
+                        }
+                      case 'author':
+                        final author = await _askText(
+                          context,
+                          title: '编辑作者',
+                          label: '作者',
+                          initial: topic.author,
+                          allowEmpty: true,
+                        );
+                        if (author != null) {
+                          await store.setAuthor(topicId, author);
+                        }
+                      case 'close':
+                        await store.closeTopic(topicId);
+                      case 'reopen':
+                        await store.reopenTopic(topicId);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'rename', child: Text('改名')),
+                    if (topic.kind == TopicKind.book)
+                      const PopupMenuItem(value: 'author', child: Text('编辑作者')),
+                    if (topic.closed)
+                      const PopupMenuItem(value: 'reopen', child: Text('重新打开'))
+                    else
+                      PopupMenuItem(
+                        value: 'close',
+                        child: Text(
+                          topic.kind == TopicKind.book ? '标为读完' : '归档',
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ],
           ),

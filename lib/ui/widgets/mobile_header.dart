@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app_identity.dart';
 import '../../theme/app_theme.dart';
 import '../screens/settings_screen.dart';
+import 'koe_icon_button.dart';
 
 Future<void> openMobileSettings(BuildContext context) {
   return Navigator.of(context).push(
@@ -52,7 +53,7 @@ class KoeMobileHeader extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
+          KoeIconButton(
             key: const ValueKey('new-recording'),
             tooltip: '新记录',
             onPressed: onNewRecording,
@@ -65,7 +66,7 @@ class KoeMobileHeader extends StatelessWidget {
             icon: const Icon(Icons.add_rounded),
           ),
           const SizedBox(width: 8),
-          IconButton(
+          KoeIconButton(
             key: const ValueKey('nav-settings'),
             tooltip: '设置',
             onPressed: onOpenSettings,
