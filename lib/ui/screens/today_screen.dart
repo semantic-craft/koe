@@ -8,6 +8,7 @@ import '../widgets/context_timeline.dart';
 import '../widgets/mobile_header.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/widgets.dart';
+import 'diary_screen.dart';
 import 'new_recording_sheet.dart';
 import 'project_detail_screen.dart';
 import 'todos_screen.dart';
@@ -140,6 +141,25 @@ class TodayScreen extends StatelessWidget {
                       : c.continueDetail,
                   onOpenLibrary: () =>
                       RecordingNavigation.of(context)?.onSelectTab?.call(2),
+                ),
+                const SizedBox(height: 22),
+                const SectionLabel('日记'),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      key: const ValueKey('today-diary'),
+                      onPressed: () => openDiary(context, weekly: false),
+                      icon: const Icon(Icons.menu_book_outlined, size: 18),
+                      label: const Text('今天的日记'),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('today-week'),
+                      onPressed: () => openDiary(context, weekly: true),
+                      icon: const Icon(Icons.date_range_outlined, size: 18),
+                      label: const Text('本周小结'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 22),
                 SectionLabel(
