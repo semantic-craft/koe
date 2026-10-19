@@ -4,17 +4,17 @@ import 'package:provider/provider.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
+import '../widgets/context_timeline.dart';
 import '../widgets/mobile_header.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/widgets.dart';
-import 'files_screen.dart';
 import 'new_recording_sheet.dart';
 import 'topics_screen.dart';
 
 /// Phone "Today" section (#131).
 ///
-/// Only real recordings and the existing topic store are shown. Projects and
-/// actions remain honest empty states until their own tickets land.
+/// The day's context items form a timeline in the order they happened (#134);
+/// each one opens its original recording and its topic links can be fixed.
 class TodayScreen extends StatelessWidget {
   const TodayScreen({super.key});
 
@@ -22,15 +22,7 @@ class TodayScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     final now = DateTime.now();
-    final today = <(String, DateTime)>[];
-    for (final path in c.exportedPaths) {
-      final view = c.recordingView(
-        RecordingReference(fileId: c.fileIdFromPath(path), path: path),
-      );
-      final at = view.recordedAt ?? view.importedAt;
-      if (at != null && _sameDay(at, now)) today.add((path, at));
-    }
-    today.sort((a, b) => b.$2.compareTo(a.$2));
+    final today = c.contextItemsForDay(now);
     final currentTopic = c.topicsEnabled ? c.topics.currentTopic : null;
     final pending = c.topicsEnabled
         ? c.topics.pendingRecordings.where((key) {
@@ -144,7 +136,7 @@ class TodayScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 22),
                 SectionLabel(
-                  '今日片段',
+                  '今日时间线',
                   trailing: today.isEmpty
                       ? null
                       : TextButton(
@@ -161,18 +153,7 @@ class TodayScreen extends StatelessWidget {
                         RecordingNavigation.of(context)?.onSelectTab?.call(2),
                   )
                 else
-                  for (final (path, at) in today.take(3))
-                    _TodayClip(
-                      path: path,
-                      at: at,
-                      onTap: () => RecordingNavigation.open(
-                        context,
-                        RecordingReference(
-                          fileId: c.fileIdFromPath(path),
-                          path: path,
-                        ),
-                      ),
-                    ),
+                  for (final item in today) ContextTimelineRow(item: item),
               ],
             ),
           ),
@@ -186,14 +167,6 @@ class TodayScreen extends StatelessWidget {
     if (action == null || !context.mounted) return;
     await handleNewRecordingAction(context, action);
   }
-}
-
-bool _sameDay(DateTime a, DateTime b) {
-  final left = a.toLocal();
-  final right = b.toLocal();
-  return left.year == right.year &&
-      left.month == right.month &&
-      left.day == right.day;
 }
 
 String _dateLine(DateTime now) {
@@ -524,61 +497,6 @@ class _TodayEmpty extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _TodayClip extends StatelessWidget {
-  const _TodayClip({required this.path, required this.at, required this.onTap});
-
-  final String path;
-  final DateTime at;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.read<RecorderController>();
-    final view = c.recordingView(
-      RecordingReference(fileId: c.fileIdFromPath(path), path: path),
-    );
-    String two(int value) => value.toString().padLeft(2, '0');
-    final local = at.toLocal();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: SurfaceCard(
-        key: ValueKey('today-clip-$path'),
-        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-        onTap: onTap,
-        child: Row(
-          children: [
-            const Icon(Icons.graphic_eq_rounded, color: AppColors.mint),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    view.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${two(local.hour)}:${two(local.minute)} · '
-                    '${FilesBody.formatDuration(c.localDurationForPath(path))}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right_rounded),
-          ],
-        ),
       ),
     );
   }
