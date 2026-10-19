@@ -7,6 +7,23 @@ const String askSystemPrompt =
     '资料里说的内容在句末标出处如 [S3]；你的推断单独成句并以「推断：」开头。'
     '不同资料说法矛盾时，把各自的说法和出处都列出来，不要替用户裁决。用中文，简洁。';
 
+const String delegationClosedNotice =
+    '外部交办暂未开放：这件事没有被执行，也没有派给任何人或代理。'
+    '可以把它记成待办，或者问我资料里和它有关的内容。';
+
+/// Whether [text] asks Koe to hand work to someone or something else, rather
+/// than asking about the user's records. Words inside quotation marks are
+/// someone else's speech, not the user's request, and never count.
+bool isDelegationRequest(String text) {
+  final own = text.replaceAll(
+    RegExp(r'「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"|‘[^’]*’'),
+    ' ',
+  );
+  return RegExp(
+    r'(交给|派给|转给|让)(代理|agent|Agent|助手|AI|ai)|交办|派单|派活|帮我(去)?(发|订|买|下单|预约|打电话|发邮件)',
+  ).hasMatch(own);
+}
+
 /// What Ask Koe can and cannot see right now.
 class AskScope {
   const AskScope({
@@ -75,8 +92,19 @@ mixin _RecorderAsk on ChangeNotifier {
   }
 
   /// Sends [question] in [sessionId]. A second send while one is out is
-  /// ignored, so one tap never becomes two paid requests.
-  Future<void> ask(String sessionId, String question) async {
+  /// ignored, so one tap never becomes two paid requests. [voiceClip] is the
+  /// audio of a recognized spoken question: the question is marked as spoken,
+  /// the waiting clip is dropped in the same save, and the audio is deleted
+  /// once the text is safely stored.
+  ///
+  /// A request to hand work off gets Koe's own "not open yet" reply: nothing
+  /// is executed and the model is not asked.
+  Future<void> ask(
+    String sessionId,
+    String question, {
+    String? voiceClip,
+  }) async {
+    final viaVoice = voiceClip != null;
     final text = question.trim();
     if (text.isEmpty || _askInFlight.contains(sessionId)) return;
     final session = asks.sessionById(sessionId);
@@ -87,10 +115,31 @@ mixin _RecorderAsk on ChangeNotifier {
       role: AskRole.user,
       text: text,
       at: now,
+      viaVoice: viaVoice,
     );
+    final messages = [...session.messages, user];
+    if (isDelegationRequest(text)) {
+      messages.add(
+        AskMessage(
+          id: 'k${now.microsecondsSinceEpoch}',
+          role: AskRole.koe,
+          text: delegationClosedNotice,
+          at: now,
+          notice: true,
+        ),
+      );
+    }
     await asks.put(
-      session.copyWith(messages: [...session.messages, user], draft: ''),
+      viaVoice
+          ? session.copyWith(messages: messages, clearVoice: true)
+          : session.copyWith(messages: messages, draft: ''),
     );
+    if (voiceClip != null) {
+      try {
+        await File(voiceClip).delete();
+      } catch (_) {}
+    }
+    if (messages.last.notice) return;
     await _answer(sessionId);
   }
 
