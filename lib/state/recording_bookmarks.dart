@@ -358,6 +358,13 @@ class RecordingBookmarkStore {
   Future<void> add(RecordingBookmark bookmark) =>
       _commit((items) => [...items, bookmark]);
 
+  /// Adds several bookmarks in one write; nothing is added if it fails.
+  Future<void> addAll(List<RecordingBookmark> bookmarks) =>
+      _commit((items) => bookmarks.isEmpty ? null : [...items, ...bookmarks]);
+
+  RecordingBookmark? byId(String id) =>
+      _items.where((item) => item.id == id).firstOrNull;
+
   Future<void> updateNote(String id, String note, {required DateTime now}) =>
       _commit(
         (items) => [

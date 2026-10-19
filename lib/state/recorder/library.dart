@@ -58,6 +58,10 @@ mixin _RecorderLibrary on ChangeNotifier {
   abstract final Map<int, String> transcriptsByFileId;
   abstract final Map<String, String> transcriptsByPath;
   abstract final RecordingAnalysis analysis;
+  Future<String?> _completePackAfterPairing(
+    MinutesDocument document,
+    String audioPath,
+  );
   // END DEPS
 
   late final RecordingLibraryStore library;
@@ -211,6 +215,28 @@ mixin _RecorderLibrary on ChangeNotifier {
         message: '音频比文字时码短，无法覆盖最后一段；未建立配对',
       );
     }
+    if (document.fromPack) {
+      // A pack's own digest is the identity: only the same original
+      // completes it, and then the recording takes over from the text record.
+      try {
+        final restored = await _completePackAfterPairing(
+          document,
+          imported.path,
+        );
+        if (restored != null) {
+          return MinutesAttachOutcome(
+            ok: true,
+            restoredPath: restored,
+            message: '已补配原音频，资料、时间码和书签已完整恢复',
+          );
+        }
+      } catch (_) {
+        return const MinutesAttachOutcome(
+          ok: false,
+          message: '原音频已保存，但资料恢复未完成；请重试补配',
+        );
+      }
+    }
     final updated = document.copyWith(
       audioPath: imported.path,
       audioDuration: duration,
@@ -249,7 +275,11 @@ mixin _RecorderLibrary on ChangeNotifier {
   /// rather than imported twice. Metadata persistence is part of the commit:
   /// if it fails, the newly copied file is removed and the caller sees failure.
   Future<({String path, bool duplicate, RecordingAsset asset})>
-  importLocalAudio(String sourcePath, {DateTime? recordedAt}) async {
+  importLocalAudio(
+    String sourcePath, {
+    DateTime? recordedAt,
+    bool recordSourcePath = true,
+  }) async {
     await _libraryLoaded;
     const extensions = {
       '.wav',
@@ -332,7 +362,7 @@ mixin _RecorderLibrary on ChangeNotifier {
         source: RecordingSource.localImport,
         recordedAt: recordedAt,
         importedAt: importedAt,
-        originalPath: p.absolute(sourcePath),
+        originalPath: recordSourcePath ? p.absolute(sourcePath) : null,
         contentHash: contentHash,
       );
       await library.upsert(asset);

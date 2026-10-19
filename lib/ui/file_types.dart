@@ -17,3 +17,11 @@ const minutesTextFileTypes = XTypeGroup(
   extensions: ['json', 'txt'],
   uniformTypeIdentifiers: ['public.plain-text', 'public.json'],
 );
+
+/// Koe material packs (`.koepack`). The type is not declared to the system,
+/// so iOS offers any file and the import checks the contents.
+const materialPackFileTypes = XTypeGroup(
+  label: 'Koe 资料包',
+  extensions: ['koepack'],
+  uniformTypeIdentifiers: ['public.data'],
+);

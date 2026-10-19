@@ -15,6 +15,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:provider/provider.dart';
 import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/main.dart';
@@ -22,6 +23,9 @@ import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/ui/screens/ask_koe_screen.dart';
+import 'package:koe/state/minutes_document.dart';
+import 'package:koe/state/recording_bookmarks.dart';
+import 'package:koe/ui/screens/minutes_document_screen.dart';
 import 'package:koe/ui/screens/new_recording_sheet.dart';
 import 'package:koe/ui/screens/recording_detail_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
@@ -339,6 +343,89 @@ void main() {
     await shot('18-translation-unaligned');
     Navigator.of(shell()).popUntil((route) => route.isFirst);
     await tester.pumpAndSettle();
+
+    // #145: export the meeting as a restorable pack, then restore it into a
+    // second, empty library ("another phone"), with and without its audio.
+    await c.addBookmark(
+      meetingRef,
+      position: const Duration(seconds: 19),
+      segment: meetingLines[2],
+      note: '样品到了再定颜色',
+    );
+    await c.setRecordingPlace(meeting, '杭州市西湖区');
+    Navigator.of(shell()).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingDetailScreen(reference: meetingRef),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('导出…'));
+    await shot('19-export-pack');
+    await tester.tap(find.byKey(const ValueKey('material-export-audio')));
+    await shot('20-export-pack-with-audio');
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
+
+    final withAudio = await c.exportMaterialPack(
+      meetingRef,
+      includeAudio: true,
+    );
+    final textOnly = await c.exportMaterialPack(
+      meetingRef,
+      includeAudio: false,
+    );
+    RecorderController otherPhone(String name) => RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: true,
+      topicStore: TopicStore(inMemory: true),
+      analysisController: RecordingAnalysis(inMemory: true),
+      transcriptPersister: ({bool strict = false}) async {},
+      libraryDirectory: Directory('${directory.path}/$name/imports'),
+      libraryStore: RecordingLibraryStore(inMemory: true),
+      minutesStore: MinutesDocumentStore(inMemory: true),
+      bookmarkStore: RecordingBookmarkStore(inMemory: true),
+    );
+    final restoredPhone = otherPhone('phone-b');
+    final restored = (await restoredPhone.importMaterialPack(
+      withAudio.path,
+    )).path!;
+    Navigator.of(shell()).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChangeNotifierProvider<RecorderController>.value(
+          value: restoredPhone,
+          child: RecordingDetailScreen(
+            reference: RecordingReference(
+              fileId: restoredPhone.fileIdFromPath(restored),
+              path: restored,
+            ),
+          ),
+        ),
+      ),
+    );
+    await shot('21-import-restored');
+    await tester.tap(find.byKey(const ValueKey('bookmark-list-button')));
+    await shot('22-import-restored-bookmarks');
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
+    final textPhone = otherPhone('phone-c');
+    final minutesId = (await textPhone.importMaterialPack(
+      textOnly.path,
+    )).minutesId!;
+    Navigator.of(shell()).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChangeNotifierProvider<RecorderController>.value(
+          value: textPhone,
+          child: MinutesDocumentScreen(documentId: minutesId),
+        ),
+      ),
+    );
+    await shot('23-import-without-audio');
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
+    restoredPhone.dispose();
+    textPhone.dispose();
 
     c.dispose();
     topics.dispose();
