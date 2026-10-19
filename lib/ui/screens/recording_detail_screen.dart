@@ -66,12 +66,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         if (controller.recordingAudioChanged(widget.reference)) return;
         final recording = controller.recordingView(widget.reference);
         final path = recording.path;
-        if (path == null ||
-            !recording.originalPresent ||
-            recording.audioLocked) {
-          return;
-        }
-        controller.playFrom(path, start, fileId: widget.reference.fileId);
+        if (!recording.playable) return;
+        controller.playFrom(path!, start, fileId: widget.reference.fileId);
       });
     }
   }
@@ -104,8 +100,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       _highlightedParagraph = jump.segmentIndex;
     });
     final path = recording.path;
-    if (path != null && recording.originalPresent && !recording.audioLocked) {
-      controller.playFrom(path, jump.start, fileId: widget.reference.fileId);
+    if (recording.playable) {
+      controller.playFrom(path!, jump.start, fileId: widget.reference.fileId);
     }
   }
 
@@ -234,10 +230,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       for (final bookmark in saved)
         resolveBookmark(
           bookmark,
-          audioAvailable:
-              path != null &&
-              recording.originalPresent &&
-              !recording.audioLocked,
+          audioAvailable: recording.playable,
           audioChanged: c.recordingAudioChanged(widget.reference),
           segments: segments,
           duration: path == null ? null : c.localDurationForPath(path),
@@ -1251,10 +1244,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     String markerLabel(RecordingBookmark bookmark) =>
         bookmark.note.isNotEmpty ? bookmark.note : bookmark.segmentText ?? '';
     final text = _showTranslation && hasTranslation ? translated : source;
-    final fileReady =
-        recording.path != null &&
-        recording.originalPresent &&
-        !recording.audioLocked;
+    final fileReady = recording.playable;
     final canProcess = fileReady && !c.fileProcessingBusy && !c.isLiveSession;
     final canOfferTranslation =
         source.isNotEmpty && !recording.live && c.appleCapabilities.supported;
@@ -1262,7 +1252,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         recording.processing ||
         recording.error != null ||
         (source.isEmpty && translated.isEmpty) ||
-        (recording.path == null && !recording.live && !recording.audioLocked);
+        recording.downloadable;
     final hasSpeakers =
         recording.path != null &&
         c.transcriptSpeakersForPath(recording.path!).isNotEmpty;
@@ -1342,7 +1332,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     ? '已在收听队列中'
                     : '加入收听队列',
                 onPressed:
-                    fileReady && !recording.live && !recording.audioLocked
+                    recording.listenable
                     ? _addToQueue
                     : null,
                 icon: Icon(
@@ -1760,9 +1750,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                                               )
                                             : null,
                                       ),
-                                    if (recording.path == null &&
-                                        !recording.live &&
-                                        !recording.audioLocked)
+                                    if (recording.downloadable)
                                       _DeviceDownload(recording: recording),
                                   ],
                                 ),
@@ -1775,7 +1763,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           ),
           // A paused take whose copy has settled plays back (#252); the live
           // controls stay above the player so it can still be continued.
-          bottomNavigationBar: fileReady && !recording.live
+          bottomNavigationBar: recording.listenable
               ? _withPausedControls(
                   recording,
                   Material(

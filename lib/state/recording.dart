@@ -294,4 +294,29 @@ class RecordingViewData {
   final List<TranscriptSegment> segments;
   final bool manuallyEdited;
   final bool hasPendingTranscript;
+
+  /// The local original can be opened, shared and processed: it is here and
+  /// nothing is still writing it.
+  bool get playable => path != null && originalPresent && !audioLocked;
+
+  /// Can be listened to now. A paused take whose copy has settled counts
+  /// (#252); the take still recording does not.
+  bool get listenable => playable && !live;
+
+  /// Not on this device yet, and fetching it now would not race the take
+  /// being recorded.
+  bool get downloadable => path == null && !live && !audioLocked;
+
+  /// The one state a recording row shows, most urgent first: paused,
+  /// recording or saving, [organizing] (the organize stage label, if any),
+  /// processing, failed, transcribed.
+  String? statusLabel({String? organizing, required bool hasText}) {
+    if (paused) return '已暂停';
+    if (audioLocked) return live ? '录音中' : '正在保存';
+    if (organizing != null) return organizing;
+    if (processing) return '处理中';
+    if (error != null) return '处理失败';
+    if (hasText) return '已转写';
+    return null;
+  }
 }
