@@ -96,6 +96,11 @@ mixin _RecorderLibrary on ChangeNotifier {
       // A partial transfer converts to a full-size WAV header, so its size
       // alone would pass the threshold below; retrieve it again instead.
       if (_incompleteRetrievalIds.contains(file.fileId)) continue;
+      // Pause/resume appends to the same device file. The local copy is a
+      // decoded WAV, far larger than the compressed listing, so its size
+      // alone cannot reveal that the device file grew; compare listings.
+      final retrievedAt = _fileJobs.retrievedSizes[file.fileId];
+      if (retrievedAt != null && file.sizeBytes > retrievedAt) continue;
       final path = localPathsByFileId[file.fileId];
       if (path == null) continue;
       try {
@@ -105,6 +110,10 @@ mixin _RecorderLibrary on ChangeNotifier {
         final minimum = (file.sizeBytes * 0.95).floor();
         if (size > 0 && (file.sizeBytes <= 0 || size >= minimum)) {
           complete.add(file.fileId);
+          // Copies from before sizes were recorded start their baseline now.
+          if (retrievedAt == null && file.sizeBytes > 0) {
+            await _fileJobs.noteRetrievedSize(file.fileId, file.sizeBytes);
+          }
         }
       } catch (_) {}
     }

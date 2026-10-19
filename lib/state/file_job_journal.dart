@@ -177,6 +177,11 @@ class FileJobJournal {
   final bool inMemory;
   final Map<String, FileJob> jobs = {};
   final Set<int> incompleteRetrievals = {};
+
+  /// Device-listed size of each file when its local copy was last complete.
+  /// Pause/resume appends to the same device file; a larger listing later
+  /// means the local copy is out of date and must be retrieved again (#92).
+  final Map<int, int> retrievedSizes = {};
   Future<void>? _loading;
   Future<void> _writing = Future.value();
   Future<File> _file() async =>
@@ -190,6 +195,8 @@ class FileJobJournal {
       );
   Future<File> _incompleteFile() async =>
       File(p.join((await _file()).parent.path, 'incomplete_retrievals.json'));
+  Future<File> _sizesFile() async =>
+      File(p.join((await _file()).parent.path, 'retrieved_sizes.json'));
 
   Future<void> load() => _loading ??= _load();
   Future<void> _load() async {
@@ -203,6 +210,19 @@ class FileJobJournal {
           (jsonDecode(await incomplete.readAsString()) as List)
               .whereType<int>(),
         );
+      }
+    } catch (_) {}
+    try {
+      final sizes = await _sizesFile();
+      if (await sizes.exists()) {
+        final decoded = jsonDecode(await sizes.readAsString());
+        if (decoded is Map) {
+          for (final entry in decoded.entries) {
+            final id = int.tryParse('${entry.key}');
+            final size = entry.value;
+            if (id != null && size is int) retrievedSizes[id] = size;
+          }
+        }
       }
     } catch (_) {}
     final source = await _file();
@@ -232,11 +252,20 @@ class FileJobJournal {
 
   /// Records whether the latest retrieval of device file [fileId] was
   /// complete; persists only when the set changes.
-  Future<void> markRetrieval(int fileId, {required bool complete}) async {
+  Future<void> markRetrieval(
+    int fileId, {
+    required bool complete,
+    int? listedBytes,
+  }) async {
     try {
       await load();
     } catch (_) {
       // A corrupt journal is reported elsewhere; the id list is separate.
+    }
+    if (complete && listedBytes != null && listedBytes > 0) {
+      await noteRetrievedSize(fileId, listedBytes);
+    } else if (!complete) {
+      await noteRetrievedSize(fileId, null);
     }
     final changed = complete
         ? incompleteRetrievals.remove(fileId)
@@ -245,6 +274,31 @@ class FileJobJournal {
     final snapshot = jsonEncode(incompleteRetrievals.toList()..sort());
     final operation = _writing.then((_) async {
       final destination = await _incompleteFile();
+      await destination.parent.create(recursive: true);
+      final temporary = File('${destination.path}.tmp');
+      await temporary.writeAsString(snapshot, flush: true);
+      await temporary.rename(destination.path);
+    });
+    _writing = operation.catchError((Object _) {});
+    await operation;
+  }
+
+  /// Records (or with null forgets) the device-listed size [fileId] had
+  /// when its local copy was complete; persists only when it changes.
+  Future<void> noteRetrievedSize(int fileId, int? bytes) async {
+    final previous = retrievedSizes[fileId];
+    if (previous == bytes) return;
+    if (bytes == null) {
+      retrievedSizes.remove(fileId);
+    } else {
+      retrievedSizes[fileId] = bytes;
+    }
+    if (inMemory) return;
+    final snapshot = jsonEncode({
+      for (final entry in retrievedSizes.entries) '${entry.key}': entry.value,
+    });
+    final operation = _writing.then((_) async {
+      final destination = await _sizesFile();
       await destination.parent.create(recursive: true);
       final temporary = File('${destination.path}.tmp');
       await temporary.writeAsString(snapshot, flush: true);

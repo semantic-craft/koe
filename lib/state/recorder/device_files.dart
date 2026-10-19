@@ -104,6 +104,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     required bool decrypted,
     bool Function(String rawPath)? transferComplete,
     List<String>? conversionFailures,
+    Map<int, int> listedSizes = const {},
   }) async {
     final converted = <({String path, bool complete, bool written})>[];
     for (final rawPath in rawPaths) {
@@ -116,7 +117,11 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       final fileId = ExportCatalog.fileIdFromPath(path);
       if (fileId != null) {
         try {
-          await _fileJobs.markRetrieval(fileId, complete: complete);
+          await _fileJobs.markRetrieval(
+            fileId,
+            complete: complete,
+            listedBytes: listedSizes[fileId],
+          );
         } catch (error) {
           // The in-memory mark still holds for this session.
           logs = [
@@ -740,6 +745,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
             [rawPath],
             decrypted: true,
             transferComplete: (raw) => !_blePull.isIncomplete(raw),
+            listedSizes: {file.fileId: file.sizeBytes},
           );
           // A partial file is kept but not reported as transferred.
           if (!_incompleteRetrievalIds.contains(file.fileId)) {
@@ -852,6 +858,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         [rawPath],
         decrypted: true,
         transferComplete: (raw) => !_blePull.isIncomplete(raw),
+        listedSizes: {file.fileId: file.sizeBytes},
       );
       statusMessage = '已下载 ${file.title}';
     } on BleFilePullCancelled {
