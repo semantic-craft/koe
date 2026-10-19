@@ -53,6 +53,7 @@ class RealtimeBleStream {
     required this.write,
     required this.crypto,
     this.onDecryptedFrame,
+    this.idleFinalizeDelay = const Duration(seconds: 2),
   });
 
   final Stream<DecodedPacket> packets;
@@ -61,6 +62,9 @@ class RealtimeBleStream {
 
   /// Invoked for each decrypted 160-B Opus frame (realtime ASR hook).
   final void Function(Uint8List frame)? onDecryptedFrame;
+
+  /// Quiet time after the last slice before a paused/stopped take is saved.
+  final Duration idleFinalizeDelay;
 
   final _stateController = StreamController<RealtimeStreamState>.broadcast();
   Stream<RealtimeStreamState> get stateStream => _stateController.stream;
@@ -76,6 +80,11 @@ class RealtimeBleStream {
   bool _decryptOn = false;
   bool _starting = false;
   Timer? _idleFinalizeTimer;
+
+  /// Set once the recording paused or stopped. The device keeps sending the
+  /// backlog it has not delivered yet; each late slice restarts the idle wait
+  /// instead of cancelling it, so the take still settles once they end (#230).
+  bool _stopPending = false;
   Future<String?>? _finalizeInFlight;
 
   void _log(String m) => debugPrint('[Realtime] $m');
@@ -88,6 +97,11 @@ class RealtimeBleStream {
   /// Start (or switch to) streaming [fileId] over BLE with realtimeFlag=1.
   Future<void> startForFile(int fileId) async {
     if (_starting) return;
+    if (_fileId == fileId) {
+      // Resumed before the paused take settled: keep the same open sink.
+      _stopPending = false;
+      _idleFinalizeTimer?.cancel();
+    }
     if (_fileId == fileId && _state.active && _sink != null) {
       _log('already streaming file $fileId');
       return;
@@ -184,7 +198,11 @@ class RealtimeBleStream {
       final n = _writeSlices(pkt.raw);
       if (n > 0) {
         _received += n;
-        _idleFinalizeTimer?.cancel();
+        if (_stopPending) {
+          _armIdleFinalize();
+        } else {
+          _idleFinalizeTimer?.cancel();
+        }
         _emit(
           _state.copyWith(
             active: true,
@@ -238,8 +256,13 @@ class RealtimeBleStream {
   /// Call when recording pauses/stops — finalize after a short idle settle.
   void onRecordingStopped() {
     if (!_state.active && _sink == null) return;
+    _stopPending = true;
+    _armIdleFinalize();
+  }
+
+  void _armIdleFinalize() {
     _idleFinalizeTimer?.cancel();
-    _idleFinalizeTimer = Timer(const Duration(seconds: 2), () {
+    _idleFinalizeTimer = Timer(idleFinalizeDelay, () {
       unawaited(_finalize(keepActive: false, reason: 'recording_stopped'));
     });
   }
@@ -265,6 +288,7 @@ class RealtimeBleStream {
     required String reason,
   }) async {
     _idleFinalizeTimer?.cancel();
+    _stopPending = false;
     final path = _path;
     final id = _fileId;
     final bytes = _received;

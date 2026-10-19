@@ -65,6 +65,66 @@ void main() {
     expect(ble.downloads.first, 103);
   }
 
+  test('a take the recorder kept recording through a link drop is not shown '
+      'as downloaded and is retrieved again in full (#231)', () async {
+    controller.dispose();
+    ble = _Ble();
+    controller =
+        RecorderController(
+            loadPersistedState: false,
+            ble: ble,
+            blePullInactivityTimeout: const Duration(milliseconds: 200),
+            // Like the real conversion, the WAV is far larger than the raw
+            // Opus payload the device lists.
+            rawExportConverter: (raw) async {
+              final wav = '${raw.substring(0, raw.lastIndexOf('.'))}.wav';
+              await File(wav).writeAsBytes(
+                wavBytes([...await File(raw).readAsBytes(), 0, 0]),
+              );
+              return wav;
+            },
+          )
+          ..connected = true
+          ..encryptReady = true
+          ..phase = AppPhase.ready;
+
+    // Recording starts while connected; the live stream saves what it gets.
+    ble.recordStatus(104);
+    await _until(() => ble.downloads.contains(104));
+    ble.slice();
+    await _until(() => controller.realtimeState.bytesReceived == 160);
+
+    // The link drops; the recorder keeps recording on its own, then stops.
+    ble.link(false);
+    await _until(() => !controller.connected);
+    await _until(() => controller.localPathFor(104)?.endsWith('.wav') ?? false);
+
+    // Reconnected: the device file now also holds the audio from the gap.
+    ble.link(true);
+    controller
+      ..connected = true
+      ..encryptReady = true
+      ..phase = AppPhase.ready;
+    await controller.listFiles();
+    ble.filePage([104], size: 480);
+    await _until(() => controller.files.isNotEmpty);
+    expect(controller.unexportedFiles.map((f) => f.fileId), [
+      104,
+    ], reason: 'the copy with the gap must not count as downloaded');
+    await _until(() => ble.downloads.where((id) => id == 104).length == 2);
+
+    // The whole device file again, replacing the copy with the gap.
+    ble.slice();
+    ble.slice();
+    ble.finish();
+    await _until(() => !controller.autoTransferActive);
+    expect(controller.unexportedFiles, isEmpty);
+    expect(
+      await File('${directory.path}/AnkerRecorder/exports/104.opus').length(),
+      480,
+    );
+  });
+
   test(
     'auto transfer counts completed device recordings, not batch attempts',
     () async {
@@ -344,13 +404,32 @@ class _Ble extends BleService {
   final downloads = <int>[];
   final failDownloads = <int>{};
 
-  void filePage(List<int> ids) {
+  final _connection = StreamController<bool>.broadcast();
+
+  void link(bool up) => _connection.add(up);
+
+  /// `1A06`: the recorder started writing device file [fileId].
+  void recordStatus(int fileId) {
+    final payload = Uint8List(4)
+      ..buffer.asByteData().setUint32(0, fileId, Endian.little);
+    _packets.add(
+      DecodedPacket(
+        raw: Uint8List(0),
+        statusByte: 1,
+        cmdType: 0x1A,
+        cmdId: 0x06,
+        payload: payload,
+      ),
+    );
+  }
+
+  void filePage(List<int> ids, {int size = 160}) {
     final data = ByteData(2 + ids.length * 12)
       ..setUint16(0, ids.length, Endian.little);
     for (var i = 0; i < ids.length; i++) {
       data.setUint32(2 + i * 12, ids[i], Endian.little);
       data.setUint32(6 + i * 12, ids[i] + 1, Endian.little);
-      data.setUint32(10 + i * 12, 160, Endian.little);
+      data.setUint32(10 + i * 12, size, Endian.little);
     }
     _packets.add(
       DecodedPacket(
@@ -389,7 +468,7 @@ class _Ble extends BleService {
   @override
   Stream<List<ScannedDevice>> get scanResults => const Stream.empty();
   @override
-  Stream<bool> get connectionState => const Stream.empty();
+  Stream<bool> get connectionState => _connection.stream;
   @override
   Stream<String> get logs => const Stream.empty();
   @override
@@ -405,5 +484,8 @@ class _Ble extends BleService {
   }
 
   @override
-  Future<void> dispose() => _packets.close();
+  Future<void> dispose() async {
+    await _packets.close();
+    await _connection.close();
+  }
 }

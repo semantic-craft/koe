@@ -369,6 +369,7 @@ class RecorderController extends ChangeNotifier
           // Keep lastKnown* + bound + activeDevice for Device-tab offline UI.
           if (info != null) lastKnownInfo = info;
           if (activeDevice != null) lastKnownDevice = activeDevice;
+          _markInterruptedLiveTake();
           info = null;
           files = [];
           selectedFileIds.clear();

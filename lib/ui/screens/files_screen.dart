@@ -713,6 +713,7 @@ class _DeviceFilesTab extends StatelessWidget {
                       final f = c.files[i];
                       final selected = c.selectedFileIds.contains(f.fileId);
                       final hasLocal = c.localPathFor(f.fileId) != null;
+                      final complete = c.localCopyComplete(f);
                       final downloading = c.activeBleDownloadFileId == f.fileId;
                       final locked = c
                           .recordingView(
@@ -727,6 +728,7 @@ class _DeviceFilesTab extends StatelessWidget {
                         selecting: c.selecting,
                         selected: selected,
                         hasLocal: hasLocal,
+                        complete: complete,
                         downloading: downloading,
                         onTap: c.selecting
                             ? (busy || locked
@@ -752,7 +754,7 @@ class _DeviceFilesTab extends StatelessWidget {
                         onExport:
                             !c.canDownloadOverBle ||
                                 downloading ||
-                                hasLocal ||
+                                complete ||
                                 locked
                             ? null
                             : () => c.downloadFileOverBle(f),
@@ -802,7 +804,9 @@ class _LocalExportCard extends StatelessWidget {
         c.recordingAssetForPath(path)?.source ?? RecordingSource.device;
     final originalPresent = recording.originalPresent;
     final organize = c.organizeStatusFor(path);
-    final status = recording.audioLocked
+    final status = recording.paused
+        ? '已暂停'
+        : recording.audioLocked
         ? (recording.live ? '录音中' : '正在保存')
         : organize.stage != OrganizeStage.none
         ? organize.label
@@ -1602,6 +1606,7 @@ class _DeviceFileTile extends StatelessWidget {
     required this.selecting,
     required this.selected,
     required this.hasLocal,
+    required this.complete,
     required this.downloading,
     this.onTap,
     this.onLongPress,
@@ -1613,6 +1618,10 @@ class _DeviceFileTile extends StatelessWidget {
   final bool selecting;
   final bool selected;
   final bool hasLocal;
+
+  /// The local copy holds the whole device file; a partial one is
+  /// labelled 未完整 and can be retrieved again (#231).
+  final bool complete;
   final bool downloading;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
@@ -1658,7 +1667,7 @@ class _DeviceFileTile extends StatelessWidget {
                     color: AppColors.violet.withValues(alpha: 0.15),
                   ),
                   child: Icon(
-                    hasLocal
+                    complete
                         ? Icons.audiotrack_rounded
                         : Icons.audiotrack_outlined,
                     color: AppColors.violet,
@@ -1680,7 +1689,11 @@ class _DeviceFileTile extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${file.sizeLabel}${hasLocal ? ' · 已下载' : ''}',
+                        '${file.sizeLabel}${complete
+                            ? ' · 已下载'
+                            : hasLocal
+                            ? ' · 未完整'
+                            : ''}',
                         style: const TextStyle(
                           fontSize: 12,
                           color: AppColors.textSecondary,
@@ -1692,10 +1705,12 @@ class _DeviceFileTile extends StatelessWidget {
                 ),
                 if (!selecting) ...[
                   IconButton(
-                    tooltip: hasLocal
+                    tooltip: complete
                         ? '已下载'
                         : downloading
                         ? '正在下载'
+                        : hasLocal
+                        ? '未完整，通过蓝牙重新取回'
                         : '通过蓝牙下载',
                     onPressed: onExport,
                     icon: downloading
@@ -1707,10 +1722,10 @@ class _DeviceFileTile extends StatelessWidget {
                             ),
                           )
                         : Icon(
-                            hasLocal
+                            complete
                                 ? Icons.download_done_rounded
                                 : Icons.download_rounded,
-                            color: hasLocal || onExport == null
+                            color: complete || onExport == null
                                 ? AppColors.textMuted
                                 : AppColors.mint,
                           ),

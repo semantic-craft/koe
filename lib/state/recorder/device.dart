@@ -20,6 +20,7 @@ mixin _RecorderDevice on ChangeNotifier {
   Future<void> _enqueueDeferredRecording(_RecordingSession owner, String path);
   void _handleFileListPage(OfflineFileList list);
   void _kickRealtimeFromFileList(OfflineFileList list);
+  void _markInterruptedLiveTake();
   abstract final Future<void> _persistedDeviceLoaded;
   abstract final PersistedDeviceLoader _persistedDeviceLoader;
   // ignore: unused_field
@@ -510,6 +511,7 @@ mixin _RecorderDevice on ChangeNotifier {
     await stopPlayback();
     if (info != null) lastKnownInfo = info;
     if (activeDevice != null) lastKnownDevice = activeDevice;
+    _markInterruptedLiveTake();
     await _ble.disconnect();
     // Keep lastKnownDevice / bound for offline Device tab; clear live session only.
     activeDevice = lastKnownDevice;
