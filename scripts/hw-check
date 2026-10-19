@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Unattended hardware probes against a real D3200 (integration_test/hw).
+# Off unless KOE_HW_TESTS=1: it connects this Mac to the recorder over BLE,
+# which can take the recorder away from the phone's Koe until it disconnects.
+#
+# The probe app is launched with `open` so macOS asks Koe itself (not the
+# terminal) for Bluetooth access. First run: allow Bluetooth for Koe once;
+# until then the scan finds nothing and the probe reports "skipped".
+# A missing, busy or recording recorder is reported as skipped (exit 0) and
+# is never counted as verified.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [[ "${KOE_HW_TESTS:-}" != "1" ]]; then
+  echo "hw-check: skipped (set KOE_HW_TESTS=1 to connect to a real recorder)"
+  exit 0
+fi
+
+unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_TTS_API_KEY || true
+result="$HOME/Library/Containers/com.anker.ankerRecorder/Data/tmp/koe-hw-resume_probe.json"
+rm -f "$result"
+
+flutter build macos --debug -t integration_test/hw/resume_probe_test.dart
+app="build/macos/Build/Products/Debug/Koe.app"
+
+# -n: a new instance even when the installed Koe is running.
+open -n -W "$app" &
+opener=$!
+deadline=$((SECONDS + ${KOE_HW_TIMEOUT:-720}))
+while kill -0 "$opener" 2>/dev/null; do
+  if (( SECONDS > deadline )); then
+    pkill -f "$PWD/$app/Contents/MacOS/Koe" || true
+    kill "$opener" 2>/dev/null || true
+    echo "hw-check: 跳过：探测超时，没有得出结论（不算已验证）"
+    exit 0
+  fi
+  sleep 2
+done
+
+mkdir -p build/hw
+if [[ ! -f "$result" ]]; then
+  echo "hw-check: 跳过：探测应用没有写出结果（可能被系统终止），不算已验证"
+  exit 0
+fi
+cp "$result" build/hw/resume_probe.json
+python3 - <<'PY'
+import json
+result = json.load(open("build/hw/resume_probe.json")) or {}
+status = result.get("status", "skipped")
+print(json.dumps(result, ensure_ascii=False, indent=2))
+if status == "skipped":
+    print(f"hw-check: 跳过：{result.get('reason', '未知原因')}（不算已验证）")
+else:
+    print(f"hw-check: resume_probe = {status}")
+PY
