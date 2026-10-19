@@ -28,6 +28,29 @@ void main() {
     expect(ogg.length, greaterThan(200));
   });
 
+  test('imported m4a plays as itself, not re-wrapped as device Opus', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-playable-');
+    addTearDown(() => dir.delete(recursive: true));
+    final m4a = File('${dir.path}/imported.m4a');
+    // `ftyp` box: an MPEG-4 file AVPlayer opens directly.
+    await m4a.writeAsBytes([
+      0,
+      0,
+      0,
+      24,
+      ...'ftypM4A '.codeUnits,
+      0,
+      0,
+      0,
+      0,
+      ...'M4A isom'.codeUnits,
+      ...List.filled(400, 7),
+    ]);
+
+    expect(await OggOpus.ensurePlayable(m4a.path), m4a.path);
+    expect(File('${m4a.path}.ogg').existsSync(), isFalse);
+  });
+
   test('ensurePlayable on sample file if present', () async {
     final path =
         '${Platform.environment['HOME']}/Library/Containers/com.anker.ankerRecorder/Data/Documents/AnkerRecorder/exports/1783822462.opus';
