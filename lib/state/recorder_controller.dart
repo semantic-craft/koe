@@ -54,6 +54,7 @@ import 'context/project_store.dart';
 import 'context/todo_store.dart';
 import 'device_store.dart';
 import 'export_catalog.dart';
+import 'organize_store.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
 import 'recording_analysis.dart';
@@ -92,6 +93,7 @@ export '../ai/speech_provider.dart';
 part 'recorder/playback.dart';
 part 'recorder/library.dart';
 part 'recorder/place.dart';
+part 'recorder/organize.dart';
 part 'recorder/phone_recording.dart';
 part 'recorder/context.dart';
 part 'recorder/todos.dart';
@@ -137,6 +139,7 @@ class RecorderController extends ChangeNotifier
         _RecorderPlayback,
         _RecorderLibrary,
         _RecorderPlace,
+        _RecorderOrganize,
         _RecorderPhoneRecording,
         _RecorderContext,
         _RecorderTodos,
@@ -164,6 +167,7 @@ class RecorderController extends ChangeNotifier
   final Map<String, String> _audioVersions = {};
   @override
   final AnalysisService? _topicRecommendationOverride;
+  @override
   String analysisKey(RecordingReference ref) => _referenceKey(ref);
   String recordingKeyFor(RecordingReference ref) => _referenceKey(ref);
   @override
@@ -219,6 +223,7 @@ class RecorderController extends ChangeNotifier
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
     PlaceCapture? placeCapture,
+    OrganizeStore? organizeStore,
     PhoneRecorder? phoneRecorder,
     bool? phoneRecordingEnabled,
     MinutesDocumentStore? minutesStore,
@@ -281,6 +286,8 @@ class RecorderController extends ChangeNotifier
     });
     _libraryLoaded = _loadRecordingLibrary();
     _phoneTakesRecovered = _recoverInterruptedPhoneTakes();
+    this.organizeStore =
+        organizeStore ?? OrganizeStore(inMemory: !loadPersistedState);
     _ownsContextItems = contextStore == null;
     contextItems = contextStore ?? ContextStore(inMemory: !loadPersistedState);
     contextItems.addListener(notifyListeners);
@@ -463,6 +470,7 @@ class RecorderController extends ChangeNotifier
       _transcriptsLoaded = _loadPersistedTranscripts();
     }
     _fileJobsLoaded = _restoreFileJobs();
+    _organizeLoaded = _loadOrganize();
     // Topics are iPhone-only in the first version (#50); elsewhere the store
     // stays empty in memory and nothing is placed.
     _ownsTopics = topicStore == null;
@@ -880,6 +888,7 @@ class RecorderController extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    removeListener(_scheduleOrganize);
     unawaited(_phoneMicStates?.cancel());
     unawaited(_devicePhoneRecorder?.dispose());
     archive.removeListener(_onArchiveChanged);

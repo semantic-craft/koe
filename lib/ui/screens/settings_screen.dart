@@ -76,6 +76,22 @@ class SettingsScreen extends StatelessWidget {
                         onChanged: c.setAutoTranscribe,
                       ),
                       const Divider(height: 20),
+                      _SettingsSwitch(
+                        key: const ValueKey('settings-auto-organize'),
+                        title: '自动整理新录音',
+                        subtitle: '之后的新录音自动转写、写摘要并提取待办；以前的录音不会自动处理',
+                        value: c.autoOrganize,
+                        onChanged: c.setAutoOrganize,
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          key: const ValueKey('settings-organize-history'),
+                          onPressed: () => showOrganizeHistorySheet(context),
+                          child: const Text('整理以前的录音…'),
+                        ),
+                      ),
+                      const Divider(height: 20),
                       _ProviderSelector(controller: c),
                       const SizedBox(height: 16),
                       if (c.speechProvider.usesEngineTrio) ...[
@@ -745,6 +761,7 @@ class _SttModeSelector extends StatelessWidget {
 
 class _SettingsSwitch extends StatelessWidget {
   const _SettingsSwitch({
+    super.key,
     required this.title,
     required this.subtitle,
     required this.value,
@@ -990,4 +1007,59 @@ class _CloudEngineSettingsState extends State<_CloudEngineSettings> {
       ],
     );
   }
+}
+
+/// Lets the user pick which history to organize; nothing runs until they
+/// confirm a range (#133).
+Future<void> showOrganizeHistorySheet(BuildContext context) async {
+  final c = context.read<RecorderController>();
+  final messenger = ScaffoldMessenger.of(context);
+  final range = await showModalBottomSheet<OrganizeRange>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) {
+      Widget option(OrganizeRange range, String title) {
+        final count = c.organizeCandidates(range).length;
+        return ListTile(
+          key: ValueKey('organize-range-${range.name}'),
+          title: Text(title),
+          subtitle: Text(count == 0 ? '没有需要整理的录音' : '$count 条未整理'),
+          enabled: count > 0,
+          onTap: () => Navigator.pop(sheetContext, range),
+        );
+      }
+
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                '整理以前的录音',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                '只处理你选的范围：缺文字的先转写，再写摘要、提取待办。已完成的步骤不会重复调用模型。',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              ),
+            ),
+            option(OrganizeRange.lastWeek, '最近 7 天'),
+            option(OrganizeRange.lastMonth, '最近 30 天'),
+            option(OrganizeRange.all, '全部'),
+            const SizedBox(height: 8),
+          ],
+        ),
+      );
+    },
+  );
+  if (range == null) return;
+  final added = await c.organizeHistory(c.organizeCandidates(range));
+  messenger.showSnackBar(
+    SnackBar(content: Text(added == 0 ? '这些录音已在整理中' : '已加入整理：$added 条')),
+  );
 }
