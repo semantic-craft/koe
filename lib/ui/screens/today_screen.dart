@@ -6,6 +6,7 @@ import '../../theme/app_theme.dart';
 import '../recording_navigation.dart';
 import '../widgets/context_timeline.dart';
 import '../widgets/mobile_header.dart';
+import '../widgets/morning_brief_card.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/widgets.dart';
 import 'diary_screen.dart';
@@ -142,6 +143,8 @@ class TodayScreen extends StatelessWidget {
                   onOpenLibrary: () =>
                       RecordingNavigation.of(context)?.onSelectTab?.call(2),
                 ),
+                const SizedBox(height: 22),
+                const MorningBriefCard(),
                 const SizedBox(height: 22),
                 const SectionLabel('日记'),
                 Wrap(

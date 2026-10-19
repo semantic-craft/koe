@@ -94,6 +94,7 @@ part 'recorder/todos.dart';
 part 'recorder/projects.dart';
 part 'recorder/diary.dart';
 part 'recorder/ask.dart';
+part 'recorder/brief.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
@@ -136,6 +137,7 @@ class RecorderController extends ChangeNotifier
         _RecorderProjects,
         _RecorderDiary,
         _RecorderAsk,
+        _RecorderBrief,
         _RecorderArchive,
         _RecorderTopics,
         _RecorderTranscriptionJobs,
