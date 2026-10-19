@@ -55,8 +55,7 @@ class Controller extends RecorderController {
     RecordingAnalysis manager, {
     this.segments = const [],
     this.text = '讨论发布，请核对发布。',
-  })
-    : super(loadPersistedState: false, analysisController: manager);
+  }) : super(loadPersistedState: false, analysisController: manager);
   final List<TranscriptSegment> segments;
   String text;
   bool audioChanged = false;

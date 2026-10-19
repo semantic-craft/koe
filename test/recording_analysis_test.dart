@@ -216,10 +216,7 @@ void main() {
       expect(manager.requireTemplate(minutesTemplateId).builtIn, isTrue);
       expect(manager.requireTemplate(bookNoteTemplateId).builtIn, isTrue);
       expect(manager.requireTemplate(thinkingNoteTemplateId).builtIn, isTrue);
-      expect(
-        () => manager.deleteTemplate(summaryTemplateId),
-        throwsStateError,
-      );
+      expect(() => manager.deleteTemplate(summaryTemplateId), throwsStateError);
       expect(
         () => manager.updateTemplate(
           bookNoteTemplateId,

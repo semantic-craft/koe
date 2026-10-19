@@ -66,6 +66,7 @@ class MacArchiveController extends ChangeNotifier {
     ArchiveClientConnector? clientConnector,
     ArchiveDeskServerFactory? deskServerFactory,
     DateTime Function()? clock,
+    this.linkCheckInterval = const Duration(seconds: 5),
   }) : phoneStore = phoneStore ?? ArchivePhoneStore(inMemory: inMemory),
        deskStore = deskStore ?? ArchiveDeskStore(inMemory: inMemory),
        _clientConnector =
@@ -89,6 +90,9 @@ class MacArchiveController extends ChangeNotifier {
   final ArchiveDeskServerFactory _deskServerFactory;
   final DateTime Function() _clock;
 
+  /// How often an idle phone retries queued work and checks its open link.
+  final Duration linkCheckInterval;
+
   ArchiveDeskServer? _server;
   ArchiveClient? _workerClient;
   ArchiveClient? _interactiveClient;
@@ -108,6 +112,7 @@ class MacArchiveController extends ChangeNotifier {
   bool _kickRequested = false;
   String? _inFlightPath;
   Timer? _retryTimer;
+  bool _linkCheckRunning = false;
   final Set<String> _explicitPaths = <String>{};
   final Map<String, DateTime> _nextAttempt = <String, DateTime>{};
   final Map<String, int> _recordGenerations = <String, int>{};
@@ -1130,12 +1135,64 @@ class MacArchiveController extends ChangeNotifier {
 
   void _ensureTimer() {
     if (_disposed || _retryTimer != null || phoneStore.pairing == null) return;
-    _retryTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _retryTimer = Timer.periodic(linkCheckInterval, (_) {
       if (_disposed || _worker != null || _manualPaused) return;
-      if (phoneStore.autoArchive || _hasDueManual) {
-        unawaited(_kick());
-      }
+      final work = phoneStore.autoArchive || _hasDueManual
+          ? _kick()
+          : Future<void>.value();
+      unawaited(work.then((_) => _checkLink()));
     });
+  }
+
+  /// An idle link is otherwise only exercised by the next transfer. The Mac
+  /// drops every session when it resets its pairing or stops receiving, so
+  /// ping the open connections each tick: a failed ping closes them and
+  /// reconnects once, which reports a revoked key as 配对密钥无效 instead of
+  /// showing 已连接 until the user reconnects by hand (#292).
+  Future<void> _checkLink() async {
+    final current = pairing;
+    if (_disposed ||
+        _linkCheckRunning ||
+        _manualPaused ||
+        _worker != null ||
+        current == null) {
+      return;
+    }
+    final open = <ArchiveClient>[
+      for (final client in [_workerClient, _interactiveClient])
+        if (client != null && client.connected) client,
+    ];
+    if (open.isEmpty) return;
+    _linkCheckRunning = true;
+    try {
+      var lost = false;
+      for (final client in open) {
+        try {
+          await client.ping();
+        } catch (_) {
+          lost = true;
+          if (identical(client, _workerClient)) await _closeWorkerClient();
+          if (identical(client, _interactiveClient)) {
+            await _closeInteractiveClient();
+          }
+        }
+      }
+      if (!lost ||
+          _disposed ||
+          _manualPaused ||
+          _worker != null ||
+          pairing?.deskId != current.deskId) {
+        return;
+      }
+      try {
+        await _ensureWorkerClient(expectedDeskId: current.deskId);
+      } on ArchiveException {
+        // _ensureClient has recorded the phase and the readable reason.
+      }
+    } finally {
+      _linkCheckRunning = false;
+      _notify();
+    }
   }
 
   bool get _hasDueManual {

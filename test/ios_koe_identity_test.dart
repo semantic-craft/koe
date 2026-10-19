@@ -58,7 +58,10 @@ void main() {
   });
 
   test('install-ios.sh --help and install prompt name Koe', () async {
-    final help = await Process.run('bash', ['scripts/install-ios.sh', '--help']);
+    final help = await Process.run('bash', [
+      'scripts/install-ios.sh',
+      '--help',
+    ]);
     expect(help.exitCode, 0, reason: '${help.stderr}');
     expect(
       help.stdout as String,
@@ -71,4 +74,3 @@ void main() {
     expect(script, contains("printf '==> Installing Koe\\n'"));
   });
 }
-

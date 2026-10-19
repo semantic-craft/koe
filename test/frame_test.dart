@@ -213,28 +213,31 @@ void main() {
     await server.close(force: true);
   });
 
-  test('device WebSocket handshake uses canonical header casing on the wire', () async {
-    // HttpServer/HttpHeaders normalizes names to lowercase on receipt, so it
-    // can't catch a casing regression — read the raw bytes instead. The
-    // recorder's embedded parser is assumed to match header names
-    // case-sensitively, the same way OkHttp emits them.
-    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    final rawBytes = <int>[];
-    final headSeen = Completer<void>();
-    late Socket accepted;
-    server.listen((socket) {
-      accepted = socket;
-      socket.listen((data) {
-        rawBytes.addAll(data);
-        if (utf8.decode(rawBytes, allowMalformed: true).contains('\r\n\r\n')) {
-          if (!headSeen.isCompleted) headSeen.complete();
-        }
+  test(
+    'device WebSocket handshake uses canonical header casing on the wire',
+    () async {
+      // HttpServer/HttpHeaders normalizes names to lowercase on receipt, so it
+      // can't catch a casing regression — read the raw bytes instead. The
+      // recorder's embedded parser is assumed to match header names
+      // case-sensitively, the same way OkHttp emits them.
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final rawBytes = <int>[];
+      final headSeen = Completer<void>();
+      late Socket accepted;
+      server.listen((socket) {
+        accepted = socket;
+        socket.listen((data) {
+          rawBytes.addAll(data);
+          if (utf8
+              .decode(rawBytes, allowMalformed: true)
+              .contains('\r\n\r\n')) {
+            if (!headSeen.isCompleted) headSeen.complete();
+          }
+        });
       });
-    });
 
-    final client = HttpClient();
-    unawaited(
-      () async {
+      final client = HttpClient();
+      unawaited(() async {
         try {
           await WifiExportService.connectSdkWebSocket(
             'ws://${server.address.address}:${server.port}',
@@ -244,36 +247,36 @@ void main() {
           // The raw socket never sends a 101 response, so the handshake
           // rejects once the connection is torn down — expected here.
         }
-      }(),
-    );
+      }());
 
-    await headSeen.future.timeout(const Duration(seconds: 5));
-    final raw = utf8.decode(rawBytes, allowMalformed: true);
+      await headSeen.future.timeout(const Duration(seconds: 5));
+      final raw = utf8.decode(rawBytes, allowMalformed: true);
 
-    for (final header in [
-      'Host:',
-      'Upgrade: websocket',
-      'Connection: Upgrade',
-      'Sec-WebSocket-Key:',
-      'Sec-WebSocket-Version: 13',
-      'Accept-Encoding: gzip',
-      'User-Agent: okhttp/3.12.13.18',
-    ]) {
-      expect(
-        raw.contains(header),
-        isTrue,
-        reason: 'expected literal "$header" in request:\n$raw',
-      );
-    }
-    // No lowercase-only duplicates from dart:io's default serialization.
-    expect(raw.contains('upgrade: websocket'), isFalse);
-    expect(raw.contains('sec-websocket-key:'), isFalse);
-    expect(raw.contains('user-agent:'), isFalse);
+      for (final header in [
+        'Host:',
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        'Sec-WebSocket-Key:',
+        'Sec-WebSocket-Version: 13',
+        'Accept-Encoding: gzip',
+        'User-Agent: okhttp/3.12.13.18',
+      ]) {
+        expect(
+          raw.contains(header),
+          isTrue,
+          reason: 'expected literal "$header" in request:\n$raw',
+        );
+      }
+      // No lowercase-only duplicates from dart:io's default serialization.
+      expect(raw.contains('upgrade: websocket'), isFalse);
+      expect(raw.contains('sec-websocket-key:'), isFalse);
+      expect(raw.contains('user-agent:'), isFalse);
 
-    client.close(force: true);
-    await accepted.close();
-    await server.close();
-  });
+      client.close(force: true);
+      await accepted.close();
+      await server.close();
+    },
+  );
 
   test('file header request hex is 18 bytes', () {
     // Access via transfer path builder — re-check fixed layout length.
