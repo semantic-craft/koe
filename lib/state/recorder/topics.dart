@@ -26,6 +26,7 @@ mixin _RecorderTopics on ChangeNotifier {
   int? fileIdFromPath(String path);
   abstract final RecordingLibraryStore library;
   bool recordingAudioChanged(RecordingReference ref);
+  DateTime? _recordedAtFromFileId(int? id);
   RecordingViewData recordingView(RecordingReference ref);
   abstract String? statusMessage;
   abstract final bool topicsEnabled;
@@ -136,16 +137,15 @@ mixin _RecorderTopics on ChangeNotifier {
         invalidKeys.add(key);
         continue;
       }
-      final seconds = key.startsWith('file:')
-          ? int.tryParse(key.substring(5))
+      // Imported ids are microsecond stamps, not recording seconds.
+      final recordedAt = key.startsWith('file:')
+          ? _recordedAtFromFileId(int.tryParse(key.substring(5)))
           : null;
       notes.add(
         TopicSummaryNote(
           recordingKey: key,
           title: recordingView(ref).title,
-          recordedAt: seconds == null
-              ? result.createdAt
-              : DateTime.fromMillisecondsSinceEpoch(seconds * 1000),
+          recordedAt: recordedAt ?? result.createdAt,
           note: note,
         ),
       );
