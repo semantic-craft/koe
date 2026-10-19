@@ -15,6 +15,17 @@ class BleFilePullCancelled implements Exception {
   const BleFilePullCancelled();
 }
 
+/// The recorder has not finished this file: it is still recording or paused
+/// on it. Its head reports an unknown size and no slices follow, so a pull
+/// can only time out (#253). Once the recording ends the file pulls normally.
+class BleFileUnfinished implements Exception {
+  const BleFileUnfinished(this.fileId);
+  final int fileId;
+
+  @override
+  String toString() => 'BleFileUnfinished($fileId)';
+}
+
 /// Pull one offline recording over BLE (0x1A/0x07 head → 0x08 slices → 0x0A done).
 ///
 /// Prefer this for playback of small/medium files; use Wi‑Fi SoftAP for batch.
@@ -50,6 +61,9 @@ class BleFilePull {
   /// flags, 160 audio bytes and a separator (PROTOCOL.md).
   static const sliceRecordBytes = 166;
 
+  /// File size the recorder reports for a file it has not finished.
+  static const unfinishedFileSize = 0xFFFFFFFF;
+
   Future<String> pullFile(
     OfflineFileEntry file, {
     // Maximum time without a file packet, not a cap on total transfer time.
@@ -71,6 +85,7 @@ class BleFilePull {
     var received = 0;
     var expected = file.sizeBytes;
     var decryptOn = false;
+    var unfinished = false;
     final fileIdStr = '${file.fileId}';
     final head = Completer<void>();
     final done = Completer<void>();
@@ -83,6 +98,12 @@ class BleFilePull {
       if (pkt.cmdId == RxCmd.fileHeadId) {
         inactivity.reset();
         final secret = AudioFileSecretKey.parseFrame(pkt.raw);
+        if (secret != null && secret.fileSize == unfinishedFileSize) {
+          _log('head id=${secret.fileId} unfinished on the recorder');
+          unfinished = true;
+          if (!head.isCompleted) head.complete();
+          return;
+        }
         if (secret != null) {
           if (secret.fileSize > 0) expected = secret.fileSize;
           decryptOn = crypto.initFileDecrypt(
@@ -133,6 +154,7 @@ class BleFilePull {
         _log('no file head yet — waiting for slices');
       }
       if (_cancelled) throw const BleFilePullCancelled();
+      if (unfinished) throw BleFileUnfinished(file.fileId);
 
       while (!_cancelled && inactivity.elapsed < timeout) {
         if (done.isCompleted) break;

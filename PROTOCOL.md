@@ -228,6 +228,16 @@ not from byte zero or a guessed latest file. A distinct `1A06` file id still
 means a new recording. This evidence covers continuation within the connected
 session, not continuation across a hardware stop, disconnect, or App restart.
 
+No stop/end-recording command is known: the table above (from the stock app's
+`AudioEventSendManager`) has only `01` and `02`; no other payload has been
+observed or tested. A paused file is ended with the recorder's own button
+(device-info state then becomes `0`).
+
+A file the recorder has not ended (state `1` or `2`) cannot be pulled: on a
+`1A 07` request its file head reports size `0xFFFFFFFF` and no slices follow
+(observed 2026-10-19, #253). Koe stops such a pull at the head and retries
+once the recorder reports state `0`.
+
 ### 5.3 Audio / file transport — `cmdType = 0x1A` / `0x1B`
 
 | type,id | Name | Payload |
