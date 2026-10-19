@@ -1,8 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import 'ogg_opus.dart';
 import 'opus_pcm_decoder.dart';
+import '../util/off_ui.dart';
 
 /// Converts the D3200's raw fixed-size Opus frames to a standard PCM WAV file.
 class OpusWave {
@@ -12,6 +15,9 @@ class OpusWave {
   static const channels = 1;
   static const bitsPerSample = 16;
 
+  /// Raw files at least this large are decoded on a background isolate.
+  static const backgroundThreshold = 256 * 1024;
+
   static Future<String> convertRawFile(String path) async {
     if (path.endsWith('.wav')) return path;
     if (path.endsWith('.opus.bin')) {
@@ -20,8 +26,30 @@ class OpusWave {
 
     final source = File(path);
     if (!await source.exists()) throw StateError('文件不存在：$path');
-    if (await source.length() == 0) throw StateError('文件为空');
+    final size = await source.length();
+    if (size == 0) throw StateError('文件为空');
+    if (size < backgroundThreshold) return _convert(path);
+    try {
+      return await runOffUi(
+        () => _convert(path, requireDecoder: true),
+        size: size,
+        threshold: backgroundThreshold,
+        debugName: 'OpusWave.convertRawFile',
+      );
+    } on _DecoderUnavailable {
+      // libopus could not be bound on the background isolate; decode here so
+      // the recording still converts, and count it like any other fallback.
+      offUiFallbacks++;
+      debugPrint('[OffUi] Opus decoder unavailable off the UI isolate');
+      return _convert(path);
+    }
+  }
 
+  static Future<String> _convert(
+    String path, {
+    bool requireDecoder = false,
+  }) async {
+    final source = File(path);
     final input = await source.open();
     final prefix = await input.read(12);
     await input.setPosition(0);
@@ -31,6 +59,10 @@ class OpusWave {
     }
 
     final decoder = OpusPcmDecoder(outputSampleRate: sampleRate);
+    if (requireDecoder && !decoder.ensureStarted()) {
+      await input.close();
+      throw const _DecoderUnavailable();
+    }
     final wavPath = path.endsWith('.opus')
         ? '${path.substring(0, path.length - 5)}.wav'
         : '$path.wav';
@@ -131,4 +163,9 @@ class OpusWave {
       data.setUint8(offset + i, value.codeUnitAt(i));
     }
   }
+}
+
+/// Thrown on a background isolate when libopus cannot be bound there.
+class _DecoderUnavailable implements Exception {
+  const _DecoderUnavailable();
 }

@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../util/off_ui.dart';
+
 /// Wrap D3200 raw AES-decrypted Opus frames (fixed 160-byte slices) into an
 /// Ogg Opus file playable by AVFoundation / just_audio.
 ///
@@ -31,34 +33,46 @@ class OggOpus {
       bytes[10] == 0x56 &&
       bytes[11] == 0x45;
 
+  /// Raw files at least this large are muxed on a background isolate.
+  static const backgroundThreshold = 256 * 1024;
+
   /// Returns path to a playable Ogg file (creates sidecar `*.ogg` if needed).
+  ///
+  /// A fresh sidecar is reused from file metadata alone; the source is only
+  /// read (streamed, off the UI isolate when large) when it must be muxed.
   static Future<String> ensurePlayable(String path) async {
     final file = File(path);
-    if (!await file.exists()) {
+    final rawStat = await file.stat();
+    if (rawStat.type != FileSystemEntityType.file) {
       throw StateError('文件不存在：$path');
     }
-    final raw = await file.readAsBytes();
-    if (raw.isEmpty) {
+    if (rawStat.size == 0) {
       throw StateError('文件为空');
     }
-    if (isOgg(raw) || isWav(raw)) return path;
-
-    final oggPath = path.endsWith('.opus')
-        ? '${path.substring(0, path.length - 5)}.ogg'
-        : '$path.ogg';
-    final oggFile = File(oggPath);
+    final oggPath = _sidecarPath(path);
     // Rebuild if missing or older/smaller than source.
-    if (await oggFile.exists()) {
-      final oggStat = await oggFile.stat();
-      final rawStat = await file.stat();
-      if (oggStat.modified.isAfter(rawStat.modified) && oggStat.size > 64) {
-        return oggPath;
-      }
+    final oggStat = await File(oggPath).stat();
+    if (oggStat.type == FileSystemEntityType.file &&
+        oggStat.modified.isAfter(rawStat.modified) &&
+        oggStat.size > 64) {
+      return oggPath;
     }
 
-    final ogg = muxRawFrames(raw);
-    await oggFile.writeAsBytes(ogg, flush: true);
-    return oggPath;
+    final input = await file.open();
+    final List<int> header;
+    try {
+      header = await input.read(12);
+    } finally {
+      await input.close();
+    }
+    if (isOgg(header) || isWav(header)) return path;
+
+    return runOffUi(
+      () => _muxFile(path, oggPath, partSuffix: '.play-part'),
+      size: rawStat.size,
+      threshold: backgroundThreshold,
+      debugName: 'OggOpus.ensurePlayable',
+    );
   }
 
   /// Bounded-memory variant for large uploads. Partial output is never reused.
@@ -71,23 +85,44 @@ class OggOpus {
     }
 
     check();
-    final source = File(path);
-    final input = await source.open();
+    final input = await File(path).open();
+    final List<int> header;
+    try {
+      header = await input.read(12);
+    } finally {
+      await input.close();
+    }
+    if (header.isEmpty) throw StateError('文件为空');
+    if (isWav(header) || isOgg(header)) return path;
+    if (!path.endsWith('.opus') && !path.endsWith('.opus.bin')) {
+      throw StateError('不支持的音频格式');
+    }
+    return _muxFile(
+      path,
+      _sidecarPath(path),
+      partSuffix: '.upload-part',
+      check: check,
+    );
+  }
+
+  static String _sidecarPath(String path) => path.endsWith('.opus')
+      ? '${path.substring(0, path.length - 5)}.ogg'
+      : '$path.ogg';
+
+  /// Streams raw frames from [path] into an Ogg file at [destination],
+  /// writing to a partial file first so an interrupted run is never reused.
+  static Future<String> _muxFile(
+    String path,
+    String destination, {
+    required String partSuffix,
+    void Function()? check,
+  }) async {
+    final input = await File(path).open();
     File? partial;
     RandomAccessFile? output;
     try {
-      final header = await input.read(12);
-      if (header.isEmpty) throw StateError('文件为空');
-      if (isWav(header) || isOgg(header)) return path;
-      if (!path.endsWith('.opus') && !path.endsWith('.opus.bin')) {
-        throw StateError('不支持的音频格式');
-      }
-      final destination = path.endsWith('.opus')
-          ? '${path.substring(0, path.length - 5)}.ogg'
-          : '$path.ogg';
-      partial = File('$destination.upload-part');
+      partial = File('$destination$partSuffix');
       output = await partial.open(mode: FileMode.write);
-      await input.setPosition(0);
       const serial = 0x41524b52;
       var sequence = 0;
       var granule = 0;
@@ -110,7 +145,7 @@ class OggOpus {
       );
       final length = await input.length();
       while (await input.position() < length) {
-        check();
+        check?.call();
         final bytes = await input.read(frameSize * 50);
         final packets = <Uint8List>[];
         for (var offset = 0; offset < bytes.length; offset += frameSize) {
@@ -135,7 +170,7 @@ class OggOpus {
           ),
         );
       }
-      check();
+      check?.call();
       await output.flush();
       await output.close();
       output = null;
