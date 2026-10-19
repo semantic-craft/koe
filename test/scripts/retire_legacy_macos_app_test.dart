@@ -85,17 +85,12 @@ void main() {
       expect(result.stderr, contains('refusing to retire'));
     });
 
-    test(
-      '--check-running also refuses, so install stops before building',
-      () async {
-        final result = await retire(
-          target: '$legacy/',
-          args: ['--check-running'],
-        );
-        expectLegacyUntouched(result);
-        expect(result.stderr, contains('refusing to retire'));
-      },
-    );
+    test('--check-running also refuses, so install stops before building',
+        () async {
+      final result = await retire(target: '$legacy/', args: ['--check-running']);
+      expectLegacyUntouched(result);
+      expect(result.stderr, contains('refusing to retire'));
+    });
 
     test('a different target passes --check-running', () async {
       final result = await retire(
@@ -185,30 +180,26 @@ fi
       return '${bin.path}:${Platform.environment['PATH']}';
     }
 
-    test(
-      'content changed inside the archive keeps the old bundle, exit 1',
-      () async {
-        final result = await retire(
-          target: '$apps/Koe.app',
-          path: tamperingPath(),
-        );
-        expect(result.exitCode, 1, reason: '${result.stdout}${result.stderr}');
-        expect(
-          result.stderr,
-          contains('does not restore identical file contents'),
-        );
-        expect(result.stderr, contains('left in place'));
-        expectLegacyUntouched(result);
-      },
-    );
+    test('content changed inside the archive keeps the old bundle, exit 1',
+        () async {
+      final result = await retire(
+        target: '$apps/Koe.app',
+        path: tamperingPath(),
+      );
+      expect(result.exitCode, 1, reason: '${result.stdout}${result.stderr}');
+      expect(result.stderr, contains('does not restore identical file contents'));
+      expect(result.stderr, contains('left in place'));
+      expectLegacyUntouched(result);
+    });
 
     test('untampered archive retires the old bundle', () async {
       final result = await retire(target: '$apps/Koe.app');
       expect(result.exitCode, 0, reason: '${result.stdout}${result.stderr}');
       expect(Directory(legacy).existsSync(), isFalse);
-      final archives = Directory(
-        backups,
-      ).listSync().whereType<File>().where((f) => f.path.endsWith('.zip'));
+      final archives = Directory(backups)
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.zip'));
       expect(archives, hasLength(1));
     });
   }, skip: Platform.isMacOS ? false : 'needs macOS ditto');

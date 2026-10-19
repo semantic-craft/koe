@@ -14,26 +14,24 @@ void main() {
     final readme = File('README.md').readAsStringSync();
     final dmg = File('scripts/build-dmg.sh').readAsStringSync();
     final install = File('scripts/install-macos.sh').readAsStringSync();
-    final shortcut = File(
-      'ios/Runner/RecordingShortcut.swift',
-    ).readAsStringSync();
+    final shortcut = File('ios/Runner/RecordingShortcut.swift').readAsStringSync();
 
     expect(readme, contains('<h1 align="center">Koe</h1>'));
 
-    final dmgName = RegExp(
-      r'dist/koe-<version>-macos\.dmg',
-    ).firstMatch(dmg)!.group(0)!;
+    final dmgName = RegExp(r'dist/koe-<version>-macos\.dmg')
+        .firstMatch(dmg)!
+        .group(0)!;
     expect(readme, contains(dmgName));
     expect(readme, isNot(contains('soundcore-manager-')));
 
-    final target = RegExp(
-      r'MACOS_INSTALL_PATH:-([^}]+)',
-    ).firstMatch(install)!.group(1)!;
+    final target = RegExp(r'MACOS_INSTALL_PATH:-([^}]+)')
+        .firstMatch(install)!
+        .group(1)!;
     expect(readme, contains(target));
 
-    final shortTitle = RegExp(
-      r'shortTitle: "([^"]+)"',
-    ).firstMatch(shortcut)!.group(1)!;
+    final shortTitle = RegExp(r'shortTitle: "([^"]+)"')
+        .firstMatch(shortcut)!
+        .group(1)!;
     final title = RegExp(
       r'static let title: LocalizedStringResource = "([^"]+)"',
     ).firstMatch(shortcut)!.group(1)!;

@@ -59,6 +59,9 @@ void main() {
     final reloaded = PlaybackHistoryStore(file: file);
     await reloaded.load();
     expect(reloaded.speed, anyOf(1.25, 1.5));
-    expect(temp.listSync().where((f) => f.path.endsWith('.tmp')), isEmpty);
+    expect(
+      temp.listSync().where((f) => f.path.endsWith('.tmp')),
+      isEmpty,
+    );
   });
 }
