@@ -879,7 +879,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         '';
     await showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('新转写版本'),
         content: SizedBox(
           width: 600,
@@ -887,7 +887,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('关闭'),
           ),
         ],
