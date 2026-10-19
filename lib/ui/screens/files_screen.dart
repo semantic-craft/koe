@@ -162,7 +162,7 @@ class _FilesBodyState extends State<FilesBody>
           DecoratedBox(
             decoration: const BoxDecoration(
               color: AppColors.bgCardHover,
-              borderRadius: BorderRadius.all(Radius.circular(24)),
+              borderRadius: BorderRadius.all(Radius.circular(AppRadii.pill)),
             ),
             child: TabBar(
               controller: _tabs,
@@ -170,7 +170,7 @@ class _FilesBodyState extends State<FilesBody>
               indicatorSize: TabBarIndicatorSize.tab,
               indicator: BoxDecoration(
                 color: AppColors.bgCard,
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(AppRadii.pill),
               ),
               indicatorPadding: const EdgeInsets.all(4),
               indicatorColor: AppColors.accent,
@@ -992,6 +992,7 @@ Future<void> startWifiExport(BuildContext context, RecorderController c) async {
   if (ep == null || !context.mounted) return;
   await showModalBottomSheet<void>(
     context: context,
+    sheetAnimationStyle: AppMotion.sheetStyle(context),
     isScrollControlled: true,
     isDismissible: false,
     enableDrag: false,
@@ -1068,7 +1069,7 @@ class _ExportBanner extends StatelessWidget {
               p.phase == ExportPhase.connectingWs) ...[
             const SizedBox(height: 10),
             ClipRRect(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(AppRadii.xs),
               child: LinearProgressIndicator(
                 value: p.phase == ExportPhase.transferring
                     ? p.batchFraction
@@ -1277,7 +1278,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                 height: 4,
                 decoration: BoxDecoration(
                   color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
+                  borderRadius: BorderRadius.circular(AppRadii.xs),
                 ),
               ),
             ),
@@ -1420,7 +1421,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
             if (transferring) ...[
               const SizedBox(height: 12),
               ClipRRect(
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(AppRadii.xs),
                 child: LinearProgressIndicator(
                   value: p.phase == ExportPhase.transferring
                       ? p.batchFraction
@@ -1676,7 +1677,7 @@ class _DeviceFileTile extends StatelessWidget {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppRadii.card),
                     color: AppColors.violet.withValues(alpha: 0.15),
                   ),
                   child: Icon(

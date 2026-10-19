@@ -657,7 +657,8 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.xs),
         ),
-        side: BorderSide(color: t.borderStrong, width: 1.5),
+        // Unchecked outline keeps 3:1 against the card (WCAG 1.4.11).
+        side: BorderSide(color: t.textMuted, width: 1.5),
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(
         color: t.accent,
