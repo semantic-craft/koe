@@ -5,6 +5,8 @@ library;
 
 import 'dart:math' as math;
 
+import '../../util/off_ui.dart';
+
 const _stopPairs = {
   '什么',
   '怎么',
@@ -73,4 +75,27 @@ List<int> rankTexts(String query, List<String> texts, {int limit = 30}) {
   }
   scored.sort((a, b) => b.$2.compareTo(a.$2));
   return [for (final (index, _) in scored.take(limit)) index];
+}
+
+/// Corpus size, in characters, from which [rankTextsOffUi] ranks on a
+/// background isolate.
+const rankBackgroundThreshold = 50000;
+
+/// [rankTexts] that runs on a background isolate once [texts] grow with the
+/// user's history; same result and order.
+Future<List<int>> rankTextsOffUi(
+  String query,
+  List<String> texts, {
+  int limit = 30,
+}) {
+  var size = 0;
+  for (final text in texts) {
+    size += text.length;
+  }
+  return runOffUi(
+    () => rankTexts(query, texts, limit: limit),
+    size: size,
+    threshold: rankBackgroundThreshold,
+    debugName: 'rankTexts',
+  );
 }

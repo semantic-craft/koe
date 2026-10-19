@@ -127,14 +127,14 @@ mixin _RecorderAsk on ChangeNotifier {
         allContextItems(),
         maxChars: 400000,
       );
-      var hits = rankTexts(question, [
+      var hits = await rankTextsOffUi(question, [
         for (final line in candidates) line.text,
       ], limit: 30);
       if (hits.isEmpty &&
           previous.isNotEmpty &&
           RegExp(r'[那这他她它呢]|还有').hasMatch(question)) {
         // A follow-up such as 「那他呢」 leans on the earlier question.
-        hits = rankTexts('$question $previous', [
+        hits = await rankTextsOffUi('$question $previous', [
           for (final line in candidates) line.text,
         ], limit: 30);
       }
