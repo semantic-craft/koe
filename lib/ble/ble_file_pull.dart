@@ -46,14 +46,24 @@ class BleFilePull {
   /// [retrievedTransferComplete].
   bool isIncomplete(String path) => _incompletePaths.contains(path);
 
+  /// One slice record as the recorder counts transferred bytes: sequence,
+  /// flags, 160 audio bytes and a separator (PROTOCOL.md).
+  static const sliceRecordBytes = 166;
+
   Future<String> pullFile(
     OfflineFileEntry file, {
     // Maximum time without a file packet, not a cap on total transfer time.
     Duration timeout = const Duration(seconds: 90),
     void Function(int received, int expected)? onProgress,
+    // Protocol `already_transferred_size`: a byte offset into the device's
+    // slice record stream, so resuming after N slices is
+    // [sliceRecordBytes] × N (PROTOCOL.md, #218). The app passes 0.
+    int alreadyTransferred = 0,
   }) async {
     _cancelled = false;
     _cancelCompleter = Completer<void>();
+    // Audio bytes the device skips for this offset.
+    final skipped = alreadyTransferred ~/ sliceRecordBytes * 160;
     final dir = await _exportDir();
     final path = p.join(dir.path, '${file.fileId}.opus');
     final sink = File(path).openWrite();
@@ -108,7 +118,7 @@ class BleFilePull {
       await write(
         DeviceCommands.startTransportAudioFile(
           fileId: file.fileId,
-          alreadyTransferred: 0,
+          alreadyTransferred: alreadyTransferred,
           realtimeFlag: 0,
         ),
       );
@@ -126,13 +136,13 @@ class BleFilePull {
 
       while (!_cancelled && inactivity.elapsed < timeout) {
         if (done.isCompleted) break;
-        if (expected > 0 && received >= expected) break;
+        if (expected > 0 && received >= expected - skipped) break;
         await Future<void>.delayed(const Duration(milliseconds: 80));
       }
 
       if (_cancelled) throw const BleFilePullCancelled();
 
-      if (expected > 0 && received < expected * 0.95) {
+      if (expected > 0 && received < (expected - skipped) * 0.95) {
         throw StateError('Incomplete BLE export: $received/$expected bytes');
       }
 
