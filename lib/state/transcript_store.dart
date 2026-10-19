@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+import '../util/off_ui.dart';
 import 'atomic_file.dart';
 import 'recording.dart';
 
@@ -26,6 +29,17 @@ class TranscriptStore {
 
   static const _fileName = 'transcripts.json';
   static Future<void> _pendingSave = Future<void>.value();
+
+  /// The save waiting behind the running one. Later saves replace its
+  /// snapshot, so a burst of saves writes only the newest state.
+  static _QueuedSave? _queued;
+
+  /// Length of the last file read or written, used to decide whether the
+  /// next encode runs on a background isolate.
+  static int _lastLength = 0;
+
+  /// Files at least this many characters long are encoded off the UI isolate.
+  static const backgroundEncodeThreshold = 256 * 1024;
 
   static Future<File> _file() async {
     Directory base;
@@ -56,7 +70,9 @@ class TranscriptStore {
     try {
       final file = await _file();
       if (!await file.exists()) return _emptyData();
-      final json = jsonDecode(await file.readAsString());
+      final text = await file.readAsString();
+      _lastLength = text.length;
+      final json = jsonDecode(text);
       return decode(json);
     } catch (e) {
       debugPrint('[TranscriptStore] load failed: $e');
@@ -237,23 +253,36 @@ class TranscriptStore {
         if (entry.value.isNotEmpty)
           entry.key: Map<int, String>.from(entry.value),
     };
-    final operation = _pendingSave.then(
-      (_) => _write(
-        paths,
-        ids,
-        pathAliases,
-        idAliases,
-        meta,
-        translated,
-        timed,
-        manual,
-        incoming,
-        speakers,
-        strict,
-      ),
+    final snapshot = _Snapshot(
+      paths,
+      ids,
+      pathAliases,
+      idAliases,
+      meta,
+      translated,
+      timed,
+      manual,
+      incoming,
+      speakers,
     );
-    _pendingSave = operation.catchError((Object _) {});
-    return operation;
+    var queued = _queued;
+    if (queued != null) {
+      // Not started yet: it writes this newer snapshot instead.
+      queued.snapshot = snapshot;
+    } else {
+      final next = queued = _queued = _QueuedSave(snapshot);
+      _pendingSave = _pendingSave.then((_) async {
+        if (identical(_queued, next)) _queued = null;
+        try {
+          await _write(next.snapshot);
+          next.done.complete();
+        } catch (error, stack) {
+          next.done.completeError(error, stack);
+        }
+      });
+    }
+    final operation = queued.done.future;
+    return strict ? operation : operation.catchError((Object _) {});
   }
 
   static Map<K, Map<String, String>> _copyAliases<K>(
@@ -299,40 +328,67 @@ class TranscriptStore {
     ),
   };
 
-  static Future<void> _write(
-    Map<String, String> byPath,
-    Map<int, String> byFileId,
-    Map<String, Map<String, String>> aliasesByPath,
-    Map<int, Map<String, String>> aliasesByFileId,
-    Map<String, TranscriptMetadata> metadata,
-    Map<String, RecordingTranslation> translations,
-    Map<String, List<TranscriptSegment>> segments,
-    Map<String, String> manualByKey,
-    Map<String, String> incomingByKey,
-    Map<String, Map<int, String>> segmentSpeakersByKey,
-    bool strict,
-  ) async {
+  static Future<void> _write(_Snapshot snapshot) async {
     try {
       final file = await _file();
-      final json = encode(
-        byPath: byPath,
-        byFileId: byFileId,
-        aliasesByPath: aliasesByPath,
-        aliasesByFileId: aliasesByFileId,
-        metadata: metadata,
-        translations: translations,
-        segments: segments,
-        manualByKey: manualByKey,
-        incomingByKey: incomingByKey,
-        segmentSpeakersByKey: segmentSpeakersByKey,
+      String encodeSnapshot() => jsonEncode(
+        encode(
+          byPath: snapshot.byPath,
+          byFileId: snapshot.byFileId,
+          aliasesByPath: snapshot.aliasesByPath,
+          aliasesByFileId: snapshot.aliasesByFileId,
+          metadata: snapshot.metadata,
+          translations: snapshot.translations,
+          segments: snapshot.segments,
+          manualByKey: snapshot.manualByKey,
+          incomingByKey: snapshot.incomingByKey,
+          segmentSpeakersByKey: snapshot.segmentSpeakersByKey,
+        ),
       );
-      await writeFileAtomically(
-        file,
-        const JsonEncoder.withIndent('  ').convert(json),
+      final contents = await runOffUi(
+        encodeSnapshot,
+        size: _lastLength,
+        threshold: backgroundEncodeThreshold,
+        debugName: 'TranscriptStore.encode',
       );
+      _lastLength = contents.length;
+      await writeFileAtomically(file, contents);
     } catch (e) {
       debugPrint('[TranscriptStore] save failed: $e');
-      if (strict) rethrow;
+      rethrow;
     }
   }
+}
+
+class _Snapshot {
+  const _Snapshot(
+    this.byPath,
+    this.byFileId,
+    this.aliasesByPath,
+    this.aliasesByFileId,
+    this.metadata,
+    this.translations,
+    this.segments,
+    this.manualByKey,
+    this.incomingByKey,
+    this.segmentSpeakersByKey,
+  );
+
+  final Map<String, String> byPath;
+  final Map<int, String> byFileId;
+  final Map<String, Map<String, String>> aliasesByPath;
+  final Map<int, Map<String, String>> aliasesByFileId;
+  final Map<String, TranscriptMetadata> metadata;
+  final Map<String, RecordingTranslation> translations;
+  final Map<String, List<TranscriptSegment>> segments;
+  final Map<String, String> manualByKey;
+  final Map<String, String> incomingByKey;
+  final Map<String, Map<int, String>> segmentSpeakersByKey;
+}
+
+class _QueuedSave {
+  _QueuedSave(this.snapshot);
+
+  _Snapshot snapshot;
+  final done = Completer<void>();
 }
