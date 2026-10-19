@@ -750,9 +750,7 @@ mixin _RecorderLibrary on ChangeNotifier {
               path: path,
               displayName: _recordingTitleForPath(path),
               source: RecordingSource.device,
-              recordedAt: id == null
-                  ? null
-                  : DateTime.fromMillisecondsSinceEpoch(id * 1000),
+              recordedAt: _recordedAtFromFileId(id),
               importedAt: _localFileTimestamp(path) ?? stamp,
             );
         await library.upsert(asset.copyWith(archived: true, deletedAt: stamp));
