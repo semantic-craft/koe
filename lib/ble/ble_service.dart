@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
 import 'advertisement.dart';
@@ -517,7 +518,7 @@ class BleService {
     if (notifyErr != null) throw notifyErr;
 
     await _notifySub?.cancel();
-    _notifySub = notify.onValueReceived.listen(_onBytes);
+    _notifySub = notify.onValueReceived.listen(handleNotification);
     device.cancelWhenDisconnected(_notifySub!);
 
     _log(
@@ -569,15 +570,33 @@ class BleService {
         );
   }
 
-  void _onBytes(List<int> data) {
+  @visibleForTesting
+  void handleNotification(List<int> data) {
     if (data.isEmpty) return;
     _rxBuffer.addAll(data);
     final packets = ProtocolFrame.processBuffer(_rxBuffer);
     for (final p in packets) {
-      _log('RX $p  ${p.raw.toHex()}');
+      if (_isAudioSlice(p)) {
+        // Retrieval and live recording deliver slices many times a second;
+        // a hex line per slice outruns debugPrint's throttle and queues in
+        // memory, so only a running count is logged.
+        if (++_audioSlicesSeen % _audioSliceLogInterval == 0) {
+          _log('RX $_audioSlicesSeen audio slices');
+        }
+      } else {
+        _log('RX $p  ${p.raw.toHex()}');
+      }
       _packetController.add(p);
     }
   }
+
+  static const _audioSliceLogInterval = 500;
+  int _audioSlicesSeen = 0;
+
+  static bool _isAudioSlice(DecodedPacket p) =>
+      (p.cmdType == RxCmd.transportType ||
+          p.cmdType == RxCmd.transportTypeAlt) &&
+      (p.cmdId == RxCmd.fileSliceId || p.cmdId == RxCmd.fileSliceMarkId);
 
   Future<void> writeCommand(List<int> frame) async {
     final c = _writeChar;
