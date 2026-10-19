@@ -51,4 +51,47 @@ void main() {
     await tester.dragUntilVisible(last, list, const Offset(0, -200));
     expect(last.hitTestable(), findsOneWidget);
   });
+
+  testWidgets('after the header scrolls away the local/device tabs stay '
+      'below the status bar and switch on tap', (tester) async {
+    // An iPhone with a Dynamic Island: the status bar covers the top 62pt.
+    const statusBar = 62.0;
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: statusBar);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+    final paths = [
+      for (var i = 0; i < 12; i++) '/tmp/${1783917051 + i * 60}.wav',
+    ];
+    final c = RecorderController(loadPersistedState: false)
+      ..exportedPaths = [...paths];
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: const MaterialApp(home: LibraryScreen()),
+      ),
+    );
+    await tester.pump();
+
+    await tester.drag(
+      find.byKey(const ValueKey('local-recordings-refresh')),
+      const Offset(0, -800),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('library-search')).hitTestable(),
+      findsNothing,
+      reason: 'the page still scrolls as one (#245)',
+    );
+
+    final device = find.widgetWithText(Tab, '设备端');
+    expect(tester.getRect(device).top, greaterThanOrEqualTo(statusBar));
+    await tester.tap(device);
+    await tester.pumpAndSettle();
+    final tabs = tester.widget<TabBar>(find.byType(TabBar));
+    expect(tabs.controller!.index, 1);
+  });
 }
