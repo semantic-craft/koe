@@ -4,8 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 import 'package:pointycastle/digests/sha256.dart';
+import 'context/context_file.dart';
 
 String analysisFingerprint(String text) => SHA256Digest()
     .process(Uint8List.fromList(utf8.encode(text)))
@@ -346,8 +346,10 @@ class RecordingAnalysis extends ChangeNotifier {
     AnalysisService? service,
     this.file,
     this.inMemory = false,
-  }) : _service = service ?? QwenAnalysisService();
+  }) : _service = service ?? QwenAnalysisService(),
+       _doc = ContextFile('analysis.json', file: file, inMemory: inMemory);
   final AnalysisService _service;
+  final ContextFile _doc;
   final File? file;
   final bool inMemory;
   String? model = 'qwen3.8-flash';
@@ -369,7 +371,6 @@ class RecordingAnalysis extends ChangeNotifier {
   final Map<String, String> progress = {};
   int _templateSequence = 0;
   Future<void>? _loading;
-  Future<void> _writing = Future.value();
   bool _disposed = false;
 
   List<PromptTemplate> get templates =>
@@ -560,17 +561,12 @@ class RecordingAnalysis extends ChangeNotifier {
     }
   }
 
-  Future<File> _destination() async =>
-      file ??
-      File(
-        '${(await getApplicationDocumentsDirectory()).path}/AnkerRecorder/analysis.json',
-      );
   Future<void> load() => _loading ??= _load();
   Future<void> _load() async {
     if (inMemory) return;
-    final f = await _destination();
-    if (!await f.exists()) return;
-    final j = jsonDecode(await f.readAsString()) as Map;
+    final raw = await _doc.readText();
+    if (raw == null) return;
+    final j = jsonDecode(raw) as Map;
     model = j['model'] as String? ?? 'qwen3.8-flash';
     for (final e in (j['results'] as Map? ?? {}).entries) {
       final resultKey = e.key as String;
@@ -654,15 +650,7 @@ class RecordingAnalysis extends ChangeNotifier {
       'pending': _running.keys.toList(),
       'errors': errors,
     });
-    final work = _writing.then((_) async {
-      final f = await _destination();
-      await f.parent.create(recursive: true);
-      final tmp = File('${f.path}.tmp');
-      await tmp.writeAsString(snapshot, flush: true);
-      await tmp.rename(f.path);
-    });
-    _writing = work.catchError((Object _) {});
-    await work;
+    await _doc.writeText(snapshot);
   }
 
   Future<void> configure(String selected) async {

@@ -166,10 +166,10 @@ void main() {
       strict: true,
     );
     final directory = await getApplicationDocumentsDirectory();
-    final temporary = Directory(
-      '${directory.path}/AnkerRecorder/app_settings.json.tmp',
-    );
-    await temporary.create();
+    // A folder where the settings file belongs makes the final rename fail.
+    final target = File('${directory.path}/AnkerRecorder/app_settings.json');
+    await target.delete();
+    await Directory(target.path).create();
     await expectLater(
       AppSettingsStore.save(
         const AppSettings(

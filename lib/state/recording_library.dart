@@ -2,8 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'context/context_file.dart';
 
 enum RecordingSource { device, localImport, phone }
 
@@ -181,15 +180,17 @@ class RecordingAsset {
 /// Persists original-audio provenance independently of transcript/analysis
 /// state. A corrupt or missing record never causes an audio file to be deleted.
 class RecordingLibraryStore {
-  RecordingLibraryStore({this.file, this.inMemory = false});
+  RecordingLibraryStore({this.file, this.inMemory = false})
+    : _doc = ContextFile(fileName, file: file, inMemory: inMemory);
 
   static const fileName = 'recording_library.json';
 
   final File? file;
   final bool inMemory;
+  final ContextFile _doc;
   final Map<String, RecordingAsset> _assets = {};
   final Map<String, RecordingAsset> _persisted = {};
-  Future<void> _pendingSave = Future<void>.value();
+  bool _writeBlocked = false;
   Future<void> _mutationQueue = Future<void>.value();
 
   String? recoveryNotice;
@@ -209,36 +210,29 @@ class RecordingLibraryStore {
     return null;
   }
 
-  Future<File> _file() async {
-    if (file != null) return file!;
-    Directory base;
-    try {
-      base = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory(p.join(base.path, 'AnkerRecorder'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return File(p.join(dir.path, fileName));
-  }
-
   Future<void> load() async {
     if (inMemory) return;
     try {
-      final target = await _file();
-      if (!await target.exists()) return;
-      final decoded = decode(await target.readAsString());
-      if (decoded == null) {
-        recoveryNotice = '资料信息无法读取，原音频文件仍保留';
-        return;
-      }
+      final raw = await _doc.readText();
+      if (raw == null) return;
+      final decoded = decode(raw);
+      if (decoded == null) throw const FormatException('recording library');
       _assets.addAll(decoded);
       _persisted
         ..clear()
         ..addAll(_assets);
     } catch (error) {
-      recoveryNotice = '资料信息无法读取，原音频文件仍保留';
       debugPrint('[RecordingLibrary] load failed: $error');
+      // Keep the unreadable file aside so the next save cannot erase the
+      // titles and places it still holds.
+      try {
+        await _doc.setAside();
+        recoveryNotice = '资料信息无法读取，已另存原文件；原音频文件仍保留';
+      } catch (backupError) {
+        debugPrint('[RecordingLibrary] backup failed: $backupError');
+        _writeBlocked = true;
+        recoveryNotice = '资料信息无法读取，也未能另存原文件；为避免覆盖，暂不保存资料信息修改。';
+      }
     }
   }
 
@@ -355,22 +349,18 @@ class RecordingLibraryStore {
         ..addAll(_assets);
       return Future<void>.value();
     }
-    final operation = _pendingSave.then(
-      (_) => _write(List<RecordingAsset>.of(_assets.values), strict),
-    );
-    _pendingSave = operation.catchError((Object _) {});
-    return operation;
+    final snapshot = List<RecordingAsset>.of(_assets.values);
+    return _doc.serialize(() => _write(snapshot, strict));
   }
 
   Future<void> _write(List<RecordingAsset> snapshot, bool strict) async {
     try {
-      final target = await _file();
-      final temporary = File('${target.path}.tmp');
-      await temporary.writeAsString(
+      if (_writeBlocked) {
+        throw StateError('recording library unreadable and not backed up');
+      }
+      await _doc.replace(
         const JsonEncoder.withIndent('  ').convert(encode(snapshot)),
-        flush: true,
       );
-      await temporary.rename(target.path);
       _persisted
         ..clear()
         ..addAll({for (final asset in snapshot) asset.path: asset});

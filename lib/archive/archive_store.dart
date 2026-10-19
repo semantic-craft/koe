@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../platform/credential_store.dart';
 import 'archive_pairing.dart';
 import 'archive_wire.dart';
+import '../state/atomic_file.dart';
 
 /// Per-original archive state on the phone. This is deliberately separate from
 /// [RecordingAsset.archived], which is the existing 30-day trash marker.
@@ -404,10 +405,8 @@ class ArchivePhoneStore {
     if (_inMemory) return;
     await _writeInterceptor?.call();
     try {
-      final target = await _file();
-      await target.parent.create(recursive: true);
-      final temporary = File('${target.path}.tmp');
-      await temporary.writeAsString(
+      await _writeAtomic(
+        await _file(),
         jsonEncode(
           _encode(
             records: records,
@@ -417,9 +416,7 @@ class ArchivePhoneStore {
             autoArchiveFrom: autoArchiveFrom,
           ),
         ),
-        flush: true,
       );
-      await temporary.rename(target.path);
       saveError = null;
     } catch (_) {
       saveError = 'Mac 归档记录保存失败，请检查存储空间';
@@ -1155,9 +1152,7 @@ class ArchiveDeskStore {
 
 Future<void> _writeAtomic(File target, String contents) async {
   await target.parent.create(recursive: true);
-  final temporary = File('${target.path}.tmp');
-  await temporary.writeAsString(contents, flush: true);
-  await temporary.rename(target.path);
+  await writeFileAtomically(target, contents);
 }
 
 Future<bool> _resolveArchiveDevelopmentProfile(

@@ -2,8 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'context/context_file.dart';
 
 /// One material in the continuous listening queue.
 ///
@@ -88,16 +87,17 @@ typedef _QueueChange<T> =
 /// Every mutation writes first and only then changes memory, so a failed save
 /// never shows a queue order that is not on disk.
 class ListeningQueueStore {
-  ListeningQueueStore({this.file, this.inMemory = false});
+  ListeningQueueStore({this.file, this.inMemory = false})
+    : _doc = ContextFile(fileName, file: file, inMemory: inMemory);
 
   static const fileName = 'listening_queue.json';
 
   final File? file;
   final bool inMemory;
+  final ContextFile _doc;
 
   List<ListeningQueueEntry> _entries = const [];
   String? _currentKey;
-  Future<void> _pendingSave = Future<void>.value();
   bool _writeBlocked = false;
 
   String? recoveryNotice;
@@ -127,24 +127,11 @@ class ListeningQueueStore {
 
   int indexOf(String key) => _entries.indexWhere((entry) => entry.key == key);
 
-  Future<File> _file() async {
-    if (file != null) return file!;
-    Directory base;
-    try {
-      base = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory(p.join(base.path, 'AnkerRecorder'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return File(p.join(dir.path, fileName));
-  }
-
   Future<void> load() async {
     if (inMemory) return;
     File? target;
     try {
-      target = await _file();
+      target = await _doc.target();
       if (!await target.exists()) return;
       final value = jsonDecode(await target.readAsString());
       if (value is! Map || value['entries'] is! List) {
@@ -269,7 +256,7 @@ class ListeningQueueStore {
   }
 
   Future<T> _commit<T>(_QueueChange<T> change) {
-    final operation = _pendingSave.then((_) async {
+    return _doc.serialize(() async {
       if (_writeBlocked) {
         throw StateError('listening queue file unreadable and not backed up');
       }
@@ -281,17 +268,13 @@ class ListeningQueueStore {
       _currentKey = next.currentKey;
       return next.result;
     });
-    _pendingSave = operation.then<void>((_) {}, onError: (Object _) {});
-    return operation;
   }
 
   /// Moves an unreadable queue file aside before anything can overwrite it.
   /// Overridable so tests can exercise a backup failure without touching
   /// production paths.
   @visibleForOverriding
-  Future<void> backupUnreadable(File target) => target.rename(
-    '${target.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}',
-  );
+  Future<void> backupUnreadable(File target) => _doc.setAside();
 
   Future<void> _write(List<ListeningQueueEntry> entries, String? currentKey) =>
       writeSnapshot(
@@ -305,10 +288,5 @@ class ListeningQueueStore {
   /// Atomically replaces the queue file. Overridable so tests can fail a real
   /// save without touching production paths.
   @visibleForOverriding
-  Future<void> writeSnapshot(String json) async {
-    final target = await _file();
-    final temporary = File('${target.path}.tmp');
-    await temporary.writeAsString(json, flush: true);
-    await temporary.rename(target.path);
-  }
+  Future<void> writeSnapshot(String json) => _doc.replace(json);
 }
