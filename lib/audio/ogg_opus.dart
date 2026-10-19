@@ -49,6 +49,10 @@ class OggOpus {
     if (rawStat.size == 0) {
       throw StateError('文件为空');
     }
+    // Only device originals are bare Opus frames. Imported m4a/mp3/aac are
+    // containers the player opens as they are; a sidecar left by an older
+    // build must not be reused for them.
+    if (!path.endsWith('.opus') && !path.endsWith('.opus.bin')) return path;
     final oggPath = _sidecarPath(path);
     // Rebuild if missing or older/smaller than source.
     final oggStat = await File(oggPath).stat();

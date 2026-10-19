@@ -60,6 +60,9 @@ if [[ -e "$TARGET" ]]; then
   fi
 fi
 
+# ditto merges into an existing bundle: files the new build no longer ships
+# would stay behind and break the code seal. Replace the bundle whole.
+rm -rf "$TARGET"
 ditto "$APP" "$TARGET"
 "$ROOT/scripts/sign-macos.sh" --verify-only "$TARGET"
 
