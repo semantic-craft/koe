@@ -54,6 +54,58 @@ void main() {
     return file;
   }
 
+  Future<void> until(bool Function() condition) async {
+    for (var i = 0; i < 200 && !condition(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+  }
+
+  test('Mac 重置配对凭据或关闭接收后，手机不再显示已连接', () async {
+    final deskStore = ArchiveDeskStore(
+      directory: Directory('${root.path}/desk'),
+    );
+    await deskStore.load();
+    final desk = MacArchiveController(
+      source: _NoopSource(),
+      isDesk: true,
+      phoneStore: ArchivePhoneStore(inMemory: true),
+      deskStore: deskStore,
+    );
+    addTearDown(desk.dispose);
+    await desk.initialize();
+    await desk.setDeskReceiving(true);
+    MacArchiveController phone() => MacArchiveController(
+      source: _NoopSource(),
+      isDesk: false,
+      phoneStore: ArchivePhoneStore(inMemory: true),
+      deskStore: ArchiveDeskStore(inMemory: true),
+      linkCheckInterval: const Duration(milliseconds: 50),
+    );
+
+    final reset = phone();
+    addTearDown(reset.dispose);
+    await reset.initialize();
+    await reset.pairWithCode(desk.deskPairing!.encode());
+    await reset.connectNow();
+    expect(reset.linkLabel, '已连接');
+
+    await desk.resetDeskPairing();
+    await until(() => !{'已连接', '连接中'}.contains(reset.linkLabel));
+    expect(reset.linkLabel, '连接失败');
+    expect(reset.linkDetail, contains('配对密钥无效'));
+
+    final closed = phone();
+    addTearDown(closed.dispose);
+    await closed.initialize();
+    await closed.pairWithCode(desk.deskPairing!.encode());
+    await closed.connectNow();
+    expect(closed.linkLabel, '已连接');
+
+    await desk.setDeskReceiving(false);
+    await until(() => !{'已连接', '连接中'}.contains(closed.linkLabel));
+    expect(closed.linkLabel, isNot('已连接'));
+  });
+
   test(
     'old authenticated clients and old codes are invalid after rotation',
     () async {
