@@ -1720,6 +1720,54 @@ void main() {
     expect(find.byType(InlinePlayer), findsNothing);
   });
 
+  for (final scale in [1.35, 2.0]) {
+    testWidgets('detail title keeps the recording time at text scale $scale', (
+      tester,
+    ) async {
+      const reference = RecordingReference(fileId: 100, path: '/tmp/100.wav');
+      const title = '2026/10/16 15:51';
+      final c = _RecordingController();
+      c.views[reference.key] = const RecordingViewData(
+        reference: reference,
+        title: title,
+        path: '/tmp/100.wav',
+        text: '转写',
+      );
+      addTearDown(c.dispose);
+      await pump(
+        tester,
+        c,
+        Builder(
+          builder: (context) => TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    const RecordingDetailScreen(reference: reference),
+              ),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+        scale: scale,
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      final titleFinder = find.text(title);
+      final paragraph = tester.renderObject<RenderParagraph>(titleFinder);
+      expect(paragraph.didExceedMaxLines, isFalse);
+      final rect = tester.getRect(titleFinder);
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(390));
+      for (final action in ['加入收听队列', '分享录音', '更多操作']) {
+        final button = find.byTooltip(action);
+        expect(rect.overlaps(tester.getRect(button)), isFalse, reason: action);
+        expect(tester.getSize(button).height, greaterThanOrEqualTo(44));
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('completed playback shows the end state and offers replay', (
     tester,
   ) async {

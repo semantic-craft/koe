@@ -1272,495 +1272,557 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final hasRecoverableCache =
         recording.path != null && c.hasRecoverableCacheForPath(recording.path!);
 
-    return Scaffold(
-      key: ValueKey('recording-detail-${widget.reference.key}'),
-      backgroundColor: AppColors.bgElevated,
-      appBar: AppBar(
-        backgroundColor: AppColors.bgElevated,
-        leading: widget.focusedSource
-            ? IconButton(
-                tooltip: widget.focusedReturnLabel,
-                onPressed: () => Navigator.maybePop(context),
-                icon: const Icon(Icons.arrow_back_rounded),
-              )
-            : null,
-        automaticallyImplyLeading:
-            !(RecordingNavigation.of(context)?.wide ?? false),
-        toolbarHeight: (RecordingNavigation.of(context)?.wide ?? false)
-            ? 88
-            : 64,
-        title: Text(
+    final wide = RecordingNavigation.of(context)?.wide ?? false;
+    final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      color: AppColors.textPrimary,
+      fontSize: wide ? 24 : 18,
+      fontWeight: FontWeight.w600,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // At large text sizes the recording time no longer fits between the
+        // back button and the three actions, and the title used to lose its
+        // minutes (#261). It then moves to its own full-width row under the
+        // toolbar and wraps; at the standard size it stays in the toolbar.
+        final titleRowHeight = _ownTitleRowHeight(
+          context,
           recording.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        titleTextStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
-          color: AppColors.textPrimary,
-          fontSize: (RecordingNavigation.of(context)?.wide ?? false) ? 24 : 18,
-          fontWeight: FontWeight.w600,
-        ),
-        actions: [
-          IconButton(
-            key: const ValueKey('add-to-queue'),
-            tooltip: c.queueContainsRecording(widget.reference)
-                ? '已在收听队列中'
-                : '加入收听队列',
-            onPressed: fileReady && !recording.live && !recording.audioLocked
-                ? _addToQueue
+          titleStyle,
+          width: constraints.maxWidth,
+          hasLeading: widget.focusedSource || !wide,
+        );
+        return Scaffold(
+          key: ValueKey('recording-detail-${widget.reference.key}'),
+          backgroundColor: AppColors.bgElevated,
+          appBar: AppBar(
+            backgroundColor: AppColors.bgElevated,
+            leading: widget.focusedSource
+                ? IconButton(
+                    tooltip: widget.focusedReturnLabel,
+                    onPressed: () => Navigator.maybePop(context),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                  )
                 : null,
-            icon: Icon(
-              c.queueContainsRecording(widget.reference)
-                  ? Icons.playlist_add_check_rounded
-                  : Icons.playlist_add_rounded,
-            ),
-          ),
-          IconButton(
-            tooltip: '分享录音',
-            onPressed: fileReady ? () => _share(recording) : null,
-            icon: const Icon(Icons.ios_share_rounded),
-          ),
-          PopupMenuButton<String>(
-            tooltip: '更多操作',
-            onSelected: (action) {
-              switch (action) {
-                case 'rename':
-                  _rename(recording);
-                case 'save':
-                  _save(recording);
-                case 'transcribe':
-                  _transcribe(recording);
-                case 'edit':
-                  _editTranscript(recording);
-                case 'speakers':
-                  _speakers(recording);
-                case 'chapters':
-                  _openChapters(segmentText);
-                case 'speaker-distribution':
-                  _openSpeakers();
-                case 'info':
-                  _showInfo(recording);
-                case 'remove-topic':
-                  _removeFromTopics(recording);
-                case 'clear-cache':
-                  _clearCache(recording);
-                case 'trash':
-                  _trash(recording);
-              }
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'rename',
-                enabled: fileReady,
-                child: const Text('重命名'),
-              ),
-              PopupMenuItem(
-                value: 'save',
-                enabled: fileReady,
-                child: const Text('保存录音'),
-              ),
-              if (source.isNotEmpty)
-                PopupMenuItem(
-                  value: 'transcribe',
-                  enabled:
-                      canProcess &&
-                      (c.speechProvider == SttProvider.apple ||
-                          c.sttConfigured),
-                  child: const Text('重新转写'),
-                ),
-              if (source.isNotEmpty)
-                PopupMenuItem(
-                  value: 'edit',
-                  enabled: fileReady && !recording.processing,
-                  child: const Text('编辑正文'),
-                ),
-              if (hasSpeakers)
-                PopupMenuItem(
-                  value: 'speakers',
-                  enabled: fileReady && !recording.processing,
-                  child: const Text('说话人姓名'),
-                ),
-              if (source.isNotEmpty && !recording.live && segmentsLocatable)
-                const PopupMenuItem(value: 'chapters', child: Text('章节')),
-              if (!recording.live)
-                const PopupMenuItem(
-                  value: 'speaker-distribution',
-                  child: Text('发言人'),
-                ),
-              if (topicPlacement != null)
-                PopupMenuItem(
-                  value: 'remove-topic',
-                  enabled: fileReady,
-                  child: const Text('移出项目/主题'),
-                ),
-              if (hasRecoverableCache)
-                PopupMenuItem(
-                  value: 'clear-cache',
-                  enabled: fileReady && !recording.processing,
-                  child: const Text('清理可恢复缓存'),
-                ),
-              PopupMenuItem(
-                value: 'trash',
-                enabled: fileReady && !recording.processing,
-                child: const Text(
-                  '删除资料…',
-                  style: TextStyle(color: AppColors.coral),
-                ),
-              ),
-              const PopupMenuItem(value: 'info', child: Text('资料信息')),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Align(
-            alignment: Alignment.center,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 4,
-                ),
-                child: Row(
-                  children: [
-                    if (hasTranslation)
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: SegmentedButton<bool>(
-                            segments: const [
-                              ButtonSegment(value: false, label: Text('原文')),
-                              ButtonSegment(value: true, label: Text('译文')),
-                            ],
-                            selected: {_showTranslation},
-                            showSelectedIcon: false,
-                            onSelectionChanged: (value) =>
-                                setState(() => _showTranslation = value.first),
-                          ),
-                        ),
-                      )
-                    else
-                      Expanded(
-                        child: Text(
-                          recording.paused
-                              ? '已暂停'
-                              : recording.live
-                              ? (recording.provider.retired ? '录音中' : '实时转写')
-                              : '转写文本',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
+            automaticallyImplyLeading: !wide,
+            toolbarHeight: wide ? 88 : 64,
+            title: titleRowHeight == null
+                ? Text(
+                    recording.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                : null,
+            titleTextStyle: titleStyle,
+            bottom: titleRowHeight == null
+                ? null
+                : PreferredSize(
+                    preferredSize: Size.fromHeight(titleRowHeight),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        _titleRowInset,
+                        0,
+                        _titleRowInset,
+                        _titleRowBottom,
                       ),
-                    if (c.topicsEnabled &&
-                        c.topics.topicOf(c.recordingKeyFor(widget.reference)) !=
-                            null &&
-                        source.isNotEmpty &&
-                        !recording.live)
-                      TextButton.icon(
-                        onPressed: () => showModalBottomSheet<void>(
-                          context: context,
-                          sheetAnimationStyle: AppMotion.sheetStyle(context),
-                          isScrollControlled: true,
-                          showDragHandle: true,
-                          builder: (sheetContext) => SafeArea(
-                            child: FractionallySizedBox(
-                              heightFactor: 0.85,
-                              child: TopicNotePanel(
-                                controller: c,
-                                reference: widget.reference,
-                                onSelectParagraph: (index) {
-                                  Navigator.pop(sheetContext);
-                                  if (mounted) {
-                                    setState(() {
-                                      _showTranslation = false;
-                                      _highlightedParagraph = index;
-                                    });
-                                  }
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                        icon: const Icon(Icons.menu_book_outlined, size: 18),
-                        label: const Text('主题笔记'),
-                      ),
-                    if (source.isNotEmpty && !recording.live)
-                      IconButton(
-                        tooltip: '摘要与分析',
-                        icon: const Icon(Icons.auto_awesome_outlined),
-                        onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => AnalysisPanel(
-                              controller: c,
-                              reference: widget.reference,
-                              onOpenSource: _openSource,
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (recording.processing) ...[
-                      const SizedBox(width: 8),
-                      const Tooltip(
-                        message: '正在处理',
-                        child: SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    ],
-                    if (canOfferTranslation) ...[
-                      const SizedBox(width: 8),
-                      if (hasTranslation)
-                        IconButton(
-                          tooltip: '翻译为其他语言',
-                          onPressed: canProcess
-                              ? () => _translate(recording)
-                              : null,
-                          icon: const Icon(Icons.translate_rounded),
-                        )
-                      else
-                        TextButton.icon(
-                          onPressed: canProcess
-                              ? () => _translate(recording)
-                              : null,
-                          icon: const Icon(Icons.translate_rounded),
-                          label: const Text('翻译'),
-                        ),
-                    ],
-                    if (!recording.live &&
-                        (path != null || bookmarkTargets.isNotEmpty))
-                      IconButton(
-                        key: const ValueKey('bookmark-list-button'),
-                        tooltip: '书签与批注',
-                        onPressed: _openBookmarkList,
-                        icon: Badge(
-                          isLabelVisible: bookmarkTargets.isNotEmpty,
-                          label: Text('${bookmarkTargets.length}'),
-                          child: const Icon(Icons.bookmarks_outlined),
-                        ),
-                      ),
-                    IconButton(
-                      tooltip: _showTranslation && hasTranslation
-                          ? '复制译文'
-                          : '复制原文',
-                      onPressed: text.isEmpty
-                          ? null
-                          : () async {
-                              await Clipboard.setData(
-                                ClipboardData(text: text),
-                              );
-                              _notice(
-                                _showTranslation && hasTranslation
-                                    ? '已复制译文'
-                                    : '已复制原文',
-                              );
-                            },
-                      icon: const Icon(Icons.copy_outlined),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (path != null) _OrganizeBanner(path: path),
-          if (!_showTranslation &&
-              recording.hasPendingTranscript &&
-              path != null)
-            _PendingTranscriptBanner(
-              onView: () => _viewIncoming(recording),
-              onAdopt: () => _adoptIncoming(recording),
-              onKeep: () => _keepManualTranscript(recording),
-            ),
-          if (!_showTranslation &&
-              source.isNotEmpty &&
-              !recording.live &&
-              !segmentsLocatable)
-            _TranscriptTimingNotice(
-              unreliable: rawSegments.isNotEmpty,
-              originalPresent: recording.originalPresent,
-              hasLocalPath: path != null,
-              hasFileId: recording.reference.fileId != null,
-              edited: recording.manuallyEdited,
-            ),
-          Expanded(
-            child: _ActiveSegmentScope(
-              position: c.positionListenable,
-              segments: segmentText,
-              enabled: followsPlayback,
-              builder: (context, activeSegment) => IndexedStack(
-                index: _showTranslation && hasTranslation ? 1 : 0,
-                children: [
-                  for (final translation in [false, true])
-                    RecordingTextReader(
-                      key: ValueKey(
-                        translation ? 'translation-reader' : 'source-reader',
-                      ),
-                      text: translation ? translated : source,
-                      live: recording.live,
-                      visible:
-                          translation == (_showTranslation && hasTranslation),
-                      highlightedParagraph: translation
-                          ? null
-                          : _highlightedParagraph,
-                      segments: translation || !segmentsLocatable
-                          ? const []
-                          : segmentText,
-                      activeSegment: translation ? null : activeSegment,
-                      bookmarkedSegments: translation || !showMarkers
-                          ? const {}
-                          : {
-                              for (final target in bookmarkTargets)
-                                if (target.segmentIndex != null)
-                                  target.segmentIndex!,
-                            },
-                      speakerAliases: translation
-                          ? const {}
-                          : recording.path == null
-                          ? const {}
-                          : c.speakerAliasesForPath(recording.path!),
-                      onSegmentTap: translation || !segmentsLocatable
-                          ? null
-                          : (index) {
-                              final target = segmentText[index].start;
-                              c.playFrom(
-                                recording.path!,
-                                target,
-                                fileId: recording.reference.fileId,
-                              );
-                            },
-                      onSegmentSpeakerTap: translation || !segmentsLocatable
-                          ? null
-                          : (index) => _correctSegmentSpeaker(recording, index),
-                      header:
-                          !hasReaderHeader || (translation && !hasTranslation)
-                          ? null
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (recording.processing)
-                                  _ProcessingStatus(
-                                    progress: recording.progress,
-                                  ),
-                                if (recording.processing &&
-                                    c.speechProvider == SttProvider.qwen)
-                                  TextButton(
-                                    onPressed: c.cancelQwenFileProcessing,
-                                    child: const Text('停止等待（保留已提交任务）'),
-                                  ),
-                                if (recording.processing &&
-                                    c.doubaoFileProcessing)
-                                  TextButton(
-                                    onPressed: c.cancelDoubaoFileProcessing,
-                                    child: const Text('停止等待（重试将重新上传）'),
-                                  ),
-                                if (recording.error != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 16),
-                                    child: Text(
-                                      recording.error!,
-                                      style: const TextStyle(
-                                        color: AppColors.coral,
-                                        height: 1.4,
-                                      ),
-                                    ),
-                                  ),
-                                if (source.isEmpty && translated.isEmpty)
-                                  _EmptyRecording(
-                                    key: const ValueKey('empty-recording'),
-                                    recording: recording,
-                                    canTranscribe:
-                                        canProcess &&
-                                        (c.speechProvider ==
-                                                SttProvider.apple ||
-                                            c.sttConfigured),
-                                    configured: c.sttConfigured,
-                                    onTranscribe: () => _transcribe(recording),
-                                    appleForm:
-                                        c.speechProvider == SttProvider.apple
-                                        ? _AppleTranscriptionForm(
-                                            reference: widget.reference,
-                                            initialLanguage:
-                                                _selectedRecordingLanguage ??
-                                                recording.sourceLanguage,
-                                            enabled: canProcess,
-                                            onLanguageChanged: (language) =>
-                                                _selectedRecordingLanguage =
-                                                    language,
-                                            onSubmit: (language, prepare) =>
-                                                _transcribe(
-                                                  recording,
-                                                  sourceLanguage: language,
-                                                  prepareLanguages: prepare,
-                                                ),
-                                          )
-                                        : null,
-                                  ),
-                                if (recording.path == null &&
-                                    !recording.live &&
-                                    !recording.audioLocked)
-                                  _DeviceDownload(recording: recording),
-                              ],
-                            ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-      // A paused take whose copy has settled plays back (#252); the live
-      // controls stay above the player so it can still be continued.
-      bottomNavigationBar: fileReady && !recording.live
-          ? _withPausedControls(
-              recording,
-              Material(
-                color: AppColors.bgCard,
-                child: SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                    child: Center(
-                      heightFactor: 1,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 720),
-                        child: InlinePlayer(
-                          path: recording.path!,
-                          fileId: recording.reference.fileId,
-                          markers: showMarkers
-                              ? [
-                                  for (final target in bookmarkTargets)
-                                    if (target.seekTo != null)
-                                      InlinePlayerMarker(
-                                        id: target.bookmark.id,
-                                        at: target.seekTo!,
-                                        label: markerLabel(target.bookmark),
-                                      ),
-                                ]
-                              : const [],
-                          onMarkerTap: (marker) {
-                            for (final target in bookmarkTargets) {
-                              if (target.bookmark.id == marker.id) {
-                                _openBookmark(target);
-                                return;
-                              }
-                            }
-                          },
-                          onAddBookmark: _addBookmark,
+                      child: Align(
+                        alignment: AlignmentDirectional.topStart,
+                        child: Semantics(
+                          header: true,
+                          namesRoute: true,
+                          child: Text(recording.title, style: titleStyle),
                         ),
                       ),
                     ),
                   ),
+            actions: [
+              IconButton(
+                key: const ValueKey('add-to-queue'),
+                tooltip: c.queueContainsRecording(widget.reference)
+                    ? '已在收听队列中'
+                    : '加入收听队列',
+                onPressed:
+                    fileReady && !recording.live && !recording.audioLocked
+                    ? _addToQueue
+                    : null,
+                icon: Icon(
+                  c.queueContainsRecording(widget.reference)
+                      ? Icons.playlist_add_check_rounded
+                      : Icons.playlist_add_rounded,
                 ),
               ),
-            )
-          : recording.live || recording.paused || recording.audioLocked
-          ? _LiveControls(recording: recording)
-          : null,
+              IconButton(
+                tooltip: '分享录音',
+                onPressed: fileReady ? () => _share(recording) : null,
+                icon: const Icon(Icons.ios_share_rounded),
+              ),
+              PopupMenuButton<String>(
+                tooltip: '更多操作',
+                onSelected: (action) {
+                  switch (action) {
+                    case 'rename':
+                      _rename(recording);
+                    case 'save':
+                      _save(recording);
+                    case 'transcribe':
+                      _transcribe(recording);
+                    case 'edit':
+                      _editTranscript(recording);
+                    case 'speakers':
+                      _speakers(recording);
+                    case 'chapters':
+                      _openChapters(segmentText);
+                    case 'speaker-distribution':
+                      _openSpeakers();
+                    case 'info':
+                      _showInfo(recording);
+                    case 'remove-topic':
+                      _removeFromTopics(recording);
+                    case 'clear-cache':
+                      _clearCache(recording);
+                    case 'trash':
+                      _trash(recording);
+                  }
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'rename',
+                    enabled: fileReady,
+                    child: const Text('重命名'),
+                  ),
+                  PopupMenuItem(
+                    value: 'save',
+                    enabled: fileReady,
+                    child: const Text('保存录音'),
+                  ),
+                  if (source.isNotEmpty)
+                    PopupMenuItem(
+                      value: 'transcribe',
+                      enabled:
+                          canProcess &&
+                          (c.speechProvider == SttProvider.apple ||
+                              c.sttConfigured),
+                      child: const Text('重新转写'),
+                    ),
+                  if (source.isNotEmpty)
+                    PopupMenuItem(
+                      value: 'edit',
+                      enabled: fileReady && !recording.processing,
+                      child: const Text('编辑正文'),
+                    ),
+                  if (hasSpeakers)
+                    PopupMenuItem(
+                      value: 'speakers',
+                      enabled: fileReady && !recording.processing,
+                      child: const Text('说话人姓名'),
+                    ),
+                  if (source.isNotEmpty && !recording.live && segmentsLocatable)
+                    const PopupMenuItem(value: 'chapters', child: Text('章节')),
+                  if (!recording.live)
+                    const PopupMenuItem(
+                      value: 'speaker-distribution',
+                      child: Text('发言人'),
+                    ),
+                  if (topicPlacement != null)
+                    PopupMenuItem(
+                      value: 'remove-topic',
+                      enabled: fileReady,
+                      child: const Text('移出项目/主题'),
+                    ),
+                  if (hasRecoverableCache)
+                    PopupMenuItem(
+                      value: 'clear-cache',
+                      enabled: fileReady && !recording.processing,
+                      child: const Text('清理可恢复缓存'),
+                    ),
+                  PopupMenuItem(
+                    value: 'trash',
+                    enabled: fileReady && !recording.processing,
+                    child: const Text(
+                      '删除资料…',
+                      style: TextStyle(color: AppColors.coral),
+                    ),
+                  ),
+                  const PopupMenuItem(value: 'info', child: Text('资料信息')),
+                ],
+              ),
+            ],
+          ),
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.center,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 760),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 4,
+                    ),
+                    child: Row(
+                      children: [
+                        if (hasTranslation)
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: SegmentedButton<bool>(
+                                segments: const [
+                                  ButtonSegment(
+                                    value: false,
+                                    label: Text('原文'),
+                                  ),
+                                  ButtonSegment(value: true, label: Text('译文')),
+                                ],
+                                selected: {_showTranslation},
+                                showSelectedIcon: false,
+                                onSelectionChanged: (value) => setState(
+                                  () => _showTranslation = value.first,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          Expanded(
+                            child: Text(
+                              recording.paused
+                                  ? '已暂停'
+                                  : recording.live
+                                  ? (recording.provider.retired
+                                        ? '录音中'
+                                        : '实时转写')
+                                  : '转写文本',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        if (c.topicsEnabled &&
+                            c.topics.topicOf(
+                                  c.recordingKeyFor(widget.reference),
+                                ) !=
+                                null &&
+                            source.isNotEmpty &&
+                            !recording.live)
+                          TextButton.icon(
+                            onPressed: () => showModalBottomSheet<void>(
+                              context: context,
+                              sheetAnimationStyle: AppMotion.sheetStyle(
+                                context,
+                              ),
+                              isScrollControlled: true,
+                              showDragHandle: true,
+                              builder: (sheetContext) => SafeArea(
+                                child: FractionallySizedBox(
+                                  heightFactor: 0.85,
+                                  child: TopicNotePanel(
+                                    controller: c,
+                                    reference: widget.reference,
+                                    onSelectParagraph: (index) {
+                                      Navigator.pop(sheetContext);
+                                      if (mounted) {
+                                        setState(() {
+                                          _showTranslation = false;
+                                          _highlightedParagraph = index;
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+                            icon: const Icon(
+                              Icons.menu_book_outlined,
+                              size: 18,
+                            ),
+                            label: const Text('主题笔记'),
+                          ),
+                        if (source.isNotEmpty && !recording.live)
+                          IconButton(
+                            tooltip: '摘要与分析',
+                            icon: const Icon(Icons.auto_awesome_outlined),
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => AnalysisPanel(
+                                  controller: c,
+                                  reference: widget.reference,
+                                  onOpenSource: _openSource,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (recording.processing) ...[
+                          const SizedBox(width: 8),
+                          const Tooltip(
+                            message: '正在处理',
+                            child: SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ],
+                        if (canOfferTranslation) ...[
+                          const SizedBox(width: 8),
+                          if (hasTranslation)
+                            IconButton(
+                              tooltip: '翻译为其他语言',
+                              onPressed: canProcess
+                                  ? () => _translate(recording)
+                                  : null,
+                              icon: const Icon(Icons.translate_rounded),
+                            )
+                          else
+                            TextButton.icon(
+                              onPressed: canProcess
+                                  ? () => _translate(recording)
+                                  : null,
+                              icon: const Icon(Icons.translate_rounded),
+                              label: const Text('翻译'),
+                            ),
+                        ],
+                        if (!recording.live &&
+                            (path != null || bookmarkTargets.isNotEmpty))
+                          IconButton(
+                            key: const ValueKey('bookmark-list-button'),
+                            tooltip: '书签与批注',
+                            onPressed: _openBookmarkList,
+                            icon: Badge(
+                              isLabelVisible: bookmarkTargets.isNotEmpty,
+                              label: Text('${bookmarkTargets.length}'),
+                              child: const Icon(Icons.bookmarks_outlined),
+                            ),
+                          ),
+                        IconButton(
+                          tooltip: _showTranslation && hasTranslation
+                              ? '复制译文'
+                              : '复制原文',
+                          onPressed: text.isEmpty
+                              ? null
+                              : () async {
+                                  await Clipboard.setData(
+                                    ClipboardData(text: text),
+                                  );
+                                  _notice(
+                                    _showTranslation && hasTranslation
+                                        ? '已复制译文'
+                                        : '已复制原文',
+                                  );
+                                },
+                          icon: const Icon(Icons.copy_outlined),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (path != null) _OrganizeBanner(path: path),
+              if (!_showTranslation &&
+                  recording.hasPendingTranscript &&
+                  path != null)
+                _PendingTranscriptBanner(
+                  onView: () => _viewIncoming(recording),
+                  onAdopt: () => _adoptIncoming(recording),
+                  onKeep: () => _keepManualTranscript(recording),
+                ),
+              if (!_showTranslation &&
+                  source.isNotEmpty &&
+                  !recording.live &&
+                  !segmentsLocatable)
+                _TranscriptTimingNotice(
+                  unreliable: rawSegments.isNotEmpty,
+                  originalPresent: recording.originalPresent,
+                  hasLocalPath: path != null,
+                  hasFileId: recording.reference.fileId != null,
+                  edited: recording.manuallyEdited,
+                ),
+              Expanded(
+                child: _ActiveSegmentScope(
+                  position: c.positionListenable,
+                  segments: segmentText,
+                  enabled: followsPlayback,
+                  builder: (context, activeSegment) => IndexedStack(
+                    index: _showTranslation && hasTranslation ? 1 : 0,
+                    children: [
+                      for (final translation in [false, true])
+                        RecordingTextReader(
+                          key: ValueKey(
+                            translation
+                                ? 'translation-reader'
+                                : 'source-reader',
+                          ),
+                          text: translation ? translated : source,
+                          live: recording.live,
+                          visible:
+                              translation ==
+                              (_showTranslation && hasTranslation),
+                          highlightedParagraph: translation
+                              ? null
+                              : _highlightedParagraph,
+                          segments: translation || !segmentsLocatable
+                              ? const []
+                              : segmentText,
+                          activeSegment: translation ? null : activeSegment,
+                          bookmarkedSegments: translation || !showMarkers
+                              ? const {}
+                              : {
+                                  for (final target in bookmarkTargets)
+                                    if (target.segmentIndex != null)
+                                      target.segmentIndex!,
+                                },
+                          speakerAliases: translation
+                              ? const {}
+                              : recording.path == null
+                              ? const {}
+                              : c.speakerAliasesForPath(recording.path!),
+                          onSegmentTap: translation || !segmentsLocatable
+                              ? null
+                              : (index) {
+                                  final target = segmentText[index].start;
+                                  c.playFrom(
+                                    recording.path!,
+                                    target,
+                                    fileId: recording.reference.fileId,
+                                  );
+                                },
+                          onSegmentSpeakerTap: translation || !segmentsLocatable
+                              ? null
+                              : (index) =>
+                                    _correctSegmentSpeaker(recording, index),
+                          header:
+                              !hasReaderHeader ||
+                                  (translation && !hasTranslation)
+                              ? null
+                              : Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (recording.processing)
+                                      _ProcessingStatus(
+                                        progress: recording.progress,
+                                      ),
+                                    if (recording.processing &&
+                                        c.speechProvider == SttProvider.qwen)
+                                      TextButton(
+                                        onPressed: c.cancelQwenFileProcessing,
+                                        child: const Text('停止等待（保留已提交任务）'),
+                                      ),
+                                    if (recording.processing &&
+                                        c.doubaoFileProcessing)
+                                      TextButton(
+                                        onPressed: c.cancelDoubaoFileProcessing,
+                                        child: const Text('停止等待（重试将重新上传）'),
+                                      ),
+                                    if (recording.error != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 16,
+                                        ),
+                                        child: Text(
+                                          recording.error!,
+                                          style: const TextStyle(
+                                            color: AppColors.coral,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ),
+                                    if (source.isEmpty && translated.isEmpty)
+                                      _EmptyRecording(
+                                        key: const ValueKey('empty-recording'),
+                                        recording: recording,
+                                        canTranscribe:
+                                            canProcess &&
+                                            (c.speechProvider ==
+                                                    SttProvider.apple ||
+                                                c.sttConfigured),
+                                        configured: c.sttConfigured,
+                                        onTranscribe: () =>
+                                            _transcribe(recording),
+                                        appleForm:
+                                            c.speechProvider ==
+                                                SttProvider.apple
+                                            ? _AppleTranscriptionForm(
+                                                reference: widget.reference,
+                                                initialLanguage:
+                                                    _selectedRecordingLanguage ??
+                                                    recording.sourceLanguage,
+                                                enabled: canProcess,
+                                                onLanguageChanged: (language) =>
+                                                    _selectedRecordingLanguage =
+                                                        language,
+                                                onSubmit: (language, prepare) =>
+                                                    _transcribe(
+                                                      recording,
+                                                      sourceLanguage: language,
+                                                      prepareLanguages: prepare,
+                                                    ),
+                                              )
+                                            : null,
+                                      ),
+                                    if (recording.path == null &&
+                                        !recording.live &&
+                                        !recording.audioLocked)
+                                      _DeviceDownload(recording: recording),
+                                  ],
+                                ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // A paused take whose copy has settled plays back (#252); the live
+          // controls stay above the player so it can still be continued.
+          bottomNavigationBar: fileReady && !recording.live
+              ? _withPausedControls(
+                  recording,
+                  Material(
+                    color: AppColors.bgCard,
+                    child: SafeArea(
+                      top: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Center(
+                          heightFactor: 1,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 720),
+                            child: InlinePlayer(
+                              path: recording.path!,
+                              fileId: recording.reference.fileId,
+                              markers: showMarkers
+                                  ? [
+                                      for (final target in bookmarkTargets)
+                                        if (target.seekTo != null)
+                                          InlinePlayerMarker(
+                                            id: target.bookmark.id,
+                                            at: target.seekTo!,
+                                            label: markerLabel(target.bookmark),
+                                          ),
+                                    ]
+                                  : const [],
+                              onMarkerTap: (marker) {
+                                for (final target in bookmarkTargets) {
+                                  if (target.bookmark.id == marker.id) {
+                                    _openBookmark(target);
+                                    return;
+                                  }
+                                }
+                              },
+                              onAddBookmark: _addBookmark,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : recording.live || recording.paused || recording.audioLocked
+              ? _LiveControls(recording: recording)
+              : null,
+        );
+      },
     );
   }
 }
@@ -3576,5 +3638,45 @@ class _BookmarkListSheet extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+const _titleRowInset = NavigationToolbar.kMiddleSpacing;
+const _titleRowBottom = 12.0;
+
+/// Height of the detail title's own row under the toolbar, or null when the
+/// title fits on one line between the leading button and the three actions.
+/// At the standard text size the toolbar title is kept as it always was.
+double? _ownTitleRowHeight(
+  BuildContext context,
+  String title,
+  TextStyle? style, {
+  required double width,
+  required bool hasLeading,
+}) {
+  final scaler = MediaQuery.textScalerOf(context);
+  final fontSize = style?.fontSize ?? 18;
+  if (scaler.scale(fontSize) <= fontSize) return null;
+  // Queue, share and more: each action keeps a 48pt tap target.
+  const actionsWidth = 3 * 48.0;
+  final toolbarSpace =
+      width -
+      (hasLeading ? kToolbarHeight : 0) -
+      2 * NavigationToolbar.kMiddleSpacing -
+      actionsWidth;
+  final painter = TextPainter(
+    text: TextSpan(text: title, style: style),
+    textDirection: Directionality.of(context),
+    textScaler: scaler,
+    maxLines: 1,
+  )..layout(maxWidth: toolbarSpace < 0 ? 0 : toolbarSpace);
+  try {
+    if (!painter.didExceedMaxLines) return null;
+    painter
+      ..maxLines = null
+      ..layout(maxWidth: width - 2 * _titleRowInset);
+    return painter.height + _titleRowBottom;
+  } finally {
+    painter.dispose();
   }
 }

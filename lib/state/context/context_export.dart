@@ -63,6 +63,7 @@ String buildContextMarkdown({
   required List<ExportedItem> items,
   required List<Todo> todos,
   String? diary,
+  bool diaryOutdated = false,
 }) {
   final out = StringBuffer()
     ..writeln('# $title')
@@ -134,6 +135,12 @@ String buildContextMarkdown({
       ..writeln('## 当天日记')
       ..writeln()
       ..writeln(diary.trim());
+  } else if (diaryOutdated) {
+    out
+      ..writeln()
+      ..writeln('## 当天日记')
+      ..writeln()
+      ..writeln('（日记生成后资料有变动，已过期，这次没有附上；在 Koe 里更新日记后再导出。）');
   }
   final lines = [for (final entry in items) ...entry.lines];
   if (lines.isNotEmpty) {
