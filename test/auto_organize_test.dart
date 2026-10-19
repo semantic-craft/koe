@@ -17,6 +17,7 @@ import 'support/wav_fixture.dart';
 /// On-device transcription that answers with a fixed sentence.
 class _Apple extends AppleSpeechService {
   int calls = 0;
+  Completer<void>? hold;
 
   @override
   Future<AppleSpeechCapabilities> capabilities({
@@ -36,6 +37,7 @@ class _Apple extends AppleSpeechService {
     SttFileProgressCallback? onProgress,
   }) async {
     calls++;
+    await hold?.future;
     return SttResult(text: '我明天去买牛奶。', language: sourceLanguage);
   }
 }
@@ -347,5 +349,18 @@ void main() {
     }
     expect(summarizer.calls, 2);
     expect(find.byKey(const ValueKey('organize-banner')), findsNothing);
+  });
+
+  test('a transcription still running is not reported as unknown', () async {
+    apple.hold = Completer<void>();
+    final c = await build();
+    await c.waitForOrganize();
+    await c.setAutoOrganize(true);
+    final path = await importAudio(c, 'running');
+    await until(() => apple.calls == 1);
+
+    expect(c.organizeStatusFor(path).stage, OrganizeStage.transcribing);
+    apple.hold!.complete();
+    await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
   });
 }

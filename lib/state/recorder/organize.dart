@@ -56,6 +56,7 @@ mixin _RecorderOrganize on ChangeNotifier {
   abstract final Future<void> _libraryLoaded;
   abstract final Map<String, String> _recordingErrors;
   abstract final Map<String, String> _completenessErrors;
+  abstract String? _fileJobKey;
   Set<int> get _incompleteRetrievalIds;
   abstract final Future<void> _settingsLoaded;
   abstract Future<void> _transcriptsLoaded;
@@ -228,7 +229,12 @@ mixin _RecorderOrganize on ChangeNotifier {
     final text = _transcriptOf(path);
     if (text.isEmpty) {
       final job = _fileJobs.jobs[key];
-      if (job != null && job.stage == 'running' && job.taskId == null) {
+      // Running without a task id is unknown only when no transcription is
+      // in flight for it now, i.e. the app stopped mid-request.
+      if (job != null &&
+          job.stage == 'running' &&
+          job.taskId == null &&
+          _fileJobKey != key) {
         return const OrganizeStatus(
           OrganizeStage.needsCheck,
           '转写请求结果未知；为避免重复收费，确认后再重新转写',
