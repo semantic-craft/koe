@@ -411,9 +411,10 @@ class RecorderController extends ChangeNotifier
     );
     _subs.add(_ble.packets.listen(_onPacket));
     _subs.add(
+      // No screen renders these lines. Notifying here rebuilt every listener
+      // once per BLE packet during retrieval and live recording.
       _ble.logs.listen((m) {
         logs = [m, ...logs].take(80).toList();
-        notifyListeners();
       }),
     );
 
