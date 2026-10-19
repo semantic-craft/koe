@@ -248,31 +248,25 @@ class DoubaoSttService extends CloudFileSttService {
     required Duration? sourceDuration,
     required bool Function() isCurrent,
   }) async {
-    final container = await AudioContainer.read(path);
-    switch (container) {
+    final ({String path, AudioContainer container}) upload;
+    try {
+      upload = await prepareUploadAudio(path, isCurrent: isCurrent);
+    } on UploadPreparationException catch (e) {
+      throw DoubaoSttException(e.cancelled ? '已取消，原录音已保留' : e.message);
+    }
+    switch (upload.container) {
       case AudioContainer.mp3:
-        return (path: path, format: 'mp3', converted: false);
+        return (path: upload.path, format: 'mp3', converted: false);
       case AudioContainer.mp4:
       case AudioContainer.adts:
       case AudioContainer.flac:
-        return _convertToWav(path, sourceDuration, isCurrent);
+        return _convertToWav(upload.path, sourceDuration, isCurrent);
       case AudioContainer.wav:
       case AudioContainer.ogg:
       case AudioContainer.unknown:
         break;
     }
-    final String prepared;
-    try {
-      prepared = await OggOpus.prepareUpload(path, isCurrent: isCurrent);
-    } on StateError catch (e) {
-      throw DoubaoSttException(
-        !isCurrent()
-            ? '已取消，原录音已保留'
-            : e.message == '不支持的音频格式'
-            ? '无法准备音频：不支持的音频格式，请导入 M4A、MP3、WAV 或 AAC'
-            : '无法准备音频：${e.message}',
-      );
-    }
+    final prepared = upload.path;
     final input = await File(prepared).open();
     final List<int> header;
     try {

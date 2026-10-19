@@ -6,8 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
-import '../audio/audio_transcoder.dart';
-import '../audio/ogg_opus.dart';
 import '../audio/audio_duration.dart';
 import '../audio/upload_source.dart';
 import 'cloud_stt_service.dart';
@@ -837,27 +835,10 @@ Future<String> qwenUploadSource(String path) => compressedUploadSource(path);
 /// flac, wav, ogg), so imported files upload as they are; only device
 /// originals (bare Opus frames) are wrapped in Ogg first (#233).
 Future<String> qwenUploadAudio(String path, bool Function() isCurrent) async {
-  final container = await AudioContainer.read(path);
-  switch (container) {
-    case AudioContainer.mp3:
-    case AudioContainer.mp4:
-    case AudioContainer.adts:
-    case AudioContainer.flac:
-      return path;
-    case AudioContainer.wav:
-    case AudioContainer.ogg:
-    case AudioContainer.unknown:
-      break;
-  }
   try {
-    return await OggOpus.prepareUpload(path, isCurrent: isCurrent);
-  } on StateError catch (e) {
-    if (!isCurrent()) throw const QwenSttException('处理已取消，可重试');
-    throw QwenSttException(
-      e.message == '不支持的音频格式'
-          ? '无法准备音频：不支持的音频格式，请导入 M4A、MP3、WAV 或 AAC'
-          : '无法准备音频：${e.message}',
-    );
+    return (await prepareUploadAudio(path, isCurrent: isCurrent)).path;
+  } on UploadPreparationException catch (e) {
+    throw QwenSttException(e.cancelled ? '处理已取消，可重试' : e.message);
   }
 }
 
