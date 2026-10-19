@@ -64,13 +64,13 @@ class SurfaceCard extends StatelessWidget {
     final tokens = KoeTokens.of(context);
     final borderRadius = BorderRadius.circular(radius);
     final card = AnimatedContainer(
-      duration: AppMotion.normal,
-      curve: AppMotion.easeOut,
+      duration: AppMotion.duration(context, AppMotion.snap),
+      curve: AppMotion.snappy,
       padding: padding,
       decoration: BoxDecoration(
         color: backgroundColor ?? tokens.bgCard,
         borderRadius: borderRadius,
-        border: Border.all(color: borderColor ?? tokens.border),
+        border: Border.all(color: borderColor ?? tokens.border, width: 0),
         boxShadow: !shadow
             ? const []
             : glow

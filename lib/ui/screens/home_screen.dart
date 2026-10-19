@@ -118,7 +118,7 @@ class _ConnectionHeader extends StatelessWidget {
               color: online
                   ? AppColors.bgSubtle
                   : AppColors.accent.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppRadii.card),
             ),
             clipBehavior: Clip.antiAlias,
             child: online

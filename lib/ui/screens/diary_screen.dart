@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/cited_text.dart';
+import '../widgets/status_indicators.dart';
 import '../widgets/widgets.dart';
 
 void openDiary(BuildContext context, {required bool weekly}) {
@@ -206,7 +207,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
           if (busy)
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(child: ThinkingDots(dotSize: 6)),
             ),
           if (current != null) ...[
             for (final raw in current.text.split('\n'))
@@ -268,7 +269,7 @@ class _DiaryLine extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 border: Border.all(color: color),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(AppRadii.xs),
               ),
               child: Text(tag, style: TextStyle(fontSize: 11, color: color)),
             ),

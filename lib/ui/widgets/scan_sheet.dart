@@ -18,11 +18,12 @@ Future<void> showScanDevicesSheet(BuildContext context) {
   }
   return showModalBottomSheet<void>(
     context: context,
+    sheetAnimationStyle: AppMotion.sheetStyle(context),
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: AppColors.bgElevated,
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.sheet)),
     ),
     builder: (ctx) => const ScanDevicesSheet(),
   );
@@ -124,7 +125,7 @@ class _ScanDevicesSheetState extends State<ScanDevicesSheet> {
               height: 4,
               decoration: BoxDecoration(
                 color: AppColors.border,
-                borderRadius: BorderRadius.circular(99),
+                borderRadius: BorderRadius.circular(AppRadii.pill),
               ),
             ),
           ),
@@ -511,7 +512,7 @@ class _SheetDeviceTile extends StatelessWidget {
               color: match
                   ? AppColors.accent.withValues(alpha: 0.12)
                   : AppColors.bg,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppRadii.card),
             ),
             clipBehavior: Clip.antiAlias,
             child: connecting

@@ -7,6 +7,7 @@ import '../context_source.dart';
 import '../screens/diary_screen.dart';
 import '../screens/todos_screen.dart';
 import 'cited_text.dart';
+import 'status_indicators.dart';
 import 'widgets.dart';
 
 /// Today's brief: open todos, others' commitments that are due, and
@@ -142,10 +143,7 @@ class _MorningBriefCardState extends State<MorningBriefCard> {
               key: const ValueKey('brief-generate'),
               onPressed: busy ? null : _generate,
               icon: busy
-                  ? const SizedBox.square(
-                      dimension: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const ThinkingDots()
                   : const Icon(Icons.auto_awesome_outlined, size: 18),
               label: Text(busy ? '生成中…' : '生成昨天要点'),
             ),

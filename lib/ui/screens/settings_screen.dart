@@ -392,8 +392,8 @@ class _EngineOptionCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppRadii.md),
         child: AnimatedContainer(
-          duration: AppMotion.fast,
-          curve: AppMotion.easeOut,
+          duration: AppMotion.duration(context, AppMotion.snap),
+          curve: AppMotion.snappy,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
           decoration: BoxDecoration(
             color: selected ? tokens.bgCard : tokens.bgPanel,
@@ -482,7 +482,7 @@ class _EngineOptionCard extends StatelessWidget {
                         ? Icons.radio_button_checked_rounded
                         : Icons.radio_button_off_rounded,
                     size: 18,
-                    color: selected ? tokens.inkAccent : tokens.textFaint,
+                    color: selected ? tokens.inkAccent : tokens.textMuted,
                   ),
                 ),
               ],
@@ -803,12 +803,7 @@ class _SettingsSwitch extends StatelessWidget {
               ],
             ),
           ),
-          Switch.adaptive(
-            value: value,
-            activeTrackColor: AppColors.accent.withValues(alpha: 0.45),
-            activeThumbColor: AppColors.accent,
-            onChanged: onChanged,
-          ),
+          Switch.adaptive(value: value, onChanged: onChanged),
         ],
       ),
     );
@@ -1019,6 +1014,7 @@ Future<void> showOrganizeHistorySheet(BuildContext context) async {
   final messenger = ScaffoldMessenger.of(context);
   final range = await showModalBottomSheet<OrganizeRange>(
     context: context,
+    sheetAnimationStyle: AppMotion.sheetStyle(context),
     showDragHandle: true,
     builder: (sheetContext) {
       Widget option(OrganizeRange range, String title) {

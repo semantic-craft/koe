@@ -173,7 +173,7 @@ class InlinePlayer extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
                   color: AppColors.bgCardHover,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppRadii.button),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,

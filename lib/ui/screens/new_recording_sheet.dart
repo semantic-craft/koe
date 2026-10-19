@@ -8,6 +8,7 @@ import '../../theme/app_theme.dart';
 import '../import_audio.dart';
 import '../recording_navigation.dart';
 import '../widgets/scan_sheet.dart';
+import '../widgets/status_indicators.dart';
 
 enum NewRecordingAction { phone, importAudio, retrieveDevice }
 
@@ -45,6 +46,7 @@ Future<void> showPhoneRecordingSheet(BuildContext context) async {
   final messenger = ScaffoldMessenger.of(context);
   final saved = await showModalBottomSheet<String>(
     context: context,
+    sheetAnimationStyle: AppMotion.sheetStyle(context),
     isDismissible: false,
     enableDrag: false,
     builder: (_) => const PhoneRecordingPanel(),
@@ -141,14 +143,23 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                active ? (paused ? '已暂停' : '手机录音中') : '手机录音',
-                key: const ValueKey('phone-recording-title'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (active && !paused) ...[
+                    const BreathingDot(),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(
+                    active ? (paused ? '已暂停' : '手机录音中') : '手机录音',
+                    key: const ValueKey('phone-recording-title'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
               Text(
@@ -235,6 +246,7 @@ Future<NewRecordingAction?> showNewRecordingSheet(BuildContext context) {
       .phoneRecordingEnabled;
   return showModalBottomSheet<NewRecordingAction>(
     context: context,
+    sheetAnimationStyle: AppMotion.sheetStyle(context),
     showDragHandle: true,
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
@@ -314,9 +326,9 @@ class _RecordOption extends StatelessWidget {
       padding: const EdgeInsets.only(top: 8),
       child: Material(
         color: enabled ? AppColors.bgCard : AppColors.bgPanel,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadii.card),
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppRadii.card),
           onTap: onTap,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 64),
@@ -328,7 +340,7 @@ class _RecordOption extends StatelessWidget {
                     icon,
                     color: enabled
                         ? AppColors.textPrimary
-                        : AppColors.textFaint,
+                        : AppColors.textMuted,
                   ),
                   const SizedBox(width: 12),
                   Expanded(

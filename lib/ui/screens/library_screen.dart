@@ -156,13 +156,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           filled: true,
                           fillColor: AppColors.bgCard,
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(AppRadii.card),
                             borderSide: const BorderSide(
                               color: AppColors.border,
                             ),
                           ),
                           enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(AppRadii.card),
                             borderSide: const BorderSide(
                               color: AppColors.border,
                             ),
@@ -325,6 +325,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final controller = context.read<RecorderController>();
     await showModalBottomSheet<void>(
       context: context,
+      sheetAnimationStyle: AppMotion.sheetStyle(context),
       showDragHandle: true,
       isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
@@ -499,10 +500,6 @@ class _FilterChip extends StatelessWidget {
       onSelected: (_) => onSelected(),
       materialTapTargetSize: MaterialTapTargetSize.padded,
       showCheckmark: false,
-      selectedColor: AppColors.accentSoft,
-      side: BorderSide(
-        color: selected ? AppColors.accentBorder : AppColors.border,
-      ),
       labelStyle: TextStyle(
         fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
         color: selected ? AppColors.accent : AppColors.textSecondary,

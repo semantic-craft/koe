@@ -235,7 +235,7 @@ class _CenterControls extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
         decoration: BoxDecoration(
           color: AppColors.bgCard.withValues(alpha: 0.97),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(AppRadii.sheet),
           border: Border.all(color: AppColors.border),
           boxShadow: AppColors.cardShadow,
         ),
