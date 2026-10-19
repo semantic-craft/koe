@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../ai/apple_speech.dart';
+import '../../ai/speech_languages.dart' show speechLanguageFor;
 import '../../ai/stt_types.dart';
 import '../../state/export_catalog.dart';
 import '../../state/recorder_controller.dart';
@@ -50,6 +51,7 @@ class RecordingDetailScreen extends StatefulWidget {
 
 class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   bool _showTranslation = false;
+  bool _translating = false;
   bool _selectionInitialized = false;
   String? _selectedRecordingLanguage;
   int? _highlightedParagraph;
@@ -595,7 +597,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
             content: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('成功后将替换当前文本、自定义说话人姓名和译文。失败时保留现有结果。'),
+                const Text('成功后将替换当前文本和自定义说话人姓名，旧译文会标为过时。失败时保留现有结果。'),
                 const SizedBox(height: 20),
                 _AppleTranscriptionForm(
                   reference: widget.reference,
@@ -626,7 +628,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('重新转写？'),
-            content: const Text('成功后将替换当前文本、自定义说话人姓名和译文。失败时保留现有结果。'),
+            content: const Text('成功后将替换当前文本和自定义说话人姓名，旧译文会标为过时。失败时保留现有结果。'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -740,23 +742,77 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       ),
     );
     if (pair == null || !mounted) return;
-    if (pair.$3) {
-      await controller.prepareRecordingTranslation(
-        widget.reference,
-        sourceLanguage: pair.$1,
-        targetLanguage: pair.$2,
-      );
-    } else {
-      await controller.translateRecording(
-        widget.reference,
-        sourceLanguage: pair.$1,
-        targetLanguage: pair.$2,
-      );
+    setState(() => _translating = true);
+    try {
+      if (pair.$3) {
+        await controller.prepareRecordingTranslation(
+          widget.reference,
+          sourceLanguage: pair.$1,
+          targetLanguage: pair.$2,
+        );
+      } else {
+        await controller.translateRecording(
+          widget.reference,
+          sourceLanguage: pair.$1,
+          targetLanguage: pair.$2,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _translating = false);
     }
     if (mounted &&
         controller.recordingView(widget.reference).translation != null) {
       setState(() => _showTranslation = true);
     }
+  }
+
+  Widget _translationNotice(
+    RecorderController c,
+    RecordingViewData recording, {
+    required bool aligned,
+    required bool playable,
+    required bool canRealign,
+    required bool canTranslate,
+  }) {
+    final translation = recording.translation!;
+    final pair =
+        '${_languageName(c, translation.sourceLanguage)} → '
+        '${_languageName(c, translation.targetLanguage)}';
+    final retranslate = canTranslate ? () => _translate(recording) : null;
+    if (recording.translationStale) {
+      return _TranslationNotice(
+        key: const ValueKey('translation-stale-notice'),
+        message: '$pair · 原文改过了，这是按旧版原文翻译的，不能对应到现在的句子回听。',
+        actionLabel: '重新翻译',
+        onAction: retranslate,
+      );
+    }
+    if (playable) {
+      return _TranslationNotice(
+        key: const ValueKey('translation-aligned-notice'),
+        message: '$pair · 点译文回听对应原声。播放的是原始录音，不是译文朗读。',
+      );
+    }
+    if (aligned) {
+      return _TranslationNotice(
+        key: const ValueKey('translation-no-audio-notice'),
+        message: '$pair · 原录音现在无法逐句定位，译文只能阅读。',
+      );
+    }
+    return _TranslationNotice(
+      key: const ValueKey('translation-unaligned-notice'),
+      message: '$pair · 这份译文没有和原文句子对齐，只能阅读，不能点译文回听原声。',
+      actionLabel: canRealign ? '重新翻译' : null,
+      onAction: canRealign ? retranslate : null,
+    );
+  }
+
+  String _languageName(RecorderController c, String code) {
+    final normalized = code.toLowerCase();
+    for (final language in c.appleCapabilities.translationLanguages) {
+      if (language.code.toLowerCase() == normalized) return language.name;
+    }
+    return speechLanguageFor(code).name;
   }
 
   Future<void> _editTranscript(RecordingViewData recording) async {
@@ -1240,8 +1296,28 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           segmentText,
           duration: path == null ? null : c.localDurationForPath(path),
         );
+    // A translation maps back to audio only through the source sentence it
+    // was made from: same count, same order, and a source that has not
+    // changed since. Anything else is read-only; times are never derived
+    // from the translated text.
+    final translatedLines = recording.translation?.segments;
+    final translationAligned =
+        hasTranslation &&
+        !recording.translationStale &&
+        translatedLines != null &&
+        segmentText.isNotEmpty &&
+        translatedLines.length == segmentText.length;
+    final translationPlayable = translationAligned && segmentsLocatable;
+    final translationSegments = translationAligned
+        ? [
+            for (var i = 0; i < segmentText.length; i++)
+              segmentText[i].copyWith(text: translatedLines[i]),
+          ]
+        : const <TranscriptSegment>[];
     final followsPlayback =
-        !_showTranslation && segmentsLocatable && c.playingPath == path;
+        (!_showTranslation || translationPlayable) &&
+        segmentsLocatable &&
+        c.playingPath == path;
     final bookmarkTargets = _bookmarkTargets(
       c,
       recording,
@@ -1618,6 +1694,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 ),
               ),
               if (path != null) _OrganizeBanner(path: path),
+              if (_translating)
+                const _TranslationNotice(
+                  key: ValueKey('translation-progress-notice'),
+                  message: '正在翻译，原文不会改动。',
+                )
+              else if (_showTranslation && hasTranslation && !recording.live)
+                _translationNotice(
+                  c,
+                  recording,
+                  aligned: translationAligned,
+                  playable: translationPlayable,
+                  canRealign: segmentText.isNotEmpty,
+                  canTranslate: canOfferTranslation && canProcess,
+                ),
               if (!_showTranslation &&
                   recording.hasPendingTranscript &&
                   path != null)
@@ -1660,10 +1750,17 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                           highlightedParagraph: translation
                               ? null
                               : _highlightedParagraph,
-                          segments: translation || !segmentsLocatable
+                          segments: translation
+                              ? (translationPlayable
+                                    ? translationSegments
+                                    : const [])
+                              : !segmentsLocatable
                               ? const []
                               : segmentText,
-                          activeSegment: translation ? null : activeSegment,
+                          activeSegment: translation && !translationPlayable
+                              ? null
+                              : activeSegment,
+                          tapPlaysSource: translation,
                           bookmarkedSegments: translation || !showMarkers
                               ? const {}
                               : {
@@ -1671,12 +1768,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                                     if (target.segmentIndex != null)
                                       target.segmentIndex!,
                                 },
-                          speakerAliases: translation
-                              ? const {}
-                              : recording.path == null
+                          speakerAliases:
+                              (translation && !translationPlayable) ||
+                                  recording.path == null
                               ? const {}
                               : c.speakerAliasesForPath(recording.path!),
-                          onSegmentTap: translation || !segmentsLocatable
+                          onSegmentTap:
+                              (translation && !translationPlayable) ||
+                                  !segmentsLocatable
                               ? null
                               : (index) {
                                   final target = segmentText[index].start;
@@ -1986,6 +2085,50 @@ class _TranscriptTimingNotice extends StatelessWidget {
   }
 }
 
+/// State of the translation shown above the translated text: languages, and
+/// whether a translated sentence can play its source audio.
+class _TranslationNotice extends StatelessWidget {
+  const _TranslationNotice({
+    super.key,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.translate_rounded,
+            size: 16,
+            color: AppColors.textMuted,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          if (actionLabel != null)
+            TextButton(onPressed: onAction, child: Text(actionLabel!)),
+        ],
+      ),
+    );
+  }
+}
+
 /// Paragraphs are created lazily, with independent source/translation positions.
 class RecordingTextReader extends StatefulWidget {
   const RecordingTextReader({
@@ -2000,6 +2143,7 @@ class RecordingTextReader extends StatefulWidget {
     this.speakerAliases = const {},
     this.onSegmentTap,
     this.onSegmentSpeakerTap,
+    this.tapPlaysSource = false,
     this.header,
   });
   final String text;
@@ -2012,6 +2156,10 @@ class RecordingTextReader extends StatefulWidget {
   final Map<String, String> speakerAliases;
   final ValueChanged<int>? onSegmentTap;
   final ValueChanged<int>? onSegmentSpeakerTap;
+
+  /// The paragraphs are translations; a tap plays the source sentence's
+  /// original audio, which the tap label says.
+  final bool tapPlaysSource;
   final Widget? header;
 
   @override
@@ -2050,12 +2198,15 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
         !mapEquals(oldWidget.speakerAliases, widget.speakerAliases)) {
       _paragraphs = _contentTexts();
       _follow();
-    } else if (!oldWidget.visible && widget.visible) {
+    } else if (!oldWidget.visible && widget.visible && widget.live) {
+      // Timed text that comes back into view stays where it was read; it
+      // follows playback again from the next sentence on.
       _follow();
     }
     final target = widget.activeSegment ?? widget.highlightedParagraph;
     final previous = oldWidget.activeSegment ?? oldWidget.highlightedParagraph;
-    if (target != previous && target != null && _following) {
+    // A hidden reader keeps the position its reader left it at.
+    if (target != previous && target != null && _following && widget.visible) {
       _scrollToParagraph(target);
     }
   }
@@ -2274,7 +2425,7 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                   return Semantics(
                                     button: true,
                                     label:
-                                        '从 ${_formatSegmentTime(widget.segments[paragraphIndex].start)} 回听第 ${paragraphIndex + 1} 段',
+                                        '从 ${_formatSegmentTime(widget.segments[paragraphIndex].start)} 回听第 ${paragraphIndex + 1} 段${widget.tapPlaysSource ? '原声' : ''}',
                                     child: InkWell(
                                       onTap: () {
                                         setState(() => _following = true);

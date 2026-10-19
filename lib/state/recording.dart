@@ -196,6 +196,20 @@ bool transcriptSegmentsMatchText(
   return fromSegments.isNotEmpty && fromSegments == normalize(transcript);
 }
 
+/// Fingerprint of the visible source a translation was made from.
+///
+/// Whitespace is ignored so re-wrapping paragraphs does not mark a translation
+/// stale; any other change to the words does.
+String transcriptSourceDigest(String text) {
+  const prime = 0x100000001b3;
+  var hash = 0xcbf29ce484222325;
+  for (final unit in text.replaceAll(RegExp(r'\s+'), '').codeUnits) {
+    hash ^= unit;
+    hash *= prime;
+  }
+  return hash.toUnsigned(64).toRadixString(16);
+}
+
 class RecordingTranslation {
   const RecordingTranslation({
     required this.text,
@@ -203,6 +217,8 @@ class RecordingTranslation {
     required this.targetLanguage,
     required this.provider,
     required this.sourceRevision,
+    this.sourceDigest,
+    this.segments,
   });
 
   final String text;
@@ -211,12 +227,23 @@ class RecordingTranslation {
   final SttProvider provider;
   final int sourceRevision;
 
+  /// [transcriptSourceDigest] of the source text this was translated from.
+  /// Older translations have none and rely on [sourceRevision] alone.
+  final String? sourceDigest;
+
+  /// One translated text per source segment, in the same order, when the
+  /// translation was made sentence by sentence. Null means the translation
+  /// has no reliable mapping back to source sentences or their audio.
+  final List<String>? segments;
+
   Map<String, Object?> toJson() => {
     'text': text,
     'sourceLanguage': sourceLanguage,
     'targetLanguage': targetLanguage,
     'provider': provider.name,
     'sourceRevision': sourceRevision,
+    if (sourceDigest != null) 'sourceDigest': sourceDigest,
+    if (segments != null) 'segments': segments,
   };
 
   static RecordingTranslation? decode(Object? value) {
@@ -228,12 +255,23 @@ class RecordingTranslation {
       return null;
     }
     if ((value['text'] as String).trim().isEmpty) return null;
+    final rawSegments = value['segments'];
+    // A damaged mapping must not point at the wrong sentence: drop it and
+    // keep the translation readable only.
+    final segments =
+        rawSegments is List && rawSegments.every((s) => s is String)
+        ? List<String>.unmodifiable(rawSegments.cast<String>())
+        : null;
     return RecordingTranslation(
       text: value['text'] as String,
       sourceLanguage: value['sourceLanguage'] as String,
       targetLanguage: value['targetLanguage'] as String,
       provider: SttProvider.parse(value['provider']) ?? SttProvider.apple,
       sourceRevision: value['sourceRevision'] as int,
+      sourceDigest: value['sourceDigest'] is String
+          ? value['sourceDigest'] as String
+          : null,
+      segments: segments,
     );
   }
 }
@@ -245,6 +283,7 @@ class RecordingViewData {
     required this.text,
     this.path,
     this.translation,
+    this.translationStale = false,
     this.sourceLanguage,
     this.mode = SttDisplayMode.transcription,
     this.live = false,
@@ -273,6 +312,10 @@ class RecordingViewData {
   final String title;
   final String text;
   final RecordingTranslation? translation;
+
+  /// The source changed after [translation] was made: it is shown as an old
+  /// version and never mapped onto the current sentences.
+  final bool translationStale;
   final String? sourceLanguage;
   final SttDisplayMode mode;
   final bool live;

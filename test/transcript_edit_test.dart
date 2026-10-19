@@ -149,7 +149,7 @@ void main() {
     expect(shown[1].speakerChanged, isTrue);
   });
 
-  test('人工改字后旧译文失效，重转写与手改一致时清掉旧待采用稿', () async {
+  test('人工改字后旧译文标为过时，重转写与手改一致时清掉旧待采用稿', () async {
     const reference = RecordingReference(fileId: 128100, path: path);
     await TranscriptStore.save(
       byPath: const {path: '原始正文'},
@@ -175,7 +175,9 @@ void main() {
     expect(c.recordingView(reference).translation, isNotNull);
 
     await c.saveManualTranscript(path, '人工正文');
-    expect(c.recordingView(reference).translation, isNull);
+    // #147: the old translation stays readable but is marked out of date.
+    expect(c.recordingView(reference).translation?.text, 'Old translation');
+    expect(c.recordingView(reference).translationStale, isTrue);
 
     c.rememberTranscript(path, '另一版转写');
     expect(c.incomingTranscriptForPath(path), '另一版转写');
@@ -219,7 +221,7 @@ void main() {
     );
   });
 
-  test('手改正文后转写语言变化仍会作废旧译文', () async {
+  test('手改正文后转写语言变化仍会让旧译文过时', () async {
     await TranscriptStore.save(
       byPath: const {path: '人工正文'},
       byFileId: const {},
@@ -248,8 +250,8 @@ void main() {
     expect(
       c
           .recordingView(const RecordingReference(fileId: 128100, path: path))
-          .translation,
-      isNull,
+          .translationStale,
+      isTrue,
     );
   });
 
