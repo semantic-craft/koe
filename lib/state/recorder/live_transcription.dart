@@ -139,6 +139,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         targetLanguage: translated.targetLanguage,
         provider: translated.provider,
         sourceRevision: _transcriptMetadata[key]!.revision,
+        sourceDigest: transcriptSourceDigest(session.text),
       );
       unawaited(_persistTranscripts());
     }

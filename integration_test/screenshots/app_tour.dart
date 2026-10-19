@@ -15,6 +15,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/main.dart';
 import 'package:koe/protocol/models.dart';
@@ -44,6 +45,44 @@ class _Assistant implements AnalysisService {
   void dispose() {}
 }
 
+/// On-device translation stand-in: canned English for the sample sentences.
+class _Translator extends AppleSpeechService {
+  static const _english = {
+    '这周先把厨房的水电定下来。': 'Let’s settle the kitchen plumbing and wiring this week.',
+    '水电我周三能出图。': 'I can have the drawings ready on Wednesday.',
+    '瓷砖样品明天到。': 'The tile samples arrive tomorrow.',
+    '那我周四去看样品。': 'Then I’ll look at the samples on Thursday.',
+    '（听不清）': '(inaudible)',
+    '预算先按二十万算。': 'Let’s plan on a budget of 200,000 for now.',
+    '可以，超出的部分再商量。': 'Fine, we’ll discuss anything over that.',
+  };
+
+  @override
+  Future<AppleSpeechCapabilities> capabilities({
+    String? sourceLanguage,
+    String? targetLanguage,
+  }) async => _capabilities;
+
+  @override
+  Future<String> translate(
+    String text, {
+    required String sourceLanguage,
+    required String targetLanguage,
+  }) async =>
+      _english[text.trim()] ??
+      'We talked about moving over dinner with friends.';
+}
+
+const _capabilities = AppleSpeechCapabilities(
+  supported: true,
+  speechStatus: SpeechResourceStatus.ready,
+  translationStatus: SpeechResourceStatus.ready,
+  translationLanguages: [
+    SpeechLanguage(code: 'zh-Hans', name: '简体中文'),
+    SpeechLanguage(code: 'en-US', name: 'English'),
+  ],
+);
+
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -56,6 +95,7 @@ void main() {
       topicStore: topics,
       analysisController: RecordingAnalysis(inMemory: true),
       qwenSpeech: QwenSttService()..apiKeyOverride = 'tour-key',
+      appleSpeech: _Translator(),
       contextAnalysisService: _Assistant(),
       transcriptPersister: ({bool strict = false}) async {},
       libraryDirectory: Directory('${directory.path}/imports'),
@@ -175,7 +215,7 @@ void main() {
     await shot('04-library');
     await tester.tap(find.byKey(ValueKey('recording-row-$a')));
     await shot('05-recording-detail');
-    await tester.pageBack();
+    Navigator.of(tester.element(find.byType(RecordingDetailScreen))).pop();
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('nav-today')));
     await tester.pumpAndSettle();
@@ -238,6 +278,65 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('发言人'));
     await shot('14-speakers-no-transcript');
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
+
+    // #147: sentence-by-sentence translation of the meeting plays the
+    // source sentence's audio; edited source and unaligned text read only.
+    await c.stopPlayback();
+    c.appleCapabilities = _capabilities;
+    await c.translateRecording(
+      meetingRef,
+      sourceLanguage: 'zh-Hans',
+      targetLanguage: 'en-US',
+    );
+    Navigator.of(shell()).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingDetailScreen(reference: meetingRef),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('译文'));
+    await shot('15-translation-aligned');
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('translation-reader')),
+        matching: find.textContaining('samples on Thursday'),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await shot('16-translation-plays-source');
+    await c.stopPlayback();
+    await c.saveManualTranscript(
+      meeting,
+      c.recordingView(meetingRef).text.replaceFirst('周三', '周二'),
+    );
+    await shot('17-translation-stale');
+    Navigator.of(shell()).popUntil((route) => route.isFirst);
+    await tester.pumpAndSettle();
+    final dinnerAt = now.subtract(const Duration(minutes: 40));
+    final dinner =
+        '${directory.path}/${dinnerAt.millisecondsSinceEpoch ~/ 1000}.wav';
+    await File(dinner).writeAsBytes(_silentWav(const Duration(seconds: 20)));
+    c.exportedPaths.add(dinner);
+    c.rememberTranscript(dinner, '晚上和朋友吃饭，聊到搬家。');
+    final dinnerRef = RecordingReference(
+      fileId: dinnerAt.millisecondsSinceEpoch ~/ 1000,
+      path: dinner,
+    );
+    await c.translateRecording(
+      dinnerRef,
+      sourceLanguage: 'zh-Hans',
+      targetLanguage: 'en-US',
+    );
+    Navigator.of(shell()).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingDetailScreen(reference: dinnerRef),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('译文'));
+    await shot('18-translation-unaligned');
     Navigator.of(shell()).popUntil((route) => route.isFirst);
     await tester.pumpAndSettle();
 

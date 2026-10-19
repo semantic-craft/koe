@@ -643,11 +643,16 @@ class RecorderController extends ChangeNotifier
     final readingLive = current && (session.active || session.finalizing);
     final text = readingLive ? session.text : (stored ?? session?.text ?? '');
     final savedTranslation = _recordingTranslations[key];
-    final translated = readingLive
-        ? session.translation
-        : (savedTranslation?.sourceRevision == metadata?.revision
-              ? savedTranslation
-              : null);
+    final translated = readingLive ? session.translation : savedTranslation;
+    // An old translation stays readable after its source changes, marked as
+    // such, so the user can compare and regenerate it.
+    final translationStale =
+        !readingLive &&
+        savedTranslation != null &&
+        (metadata == null ||
+            savedTranslation.sourceRevision != metadata.revision ||
+            (savedTranslation.sourceDigest != null &&
+                savedTranslation.sourceDigest != transcriptSourceDigest(text)));
     final asset = path == null ? null : library.assetForPath(path);
     final archiveRecord = path == null ? null : archive.recordForPath(path);
     final title = path == null
@@ -673,6 +678,7 @@ class RecorderController extends ChangeNotifier
       title: title,
       text: text,
       translation: translated ?? (stored == null ? session?.translation : null),
+      translationStale: translated != null && translationStale,
       sourceLanguage:
           metadata?.sourceLanguage ?? session?.configuration.sourceLanguage,
       mode: session?.configuration.mode ?? SttDisplayMode.transcription,

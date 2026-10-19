@@ -49,6 +49,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     String? sourceLanguage,
     List<TranscriptSegment>? segments,
   });
+  Map<String, String> speakerAliasesForPath(String path);
   abstract SttProvider speechProvider;
   abstract String? statusMessage;
   abstract bool streamingSttActive;
@@ -499,15 +500,52 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         );
         if (_disposed || revision != _fileJobRevision) return;
       }
-      final translated = await _appleSpeech.translate(
-        view.text,
-        sourceLanguage: source,
-        targetLanguage: target,
-      );
+      // Sentence-timed text is translated sentence by sentence so each
+      // translated line keeps its source sentence and that sentence's audio.
+      // Without such a mapping the whole text is translated and stays
+      // read-only; no time is ever derived from the translated text.
+      final path = view.path;
+      final sourceSegments = view.segments;
+      final aligned =
+          path != null &&
+          transcriptSegmentsMatchText(
+            sourceSegments,
+            normalizeSttText(view.text),
+            aliases: speakerAliasesForPath(path),
+          );
+      final String translated;
+      List<String>? translatedSegments;
+      if (aligned) {
+        translatedSegments = [];
+        for (final segment in sourceSegments) {
+          if (_disposed || revision != _fileJobRevision) return;
+          final line = segment.text.trim();
+          translatedSegments.add(
+            line.isEmpty
+                ? ''
+                : (await _appleSpeech.translate(
+                    line,
+                    sourceLanguage: source,
+                    targetLanguage: target,
+                  )).trim(),
+          );
+        }
+        translated = translatedSegments
+            .where((line) => line.isNotEmpty)
+            .join('\n\n');
+      } else {
+        translated = await _appleSpeech.translate(
+          view.text,
+          sourceLanguage: source,
+          targetLanguage: target,
+        );
+      }
       if (_disposed ||
           revision != _fileJobRevision ||
           sourceRevision != (_transcriptMetadata[key]?.revision ?? 0) ||
-          recordingView(ref).text != view.text) {
+          recordingView(ref).text != view.text ||
+          (aligned &&
+              !listEquals(recordingView(ref).segments, sourceSegments))) {
         return;
       }
       if (translated.trim().isEmpty) throw StateError('empty_translation');
@@ -525,12 +563,16 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         targetLanguage: target,
         provider: SttProvider.apple,
         sourceRevision: sourceRevision,
+        sourceDigest: transcriptSourceDigest(view.text),
+        segments: translatedSegments == null
+            ? null
+            : List<String>.unmodifiable(translatedSegments),
       );
       _sessionForReference(ref)?.error = null;
       await _persistTranscripts();
     } catch (error) {
       if (!_disposed && revision == _fileJobRevision) {
-        _recordingErrors[key] = _speechErrorMessage(error);
+        _recordingErrors[key] = '翻译失败，原文未改动：${_speechErrorMessage(error)}';
       }
     } finally {
       if (!_disposed && revision == _fileJobRevision) {

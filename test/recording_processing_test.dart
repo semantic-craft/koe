@@ -1196,7 +1196,7 @@ void main() async {
       await c.transcribeRecording(ref, sourceLanguage: 'zh-CN');
       expect(c.recordingView(ref).text, 'Apple result');
       expect(c.recordingView(ref).sourceLanguage, 'zh-CN');
-      expect(c.recordingView(ref).translation, isNull);
+      expect(c.recordingView(ref).translationStale, isTrue);
     },
   );
 
@@ -1255,8 +1255,9 @@ void main() async {
     final renamed = await c.renameLocalExport(file.path, 'Interview');
     expect(c.recordingView(ref).path, renamed);
     expect(c.recordingView(ref).translation?.text, '译文');
+    expect(c.recordingView(ref).translationStale, isFalse);
     c.rememberTranscript(renamed, 'New source');
-    expect(c.recordingView(ref).translation, isNull);
+    expect(c.recordingView(ref).translationStale, isTrue);
   });
 
   test(

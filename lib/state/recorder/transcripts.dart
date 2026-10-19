@@ -53,11 +53,9 @@ mixin _RecorderTranscripts on ChangeNotifier {
     for (final entry in saved.metadata.entries) {
       _transcriptMetadata.putIfAbsent(entry.key, () => entry.value);
     }
+    // Translations of an older source are kept and shown as out of date.
     for (final entry in saved.translations.entries) {
-      final metadata = _transcriptMetadata[entry.key];
-      if (metadata?.revision == entry.value.sourceRevision) {
-        _recordingTranslations.putIfAbsent(entry.key, () => entry.value);
-      }
+      _recordingTranslations.putIfAbsent(entry.key, () => entry.value);
     }
     for (final entry in saved.segments.entries) {
       _transcriptSegments.putIfAbsent(
@@ -133,7 +131,6 @@ mixin _RecorderTranscripts on ChangeNotifier {
             !listEquals(segments, _transcriptSegments[key] ?? const []))) {
       _segmentSpeakers.remove(key);
     }
-    if (visibleChanged) _recordingTranslations.remove(key);
     if (manual != null && t != manual) {
       _incomingTranscripts[key] = t;
     }
@@ -249,14 +246,13 @@ mixin _RecorderTranscripts on ChangeNotifier {
     final previousIncoming = _incomingTranscripts[key];
     final previousVisible = previousManual ?? provider ?? '';
     final visibleChanged = normalized != previousVisible;
-    final previousTranslation = _recordingTranslations[key];
     final adoptsProvider = provider == normalized && visibleChanged;
+    if (visibleChanged) _pinTranslationSource(key, previousVisible);
     final previousAliasesPath = speakerAliasesByPath[path];
     final fileId = fileIdFromPath(path);
     final previousAliasesId = fileId == null
         ? null
         : speakerAliasesByFileId[fileId];
-    if (visibleChanged) _recordingTranslations.remove(key);
     if (provider == normalized) {
       _manualTranscripts.remove(key);
       _incomingTranscripts.remove(key);
@@ -280,9 +276,6 @@ mixin _RecorderTranscripts on ChangeNotifier {
       } else {
         _incomingTranscripts[key] = previousIncoming;
       }
-      if (visibleChanged && previousTranslation != null) {
-        _recordingTranslations[key] = previousTranslation;
-      }
       if (adoptsProvider) {
         if (previousAliasesPath != null) {
           speakerAliasesByPath[path] = previousAliasesPath;
@@ -304,8 +297,28 @@ mixin _RecorderTranscripts on ChangeNotifier {
     return _manualTranscripts.containsKey(key);
   }
 
+  /// Manual edits keep the revision, so a translation saved before source
+  /// fingerprints existed is pinned to the text it was made from before that
+  /// text changes; it then reads as out of date instead of current.
+  void _pinTranslationSource(String key, String visibleText) {
+    final translation = _recordingTranslations[key];
+    if (translation == null || translation.sourceDigest != null) return;
+    _recordingTranslations[key] = RecordingTranslation(
+      text: translation.text,
+      sourceLanguage: translation.sourceLanguage,
+      targetLanguage: translation.targetLanguage,
+      provider: translation.provider,
+      sourceRevision: translation.sourceRevision,
+      sourceDigest: transcriptSourceDigest(visibleText),
+      segments: translation.segments,
+    );
+  }
+
   Future<void> discardManualTranscript(String path) async {
-    _manualTranscripts.remove(_recordingKey(path: path));
+    final key = _recordingKey(path: path);
+    final manual = _manualTranscripts[key];
+    if (manual != null) _pinTranslationSource(key, manual);
+    _manualTranscripts.remove(key);
     notifyListeners();
     await _persistTranscripts(strict: true);
   }
@@ -314,9 +327,9 @@ mixin _RecorderTranscripts on ChangeNotifier {
     final key = _recordingKey(path: path);
     final incoming = _incomingTranscripts.remove(key);
     if (incoming == null) return;
-    final previousManual = _manualTranscripts.remove(key);
     final previousText = transcriptsByPath[path];
-    final previousTranslation = _recordingTranslations.remove(key);
+    _pinTranslationSource(key, _manualTranscripts[key] ?? previousText ?? '');
+    final previousManual = _manualTranscripts.remove(key);
     final id = fileIdFromPath(path);
     final previousAliasesPath = speakerAliasesByPath.remove(path);
     final previousAliasesId = id == null
@@ -335,9 +348,6 @@ mixin _RecorderTranscripts on ChangeNotifier {
         transcriptsByPath.remove(path);
       } else {
         transcriptsByPath[path] = previousText;
-      }
-      if (previousTranslation != null) {
-        _recordingTranslations[key] = previousTranslation;
       }
       if (previousAliasesPath != null) {
         speakerAliasesByPath[path] = previousAliasesPath;
