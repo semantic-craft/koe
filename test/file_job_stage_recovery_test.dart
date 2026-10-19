@@ -11,6 +11,7 @@ import 'package:koe/state/recorder_controller.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'support/wav_fixture.dart';
+import 'support/temp_dir.dart';
 
 /// #10: every file-job stage (queued / upload / submit / poll / save) must
 /// fail visibly, keep the recording, and recover after a controller restart
@@ -31,9 +32,7 @@ void main() {
     // A finished WAV: retrieved audio must pass the #13 completeness check.
     await audio.writeAsBytes(wavBytes([1, 2, 3, 4]));
   });
-  tearDown(() async {
-    if (await dir.exists()) await dir.delete(recursive: true);
-  });
+  tearDown(() => deleteTemporaryDirectory(dir));
 
   /// Opens a controller over [journal] the way a relaunch would: the journal
   /// is read from disk and recoverable jobs are resumed automatically.
@@ -253,10 +252,8 @@ void main() {
     test('transcript store failure does not report success; restart saves the '
         'returned text without a second request', () async {
       final docs = await getApplicationDocumentsDirectory();
-      // A directory where the atomic temp file must go makes the write fail.
-      final blocker = Directory(
-        '${docs.path}/AnkerRecorder/transcripts.json.tmp',
-      );
+      // A directory where the transcript file must go makes the write fail.
+      final blocker = Directory('${docs.path}/AnkerRecorder/transcripts.json');
       await blocker.create(recursive: true);
       addTearDown(() async {
         if (await blocker.exists()) await blocker.delete(recursive: true);
