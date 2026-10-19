@@ -14,6 +14,7 @@ import 'listening_queue_screen.dart';
 import 'minutes_document_screen.dart';
 import 'new_recording_sheet.dart';
 import 'trash_screen.dart';
+import '../file_types.dart';
 
 /// Phone "Materials" section (#131).
 ///
@@ -264,8 +265,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _importText(BuildContext context) async {
     final controller = context.read<RecorderController>();
-    const group = XTypeGroup(label: '妙记文字', extensions: ['json', 'txt']);
-    final selected = await openFile(acceptedTypeGroups: const [group]);
+    final selected = await openFile(
+      acceptedTypeGroups: const [minutesTextFileTypes],
+    );
     if (selected == null || !context.mounted) return;
     try {
       final contents = await selected.readAsString();

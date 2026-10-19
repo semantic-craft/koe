@@ -61,6 +61,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Tests run the iOS picker's own filter validation (see file_types_test).
+  file_selector_ios: ^0.5.3
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
