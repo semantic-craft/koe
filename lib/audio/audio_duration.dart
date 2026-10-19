@@ -28,6 +28,10 @@ class AudioDuration {
           await input.setPosition(length - tailLength);
           return _oggDuration(Uint8List.fromList(await input.read(tailLength)));
         }
+        if (header.length >= 8 &&
+            String.fromCharCodes(header, 4, 8) == 'ftyp') {
+          return await _mp4Duration(input, length);
+        }
         if (path.endsWith('.opus') || path.endsWith('.opus.bin')) {
           final frames = (length + OggOpus.frameSize - 1) ~/ OggOpus.frameSize;
           return Duration(milliseconds: frames * 20);
@@ -72,6 +76,70 @@ class AudioDuration {
       offset = body + size + (size.isOdd ? 1 : 0);
     }
     return null;
+  }
+
+  /// MPEG-4 audio (m4a/mp4/mov): `moov/mvhd` holds the timescale and length.
+  /// Read here because a second player cannot probe while background audio
+  /// owns the only one on iPhone.
+  static Future<Duration?> _mp4Duration(
+    RandomAccessFile input,
+    int fileLength,
+  ) async {
+    Future<(String, int, int)?> atomAt(int offset, int end) async {
+      if (offset + 8 > end) return null;
+      await input.setPosition(offset);
+      final head = ByteData.sublistView(
+        Uint8List.fromList(await input.read(16)),
+      );
+      if (head.lengthInBytes < 8) return null;
+      var size = head.getUint32(0);
+      final type = String.fromCharCodes(
+        List.generate(4, (i) => head.getUint8(4 + i)),
+      );
+      var bodyStart = offset + 8;
+      if (size == 1) {
+        if (head.lengthInBytes < 16) return null;
+        size = head.getUint64(8);
+        bodyStart = offset + 16;
+      } else if (size == 0) {
+        size = end - offset;
+      }
+      if (size < 8 || offset + size > end) return null;
+      return (type, bodyStart, offset + size);
+    }
+
+    Future<(int, int)?> find(String type, int start, int end) async {
+      var offset = start;
+      while (true) {
+        final atom = await atomAt(offset, end);
+        if (atom == null) return null;
+        if (atom.$1 == type) return (atom.$2, atom.$3);
+        offset = atom.$3;
+      }
+    }
+
+    final moov = await find('moov', 0, fileLength);
+    if (moov == null) return null;
+    final mvhd = await find('mvhd', moov.$1, moov.$2);
+    if (mvhd == null) return null;
+    await input.setPosition(mvhd.$1);
+    final body = ByteData.sublistView(Uint8List.fromList(await input.read(32)));
+    if (body.lengthInBytes < 20) return null;
+    final int timescale;
+    final int units;
+    if (body.getUint8(0) == 1) {
+      if (body.lengthInBytes < 32) return null;
+      timescale = body.getUint32(20);
+      units = body.getUint64(24);
+    } else {
+      timescale = body.getUint32(12);
+      units = body.getUint32(16);
+    }
+    if (timescale <= 0 || units <= 0) return null;
+    return Duration(
+      microseconds: (units * Duration.microsecondsPerSecond / timescale)
+          .round(),
+    );
   }
 
   static Duration? _oggDuration(Uint8List tail) {

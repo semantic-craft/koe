@@ -47,6 +47,33 @@ void main() {
     },
   );
 
+  test('reads duration of an m4a from its movie header', () async {
+    // On iPhone the fallback player probe cannot run next to background
+    // audio, so a 妙记 m4a showed 「无法读取音频时长，未建立配对」.
+    Uint8List atom(String type, List<int> body) {
+      final size = ByteData(4)..setUint32(0, 8 + body.length);
+      return Uint8List.fromList([
+        ...size.buffer.asUint8List(),
+        ...type.codeUnits,
+        ...body,
+      ]);
+    }
+
+    final mvhd = ByteData(100)
+      ..setUint32(12, 44100)
+      ..setUint32(16, 44100 * 33);
+    final bytes = [
+      ...atom('ftyp', 'M4A isomiso2'.codeUnits),
+      ...atom('free', [0, 0, 0, 0]),
+      ...atom('moov', atom('mvhd', mvhd.buffer.asUint8List())),
+      ...atom('mdat', List.filled(64, 0)),
+    ];
+    final file = File('${directory.path}/miaoji.m4a');
+    await file.writeAsBytes(bytes);
+
+    expect(await AudioDuration.read(file.path), const Duration(seconds: 33));
+  });
+
   test('estimates duration from raw Opus frame count', () async {
     final file = File('${directory.path}/1.opus');
     await file.writeAsBytes(Uint8List(OggOpus.frameSize * 10));
