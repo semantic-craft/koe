@@ -16,11 +16,7 @@ void main() {
     final install = File('scripts/install-macos.sh').readAsStringSync();
     final shortcut = File('ios/Runner/RecordingShortcut.swift').readAsStringSync();
 
-    const fullName = 'Koe — 安克录音豆录音与转写工具';
-    final heading = readme
-        .split('\n')
-        .firstWhere((line) => line.startsWith('# '));
-    expect(heading, '# $fullName');
+    expect(readme, contains('<h1 align="center">Koe</h1>'));
 
     final dmgName = RegExp(r'dist/koe-<version>-macos\.dmg')
         .firstMatch(dmg)!

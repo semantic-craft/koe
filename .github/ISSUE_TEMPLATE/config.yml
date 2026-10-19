@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题 / Security vulnerability
+    url: https://github.com/semantic-craft/koe/security/advisories/new
+    about: 私下报告，不要开公开 Issue / Report privately, not in a public issue

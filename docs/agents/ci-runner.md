@@ -20,6 +20,6 @@ CI（[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）只在带 `sel
 ## 注意
 
 - **Mac 要开着、联网、已登录**，CI 才会跑；关机时任务会排队等待。
-- **PR 的代码会以你的用户身份在这台 Mac 上执行。** 仓库保持私有、只接受自己和受信 agent 的 PR；workflow 不读任何密钥。开发构建默认隔离 Keychain（见 [lessons](../../lessons.md)），测试不会读个人凭据。
+- **PR 的代码会以你的用户身份在这台 Mac 上执行。** 仓库保持私有、只接受自己和受信 agent 的 PR；workflow 不读任何密钥。开发构建默认隔离 Keychain（见 [CONTRIBUTING](../../CONTRIBUTING.md) 规则 3），测试不会读个人凭据。
 - 账单：自托管运行机不消耗托管分钟。如果 GitHub 仍以「付款失败 / 支出上限」拒绝任务，去 <https://github.com/settings/billing> 处理付款状态；支出上限保持 $0 就不会产生托管机器费用。
 - 停用：`cd ~/actions-runner && ./svc.sh stop && ./svc.sh uninstall`，再在 Runners 页面删掉这台运行机。

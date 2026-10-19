@@ -1,0 +1,66 @@
+name: 问题报告 / Bug report
+description: Koe 出现了不符合预期的行为
+labels: [needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **不要贴任何 API Key、token 或配对信息。** 安全问题请按 SECURITY.md 私下报告。
+        Never paste API keys, tokens or pairing info. Report security issues privately (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 你做了什么、看到了什么、期望看到什么
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 打开 …
+        2. 点 …
+        3. 看到 …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Koe 版本或提交 / Version or commit
+      placeholder: 1.2.0+3 或 commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台 / Platform
+      options:
+        - iOS
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: 系统与设备 / OS and device
+      placeholder: iOS 26.1, iPhone 16 Pro
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及部分 / Area
+      multiple: true
+      options:
+        - 录音豆连接与取回 / Recorder connection and pull
+        - 转写（Apple / 千问 / 豆包）/ Transcription
+        - 回听与校订 / Playback and correction
+        - 今日·项目·待办 / Today, projects, to-dos
+        - 日记·问 Koe·晨报 / Diary, Ask Koe, brief
+        - 导出与资料包 / Export and material packs
+        - Mac 归档 / Mac archive
+        - 其他 / Other
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图 / Logs or screenshots
+      description: 先删掉 Key、token、真实地点和他人信息 / Remove keys, tokens, real places and other people's data first
