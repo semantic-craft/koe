@@ -9,6 +9,7 @@ import '../widgets/mobile_header.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/widgets.dart';
 import 'new_recording_sheet.dart';
+import 'todos_screen.dart';
 import 'topics_screen.dart';
 
 /// Phone "Today" section (#131).
@@ -96,8 +97,9 @@ class TodayScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 22),
                 const SectionLabel('下一步行动'),
-                _NextActionCard(
-                  pending: pending,
+                _ActionsSection(
+                  today: today,
+                  pendingTopics: pending,
                   onOpenProjects: () =>
                       RecordingNavigation.of(context)?.onSelectTab?.call(1),
                 ),
@@ -319,53 +321,184 @@ class _DeviceStatusCard extends StatelessWidget {
   }
 }
 
-class _NextActionCard extends StatelessWidget {
-  const _NextActionCard({required this.pending, required this.onOpenProjects});
+/// My open todos with completion controls, unclear sentences waiting for
+/// the user, and an on-demand extraction from today's transcripts.
+class _ActionsSection extends StatefulWidget {
+  const _ActionsSection({
+    required this.today,
+    required this.pendingTopics,
+    required this.onOpenProjects,
+  });
 
-  final int pending;
+  final List<ContextItem> today;
+  final int pendingTopics;
   final VoidCallback onOpenProjects;
 
   @override
-  Widget build(BuildContext context) {
-    return SurfaceCard(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      child: Row(
-        children: [
-          Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: AppColors.borderStrong),
-            ),
+  State<_ActionsSection> createState() => _ActionsSectionState();
+}
+
+class _ActionsSectionState extends State<_ActionsSection> {
+  bool _extracting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    context.read<RecorderController>().syncSystemLinks();
+  }
+
+  Future<void> _extract() async {
+    final c = context.read<RecorderController>();
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _extracting = true);
+    var added = 0;
+    String? problem;
+    try {
+      for (final item in widget.today) {
+        final ref = c.contextReference(item);
+        final path = ref?.path;
+        if (ref == null || path == null) continue;
+        if ((c.transcriptForPath(path) ?? '').trim().isEmpty) continue;
+        var retry = false;
+        if (c.todoExtractionUnknown(ref)) {
+          retry = await _confirmRetry(item.title);
+          if (!retry) continue;
+        }
+        try {
+          added += await c.extractTodos(ref, confirmRetry: retry);
+        } on StateError catch (error) {
+          problem = error.message.toString();
+        } catch (_) {
+          problem = '「${item.title}」提取失败，可稍后重试';
+        }
+        if (!mounted) return;
+      }
+    } finally {
+      if (mounted) setState(() => _extracting = false);
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(problem ?? (added == 0 ? '没有发现新的承诺' : '新增 $added 条待办')),
+      ),
+    );
+  }
+
+  Future<bool> _confirmRetry(String title) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('上次提取结果未知'),
+        content: Text('「$title」上次提取没有返回结果，可能已经计费。确认重新提取？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('跳过'),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  pending > 0 ? '$pending 条录音待归类' : '还没有下一步行动',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  pending > 0 ? '把它们放进主题，之后更容易找回原话。' : '行动与待办将在后续版本开放。',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('重新提取'),
           ),
-          if (pending > 0)
-            TextButton(
-              onPressed: onOpenProjects,
-              style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-              child: const Text('处理'),
-            ),
         ],
+      ),
+    );
+    return ok == true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.watch<RecorderController>();
+    final mine = c.todos.openMine;
+    final asks = c.todos.clarifications.length;
+    final canExtract = widget.today.any((item) {
+      final path = c.contextReference(item)?.path;
+      return path != null &&
+          (c.transcriptForPath(path) ?? '').trim().isNotEmpty;
+    });
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (mine.isEmpty)
+          const SurfaceCard(
+            key: ValueKey('today-no-todos'),
+            padding: EdgeInsets.fromLTRB(14, 12, 14, 12),
+            child: Text(
+              '还没有待办。转写后点「提取待办」，Koe 只会记下你明确答应要做的事。',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+          )
+        else
+          for (final todo in mine.take(5)) TodoRow(todo: todo),
+        if (asks > 0)
+          _ActionLink(
+            label: '$asks 条需要确认是哪件事',
+            action: '处理',
+            onTap: () => openTodos(context),
+          ),
+        if (widget.pendingTopics > 0)
+          _ActionLink(
+            label: '${widget.pendingTopics} 条录音待归类',
+            action: '处理',
+            onTap: widget.onOpenProjects,
+          ),
+        Wrap(
+          spacing: 8,
+          children: [
+            if (canExtract)
+              TextButton.icon(
+                key: const ValueKey('today-extract-todos'),
+                onPressed: _extracting ? null : _extract,
+                icon: _extracting
+                    ? const SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.auto_awesome_outlined, size: 18),
+                label: Text(_extracting ? '提取中…' : '提取待办'),
+              ),
+            TextButton(
+              key: const ValueKey('today-all-todos'),
+              onPressed: () => openTodos(context),
+              child: const Text('全部待办'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ActionLink extends StatelessWidget {
+  const _ActionLink({
+    required this.label,
+    required this.action,
+    required this.onTap,
+  });
+
+  final String label;
+  final String action;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: SurfaceCard(
+        padding: const EdgeInsets.fromLTRB(14, 4, 8, 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            TextButton(
+              onPressed: onTap,
+              style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+              child: Text(action),
+            ),
+          ],
+        ),
       ),
     );
   }

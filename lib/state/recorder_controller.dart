@@ -36,12 +36,15 @@ import '../ble/realtime_stream.dart';
 import '../crypto/device_crypto.dart';
 import '../platform/background_sync_service.dart';
 import '../platform/place_capture.dart';
+import '../platform/system_tasks.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
 import '../wifi/wifi_export_service.dart';
 import 'app_settings_store.dart';
+import 'context/commitments.dart';
 import 'context/context_store.dart';
+import 'context/todo_store.dart';
 import 'device_store.dart';
 import 'export_catalog.dart';
 import 'transcript_store.dart';
@@ -60,6 +63,8 @@ import 'topic_note.dart';
 import 'topic_summary.dart';
 
 export 'context/context_store.dart';
+export 'context/todo_store.dart';
+export '../platform/system_tasks.dart';
 export 'recording.dart';
 export 'recording_library.dart';
 export 'listening_queue.dart';
@@ -77,6 +82,7 @@ part 'recorder/playback.dart';
 part 'recorder/library.dart';
 part 'recorder/place.dart';
 part 'recorder/context.dart';
+part 'recorder/todos.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
@@ -115,6 +121,7 @@ class RecorderController extends ChangeNotifier
         _RecorderLibrary,
         _RecorderPlace,
         _RecorderContext,
+        _RecorderTodos,
         _RecorderArchive,
         _RecorderTopics,
         _RecorderTranscriptionJobs,
@@ -199,6 +206,9 @@ class RecorderController extends ChangeNotifier
     ArchivePhoneStore? archivePhoneStore,
     ArchiveDeskStore? archiveDeskStore,
     ContextStore? contextStore,
+    TodoStore? todoStore,
+    SystemTasks? systemTasks,
+    AnalysisService? contextAnalysisService,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled =
@@ -243,6 +253,17 @@ class RecorderController extends ChangeNotifier
     contextItems = contextStore ?? ContextStore(inMemory: !loadPersistedState);
     contextItems.addListener(notifyListeners);
     unawaited(contextItems.load());
+    _contextServiceOverride = contextAnalysisService;
+    _ownsTodos = todoStore == null;
+    todos = todoStore ?? TodoStore(inMemory: !loadPersistedState);
+    todos.addListener(notifyListeners);
+    unawaited(todos.load());
+    _systemTasks = systemTasks ?? const ChannelSystemTasks();
+    if (loadPersistedState) {
+      _todoLifecycle = AppLifecycleListener(
+        onResume: () => unawaited(syncSystemLinks()),
+      );
+    }
     minutes =
         minutesStore ?? MinutesDocumentStore(inMemory: !loadPersistedState);
     _minutesLoaded = _loadMinutesDocuments();
@@ -449,6 +470,8 @@ class RecorderController extends ChangeNotifier
   }
 
   bool _ownsContextItems = true;
+  bool _ownsTodos = true;
+  AppLifecycleListener? _todoLifecycle;
 
   /// Whether topic notes (#49) are active. First version: iPhone only.
   @override
@@ -800,6 +823,10 @@ class RecorderController extends ChangeNotifier
     if (_ownsArchive) archive.dispose();
     contextItems.removeListener(notifyListeners);
     if (_ownsContextItems) contextItems.dispose();
+    todos.removeListener(notifyListeners);
+    if (_ownsTodos) todos.dispose();
+    _todoLifecycle?.dispose();
+    _disposeContextServices();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();

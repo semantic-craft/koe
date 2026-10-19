@@ -16,9 +16,35 @@ mixin _RecorderContext on ChangeNotifier {
   RecordingViewData recordingView(RecordingReference ref);
   abstract final TopicStore topics;
   abstract final bool topicsEnabled;
+  abstract final QwenSttService _qwenStt;
   // END DEPS
 
   late final ContextStore contextItems;
+
+  /// Test seam: one fake answers every personal-context prompt.
+  late final AnalysisService? _contextServiceOverride;
+  final Map<String, AnalysisService> _contextServices = {};
+
+  /// The existing Qwen chat path, with the system prompt of one feature.
+  /// Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  AnalysisService _contextService(String systemPrompt) =>
+      _contextServiceOverride ??
+      _contextServices.putIfAbsent(
+        systemPrompt,
+        () => QwenAnalysisService(
+          origin: () => _qwenStt.baseUrl,
+          systemPrompt: systemPrompt,
+          instructionLabel: '要求',
+          sourceLabel: '资料',
+        ),
+      );
+
+  void _disposeContextServices() {
+    for (final service in _contextServices.values) {
+      service.dispose();
+    }
+  }
 
   static String contextIdForRecording(String recordingKey) =>
       'recording:$recordingKey';
@@ -43,7 +69,12 @@ mixin _RecorderContext on ChangeNotifier {
   /// The recording an item points at, resolved to its current path.
   RecordingReference? contextReference(ContextItem item) {
     final source = item.source;
-    if (source == null) return null;
+    return source == null ? null : referenceForSource(source);
+  }
+
+  /// The recording a source points at, resolved to its current path (the
+  /// stored path is only a hint and may predate a rename).
+  RecordingReference? referenceForSource(ContextSource source) {
     final key = source.recordingKey;
     if (key.startsWith('file:')) {
       final id = int.tryParse(key.substring(5));
