@@ -810,19 +810,10 @@ class _LocalExportCard extends StatelessWidget {
         c.recordingAssetForPath(path)?.source ?? RecordingSource.device;
     final originalPresent = recording.originalPresent;
     final organize = c.organizeStatusFor(path);
-    final status = recording.paused
-        ? '已暂停'
-        : recording.audioLocked
-        ? (recording.live ? '录音中' : '正在保存')
-        : organize.stage != OrganizeStage.none
-        ? organize.label
-        : recording.processing
-        ? '处理中'
-        : recording.error != null
-        ? '处理失败'
-        : text.isNotEmpty
-        ? '已转写'
-        : null;
+    final status = recording.statusLabel(
+      organizing: organize.stage != OrganizeStage.none ? organize.label : null,
+      hasText: text.isNotEmpty,
+    );
     return Semantics(
       button: !selecting,
       child: Material(
