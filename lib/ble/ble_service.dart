@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
+import '../protocol/slice_marks.dart';
 import 'advertisement.dart';
 import 'uuids.dart';
 
@@ -583,6 +584,7 @@ class BleService {
         if (++_audioSlicesSeen % _audioSliceLogInterval == 0) {
           _log('RX $_audioSlicesSeen audio slices');
         }
+        _sliceMarks.inspect(p).forEach(_log);
       } else {
         _log('RX $p  ${p.raw.toHex()}');
       }
@@ -591,6 +593,7 @@ class BleService {
   }
 
   static const _audioSliceLogInterval = 500;
+  final _sliceMarks = SliceMarkProbe();
   int _audioSlicesSeen = 0;
 
   /// File-transfer and live audio slices (the high-rate packets).
