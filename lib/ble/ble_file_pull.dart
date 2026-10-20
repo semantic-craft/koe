@@ -9,6 +9,7 @@ import '../audio/retrieved_audio.dart';
 import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
+import '../protocol/slice_marks.dart';
 import '../protocol/models.dart';
 
 class BleFilePullCancelled implements Exception {
@@ -69,6 +70,8 @@ class BleFilePull {
     // Maximum time without a file packet, not a cap on total transfer time.
     Duration timeout = const Duration(seconds: 90),
     void Function(int received, int expected)? onProgress,
+    // Slices the user marked on the bean by double-tapping, by sequence.
+    void Function(int sequence)? onMark,
     // Protocol `already_transferred_size`: a byte offset into the device's
     // slice record stream, so resuming after N slices is
     // [sliceRecordBytes] × N (PROTOCOL.md, #218). The app passes 0.
@@ -125,6 +128,7 @@ class BleFilePull {
           sink,
           fileId: fileIdStr,
           decrypt: decryptOn,
+          onMark: onMark,
         );
         onProgress?.call(received, expected);
         return;
@@ -218,18 +222,21 @@ class BleFilePull {
     IOSink sink, {
     required String fileId,
     required bool decrypt,
+    void Function(int sequence)? onMark,
   }) {
     var written = 0;
     var i = 9;
     while (frame.length - i >= 165) {
       final seq = readU32Le(frame, i);
       i += 4;
-      i += 1; // flags
+      final flags = frame[i];
+      i += 1;
       final dataEnd = i + 160;
       if (dataEnd > frame.length) break;
       var chunk = Uint8List.fromList(frame.sublist(i, dataEnd));
       i = dataEnd;
       if (i < frame.length) i += 1;
+      if (SliceMark.isMark(flags)) onMark?.call(seq);
 
       if (decrypt) {
         final plain = crypto.decryptChunk(

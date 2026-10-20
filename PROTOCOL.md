@@ -261,6 +261,8 @@ When `realtimeFlag == 1`, transfer prefers non-SPP path (`preferSpp=false`).
 
 **`already_transferred_size` is a byte offset into the slice record stream (observed from a Mac on 2026-10-19).** Each slice record is 166 bytes: `u32 LE sequence`, 1 flag byte, 160 audio bytes, 1 separator. Resuming after N slices means sending `166 × N`; the recorder then starts at sequence N, and the decrypted audio equals bytes `160 × N…` of a full pull. Offsets in 160- or 165-byte units land mid-record: slices arrive misaligned and their sequences decode as garbage. Evidence: a one-off probe from a Mac (#247, since removed) on a real soundcore Work, file 1792377669 (1 047 680 audio bytes): offset 16 600 → first sequence 100, audio matches from byte 16 000; offsets 16 000 and 16 500 → misaligned. Not yet confirmed from the iPhone app (#218).
 
+**The flag byte carries the double-tap mark (observed from a Mac on 2026-10-20, #325).** Double-tapping the bean's mic while it records sets the flag byte of the slice recorded at that moment to `0x01`; the next slice is back to `0x00`. No other packet accompanies it, and it rides in ordinary `0x08` slices, not `0x12`. Each slice holds 20 ms of audio, so the mark sits at `sequence × 20 ms` into the file. Evidence: a debug build on a Mac with a real soundcore Work; regular double taps about 2.3 s apart showed as flagged sequences 1400, 1517, 1630, 1744 (gaps 117, 113, 114 slices), and the user confirmed the taps. Koe saves each mark as a bookmark on the retrieved recording and, during all-day listening, marks the sentence being spoken.
+
 **RX (type 0x1A) — `FileTransportDispatch` / `AudioMessageDispatch`:**
 
 | cmdId | Meaning |

@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
+import '../protocol/slice_marks.dart';
 
 /// Live status of Feishu-style realtime BLE transfer (`1A07` realtimeFlag=1).
 class RealtimeStreamState {
@@ -53,6 +54,7 @@ class RealtimeBleStream {
     required this.write,
     required this.crypto,
     this.onDecryptedFrame,
+    this.onMark,
     this.idleFinalizeDelay = const Duration(seconds: 2),
   });
 
@@ -62,6 +64,9 @@ class RealtimeBleStream {
 
   /// Invoked for each decrypted 160-B Opus frame (realtime ASR hook).
   final void Function(Uint8List frame)? onDecryptedFrame;
+
+  /// Invoked for each slice the user marked by double-tapping the bean.
+  final void Function(int fileId, int sequence)? onMark;
 
   /// Quiet time after the last slice before a paused/stopped take is saved.
   final Duration idleFinalizeDelay;
@@ -231,12 +236,14 @@ class RealtimeBleStream {
     while (frame.length - i >= 165) {
       final seq = readU32Le(frame, i);
       i += 4;
-      i += 1; // flags
+      final flags = frame[i];
+      i += 1;
       final dataEnd = i + 160;
       if (dataEnd > frame.length) break;
       var chunk = Uint8List.fromList(frame.sublist(i, dataEnd));
       i = dataEnd;
       if (i < frame.length) i += 1;
+      if (SliceMark.isMark(flags)) onMark?.call(fileId, seq);
 
       if (_decryptOn) {
         final plain = crypto.decryptChunk(

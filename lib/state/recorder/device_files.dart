@@ -61,6 +61,15 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   abstract List<OfflineFileEntry> files;
   abstract DeviceInfoModel? info;
   String? localPathFor(int fileId);
+  bool get textCaptureFromDevice;
+  bool markTextCaptureHighlight();
+  List<RecordingBookmark> bookmarksFor(RecordingReference ref);
+  Future<RecordingBookmark> addBookmark(
+    RecordingReference ref, {
+    required Duration position,
+    TranscriptSegment? segment,
+    String note,
+  });
   abstract List<String> logs;
   abstract AppPhase phase;
   abstract RealtimeStreamState realtimeState;
@@ -435,6 +444,51 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       owner.error = '无法保存转写任务，请在录音详情中重试';
       notifyListeners();
     }
+  }
+
+  /// Double-tap marks seen per device file, by slice sequence, until they
+  /// are saved as bookmarks on the local copy.
+  final Map<int, Set<int>> _deviceMarks = {};
+
+  void _onDeviceMark(int fileId, int sequence, {required bool live}) {
+    (_deviceMarks[fileId] ??= <int>{}).add(sequence);
+    // During all-day listening the tap marks what is being said (#319).
+    if (live && textCaptureFromDevice) markTextCaptureHighlight();
+  }
+
+  /// Saves the marks of [fileId] as bookmarks once its local copy is
+  /// complete. A mark next to an existing bookmark is not doubled, so a
+  /// second retrieval of the same file adds nothing.
+  Future<void> _applyDeviceMarks(int fileId) async {
+    final pending = _deviceMarks[fileId];
+    if (pending == null || pending.isEmpty) return;
+    final path = localPathFor(fileId);
+    if (path == null || !File(path).existsSync()) return;
+    final key = _recordingKey(fileId: fileId, path: path);
+    if (!_copies.usableForProcessing(
+      fileId: fileId,
+      path: path,
+      recordingKey: key,
+    )) {
+      return;
+    }
+    final ref = RecordingReference(fileId: fileId, path: path);
+    for (final sequence in pending.toList()..sort()) {
+      final at = SliceMark.position(sequence);
+      final near = bookmarksFor(
+        ref,
+      ).any((b) => (b.position - at).abs() < const Duration(milliseconds: 500));
+      if (!near) {
+        try {
+          await addBookmark(ref, position: at, note: SliceMark.bookmarkNote);
+        } catch (e) {
+          debugPrint('[DeviceMarks] $fileId: $e');
+          return;
+        }
+      }
+      pending.remove(sequence);
+    }
+    _deviceMarks.remove(fileId);
   }
 
   bool _autoTransferRunning = false;
@@ -831,6 +885,8 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
             final rawPath = await _blePull.pullFile(
               file,
               timeout: blePullInactivityTimeout,
+              onMark: (sequence) =>
+                  _onDeviceMark(file.fileId, sequence, live: false),
               onProgress: (received, expected) {
                 if (_shouldYieldAutoTransfer) return;
                 final now = DateTime.now();
@@ -853,6 +909,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
               listedSizes: {file.fileId: file.sizeBytes},
             );
           });
+          await _applyDeviceMarks(file.fileId);
           // A partial file is kept but not reported as transferred.
           if (!_copies.isPartial(file.fileId)) {
             completeIds.add(file.fileId);
@@ -957,6 +1014,8 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         final rawPath = await _blePull.pullFile(
           file,
           timeout: blePullInactivityTimeout,
+          onMark: (sequence) =>
+              _onDeviceMark(file.fileId, sequence, live: false),
           onProgress: (received, expected) {
             final now = DateTime.now();
             if (now.difference(lastProgressAt) <
@@ -978,6 +1037,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
           listedSizes: {file.fileId: file.sizeBytes},
         );
       });
+      await _applyDeviceMarks(file.fileId);
       statusMessage = '已下载 ${file.title}';
     } on BleFilePullCancelled {
       statusMessage = '已取消下载';
