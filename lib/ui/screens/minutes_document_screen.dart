@@ -8,6 +8,7 @@ import '../../state/minutes_document.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../file_types.dart';
+import '../widgets/highlight.dart';
 import 'recording_detail_screen.dart';
 
 /// Read-only 妙记 text import with an optional audio pairing.
@@ -179,6 +180,9 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
           final line = index - header.length;
           final segment = document.segments[line];
           return _SegmentRow(
+            key: segment.highlighted
+                ? ValueKey('minutes-highlight-$line')
+                : null,
             segment: segment,
             focused: focusValid && line == focus,
             showTime: document.timingReliable,
@@ -234,6 +238,7 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
 
 class _SegmentRow extends StatelessWidget {
   const _SegmentRow({
+    super.key,
     required this.segment,
     required this.showTime,
     this.focused = false,
@@ -247,6 +252,10 @@ class _SegmentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const base = TextStyle(fontSize: 15, height: 1.55);
+    final textStyle = segment.highlighted
+        ? base.merge(highlightTextStyle(context))
+        : base;
     final content = Container(
       padding: EdgeInsets.symmetric(vertical: 8, horizontal: focused ? 8 : 0),
       decoration: focused
@@ -258,9 +267,10 @@ class _SegmentRow extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showTime || segment.speaker != null)
+          if (showTime || segment.speaker != null || segment.highlighted)
             Text(
               [
+                if (segment.highlighted) '★ 重点',
                 if (showTime) _formatDuration(segment.start),
                 if (segment.speaker != null) segment.speaker!,
               ].join(' · '),
@@ -272,15 +282,9 @@ class _SegmentRow extends StatelessWidget {
             ),
           const SizedBox(height: 3),
           if (onTap == null)
-            SelectableText(
-              segment.text,
-              style: const TextStyle(fontSize: 15, height: 1.55),
-            )
+            SelectableText(segment.text, style: textStyle)
           else
-            Text(
-              segment.text,
-              style: const TextStyle(fontSize: 15, height: 1.55),
-            ),
+            Text(segment.text, style: textStyle),
         ],
       ),
     );

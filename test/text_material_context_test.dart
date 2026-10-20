@@ -150,4 +150,60 @@ void main() {
     expect(find.byKey(ValueKey('minutes-document-${note.id}')), findsOneWidget);
     expect(find.text('原录音已不在资料里（可能在回收站）'), findsNothing);
   });
+
+  testWidgets('marked sentences stand out in the text and on the timeline', (
+    tester,
+  ) async {
+    late RecorderController c;
+    final store = MinutesDocumentStore(inMemory: true);
+    final at = DateTime(2026, 10, 20, 9);
+    await tester.runAsync(() async {
+      await store.upsert(
+        MinutesDocument(
+          id: 'live-1',
+          title: '纯文字记录 10-20 09:00',
+          sourceName: '纯文字记录',
+          importedAt: at,
+          capturedAt: at,
+          segments: const [
+            MinutesSegment(text: '先说点闲话。', start: Duration.zero),
+            MinutesSegment(
+              text: '合同周五前要签。',
+              start: Duration.zero,
+              highlighted: true,
+            ),
+          ],
+          timingReliable: false,
+        ),
+      );
+      c = RecorderController(
+        loadPersistedState: false,
+        analysisController: RecordingAnalysis(inMemory: true),
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${directory.path}/imports'),
+        minutesStore: store,
+      );
+      await c.contextItems.load();
+    });
+    addTearDown(c.dispose);
+    final item = c.contextItemsForDay(at).single;
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: c,
+        child: MaterialApp(
+          home: Scaffold(body: ContextTimelineRow(item: item)),
+        ),
+      ),
+    );
+    expect(
+      find.byKey(const ValueKey('timeline-highlight-live-1-1')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('合同周五前要签。'), findsOneWidget);
+
+    await tester.tap(find.text(item.title));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('minutes-highlight-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('minutes-highlight-0')), findsNothing);
+  });
 }

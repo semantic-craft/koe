@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../state/minutes_document.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../context_source.dart';
 import '../recording_navigation.dart';
+import 'highlight.dart';
 import 'widgets.dart';
 import 'koe_icon_button.dart';
 
@@ -41,6 +43,12 @@ class ContextTimelineRow extends StatelessWidget {
       for (final id in item.projectIds) ?c.projects.projectById(id)?.title,
     ];
     final details = [contextTimeLabel(item), ?item.location];
+    final document = c.contextDocument(item);
+    final highlights = [
+      for (final (index, segment)
+          in (document?.segments ?? const <MinutesSegment>[]).indexed)
+        if (segment.highlighted) (index, segment.text),
+    ];
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: SurfaceCard(
@@ -76,6 +84,27 @@ class ContextTimelineRow extends StatelessWidget {
                       color: AppColors.textSecondary,
                     ),
                   ),
+                  for (final (index, text) in highlights.take(3))
+                    Padding(
+                      key: ValueKey(
+                        'timeline-highlight-${document!.id}-$index',
+                      ),
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            const TextSpan(text: '★ '),
+                            TextSpan(
+                              text: text,
+                              style: highlightTextStyle(context),
+                            ),
+                          ],
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
                   if (topicTitles.isNotEmpty || projectTitles.isNotEmpty) ...[
                     const SizedBox(height: 6),
                     Wrap(

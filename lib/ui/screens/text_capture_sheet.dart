@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/highlight.dart';
 import '../widgets/status_indicators.dart';
 
 /// Text-only capture: listens until the user ends it, showing the text as
@@ -113,6 +114,7 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
     final active = controller.textCaptureActive;
     final stopping = controller.textCaptureStopping;
     final text = controller.textCaptureText;
+    final lines = controller.textCaptureLines;
     final listening = active && !controller.textCapturePaused;
     return PopScope(
       canPop: !active,
@@ -171,8 +173,21 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                       reverse: true,
                       child: Align(
                         alignment: Alignment.topLeft,
-                        child: Text(
-                          text.isEmpty ? '开口说吧，识别出的文字会出现在这里。' : text,
+                        child: Text.rich(
+                          TextSpan(
+                            children: text.isEmpty
+                                ? const [TextSpan(text: '开口说吧，识别出的文字会出现在这里。')]
+                                : [
+                                    for (final (index, (line, marked))
+                                        in lines.indexed)
+                                      TextSpan(
+                                        text: index == 0 ? line : '\n$line',
+                                        style: marked
+                                            ? highlightTextStyle(context)
+                                            : null,
+                                      ),
+                                  ],
+                          ),
                           key: const ValueKey('text-capture-text'),
                           style: TextStyle(
                             fontSize: 16,
@@ -188,6 +203,15 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                 ),
                 const SizedBox(height: 16),
                 if (active) ...[
+                  OutlinedButton.icon(
+                    key: const ValueKey('mark-text-capture'),
+                    onPressed: stopping || text.isEmpty
+                        ? null
+                        : controller.markTextCaptureHighlight,
+                    icon: const Icon(Icons.star_outline_rounded),
+                    label: const Text('标记这句为重点'),
+                  ),
+                  const SizedBox(height: 8),
                   FilledButton.icon(
                     key: const ValueKey('stop-text-capture'),
                     onPressed: stopping ? null : () => _stop(keepAudio: false),
