@@ -45,7 +45,11 @@ Future<void> handleNewRecordingAction(
       ).showSnackBar(const SnackBar(content: Text('在「设备端」标签选择要取回的录音')));
       break;
     case NewRecordingAction.phone:
-      await showPhoneRecordingSheet(context);
+      if (context.read<RecorderController>().allDayListening) {
+        await showTextCaptureSheet(context, allDay: true);
+      } else {
+        await showPhoneRecordingSheet(context);
+      }
       break;
     case NewRecordingAction.textCapture:
       await showTextCaptureSheet(context);
@@ -416,7 +420,9 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
               icon: Icons.mic_none_rounded,
               title: '手机录音',
               subtitle: phoneRecording
-                  ? '用手机麦克风录下来，保存为原件'
+                  ? controller.allDayListening
+                        ? '全天监听已打开：开始后一直识别、只留文字'
+                        : '用手机麦克风录下来，保存为原件'
                   : '只在 iPhone 上提供；这里请用录音豆或导入音频',
               trailing: phoneRecording ? null : '仅 iPhone',
               onTap: phoneRecording

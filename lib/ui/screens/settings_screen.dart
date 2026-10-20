@@ -76,6 +76,18 @@ class SettingsScreen extends StatelessWidget {
                         value: c.autoTranscribe,
                         onChanged: c.setAutoTranscribe,
                       ),
+                      if (c.phoneRecordingEnabled) ...[
+                        const Divider(height: 20),
+                        _SettingsSwitch(
+                          key: const ValueKey('settings-all-day-listening'),
+                          title: '全天监听',
+                          subtitle:
+                              '打开后按「手机录音」或录音豆录音键，一直识别、只留文字，'
+                              '安静约 10 分钟另起一条；安静时不上传声音',
+                          value: c.allDayListening,
+                          onChanged: c.setAllDayListening,
+                        ),
+                      ],
                       const Divider(height: 20),
                       _SettingsSwitch(
                         key: const ValueKey('settings-auto-organize'),

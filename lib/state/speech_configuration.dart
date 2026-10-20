@@ -42,6 +42,20 @@ class SpeechConfiguration {
   /// The resolved API key for [provider], or null.
   String? engineKey(SttProvider provider) => engineConfig(provider).apiKey;
 
+  /// The same settings with recording transcription turned off.
+  SpeechConfiguration withoutTranscription() => SpeechConfiguration(
+    provider: provider,
+    sourceLanguage: sourceLanguage,
+    targetLanguage: targetLanguage,
+    ownerLanguage: ownerLanguage,
+    guestLanguage: guestLanguage,
+    mode: mode,
+    enabled: false,
+    appleReady: appleReady,
+    appleTranslationReady: appleTranslationReady,
+    engines: engines,
+  );
+
   SpeechConfiguration withSourceLanguage(String source) => SpeechConfiguration(
     provider: provider,
     sourceLanguage: source,

@@ -7,6 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/main.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
+import 'package:koe/ble/ble_service.dart';
+import 'package:koe/protocol/frame.dart';
+import 'package:koe/protocol/models.dart';
 import 'package:koe/platform/phone_mic_stream.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
@@ -40,8 +43,9 @@ void main() {
   Directory spoolDir() => Directory('${directory.path}/text_capture');
   File minutesFile() => File('${directory.path}/minutes.json');
 
-  RecorderController build({bool disposeAtEnd = true}) {
+  RecorderController build({bool disposeAtEnd = true, BleService? ble}) {
     final controller = RecorderController(
+      ble: ble,
       loadPersistedState: false,
       analysisController: RecordingAnalysis(inMemory: true),
       qwenSpeech: fileStt..apiKeyOverride = 'test-key',
@@ -155,6 +159,100 @@ void main() {
     await until(noSpools);
   });
 
+  group('all-day listening', () {
+    setUp(() {
+      AllDayTiming.sleepAfter = const Duration(milliseconds: 150);
+      AllDayTiming.splitAfter = const Duration(milliseconds: 400);
+      AllDayTiming.tick = const Duration(milliseconds: 20);
+    });
+    tearDown(() {
+      AllDayTiming.sleepAfter = const Duration(seconds: 20);
+      AllDayTiming.splitAfter = const Duration(minutes: 10);
+      AllDayTiming.tick = const Duration(seconds: 5);
+    });
+
+    test('sends only speech, rests when quiet and splits records', () async {
+      final controller = build();
+      expect(await controller.startTextCapture(allDay: true), isTrue);
+
+      mic.speak(_second);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Quiet audio opens no connection and goes nowhere.
+      expect(streams, isEmpty);
+
+      mic.say(_second);
+      await until(() => streams.length == 1 && streams.first.received > 0);
+      // The speech plus the half second just before it.
+      await until(() => streams.first.received == _second + _second ~/ 2);
+      streams.first.emit('第一段。', speechFinal: true);
+      streams.first.finalText = '第一段。';
+
+      // Quiet: the connection is finished, then the record is saved.
+      await until(() => streams.first.finished);
+      await until(() => controller.textCaptureFinishedRecords == 1);
+      expect(controller.minutesDocuments.single.bodyText, '第一段。');
+      expect(controller.minutesDocuments.single.warning, isNull);
+      expect(controller.textCaptureActive, isTrue);
+
+      mic.say(_second);
+      await until(() => streams.length == 2 && streams[1].received > 0);
+      streams[1].emit('第二段。', speechFinal: true);
+      streams[1].finalText = '第二段。';
+      await controller.stopTextCapture();
+
+      expect(controller.minutesDocuments.map((d) => d.bodyText).toSet(), {
+        '第一段。',
+        '第二段。',
+      });
+      expect(controller.library.assets, isEmpty);
+      expect(noSpools(), isTrue);
+    });
+
+    test('the recorder key starts it and stopping the take saves it', () async {
+      final ble = _Ble();
+      final controller = build(ble: ble)
+        ..connected = true
+        ..allDayListening = true;
+
+      ble.audio(1);
+      await until(() => controller.textCaptureFromDevice);
+      expect(controller.textCaptureAllDay, isTrue);
+      expect(mic.started, isFalse);
+
+      final speech = ByteData(_second);
+      for (var i = 0; i < _second; i += 2) {
+        speech.setInt16(i, i % 4 == 0 ? 1200 : -1200, Endian.little);
+      }
+      controller.feedDeviceTextCapture(speech.buffer.asUint8List());
+      await until(() => streams.length == 1 && streams.first.received > 0);
+      streams.first.emit('录音豆听到的话。', speechFinal: true);
+      streams.first.finalText = '录音豆听到的话。';
+
+      ble.audio(0);
+      await until(() => !controller.textCaptureActive);
+      expect(controller.minutesDocuments.single.bodyText, '录音豆听到的话。');
+    });
+
+    test('reopening Koe continues listening that was left on', () async {
+      final first = build(disposeAtEnd: false)..allDayListening = true;
+      expect(await first.startTextCapture(allDay: true), isTrue);
+      first.dispose();
+
+      mic = _Mic();
+      final second = build()..allDayListening = true;
+      await until(() => second.textCaptureActive);
+      expect(second.textCaptureAllDay, isTrue);
+      await second.stopTextCapture();
+
+      mic = _Mic();
+      final third = build()..allDayListening = true;
+      await third.waitForMinutesDocuments();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // Stopped by the user: not resumed.
+      expect(third.textCaptureActive, isFalse);
+    });
+  });
+
   test('keeping the audio saves an original that carries the text', () async {
     final controller = build();
     expect(await controller.startTextCapture(), isTrue);
@@ -209,12 +307,97 @@ void main() {
     expect(find.text('文字已保存到资料'), findsOneWidget);
     expect(controller.minutesDocuments.single.bodyText, '界面上看得到的话。');
   });
+  testWidgets('with all-day listening on, phone recording listens all day', (
+    tester,
+  ) async {
+    final controller = (await tester.runAsync(() async => build()))!
+      ..allDayListening = true;
+    await tester.pumpWidget(KoeApp(controller: controller));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+    Future<void> settle(bool Function() done) async {
+      for (var i = 0; i < 100 && !done(); i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(done(), isTrue);
+    }
+
+    await tester.tap(find.byKey(const ValueKey('new-recording')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('new-record-phone')));
+    await settle(() => controller.textCaptureActive);
+    expect(controller.textCaptureAllDay, isTrue);
+    expect(find.text('全天监听中'), findsOneWidget);
+
+    // Putting the sheet away keeps listening, one tap from its controls.
+    await tester.tap(find.byKey(const ValueKey('hide-text-capture')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(controller.textCaptureActive, isTrue);
+    expect(find.byKey(const ValueKey('all-day-listening-bar')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('all-day-listening-bar')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byKey(const ValueKey('stop-text-capture')));
+    await settle(() => !controller.textCaptureActive);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('all-day-listening-bar')), findsNothing);
+  });
+}
+
+class _Ble extends BleService {
+  final _packets = StreamController<DecodedPacket>.broadcast();
+
+  /// The recorder reports its key: 1 = recording, 0 = stopped.
+  void audio(int status) => _packets.add(
+    DecodedPacket(
+      raw: Uint8List(0),
+      statusByte: 1,
+      cmdType: 0x18,
+      cmdId: 0x82,
+      payload: Uint8List.fromList([status]),
+    ),
+  );
+
+  @override
+  Stream<DecodedPacket> get packets => _packets.stream;
+  @override
+  Stream<List<ScannedDevice>> get scanResults => const Stream.empty();
+  @override
+  Stream<bool> get connectionState => const Stream.empty();
+  @override
+  Stream<String> get logs => const Stream.empty();
+  @override
+  bool get isConnected => true;
+  @override
+  Future<void> writeCommand(List<int> frame) async {}
+  @override
+  Future<void> dispose() async {
+    await _packets.close();
+  }
 }
 
 class _Mic implements PhoneMicStream {
   StreamController<Uint8List>? _samples;
+  bool get started => _samples != null;
 
   void speak(int bytes) => _samples!.add(Uint8List(bytes));
+
+  /// [bytes] of audio loud enough to count as speech.
+  void say(int bytes) {
+    final data = ByteData(bytes);
+    for (var i = 0; i + 1 < bytes; i += 2) {
+      data.setInt16(i, i % 4 == 0 ? 1200 : -1200, Endian.little);
+    }
+    _samples!.add(data.buffer.asUint8List());
+  }
 
   @override
   Future<bool> requestPermission() async => true;
@@ -243,6 +426,7 @@ class _Stream implements SttStreamSession {
   final bool offline;
   final _events = StreamController<SttStreamEvent>.broadcast();
   bool _ready = false;
+  bool finished = false;
   int received = 0;
   String? finalText;
 
@@ -281,6 +465,7 @@ class _Stream implements SttStreamSession {
     Duration timeout = const Duration(seconds: 20),
   }) async {
     _ready = false;
+    finished = true;
     return SttStreamEvent(type: 'done', text: finalText ?? '', isFinal: true);
   }
 

@@ -55,6 +55,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   abstract String? statusMessage;
   abstract bool transcribing;
   abstract String? transcribingPath;
+  abstract bool allDayListening;
+  bool get textCaptureFromDevice;
+  void feedDeviceTextCapture(Uint8List pcm);
   // END DEPS
 
   _RecordingSession? get _currentRecording =>
@@ -232,6 +235,13 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
 
   /// Live BLE Opus frame → PCM16 → provider WS STT (when auto-transcribe on).
   void _onRealtimeOpusFrame(Uint8List frame) {
+    if (textCaptureFromDevice) {
+      // All-day listening takes the recorder's speech instead (#319).
+      if (!_opusPcm.ensureStarted()) return;
+      final pcm = _opusPcm.decodeFrame(frame);
+      if (pcm != null && pcm.isNotEmpty) feedDeviceTextCapture(pcm);
+      return;
+    }
     if (!_activeAutoTranscribe ||
         !_activeSttConfigured ||
         _recordWireStatus == 2) {
@@ -665,13 +675,18 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         unawaited(_enqueueDeferredRecording(previous, previous.path!));
       }
     }
-    final config = _settingsConfiguration;
+    // During all-day listening the take's speech is recognized once, as
+    // text records; the take itself is not transcribed again (#319).
+    final textOnly = allDayListening;
+    final config = textOnly
+        ? _settingsConfiguration.withoutTranscription()
+        : _settingsConfiguration;
     _currentSessionId =
         '${DateTime.now().microsecondsSinceEpoch}-${++liveSessionRevision}';
     _recordingSessions[_currentSessionId!] = _RecordingSession(
       _currentSessionId!,
       config,
-    );
+    )..textOnly = textOnly;
     _liveConfiguration = config;
     if (appleLanguagePreparationBusy) {
       _fileCancellation = _appleSpeech.cancelFileProcessing();

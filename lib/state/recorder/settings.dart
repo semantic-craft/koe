@@ -59,6 +59,7 @@ mixin _RecorderSettings on ChangeNotifier {
     }
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
+    allDayListening = s.allDayListening;
     transcriptLanguage = s.transcriptLanguage;
     appleSourceLanguage = s.appleSourceLanguage;
     translationTargetLanguage = s.translationTargetLanguage;
@@ -109,6 +110,7 @@ mixin _RecorderSettings on ChangeNotifier {
             },
             autoTranscribe: autoTranscribe,
             autoRealtime: autoRealtime,
+            allDayListening: allDayListening,
             transcriptLanguage: transcriptLanguage,
             sttMode: sttMode,
             translationTargetLanguage: translationTargetLanguage,
@@ -276,6 +278,12 @@ mixin _RecorderSettings on ChangeNotifier {
     unawaited(_persistSettings());
   }
 
+  void setAllDayListening(bool v) {
+    allDayListening = v;
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
   void setAutoRealtime(bool v) {
     autoRealtime = v;
     if (!v && _autoTransferRunning) _blePull.cancel();
@@ -416,6 +424,9 @@ mixin _RecorderSettings on ChangeNotifier {
 
   /// Auto BLE realtime transfer while device is recording (no SoftAP).
   bool autoRealtime = true;
+
+  /// The record buttons start all-day, text-only listening (#319).
+  bool allDayListening = false;
 
   /// Near-realtime AI transcription (PCM WS stream + Ogg batch fallback).
   bool autoTranscribe = true;

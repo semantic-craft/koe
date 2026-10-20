@@ -1,5 +1,18 @@
 part of '../recorder_controller.dart';
 
+/// Timing of all-day listening (#319); tests shorten it.
+abstract final class AllDayTiming {
+  /// Connections close after this long without speech and reopen when
+  /// speech comes back.
+  static Duration sleepAfter = const Duration(seconds: 20);
+
+  /// A quiet stretch this long starts a new text record.
+  static Duration splitAfter = const Duration(minutes: 10);
+
+  /// How often quiet is checked.
+  static Duration tick = const Duration(seconds: 5);
+}
+
 /// What [RecorderController.stopTextCapture] produced.
 class TextCaptureOutcome {
   const TextCaptureOutcome({
@@ -74,7 +87,14 @@ mixin _RecorderTextCapture on ChangeNotifier {
   });
   Future<void> stopPlayback();
   String _takeLabel(DateTime at);
+  abstract bool allDayListening;
   // END DEPS
+
+  /// Mean absolute PCM16 level above which a chunk counts as speech; about
+  /// -50 dBFS, so distant speech still passes while room noise does not.
+  static const _voiceLevel = 100;
+  static const _prerollBytes = _bytesPerSecond ~/ 2;
+  static const _hangoverBytes = _bytesPerSecond * 2;
 
   static const _bytesPerSecond = TextCaptureSpool.bytesPerSecond;
   static const _chunkBytes = 6400;
@@ -122,6 +142,21 @@ mixin _RecorderTextCapture on ChangeNotifier {
   bool _textBusy = false;
   bool _textStopping = false;
 
+  /// A connection is being finished on purpose (quiet or a new record);
+  /// its closing events are not a lost connection.
+  bool _textEnding = false;
+  bool _textConnecting = false;
+  bool _textRolling = false;
+  bool _textAllDay = false;
+  DateTime? _textLastVoice;
+  int _textHangover = 0;
+  final BytesBuilder _textPreroll = BytesBuilder(copy: false);
+  final BytesBuilder _textHeld = BytesBuilder(copy: false);
+  Timer? _textTicker;
+
+  /// Records finished by quiet stretches in this all-day run.
+  int textCaptureFinishedRecords = 0;
+
   /// Offset of the next spooled byte to send to the service.
   int _textSent = 0;
 
@@ -141,6 +176,25 @@ mixin _RecorderTextCapture on ChangeNotifier {
   bool get textCaptureActive => _textId != null;
   bool get textCaptureStopping => _textStopping;
   bool get textCaptureConnected => _textSession?.isServerReady ?? false;
+  bool get textCaptureAllDay => _textAllDay;
+  bool _textFromDevice = false;
+
+  /// Listening to the connected recorder rather than the phone microphone.
+  bool get textCaptureFromDevice => textCaptureActive && _textFromDevice;
+
+  /// Speech decoded from the recorder's live stream, 16 kHz mono PCM16.
+  void feedDeviceTextCapture(Uint8List pcm) {
+    if (textCaptureFromDevice && !_textStopping) _onTextSamples(pcm);
+  }
+
+  /// All-day listening with nothing to send: the connection rests until
+  /// speech comes back.
+  bool get textCaptureResting =>
+      _textAllDay &&
+      _textSession == null &&
+      !_textConnecting &&
+      _textRetryTimer == null &&
+      textCaptureBacklogSeconds == 0;
 
   /// Everything recognized so far, the sentence in progress included.
   String get textCaptureText => _joinText(_textCommitted, _textLive);
@@ -174,9 +228,15 @@ mixin _RecorderTextCapture on ChangeNotifier {
 
   /// Starts capture. Returns false, with the reason in [textCaptureError],
   /// when the speech service or microphone cannot be used.
-  Future<bool> startTextCapture() async {
+  ///
+  /// [fromDevice] takes speech from the connected recorder's live stream
+  /// (fed through [feedDeviceTextCapture]) instead of the phone microphone.
+  Future<bool> startTextCapture({
+    bool allDay = false,
+    bool fromDevice = false,
+  }) async {
     if (!phoneRecordingEnabled || textCaptureActive || _textBusy) return false;
-    if (phoneRecordingActive || voiceHoldTarget != null) {
+    if (!fromDevice && (phoneRecordingActive || voiceHoldTarget != null)) {
       textCaptureError = '麦克风正在录音，先结束那段再开始';
       notifyListeners();
       return false;
@@ -192,21 +252,21 @@ mixin _RecorderTextCapture on ChangeNotifier {
         notifyListeners();
         return false;
       }
-      if (!await _micStream.requestPermission()) {
+      if (!fromDevice && !await _micStream.requestPermission()) {
         textCaptureError = '没有麦克风权限。可在系统设置里允许 Koe 使用麦克风';
         notifyListeners();
         return false;
       }
-      await stopPlayback();
+      if (!fromDevice) await stopPlayback();
       final startedAt = DateTime.now();
       final id = 'live-${startedAt.microsecondsSinceEpoch}';
       final spool = await TextCaptureSpool.create(
         await _textCaptureDirectory(),
         id,
       );
-      final Stream<Uint8List> samples;
+      Stream<Uint8List>? samples;
       try {
-        samples = await _micStream.start();
+        if (!fromDevice) samples = await _micStream.start();
       } catch (_) {
         await spool.delete();
         textCaptureError = '无法开始录音，麦克风可能正被其他应用使用';
@@ -224,13 +284,26 @@ mixin _RecorderTextCapture on ChangeNotifier {
       _textAtFinal = '';
       _textRetry = 0;
       _textLastDraft = null;
+      _textAllDay = allDay;
+      _textLastVoice = null;
+      _textHangover = 0;
+      _textPreroll.clear();
+      _textHeld.clear();
+      textCaptureFinishedRecords = 0;
       textCaptureError = null;
       textCapturePaused = false;
-      _textMic = samples.listen(_onTextSamples, onDone: _onTextMicDone);
-      _textMicStates = _micStream.states.listen(_onTextMicState);
+      _textFromDevice = fromDevice;
+      if (samples != null) {
+        _textMic = samples.listen(_onTextSamples, onDone: _onTextMicDone);
+        _textMicStates = _micStream.states.listen(_onTextMicState);
+      }
       unawaited(_saveTextState());
+      if (allDay) {
+        unawaited(_writeAllDayMarker());
+        _textTicker = Timer.periodic(AllDayTiming.tick, (_) => _onTextTick());
+      }
       notifyListeners();
-      unawaited(_connectText());
+      if (!allDay) unawaited(_connectText());
       return true;
     } finally {
       _textBusy = false;
@@ -238,9 +311,133 @@ mixin _RecorderTextCapture on ChangeNotifier {
   }
 
   void _onTextSamples(Uint8List samples) {
+    if (_textSpool == null || samples.isEmpty) return;
+    var keep = samples;
+    if (_textAllDay) {
+      if (_isVoiced(samples)) {
+        if (_textLastVoice == null && (_textSpool?.length ?? 0) == 0) {
+          // A new record starts when its first words do.
+          _textStartedAt = DateTime.now();
+        }
+        _textLastVoice = DateTime.now();
+        _textHangover = _hangoverBytes;
+        _textPreroll.add(samples);
+        keep = _textPreroll.takeBytes();
+      } else if (_textHangover > 0) {
+        _textHangover -= samples.length;
+      } else {
+        // Quiet audio is not sent anywhere; the last half second is kept so
+        // the first syllable of the next sentence is not cut off.
+        _textPreroll.add(samples);
+        if (_textPreroll.length > _prerollBytes) {
+          final all = _textPreroll.takeBytes();
+          _textPreroll.add(
+            Uint8List.sublistView(all, (all.length - _prerollBytes) & ~1),
+          );
+        }
+        return;
+      }
+    }
+    if (_textRolling) {
+      _textHeld.add(keep);
+      return;
+    }
+    final spool = _textSpool!;
+    unawaited(spool.append(keep).then((_) => _afterTextAppend()));
+  }
+
+  static bool _isVoiced(Uint8List samples) {
+    final view = ByteData.sublistView(samples);
+    final count = samples.length ~/ 2;
+    if (count == 0) return false;
+    var sum = 0;
+    for (var i = 0; i < count; i++) {
+      final v = view.getInt16(i * 2, Endian.little);
+      sum += v < 0 ? -v : v;
+    }
+    return sum ~/ count >= _voiceLevel;
+  }
+
+  /// Sends new audio, opening a connection first when none is open and no
+  /// retry is already waiting.
+  void _afterTextAppend() {
+    if (!textCaptureActive || _textStopping || _textEnding || _disposed) {
+      return;
+    }
+    if (_textSession == null && !_textConnecting && _textRetryTimer == null) {
+      unawaited(_connectText());
+      return;
+    }
+    unawaited(_pumpText());
+  }
+
+  void _onTextTick() {
     final spool = _textSpool;
-    if (spool == null) return;
-    unawaited(spool.append(samples).then((_) => _pumpText()));
+    if (!_textAllDay || spool == null || _textStopping || _textRolling) return;
+    if (_textEnding || _textConnecting) return;
+    final quiet = DateTime.now().difference(
+      _textLastVoice ?? _textStartedAt ?? DateTime.now(),
+    );
+    final drained = spool.length <= _textSent;
+    if (_textSession != null && drained && quiet >= AllDayTiming.sleepAfter) {
+      unawaited(_restText());
+    } else if (_textSession == null &&
+        _textRetryTimer == null &&
+        quiet >= AllDayTiming.splitAfter &&
+        _joinText(_textCommitted, _textLive).isNotEmpty) {
+      unawaited(_rollTextRecord());
+    }
+  }
+
+  /// Closes the connection during a quiet stretch; the next words reopen it.
+  Future<void> _restText() async {
+    await _endTextSession();
+    _scheduleTextDraft();
+    if (!_disposed) notifyListeners();
+    final spool = _textSpool;
+    if (spool != null && spool.length > _textSent) _afterTextAppend();
+  }
+
+  /// Saves the record a long quiet stretch ended and starts the next one,
+  /// without touching the microphone.
+  Future<void> _rollTextRecord() async {
+    final config = _textConfig;
+    if (config == null) return;
+    _textRolling = true;
+    try {
+      _textDraftTimer?.cancel();
+      _textDraftTimer = null;
+      await _textSpool!.flush();
+      await _textSaves;
+      final saved = await _saveTextRecord(keepAudio: false, config: config);
+      if (saved == null) return;
+      textCaptureFinishedRecords++;
+      final now = DateTime.now();
+      final id = 'live-${now.microsecondsSinceEpoch}';
+      _textSpool = await TextCaptureSpool.create(
+        await _textCaptureDirectory(),
+        id,
+      );
+      _textId = id;
+      _textStartedAt = now;
+      _textSent = 0;
+      _textFinalMark = 0;
+      _textCommitted = '';
+      _textLive = '';
+      _textAtFinal = '';
+      _textLastVoice = null;
+      _textLastDraft = null;
+      await _saveTextState();
+    } catch (e) {
+      debugPrint('[TextCapture] new record: $e');
+    } finally {
+      _textRolling = false;
+      final held = _textHeld.takeBytes();
+      if (held.isNotEmpty && _textSpool != null) {
+        unawaited(_textSpool!.append(held).then((_) => _afterTextAppend()));
+      }
+      if (!_disposed) notifyListeners();
+    }
   }
 
   void _onTextMicDone() {
@@ -274,6 +471,16 @@ mixin _RecorderTextCapture on ChangeNotifier {
   }
 
   Future<void> _connectText() async {
+    if (_textConnecting) return;
+    _textConnecting = true;
+    try {
+      await _openTextConnection();
+    } finally {
+      _textConnecting = false;
+    }
+  }
+
+  Future<void> _openTextConnection() async {
     final config = _textConfig;
     if (!textCaptureActive || _textStopping || config == null) return;
     _detachTextSession();
@@ -371,10 +578,12 @@ mixin _RecorderTextCapture on ChangeNotifier {
         }
         _textAtFinal = _textLive;
         _textFinalMark = _textSent;
-        if (!_textStopping) _onTextSessionLost('语音服务结束了这一段连接');
+        if (!_textStopping && !_textEnding) {
+          _onTextSessionLost('语音服务结束了这一段连接');
+        }
       case 'error':
       case 'closed':
-        if (!_textStopping) _onTextSessionLost('连接中断');
+        if (!_textStopping && !_textEnding) _onTextSessionLost('连接中断');
       default:
         break;
     }
@@ -383,8 +592,14 @@ mixin _RecorderTextCapture on ChangeNotifier {
   void _onTextSessionLost(String reason) {
     _rewindText();
     _detachTextSession();
-    textCaptureError = '$reason，正在重新连接；这期间说的话连上后会补上';
     _scheduleTextDraft();
+    final spool = _textSpool;
+    if (_textAllDay && spool != null && spool.length <= _textSent) {
+      // Nothing waits to be sent: the next words open a new connection.
+      notifyListeners();
+      return;
+    }
+    textCaptureError = '$reason，正在重新连接；这期间说的话连上后会补上';
     _retryTextLater();
     notifyListeners();
   }
@@ -498,6 +713,8 @@ mixin _RecorderTextCapture on ChangeNotifier {
     _textRetryTimer = null;
     _textDraftTimer?.cancel();
     _textDraftTimer = null;
+    _textTicker?.cancel();
+    _textTicker = null;
     _textId = null;
     _textStartedAt = null;
     _textConfig = null;
@@ -507,6 +724,11 @@ mixin _RecorderTextCapture on ChangeNotifier {
     _textCommitted = '';
     _textLive = '';
     _textAtFinal = '';
+    _textAllDay = false;
+    _textFromDevice = false;
+    _textLastVoice = null;
+    _textPreroll.clear();
+    _textHeld.clear();
     textCapturePaused = false;
   }
 
@@ -515,37 +737,28 @@ mixin _RecorderTextCapture on ChangeNotifier {
     _textRetryTimer = null;
     _textDraftTimer?.cancel();
     _textDraftTimer = null;
-    try {
-      await _micStream.stop();
-    } catch (_) {}
+    _textTicker?.cancel();
+    _textTicker = null;
+    if (!_textFromDevice) {
+      try {
+        await _micStream.stop();
+      } catch (_) {}
+    }
     await _textMic?.cancel();
     _textMic = null;
     await _textMicStates?.cancel();
     _textMicStates = null;
   }
 
-  /// Ends capture and saves the text. With [keepAudio] the audio is kept as
-  /// an original too and the text becomes its transcript. Speech the
-  /// service never received is recognized from the phone, now or once the
-  /// network is back.
-  Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio = false}) async {
-    final id = _textId;
+  /// Finishes the open connection on purpose and keeps its text. A backlog
+  /// too long to stream is left for file recognition.
+  Future<void> _endTextSession() async {
     final spool = _textSpool;
-    final startedAt = _textStartedAt;
-    final config = _textConfig;
-    if (id == null ||
-        spool == null ||
-        startedAt == null ||
-        config == null ||
-        _textStopping) {
-      return null;
-    }
-    _textStopping = true;
-    notifyListeners();
+    final session = _textSession;
+    if (spool == null) return;
+    _textEnding = true;
     try {
-      await _stopTextMicrophone();
       await spool.flush();
-      final session = _textSession;
       var finished = false;
       if (session != null &&
           session.isServerReady &&
@@ -573,93 +786,174 @@ mixin _RecorderTextCapture on ChangeNotifier {
         _rewindText();
       }
       _detachTextSession();
-      await _textSaves;
+    } finally {
+      _textEnding = false;
+    }
+  }
 
-      final text = _textCommitted.trim();
-      final tailBytes = spool.length - _textSent;
-      final pendingSeconds = tailBytes >= _bytesPerSecond ~/ 2
-          ? (tailBytes + _bytesPerSecond - 1) ~/ _bytesPerSecond
-          : 0;
+  /// Saves the current record once its connection is finished: as text,
+  /// or with [keepAudio] as an original carrying the text. Speech never
+  /// recognized is left in the spool for file recognition. Returns null
+  /// when the text could not be saved.
+  Future<TextCaptureOutcome?> _saveTextRecord({
+    required bool keepAudio,
+    required SpeechConfiguration config,
+  }) async {
+    final id = _textId!;
+    final spool = _textSpool!;
+    final startedAt = _textStartedAt!;
+    await _textSaves;
+    final text = _textCommitted.trim();
+    final tailBytes = spool.length - _textSent;
+    final pendingSeconds = tailBytes >= _bytesPerSecond ~/ 2
+        ? (tailBytes + _bytesPerSecond - 1) ~/ _bytesPerSecond
+        : 0;
 
-      String? recordingPath;
-      if (keepAudio) {
-        final dir = await _importDirectory();
-        await dir.create(recursive: true);
-        final path = p.join(
-          dir.path,
-          'textcap_${startedAt.microsecondsSinceEpoch}.wav',
+    String? recordingPath;
+    if (keepAudio) {
+      final dir = await _importDirectory();
+      await dir.create(recursive: true);
+      final path = p.join(
+        dir.path,
+        'textcap_${startedAt.microsecondsSinceEpoch}.wav',
+      );
+      await spool.writeWav(path);
+      if (pendingSeconds == 0 && text.isNotEmpty) {
+        rememberTranscript(
+          path,
+          text,
+          provider: config.provider,
+          sourceLanguage: config.sourceLanguage,
         );
-        await spool.writeWav(path);
-        if (pendingSeconds == 0 && text.isNotEmpty) {
-          rememberTranscript(
-            path,
-            text,
-            provider: config.provider,
-            sourceLanguage: config.sourceLanguage,
-          );
-        }
-        recordingPath = await _adoptPhoneTake(path, startedAt, label: '纯文字记录');
-        if (recordingPath != null && pendingSeconds == 0) {
-          await _removeTextDocument(id);
-          await spool.delete();
-          _clearTextCapture();
-          return TextCaptureOutcome(
-            recordingPath: recordingPath,
-            message: text.isEmpty ? '原声已保存，没有识别到文字' : '文字和原声已保存',
-          );
-        }
       }
-
-      if (text.isEmpty && pendingSeconds == 0) {
+      recordingPath = await _adoptPhoneTake(path, startedAt, label: '纯文字记录');
+      if (recordingPath != null && pendingSeconds == 0) {
         await _removeTextDocument(id);
         await spool.delete();
-        _clearTextCapture();
         return TextCaptureOutcome(
           recordingPath: recordingPath,
-          message: recordingPath == null ? '没有识别到文字，未保存' : '原声已保存，没有识别到文字',
+          message: text.isEmpty ? '原声已保存，没有识别到文字' : '文字和原声已保存',
         );
       }
+    }
 
-      final document = _textDocument(
-        id,
-        startedAt,
-        text.isEmpty ? _waitingLine : text,
-        warning: pendingSeconds > 0
-            ? '还有约 $pendingSeconds 秒的话没识别，联网后自动补上并接在后面'
-            : null,
-      )!;
-      try {
-        await minutes.upsert(document, strict: true);
-      } catch (_) {
-        textCaptureError = '文字保存失败，请再点一次结束';
-        return null;
-      }
-      if (pendingSeconds > 0) {
-        final state = TextCaptureSpoolState(
-          documentId: id,
-          startedAt: startedAt,
-          sentBytes: _textSent,
-        );
-        await spool.saveState(state);
-        await spool.close();
-        unawaited(_recognizeTextTail(spool, state));
-      } else {
-        await spool.delete();
-      }
-      _clearTextCapture();
+    if (text.isEmpty && pendingSeconds == 0) {
+      await _removeTextDocument(id);
+      await spool.delete();
       return TextCaptureOutcome(
-        document: document,
         recordingPath: recordingPath,
-        pendingSeconds: pendingSeconds,
-        message: pendingSeconds > 0
-            ? '文字已保存；还有约 $pendingSeconds 秒联网后补上'
-            : recordingPath != null
-            ? '原声已保存，文字已保存到资料'
-            : '文字已保存到资料',
+        message: recordingPath == null ? '没有识别到文字，未保存' : '原声已保存，没有识别到文字',
       );
+    }
+
+    final document = _textDocument(
+      id,
+      startedAt,
+      text.isEmpty ? _waitingLine : text,
+      warning: pendingSeconds > 0
+          ? '还有约 $pendingSeconds 秒的话没识别，联网后自动补上并接在后面'
+          : null,
+    )!;
+    try {
+      await minutes.upsert(document, strict: true);
+    } catch (_) {
+      textCaptureError = '文字保存失败，请再点一次结束';
+      return null;
+    }
+    if (pendingSeconds > 0) {
+      final state = TextCaptureSpoolState(
+        documentId: id,
+        startedAt: startedAt,
+        sentBytes: _textSent,
+      );
+      await spool.saveState(state);
+      await spool.close();
+      unawaited(_recognizeTextTail(spool, state));
+    } else {
+      await spool.delete();
+    }
+    return TextCaptureOutcome(
+      document: document,
+      recordingPath: recordingPath,
+      pendingSeconds: pendingSeconds,
+      message: pendingSeconds > 0
+          ? '文字已保存；还有约 $pendingSeconds 秒联网后补上'
+          : recordingPath != null
+          ? '原声已保存，文字已保存到资料'
+          : '文字已保存到资料',
+    );
+  }
+
+  /// Ends capture and saves the text. With [keepAudio] the audio is kept as
+  /// an original too and the text becomes its transcript. Speech the
+  /// service never received is recognized from the phone, now or once the
+  /// network is back. Ends all-day listening too.
+  Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio = false}) async {
+    final config = _textConfig;
+    if (_textId == null ||
+        _textSpool == null ||
+        _textStartedAt == null ||
+        config == null ||
+        _textStopping) {
+      return null;
+    }
+    _textStopping = true;
+    notifyListeners();
+    try {
+      await _stopTextMicrophone();
+      while (_textRolling) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      final held = _textHeld.takeBytes();
+      if (held.isNotEmpty) await _textSpool!.append(held);
+      await _endTextSession();
+      final outcome = await _saveTextRecord(
+        keepAudio: keepAudio,
+        config: config,
+      );
+      if (outcome == null) return null;
+      await _clearAllDayMarker();
+      _clearTextCapture();
+      return outcome;
     } finally {
       _textStopping = false;
       if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<File> _allDayMarker() async =>
+      File(p.join((await _textCaptureDirectory()).path, 'all_day.json'));
+
+  /// Remembers that all-day listening is on, so reopening Koe after it was
+  /// closed continues it.
+  Future<void> _writeAllDayMarker() async {
+    try {
+      final marker = await _allDayMarker();
+      await marker.parent.create(recursive: true);
+      await marker.writeAsString('{"version":1}');
+    } catch (e) {
+      debugPrint('[TextCapture] marker: $e');
+    }
+  }
+
+  Future<void> _clearAllDayMarker() async {
+    try {
+      final marker = await _allDayMarker();
+      if (await marker.exists()) await marker.delete();
+    } catch (_) {}
+  }
+
+  /// Continues all-day listening that was still on when Koe last closed.
+  Future<void> _resumeAllDayListening() async {
+    try {
+      if (textCaptureActive || !await (await _allDayMarker()).exists()) return;
+      if (!allDayListening) {
+        await _clearAllDayMarker();
+        return;
+      }
+      await startTextCapture(allDay: true);
+    } catch (e) {
+      debugPrint('[TextCapture] resume: $e');
     }
   }
 
@@ -675,6 +969,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
       await _textSaves;
       await _removeTextDocument(id);
       await spool.delete();
+      await _clearAllDayMarker();
       _clearTextCapture();
       textCaptureError = null;
     } finally {
@@ -753,6 +1048,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
   }
 
   void _disposeTextCapture() {
+    _textTicker?.cancel();
     _textRetryTimer?.cancel();
     _textDraftTimer?.cancel();
     unawaited(_textMic?.cancel());

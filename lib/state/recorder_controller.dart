@@ -506,10 +506,10 @@ class RecorderController extends ChangeNotifier
       // Text-only captures cut off by a crash, or stopped without network,
       // still have speech to recognize.
       unawaited(
-        Future.wait([
-          _settingsLoaded,
-          _minutesLoaded,
-        ]).then((_) => _recoverTextCaptures()),
+        Future.wait([_settingsLoaded, _minutesLoaded]).then((_) async {
+          await _recoverTextCaptures();
+          await _resumeAllDayListening();
+        }),
       );
     }
     _organizeLoaded = _loadOrganize();
@@ -1034,6 +1034,10 @@ class _RecordingSession {
   bool paused = false;
   bool finalizing = false;
   bool transcriptionComplete = false;
+
+  /// Taken during all-day listening (#319): its text lives in text records,
+  /// so the take itself is not transcribed or organized again.
+  bool textOnly = false;
 }
 
 /// One cloud engine's wiring into [RecorderController]. [load] reads the

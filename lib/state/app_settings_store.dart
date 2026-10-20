@@ -132,6 +132,7 @@ class AppSettings {
     this.engines = const {},
     this.autoTranscribe = true,
     this.autoRealtime = true,
+    this.allDayListening = false,
     this.transcriptLanguage = 'auto',
     this.sttMode = SttDisplayMode.transcription,
     this.translationTargetLanguage = 'zh',
@@ -149,6 +150,10 @@ class AppSettings {
   final String appleSourceLanguage;
   final bool autoTranscribe;
   final bool autoRealtime;
+
+  /// The record buttons start all-day, text-only listening instead of a
+  /// recording.
+  final bool allDayListening;
   final String transcriptLanguage;
   final SttDisplayMode sttMode;
   final String translationTargetLanguage;
@@ -166,6 +171,7 @@ class AppSettings {
     Map<String, EngineConfig>? engines,
     bool? autoTranscribe,
     bool? autoRealtime,
+    bool? allDayListening,
     String? transcriptLanguage,
     SttDisplayMode? sttMode,
     String? translationTargetLanguage,
@@ -179,6 +185,7 @@ class AppSettings {
       engines: engines ?? this.engines,
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
+      allDayListening: allDayListening ?? this.allDayListening,
       transcriptLanguage: transcriptLanguage ?? this.transcriptLanguage,
       sttMode: sttMode ?? this.sttMode,
       translationTargetLanguage:
@@ -194,6 +201,7 @@ class AppSettings {
     if (_engineJson.isNotEmpty) 'engines': _engineJson,
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
+    'allDayListening': allDayListening,
     'transcriptLanguage': transcriptLanguage,
     'sttMode': sttMode.name,
     'translationTargetLanguage': translationTargetLanguage,
@@ -231,6 +239,7 @@ class AppSettings {
       engines: engines,
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,
+      allDayListening: map['allDayListening'] == true,
       transcriptLanguage: _str(map['transcriptLanguage']) ?? 'auto',
       sttMode: sttMode,
       translationTargetLanguage: _str(map['translationTargetLanguage']) ?? 'zh',
