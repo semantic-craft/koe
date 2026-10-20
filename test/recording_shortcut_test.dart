@@ -197,6 +197,29 @@ void main() {
     },
   );
 
+  test(
+    'one tap brings the bound recorder back after a manual disconnect',
+    () async {
+      final ble = _FakeBleService()..ready = true;
+      final controller = _controller(ble)
+        ..bound = true
+        ..lastKnownDevice = _device
+        ..activeDevice = _device
+        ..connected = true;
+      await controller.disconnect();
+      expect(controller.manuallyDisconnected, isTrue);
+      expect(controller.canReconnectBoundDevice, isTrue);
+
+      // Handed to the other device and back: no scan list to pick from.
+      await controller.reconnectBoundDevice();
+      expect(ble.startScanCalls, 1);
+      ble.emitScan([_device]);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(ble.connectCalls, 1);
+      expect(controller.manuallyDisconnected, isFalse);
+    },
+  );
+
   test('unexpected disconnect still reconnects a bound recorder', () async {
     final ble = _FakeBleService()..ready = true;
     final controller = _controller(ble)

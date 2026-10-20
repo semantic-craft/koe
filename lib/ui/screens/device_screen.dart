@@ -452,11 +452,24 @@ class _OfflineDeviceView extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    AccentButton(
-                      label: '扫描并连接',
-                      icon: Icons.radar_rounded,
-                      onPressed: () => showScanDevicesSheet(context),
-                    ),
+                    if (c.canReconnectBoundDevice) ...[
+                      AccentButton(
+                        key: const ValueKey('device-reconnect'),
+                        label: '重新连接',
+                        icon: Icons.link_rounded,
+                        onPressed: c.reconnectBoundDevice,
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () => showScanDevicesSheet(context),
+                        child: const Text('扫描其他设备'),
+                      ),
+                    ] else
+                      AccentButton(
+                        label: '扫描并连接',
+                        icon: Icons.radar_rounded,
+                        onPressed: () => showScanDevicesSheet(context),
+                      ),
                   ],
                 ),
               ),

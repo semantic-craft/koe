@@ -506,6 +506,25 @@ mixin _RecorderDevice on ChangeNotifier {
     }
   }
 
+  /// Whether one tap can bring the bound recorder back after a disconnect,
+  /// without picking it from a scan.
+  bool get canReconnectBoundDevice =>
+      !connected && bound && lastKnownDevice != null;
+
+  /// Reconnects the bound recorder, for example after it was handed to the
+  /// Mac and back. Clears a manual disconnect, so automatic reconnection
+  /// resumes too.
+  Future<void> reconnectBoundDevice() async {
+    await _persistedDeviceLoaded;
+    if (!canReconnectBoundDevice) return;
+    _explicitDisconnect = false;
+    _resetBoundReconnectBackoff();
+    unawaited(_persistDevice());
+    await startScan();
+  }
+
+  /// Leaves the recorder bound but lets it go, so another device (the Mac
+  /// or the phone) can connect; nothing reconnects until asked.
   Future<void> disconnect() async {
     await _persistedDeviceLoaded;
     _explicitDisconnect = true;

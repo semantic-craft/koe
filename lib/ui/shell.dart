@@ -794,6 +794,32 @@ class _DesktopSidebar extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
+              // One click to hand the recorder to the phone and back; it
+              // stays bound either way.
+              if (c.connected)
+                OutlinedButton.icon(
+                  key: const ValueKey('sidebar-disconnect'),
+                  onPressed: c.disconnect,
+                  icon: const Icon(Icons.link_off_rounded, size: 18),
+                  label: const Text('断开录音豆'),
+                )
+              else if (c.canReconnectBoundDevice)
+                OutlinedButton.icon(
+                  key: const ValueKey('sidebar-connect'),
+                  onPressed:
+                      c.phase == AppPhase.scanning ||
+                          c.phase == AppPhase.connecting
+                      ? null
+                      : c.reconnectBoundDevice,
+                  icon: const Icon(Icons.link_rounded, size: 18),
+                  label: Text(
+                    c.phase == AppPhase.connecting ||
+                            c.phase == AppPhase.scanning
+                        ? '正在连接…'
+                        : '连接录音豆',
+                  ),
+                ),
               const SizedBox(height: 24),
               for (final (i, icon, label) in [
                 (0, Icons.library_music_outlined, '录音库'),
