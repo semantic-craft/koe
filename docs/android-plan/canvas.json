@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "title": "Koe Android 执行计划",
+  "boards": {"Main.html": {"x": 0, "y": 0, "w": 1360, "h": 2400, "title": "Android 开发与验收", "expand": "fill"}},
+  "order": ["Main.html"],
+  "pages": [],
+  "notes": {},
+  "designSystems": [{"title": "Koe", "namespace": "koe", "copiedAt": "2026-10-20T19:40:00+08:00"}]
+}

@@ -1,0 +1,31 @@
+:root, [data-theme="light"] {
+  --surface0: #F5F5F3;
+  --surface1: #FCFCFB;
+  --surface2: #FFFFFF;
+  --text-primary: #252521;
+  --text-secondary: #686860;
+  --text-muted: #6F6F67;
+  --accent: #A4472B;
+  --accent-pressed: #8A3B23;
+  --accent-soft: #F6E9E2;
+  --subtle: #E7E5DE;
+}
+:root {
+  --radius-button: 8px;
+  --radius-panel: 10px;
+  --radius-card: 12px;
+  --radius-sheet: 16px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --font-body: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+.body-text { font-size: 15px; line-height: 24px; font-weight: 400; font-family: var(--font-body); }
+.page-title { font-size: 34px; line-height: 44px; font-weight: 650; font-family: var(--font-body); }
+.section-title { font-size: 20px; line-height: 32px; font-weight: 600; font-family: var(--font-body); }
+.caption { font-size: 13px; line-height: 20px; font-weight: 400; font-family: var(--font-body); }
