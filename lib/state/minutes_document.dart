@@ -13,6 +13,7 @@ class MinutesSegment {
     required this.start,
     this.end,
     this.speaker,
+    this.highlighted = false,
   });
 
   final String text;
@@ -20,11 +21,15 @@ class MinutesSegment {
   final Duration? end;
   final String? speaker;
 
+  /// Marked as a key point by the user while capturing.
+  final bool highlighted;
+
   Map<String, Object?> toJson() => {
     'text': text,
     'startMs': start.inMilliseconds,
     if (end != null) 'endMs': end!.inMilliseconds,
     if (speaker != null) 'speaker': speaker,
+    if (highlighted) 'highlighted': true,
   };
 
   static MinutesSegment? decode(Object? value) {
@@ -47,6 +52,7 @@ class MinutesSegment {
       speaker: speaker is String && speaker.trim().isNotEmpty
           ? speaker.trim()
           : null,
+      highlighted: value['highlighted'] == true,
     );
   }
 }
