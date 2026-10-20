@@ -25,6 +25,8 @@ mixin _RecorderTodos on ChangeNotifier {
   RecordingViewData recordingView(RecordingReference ref);
   List<TranscriptSegment> quotableSegmentsForPath(String path);
   String? transcriptForPath(String path);
+  RecordingReference? contextReference(ContextItem item);
+  MinutesDocument? contextDocument(ContextItem item);
   // END DEPS
 
   late final TodoStore todos;
@@ -60,13 +62,83 @@ mixin _RecorderTodos on ChangeNotifier {
         });
   }
 
-  Future<int> _extractTodos(String key, String path, bool confirmRetry) async {
-    await todos.load();
+  Future<int> _extractTodos(String key, String path, bool confirmRetry) {
     final text = transcriptForPath(path)?.trim() ?? '';
     if (text.isEmpty) throw StateError('这条录音还没有文字，转写后再提取待办');
+    final view = recordingView(RecordingReference(path: path));
+    return _extractCommitments(
+      key: key,
+      text: text,
+      segments: quotableSegmentsForPath(path),
+      recordedOn: view.recordedAt ?? view.importedAt ?? DateTime.now(),
+      path: path,
+      byLine: false,
+      confirmRetry: confirmRetry,
+    );
+  }
+
+  /// Whether [item] has words todos can be extracted from.
+  bool canExtractTodosFrom(ContextItem item) {
+    final document = contextDocument(item);
+    if (document != null) return document.bodyText.trim().isNotEmpty;
+    final path = contextReference(item)?.path;
+    return path != null && (transcriptForPath(path) ?? '').trim().isNotEmpty;
+  }
+
+  /// Whether a previous extraction for [item] never reported its result.
+  bool todoExtractionUnknownForItem(ContextItem item) {
+    final document = contextDocument(item);
+    if (document == null) {
+      final ref = contextReference(item);
+      return ref != null && todoExtractionUnknown(ref);
+    }
+    final record = todos.extractionFor(ContextSource.documentKey(document.id));
+    return record != null && !record.done;
+  }
+
+  /// [extractTodos] for a timeline item: a recording, or a text material
+  /// whose todos cite its sentences instead of audio offsets.
+  Future<int> extractTodosForItem(
+    ContextItem item, {
+    bool confirmRetry = false,
+  }) {
+    final document = contextDocument(item);
+    if (document == null) {
+      final ref = contextReference(item);
+      if (ref == null) throw StateError('找不到这条录音');
+      return extractTodos(ref, confirmRetry: confirmRetry);
+    }
+    final key = ContextSource.documentKey(document.id);
+    return _todoExtractionsInFlight[key] ??=
+        _extractCommitments(
+          key: key,
+          text: document.bodyText.trim(),
+          segments: [
+            for (final segment in document.segments)
+              TranscriptSegment(text: segment.text, start: segment.start),
+          ],
+          recordedOn: document.capturedAt ?? document.importedAt,
+          path: null,
+          byLine: true,
+          confirmRetry: confirmRetry,
+        ).whenComplete(() {
+          _todoExtractionsInFlight.remove(key);
+        });
+  }
+
+  Future<int> _extractCommitments({
+    required String key,
+    required String text,
+    required List<TranscriptSegment> segments,
+    required DateTime recordedOn,
+    required String? path,
+    required bool byLine,
+    required bool confirmRetry,
+  }) async {
+    await todos.load();
+    if (text.isEmpty) throw StateError('这条资料还没有文字');
     final apiKey = analysisApiKey;
     if (apiKey.isEmpty) throw StateError('先在设置里配置通义千问，再提取待办');
-    final segments = quotableSegmentsForPath(path);
     final fingerprint = analysisFingerprint(text);
     final previous = todos.extractionFor(key);
     if (previous != null &&
@@ -81,10 +153,7 @@ mixin _RecorderTodos on ChangeNotifier {
       for (final todo in todos.todos)
         if (todo.open) todo,
     ];
-    final view = recordingView(RecordingReference(path: path));
-    final instruction = commitmentInstruction(
-      view.recordedAt ?? view.importedAt ?? DateTime.now(),
-    );
+    final instruction = commitmentInstruction(recordedOn);
     await todos.markExtraction(
       key,
       TodoExtraction(fingerprint: fingerprint, done: false),
@@ -114,6 +183,7 @@ mixin _RecorderTodos on ChangeNotifier {
         recordingKey: key,
         path: path,
         now: DateTime.now(),
+        byLine: byLine,
       );
     } catch (_) {
       await todos.markExtraction(key, previous);

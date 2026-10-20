@@ -1,6 +1,7 @@
 part of '../recorder_controller.dart';
 
-/// Personal context: one timeline item per recording, with its place and
+/// Personal context: one timeline item per recording and per text-only
+/// material (typed note, text capture, imported 妙记 text), with place and
 /// topic links, plus the corrections the user makes to those links.
 ///
 /// Mixed into [RecorderController]; members the rest of the controller owns
@@ -19,6 +20,7 @@ mixin _RecorderContext on ChangeNotifier {
   abstract final QwenSttService _qwenStt;
   List<TranscriptSegment> quotableSegmentsForPath(String path);
   String? transcriptForPath(String path);
+  abstract final MinutesDocumentStore minutes;
   // END DEPS
 
   late final ContextStore contextItems;
@@ -51,6 +53,9 @@ mixin _RecorderContext on ChangeNotifier {
   static String contextIdForRecording(String recordingKey) =>
       'recording:$recordingKey';
 
+  static String contextIdForDocument(String documentId) =>
+      'document:$documentId';
+
   /// The day's context items in time order; unknown-time items come last.
   List<ContextItem> contextItemsForDay(DateTime day) {
     _syncContextItems();
@@ -80,9 +85,17 @@ mixin _RecorderContext on ChangeNotifier {
     return source == null ? null : referenceForSource(source);
   }
 
+  /// The text material an item points at, or null for a recording.
+  MinutesDocument? contextDocument(ContextItem item) {
+    final id = item.source?.documentId;
+    return id == null ? null : minutes.byId(id);
+  }
+
   /// The recording a source points at, resolved to its current path (the
-  /// stored path is only a hint and may predate a rename).
+  /// stored path is only a hint and may predate a rename). Null for a text
+  /// material, which has nothing to replay.
   RecordingReference? referenceForSource(ContextSource source) {
+    if (source.documentId != null) return null;
     final key = source.recordingKey;
     if (key.startsWith('file:')) {
       final id = int.tryParse(key.substring(5));
@@ -114,6 +127,32 @@ mixin _RecorderContext on ChangeNotifier {
     final share = (maxChars ~/ withText.length).clamp(400, maxChars);
     final lines = <SourceLine>[];
     for (final item in withText) {
+      final document = contextDocument(item);
+      if (document != null) {
+        var used = 0;
+        for (final (index, segment) in document.segments.indexed) {
+          if (used >= share) break;
+          final text = segment.text.length > share - used
+              ? '${segment.text.substring(0, share - used)}…'
+              : segment.text;
+          used += text.length;
+          lines.add(
+            SourceLine(
+              label: 'S${lines.length + 1}',
+              title: item.title,
+              text: text,
+              at: document.timingReliable
+                  ? item.start?.add(segment.start)
+                  : item.start,
+              source: ContextSource(
+                recordingKey: ContextSource.documentKey(document.id),
+                line: index,
+              ),
+            ),
+          );
+        }
+        continue;
+      }
       final ref = contextReference(item)!;
       final path = ref.path!;
       final key = item.source!.recordingKey;
@@ -148,6 +187,8 @@ mixin _RecorderContext on ChangeNotifier {
   bool contextItemHasText(ContextItem item) => _itemText(item).isNotEmpty;
 
   String _itemText(ContextItem item) {
+    final document = contextDocument(item);
+    if (document != null) return document.bodyText.trim();
     final path = contextReference(item)?.path;
     if (path == null) return '';
     return transcriptForPath(path)?.trim() ?? '';
@@ -158,8 +199,21 @@ mixin _RecorderContext on ChangeNotifier {
     final now = DateTime.now();
     contextItems.sync([
       for (final path in exportedPaths) _recordingContextItem(path, now),
+      for (final document in minutes.documents)
+        if (document.textOnly) _documentContextItem(document),
     ]);
   }
+
+  /// A text material sits at its capture time; an import that gave none
+  /// keeps an unknown time and sits on the day it arrived.
+  ContextItem _documentContextItem(MinutesDocument document) => ContextItem(
+    id: contextIdForDocument(document.id),
+    kind: ContextKind.document,
+    title: document.title,
+    start: document.capturedAt,
+    addedAt: document.importedAt,
+    source: ContextSource(recordingKey: ContextSource.documentKey(document.id)),
+  );
 
   ContextItem _recordingContextItem(String path, DateTime now) {
     final id = fileIdFromPath(path);
