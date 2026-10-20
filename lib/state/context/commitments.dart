@@ -62,7 +62,8 @@ class CommitmentChanges {
   final List<TodoClarification> clarifications;
 }
 
-/// Turns the model's JSON into todo changes.
+/// Turns the model's JSON into todo changes. With [byLine] the citations
+/// point at sentence numbers of a text material instead of audio offsets.
 ///
 /// Every item must cite a real sentence; one that does not is dropped,
 /// so no todo exists without the words it came from. An update is applied
@@ -76,6 +77,7 @@ CommitmentChanges parseCommitments(
   required String recordingKey,
   required String? path,
   required DateTime now,
+  bool byLine = false,
 }) {
   final json = _firstJsonObject(raw);
   if (json == null) throw const FormatException('模型没有返回可读的结果');
@@ -93,12 +95,14 @@ CommitmentChanges parseCommitments(
     final segment = segments[index - 1];
     return (
       segment,
-      ContextSource(
-        recordingKey: recordingKey,
-        path: path,
-        start: segment.start,
-        end: segment.end,
-      ),
+      byLine
+          ? ContextSource(recordingKey: recordingKey, line: index - 1)
+          : ContextSource(
+              recordingKey: recordingKey,
+              path: path,
+              start: segment.start,
+              end: segment.end,
+            ),
     );
   }
 

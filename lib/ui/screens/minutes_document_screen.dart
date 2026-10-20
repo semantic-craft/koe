@@ -15,9 +15,17 @@ import 'recording_detail_screen.dart';
 /// A text-only document never shows a fake player. When audio is paired but
 /// the timecodes are unreliable, only whole-file playback is offered.
 class MinutesDocumentScreen extends StatefulWidget {
-  const MinutesDocumentScreen({super.key, required this.documentId});
+  const MinutesDocumentScreen({
+    super.key,
+    required this.documentId,
+    this.focusLine,
+  });
 
   final String documentId;
+
+  /// The sentence a citation points at: repeated above the text and marked
+  /// in it, so the reader lands on it without scrolling.
+  final int? focusLine;
 
   @override
   State<MinutesDocumentScreen> createState() => _MinutesDocumentScreenState();
@@ -48,6 +56,9 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
         File(audioPath).existsSync();
     final playing = audioPath != null && c.playingPath == audioPath;
     final canSeek = document.timingReliable && audioAvailable;
+    final focus = widget.focusLine;
+    final focusValid =
+        focus != null && focus >= 0 && focus < document.segments.length;
     final header = <Widget>[
       _MetaRow(label: '来源', value: document.sourceName),
       _MetaRow(
@@ -135,6 +146,21 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
           style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
         ),
       ],
+      if (focusValid) ...[
+        const SizedBox(height: 18),
+        Container(
+          key: const ValueKey('minutes-focus-line'),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.accent.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            '出处 · 第 ${focus + 1} 句\n${document.segments[focus].text}',
+            style: const TextStyle(fontSize: 14, height: 1.5),
+          ),
+        ),
+      ],
       const SizedBox(height: 18),
       const Text(
         '正文',
@@ -150,9 +176,11 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
         itemCount: header.length + document.segments.length,
         itemBuilder: (context, index) {
           if (index < header.length) return header[index];
-          final segment = document.segments[index - header.length];
+          final line = index - header.length;
+          final segment = document.segments[line];
           return _SegmentRow(
             segment: segment,
+            focused: focusValid && line == focus,
             showTime: document.timingReliable,
             onTap: canSeek
                 ? () => c.playFrom(
@@ -208,17 +236,25 @@ class _SegmentRow extends StatelessWidget {
   const _SegmentRow({
     required this.segment,
     required this.showTime,
+    this.focused = false,
     this.onTap,
   });
 
   final MinutesSegment segment;
   final bool showTime;
+  final bool focused;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final content = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+    final content = Container(
+      padding: EdgeInsets.symmetric(vertical: 8, horizontal: focused ? 8 : 0),
+      decoration: focused
+          ? BoxDecoration(
+              color: AppColors.accent.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(8),
+            )
+          : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

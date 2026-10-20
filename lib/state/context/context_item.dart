@@ -1,31 +1,44 @@
 import 'context_file.dart';
 
 /// What a personal-context item stands for.
-enum ContextKind { recording, place, todo, calendar, note }
+enum ContextKind { recording, place, todo, calendar, note, document }
 
-/// Points into an original recording instead of copying its words.
+/// Points into an original recording or text material instead of copying
+/// its words.
 ///
 /// [recordingKey] is the controller's stable recording identity (`file:<id>`
 /// or `path:<path>`); [path] is only a hint for opening the file and may go
 /// stale after a rename. [start]/[end] are offsets into the audio.
+///
+/// A text material (typed note, text-only capture, imported 妙记 text) uses
+/// `doc:<id>` and [line], the sentence index in it; it has no audio to replay.
 class ContextSource {
   const ContextSource({
     required this.recordingKey,
     this.path,
     this.start = Duration.zero,
     this.end,
+    this.line,
   });
+
+  static String documentKey(String documentId) => 'doc:$documentId';
 
   final String recordingKey;
   final String? path;
   final Duration start;
   final Duration? end;
+  final int? line;
+
+  /// The text material this points into, or null for a recording.
+  String? get documentId =>
+      recordingKey.startsWith('doc:') ? recordingKey.substring(4) : null;
 
   Map<String, Object?> toJson() => {
     'recordingKey': recordingKey,
     if (path != null) 'path': path,
     'startMs': start.inMilliseconds,
     if (end != null) 'endMs': end!.inMilliseconds,
+    if (line != null) 'line': line,
   };
 
   static ContextSource? decode(Object? value) {
@@ -33,6 +46,7 @@ class ContextSource {
     final key = value['recordingKey'];
     final startMs = value['startMs'];
     final endMs = value['endMs'];
+    final line = value['line'];
     if (key is! String || key.isEmpty) return null;
     return ContextSource(
       recordingKey: key,
@@ -41,6 +55,7 @@ class ContextSource {
         milliseconds: startMs is int && startMs > 0 ? startMs : 0,
       ),
       end: endMs is int ? Duration(milliseconds: endMs) : null,
+      line: line is int && line >= 0 ? line : null,
     );
   }
 
@@ -50,10 +65,11 @@ class ContextSource {
       other.recordingKey == recordingKey &&
       other.path == path &&
       other.start == start &&
-      other.end == end;
+      other.end == end &&
+      other.line == line;
 
   @override
-  int get hashCode => Object.hash(recordingKey, path, start, end);
+  int get hashCode => Object.hash(recordingKey, path, start, end, line);
 }
 
 /// One thing that happened in the user's life, as Koe knows it.
@@ -95,6 +111,11 @@ class ContextItem {
   final bool userEdited;
 
   bool get timeKnown => start != null;
+
+  /// Rebuilt from a recording or text material that currently exists;
+  /// hidden while that material is gone.
+  bool get derived =>
+      kind == ContextKind.recording || kind == ContextKind.document;
 
   /// The moment used to place the item on a day: when it happened, or, with
   /// an unknown time, when Koe received it.

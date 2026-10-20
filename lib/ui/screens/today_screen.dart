@@ -490,17 +490,14 @@ class _ActionsSectionState extends State<_ActionsSection> {
     String? problem;
     try {
       for (final item in widget.today) {
-        final ref = c.contextReference(item);
-        final path = ref?.path;
-        if (ref == null || path == null) continue;
-        if ((c.transcriptForPath(path) ?? '').trim().isEmpty) continue;
+        if (!c.canExtractTodosFrom(item)) continue;
         var retry = false;
-        if (c.todoExtractionUnknown(ref)) {
+        if (c.todoExtractionUnknownForItem(item)) {
           retry = await _confirmRetry(item.title);
           if (!retry) continue;
         }
         try {
-          added += await c.extractTodos(ref, confirmRetry: retry);
+          added += await c.extractTodosForItem(item, confirmRetry: retry);
         } on StateError catch (error) {
           problem = error.message.toString();
         } catch (_) {
@@ -544,11 +541,7 @@ class _ActionsSectionState extends State<_ActionsSection> {
     final c = context.watch<RecorderController>();
     final mine = c.todos.openMine;
     final asks = c.todos.clarifications.length;
-    final canExtract = widget.today.any((item) {
-      final path = c.contextReference(item)?.path;
-      return path != null &&
-          (c.transcriptForPath(path) ?? '').trim().isNotEmpty;
-    });
+    final canExtract = widget.today.any(c.canExtractTodosFrom);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

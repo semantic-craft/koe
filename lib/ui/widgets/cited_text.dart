@@ -79,7 +79,7 @@ class _CitedTextState extends State<CitedText> {
   }
 }
 
-/// The cited sentences under a text, each tappable to replay it.
+/// The cited sentences under a text, each tappable to replay or read it.
 class SourceList extends StatelessWidget {
   const SourceList({super.key, required this.sources});
 
@@ -97,7 +97,7 @@ class SourceList extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Text(
-                '[${line.label}] ${line.title} ▶︎ ${offsetLabel(line.source.start)}\n「${line.text}」',
+                '[${line.label}] ${line.title} ${sourcePositionLabel(line.source)}\n「${line.text}」',
                 style: const TextStyle(
                   fontSize: 12,
                   height: 1.4,
