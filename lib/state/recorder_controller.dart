@@ -39,6 +39,7 @@ import '../ble/realtime_stream.dart';
 import '../crypto/device_crypto.dart';
 import '../platform/answer_speaker.dart';
 import '../platform/background_sync_service.dart';
+import '../platform/phone_mic_stream.dart';
 import '../platform/phone_recorder.dart';
 import '../platform/place_capture.dart';
 import '../platform/system_tasks.dart';
@@ -70,6 +71,7 @@ import 'minutes_document.dart';
 import 'playback_history.dart';
 import 'recording_bookmarks.dart';
 import 'speech_configuration.dart';
+import 'text_capture_spool.dart';
 import 'deferred_file_jobs.dart';
 import 'device_copies.dart';
 import 'file_job_journal.dart';
@@ -105,6 +107,7 @@ part 'recorder/place.dart';
 part 'recorder/organize.dart';
 part 'recorder/phone_recording.dart';
 part 'recorder/voice_input.dart';
+part 'recorder/text_capture.dart';
 part 'recorder/context.dart';
 part 'recorder/todos.dart';
 part 'recorder/projects.dart';
@@ -153,6 +156,7 @@ class RecorderController extends ChangeNotifier
         _RecorderOrganize,
         _RecorderPhoneRecording,
         _RecorderVoiceInput,
+        _RecorderTextCapture,
         _RecorderContext,
         _RecorderTodos,
         _RecorderProjects,
@@ -239,6 +243,8 @@ class RecorderController extends ChangeNotifier
     PlaceCapture? placeCapture,
     OrganizeStore? organizeStore,
     PhoneRecorder? phoneRecorder,
+    PhoneMicStream? micStream,
+    SttStreamSession Function(SpeechConfiguration config)? speechStream,
     AnswerSpeaker? answerSpeaker,
     bool? phoneRecordingEnabled,
     MinutesDocumentStore? minutesStore,
@@ -272,6 +278,8 @@ class RecorderController extends ChangeNotifier
        _libraryDirectoryOverride = libraryDirectory,
        _placeCapture = placeCapture ?? const DevicePlaceCapture(),
        _phoneRecorderOverride = phoneRecorder,
+       _micStreamOverride = micStream,
+       _speechStreamOverride = speechStream,
        answerSpeaker = answerSpeaker ?? SystemAnswerSpeaker(),
        phoneRecordingEnabled =
            phoneRecordingEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
@@ -494,6 +502,16 @@ class RecorderController extends ChangeNotifier
       _transcriptsLoaded = _loadPersistedTranscripts();
     }
     _fileJobsLoaded = _restoreFileJobs();
+    if (this.phoneRecordingEnabled) {
+      // Text-only captures cut off by a crash, or stopped without network,
+      // still have speech to recognize.
+      unawaited(
+        Future.wait([
+          _settingsLoaded,
+          _minutesLoaded,
+        ]).then((_) => _recoverTextCaptures()),
+      );
+    }
     _organizeLoaded = _loadOrganize();
     // Topics are iPhone-only in the first version (#50); elsewhere the store
     // stays empty in memory and nothing is placed.
@@ -565,6 +583,16 @@ class RecorderController extends ChangeNotifier
   PhoneRecorder get _phoneRecorder =>
       _phoneRecorderOverride ??
       (_devicePhoneRecorder ??= DevicePhoneRecorder());
+  final PhoneMicStream? _micStreamOverride;
+  PhoneMicStream? _deviceMicStream;
+  @override
+  PhoneMicStream get _micStream =>
+      _micStreamOverride ?? (_deviceMicStream ??= DevicePhoneMicStream());
+
+  /// Test seam: replaces the configured engine's live recognition stream.
+  @override
+  final SttStreamSession Function(SpeechConfiguration config)?
+  _speechStreamOverride;
 
   /// Reads Ask Koe answers aloud when the user turns it on.
   final AnswerSpeaker answerSpeaker;
@@ -943,6 +971,8 @@ class RecorderController extends ChangeNotifier
     removeListener(_scheduleOrganize);
     unawaited(_phoneMicStates?.cancel());
     unawaited(_devicePhoneRecorder?.dispose());
+    _disposeTextCapture();
+    unawaited(_deviceMicStream?.dispose());
     archive.removeListener(_onArchiveChanged);
     if (_ownsArchive) archive.dispose();
     contextItems.removeListener(notifyListeners);
