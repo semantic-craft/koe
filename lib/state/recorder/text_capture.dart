@@ -166,6 +166,9 @@ mixin _RecorderTextCapture on ChangeNotifier {
   String _textLive = '';
   String _textAtFinal = '';
 
+  /// Line indexes of [textCaptureText] the user marked as key points.
+  final Set<int> _textMarks = {};
+
   /// Why capture cannot start, or what is wrong while it runs; null when
   /// all is well.
   String? textCaptureError;
@@ -198,6 +201,29 @@ mixin _RecorderTextCapture on ChangeNotifier {
 
   /// Everything recognized so far, the sentence in progress included.
   String get textCaptureText => _joinText(_textCommitted, _textLive);
+
+  /// The recognized lines so far, each with whether it is marked.
+  List<(String, bool)> get textCaptureLines => [
+    for (final (index, line) in _textLines(textCaptureText).indexed)
+      (line, _textMarks.contains(index)),
+  ];
+
+  /// Marks the sentence being spoken, or the last finished one, as a key
+  /// point. Returns false when there is nothing to mark yet.
+  bool markTextCaptureHighlight() {
+    if (!textCaptureActive || _textStopping) return false;
+    final lines = _textLines(textCaptureText);
+    if (lines.isEmpty) return false;
+    _textMarks.add(lines.length - 1);
+    _scheduleTextDraft();
+    notifyListeners();
+    return true;
+  }
+
+  static List<String> _textLines(String text) => [
+    for (final line in text.split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  ];
 
   /// Captured speech the service has not received yet.
   int get textCaptureBacklogSeconds =>
@@ -282,6 +308,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
       _textCommitted = '';
       _textLive = '';
       _textAtFinal = '';
+      _textMarks.clear();
       _textRetry = 0;
       _textLastDraft = null;
       _textAllDay = allDay;
@@ -425,6 +452,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
       _textCommitted = '';
       _textLive = '';
       _textAtFinal = '';
+      _textMarks.clear();
       _textLastVoice = null;
       _textLastDraft = null;
       await _saveTextState();
@@ -624,11 +652,9 @@ mixin _RecorderTextCapture on ChangeNotifier {
     DateTime startedAt,
     String text, {
     String? warning,
+    Set<int> marks = const {},
   }) {
-    final lines = [
-      for (final line in text.split('\n'))
-        if (line.trim().isNotEmpty) line.trim(),
-    ];
+    final lines = _textLines(text);
     if (lines.isEmpty) return null;
     return MinutesDocument(
       id: id,
@@ -637,8 +663,12 @@ mixin _RecorderTextCapture on ChangeNotifier {
       importedAt: startedAt,
       capturedAt: startedAt,
       segments: [
-        for (final line in lines)
-          MinutesSegment(text: line, start: Duration.zero),
+        for (final (index, line) in lines.indexed)
+          MinutesSegment(
+            text: line,
+            start: Duration.zero,
+            highlighted: marks.contains(index),
+          ),
       ],
       timingReliable: false,
       warning: warning,
@@ -676,12 +706,14 @@ mixin _RecorderTextCapture on ChangeNotifier {
     if (id == null || startedAt == null) return _textSaves;
     final text = _joinText(_textCommitted, _textAtFinal);
     final mark = _textFinalMark;
+    final marks = {..._textMarks};
     return _queueTextSave(() async {
       final document = _textDocument(
         id,
         startedAt,
         text,
         warning: '记录还在进行，或在结束前中断；中断后没识别的部分会在下次联网时补上',
+        marks: marks,
       );
       if (document == null) return;
       await minutes.upsert(document, strict: false);
@@ -729,6 +761,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
     _textLastVoice = null;
     _textPreroll.clear();
     _textHeld.clear();
+    _textMarks.clear();
     textCapturePaused = false;
   }
 
@@ -850,6 +883,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
       id,
       startedAt,
       text.isEmpty ? _waitingLine : text,
+      marks: text.isEmpty ? const {} : {..._textMarks},
       warning: pendingSeconds > 0
           ? '还有约 $pendingSeconds 秒的话没识别，联网后自动补上并接在后面'
           : null,
@@ -1014,7 +1048,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
       final existing = minutes.byId(state.documentId);
       final kept = [
         for (final segment in existing?.segments ?? const <MinutesSegment>[])
-          if (segment.text != _waitingLine) segment.text,
+          if (segment.text != _waitingLine) segment,
       ];
       var tail = '';
       if (spool.length - state.sentBytes >= _bytesPerSecond ~/ 2) {
@@ -1027,7 +1061,11 @@ mixin _RecorderTextCapture on ChangeNotifier {
       final document = _textDocument(
         state.documentId,
         state.startedAt,
-        _joinText(kept.join('\n'), tail),
+        _joinText(kept.map((segment) => segment.text).join('\n'), tail),
+        marks: {
+          for (final (index, segment) in kept.indexed)
+            if (segment.highlighted) index,
+        },
       );
       if (document == null) {
         await _removeTextDocument(state.documentId);

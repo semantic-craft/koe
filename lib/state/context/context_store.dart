@@ -10,8 +10,8 @@ export 'context_item.dart';
 
 /// Persists the user's context items and the corrections made to them.
 ///
-/// Recording items are rebuilt from the recordings that currently exist via
-/// [sync]. A recording that leaves the library (trash) hides its item; an
+/// Recording and text-material items are rebuilt from what currently exists
+/// via [sync]. A recording that leaves the library (trash) hides its item; an
 /// item the user corrected stays stored so the correction returns with the
 /// recording when it is restored.
 class ContextStore extends ChangeNotifier {
@@ -73,7 +73,7 @@ class ContextStore extends ChangeNotifier {
 
   ContextItem? _visible(ContextItem? item) {
     if (item == null) return null;
-    if (item.kind == ContextKind.recording && !_live.contains(item.id)) {
+    if (item.derived && !_live.contains(item.id)) {
       return null;
     }
     return item;
@@ -100,7 +100,7 @@ class ContextStore extends ChangeNotifier {
           .toList()
         ..sort(compareContextItems);
 
-  /// Replaces the recording items with [derived], keeping user links.
+  /// Replaces the derived items with [derived], keeping user links.
   ///
   /// Does not notify: it runs while the UI reads the timeline. Changes are
   /// written in the background; nothing is merged before [load] finishes, so
@@ -130,7 +130,7 @@ class ContextStore extends ChangeNotifier {
     }
     _items.removeWhere((id, item) {
       final drop =
-          item.kind == ContextKind.recording &&
+          item.derived &&
           !live.contains(id) &&
           !item.userEdited &&
           item.projectIds.isEmpty;

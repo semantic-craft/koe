@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../state/minutes_document.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import '../context_source.dart';
 import '../recording_navigation.dart';
+import 'highlight.dart';
 import 'widgets.dart';
 import 'koe_icon_button.dart';
 
@@ -20,7 +23,8 @@ String contextTimeLabel(ContextItem item) {
 }
 
 /// One timeline row: time, title, place and linked topics. Tapping opens
-/// the original recording; the link button corrects the topic links.
+/// the original recording or text material; the link button corrects the
+/// topic links.
 class ContextTimelineRow extends StatelessWidget {
   const ContextTimelineRow({super.key, required this.item});
 
@@ -30,6 +34,8 @@ class ContextTimelineRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     final ref = c.contextReference(item);
+    final source = item.source;
+    final isText = source?.documentId != null;
     final topicTitles = [
       for (final id in item.topicIds) ?c.topics.topicById(id)?.title,
     ];
@@ -37,18 +43,26 @@ class ContextTimelineRow extends StatelessWidget {
       for (final id in item.projectIds) ?c.projects.projectById(id)?.title,
     ];
     final details = [contextTimeLabel(item), ?item.location];
+    final document = c.contextDocument(item);
+    final highlights = [
+      for (final (index, segment)
+          in (document?.segments ?? const <MinutesSegment>[]).indexed)
+        if (segment.highlighted) (index, segment.text),
+    ];
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: SurfaceCard(
         key: ValueKey('timeline-item-${item.id}'),
         padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
-        onTap: ref == null
+        onTap: isText
+            ? () => openContextSource(context, source!)
+            : ref == null
             ? null
             : () => RecordingNavigation.open(context, ref),
         child: Row(
           children: [
-            const Icon(
-              Icons.graphic_eq_rounded,
+            Icon(
+              isText ? Icons.notes_rounded : Icons.graphic_eq_rounded,
               color: AppColors.textSecondary,
             ),
             const SizedBox(width: 12),
@@ -70,6 +84,27 @@ class ContextTimelineRow extends StatelessWidget {
                       color: AppColors.textSecondary,
                     ),
                   ),
+                  for (final (index, text) in highlights.take(3))
+                    Padding(
+                      key: ValueKey(
+                        'timeline-highlight-${document!.id}-$index',
+                      ),
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            const TextSpan(text: '★ '),
+                            TextSpan(
+                              text: text,
+                              style: highlightTextStyle(context),
+                            ),
+                          ],
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
                   if (topicTitles.isNotEmpty || projectTitles.isNotEmpty) ...[
                     const SizedBox(height: 6),
                     Wrap(

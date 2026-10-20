@@ -70,7 +70,7 @@ String buildContextMarkdown({
     ..writeln()
     ..writeln(
       '> 由 Koe 导出（$scopeLabel，${_date(exportedAt)} ${_clock(exportedAt)}）。'
-      '内容来自本人录音的转写，[S#] 对应文末「出处」里的录音和时间位置；'
+      '内容来自本人录音的转写和文字记录，[S#] 对应文末「出处」里的录音时间位置或文字句号；'
       '地点只到区县。请只依据这些资料回答，没有依据的请说明。',
     );
   if (goal != null && goal.isNotEmpty) {
@@ -103,9 +103,10 @@ String buildContextMarkdown({
     }
     out.writeln();
     for (final line in entry.lines) {
-      out.writeln(
-        '- [${line.label}] ${_offset(line.source.start)} ${line.text}',
-      );
+      final position = line.source.documentId == null
+          ? '${_offset(line.source.start)} '
+          : '';
+      out.writeln('- [${line.label}] $position${line.text}');
     }
   }
   if (todos.isNotEmpty) {
@@ -154,9 +155,12 @@ String buildContextMarkdown({
       final end = line.source.end == null
           ? ''
           : '–${_offset(line.source.end!)}';
+      final position = line.source.documentId == null
+          ? '录音位置 ${_offset(line.source.start)}$end'
+          : '文字第 ${(line.source.line ?? 0) + 1} 句';
       out.writeln(
-        '- [${line.label}] ${line.title}$at · 录音位置 '
-        '${_offset(line.source.start)}$end · ${line.source.recordingKey}',
+        '- [${line.label}] ${line.title}$at · $position · '
+        '${line.source.recordingKey}',
       );
     }
   }
@@ -171,7 +175,8 @@ String relabelCitations(
   List<SourceLine> to,
 ) {
   String keyOf(SourceLine line) =>
-      '${line.source.recordingKey}@${line.source.start.inMilliseconds}';
+      '${line.source.recordingKey}@${line.source.start.inMilliseconds}'
+      '#${line.source.line}';
   final target = {for (final line in to) keyOf(line): line.label};
   final mapping = {for (final line in from) line.label: target[keyOf(line)]};
   return text.replaceAllMapped(RegExp(r'\[(S\d+)\]'), (match) {

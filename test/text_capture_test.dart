@@ -270,6 +270,34 @@ void main() {
     expect(controller.minutesDocuments, isEmpty);
     expect(noSpools(), isTrue);
   });
+  test('a marked sentence stays marked in the saved text', () async {
+    final controller = build();
+    expect(controller.markTextCaptureHighlight(), isFalse);
+    expect(await controller.startTextCapture(), isTrue);
+    await until(() => controller.textCaptureConnected);
+    mic.speak(_second);
+    await until(() => streams.first.received == _second);
+    streams.first.emit('先说点闲话。', speechFinal: true);
+    streams.first.emit('先说点闲话。\n合同周五前要签');
+    await Future<void>.delayed(Duration.zero);
+    // Marks the sentence being spoken, before it is finished.
+    expect(controller.markTextCaptureHighlight(), isTrue);
+    streams.first.emit('先说点闲话。\n合同周五前要签。\n再说别的。', speechFinal: true);
+    streams.first.finalText = '先说点闲话。\n合同周五前要签。\n再说别的。';
+
+    final outcome = await controller.stopTextCapture();
+
+    final marked = [
+      for (final segment in outcome!.document!.segments)
+        if (segment.highlighted) segment.text,
+    ];
+    expect(marked, ['合同周五前要签。']);
+    final saved = MinutesDocumentStore.decode(
+      await minutesFile().readAsString(),
+    )!.values.single;
+    expect(saved.segments.map((s) => s.highlighted), [false, true, false]);
+  });
+
   testWidgets('new record offers text-only capture and saves its text', (
     tester,
   ) async {
@@ -299,13 +327,19 @@ void main() {
     streams.first.emit('界面上看得到的话。', speechFinal: true);
     streams.first.finalText = '界面上看得到的话。';
     await tester.pump();
-    expect(find.text('界面上看得到的话。'), findsOneWidget);
+    expect(find.text('界面上看得到的话。', findRichText: true), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('mark-text-capture')));
+    await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('stop-text-capture')));
     await settle(() => !controller.textCaptureActive);
     await tester.pumpAndSettle();
     expect(find.text('文字已保存到资料'), findsOneWidget);
     expect(controller.minutesDocuments.single.bodyText, '界面上看得到的话。');
+    expect(
+      controller.minutesDocuments.single.segments.single.highlighted,
+      isTrue,
+    );
   });
   testWidgets('with all-day listening on, phone recording listens all day', (
     tester,

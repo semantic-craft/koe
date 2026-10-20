@@ -206,7 +206,7 @@ class _ClarificationCard extends StatelessWidget {
             InkWell(
               onTap: () => openContextSource(context, item.source),
               child: Text(
-                '「${item.quote}」 ▶︎ ${offsetLabel(item.source.start)}',
+                '「${item.quote}」 ${sourcePositionLabel(item.source)}',
                 style: const TextStyle(
                   fontSize: 13,
                   color: AppColors.textSecondary,
@@ -328,7 +328,7 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
                 const SizedBox(width: 10),
                 Expanded(child: Text(todo.quote)),
                 Text(
-                  '▶︎ ${offsetLabel(todo.source.start)}',
+                  sourcePositionLabel(todo.source),
                   style: const TextStyle(
                     fontSize: 12,
                     color: AppColors.textSecondary,
