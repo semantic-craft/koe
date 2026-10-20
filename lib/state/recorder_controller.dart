@@ -46,6 +46,7 @@ import '../platform/system_tasks.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
+import '../protocol/slice_marks.dart';
 import '../wifi/wifi_export_service.dart';
 import 'app_settings_store.dart';
 import 'context/commitments.dart';
@@ -456,6 +457,7 @@ class RecorderController extends ChangeNotifier
       write: _ble.writeCommand,
       crypto: _crypto,
       onDecryptedFrame: _onRealtimeOpusFrame,
+      onMark: (fileId, sequence) => _onDeviceMark(fileId, sequence, live: true),
     );
     _blePull = BleFilePull(
       packets: _ble.packets,

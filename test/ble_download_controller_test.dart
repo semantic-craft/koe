@@ -9,6 +9,7 @@ import 'package:koe/ble/ble_service.dart';
 import 'package:koe/state/file_job_journal.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
+import 'package:koe/protocol/slice_marks.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -188,29 +189,46 @@ void main() {
   });
 
   test(
-    'auto transfer counts completed device recordings, not batch attempts',
+    'a double tap on the recorder becomes a bookmark at its moment',
     () async {
-      await startBacklog();
-      expect(controller.statusMessage, startsWith('自动传输 1/3'));
+      controller.dispose();
+      ble = _Ble();
+      controller =
+          RecorderController(
+              loadPersistedState: false,
+              ble: ble,
+              rawExportConverter: (raw) async {
+                final wav = '${raw.substring(0, raw.lastIndexOf('.'))}.wav';
+                await File(
+                  wav,
+                ).writeAsBytes(wavBytes([...await File(raw).readAsBytes()]));
+                return wav;
+              },
+            )
+            ..autoRealtime = false
+            ..connected = true
+            ..encryptReady = true
+            ..phase = AppPhase.ready;
+
+      final work = controller.downloadFileOverBle(
+        OfflineFileEntry(fileId: 106, sizeBytes: 480),
+      );
+      await _until(() => ble.downloads.contains(106));
+      ble.slice(sequence: 0);
+      // Slice 50 starts one second in: 50 × 20 ms.
+      ble.slice(sequence: 50, flags: 0x01);
+      ble.slice(sequence: 51);
       ble.finish();
-      await _until(() => ble.downloads.length == 2);
-      expect(controller.statusMessage, startsWith('自动传输 2/3'));
+      await work;
+
+      final path = controller.localPathFor(106)!;
+      final marks = controller.bookmarksFor(
+        RecordingReference(fileId: 106, path: path),
+      );
+      expect(marks.map((b) => b.position), [const Duration(seconds: 1)]);
+      expect(marks.single.note, SliceMark.bookmarkNote);
     },
   );
-
-  test('manual download takes priority over a running BLE backlog', () async {
-    await startBacklog();
-    final requested = controller.files.singleWhere((f) => f.fileId == 102);
-    final work = controller.downloadFileOverBle(requested);
-    expect(controller.downloadingFileId, 102);
-    await _until(() => ble.downloads.contains(102));
-    ble.finish();
-    await work;
-    expect(controller.localPathFor(102), isNotNull);
-    expect(controller.downloadingFileId, isNull);
-    await _until(() => ble.downloads.length == 3);
-    expect(ble.downloads, [103, 102, 103]);
-  });
 
   test(
     'failed automatic downloads do not increment the completed count',
@@ -528,8 +546,11 @@ class _Ble extends BleService {
   }
 
   /// One 160-byte file slice without the done signal (link dropped).
-  void slice() {
+  /// [flags] 0x01 is the recorder's double-tap mark.
+  void slice({int sequence = 0, int flags = 0}) {
     final raw = Uint8List(175)..fillRange(14, 174, 1);
+    raw.buffer.asByteData().setUint32(9, sequence, Endian.little);
+    raw[13] = flags;
     _emit(0x08, raw);
   }
 

@@ -58,6 +58,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   abstract bool allDayListening;
   bool get textCaptureFromDevice;
   void feedDeviceTextCapture(Uint8List pcm);
+  Future<void> _applyDeviceMarks(int fileId);
   // END DEPS
 
   _RecordingSession? get _currentRecording =>
@@ -180,6 +181,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
           unawaited(
             _convertExportToWav(s.path!).whenComplete(() {
               _finalizingRecordings.remove(key);
+              if (s.fileId != null) unawaited(_applyDeviceMarks(s.fileId!));
               unawaited(_enqueueDeferredRecording(owner, s.path!));
               notifyListeners();
             }),
@@ -204,6 +206,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       unawaited(
         _convertExportToWav(finishedPath).whenComplete(() {
           _finalizingRecordings.remove(finishedKey);
+          if (s.fileId != null) unawaited(_applyDeviceMarks(s.fileId!));
           final owner = _sessionForReference(
             RecordingReference(path: finishedPath),
           );

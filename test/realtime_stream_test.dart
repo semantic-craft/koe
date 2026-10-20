@@ -61,11 +61,40 @@ void main() {
     expect(stream.state.bytesReceived, 4 * 160);
     expect(await File(stream.state.path!).length(), 4 * 160);
   });
+
+  test(
+    'a double tap on the recorder reaches the app while it records',
+    () async {
+      final packets = StreamController<DecodedPacket>.broadcast();
+      final marks = <(int, int)>[];
+      final stream = RealtimeBleStream(
+        packets: packets.stream,
+        write: (_) async {},
+        crypto: DeviceCrypto(),
+        onMark: (fileId, sequence) => marks.add((fileId, sequence)),
+      );
+      addTearDown(() async {
+        await stream.dispose();
+        await packets.close();
+      });
+
+      await stream.startForFile(1792390000);
+      packets.add(_slice(0));
+      packets.add(_slice(1, flags: 0x01));
+      packets.add(_slice(2));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(marks, [(1792390000, 1)]);
+      // The marked slice's audio is kept like any other.
+      expect(stream.state.bytesReceived, 3 * 160);
+    },
+  );
 }
 
-DecodedPacket _slice(int sequence) {
+DecodedPacket _slice(int sequence, {int flags = 0}) {
   final raw = Uint8List(175);
   raw.setRange(9, 13, u32Le(sequence));
+  raw[13] = flags;
   raw.fillRange(14, 174, sequence + 1);
   return DecodedPacket(
     raw: raw,
