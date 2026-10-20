@@ -52,6 +52,28 @@ void main() {
     await logSub.cancel();
   });
 
+  test('a slice flagged by the bean shows in the log once, with its '
+      'sequence', () async {
+    final ble = BleService();
+    final logs = <String>[];
+    final logSub = ble.logs.listen(logs.add);
+
+    for (var sequence = 0; sequence < 100; sequence++) {
+      ble.handleNotification(
+        _sliceFrame(sequence, flags: sequence >= 40 && sequence < 43 ? 2 : 0),
+      );
+    }
+    ble.handleNotification(_sliceFrame(100, cmdId: RxCmd.fileSliceMarkId));
+    await Future<void>.delayed(Duration.zero);
+
+    final marks = logs.where((line) => line.startsWith('标记线索')).toList();
+    expect(marks, hasLength(3));
+    expect(marks[0], contains('cmd=0x08 seq=40 flags=0x02'));
+    expect(marks[1], contains('cmd=0x08 seq=43 flags=0x00'));
+    expect(marks[2], contains('cmd=0x12 seq=100 flags=0x00'));
+    await logSub.cancel();
+  });
+
   test('BLE diagnostic lines do not rebuild controller listeners', () async {
     final ble = _LogOnlyBleService();
     final controller = RecorderController(
@@ -111,10 +133,15 @@ void main() {
   });
 }
 
-Uint8List _sliceFrame(int sequence) {
+Uint8List _sliceFrame(
+  int sequence, {
+  int flags = 0,
+  int cmdId = RxCmd.fileSliceId,
+}) {
   final slice = Uint8List(166);
   ByteData.sublistView(slice).setUint32(0, sequence, Endian.little);
-  return _frame(RxCmd.fileSliceId, slice);
+  slice[4] = flags;
+  return _frame(cmdId, slice);
 }
 
 Uint8List _frame(

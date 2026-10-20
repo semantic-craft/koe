@@ -15,6 +15,7 @@ import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
+import '../protocol/slice_marks.dart';
 
 /// SoftAP credentials + endpoint returned by the device after 1A05.
 class WifiEndpoint {
@@ -303,6 +304,7 @@ class WifiExportService {
   }
 
   void _log(String m) => debugPrint('[WiFiExport] $m');
+  final _sliceMarks = SliceMarkProbe();
 
   /// Generate Feishu-style credentials: SSID `WiFi-{ms}`, password `{ms}`.
   static ({String ssid, String password}) generateCredentials() {
@@ -695,6 +697,7 @@ class WifiExportService {
     }
 
     if (pkt.cmdId == RxCmd.fileSliceId || pkt.cmdId == RxCmd.fileSliceMarkId) {
+      _sliceMarks.inspect(pkt).forEach(_log);
       _writeSlices(pkt.raw);
       return;
     }
