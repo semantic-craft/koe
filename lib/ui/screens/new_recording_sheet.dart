@@ -11,8 +11,15 @@ import '../recording_navigation.dart';
 import '../widgets/hold_to_talk.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/status_indicators.dart';
+import 'text_capture_sheet.dart';
 
-enum NewRecordingAction { phone, importAudio, importPack, retrieveDevice }
+enum NewRecordingAction {
+  phone,
+  textCapture,
+  importAudio,
+  importPack,
+  retrieveDevice,
+}
 
 Future<void> handleNewRecordingAction(
   BuildContext context,
@@ -39,6 +46,9 @@ Future<void> handleNewRecordingAction(
       break;
     case NewRecordingAction.phone:
       await showPhoneRecordingSheet(context);
+      break;
+    case NewRecordingAction.textCapture:
+      await showTextCaptureSheet(context);
       break;
   }
 }
@@ -411,6 +421,18 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
               trailing: phoneRecording ? null : '仅 iPhone',
               onTap: phoneRecording
                   ? () => Navigator.pop(context, NewRecordingAction.phone)
+                  : null,
+            ),
+            _RecordOption(
+              key: const ValueKey('new-record-text-capture'),
+              icon: Icons.subject_rounded,
+              title: '纯文字记录',
+              subtitle: phoneRecording
+                  ? '一直识别你说的话，只留文字、不存录音；断网也不丢'
+                  : '只在 iPhone 上提供',
+              trailing: phoneRecording ? null : '仅 iPhone',
+              onTap: phoneRecording
+                  ? () => Navigator.pop(context, NewRecordingAction.textCapture)
                   : null,
             ),
             _RecordOption(

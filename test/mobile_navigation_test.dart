@@ -340,8 +340,9 @@ void main() {
     expect(find.text('导入本地音频'), findsOneWidget);
     expect(find.text('取回设备录音'), findsOneWidget);
     expect(find.text('手机录音'), findsOneWidget);
-    // Off iPhone the row stays visible but disabled.
-    expect(find.text('仅 iPhone'), findsOneWidget);
+    expect(find.text('纯文字记录'), findsOneWidget);
+    // Off iPhone both microphone rows stay visible but disabled.
+    expect(find.text('仅 iPhone'), findsNWidgets(2));
   });
 
   testWidgets('ask Koe button does not cover an open sheet', (tester) async {
