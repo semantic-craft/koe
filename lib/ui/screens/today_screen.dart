@@ -101,9 +101,13 @@ class TodayScreen extends StatelessWidget {
                   connected: c.connected,
                   name: c.displayDeviceName,
                   status: c.statusMessage,
-                  onScan: () => showScanDevicesSheet(context),
-                  onOpenLibrary: () =>
-                      RecordingNavigation.of(context)?.onSelectTab?.call(2),
+                  handedOff:
+                      c.manuallyDisconnected && c.canReconnectBoundDevice,
+                  onScan: c.canReconnectBoundDevice
+                      ? c.reconnectBoundDevice
+                      : () => showScanDevicesSheet(context),
+                  scanLabel: c.canReconnectBoundDevice ? '连接' : '扫描',
+                  onDisconnect: c.disconnect,
                 ),
                 if (c.organizeStore.queued.isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -401,14 +405,22 @@ class _DeviceStatusCard extends StatelessWidget {
     required this.name,
     required this.status,
     required this.onScan,
-    required this.onOpenLibrary,
+    required this.scanLabel,
+    required this.onDisconnect,
+    this.handedOff = false,
   });
 
   final bool connected;
   final String name;
   final String? status;
   final VoidCallback onScan;
-  final VoidCallback onOpenLibrary;
+  final String scanLabel;
+
+  /// Lets the recorder go, still bound, so the Mac can take it.
+  final VoidCallback onDisconnect;
+
+  /// Disconnected on purpose: the recorder may be with the other device.
+  final bool handedOff;
 
   @override
   Widget build(BuildContext context) {
@@ -427,13 +439,19 @@ class _DeviceStatusCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  connected ? name : '未连接设备',
+                  connected
+                      ? name
+                      : handedOff
+                      ? '$name · 已断开'
+                      : '未连接设备',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   connected
                       ? (status == null || status!.isEmpty ? '已连接' : status!)
+                      : handedOff
+                      ? '录音豆可以在另一台设备上用；点「连接」接回这里'
                       : '扫描后连接录音豆；也可以直接导入本地音频。',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -446,9 +464,10 @@ class _DeviceStatusCard extends StatelessWidget {
             ),
           ),
           TextButton(
-            onPressed: connected ? onOpenLibrary : onScan,
+            key: ValueKey(connected ? 'today-disconnect' : 'today-connect'),
+            onPressed: connected ? onDisconnect : onScan,
             style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-            child: Text(connected ? '资料' : '扫描'),
+            child: Text(connected ? '断开' : scanLabel),
           ),
         ],
       ),
