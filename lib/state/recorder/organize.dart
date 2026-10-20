@@ -66,6 +66,7 @@ mixin _RecorderOrganize on ChangeNotifier {
   String get analysisApiKey;
   bool _isConfigured(SpeechConfiguration config);
   bool _isTrashedPath(String path);
+  _RecordingSession? _sessionForReference(RecordingReference ref);
   String analysisKey(RecordingReference ref);
   Future<int> extractTodos(RecordingReference ref, {bool confirmRetry = false});
   int? fileIdFromPath(String path);
@@ -323,13 +324,22 @@ mixin _RecorderOrganize on ChangeNotifier {
     }
   }
 
+  /// A take made during all-day listening: its speech is already text.
+  bool _takenAsTextOnly(String path) =>
+      _sessionForReference(
+        RecordingReference(fileId: fileIdFromPath(path), path: path),
+      )?.textOnly ??
+      false;
+
   Future<void> _enqueueNewRecordings() async {
     if (!organizeStore.enabled) return;
     var changed = false;
     for (final path in exportedPaths) {
       if (!organizeStore.known.add(path)) continue;
       changed = true;
-      if (!_isTrashedPath(path) && !organizeStore.queued.contains(path)) {
+      if (!_isTrashedPath(path) &&
+          !_takenAsTextOnly(path) &&
+          !organizeStore.queued.contains(path)) {
         organizeStore.queued.add(path);
       }
     }

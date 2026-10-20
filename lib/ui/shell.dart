@@ -14,6 +14,7 @@ import 'screens/library_screen.dart';
 import 'screens/projects_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/text_capture_sheet.dart';
 import 'screens/today_screen.dart';
 import 'screens/trash_screen.dart';
 import 'widgets/koe_icon_button.dart';
@@ -221,6 +222,7 @@ class _AppShellState extends State<AppShell> {
         c.hasLoadedTrack &&
         playing != null &&
         (visible == null || c.recordingView(visible).path != playing);
+    final showListening = c.textCaptureActive && c.textCaptureAllDay;
     final detailVisible = _routes.routes.length > 1 && !covered;
 
     return RecordingNavigation(
@@ -294,11 +296,18 @@ class _AppShellState extends State<AppShell> {
           // from the nested route. Let detail pages own their safe area when
           // there are no shared controls below them.
           bottomNavigationBar:
-              (_wide || detailVisible) && !showRecording && !showPlayer
+              (_wide || detailVisible) &&
+                  !showRecording &&
+                  !showPlayer &&
+                  !showListening
               ? null
               : Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (showListening)
+                      _AllDayListeningBar(
+                        onOpen: () => showTextCaptureSheet(context),
+                      ),
                     if (showRecording)
                       _ActiveRecordingBar(
                         onOpen: () => _openRecording(current),
@@ -317,7 +326,8 @@ class _AppShellState extends State<AppShell> {
                         index: _mobileIndex,
                         onSelect: _selectMobileTab,
                       ),
-                    if (detailVisible && (showPlayer || showRecording))
+                    if (detailVisible &&
+                        (showPlayer || showRecording || showListening))
                       SizedBox(height: MediaQuery.paddingOf(context).bottom),
                   ],
                 ),
@@ -391,6 +401,34 @@ class _RecordingRouteObserver extends NavigatorObserver {
       }
     }
     changed();
+  }
+}
+
+/// Stays up while all-day listening runs, so it is always one tap from
+/// its controls.
+class _AllDayListeningBar extends StatelessWidget {
+  const _AllDayListeningBar({required this.onOpen});
+  final VoidCallback onOpen;
+  @override
+  Widget build(BuildContext context) {
+    final c = context.watch<RecorderController>();
+    final label = c.textCapturePaused
+        ? '全天监听已暂停 · 打开'
+        : c.textCaptureResting
+        ? '全天监听中 · 安静'
+        : '全天监听中 · 打开';
+    return Material(
+      color: AppColors.bgCard,
+      child: Container(
+        key: const ValueKey('all-day-listening-bar'),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: TextButton.icon(
+          onPressed: onOpen,
+          icon: const _RecordingDot(),
+          label: Align(alignment: Alignment.centerLeft, child: Text(label)),
+        ),
+      ),
+    );
   }
 }
 

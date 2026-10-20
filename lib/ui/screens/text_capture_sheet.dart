@@ -12,15 +12,22 @@ import '../widgets/status_indicators.dart';
 /// the speech service recognizes it. Like a phone take, the sheet cannot be
 /// swiped away while listening, so the controls stay in reach; capture keeps
 /// going with the screen locked.
-Future<void> showTextCaptureSheet(BuildContext context) async {
+/// With [allDay] it starts all-day listening (#319), which keeps running
+/// after the sheet is put away.
+Future<void> showTextCaptureSheet(
+  BuildContext context, {
+  bool allDay = false,
+}) async {
   final messenger = ScaffoldMessenger.of(context);
+  final controller = context.read<RecorderController>();
+  final dismissible = allDay || controller.textCaptureAllDay;
   final outcome = await showModalBottomSheet<TextCaptureOutcome>(
     context: context,
     sheetAnimationStyle: AppMotion.sheetStyle(context),
-    isDismissible: false,
-    enableDrag: false,
+    isDismissible: dismissible,
+    enableDrag: dismissible,
     isScrollControlled: true,
-    builder: (_) => const TextCapturePanel(),
+    builder: (_) => TextCapturePanel(allDay: allDay),
   );
   if (outcome != null) {
     messenger.showSnackBar(SnackBar(content: Text(outcome.message)));
@@ -28,7 +35,9 @@ Future<void> showTextCaptureSheet(BuildContext context) async {
 }
 
 class TextCapturePanel extends StatefulWidget {
-  const TextCapturePanel({super.key});
+  const TextCapturePanel({super.key, this.allDay = false});
+
+  final bool allDay;
 
   @override
   State<TextCapturePanel> createState() => _TextCapturePanelState();
@@ -47,7 +56,7 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
       if (!mounted) return;
       final controller = context.read<RecorderController>();
       if (!controller.textCaptureActive) {
-        unawaited(controller.startTextCapture());
+        unawaited(controller.startTextCapture(allDay: widget.allDay));
       }
     });
   }
@@ -102,6 +111,10 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
     if (c.textCaptureStopping) return '正在收尾，保存文字…';
     if (c.textCaptureError != null) return c.textCaptureError!;
     if (c.textCapturePaused) return '系统暂停了麦克风（如来电），结束后会自动继续';
+    if (c.textCaptureResting) {
+      final saved = c.textCaptureFinishedRecords;
+      return saved > 0 ? '安静中，说话时自动接上 · 已分出 $saved 条' : '安静中，说话时自动接上';
+    }
     if (!c.textCaptureConnected) return '正在连接语音服务…';
     final backlog = c.textCaptureBacklogSeconds;
     if (backlog >= 2) return '正在补识别断线时的 $backlog 秒';
@@ -116,8 +129,9 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
     final text = controller.textCaptureText;
     final lines = controller.textCaptureLines;
     final listening = active && !controller.textCapturePaused;
+    final allDay = controller.textCaptureAllDay || widget.allDay;
     return PopScope(
-      canPop: !active,
+      canPop: !active || allDay,
       child: SafeArea(
         child: SizedBox(
           height: MediaQuery.sizeOf(context).height * 0.72,
@@ -134,7 +148,9 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                       const SizedBox(width: 8),
                     ],
                     Text(
-                      active ? '纯文字记录中' : '纯文字记录',
+                      allDay
+                          ? (active ? '全天监听中' : '全天监听')
+                          : (active ? '纯文字记录中' : '纯文字记录'),
                       key: const ValueKey('text-capture-title'),
                       style: const TextStyle(
                         fontSize: 18,
@@ -216,8 +232,14 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                     key: const ValueKey('stop-text-capture'),
                     onPressed: stopping ? null : () => _stop(keepAudio: false),
                     icon: const Icon(Icons.stop_rounded),
-                    label: const Text('结束并保存文字'),
+                    label: Text(allDay ? '结束全天监听并保存' : '结束并保存文字'),
                   ),
+                  if (allDay)
+                    TextButton(
+                      key: const ValueKey('hide-text-capture'),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('收起，继续在后台监听'),
+                    ),
                   Row(
                     children: [
                       Expanded(

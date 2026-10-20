@@ -43,6 +43,11 @@ mixin _RecorderDevice on ChangeNotifier {
   Future<void> listFiles();
   bool get needsWifiJoin;
   abstract int pcmFramesDecoded;
+  abstract bool allDayListening;
+  bool get textCaptureActive;
+  bool get textCaptureFromDevice;
+  Future<bool> startTextCapture({bool allDay, bool fromDevice});
+  Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio});
   abstract int? playingFileId;
   abstract String? playingPath;
   abstract RealtimeStreamState realtimeState;
@@ -751,6 +756,10 @@ mixin _RecorderDevice on ChangeNotifier {
         }
       }
       _bindCurrentRecording(fileId: fileId);
+      if (allDayListening && !textCaptureActive) {
+        // The recorder's key starts all-day listening when it is on (#319).
+        unawaited(startTextCapture(allDay: true, fromDevice: true));
+      }
       _currentRecording?.active = true;
       _currentRecording?.paused = false;
       // New take: re-enable PCM stream STT (may have fallen back last session).
@@ -777,6 +786,9 @@ mixin _RecorderDevice on ChangeNotifier {
       _snapshotLiveText();
       _currentRecording?.active = false;
       _currentRecording?.paused = status == 2;
+      if (status == 0 && textCaptureFromDevice) {
+        unawaited(stopTextCapture());
+      }
       if (status == 0) {
         _currentRecording?.ended = true;
         // The recorder closed its file: it can be pulled now (#253).
