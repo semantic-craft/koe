@@ -64,12 +64,14 @@
                     android:scheme="soundcore"/>
             </intent-filter>
         </activity>
-        <!-- Starts as connectedDevice for recorder sync; microphone is declared
-             so phone recording and listening can run in the same service. -->
+        <!-- Koe's one foreground service: connectedDevice for recorder sync,
+             microphone for phone recording and listening, as the active work
+             needs. shortService is only the fallback that satisfies Android's
+             start contract when a type is refused. -->
         <service
             android:name=".RecordingSyncService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|microphone"
+            android:foregroundServiceType="connectedDevice|microphone|shortService"
             android:stopWithTask="true" />
         <service
             android:name="com.ryanheise.audioservice.AudioService"

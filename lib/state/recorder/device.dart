@@ -436,7 +436,7 @@ mixin _RecorderDevice on ChangeNotifier {
     notifyListeners();
     // Start while the activity is visible. Android 12+ restricts launching a
     // foreground service after the app has already entered the background.
-    await BackgroundSyncService.start();
+    await BackgroundSyncService.shared.begin(BackgroundWork.recorderSync);
     bool? shortcutResult;
     String? shortcutFailure;
     try {
@@ -444,7 +444,7 @@ mixin _RecorderDevice on ChangeNotifier {
       await _ble.connect(d.id, serviceUuidHint: d.serviceUuid);
       // Retry after GATT is ready in case Android initially rejected the
       // connected-device service before Bluetooth permission settled.
-      await BackgroundSyncService.start();
+      await BackgroundSyncService.shared.begin(BackgroundWork.recorderSync);
       connected = true;
       phase = AppPhase.ready;
       statusMessage = '已连接';
@@ -495,7 +495,7 @@ mixin _RecorderDevice on ChangeNotifier {
       activeDevice = lastKnownDevice;
       connected = false;
       if (!_ble.isConnected) {
-        await BackgroundSyncService.stop();
+        await BackgroundSyncService.shared.end(BackgroundWork.recorderSync);
       }
       _scheduleBoundReconnect();
       if (_recordingShortcutPending) {
@@ -555,7 +555,7 @@ mixin _RecorderDevice on ChangeNotifier {
     phase = AppPhase.idle;
     statusMessage = null;
     connected = false;
-    await BackgroundSyncService.stop();
+    await BackgroundSyncService.shared.end(BackgroundWork.recorderSync);
     unawaited(_persistDevice());
     notifyListeners();
   }

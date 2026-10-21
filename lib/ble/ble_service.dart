@@ -63,23 +63,24 @@ class BleService {
   }
 
   Future<bool> ensurePermissions() async {
-    if (Platform.isMacOS) {
-      // macOS uses entitlements + system prompt on first CBCentral use.
-      return true;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.macOS:
+        // macOS uses entitlements + system prompt on first CBCentral use.
+        return true;
+      case TargetPlatform.android:
+        // Scan is declared neverForLocation, so finding the recorder needs
+        // no location; location is asked for only by place tagging.
+        final statuses = await [
+          Permission.bluetoothScan,
+          Permission.bluetoothConnect,
+        ].request();
+        return statuses.values.every((s) => s.isGranted || s.isLimited);
+      case TargetPlatform.iOS:
+        final s = await Permission.bluetooth.request();
+        return s.isGranted || s.isLimited || s.isRestricted;
+      default:
+        return true;
     }
-    if (Platform.isAndroid) {
-      final statuses = await [
-        Permission.bluetoothScan,
-        Permission.bluetoothConnect,
-        Permission.locationWhenInUse,
-      ].request();
-      return statuses.values.every((s) => s.isGranted || s.isLimited);
-    }
-    if (Platform.isIOS) {
-      final s = await Permission.bluetooth.request();
-      return s.isGranted || s.isLimited || s.isRestricted;
-    }
-    return true;
   }
 
   /// Wait until CoreBluetooth / the adapter leaves the transient `unknown`
