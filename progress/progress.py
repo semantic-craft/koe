@@ -126,7 +126,7 @@ def normalized_css(text):
 
 def css_urls(text):
     text = normalized_css(text)
-    pattern = r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)|@import\s+(?:"([^"]*)"|'([^']*)')"""
+    pattern = r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)|@import\s*(?:"([^"]*)"|'([^']*)')"""
     return [next(v for v in m.groups() if v is not None).strip()
             for m in re.finditer(pattern, text, re.I)]
 
@@ -152,6 +152,8 @@ class HTML(HTMLParser):
     def resource(self, value, line=None):
         value = (value or '').strip()
         self.links.append(value)
+        if '\\' in value:
+            self.violations.append((line or self.getpos()[0], 'Unsupported backslash URL'))
         if value.startswith('//') or urlsplit(value).scheme.lower() in {'http', 'https'}:
             self.external = True
             self.violations.append((line or self.getpos()[0], "External resource: " + value))
@@ -170,16 +172,36 @@ class HTML(HTMLParser):
 
     def javascript(self, text):
         # The same dependency policy applies to inline and external scripts.
-        pattern = r"""\b(?:import|export)\s+(?:[^;]*?\bfrom\s*)?['"]([^'"]+)['"]"""
-        for match in re.finditer(pattern, text):
-            self.resource(match[1], self.getpos()[0] + text.count('\n', 0, match.start()))
+        # Tokenize strings before comments so https:// inside a specifier survives.
+        token_pattern = r"""(?P<string>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(?P<comment>/\*.*?\*/|//[^\r\n]*)|(?P<word>[$\w]+)|(?P<punct>[^\s])"""
+        tokens = [m for m in re.finditer(token_pattern, text, re.S) if m.lastgroup != 'comment']
+        for i, token in enumerate(tokens):
+            if token.lastgroup != 'word' or token[0] not in {'import', 'export'}:
+                continue
+            tail = tokens[i + 1:]
+            specifier = None
+            if token[0] == 'import' and tail and tail[0].lastgroup == 'string':
+                specifier = tail[0]
+            else:
+                for j, candidate in enumerate(tail):
+                    if candidate[0] == ';':
+                        break
+                    if candidate[0] == 'from' and j + 1 < len(tail) and tail[j + 1].lastgroup == 'string':
+                        specifier = tail[j + 1]
+                        break
+            if specifier is not None:
+                self.resource(specifier[0][1:-1], self.getpos()[0] + text.count('\n', 0, specifier.start()))
+        # Preserve line positions while removing comments and string contents.
+        code = re.sub(token_pattern, lambda m: re.sub(r'[^\n]', ' ', m[0])
+                      if m.lastgroup in {'string', 'comment'} else m[0], text, flags=re.S)
         pattern = r'fetch\s*\(|XMLHttpRequest|import\s*\(|WebSocket|EventSource|navigator\s*\.\s*sendBeacon|importScripts\s*\(|\b(?:Worker|SharedWorker)\s*\('
-        for match in re.finditer(pattern, text, re.I):
-            self.violations.append((self.getpos()[0] + text.count('\n', 0, match.start()),
-                                    'Runtime access: ' + match[0]))
+        for match in re.finditer(pattern, code, re.I):
+            self.violations.append((self.getpos()[0] + code.count('\n', 0, match.start()), 'Runtime access: ' + match[0]))
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if len(a) != len(attrs):
+            self.violations.append((self.getpos()[0], 'Unsupported duplicate HTML attribute'))
         for key, value in attrs:
             if key.startswith('on') or key == 'ping':
                 self.violations.append((self.getpos()[0], 'Unsupported active attribute: ' + key))
@@ -249,6 +271,7 @@ def html_files(c):
 
 
 def relative_target(path, link):
+    require('\\' not in unquote(link), f'Unsupported backslash URL: {link}')
     if not link or link.startswith('#') or urlsplit(link).scheme.lower() in {'http', 'https', 'mailto', 'data'} or link.startswith('//'):
         return None
     require(not urlsplit(link).scheme and not link.startswith('/'), f'Nonrelative URL: {link}')
@@ -358,7 +381,7 @@ def builtin(c):
                 kind, ref = evidence['kind'], evidence['ref']
                 route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/' + quote(c['facts']['main']['branch'], safe='')}.get(kind)
                 label = e(f'{kind} {ref}: {evidence["note"]}')
-                out.append('<li>' + (f'<a href="{e(base + "/" + route + "/" + str(ref))}">{label}</a>' if route else label) + '</li>')
+                out.append('<li>' + (f'<a href="{e(base + "/" + route + "/" + quote(str(ref), safe="/" if kind == "file" else ""))}">{label}</a>' if route else label) + '</li>')
             out.append('</ul><p>Next: ' + e(item['next']) + '</p></article>')
         out.append('</section>')
     out.append('<section><h2>Open pull requests</h2><ul>')
@@ -366,13 +389,13 @@ def builtin(c):
         out.append(f'<li><a href="{e(base)}/pull/{p["number"]}">#{p["number"]}</a> <code>{e(p["head"])}</code></li>')
     out.append('</ul><h2>Recent releases</h2><ul>')
     for r in c['facts']['releases']:
-        out.append(f'<li><a href="{e(base)}/releases/tag/{e(r["tag"])}">{e(r["tag"])}</a> {e(r["published_at"])} (draft: {e(r["draft"])}, prerelease: {e(r["prerelease"])})</li>')
+        out.append(f'<li><a href="{e(base)}/releases/tag/{e(quote(r["tag"], safe=""))}">{e(r["tag"])}</a> {e(r["published_at"])} (draft: {e(r["draft"])}, prerelease: {e(r["prerelease"])})</li>')
     return '\n'.join(out + ['</ul></section></html>']) + '\n'
 
 
 def generate(c, dest):
     if c['renderer']:
-        subprocess.run([sys.executable, str(ROOT / c['renderer']), '--out', str(dest)], cwd=ROOT, check=True)
+        subprocess.run([sys.executable, '-B', str(ROOT / c['renderer']), '--out', str(dest)], cwd=ROOT, check=True)
     else:
         require(c['outputs'] == [c['page']], 'Built-in renderer produces page only')
         p = dest / c['page']; p.parent.mkdir(parents=True, exist_ok=True)
