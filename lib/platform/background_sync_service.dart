@@ -26,8 +26,26 @@ class BackgroundWork {
     text: 'Koe 正在同步录音',
   );
 
+  /// A phone microphone take that keeps the audio as an original.
+  static const phoneRecording = BackgroundWork(
+    'phoneRecording',
+    type: ForegroundServiceType.microphone,
+    text: 'Koe 正在录音',
+  );
+
+  /// Text-only capture and all-day listening from the phone microphone.
+  static const textCapture = BackgroundWork(
+    'textCapture',
+    type: ForegroundServiceType.microphone,
+    text: 'Koe 正在监听（只留文字）',
+  );
+
   final String id;
   final ForegroundServiceType type;
+
+  /// Microphone work can be stopped from its notification; recorder sync
+  /// ends on its own.
+  bool get stoppable => type == ForegroundServiceType.microphone;
 
   /// Notification text while this is the latest work.
   final String text;
@@ -49,12 +67,14 @@ class BackgroundSyncService {
   BackgroundSyncService({
     this._channel = const MethodChannel(_channelName),
     bool? enabled,
-  }) : _enabled = enabled ?? (!kIsWeb && Platform.isAndroid);
+  }) : _enabled = enabled ?? (!kIsWeb && Platform.isAndroid) {
+    if (_enabled) _channel.setMethodCallHandler(_onNativeCall);
+  }
 
   static const _channelName = 'com.anker.anker_recorder/background_sync';
 
-  /// The app-wide service.
-  static final shared = BackgroundSyncService();
+  /// The app-wide service. Tests replace it with one on a mock channel.
+  static BackgroundSyncService shared = BackgroundSyncService();
 
   final MethodChannel _channel;
   final bool _enabled;
@@ -62,17 +82,27 @@ class BackgroundSyncService {
   // Insertion order: the last entry's text is on the notification.
   final _works = <String, BackgroundWork>{};
   final _texts = <String, String>{};
+  final _onStops = <String, VoidCallback>{};
   bool _askedForNotifications = false;
   _Request? _applied;
 
   /// Starts [work], or brings its notification text back to the front. Safe
   /// to call again for running work, for example to retry once a permission
   /// the service type needs has been granted.
-  Future<void> begin(BackgroundWork work, {String? text}) async {
+  ///
+  /// [onStop] runs when the user taps 停止 on the notification of
+  /// [BackgroundWork.stoppable] work. It should finish the work and [end] it;
+  /// nothing restarts the work afterwards.
+  Future<void> begin(
+    BackgroundWork work, {
+    String? text,
+    VoidCallback? onStop,
+  }) async {
     if (!_enabled) return;
     _works.remove(work.id);
     _works[work.id] = work;
     _texts[work.id] = text ?? work.text;
+    if (onStop != null) _onStops[work.id] = onStop;
     await _ensureNotificationPermission();
     await _apply();
   }
@@ -88,7 +118,35 @@ class BackgroundSyncService {
   Future<void> end(BackgroundWork work) async {
     if (!_enabled || _works.remove(work.id) == null) return;
     _texts.remove(work.id);
+    _onStops.remove(work.id);
     await _apply();
+  }
+
+  /// The notification's 停止 was tapped: stops every stoppable work.
+  Future<Object?> _onNativeCall(MethodCall call) async {
+    if (call.method != 'stopRequested') {
+      throw MissingPluginException(call.method);
+    }
+    final handlers = <VoidCallback>[];
+    var dropped = false;
+    for (final work in [..._works.values]) {
+      if (!work.stoppable) continue;
+      final handler = _onStops[work.id];
+      if (handler != null) {
+        handlers.add(handler);
+      } else {
+        // Nothing here can finish this work; drop it rather than leave a
+        // notification whose button does nothing.
+        _works.remove(work.id);
+        _texts.remove(work.id);
+        dropped = true;
+      }
+    }
+    if (dropped) await _apply();
+    for (final handler in handlers) {
+      handler();
+    }
+    return null;
   }
 
   /// Before the first background work, ask for notifications so the
@@ -119,6 +177,7 @@ class BackgroundSyncService {
         : _Request(
             types: {for (final work in _works.values) work.type.name},
             text: _texts[_works.keys.last]!,
+            stoppable: _works.values.any((work) => work.stoppable),
           );
     if (request == _applied) return;
     try {
@@ -132,6 +191,7 @@ class BackgroundSyncService {
       final started = await _channel.invokeListMethod<String>('update', {
         'types': request.types.toList(),
         'text': request.text,
+        'stoppable': request.stoppable,
       });
       _applied = started != null && started.toSet().containsAll(request.types)
           ? request
@@ -146,17 +206,24 @@ class BackgroundSyncService {
 
 @immutable
 class _Request {
-  const _Request({required this.types, required this.text});
+  const _Request({
+    required this.types,
+    required this.text,
+    required this.stoppable,
+  });
 
   final Set<String> types;
   final String text;
+  final bool stoppable;
 
   @override
   bool operator ==(Object other) =>
       other is _Request &&
       other.text == text &&
+      other.stoppable == stoppable &&
       setEquals(other.types, types);
 
   @override
-  int get hashCode => Object.hash(text, Object.hashAllUnordered(types));
+  int get hashCode =>
+      Object.hash(text, stoppable, Object.hashAllUnordered(types));
 }

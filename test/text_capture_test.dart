@@ -17,6 +17,8 @@ import 'package:koe/state/minutes_document.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 
+import 'support/fake_foreground_service.dart';
+
 /// One second of 16 kHz mono PCM16.
 const _second = 32000;
 
@@ -231,6 +233,37 @@ void main() {
       ble.audio(0);
       await until(() => !controller.textCaptureActive);
       expect(controller.minutesDocuments.single.bodyText, '录音豆听到的话。');
+    });
+
+    test('on Android it listens as microphone work of the foreground '
+        'service; 停止 on the notification saves the text and it does not '
+        'resume', () async {
+      final service = FakeForegroundService();
+      final first = build(disposeAtEnd: false)..allDayListening = true;
+      expect(await first.startTextCapture(allDay: true), isTrue);
+      await until(() => service.running);
+      expect(service.types, {'microphone'});
+      expect(service.text, 'Koe 正在全天监听（只留文字）');
+      expect(service.stoppable, isTrue);
+
+      mic.say(_second);
+      await until(() => streams.length == 1 && streams.first.received > 0);
+      streams.first.emit('锁屏时说的话。', speechFinal: true);
+      streams.first.finalText = '锁屏时说的话。';
+
+      await service.pressStop();
+      await until(() => !first.textCaptureActive && !service.running);
+      expect(first.minutesDocuments.single.bodyText, '锁屏时说的话。');
+      first.dispose();
+
+      // Reopening Koe does not start listening again on its own.
+      mic = _Mic();
+      final second = build()..allDayListening = true;
+      await second.waitForMinutesDocuments();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(second.textCaptureActive, isFalse);
+      expect(mic.started, isFalse);
+      expect(service.running, isFalse);
     });
 
     test('reopening Koe continues listening that was left on', () async {

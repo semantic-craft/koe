@@ -8,12 +8,6 @@ const _denied = 0;
 const _granted = 1;
 const _permanentlyDenied = 4;
 
-const _phoneRecording = BackgroundWork(
-  'phoneRecording',
-  type: ForegroundServiceType.microphone,
-  text: 'Koe 正在录音',
-);
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('test/background_sync');
@@ -57,6 +51,15 @@ void main() {
   BackgroundSyncService service() =>
       BackgroundSyncService(channel: channel, enabled: true);
 
+  Future<void> nativeTapsStop() => TestDefaultBinaryMessengerBinding
+      .instance
+      .defaultBinaryMessenger
+      .handlePlatformMessage(
+        channel.name,
+        channel.codec.encodeMethodCall(const MethodCall('stopRequested')),
+        (_) {},
+      );
+
   List<String> methods() => [for (final call in calls) call.method];
 
   Map<String, Object?> lastUpdate() => Map<String, Object?>.from(
@@ -78,41 +81,50 @@ void main() {
     expect(lastUpdate(), {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',
+      'stoppable': false,
     });
   });
 
-  test('refused notifications are explained once and sync still runs', () async {
-    notificationStatus = _denied;
-    afterRequest = _permanentlyDenied;
-    final sync = service();
+  test(
+    'refused notifications are explained once and sync still runs',
+    () async {
+      notificationStatus = _denied;
+      afterRequest = _permanentlyDenied;
+      final sync = service();
 
-    await sync.begin(BackgroundWork.recorderSync);
-    await sync.end(BackgroundWork.recorderSync);
-    await sync.begin(BackgroundWork.recorderSync);
+      await sync.begin(BackgroundWork.recorderSync);
+      await sync.end(BackgroundWork.recorderSync);
+      await sync.begin(BackgroundWork.recorderSync);
 
-    expect(methods().where((m) => m == 'explainNotificationsOff'), hasLength(1));
-    expect(methods().where((m) => m == 'requestPermissions'), hasLength(1));
-    expect(methods().last, 'update');
-  });
+      expect(
+        methods().where((m) => m == 'explainNotificationsOff'),
+        hasLength(1),
+      );
+      expect(methods().where((m) => m == 'requestPermissions'), hasLength(1));
+      expect(methods().last, 'update');
+    },
+  );
 
   test('concurrent works share one service as the union of their types, '
       'showing the latest work', () async {
     final sync = service();
 
     await sync.begin(BackgroundWork.recorderSync);
-    await sync.begin(_phoneRecording);
+    await sync.begin(BackgroundWork.phoneRecording);
     expect(lastUpdate(), {
       'types': ['connectedDevice', 'microphone'],
       'text': 'Koe 正在录音',
+      'stoppable': true,
     });
 
-    await sync.updateText(_phoneRecording, 'Koe 正在录音 · 03:12');
+    await sync.updateText(BackgroundWork.phoneRecording, 'Koe 正在录音 · 03:12');
     expect(lastUpdate()['text'], 'Koe 正在录音 · 03:12');
 
-    await sync.end(_phoneRecording);
+    await sync.end(BackgroundWork.phoneRecording);
     expect(lastUpdate(), {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',
+      'stoppable': false,
     });
 
     await sync.end(BackgroundWork.recorderSync);
@@ -131,4 +143,41 @@ void main() {
 
     expect(methods().where((m) => m == 'update'), hasLength(2));
   });
+
+  test('停止 on the notification asks microphone work to finish and leaves '
+      'recorder sync running', () async {
+    final sync = service();
+    final stopped = <String>[];
+    await sync.begin(BackgroundWork.recorderSync);
+    await sync.begin(
+      BackgroundWork.phoneRecording,
+      onStop: () {
+        stopped.add('phoneRecording');
+        sync.end(BackgroundWork.phoneRecording);
+      },
+    );
+
+    await nativeTapsStop();
+    await pumpEventQueue();
+
+    expect(stopped, ['phoneRecording']);
+    expect(lastUpdate(), {
+      'types': ['connectedDevice'],
+      'text': 'Koe 正在同步录音',
+      'stoppable': false,
+    });
+  });
+
+  test(
+    'microphone work nobody can finish is dropped when 停止 is tapped',
+    () async {
+      final sync = service();
+      await sync.begin(BackgroundWork.textCapture);
+
+      await nativeTapsStop();
+      await pumpEventQueue();
+
+      expect(methods().last, 'stop');
+    },
+  );
 }

@@ -21,8 +21,10 @@ import android.util.Log
  * a partial wake lock.
  *
  * Dart sends the full state on every change: the service types of all active
- * works (connectedDevice for recorder sync, microphone for phone recording)
- * and the notification text. The service runs as their union.
+ * works (connectedDevice for recorder sync, microphone for phone recording
+ * and listening), the notification text, and whether the notification offers
+ * 停止. The service runs as their union. 停止 only asks Dart to finish the
+ * microphone work (save the take, keep the text); Dart then ends it as usual.
  *
  * Android 14+ crashes the process when a startForegroundService() start is
  * not followed by a successful startForeground(), so a rejected type falls
@@ -41,6 +43,20 @@ class RecordingSyncService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_USER_STOP) {
+            // Delivered by startService from the notification, so there is no
+            // pending foreground promotion to satisfy here.
+            val listener = stopListener
+            if (listener == null || requestedTypes == 0) {
+                // No Dart side left to finish the work (the activity is
+                // gone): only the notification remains, so take it down.
+                requestedTypes = 0
+                shutDown()
+            } else {
+                listener()
+            }
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_STOP || requestedTypes == 0) {
             // A start may already be waiting for its foreground promotion;
             // satisfy it before stopping, or Android ends the process.
@@ -59,7 +75,7 @@ class RecordingSyncService : Service() {
     /** Brings foreground types and notification in line with the request. */
     private fun apply(): Boolean {
         val types = requestedTypes
-        val notification = buildNotification(requestedText)
+        val notification = buildNotification(requestedText, requestedStoppable)
         if (types == appliedTypes) {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
             return true
@@ -79,7 +95,7 @@ class RecordingSyncService : Service() {
         try {
             startForeground(
                 NOTIFICATION_ID,
-                buildNotification(requestedText),
+                buildNotification(requestedText, stoppable = false),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE,
             )
         } catch (error: Exception) {
@@ -139,14 +155,14 @@ class RecordingSyncService : Service() {
             "后台工作",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "同步录音等工作在后台进行时显示"
+            description = "同步录音、手机录音和监听在后台进行时显示"
             setShowBadge(false)
             setSound(null, null)
         }
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(text: String, stoppable: Boolean): Notification {
         // The launcher intent brings the existing task back, as tapping the
         // app icon does, instead of stacking a second activity.
         val openApp = packageManager.getLaunchIntentForPackage(packageName)
@@ -157,7 +173,7 @@ class RecordingSyncService : Service() {
             openApp,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_sync_notification)
             .setContentTitle("Koe")
             .setContentText(text)
@@ -167,7 +183,18 @@ class RecordingSyncService : Service() {
             .setOnlyAlertOnce(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
+        if (stoppable) {
+            val stop = PendingIntent.getService(
+                this,
+                1,
+                Intent(this, RecordingSyncService::class.java).setAction(ACTION_USER_STOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(
+                Notification.Action.Builder(null, STOP_TITLE, stop).build(),
+            )
+        }
+        return builder.build()
     }
 
     companion object {
@@ -175,6 +202,8 @@ class RecordingSyncService : Service() {
         private const val CHANNEL_ID = "recording_sync"
         private const val NOTIFICATION_ID = 3200
         private const val ACTION_STOP = "com.semanticcraft.soundcore.STOP_FOREGROUND"
+        private const val ACTION_USER_STOP = "com.semanticcraft.soundcore.USER_STOP"
+        private const val STOP_TITLE = "停止"
         private const val DEFAULT_TEXT = "Koe 正在后台工作"
 
         private val typeFlags = mapOf(
@@ -191,13 +220,22 @@ class RecordingSyncService : Service() {
         @Volatile private var instance: RecordingSyncService? = null
         @Volatile private var requestedTypes = 0
         @Volatile private var requestedText = DEFAULT_TEXT
+        @Volatile private var requestedStoppable = false
+
+        /** Asks Dart to finish the stoppable work; set while Flutter runs. */
+        @Volatile var stopListener: (() -> Unit)? = null
 
         /**
          * Runs the service as [types] with [text] on its notification.
          * Returns the types it started with; one whose permission is not yet
          * granted is left out, and the service does not start without any.
          */
-        fun update(context: Context, types: List<String>, text: String?): List<String> {
+        fun update(
+            context: Context,
+            types: List<String>,
+            text: String?,
+            stoppable: Boolean,
+        ): List<String> {
             val usable = types.filter { name ->
                 val permission = typePermissions[name] ?: return@filter false
                 context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
@@ -208,6 +246,7 @@ class RecordingSyncService : Service() {
             }
             requestedTypes = usable.fold(0) { flags, name -> flags or typeFlags.getValue(name) }
             requestedText = text?.takeIf { it.isNotBlank() } ?: DEFAULT_TEXT
+            requestedStoppable = stoppable
             val running = instance
             if (running != null && running.appliedTypes != 0) {
                 // Already in the foreground: change it in place, which also
@@ -261,7 +300,26 @@ class RecordingSyncService : Service() {
                 "notificationPosted" to (posted != null),
                 "opensKoe" to (tap != null && tap.isActivity && tap.creatorPackage == context.packageName),
                 "wakeLockHeld" to (service?.wakeLock?.isHeld == true),
+                "actions" to (posted?.notification?.actions?.map { it.title.toString() } ?: emptyList<String>()),
+                // False once the screen is off, as behind the lock screen.
+                "screenInteractive" to (context.getSystemService(POWER_SERVICE) as PowerManager).isInteractive,
             )
+        }
+
+        /**
+         * Sends the notification's 停止 the way a tap does, for the device
+         * scenarios. Returns false when the notification has no such action.
+         */
+        fun pressStop(context: Context): Boolean {
+            val action = context.getSystemService(NotificationManager::class.java)
+                .activeNotifications
+                .firstOrNull { it.id == NOTIFICATION_ID }
+                ?.notification
+                ?.actions
+                ?.firstOrNull { it.title.toString() == STOP_TITLE }
+                ?: return false
+            action.actionIntent.send()
+            return true
         }
     }
 }

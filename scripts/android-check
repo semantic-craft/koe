@@ -26,7 +26,33 @@ echo "android-check: $serial $(adb -s "$serial" shell getprop ro.product.model |
 flutter build apk --debug
 adb -s "$serial" install -r -g build/app/outputs/flutter-apk/app-debug.apk
 
+wake_screen() {
+  adb -s "$serial" shell input keyevent KEYCODE_WAKEUP
+  adb -s "$serial" shell wm dismiss-keyguard
+}
+
+# Scenarios ask for what only adb can do by printing a marker line:
+#   KOE_ADB: lock-screen   turn the screen off, as the power button does
+#   KOE_ADB: wake-screen   turn it on and dismiss a non-secure keyguard
+answer_scenarios() {
+  local line
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+    case "$line" in
+      *"KOE_ADB: lock-screen"*) adb -s "$serial" shell input keyevent KEYCODE_SLEEP ;;
+      *"KOE_ADB: wake-screen"*) wake_screen ;;
+    esac
+  done
+}
+
 targets=("$@")
 [[ ${#targets[@]} -gt 0 ]] || targets=(integration_test/android)
-flutter test "${targets[@]}" -d "$serial" --reporter expanded
+wake_screen
+set +e
+flutter test "${targets[@]}" -d "$serial" --reporter expanded 2>&1 | answer_scenarios
+status=${PIPESTATUS[0]}
+set -e
+# Leave the phone on screen whatever the scenarios did.
+wake_screen
+[[ $status -eq 0 ]] || exit 1
 echo "android-check: passed on $serial ($package)"
