@@ -1,5 +1,6 @@
 {
   "facts": {
+    "default_branch": "main",
     "issues": [
       {
         "number": 14,
@@ -230,17 +231,14 @@
         "updated_at": "2026-10-21T03:51:15Z"
       }
     ],
-    "main": {
-      "branch": "main",
-      "sha": "836d475be6246de8cf77f2bde46c5d20bf65becd"
-    },
+    "main": "836d475be6246de8cf77f2bde46c5d20bf65becd",
     "open_pulls": [
       {
         "head": "9feb7079350074f75d134348330711105500f47c",
         "number": 62
       },
       {
-        "head": "799d9cec8822b1f14fccd2f043243691ded478e9",
+        "head": "8da19773c88c977461e0953c80973063f1e77a04",
         "number": 355
       }
     ],
@@ -353,7 +351,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-21T10:52:24.269622Z",
+  "observed_at": "2026-10-21T11:11:59.850702Z",
   "outputs": [
     "progress/index.html"
   ],

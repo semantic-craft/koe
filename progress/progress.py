@@ -47,7 +47,7 @@ def live(c):
         i = gh(f'{base}/issues/{n}')
         issues.append(dict(number=n, state=i['state'], reason=i.get('state_reason'), updated_at=i['updated_at']))
     pages = json.loads(run('gh', 'api', '--paginate', '--slurp', f'{base}/pulls?state=open&per_page=100'))
-    return dict(main=dict(branch=branch, sha=head), pulls=pulls, issues=issues,
+    return dict(main=head, default_branch=branch, pulls=pulls, issues=issues,
                 open_pulls=sorted([dict(number=p['number'], head=p['head']['sha']) for page in pages for p in page], key=lambda p: p['number']),
                 releases=[dict(id=r['id'], tag=r['tag_name'], draft=r['draft'], prerelease=r['prerelease'], published_at=r['published_at']) for r in gh(f'{base}/releases?per_page=10')])
 
@@ -67,8 +67,8 @@ def schema(c, snapshot=True):
     typed(c['tracked'], dict(pulls=list, issues=list))
     typed(c['facts'], dict(pulls=list, open_pulls=list, issues=list, releases=list))
     if snapshot:
-        typed(c['facts'].get('main'), dict(branch=str, sha=str))
-        require(not c['observed_at'] or all(c['facts']['main'].values()), 'Refresh default branch facts')
+        typed(c['facts'], dict(main=str, default_branch=str))
+        require(not c['observed_at'] or (c['facts']['main'] and c['facts']['default_branch']), 'Refresh default branch facts')
     fields = {'pulls': dict(number=int, state=str, merged=bool, head=str, base=str, merge_commit=(str, type(None))),
               'open_pulls': dict(number=int, head=str), 'issues': dict(number=int, state=str, reason=(str, type(None)), updated_at=str),
               'releases': dict(id=int, tag=str, draft=bool, prerelease=bool, published_at=(str, type(None)))}
@@ -275,7 +275,8 @@ def relative_target(path, link):
     if not link or link.startswith('#') or urlsplit(link).scheme.lower() in {'http', 'https', 'mailto', 'data'} or link.startswith('//'):
         return None
     require(not urlsplit(link).scheme and not link.startswith('/'), f'Nonrelative URL: {link}')
-    target = (ROOT / path).parent / unquote(urlsplit(link).path)
+    url_path = unquote(urlsplit(link).path)
+    target = (ROOT / path).parent / url_path if url_path else ROOT / path
     require(target.resolve().is_relative_to(ROOT.resolve()), f'Link outside repository: {link}')
     if target.is_dir():
         target = target / 'index.html'
@@ -372,14 +373,14 @@ def builtin(c):
     base = 'https://github.com/' + c['repository']
     out = ['<!doctype html>', '<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
            '<title>' + e(c['title']) + '</title>', '<style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>',
-           '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e((c['facts']['main']['branch'] + ': ' + c['facts']['main']['sha']) if c['facts']['main']['sha'] else 'unverified') + '</code></p>']
+           '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e((c['facts']['default_branch'] + ': ' + c['facts']['main']) if c['facts']['main'] else 'unverified') + '</code></p>']
     for section in c['sections']:
         out.append(f'<section id="{e(section["id"])}"><h2>{e(section["title"])}</h2>')
         for item in section['items']:
             out.append(f'<article id="{e(item["id"])}"><h3>{e(item["title"])}</h3><span class="badge">{e(item["status"])}</span><p>{e(item["summary"])}</p><ul>')
             for evidence in item['evidence']:
                 kind, ref = evidence['kind'], evidence['ref']
-                route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/' + quote(c['facts']['main']['branch'], safe='')}.get(kind)
+                route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/' + quote(c['facts']['default_branch'], safe='')}.get(kind)
                 label = e(f'{kind} {ref}: {evidence["note"]}')
                 out.append('<li>' + (f'<a href="{e(base + "/" + route + "/" + quote(str(ref), safe="/" if kind == "file" else ""))}">{label}</a>' if route else label) + '</li>')
             out.append('</ul><p>Next: ' + e(item['next']) + '</p></article>')
@@ -465,7 +466,7 @@ def main():
         root = Path.cwd().resolve()
         require(a.repository and a.title, 'init requires --repository and --title')
         require(not (root / 'progress').exists(), 'progress already exists')
-        c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main=dict(branch='', sha=''), pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
+        c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main='', default_branch='', pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
         schema(c)
         write_json(root / CONFIG, c)
         shutil.copyfile(__file__, root / 'progress/progress.py')
