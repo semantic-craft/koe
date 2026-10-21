@@ -222,7 +222,7 @@ void main() async {
       );
       expect(find.text(provider.label), findsWidgets);
     }
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets(
     'unconfigured Qwen opens configuration without changing active provider',

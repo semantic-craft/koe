@@ -558,8 +558,9 @@ class _LinkCard extends StatelessWidget {
     final link = _reminder ? todo.reminder : todo.calendar;
     final name = _reminder ? '提醒事项' : '日历';
     final conflict = link?.conflict;
+    final supported = c.systemTaskSupported(target);
     final status = link == null
-        ? '未导出'
+        ? (supported ? '未导出' : '此设备不支持')
         : conflict != null
         ? '有冲突：$name里是「${conflict.title}」'
         : link.unsynced
@@ -579,13 +580,13 @@ class _LinkCard extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Expanded(child: Text('$name · $status')),
-              if (link == null)
+              if (link == null && supported)
                 TextButton(
                   key: ValueKey('export-${target.name}'),
                   onPressed: () => _export(context),
                   child: const Text('导出'),
                 )
-              else
+              else if (link != null)
                 TextButton(
                   key: ValueKey('unlink-${target.name}'),
                   onPressed: () =>

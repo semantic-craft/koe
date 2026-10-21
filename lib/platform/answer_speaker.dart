@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Reads Ask Koe answers aloud with the system's synthetic voice. It never
@@ -15,7 +14,8 @@ abstract class AnswerSpeaker {
 }
 
 /// AVSpeechSynthesizer through `koe/answer_speech` (ios/Runner). iPhone only:
-/// the Mac app does not register the channel.
+/// the Mac app does not register the channel, and Android reads aloud with
+/// its own [AnswerSpeaker].
 class SystemAnswerSpeaker implements AnswerSpeaker {
   SystemAnswerSpeaker({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel('koe/answer_speech');
@@ -23,7 +23,7 @@ class SystemAnswerSpeaker implements AnswerSpeaker {
   final MethodChannel _channel;
 
   @override
-  bool get available => Platform.isIOS;
+  bool get available => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
   Future<void> speak(String text) async {

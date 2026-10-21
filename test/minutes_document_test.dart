@@ -33,6 +33,8 @@ void main() {
     loadPersistedState: false,
     libraryStore: RecordingLibraryStore(file: libraryFile),
     libraryDirectory: imports,
+    // Phone-take recovery would still be listing imports at teardown.
+    phoneRecordingEnabled: false,
     minutesStore: MinutesDocumentStore(file: minutesFile),
   );
 

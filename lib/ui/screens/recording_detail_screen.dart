@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
@@ -29,6 +28,7 @@ import 'files_screen.dart';
 import 'settings_screen.dart';
 import 'speaker_distribution_screen.dart';
 import '../widgets/koe_icon_button.dart';
+import '../../platform/device_kind.dart';
 
 class RecordingDetailScreen extends StatefulWidget {
   const RecordingDetailScreen({
@@ -462,7 +462,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
   Future<void> _save(RecordingViewData recording) async {
     if (recording.audioLocked || recording.path == null) return;
-    if (Platform.isIOS) return _share(recording);
+    if (runsOnPhone) return _share(recording);
     try {
       final destination = await getDirectoryPath(
         confirmButtonText: '保存',
@@ -1129,9 +1129,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         label: '回收站状态',
                         value: recording.archived ? '回收站' : '资料库',
                       ),
-                      if (!kIsWeb &&
-                          (defaultTargetPlatform == TargetPlatform.iOS ||
-                              defaultTargetPlatform == TargetPlatform.macOS))
+                      if (runsOnApple)
                         _InfoRow(
                           label: 'Mac 归档',
                           value: path == null

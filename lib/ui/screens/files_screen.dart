@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -21,6 +20,7 @@ import '../recording_navigation.dart';
 import '../transcript_layout.dart';
 import '../widgets/widgets.dart';
 import '../widgets/koe_icon_button.dart';
+import '../../platform/device_kind.dart';
 
 /// On-device + local export file list (embedded in Home when not live recording).
 ///
@@ -915,10 +915,7 @@ class _LocalExportCard extends StatelessWidget {
                           ),
                         ),
                       ],
-                      if (!kIsWeb &&
-                          (defaultTargetPlatform == TargetPlatform.iOS ||
-                              defaultTargetPlatform ==
-                                  TargetPlatform.macOS)) ...[
+                      if (runsOnApple) ...[
                         const SizedBox(height: 3),
                         Text(
                           'Mac：${c.archive.statusForPath(path)}',

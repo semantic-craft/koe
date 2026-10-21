@@ -10,6 +10,7 @@ import '../../state/meeting_minutes.dart';
 import '../../state/recording_analysis.dart';
 import '../../state/recorder_controller.dart';
 import 'koe_icon_button.dart';
+import '../../platform/device_kind.dart';
 
 class MinuteMapNode {
   const MinuteMapNode(this.id, this.text, {this.parent, this.item});
@@ -269,7 +270,7 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
       if (full.length > 300) throw StateError('超过 300 个节点，请导出文字纪要保留全部内容');
       final bytes = await MinuteMapLayout(full, title, metadata).png();
       if (!mounted) return;
-      if (Platform.isIOS) {
+      if (runsOnPhone) {
         final dir = await getTemporaryDirectory();
         final file = File(
           '${dir.path}/minutes-map-${DateTime.now().microsecondsSinceEpoch}.png',

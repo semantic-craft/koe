@@ -23,3 +23,10 @@
 - 修复：57b9a5b（#256，依据用户确认的操作和当时的 BLE 日志更正；补取成功那次日志为 `head … size=1195200`）。
 - Done right: 验收结论里每一步用户或设备操作都要指向日志、截图或用户原话；看不到的写「待核实」，先问再写。
 - Seen 1x (2026-10-19)
+
+### 本机跑测试前清掉 shell 里的云端密钥环境变量
+
+- 出事：2026-10-21 #337 在本机跑 `check`，干净 main 也红 5 条（`engine_lineup_test`、`recording_processing_test`、`context_export_test`）：agent 的 shell 带着 `DASHSCOPE_API_KEY` 等变量，`lib/ai/cloud_stt_service.dart` 会读它们，「未配置」的用例因此看到已配置。CI 运行机没有这些变量，所以只在本机红。
+- 修复：只改跑法：`env -u DASHSCOPE_API_KEY -u ARK_API_KEY -u DOUBAO_TTS_API_KEY check`，main 与分支都全绿。没有读取或打印变量值。
+- Done right: 本机 `check` 出现与改动无关的「已配置」类失败，先在干净 worktree 用同样去掉密钥变量的命令复跑一遍对照，再判断是不是回归。
+- Seen 1x (2026-10-21)
