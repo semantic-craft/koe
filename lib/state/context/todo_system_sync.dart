@@ -56,8 +56,8 @@ class TodoSystemSync {
       if (!await _tasks.requestAccess(target)) {
         throw SystemTasksUnavailable(
           target == SystemTaskTarget.reminder
-              ? '没有访问提醒事项的权限；Koe 里的待办不受影响'
-              : '没有访问日历的权限；Koe 里的待办不受影响',
+              ? '没有访问提醒事项的权限，可在系统设置里允许 Koe 访问；Koe 里的待办不受影响'
+              : '没有访问日历的权限，可在系统设置里允许 Koe 访问；Koe 里的待办不受影响',
         );
       }
       // The time picked for the event becomes the todo's time; otherwise
