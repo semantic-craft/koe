@@ -42,6 +42,26 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
       }
       throw MissingPluginException();
     });
+    // Android keeps the same single item in flutter_secure_storage.
+    final secure = <String, String>{};
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async {
+        final args = (call.arguments as Map).cast<String, Object?>();
+        final key = args['key'] as String?;
+        switch (call.method) {
+          case 'read':
+            return secure[key];
+          case 'write':
+            secure[key!] = args['value'] as String;
+            return null;
+          case 'delete':
+            secure.remove(key);
+            return null;
+        }
+        throw MissingPluginException();
+      },
+    );
     await AppSettingsStore.load();
     directories.add(directory);
   });

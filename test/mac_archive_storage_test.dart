@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/archive/archive_pairing.dart';
@@ -147,6 +148,8 @@ void main() {
   test(
     'credential isolation mode selects separate private archive folders',
     () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       var mode = 'system';
