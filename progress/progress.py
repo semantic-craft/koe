@@ -146,7 +146,7 @@ def srcset_urls(value):
 
 class HTML(HTMLParser):
     def __init__(self, text):
-        super().__init__(); self.links = []; self.external = False; self.requires_inline = False; self.in_style = False; self.violations = []; self.inline_lines = []
+        super().__init__(); self.links = []; self.external = False; self.requires_inline = False; self.in_style = False; self.in_script = False; self.violations = []; self.inline_lines = []
         self.feed(text)
 
     def resource(self, value, line=None):
@@ -157,14 +157,43 @@ class HTML(HTMLParser):
             self.violations.append((line or self.getpos()[0], "External resource: " + value))
 
     def css(self, text):
+        normalized = normalized_css(text)
+        string_image_set = any(re.search(r"""(?:^|,)\s*['"]""", match[1])
+                               for match in re.finditer(r'image-set\(((?:[^()]|\([^()]*\))*)\)', normalized, re.I))
+        if string_image_set or re.search(r'\bsrc\s*\(', normalized, re.I):
+            self.violations.append((self.getpos()[0], 'Unsupported CSS string image-set or src()'))
         if re.search(r'@import\b', normalized_css(text), re.I):
             self.requires_inline = True
             self.inline_lines.append(self.getpos()[0])
         for url in css_urls(text):
-            self.resource(url)
+            self.resource(url, self.getpos()[0] + text.count('\n', 0, max(0, text.find(url))))
+
+    def javascript(self, text):
+        # The same dependency policy applies to inline and external scripts.
+        pattern = r"""\b(?:import|export)\s+(?:[^;]*?\bfrom\s*)?['"]([^'"]+)['"]"""
+        for match in re.finditer(pattern, text):
+            self.resource(match[1], self.getpos()[0] + text.count('\n', 0, match.start()))
+        pattern = r'fetch\s*\(|XMLHttpRequest|import\s*\(|WebSocket|EventSource|navigator\s*\.\s*sendBeacon|importScripts\s*\(|\b(?:Worker|SharedWorker)\s*\('
+        for match in re.finditer(pattern, text, re.I):
+            self.violations.append((self.getpos()[0] + text.count('\n', 0, match.start()),
+                                    'Runtime access: ' + match[0]))
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        for key, value in attrs:
+            if key.startswith('on') or key == 'ping':
+                self.violations.append((self.getpos()[0], 'Unsupported active attribute: ' + key))
+        if tag == 'iframe' and a.get('srcdoc') is not None:
+            child = HTML(a['srcdoc'])
+            self.links.extend(child.links)
+            self.violations.extend((self.getpos()[0] + n - 1, reason) for n, reason in child.violations)
+            self.inline_lines.extend([self.getpos()[0]] * len(child.inline_lines))
+        if tag == 'meta' and (a.get('http-equiv') or '').lower() == 'refresh':
+            match = re.search(r""";\s*url\s*=\s*(.*?)\s*$""", a.get('content') or '', re.I)
+            if match:
+                self.resource(match[1].strip("\"'"))
+            else:
+                self.violations.append((self.getpos()[0], 'Unsupported refresh content'))
         if tag == "base" and "href" in a:
             self.violations.append((self.getpos()[0], "base[href] is not allowed"))
         if tag in {"image", "use", "script"}:
@@ -193,6 +222,8 @@ class HTML(HTMLParser):
                     self.inline_lines.append(self.getpos()[0])
                 self.resource(a.get('href'))
         self.css(a.get('style') or '')
+        if tag == 'script':
+            self.in_script = True
         if tag == 'style':
             self.in_style = True
 
@@ -201,10 +232,14 @@ class HTML(HTMLParser):
         self.handle_endtag(tag)
 
     def handle_endtag(self, tag):
+        if tag == 'script':
+            self.in_script = False
         if tag == 'style':
             self.in_style = False
 
     def handle_data(self, data):
+        if self.in_script:
+            self.javascript(data)
         if self.in_style:
             self.css(data)
 
@@ -234,14 +269,10 @@ def resource_document(c, path):
     if path in html_files(c) or suffix in {'.html', '.htm', '.svg'}:
         return HTML(text), text
     parsed = HTML('')
-    for url in css_urls(text):
-        line = text.count('\n', 0, max(0, text.find(url))) + 1
-        parsed.resource(url, line)
-    if suffix != '.css':
-        # Static module dependencies are resources too; dynamic imports are rejected.
-        pattern = r"""\b(?:import|export)\s+(?:[^;\n]*?\bfrom\s*)?['"]([^'"]+)['"]"""
-        for match in re.finditer(pattern, text):
-            parsed.resource(match[1], text.count('\n', 0, match.start()) + 1)
+    if suffix == '.css':
+        parsed.css(text)
+    else:
+        parsed.javascript(text)
     return parsed, text
 
 
