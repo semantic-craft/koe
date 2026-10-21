@@ -48,7 +48,6 @@ app.*.map.json
 # Local agent / scratch state (keep on disk, never commit)
 .scratch/
 .sites/
-.sites-progress.json
 .agy-prompts/
 .agy-tasks/
 .agents/
