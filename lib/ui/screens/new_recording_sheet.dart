@@ -139,6 +139,31 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  /// System back mid-take: leaving ends the take, so confirm first and
+  /// save on yes; the take is never dropped silently.
+  Future<void> _confirmLeave() async {
+    if (_stopping) return;
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('正在录音'),
+        content: const Text('返回会结束并保存这段录音。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('继续录音'),
+          ),
+          TextButton(
+            key: const ValueKey('confirm-leave-phone-recording'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('结束并保存'),
+          ),
+        ],
+      ),
+    );
+    if (leave == true && mounted) await _stop();
+  }
+
   String _clock(Duration d) {
     String two(int v) => v.toString().padLeft(2, '0');
     final hours = d.inHours;
@@ -155,6 +180,9 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
     final error = controller.phoneRecordingError;
     return PopScope(
       canPop: !active,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_confirmLeave());
+      },
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Build, install and run the unattended scenarios in integration_test/android
+# on the Pixel connected over adb. Not part of `check`: it needs the device.
+#
+#   scripts/android-check                 every *_test.dart in integration_test/android
+#   scripts/android-check <file>...       only these scenarios
+#
+# KOE_ANDROID_SERIAL picks the device (default: the Pixel 11 Pro).
+# Exit codes: 0 passed, 1 failed, 77 skipped because the device is offline.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+serial="${KOE_ANDROID_SERIAL:-67241FDKX003EH}"
+package=com.semanticcraft.soundcore
+skipped=77
+
+state="$(adb -s "$serial" get-state 2>/dev/null || true)"
+if [[ "$state" != device ]]; then
+  echo "android-check: 跳过（设备离线）: $serial${state:+ ($state)}"
+  exit "$skipped"
+fi
+echo "android-check: $serial $(adb -s "$serial" shell getprop ro.product.model | tr -d '\r') / Android $(adb -s "$serial" shell getprop ro.build.version.release | tr -d '\r')"
+
+# Install with every runtime permission granted, so no system dialog waits
+# for a tap; the scenario run below reinstalls over it and keeps the grants.
+flutter build apk --debug
+adb -s "$serial" install -r -g build/app/outputs/flutter-apk/app-debug.apk
+
+targets=("$@")
+[[ ${#targets[@]} -gt 0 ]] || targets=(integration_test/android)
+flutter test "${targets[@]}" -d "$serial" --reporter expanded
+echo "android-check: passed on $serial ($package)"

@@ -232,7 +232,7 @@ class _AppShellState extends State<AppShell> {
       selected: _wide ? visible : null,
       onSelectTab: _selectMobileTab,
       child: PopScope(
-        canPop: !detailVisible,
+        canPop: !detailVisible && _routes.popups.isEmpty,
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) _navigator.currentState?.maybePop();
         },

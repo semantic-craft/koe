@@ -341,6 +341,56 @@ void main() {
       isTrue,
     );
   });
+  testWidgets('system back while listening asks first, then saves the text', (
+    tester,
+  ) async {
+    final controller = (await tester.runAsync(() async => build()))!;
+    await tester.pumpWidget(KoeApp(controller: controller));
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 100),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 5),
+    );
+    Future<void> settle(bool Function() done) async {
+      for (var i = 0; i < 100 && !done(); i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(done(), isTrue);
+    }
+
+    Future<void> dialog() async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    await tester.tap(find.byKey(const ValueKey('new-recording')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('new-record-text-capture')));
+    await settle(() => controller.textCaptureConnected);
+    streams.first.emit('返回前说的话。', speechFinal: true);
+    streams.first.finalText = '返回前说的话。';
+    await tester.pump();
+
+    await tester.binding.handlePopRoute();
+    await dialog();
+    expect(find.text('返回会结束这次记录并保存文字。'), findsOneWidget);
+    await tester.tap(find.text('继续记录'));
+    await dialog();
+    expect(controller.textCaptureActive, isTrue);
+    expect(find.text('纯文字记录中'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await dialog();
+    await tester.tap(find.byKey(const ValueKey('confirm-leave-text-capture')));
+    await settle(() => !controller.textCaptureActive);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('text-capture-title')), findsNothing);
+    expect(controller.minutesDocuments.single.bodyText, '返回前说的话。');
+  });
+
   testWidgets('with all-day listening on, phone recording listens all day', (
     tester,
   ) async {
