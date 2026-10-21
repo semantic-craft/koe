@@ -6,6 +6,7 @@ import hashlib
 from html import escape
 from html.parser import HTMLParser
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -280,11 +281,14 @@ def relative_target(path, link):
     require(not urlsplit(link).scheme and not link.startswith('/'), f'Nonrelative URL: {link}')
     url_path = unquote(urlsplit(link).path)
     target = (ROOT / path).parent / url_path if url_path else ROOT / path
+    # URL identity and relative bases follow the reference, not a symlink target.
+    target = Path(os.path.normpath(target))
     require(target.resolve().is_relative_to(ROOT.resolve()), f'Link outside repository: {link}')
     if target.is_dir():
         target = target / 'index.html'
+        require(target.resolve().is_relative_to(ROOT.resolve()), f'Link outside repository: {link}')
     require(target.is_file(), f'Missing relative link: {path}: {link}')
-    return target.resolve().relative_to(ROOT.resolve()).as_posix()
+    return target.relative_to(ROOT).as_posix()
 
 
 def resource_document(c, path):
