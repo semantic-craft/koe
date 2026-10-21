@@ -2,6 +2,8 @@
 
 Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundcore Work（D3200）录音豆：BLE 连接、取回录音、指定模型转写与分析，并逐步做成手机优先的个人记录与持续事项工具（录音 + 地点 + 待办 + 日记，可交给 AI）。产品身份以 [pubspec.yaml](pubspec.yaml) 和 [README](README.md) 为准；当前做什么、冻结什么见 [ROADMAP](ROADMAP.md)。
 
+开发进度在 `progress/`（progress.json + 生成的自包含 index.html），更新时按 progress-page 技能 `python3 progress/progress.py refresh|render|check`，生成物不手改。
+
 ## 目录
 
 | 改动 | 入口 |

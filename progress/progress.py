@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""Repository progress snapshots, deterministic HTML and optional publication proof."""
+import argparse
+import datetime
+import hashlib
+from html import escape
+from html.parser import HTMLParser
+import json
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from urllib.parse import unquote, urlsplit
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = 'progress/progress.json'
+STATUSES = {'done', 'in_progress', 'blocked', 'planned', 'unverified'}
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + '\n', encoding='utf-8')
+
+
+def run(*args, cwd=None):
+    return subprocess.check_output(args, cwd=cwd or ROOT, text=True).strip()
+
+
+def live(c):
+    base = 'repos/' + c['repository']
+    def gh(path):
+        return json.loads(run('gh', 'api', path))
+    pulls, issues = [], []
+    for n in sorted(c['tracked']['pulls']):
+        p = gh(f'{base}/pulls/{n}')
+        pulls.append(dict(number=n, state=p['state'], merged=p['merged'], head=p['head']['sha'], base=p['base']['sha'], merge_commit=p['merge_commit_sha']))
+    for n in sorted(c['tracked']['issues']):
+        i = gh(f'{base}/issues/{n}')
+        issues.append(dict(number=n, state=i['state'], reason=i.get('state_reason'), updated_at=i['updated_at']))
+    pages = json.loads(run('gh', 'api', '--paginate', '--slurp', f'{base}/pulls?state=open&per_page=100'))
+    return dict(main=gh(f'{base}/commits/main')['sha'], pulls=pulls, issues=issues,
+                open_pulls=sorted([dict(number=p['number'], head=p['head']['sha']) for page in pages for p in page], key=lambda p: p['number']),
+                releases=[dict(id=r['id'], tag=r['tag_name'], draft=r['draft'], prerelease=r['prerelease'], published_at=r['published_at']) for r in gh(f'{base}/releases?per_page=10')])
+
+
+def schema(c, snapshot=True):
+    def typed(o, fields):
+        require(isinstance(o, dict), 'Expected object')
+        for k, t in fields.items():
+            require(k in o and type(o[k]) in (t if isinstance(t, tuple) else (t,)), f'Invalid {k}')
+    typed(c, dict(schema_version=int, repository=str, title=str, page=str, renderer=(str, type(None)), inputs=list, outputs=list, related_repositories=list, tracked=dict, observed_at=(str, type(None)), facts=dict, sections=list))
+    require(c['schema_version'] == 1, 'schema_version must be 1')
+    for repo in [c['repository']] + c['related_repositories']:
+        require(isinstance(repo, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo), 'Invalid repository')
+    for key in ('inputs', 'outputs'):
+        require(all(isinstance(p, str) for p in c[key]) and len(set(c[key])) == len(c[key]), f'Invalid {key}')
+    require(c['page'] in c['outputs'], 'page must be in outputs')
+    typed(c['tracked'], dict(pulls=list, issues=list))
+    typed(c['facts'], dict(main=str, pulls=list, open_pulls=list, issues=list, releases=list))
+    fields = {'pulls': dict(number=int, state=str, merged=bool, head=str, base=str, merge_commit=(str, type(None))),
+              'open_pulls': dict(number=int, head=str), 'issues': dict(number=int, state=str, reason=(str, type(None)), updated_at=str),
+              'releases': dict(id=int, tag=str, draft=bool, prerelease=bool, published_at=(str, type(None)))}
+    for key, spec in fields.items():
+        for record in c['facts'][key]:
+            typed(record, spec)
+    for key in ('pulls', 'issues'):
+        ns = c['tracked'][key]
+        require(all(type(n) is int and n > 0 for n in ns) and len(set(ns)) == len(ns), 'Invalid tracked numbers')
+        require(not snapshot or set(ns) <= {x['number'] for x in c['facts'][key]}, 'Tracked numbers missing facts')
+    ids = set()
+    def ident(o):
+        require(re.fullmatch('[a-z0-9-]+', o['id']) and o['id'] not in ids, 'IDs must be globally unique and nonempty')
+        ids.add(o['id'])
+    for section in c['sections']:
+        typed(section, dict(id=str, title=str, items=list)); ident(section)
+        for item in section['items']:
+            typed(item, dict(id=str, title=str, status=str, summary=str, evidence=list, next=str)); ident(item)
+            require(item['status'] in STATUSES, 'Invalid status')
+            for e in item['evidence']:
+                typed(e, dict(kind=str, ref=(str, int), note=str))
+                require(e['kind'] in {'pull', 'issue', 'release', 'commit', 'file', 'note'}, 'Invalid evidence kind')
+                if e['kind'] in ('pull', 'issue'):
+                    require(type(e['ref']) is int and e['ref'] in set(c['tracked'][e['kind'] + 's']) | {x['number'] for x in c['facts']['open_pulls']}, 'Evidence number is not tracked')
+                elif e['kind'] == 'release':
+                    require(e['ref'] in {r['tag'] for r in c['facts']['releases']}, 'Unknown release tag')
+                else:
+                    require(isinstance(e['ref'], str), 'Evidence ref must be text')
+
+
+def safe_path(root, value, exists=False):
+    require(isinstance(value, str) and value and '\\' not in value, f'Invalid relative path: {value}')
+    p = PurePosixPath(value)
+    require(not p.is_absolute() and '..' not in p.parts and not re.match(r'^[A-Za-z]:', value), f'Path outside repository: {value}')
+    dest = root / value
+    require(dest.resolve().is_relative_to(root.resolve()), f'Path outside repository: {value}')
+    require(not exists or dest.is_file(), f'Missing input: {value}')
+    return dest
+
+
+def paths(c):
+    for p in [c['page']] + c['outputs']:
+        safe_path(ROOT, p)
+    for p in c['inputs'] + ([c['renderer']] if c['renderer'] else []):
+        safe_path(ROOT, p, True)
+
+
+class HTML(HTMLParser):
+    def __init__(self, text):
+        super().__init__(); self.links = []; self.external = False
+        self.feed(text)
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        self.links.extend(v for k, v in attrs if k in ('href', 'src') and v is not None)
+        if tag == 'script' and 'src' in a:
+            self.external = True
+        if tag == 'link' and set(a.get('rel', '').lower().split()) & {'stylesheet', 'preload', 'modulepreload', 'import'} and 'href' in a:
+            self.external = True
+    handle_startendtag = handle_starttag
+
+
+def html_files(c):
+    return sorted(set([c['page']] + [p for p in c['outputs'] if p.lower().endswith(('.html', '.htm'))]))
+
+
+def relative_target(path, link):
+    if link.startswith('#') or urlsplit(link).scheme.lower() in {'http', 'https', 'mailto', 'data'} or link.startswith('//'):
+        return None
+    require(not urlsplit(link).scheme and not link.startswith('/'), f'Nonrelative URL: {link}')
+    target = (ROOT / path).parent / unquote(urlsplit(link).path)
+    require(target.resolve().is_relative_to(ROOT.resolve()), f'Link outside repository: {link}')
+    if target.is_dir():
+        target = target / 'index.html'
+    require(target.is_file(), f'Missing relative link: {path}: {link}')
+    return target.resolve().relative_to(ROOT.resolve()).as_posix()
+
+
+def links(c, recursive=False):
+    todo = [c['page']] if recursive else html_files(c)
+    seen = set()
+    while todo:
+        p = todo.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        if p == c['page'] or p.lower().endswith(('.html', '.htm')):
+            for link in HTML((ROOT / p).read_text(encoding='utf-8')).links:
+                target = relative_target(p, link)
+                if target and recursive:
+                    todo.append(target)
+    return seen
+
+
+def contained(c):
+    pattern = r'@import\b|url\(\s*[\x22\x27]?\s*(?:https?:|//)|fetch\s*\(|XMLHttpRequest|import\s*\(|new\s+WebSocket|EventSource|navigator\s*\.\s*sendBeacon|/Users/|/home/|file://|C:\\\\?'
+    for p in html_files(c):
+        text = (ROOT / p).read_text(encoding='utf-8')
+        require(not HTML(text).external and not re.search(pattern, text, re.I), f'External resource or runtime access: {p}')
+
+
+def texts(c):
+    for p in sorted(set([CONFIG] + c['inputs'] + c['outputs'] + ([c['renderer']] if c['renderer'] else []))):
+        raw = (ROOT / p).read_bytes()
+        if b'\0' in raw:
+            continue
+        try:
+            yield p, raw.decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+
+
+def forbidden(c):
+    pattern = r'chat[g]pt\.site|appgpr[j]_|\.openai/hosting\.json|遗留|已停用|retired|legacy|former URL'
+    for p, text in texts(c):
+        for n, line in enumerate(text.splitlines(), 1):
+            require(not re.search(pattern, line, re.I), f'{p}:{n}: prohibited term')
+
+
+def repo_links(c):
+    allowed = {r.lower() for r in [c['repository']] + c['related_repositories']}
+    for p, text in texts(c):
+        for owner, name in re.findall(r'github\.com/([\w.-]+)/([\w.-]+)', text, re.I):
+            require(f'{owner}/{name.removesuffix(".git")}'.lower() in allowed, f'{p}: unrelated repository {owner}/{name}')
+
+
+def builtin(c):
+    e = lambda x: escape(str(x), quote=True)
+    base = 'https://github.com/' + c['repository']
+    out = ['<!doctype html>', '<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+           '<title>' + e(c['title']) + '</title>', '<style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>',
+           '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e(c['facts']['main'] or 'unverified') + '</code></p>']
+    for section in c['sections']:
+        out.append(f'<section id="{e(section["id"])}"><h2>{e(section["title"])}</h2>')
+        for item in section['items']:
+            out.append(f'<article id="{e(item["id"])}"><h3>{e(item["title"])}</h3><span class="badge">{e(item["status"])}</span><p>{e(item["summary"])}</p><ul>')
+            for evidence in item['evidence']:
+                kind, ref = evidence['kind'], evidence['ref']
+                route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/main'}.get(kind)
+                label = e(f'{kind} {ref}: {evidence["note"]}')
+                out.append('<li>' + (f'<a href="{e(base + "/" + route + "/" + str(ref))}">{label}</a>' if route else label) + '</li>')
+            out.append('</ul><p>Next: ' + e(item['next']) + '</p></article>')
+        out.append('</section>')
+    out.append('<section><h2>Open pull requests</h2><ul>')
+    for p in c['facts']['open_pulls']:
+        out.append(f'<li><a href="{e(base)}/pull/{p["number"]}">#{p["number"]}</a> <code>{e(p["head"])}</code></li>')
+    out.append('</ul><h2>Recent releases</h2><ul>')
+    for r in c['facts']['releases']:
+        out.append(f'<li><a href="{e(base)}/releases/tag/{e(r["tag"])}">{e(r["tag"])}</a> {e(r["published_at"])} (draft: {e(r["draft"])}, prerelease: {e(r["prerelease"])})</li>')
+    return '\n'.join(out + ['</ul></section></html>']) + '\n'
+
+
+def generate(c, dest):
+    if c['renderer']:
+        subprocess.run([sys.executable, str(ROOT / c['renderer']), '--out', str(dest)], cwd=ROOT, check=True)
+    else:
+        require(c['outputs'] == [c['page']], 'Built-in renderer produces page only')
+        p = dest / c['page']; p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(builtin(c), encoding='utf-8')
+    actual = {p.relative_to(dest).as_posix() for p in dest.rglob('*') if p.is_file()}
+    require(actual == set(c['outputs']), 'Renderer must produce exactly outputs')
+    for p in c['outputs']:
+        safe_path(dest, p, True)
+
+
+def regenerate(c):
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp); generate(c, dest)
+        for p in c['outputs']:
+            require((ROOT / p).is_file() and (ROOT / p).read_bytes() == (dest / p).read_bytes(), f'Output differs: {p}')
+
+
+def publication(c, proof):
+    require(proof['adapter'] == 'artifact', 'Invalid adapter')
+    require(isinstance(proof['source']['commit_sha'], str) and re.fullmatch('[0-9a-f]{40,64}', proof['source']['commit_sha']), 'Invalid source commit')
+    pub, back = proof['publish'], proof['readback']
+    require(isinstance(pub['url'], str) and pub['url'].startswith('https://') and type(pub['version']) is int and pub['version'] > 0, 'Invalid publication URL/version')
+    require(isinstance(pub['version_id'], str) and pub['version_id'] and back['version_id'] == pub['version_id'], 'Version mismatch')
+    require(isinstance(back['dir'], str) and Path(back['dir']).is_dir(), 'Missing readback directory')
+    require(isinstance(proof['files'], dict) and set(proof['files']) == links(c, True), 'Proof file set differs from reachable files')
+    for p, sha in proof['files'].items():
+        raw = (ROOT / p).read_bytes()
+        require(hashlib.sha256(raw).hexdigest() == sha, f'Digest mismatch: {p}')
+        readback = Path(back['dir']) / ('index.html' if p == c['page'] else p)
+        require(readback.is_file(), f'Missing readback file: {p}')
+        require(raw in readback.read_bytes() if p == c['page'] else raw == readback.read_bytes(), f'Readback differs: {p}')
+
+
+def check(c, online=False, proof=None):
+    errors = []
+    def test(rule, fn):
+        try:
+            fn()
+        except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+            errors.append(f'Progress check FAILED [{rule}]: {exc}')
+    test('schema', lambda: schema(c))
+    if not errors:
+        test('paths-in-repo', lambda: paths(c))
+    if not errors:
+        for rule, fn in [('regenerate', regenerate), ('self-contained', contained), ('relative-links', links), ('legacy-terms', forbidden), ('repo-links', repo_links)]:
+            test(rule, lambda fn=fn: fn(c))
+        if proof is not None:
+            test('publication', lambda: publication(c, json.loads(Path(proof).read_text(encoding='utf-8'))))
+        if online:
+            test('live-facts', lambda: require(c['facts'] == live(c), 'GitHub snapshot differs'))
+            test('private-repo', lambda: require(json.loads(run('gh', 'repo', 'view', c['repository'], '--json', 'visibility'))['visibility'] == 'PRIVATE', 'Repository must be PRIVATE'))
+    for error in errors:
+        print(error, file=sys.stderr)
+    return not errors
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['init', 'refresh', 'render', 'check', 'publish'])
+    parser.add_argument('--repository'); parser.add_argument('--title')
+    parser.add_argument('--live', action='store_true'); parser.add_argument('--publication')
+    parser.add_argument('--adapter'); parser.add_argument('--receipt')
+    a = parser.parse_args()
+    if a.command == 'publish' and a.adapter != 'artifact':
+        raise ValueError('Unknown publish adapter')
+    if a.command == 'init':
+        root = Path.cwd().resolve()
+        require(a.repository and a.title, 'init requires --repository and --title')
+        require(not (root / 'progress').exists(), 'progress already exists')
+        c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main='', pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
+        schema(c)
+        write_json(root / CONFIG, c)
+        shutil.copyfile(__file__, root / 'progress/progress.py')
+        (root / c['page']).write_text(builtin(c), encoding='utf-8')
+        print('Progress initialized'); return 0
+    try:
+        c = json.loads((ROOT / CONFIG).read_text(encoding='utf-8'))
+    except (ValueError, OSError) as exc:
+        print(f'Progress check FAILED [schema]: {exc}', file=sys.stderr); return 1
+    if a.command in ('check', 'publish'):
+        require(a.command != 'publish' or (a.publication and a.receipt), 'publish requires proof and external receipt')
+        if not check(c, a.live or a.command == 'publish', a.publication):
+            return 1
+        if a.command == 'publish':
+            proof = json.loads(Path(a.publication).read_text(encoding='utf-8'))
+            require(run('git', 'rev-parse', 'HEAD') == proof['source']['commit_sha'] and not run('git', 'status', '--porcelain', '--untracked-files=all'), 'Source must be clean at proof commit')
+            dest = Path(a.receipt).resolve()
+            require(not dest.is_relative_to(ROOT), 'Receipt must be outside repository')
+            write_json(dest, dict(adapter='artifact', source=proof['source'], publish=proof['publish'], files=proof['files']))
+        print('Progress check PASS'); return 0
+    schema(c, snapshot=a.command != 'refresh'); paths(c)
+    if a.command == 'refresh':
+        facts = live(c)
+        if facts != c['facts']:
+            c['facts'] = facts
+            c['observed_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+            write_json(ROOT / CONFIG, c)
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp); generate(c, dest)
+            for p in c['outputs']:
+                (ROOT / p).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(dest / p, ROOT / p)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
