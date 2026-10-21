@@ -67,9 +67,12 @@ def outside_progress(files):
 def progress_pull(base, number, head):
     path = f'{base}/pulls/{number}'
     try:
+        before = github(path)
         files = github_files(path + '/files')
         detail = github(path)
-        if detail['head']['sha'] != head:
+        if (before['head']['sha'] != detail['head']['sha'] or detail['head']['sha'] != head
+                or before['base']['sha'] != detail['base']['sha']
+                or before['changed_files'] != detail['changed_files']):
             return False
         count = detail['changed_files']
         return (type(count) is int and count == len(files) and bool(files)
