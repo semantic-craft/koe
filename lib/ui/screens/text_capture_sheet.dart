@@ -99,6 +99,31 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  /// System back while listening (not all day, which just collapses):
+  /// leaving ends the capture, so confirm first and save the text on yes.
+  Future<void> _confirmLeave() async {
+    if (context.read<RecorderController>().textCaptureStopping) return;
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('正在记录'),
+        content: const Text('返回会结束这次记录并保存文字。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('继续记录'),
+          ),
+          TextButton(
+            key: const ValueKey('confirm-leave-text-capture'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('结束并保存'),
+          ),
+        ],
+      ),
+    );
+    if (leave == true && mounted) await _stop(keepAudio: false);
+  }
+
   String _clock(Duration d) {
     String two(int v) => v.toString().padLeft(2, '0');
     final hours = d.inHours;
@@ -132,6 +157,9 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
     final allDay = controller.textCaptureAllDay || widget.allDay;
     return PopScope(
       canPop: !active || allDay,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_confirmLeave());
+      },
       child: SafeArea(
         child: SizedBox(
           height: MediaQuery.sizeOf(context).height * 0.72,

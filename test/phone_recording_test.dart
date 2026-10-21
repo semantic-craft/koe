@@ -157,6 +157,40 @@ void main() {
     expect(controller.library.assets, isEmpty);
   });
 
+  testWidgets('system back mid-take asks first, then saves the take', (
+    tester,
+  ) async {
+    controller = (await tester.runAsync(() async => build()))!;
+    addTearDown(controller.dispose);
+    await pump(tester);
+    await openPhoneRecording(tester);
+    await settle(tester, () => controller.phoneRecordingActive);
+
+    await tester.binding.handlePopRoute();
+    await pumpDialog(tester);
+    expect(find.text('返回会结束并保存这段录音。'), findsOneWidget);
+    await tester.tap(find.text('继续录音'));
+    await pumpDialog(tester);
+    expect(controller.phoneRecordingActive, isTrue);
+    expect(find.text('手机录音中'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await pumpDialog(tester);
+    await tester.tap(
+      find.byKey(const ValueKey('confirm-leave-phone-recording')),
+    );
+    await settle(
+      tester,
+      () => controller.library.assets.any(
+        (a) => a.source == RecordingSource.phone,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.phoneRecordingActive, isFalse);
+    expect(find.byKey(const ValueKey('phone-recording-title')), findsNothing);
+    expect(find.text('手机录音已保存为原件'), findsOneWidget);
+  });
+
   testWidgets('denied microphone permission explains and records nothing', (
     tester,
   ) async {
