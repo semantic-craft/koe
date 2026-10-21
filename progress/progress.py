@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = 'progress/progress.json'
@@ -37,6 +37,8 @@ def live(c):
     base = 'repos/' + c['repository']
     def gh(path):
         return json.loads(run('gh', 'api', path))
+    branch = gh(base)['default_branch']
+    head = gh(f'{base}/commits/{quote(branch, safe="")}')['sha']
     pulls, issues = [], []
     for n in sorted(c['tracked']['pulls']):
         p = gh(f'{base}/pulls/{n}')
@@ -45,7 +47,7 @@ def live(c):
         i = gh(f'{base}/issues/{n}')
         issues.append(dict(number=n, state=i['state'], reason=i.get('state_reason'), updated_at=i['updated_at']))
     pages = json.loads(run('gh', 'api', '--paginate', '--slurp', f'{base}/pulls?state=open&per_page=100'))
-    return dict(main=gh(f'{base}/commits/main')['sha'], pulls=pulls, issues=issues,
+    return dict(main=dict(branch=branch, sha=head), pulls=pulls, issues=issues,
                 open_pulls=sorted([dict(number=p['number'], head=p['head']['sha']) for page in pages for p in page], key=lambda p: p['number']),
                 releases=[dict(id=r['id'], tag=r['tag_name'], draft=r['draft'], prerelease=r['prerelease'], published_at=r['published_at']) for r in gh(f'{base}/releases?per_page=10')])
 
@@ -63,7 +65,10 @@ def schema(c, snapshot=True):
         require(all(isinstance(p, str) for p in c[key]) and len(set(c[key])) == len(c[key]), f'Invalid {key}')
     require(c['page'] in c['outputs'], 'page must be in outputs')
     typed(c['tracked'], dict(pulls=list, issues=list))
-    typed(c['facts'], dict(main=str, pulls=list, open_pulls=list, issues=list, releases=list))
+    typed(c['facts'], dict(pulls=list, open_pulls=list, issues=list, releases=list))
+    if snapshot:
+        typed(c['facts'].get('main'), dict(branch=str, sha=str))
+        require(not c['observed_at'] or all(c['facts']['main'].values()), 'Refresh default branch facts')
     fields = {'pulls': dict(number=int, state=str, merged=bool, head=str, base=str, merge_commit=(str, type(None))),
               'open_pulls': dict(number=int, head=str), 'issues': dict(number=int, state=str, reason=(str, type(None)), updated_at=str),
               'releases': dict(id=int, tag=str, draft=bool, prerelease=bool, published_at=(str, type(None)))}
@@ -111,18 +116,74 @@ def paths(c):
         safe_path(ROOT, p, True)
 
 
+def css_urls(text):
+    # Comments are not resource references. Decode CSS escapes before URL matching.
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+    text = re.sub(r'\\([0-9a-fA-F]{1,6})\s?|\\([^\n\r])',
+                  lambda m: chr(int(m[1], 16)) if m[1] else m[2], text)
+    pattern = r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)|@import\s+(?:"([^"]*)"|'([^']*)')"""
+    return [next(v for v in m.groups() if v is not None).strip()
+            for m in re.finditer(pattern, text, re.I)]
+
+
+def srcset_urls(value):
+    # A URL token may contain commas (notably data URLs); descriptors end at a comma.
+    while value:
+        value = value.lstrip(' ,\t\r\n\f')
+        if not value:
+            break
+        match = re.match(r'[^\s]+', value)
+        url = match[0]; value = value[match.end():]
+        yield url.rstrip(',')
+        if not url.endswith(','):
+            value = value.partition(',')[2]
+
+
 class HTML(HTMLParser):
     def __init__(self, text):
-        super().__init__(); self.links = []; self.external = False
+        super().__init__(); self.links = []; self.external = False; self.in_style = False
         self.feed(text)
+
+    def resource(self, value):
+        value = (value or '').strip()
+        self.links.append(value)
+        if value.startswith('//') or urlsplit(value).scheme.lower() in {'http', 'https'}:
+            self.external = True
+
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        self.links.extend(v for k, v in attrs if k in ('href', 'src') and v is not None)
-        if tag == 'script' and 'src' in a:
-            self.external = True
-        if tag == 'link' and set(a.get('rel', '').lower().split()) & {'stylesheet', 'preload', 'modulepreload', 'import'} and 'href' in a:
-            self.external = True
-    handle_startendtag = handle_starttag
+        self.links.extend(v.strip() for k, v in attrs if k in ('href', 'src') and v is not None)
+        embedded = {'script', 'img', 'iframe', 'frame', 'embed', 'video', 'audio', 'source', 'track'}
+        if tag in embedded or (tag == 'input' and (a.get('type') or '').lower() == 'image'):
+            self.resource(a.get('src'))
+        if tag in {'img', 'source'}:
+            for url in srcset_urls(a.get('srcset') or ''):
+                self.resource(url)
+        if tag == 'object':
+            self.resource(a.get('data'))
+        if tag == 'video':
+            self.resource(a.get('poster'))
+        if tag == 'link':
+            rel = set((a.get('rel') or '').lower().split())
+            if not rel or rel - {'canonical', 'alternate', 'author', 'help', 'license', 'next', 'prev', 'search'}:
+                self.resource(a.get('href'))
+        for url in css_urls(a.get('style') or ''):
+            self.resource(url)
+        if tag == 'style':
+            self.in_style = True
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if tag == 'style':
+            self.in_style = False
+
+    def handle_data(self, data):
+        if self.in_style:
+            for url in css_urls(data):
+                self.resource(url)
 
 
 def html_files(c):
@@ -130,7 +191,7 @@ def html_files(c):
 
 
 def relative_target(path, link):
-    if link.startswith('#') or urlsplit(link).scheme.lower() in {'http', 'https', 'mailto', 'data'} or link.startswith('//'):
+    if not link or link.startswith('#') or urlsplit(link).scheme.lower() in {'http', 'https', 'mailto', 'data'} or link.startswith('//'):
         return None
     require(not urlsplit(link).scheme and not link.startswith('/'), f'Nonrelative URL: {link}')
     target = (ROOT / path).parent / unquote(urlsplit(link).path)
@@ -158,7 +219,7 @@ def links(c, recursive=False):
 
 
 def contained(c):
-    pattern = r'@import\b|url\(\s*[\x22\x27]?\s*(?:https?:|//)|fetch\s*\(|XMLHttpRequest|import\s*\(|new\s+WebSocket|EventSource|navigator\s*\.\s*sendBeacon|/Users/|/home/|file://|C:\\\\?'
+    pattern = r'fetch\s*\(|XMLHttpRequest|import\s*\(|new\s+WebSocket|EventSource|navigator\s*\.\s*sendBeacon|/Users/|/home/|file://|C:\\\\?'
     for p in html_files(c):
         text = (ROOT / p).read_text(encoding='utf-8')
         require(not HTML(text).external and not re.search(pattern, text, re.I), f'External resource or runtime access: {p}')
@@ -194,14 +255,14 @@ def builtin(c):
     base = 'https://github.com/' + c['repository']
     out = ['<!doctype html>', '<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
            '<title>' + e(c['title']) + '</title>', '<style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>',
-           '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e(c['facts']['main'] or 'unverified') + '</code></p>']
+           '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e((c['facts']['main']['branch'] + ': ' + c['facts']['main']['sha']) if c['facts']['main']['sha'] else 'unverified') + '</code></p>']
     for section in c['sections']:
         out.append(f'<section id="{e(section["id"])}"><h2>{e(section["title"])}</h2>')
         for item in section['items']:
             out.append(f'<article id="{e(item["id"])}"><h3>{e(item["title"])}</h3><span class="badge">{e(item["status"])}</span><p>{e(item["summary"])}</p><ul>')
             for evidence in item['evidence']:
                 kind, ref = evidence['kind'], evidence['ref']
-                route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/main'}.get(kind)
+                route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/' + quote(c['facts']['main']['branch'], safe='')}.get(kind)
                 label = e(f'{kind} {ref}: {evidence["note"]}')
                 out.append('<li>' + (f'<a href="{e(base + "/" + route + "/" + str(ref))}">{label}</a>' if route else label) + '</li>')
             out.append('</ul><p>Next: ' + e(item['next']) + '</p></article>')
@@ -287,7 +348,7 @@ def main():
         root = Path.cwd().resolve()
         require(a.repository and a.title, 'init requires --repository and --title')
         require(not (root / 'progress').exists(), 'progress already exists')
-        c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main='', pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
+        c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main=dict(branch='', sha=''), pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
         schema(c)
         write_json(root / CONFIG, c)
         shutil.copyfile(__file__, root / 'progress/progress.py')

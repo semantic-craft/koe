@@ -230,7 +230,10 @@
         "updated_at": "2026-10-21T03:51:15Z"
       }
     ],
-    "main": "836d475be6246de8cf77f2bde46c5d20bf65becd",
+    "main": {
+      "branch": "main",
+      "sha": "836d475be6246de8cf77f2bde46c5d20bf65becd"
+    },
     "open_pulls": [
       {
         "head": "9feb7079350074f75d134348330711105500f47c",
@@ -346,7 +349,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-21T09:10:39.678179Z",
+  "observed_at": "2026-10-21T09:36:37.220502Z",
   "outputs": [
     "progress/index.html"
   ],
