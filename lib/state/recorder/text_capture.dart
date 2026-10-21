@@ -47,6 +47,11 @@ class TextCaptureOutcome {
 /// once its text is saved, unless the user chooses to keep the audio as an
 /// original.
 ///
+/// On Android capture from the phone microphone runs as microphone work of
+/// Koe's foreground service, so listening goes on behind the lock screen;
+/// its notification says it listens and keeps only text, and 停止 there ends
+/// and saves like the sheet does (all-day listening too, until started again).
+///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderTextCapture on ChangeNotifier {
@@ -325,6 +330,17 @@ mixin _RecorderTextCapture on ChangeNotifier {
         _textMicStates = _micStream.states.listen(_onTextMicState);
       }
       unawaited(_saveTextState());
+      if (!fromDevice) {
+        // Started from the sheet or on launch, while Koe is on screen, as
+        // Android requires.
+        unawaited(
+          BackgroundSyncService.shared.begin(
+            BackgroundWork.textCapture,
+            text: _textNotice(),
+            onStop: () => unawaited(stopTextCapture()),
+          ),
+        );
+      }
       if (allDay) {
         unawaited(_writeAllDayMarker());
         _textTicker = Timer.periodic(AllDayTiming.tick, (_) => _onTextTick());
@@ -477,8 +493,21 @@ mixin _RecorderTextCapture on ChangeNotifier {
   void _onTextMicState(PhoneMicState state) {
     if (!textCaptureActive || _disposed) return;
     textCapturePaused = state == PhoneMicState.paused;
+    unawaited(
+      BackgroundSyncService.shared.updateText(
+        BackgroundWork.textCapture,
+        _textNotice(),
+      ),
+    );
     notifyListeners();
   }
+
+  /// The notification line while capture runs from the phone microphone.
+  String _textNotice() => textCapturePaused
+      ? 'Koe 监听已暂停（只留文字）'
+      : _textAllDay
+      ? 'Koe 正在全天监听（只留文字）'
+      : BackgroundWork.textCapture.text;
 
   void _detachTextSession() {
     _textGeneration++;
@@ -763,6 +792,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
     _textHeld.clear();
     _textMarks.clear();
     textCapturePaused = false;
+    unawaited(BackgroundSyncService.shared.end(BackgroundWork.textCapture));
   }
 
   Future<void> _stopTextMicrophone() async {

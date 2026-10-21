@@ -9,6 +9,8 @@ import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
 import 'package:koe/state/recorder_controller.dart';
 
+import 'support/fake_foreground_service.dart';
+
 void main() {
   late Directory directory;
   late Directory imports;
@@ -208,6 +210,56 @@ void main() {
     expect(find.byKey(const ValueKey('phone-recording-title')), findsNothing);
   });
 
+  Future<void> until(bool Function() done) async {
+    for (var i = 0; i < 200 && !done(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(done(), isTrue);
+  }
+
+  test('on Android a take runs as microphone work of the foreground service '
+      'and 停止 on its notification saves it', () async {
+    final service = FakeForegroundService();
+    controller = build();
+    addTearDown(controller.dispose);
+
+    await controller.startPhoneRecording();
+    expect(service.types, {'microphone'});
+    expect(service.text, 'Koe 正在录音');
+    expect(service.stoppable, isTrue);
+
+    await controller.pausePhoneRecording();
+    expect(service.text, 'Koe 录音已暂停');
+    await controller.resumePhoneRecording();
+    expect(service.text, 'Koe 正在录音');
+    // A call pauses it, and the notification says so.
+    mic.states$.add(PhoneMicState.paused);
+    await until(() => service.text == 'Koe 录音已暂停');
+
+    await service.pressStop();
+    await until(() => controller.library.assets.isNotEmpty);
+    final asset = controller.library.assets.single;
+    expect(asset.source, RecordingSource.phone);
+    expect(File(asset.path).lengthSync(), greaterThan(44));
+    expect(controller.phoneRecordingActive, isFalse);
+    expect(service.running, isFalse);
+    expect(mic.starts, 1);
+  });
+
+  test('a pause the user made survives the system resuming after a '
+      'notification sound', () async {
+    controller = build();
+    addTearDown(controller.dispose);
+    await controller.startPhoneRecording();
+    await controller.pausePhoneRecording();
+    expect(mic.pauses, 1);
+
+    // Focus regained: record resumes the take on its own.
+    mic.states$.add(PhoneMicState.recording);
+    await until(() => mic.pauses == 2);
+    expect(controller.phoneRecordingPaused, isTrue);
+  });
+
   test('a take cut off by a kill is recovered on the next launch', () async {
     final started = DateTime(2026, 10, 19, 8, 15);
     await imports.create(recursive: true);
@@ -272,6 +324,8 @@ class _FakePhoneRecorder implements PhoneRecorder {
   final bool permission;
   final states$ = StreamController<PhoneMicState>.broadcast();
   String? path;
+  int starts = 0;
+  int pauses = 0;
 
   @override
   Future<bool> requestPermission() async => permission;
@@ -281,12 +335,13 @@ class _FakePhoneRecorder implements PhoneRecorder {
 
   @override
   Future<void> start(String path) async {
+    starts++;
     this.path = path;
     await File(path).writeAsBytes(_wav(dataBytes: 0, headerSizes: 0));
   }
 
   @override
-  Future<void> pause() async {}
+  Future<void> pause() async => pauses++;
 
   @override
   Future<void> resume() async {}

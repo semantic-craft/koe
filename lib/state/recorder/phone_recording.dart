@@ -3,6 +3,10 @@ part of '../recorder_controller.dart';
 /// Phone microphone takes: start, pause, resume, stop and save as an original
 /// in the library, plus recovery of a take cut off by a crash or kill.
 ///
+/// On Android a take runs as microphone work of Koe's foreground service, so
+/// it keeps recording behind the lock screen; its notification says whether
+/// it records or is paused, and 停止 there saves the take like the sheet does.
+///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderPhoneRecording on ChangeNotifier {
@@ -31,6 +35,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   DateTime? _phoneTakeRunningSince;
   Duration _phoneTakeElapsed = Duration.zero;
   bool _phoneTakeBusy = false;
+
+  /// Paused by the user rather than by the system (a call).
+  bool _phoneTakeHeld = false;
   StreamSubscription<PhoneMicState>? _phoneMicStates;
 
   /// Why the last start or save did not complete; null when it did.
@@ -79,9 +86,15 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _phoneTakeStartedAt = startedAt;
       _phoneTakeRunningSince = startedAt;
       _phoneTakeElapsed = Duration.zero;
+      _phoneTakeHeld = false;
       await _phoneMicStates?.cancel();
       _phoneMicStates = _phoneRecorder.states.listen(_onPhoneMicState);
       notifyListeners();
+      // Started from the sheet, while Koe is on screen, as Android requires.
+      await BackgroundSyncService.shared.begin(
+        BackgroundWork.phoneRecording,
+        onStop: () => unawaited(stopPhoneRecording()),
+      );
     } finally {
       _phoneTakeBusy = false;
     }
@@ -93,11 +106,27 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       case PhoneMicState.paused:
         _markPhoneTakePaused();
       case PhoneMicState.recording:
+        if (_phoneTakeHeld) {
+          // The system resumed after an interruption that came while the
+          // user had paused; the user's pause wins.
+          unawaited(_phoneRecorder.pause().catchError((_) {}));
+          return;
+        }
         _markPhoneTakeRunning();
       case PhoneMicState.stopped:
         break;
     }
+    _showPhoneTakeState();
     notifyListeners();
+  }
+
+  void _showPhoneTakeState() {
+    unawaited(
+      BackgroundSyncService.shared.updateText(
+        BackgroundWork.phoneRecording,
+        phoneRecordingPaused ? 'Koe 录音已暂停' : BackgroundWork.phoneRecording.text,
+      ),
+    );
   }
 
   void _markPhoneTakePaused() {
@@ -113,15 +142,19 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   Future<void> pausePhoneRecording() async {
     if (!phoneRecordingActive || phoneRecordingPaused) return;
+    _phoneTakeHeld = true;
     await _phoneRecorder.pause();
     _markPhoneTakePaused();
+    _showPhoneTakeState();
     notifyListeners();
   }
 
   Future<void> resumePhoneRecording() async {
     if (!phoneRecordingActive || !phoneRecordingPaused) return;
+    _phoneTakeHeld = false;
     await _phoneRecorder.resume();
     _markPhoneTakeRunning();
+    _showPhoneTakeState();
     notifyListeners();
   }
 
@@ -175,6 +208,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeStartedAt = null;
     _phoneTakeRunningSince = null;
     _phoneTakeElapsed = Duration.zero;
+    _phoneTakeHeld = false;
+    unawaited(BackgroundSyncService.shared.end(BackgroundWork.phoneRecording));
   }
 
   Future<String?> _adoptPhoneTake(

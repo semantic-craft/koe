@@ -2,6 +2,8 @@ package com.semanticcraft.soundcore
 
 import android.app.AlertDialog
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -10,10 +12,50 @@ import com.ryanheise.audioservice.AudioServiceActivity
 class MainActivity : AudioServiceActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(
+        val backgroundSync = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.anker.anker_recorder/background_sync",
-        ).setMethodCallHandler { call, result ->
+        )
+        // Kept out of the lambdas below, which can outlive this activity.
+        val appContext = applicationContext
+        val mainThread = Handler(Looper.getMainLooper())
+        // 停止 on the notification: Dart saves the take or the text and ends
+        // the work. If Dart cannot answer, the service just stops.
+        RecordingSyncService.stopListener = {
+            mainThread.post {
+                backgroundSync.invokeMethod(
+                    "stopRequested",
+                    null,
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {}
+
+                        override fun error(code: String, message: String?, details: Any?) {
+                            RecordingSyncService.stop(appContext)
+                        }
+
+                        override fun notImplemented() {
+                            RecordingSyncService.stop(appContext)
+                        }
+                    },
+                )
+            }
+        }
+        // audio_service caches the engine past this activity, so Dart (and a
+        // take) can outlive it. When the engine itself goes, nothing is left
+        // to record or to answer 停止: stop the service with it.
+        if (watchedEngine !== flutterEngine) {
+            watchedEngine = flutterEngine
+            flutterEngine.addEngineLifecycleListener(object : FlutterEngine.EngineLifecycleListener {
+                override fun onPreEngineRestart() {}
+
+                override fun onEngineWillDestroy() {
+                    RecordingSyncService.stopListener = null
+                    RecordingSyncService.stop(appContext)
+                    if (watchedEngine === flutterEngine) watchedEngine = null
+                }
+            })
+        }
+        backgroundSync.setMethodCallHandler { call, result ->
             try {
                 when (call.method) {
                     "update" -> result.success(
@@ -21,6 +63,7 @@ class MainActivity : AudioServiceActivity() {
                             applicationContext,
                             call.argument<List<String>>("types") ?: emptyList(),
                             call.argument<String>("text"),
+                            call.argument<Boolean>("stoppable") ?: false,
                         ),
                     )
                     "stop" -> {
@@ -35,6 +78,7 @@ class MainActivity : AudioServiceActivity() {
                     // Device scenarios leave the screen the way the Home
                     // gesture does, then check the work keeps running.
                     "moveTaskToBack" -> result.success(moveTaskToBack(true))
+                    "pressStop" -> result.success(RecordingSyncService.pressStop(applicationContext))
                     else -> result.notImplemented()
                 }
             } catch (error: Exception) {
@@ -47,13 +91,17 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    companion object {
+        private var watchedEngine: FlutterEngine? = null
+    }
+
     private fun explainNotificationsOff() {
         if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this)
             .setTitle("通知已关闭")
             .setMessage(
-                "取回录音时，Koe 会在通知栏显示「Koe 正在同步录音」，点它就能回到 Koe。" +
-                    "通知关闭后同步照常进行，只是看不到这条通知。",
+                "取回录音、手机录音或监听时，Koe 会在通知栏显示正在做什么，点它就能回到 Koe，" +
+                    "录音和监听还能从通知上停止。通知关闭后这些工作照常进行，只是看不到这条通知。",
             )
             .setNegativeButton("暂不", null)
             .setPositiveButton("去设置") { _, _ ->

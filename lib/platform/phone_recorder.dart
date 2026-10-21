@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:record/record.dart';
 
 /// What the microphone is doing, as reported by the platform.
@@ -32,11 +34,18 @@ class DevicePhoneRecorder implements PhoneRecorder {
 
   /// WAV keeps every sample written before a crash readable; speech-rate mono
   /// keeps an hour near 115 MB.
-  static const config = RecordConfig(
+  ///
+  /// A call pauses the take. On Android every short sound that takes audio
+  /// focus (a notification, a navigation prompt) also counts as one, so there
+  /// the take resumes when focus comes back instead of staying paused behind
+  /// the lock screen; a pause the user made is kept by the controller.
+  static RecordConfig get config => RecordConfig(
     encoder: AudioEncoder.wav,
     sampleRate: 16000,
     numChannels: 1,
-    audioInterruption: AudioInterruptionMode.pause,
+    audioInterruption: defaultTargetPlatform == TargetPlatform.android
+        ? AudioInterruptionMode.pauseResume
+        : AudioInterruptionMode.pause,
   );
 
   @override
