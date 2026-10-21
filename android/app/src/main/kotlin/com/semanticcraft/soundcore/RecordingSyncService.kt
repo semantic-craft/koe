@@ -301,6 +301,8 @@ class RecordingSyncService : Service() {
                 "opensKoe" to (tap != null && tap.isActivity && tap.creatorPackage == context.packageName),
                 "wakeLockHeld" to (service?.wakeLock?.isHeld == true),
                 "actions" to (posted?.notification?.actions?.map { it.title.toString() } ?: emptyList<String>()),
+                // False once the screen is off, as behind the lock screen.
+                "screenInteractive" to (context.getSystemService(POWER_SERVICE) as PowerManager).isInteractive,
             )
         }
 
