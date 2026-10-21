@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:audio_decoder/audio_decoder.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'ogg_opus.dart';
@@ -68,18 +70,24 @@ abstract class AudioTranscoder {
   Future<void> toWav(String input, String output);
 }
 
-/// AVFoundation conversion in `darwin/AudioTranscodeBridge.swift`.
+/// AVFoundation conversion in `darwin/AudioTranscodeBridge.swift`; on
+/// Android, [AndroidAudioTranscoder].
 class PlatformAudioTranscoder implements AudioTranscoder {
   const PlatformAudioTranscoder([
     this._channel = const MethodChannel(
       'com.semanticcraft.koe/audio_transcode',
     ),
+    this._android = const AndroidAudioTranscoder(),
   ]);
 
   final MethodChannel _channel;
+  final AudioTranscoder _android;
 
   @override
   Future<void> toWav(String input, String output) async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return _android.toWav(input, output);
+    }
     try {
       await _channel.invokeMethod<void>('toWav', {
         'input': input,
@@ -88,6 +96,30 @@ class PlatformAudioTranscoder implements AudioTranscoder {
       });
     } on PlatformException catch (e) {
       throw AudioTranscodeException(e.message ?? '无法转换音频');
+    } on MissingPluginException {
+      throw const AudioTranscodeException('此设备无法转换音频格式');
+    }
+  }
+}
+
+/// MediaExtractor + MediaCodec through the audio_decoder plugin, which
+/// resamples and mixes down to mono itself.
+class AndroidAudioTranscoder implements AudioTranscoder {
+  const AndroidAudioTranscoder();
+
+  @override
+  Future<void> toWav(String input, String output) async {
+    try {
+      await AudioDecoder.convertToWav(
+        input,
+        output,
+        sampleRate: 16000,
+        channels: 1,
+        bitDepth: 16,
+      );
+    } on AudioConversionException {
+      // The plugin reports English codec errors; show one plain reason.
+      throw const AudioTranscodeException('无法转换音频');
     } on MissingPluginException {
       throw const AudioTranscodeException('此设备无法转换音频格式');
     }
