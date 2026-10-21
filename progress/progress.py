@@ -66,9 +66,12 @@ def schema(c, snapshot=True):
     require(c['page'] in c['outputs'], 'page must be in outputs')
     typed(c['tracked'], dict(pulls=list, issues=list))
     typed(c['facts'], dict(pulls=list, open_pulls=list, issues=list, releases=list))
+    if 'default_branch' in c['facts']:
+        typed(c['facts'], dict(default_branch=str))
+        require(bool(c['facts']['default_branch']), 'Invalid default_branch')
     if snapshot:
-        typed(c['facts'], dict(main=str, default_branch=str))
-        require(not c['observed_at'] or (c['facts']['main'] and c['facts']['default_branch']), 'Refresh default branch facts')
+        typed(c['facts'], dict(main=str))
+        require(not c['observed_at'] or c['facts']['main'], 'Refresh default branch facts')
     fields = {'pulls': dict(number=int, state=str, merged=bool, head=str, base=str, merge_commit=(str, type(None))),
               'open_pulls': dict(number=int, head=str), 'issues': dict(number=int, state=str, reason=(str, type(None)), updated_at=str),
               'releases': dict(id=int, tag=str, draft=bool, prerelease=bool, published_at=(str, type(None)))}
@@ -373,14 +376,14 @@ def builtin(c):
     base = 'https://github.com/' + c['repository']
     out = ['<!doctype html>', '<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
            '<title>' + e(c['title']) + '</title>', '<style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>',
-           '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e((c['facts']['default_branch'] + ': ' + c['facts']['main']) if c['facts']['main'] else 'unverified') + '</code></p>']
+           '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e(((c['facts']['default_branch'] + ': ' if 'default_branch' in c['facts'] else '') + c['facts']['main']) if c['facts']['main'] else 'unverified') + '</code></p>']
     for section in c['sections']:
         out.append(f'<section id="{e(section["id"])}"><h2>{e(section["title"])}</h2>')
         for item in section['items']:
             out.append(f'<article id="{e(item["id"])}"><h3>{e(item["title"])}</h3><span class="badge">{e(item["status"])}</span><p>{e(item["summary"])}</p><ul>')
             for evidence in item['evidence']:
                 kind, ref = evidence['kind'], evidence['ref']
-                route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/' + quote(c['facts']['default_branch'], safe='')}.get(kind)
+                route = {'pull': 'pull', 'issue': 'issues', 'release': 'releases/tag', 'commit': 'commit', 'file': 'blob/' + quote(c['facts'].get('default_branch', 'HEAD'), safe='')}.get(kind)
                 label = e(f'{kind} {ref}: {evidence["note"]}')
                 out.append('<li>' + (f'<a href="{e(base + "/" + route + "/" + quote(str(ref), safe="/" if kind == "file" else ""))}">{label}</a>' if route else label) + '</li>')
             out.append('</ul><p>Next: ' + e(item['next']) + '</p></article>')
@@ -430,6 +433,13 @@ def publication(c, proof):
         require(raw in readback.read_bytes() if p == c['page'] else raw == readback.read_bytes(), f'Readback differs: {p}')
 
 
+def live_matches(c):
+    current = live(c)
+    if 'default_branch' not in c['facts']:
+        current.pop('default_branch')
+    require(c['facts'] == current, 'GitHub snapshot differs')
+
+
 def check(c, online=False, proof=None):
     errors = []
     def test(rule, fn):
@@ -446,7 +456,7 @@ def check(c, online=False, proof=None):
         if proof is not None:
             test('publication', lambda: publication(c, json.loads(Path(proof).read_text(encoding='utf-8'))))
         if online:
-            test('live-facts', lambda: require(c['facts'] == live(c), 'GitHub snapshot differs'))
+            test('live-facts', lambda: live_matches(c))
             test('private-repo', lambda: require(json.loads(run('gh', 'repo', 'view', c['repository'], '--json', 'visibility'))['visibility'] == 'PRIVATE', 'Repository must be PRIVATE'))
     for error in errors:
         print(error, file=sys.stderr)
@@ -466,7 +476,7 @@ def main():
         root = Path.cwd().resolve()
         require(a.repository and a.title, 'init requires --repository and --title')
         require(not (root / 'progress').exists(), 'progress already exists')
-        c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main='', default_branch='', pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
+        c = dict(schema_version=1, repository=a.repository, title=a.title, page='progress/index.html', renderer=None, inputs=[], outputs=['progress/index.html'], related_repositories=[], tracked=dict(pulls=[], issues=[]), observed_at=None, facts=dict(main='', pulls=[], open_pulls=[], issues=[], releases=[]), sections=[])
         schema(c)
         write_json(root / CONFIG, c)
         shutil.copyfile(__file__, root / 'progress/progress.py')
