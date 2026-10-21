@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../state/context/todo.dart';
+import 'android_calendar_tasks.dart';
 
 enum SystemTaskTarget { reminder, event }
 
@@ -41,15 +42,22 @@ abstract class SystemTasks {
   Future<SystemSnapshot?> fetch(SystemTaskTarget target, String id);
 }
 
-/// EventKit bridge on iOS (`ios/Runner/SystemTasksBridge.swift`). Other
-/// platforms have no handler: [supports] is false and calls report
+/// EventKit bridge on iOS (`ios/Runner/SystemTasksBridge.swift`); on Android
+/// it hands over to [AndroidCalendarTasks] (Calendar only). Other platforms
+/// have no handler: [supports] is false and calls report
 /// [SystemTasksUnavailable].
 class ChannelSystemTasks implements SystemTasks {
   const ChannelSystemTasks();
 
+  static const SystemTasks _android = AndroidCalendarTasks();
+
+  static bool get _onAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   @override
-  bool supports(SystemTaskTarget target) =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  bool supports(SystemTaskTarget target) => _onAndroid
+      ? _android.supports(target)
+      : !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   static const _channel = MethodChannel('com.semanticcraft.koe/system_tasks');
 
@@ -66,8 +74,9 @@ class ChannelSystemTasks implements SystemTasks {
   }
 
   @override
-  Future<bool> requestAccess(SystemTaskTarget target) async =>
-      await _call<bool>('access', {'target': target.name}) ?? false;
+  Future<bool> requestAccess(SystemTaskTarget target) async => _onAndroid
+      ? _android.requestAccess(target)
+      : await _call<bool>('access', {'target': target.name}) ?? false;
 
   @override
   Future<String> save(
@@ -80,6 +89,18 @@ class ChannelSystemTasks implements SystemTasks {
     bool done = false,
     String? notes,
   }) async {
+    if (_onAndroid) {
+      return _android.save(
+        target,
+        existingId: existingId,
+        title: title,
+        start: start,
+        end: end,
+        hasTime: hasTime,
+        done: done,
+        notes: notes,
+      );
+    }
     final id = await _call<String>('save', {
       'target': target.name,
       'id': ?existingId,
@@ -98,6 +119,7 @@ class ChannelSystemTasks implements SystemTasks {
 
   @override
   Future<SystemSnapshot?> fetch(SystemTaskTarget target, String id) async {
+    if (_onAndroid) return _android.fetch(target, id);
     final value = await _call<Map>('fetch', {'target': target.name, 'id': id});
     if (value == null) return null;
     DateTime? time(Object? ms) =>
