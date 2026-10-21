@@ -28,6 +28,10 @@ DEPS=(
   record record_ios record_macos record_platform_interface
   just_audio just_audio_background audio_service audio_session
   opus_codec opus_codec_dart opus_codec_ios opus_codec_macos
+  flutter_blue_plus_android record_android
+  flutter_secure_storage flutter_secure_storage_darwin audio_decoder flutter_tts
+  device_calendar_plus device_calendar_plus_android device_calendar_plus_ios
+  quick_actions quick_actions_android quick_actions_ios
 )
 
 die() { echo "ref: $*" >&2; exit 1; }

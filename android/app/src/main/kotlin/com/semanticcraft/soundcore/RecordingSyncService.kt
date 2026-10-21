@@ -1,4 +1,4 @@
-package com.anker.anker_recorder
+package com.semanticcraft.soundcore
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,7 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 
@@ -23,15 +22,11 @@ class RecordingSyncService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        startForeground(
+            NOTIFICATION_ID,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+        )
         return START_NOT_STICKY
     }
 
@@ -58,7 +53,6 @@ class RecordingSyncService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -75,22 +69,11 @@ class RecordingSyncService : Service() {
         val openApp = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                PendingIntent.FLAG_IMMUTABLE
-            } else {
-                0
-            }
+        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val contentIntent = PendingIntent.getActivity(this, 0, openApp, pendingFlags)
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-        return builder
+        return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_sync_notification)
-            .setContentTitle("安克录音豆")
+            .setContentTitle("Koe")
             .setContentText("正在后台同步录音")
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(contentIntent)
@@ -105,12 +88,7 @@ class RecordingSyncService : Service() {
         private const val NOTIFICATION_ID = 3200
 
         fun start(context: Context) {
-            val intent = Intent(context, RecordingSyncService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(Intent(context, RecordingSyncService::class.java))
         }
 
         fun stop(context: Context) {

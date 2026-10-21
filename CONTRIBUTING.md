@@ -4,7 +4,7 @@
 
 ## 开工前
 
-1. 先读 [README](README.md) 跑起来，再读 [ROADMAP](ROADMAP.md)：冻结区里的功能（外部 AI 接入、Mac 双端同步、Android 等）暂不接 PR。
+1. 先读 [README](README.md) 跑起来，再读 [ROADMAP](ROADMAP.md)：冻结区里的功能（P3、外部 AI 接入、Mac 双端同步等）暂不接 PR。Android 已按 [#331](https://github.com/semantic-craft/koe/issues/331) 解冻，范围限 Pixel 11 Pro / Android 17，子工单 #336–#345；Android 改动用 `scripts/android-check` 在 Pixel 上跑 [integration_test/android](integration_test/android/) 的场景。
 2. 改动较大时先开 Issue 讨论范围和验收条件。工单与标签约定见 [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) 和 [docs/agents/triage-labels.md](docs/agents/triage-labels.md)。
 3. 开工前查一下有没有开放 PR 在改同一个工单或同一批文件：一个工单同一时间只有一个在做的 PR。
 4. 领域术语见 [GLOSSARY](GLOSSARY.md)，设计决策见 [docs/adr](docs/adr/)，界面规范见 [docs/design/ui-guidelines.md](docs/design/ui-guidelines.md)，设备协议见 [PROTOCOL](PROTOCOL.md)。

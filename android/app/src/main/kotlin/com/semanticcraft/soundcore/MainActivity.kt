@@ -1,4 +1,4 @@
-package com.anker.anker_recorder
+package com.semanticcraft.soundcore
 
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
