@@ -34,10 +34,77 @@ def run(*args, cwd=None):
     return subprocess.check_output(args, cwd=cwd or ROOT, text=True).strip()
 
 
+def github(path, paginate=False):
+    flags = ('--paginate', '--slurp') if paginate else ()
+    return json.loads(run('gh', 'api', *flags, path))
+
+
+def github_files(path, commit=False):
+    pages = github(path + '?per_page=100', paginate=True)
+    require(isinstance(pages, list) and pages, 'Incomplete file listing: ' + path)
+    batches = [page['files'] if commit else page for page in pages]
+    require(all(isinstance(batch, list) for batch in batches), 'Invalid file listing: ' + path)
+    files = [f for batch in batches for f in batch]
+    # Both endpoints cap listings at 3,000 files. A full final page cannot
+    # establish completeness, even if gh has followed every available Link.
+    require(len(files) < 3000 and len(batches[-1]) < 100,
+            'Incomplete file listing: ' + path)
+    return files
+
+
+def outside_progress(files):
+    for f in files:
+        paths = [f['filename']]
+        if 'previous_filename' in f:
+            paths.append(f['previous_filename'])
+        for path in paths:
+            if not (isinstance(path, str) and path.startswith('progress/')
+                    and all(part not in ('', '.', '..') for part in path.split('/'))):
+                return str(path)
+    return None
+
+
+def progress_pull(base, number, head):
+    path = f'{base}/pulls/{number}'
+    try:
+        files = github_files(path + '/files')
+        detail = github(path)
+        if detail['head']['sha'] != head:
+            return False
+        count = detail['changed_files']
+        return (type(count) is int and count == len(files) and bool(files)
+                and outside_progress(files) is None)
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+        return False
+
+
+def progress_ancestry(base, snapshot, head):
+    require(isinstance(snapshot, str) and re.fullmatch(r'[0-9a-f]{40}', snapshot),
+            'facts.main must be a full 40-character lowercase hexadecimal commit SHA')
+    if snapshot == head:
+        return
+    comparison = github(f'{base}/compare/{quote(snapshot, safe="")}...{quote(head, safe="")}')
+    require(comparison['base_commit']['sha'] == snapshot,
+            'Comparison base_commit.sha does not match facts.main')
+    require(comparison['status'] != 'identical' or snapshot == head,
+            'Comparison is identical but facts.main differs from live head')
+    require(comparison['status'] in ('identical', 'ahead'),
+            f'facts.main {snapshot} is not an ancestor of {head}: {comparison["status"]}')
+    commits = comparison['commits']
+    require(type(comparison['total_commits']) is int and comparison['total_commits'] == len(commits),
+            'Incomplete comparison commit listing')
+    require(bool(commits) or comparison['status'] == 'identical', 'Incomplete comparison commit listing')
+    for commit in commits:
+        sha = commit['sha']
+        files = github_files(f'{base}/commits/{quote(sha, safe="")}', commit=True)
+        outside = outside_progress(files)
+        require(outside is None, f'Commit {sha} changes outside progress/: {outside}')
+
+
 def live(c):
     base = 'repos/' + c['repository']
     def gh(path):
-        return json.loads(run('gh', 'api', path))
+        return github(path)
     branch = gh(base)['default_branch']
     head = gh(f'{base}/commits/{quote(branch, safe="")}')['sha']
     pulls, issues = [], []
@@ -49,7 +116,8 @@ def live(c):
         issues.append(dict(number=n, state=i['state'], reason=i.get('state_reason'), updated_at=i['updated_at']))
     pages = json.loads(run('gh', 'api', '--paginate', '--slurp', f'{base}/pulls?state=open&per_page=100'))
     return dict(main=head, default_branch=branch, pulls=pulls, issues=issues,
-                open_pulls=sorted([dict(number=p['number'], head=p['head']['sha']) for page in pages for p in page], key=lambda p: p['number']),
+                open_pulls=sorted([dict(number=p['number'], head=p['head']['sha']) for page in pages for p in page
+                                   if not progress_pull(base, p['number'], p['head']['sha'])], key=lambda p: p['number']),
                 releases=[dict(id=r['id'], tag=r['tag_name'], draft=r['draft'], prerelease=r['prerelease'], published_at=r['published_at']) for r in gh(f'{base}/releases?per_page=10')])
 
 
@@ -441,6 +509,8 @@ def live_matches(c):
     current = live(c)
     if 'default_branch' not in c['facts']:
         current.pop('default_branch')
+    progress_ancestry('repos/' + c['repository'], c['facts']['main'], current['main'])
+    current['main'] = c['facts']['main']
     require(c['facts'] == current, 'GitHub snapshot differs')
 
 
