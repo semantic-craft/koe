@@ -116,11 +116,16 @@ def paths(c):
         safe_path(ROOT, p, True)
 
 
-def css_urls(text):
+def normalized_css(text):
     # Comments are not resource references. Decode CSS escapes before URL matching.
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
     text = re.sub(r'\\([0-9a-fA-F]{1,6})\s?|\\([^\n\r])',
                   lambda m: chr(int(m[1], 16)) if m[1] else m[2], text)
+    return text
+
+
+def css_urls(text):
+    text = normalized_css(text)
     pattern = r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)|@import\s+(?:"([^"]*)"|'([^']*)')"""
     return [next(v for v in m.groups() if v is not None).strip()
             for m in re.finditer(pattern, text, re.I)]
@@ -141,18 +146,35 @@ def srcset_urls(value):
 
 class HTML(HTMLParser):
     def __init__(self, text):
-        super().__init__(); self.links = []; self.external = False; self.in_style = False
+        super().__init__(); self.links = []; self.external = False; self.requires_inline = False; self.in_style = False; self.violations = []; self.inline_lines = []
         self.feed(text)
 
-    def resource(self, value):
+    def resource(self, value, line=None):
         value = (value or '').strip()
         self.links.append(value)
         if value.startswith('//') or urlsplit(value).scheme.lower() in {'http', 'https'}:
             self.external = True
+            self.violations.append((line or self.getpos()[0], "External resource: " + value))
+
+    def css(self, text):
+        if re.search(r'@import\b', normalized_css(text), re.I):
+            self.requires_inline = True
+            self.inline_lines.append(self.getpos()[0])
+        for url in css_urls(text):
+            self.resource(url)
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if tag == "base" and "href" in a:
+            self.violations.append((self.getpos()[0], "base[href] is not allowed"))
+        if tag in {"image", "use", "script"}:
+            for key in ("href", "xlink:href"):
+                if key in a:
+                    self.resource(a[key])
         self.links.extend(v.strip() for k, v in attrs if k in ('href', 'src') and v is not None)
+        if tag == 'script' and 'src' in a:
+            self.requires_inline = True
+            self.inline_lines.append(self.getpos()[0])
         embedded = {'script', 'img', 'iframe', 'frame', 'embed', 'video', 'audio', 'source', 'track'}
         if tag in embedded or (tag == 'input' and (a.get('type') or '').lower() == 'image'):
             self.resource(a.get('src'))
@@ -166,9 +188,11 @@ class HTML(HTMLParser):
         if tag == 'link':
             rel = set((a.get('rel') or '').lower().split())
             if not rel or rel - {'canonical', 'alternate', 'author', 'help', 'license', 'next', 'prev', 'search'}:
+                if 'href' in a:
+                    self.requires_inline = True
+                    self.inline_lines.append(self.getpos()[0])
                 self.resource(a.get('href'))
-        for url in css_urls(a.get('style') or ''):
-            self.resource(url)
+        self.css(a.get('style') or '')
         if tag == 'style':
             self.in_style = True
 
@@ -182,8 +206,7 @@ class HTML(HTMLParser):
 
     def handle_data(self, data):
         if self.in_style:
-            for url in css_urls(data):
-                self.resource(url)
+            self.css(data)
 
 
 def html_files(c):
@@ -202,27 +225,67 @@ def relative_target(path, link):
     return target.resolve().relative_to(ROOT.resolve()).as_posix()
 
 
-def links(c, recursive=False):
-    todo = [c['page']] if recursive else html_files(c)
-    seen = set()
+def resource_document(c, path):
+    """Parse scan-capable resources; binary attachments remain graph leaves."""
+    suffix = Path(path).suffix.lower()
+    if path not in html_files(c) and suffix not in {'.html', '.htm', '.css', '.js', '.mjs', '.svg'}:
+        return None, ''
+    text = (ROOT / path).read_text(encoding='utf-8')
+    if path in html_files(c) or suffix in {'.html', '.htm', '.svg'}:
+        return HTML(text), text
+    parsed = HTML('')
+    for url in css_urls(text):
+        line = text.count('\n', 0, max(0, text.find(url))) + 1
+        parsed.resource(url, line)
+    if suffix != '.css':
+        # Static module dependencies are resources too; dynamic imports are rejected.
+        pattern = r"""\b(?:import|export)\s+(?:[^;\n]*?\bfrom\s*)?['"]([^'"]+)['"]"""
+        for match in re.finditer(pattern, text):
+            parsed.resource(match[1], text.count('\n', 0, match.start()) + 1)
+    return parsed, text
+
+
+def resources(c, roots, strict=True):
+    todo = list(roots); seen = set()
     while todo:
-        p = todo.pop()
-        if p in seen:
+        path = todo.pop()
+        if path in seen:
             continue
-        seen.add(p)
-        if p == c['page'] or p.lower().endswith(('.html', '.htm')):
-            for link in HTML((ROOT / p).read_text(encoding='utf-8')).links:
-                target = relative_target(p, link)
-                if target and recursive:
-                    todo.append(target)
-    return seen
+        seen.add(path)
+        parsed, text = resource_document(c, path)
+        yield path, parsed, text
+        if parsed is None:
+            continue
+        for link in parsed.links:
+            try:
+                target = relative_target(path, link)
+            except ValueError:
+                if strict:
+                    raise
+                continue  # relative-links owns missing/invalid local targets.
+            if target:
+                todo.append(target)
+
+
+def links(c, recursive=False):
+    return {p for p, _, _ in resources(c, [c['page']] if recursive else html_files(c))}
 
 
 def contained(c):
-    pattern = r'fetch\s*\(|XMLHttpRequest|import\s*\(|new\s+WebSocket|EventSource|navigator\s*\.\s*sendBeacon|/Users/|/home/|file://|C:\\\\?'
-    for p in html_files(c):
-        text = (ROOT / p).read_text(encoding='utf-8')
-        require(not HTML(text).external and not re.search(pattern, text, re.I), f'External resource or runtime access: {p}')
+    pattern = r'fetch\s*\(|XMLHttpRequest|import\s*\(|WebSocket|EventSource|navigator\s*\.\s*sendBeacon|importScripts\s*\(|/Users/|/home/|file://|C:\\\\?'
+    inline = set(html_files(c))
+    for p, parsed, text in resources(c, html_files(c), strict=False):
+        if parsed is None:
+            continue
+        violations = list(parsed.violations)
+        if p in inline:
+            violations.extend((line, 'CSS and JavaScript must be inline') for line in parsed.inline_lines)
+        match = re.search(pattern, text, re.I)
+        if match:
+            violations.append((text.count('\n', 0, match.start()) + 1, 'Runtime access: ' + match[0]))
+        if violations:
+            line, reason = min(violations)
+            raise ValueError(f'{p}:{line}: {reason}')
 
 
 def texts(c):
@@ -253,7 +316,7 @@ def repo_links(c):
 def builtin(c):
     e = lambda x: escape(str(x), quote=True)
     base = 'https://github.com/' + c['repository']
-    out = ['<!doctype html>', '<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+    out = ['<!doctype html>', '<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
            '<title>' + e(c['title']) + '</title>', '<style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>',
            '<h1>' + e(c['title']) + '</h1>', '<p>Observed: ' + e(c['observed_at'] or 'unverified') + '</p>', '<p>Main: <code>' + e((c['facts']['main']['branch'] + ': ' + c['facts']['main']['sha']) if c['facts']['main']['sha'] else 'unverified') + '</code></p>']
     for section in c['sections']:
