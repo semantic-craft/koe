@@ -481,5 +481,7 @@ void main() async {
       );
       expect(find.textContaining('已清除已保存的 API Key'), findsOneWidget);
     },
+    // Injects failures through the Apple Keychain channel.
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 }

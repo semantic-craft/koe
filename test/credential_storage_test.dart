@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:koe/platform/credential_store.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,6 +13,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // These cases drive the Apple Keychain channel; Android has its own file.
+  setUp(() => debugDefaultTargetPlatformOverride = TargetPlatform.iOS);
+  tearDown(() => debugDefaultTargetPlatformOverride = null);
   test('settings serialization never includes in-memory credentials', () {
     const settings = AppSettings(
       engines: {
