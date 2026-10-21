@@ -35,6 +35,9 @@ class _System implements SystemTasks {
   var _next = 0;
 
   @override
+  bool supports(SystemTaskTarget target) => true;
+
+  @override
   Future<bool> requestAccess(SystemTaskTarget target) async => granted;
 
   @override

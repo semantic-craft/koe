@@ -19,6 +19,9 @@ class TodoSystemSync {
   /// Last system-app problem worth telling the user about.
   String? notice;
 
+  /// Whether this device has [target]'s system app at all.
+  bool supports(SystemTaskTarget target) => _tasks.supports(target);
+
   /// Writes the todo into Reminders after the user confirmed it. A todo that
   /// is already linked is updated in place, never created twice.
   Future<void> exportToReminders(String id) =>

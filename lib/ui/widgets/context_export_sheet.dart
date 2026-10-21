@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +6,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
+import '../../platform/device_kind.dart';
 
 /// Shows what will be exported for [scope] and lets the user copy or share
 /// it. Koe sends nothing by itself.
@@ -77,7 +77,7 @@ Future<void> showContextExportSheet(
                     label: const Text('复制'),
                   ),
                 ),
-                if (Platform.isIOS || Platform.isMacOS) ...[
+                if (runsOnPhone || runsOnMac) ...[
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton.icon(

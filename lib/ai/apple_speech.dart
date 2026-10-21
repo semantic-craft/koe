@@ -3,6 +3,7 @@ import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import '../platform/device_kind.dart';
 
 import 'stt_types.dart';
 
@@ -86,6 +87,11 @@ class AppleSpeechService {
 
   bool get _supportedPlatform =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
+  /// Whether the Apple engine belongs in the engine list at all. Apple
+  /// devices list it, marked limited when [capabilities] says so; other
+  /// platforms never have it.
+  bool get offered => runsOnApple;
 
   Future<AppleSpeechCapabilities> capabilities({
     String? sourceLanguage,

@@ -31,6 +31,8 @@ void main() {
     loadPersistedState: false,
     libraryStore: RecordingLibraryStore(file: storeFile),
     libraryDirectory: imports,
+    // Phone-take recovery would still be listing imports at teardown.
+    phoneRecordingEnabled: false,
   );
 
   Future<File> sourceAudio(String name, {int seed = 1}) async {

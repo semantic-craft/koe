@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/state/meeting_minutes.dart';
 import 'package:koe/state/recording_analysis.dart';
@@ -55,8 +56,7 @@ class Controller extends RecorderController {
     RecordingAnalysis manager, {
     this.segments = const [],
     this.text = '讨论发布，请核对发布。',
-  })
-    : super(loadPersistedState: false, analysisController: manager);
+  }) : super(loadPersistedState: false, analysisController: manager);
   final List<TranscriptSegment> segments;
   String text;
   bool audioChanged = false;
@@ -425,4 +425,45 @@ void main() {
       expect(loaded.results['file:1/minutes'], isNotNull);
     },
   );
+
+  testWidgets('Android exports minutes through the share sheet', (
+    tester,
+  ) async {
+    final shared = <Map<Object?, Object?>>[];
+    const channel = MethodChannel('dev.fluttercommunity.plus/share');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      shared.add(call.arguments as Map<Object?, Object?>);
+      return 'dev.fluttercommunity.plus/share/unavailable';
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    final manager = RecordingAnalysis(inMemory: true, service: Service());
+    final controller = Controller(manager);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MinutesPanel(
+          controller: controller,
+          reference: const RecordingReference(fileId: 1),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('生成纪要'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('导出纪要'));
+    await tester.tap(find.text('导出纪要'));
+    await tester.pumpAndSettle();
+
+    expect(shared, hasLength(1));
+    expect(shared.single['title'], '会议纪要');
+    expect(find.text('导出失败，请重试'), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 }

@@ -2,6 +2,7 @@ import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/ui/widgets/analysis_panel.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Service implements AnalysisService {
@@ -172,4 +173,43 @@ void main() {
       expect(find.textContaining('已过期'), findsOneWidget);
     },
   );
+  testWidgets('Android exports the analysis through the share sheet', (
+    tester,
+  ) async {
+    final shared = <Map<Object?, Object?>>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('dev.fluttercommunity.plus/share'),
+      (call) async {
+        shared.add(call.arguments as Map<Object?, Object?>);
+        return 'dev.fluttercommunity.plus/share/unavailable';
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('dev.fluttercommunity.plus/share'),
+        null,
+      ),
+    );
+    final manager = RecordingAnalysis(inMemory: true, service: _Service());
+    final c = _Controller(manager);
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AnalysisPanel(
+          controller: c,
+          reference: const RecordingReference(fileId: 123),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('generate-analysis')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('导出'));
+    await tester.pumpAndSettle();
+
+    expect(shared, hasLength(1));
+    expect(shared.single['text'], contains('已完成的摘要'));
+    expect(find.text('导出失败，请重试'), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 }

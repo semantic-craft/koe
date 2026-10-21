@@ -20,6 +20,8 @@ void main() {
       // iPhone is the first platform where topics are enabled; keep the
       // navigation test on the production path that reaches existing topics.
       topicsEnabled: true,
+      // The new-recording sheet case checks a device without phone recording.
+      phoneRecordingEnabled: false,
       libraryDirectory: Directory('${directory.path}/imports'),
     );
     addTearDown(() async {
@@ -341,7 +343,7 @@ void main() {
     expect(find.text('取回设备录音'), findsOneWidget);
     expect(find.text('手机录音'), findsOneWidget);
     expect(find.text('纯文字记录'), findsOneWidget);
-    // Off iPhone both microphone rows stay visible but disabled.
+    // Without phone recording both microphone rows stay visible but disabled.
     expect(find.text('仅 iPhone'), findsNWidgets(2));
   });
 

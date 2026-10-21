@@ -151,6 +151,12 @@ mixin _RecorderSettings on ChangeNotifier {
 
   bool get conversationModeAvailable => false;
 
+  /// The engines this device can offer, in lineup order.
+  List<SttProvider> get speechProviders => [
+    for (final provider in SttProvider.available)
+      if (!provider.onDevice || _appleSpeech.offered) provider,
+  ];
+
   Future<void> refreshAppleCapabilities() async {
     final revision = ++_capabilityRevision;
     appleCapabilitiesLoading = true;

@@ -11,6 +11,7 @@ import '../../state/recorder_controller.dart';
 import '../../state/transcript_chapters.dart';
 import '../transcript_jump.dart';
 import 'minutes_mind_map.dart';
+import '../../platform/device_kind.dart';
 
 class MinutesPanel extends StatefulWidget {
   const MinutesPanel({
@@ -87,7 +88,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
   Future<void> export(MeetingMinutes minutes, AnalysisResult result) async {
     try {
       final content = minutes.export(result);
-      if (Platform.isIOS) {
+      if (runsOnPhone) {
         final box = context.findRenderObject() as RenderBox?;
         await SharePlus.instance.share(
           ShareParams(
