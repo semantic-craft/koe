@@ -79,6 +79,7 @@ import 'file_job_journal.dart';
 import 'topic_store.dart';
 import 'topic_note.dart';
 import 'topic_summary.dart';
+import '../platform/device_kind.dart';
 
 export 'context/context_store.dart';
 export 'context/todo_store.dart';
@@ -266,8 +267,7 @@ class RecorderController extends ChangeNotifier
     AnalysisService? contextAnalysisService,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
-       topicsEnabled =
-           topicsEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
+       topicsEnabled = topicsEnabled ?? runsOnPhone,
        _rawExportConverter = rawExportConverter ?? OpusWave.convertRawFile,
        _localDurationReader = localDurationReader ?? AudioDuration.read,
        _audioDurationProbe = audioDurationProbe ?? _probeAudioDuration,
@@ -282,8 +282,7 @@ class RecorderController extends ChangeNotifier
        _micStreamOverride = micStream,
        _speechStreamOverride = speechStream,
        answerSpeaker = answerSpeaker ?? SystemAnswerSpeaker(),
-       phoneRecordingEnabled =
-           phoneRecordingEnabled ?? defaultTargetPlatform == TargetPlatform.iOS,
+       phoneRecordingEnabled = phoneRecordingEnabled ?? runsOnPhone,
        // Keep the injection seam public while the field stays private.
        // ignore: prefer_initializing_formals
        _transcriptPersister = transcriptPersister,
@@ -546,7 +545,7 @@ class RecorderController extends ChangeNotifier
         archiveController ??
         MacArchiveController(
           source: _RecorderArchiveSource(this),
-          isDesk: !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS,
+          isDesk: runsOnMac,
           phoneStore: archivePhoneStore,
           deskStore: archiveDeskStore,
           inMemory: !loadPersistedState,

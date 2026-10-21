@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
@@ -10,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../file_types.dart';
+import '../../platform/device_kind.dart';
 
 /// Hands a finished export file to the system share/save sheet. Returns
 /// false when the user closed the sheet without sending it.
@@ -66,9 +66,7 @@ Future<void> showMaterialExportSheet(
       child: MaterialExportPanel(
         reference: reference,
         share: share ?? _systemShare,
-        save: defaultTargetPlatform == TargetPlatform.macOS
-            ? save ?? _saveToFile
-            : null,
+        save: runsOnMac ? save ?? _saveToFile : null,
       ),
     ),
   );

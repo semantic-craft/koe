@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +8,7 @@ import '../../state/recorder_controller.dart';
 import '../../state/recording_analysis.dart';
 import '../../theme/app_theme.dart';
 import 'koe_icon_button.dart';
+import '../../platform/device_kind.dart';
 
 class TopicNotePanel extends StatefulWidget {
   const TopicNotePanel({
@@ -218,7 +218,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
     Topic? topic,
   ) async {
     final text = note.export(result, topic: topic);
-    if (Platform.isIOS) {
+    if (runsOnPhone) {
       final box = context.findRenderObject() as RenderBox?;
       await SharePlus.instance.share(
         ShareParams(

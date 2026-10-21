@@ -10,6 +10,7 @@ import '../../state/recording_analysis.dart';
 import '../../theme/app_theme.dart';
 import '../transcript_jump.dart';
 import 'minutes_panel.dart';
+import '../../platform/device_kind.dart';
 
 class AnalysisPanel extends StatefulWidget {
   const AnalysisPanel({
@@ -82,8 +83,9 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
       }
     }
   }
@@ -93,7 +95,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
       final contents = result.exportText;
       final isDefaultSummary =
           !custom && selectedTemplate.id == summaryTemplateId;
-      if (Platform.isIOS) {
+      if (runsOnPhone) {
         final box = context.findRenderObject() as RenderBox?;
         await SharePlus.instance.share(
           ShareParams(
@@ -112,8 +114,9 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('导出失败，请重试')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('导出失败，请重试')));
       }
     }
   }

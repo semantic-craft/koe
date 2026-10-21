@@ -1,10 +1,10 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import 'widgets.dart';
+import '../../platform/device_kind.dart';
 
 /// Settings surface for direct Mac original-audio archiving.
 ///
@@ -15,7 +15,7 @@ class MacArchiveSettings extends StatelessWidget {
 
   final RecorderController controller;
 
-  bool get _isMac => !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+  bool get _isMac => runsOnMac;
 
   @override
   Widget build(BuildContext context) {

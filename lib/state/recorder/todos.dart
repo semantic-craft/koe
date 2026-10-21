@@ -36,6 +36,11 @@ mixin _RecorderTodos on ChangeNotifier {
   /// Last system-app problem worth telling the user about.
   String? get systemTasksNotice => _todoSync.notice;
 
+  /// Whether this device has [target]'s system app; Android has no
+  /// Reminders.
+  bool systemTaskSupported(SystemTaskTarget target) =>
+      _todoSync.supports(target);
+
   String get _contextModel => analysis.model ?? 'qwen3.8-flash';
 
   /// Whether a previous extraction for [ref] never reported its result.

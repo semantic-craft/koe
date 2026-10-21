@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -15,6 +14,7 @@ import '../widgets/about_koe.dart';
 import '../widgets/mac_archive_settings.dart';
 import 'device_screen.dart';
 import '../widgets/koe_icon_button.dart';
+import '../../platform/device_kind.dart';
 
 /// Processing choices apply to the next recording.
 class SettingsScreen extends StatelessWidget {
@@ -158,9 +158,7 @@ class SettingsScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (!kIsWeb &&
-                    (defaultTargetPlatform == TargetPlatform.iOS ||
-                        defaultTargetPlatform == TargetPlatform.macOS)) ...[
+                if (runsOnApple) ...[
                   const SizedBox(height: 18),
                   const SectionLabel('Mac 原件归档'),
                   MacArchiveSettings(controller: c),
@@ -235,10 +233,10 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
-/// Data-driven ASR engine lineup. Iterates over [SttProvider.available] and
-/// derives each card from per-engine metadata plus the controller's
-/// configuration state, so adding an engine is a data change (enum value plus
-/// a [_metadata] entry) — no engine-specific widget code.
+/// Data-driven ASR engine lineup. Iterates over the engines the controller
+/// offers on this device and derives each card from per-engine metadata plus
+/// the controller's configuration state, so adding an engine is a data change
+/// (enum value plus a [_metadata] entry) — no engine-specific widget code.
 class _ProviderSelector extends StatelessWidget {
   const _ProviderSelector({required this.controller});
   final RecorderController controller;
@@ -297,6 +295,7 @@ class _ProviderSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = KoeTokens.of(context);
+    final providers = controller.speechProviders;
     return Column(
       key: ValueKey('speech-provider-${controller.speechProvider.name}'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -314,7 +313,7 @@ class _ProviderSelector extends StatelessWidget {
               ),
             ),
             Text(
-              '共 ${SttProvider.available.length} 个引擎',
+              '共 ${providers.length} 个引擎',
               style: TextStyle(
                 fontSize: 12,
                 color: tokens.textMuted,
@@ -324,16 +323,16 @@ class _ProviderSelector extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        for (var i = 0; i < SttProvider.available.length; i++) ...[
+        for (var i = 0; i < providers.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),
           _EngineOptionCard(
-            provider: SttProvider.available[i],
-            selected: controller.speechProvider == SttProvider.available[i],
-            meta: _metaFor(SttProvider.available[i], tokens),
+            provider: providers[i],
+            selected: controller.speechProvider == providers[i],
+            meta: _metaFor(providers[i], tokens),
             enabled:
-                !SttProvider.available[i].needsCredentials ||
-                controller.engineConfigured(SttProvider.available[i]),
-            onTap: () => _tap(context, SttProvider.available[i]),
+                !providers[i].needsCredentials ||
+                controller.engineConfigured(providers[i]),
+            onTap: () => _tap(context, providers[i]),
           ),
         ],
       ],

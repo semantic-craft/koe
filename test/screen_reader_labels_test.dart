@@ -133,7 +133,7 @@ void main() {
     expect(find.text('取消'), findsOneWidget);
     expect(find.text('Cancel'), findsNothing);
     semantics.dispose();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('navigation buttons can be activated by VoiceOver and Voice '
       'Control, on the phone and on the Mac sidebar', (tester) async {

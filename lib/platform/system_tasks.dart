@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../state/context/todo.dart';
@@ -17,6 +18,10 @@ class SystemTasksUnavailable implements Exception {
 /// Reads and writes the one Reminders/Calendar item Koe created for a todo.
 /// Nothing here runs without an explicit user action.
 abstract class SystemTasks {
+  /// Whether this device has the system app at all. The UI says so instead
+  /// of offering an export that can only fail.
+  bool supports(SystemTaskTarget target);
+
   /// Asks for access when not yet decided; false when denied.
   Future<bool> requestAccess(SystemTaskTarget target);
 
@@ -36,10 +41,15 @@ abstract class SystemTasks {
   Future<SystemSnapshot?> fetch(SystemTaskTarget target, String id);
 }
 
-/// EventKit bridge on iOS (`darwin/SystemTasksBridge.swift`). Other
-/// platforms have no handler and report [SystemTasksUnavailable].
+/// EventKit bridge on iOS (`ios/Runner/SystemTasksBridge.swift`). Other
+/// platforms have no handler: [supports] is false and calls report
+/// [SystemTasksUnavailable].
 class ChannelSystemTasks implements SystemTasks {
   const ChannelSystemTasks();
+
+  @override
+  bool supports(SystemTaskTarget target) =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   static const _channel = MethodChannel('com.semanticcraft.koe/system_tasks');
 

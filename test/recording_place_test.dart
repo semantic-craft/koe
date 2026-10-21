@@ -36,6 +36,8 @@ void main() {
       inMemory: inMemoryLibrary,
     ),
     libraryDirectory: imports,
+    // Phone-take recovery would still be listing imports at teardown.
+    phoneRecordingEnabled: false,
     placeCapture: capture,
   );
 
