@@ -42,28 +42,37 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
       }
       throw MissingPluginException();
     });
-    // Android keeps the same single item in flutter_secure_storage.
-    final secure = <String, String>{};
-    messenger.setMockMethodCallHandler(
-      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
-      (call) async {
-        final args = (call.arguments as Map).cast<String, Object?>();
-        final key = args['key'] as String?;
-        switch (call.method) {
-          case 'read':
-            return secure[key];
-          case 'write':
-            secure[key!] = args['value'] as String;
-            return null;
-          case 'delete':
-            secure.remove(key);
-            return null;
-        }
-        throw MissingPluginException();
-      },
-    );
+    for (final entry in _pluginMocks.entries) {
+      messenger.setMockMethodCallHandler(entry.key, entry.value());
+    }
     await AppSettingsStore.load();
     directories.add(directory);
   });
   await testMain();
 }
+
+/// In-memory stand-ins for plugin channels the app reaches on Android, the
+/// default flutter_test platform. Each entry builds a fresh handler per test;
+/// add a plugin by adding its channel here.
+final _pluginMocks =
+    <MethodChannel, Future<Object?>? Function(MethodCall) Function()>{
+      // Android keeps the single credential item in flutter_secure_storage.
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'): () {
+        final secure = <String, String>{};
+        return (call) async {
+          final args = (call.arguments as Map).cast<String, Object?>();
+          final key = args['key'] as String?;
+          switch (call.method) {
+            case 'read':
+              return secure[key];
+            case 'write':
+              secure[key!] = args['value'] as String;
+              return null;
+            case 'delete':
+              secure.remove(key);
+              return null;
+          }
+          throw MissingPluginException();
+        };
+      },
+    };
