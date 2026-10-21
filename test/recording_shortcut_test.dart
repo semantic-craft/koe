@@ -73,6 +73,8 @@ void main() {
       final restarted = RecorderController(
         ble: ble,
         loadPersistedState: false,
+        phoneRecordingEnabled: false,
+        topicsEnabled: false,
         persistedDeviceLoader: DeviceStore.load,
       );
       _disposeAfterSettling(restarted);
@@ -111,6 +113,8 @@ void main() {
       final next = RecorderController(
         ble: nextBle,
         loadPersistedState: false,
+        phoneRecordingEnabled: false,
+        topicsEnabled: false,
         persistedDeviceLoader: DeviceStore.load,
       );
       _disposeAfterSettling(next);
@@ -310,6 +314,8 @@ void main() {
       final controller = RecorderController(
         ble: ble,
         loadPersistedState: false,
+        phoneRecordingEnabled: false,
+        topicsEnabled: false,
         persistedDeviceLoader: () => loaded.future,
         recordingShortcutScanTimeout: const Duration(seconds: 1),
       );
@@ -388,6 +394,8 @@ void main() {
             RecorderController(
                 ble: ble,
                 loadPersistedState: false,
+                phoneRecordingEnabled: false,
+                topicsEnabled: false,
                 recordingShortcutScanTimeout: const Duration(milliseconds: 20),
               )
               ..bound = true
@@ -409,9 +417,13 @@ void main() {
   });
 }
 
+// Phone takes and topics stay off: their library I/O would still be writing
+// into the mocked documents folder when tearDown deletes it.
 RecorderController _controller(_FakeBleService ble) => RecorderController(
   ble: ble,
   loadPersistedState: false,
+  phoneRecordingEnabled: false,
+  topicsEnabled: false,
   recordingShortcutScanTimeout: const Duration(seconds: 1),
 );
 
