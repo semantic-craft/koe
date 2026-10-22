@@ -43,6 +43,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   /// Why the last start or save did not complete; null when it did.
   String? phoneRecordingError;
 
+  /// Whether the last start failed because microphone permission was denied.
+  bool phoneRecordingPermissionDenied = false;
+
   bool get phoneRecordingActive => _phoneTakePath != null;
   bool get phoneRecordingPaused =>
       phoneRecordingActive && _phoneTakeRunningSince == null;
@@ -62,10 +65,12 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     try {
       await _libraryLoaded;
       if (!await _phoneRecorder.requestPermission()) {
+        phoneRecordingPermissionDenied = true;
         phoneRecordingError = '没有麦克风权限。可在系统设置里允许 Koe 使用麦克风，或先导入音频';
         notifyListeners();
         return;
       }
+      phoneRecordingPermissionDenied = false;
       await stopPlayback();
       final dir = await _importDirectory();
       await dir.create(recursive: true);
@@ -227,9 +232,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   Future<String?> _adoptPhoneTake(
     String path,
     DateTime recordedAt, {
-    String label = '手机录音',
+    String? label,
     bool voiceNote = false,
   }) async {
+    final effectiveLabel = label ?? (runsOnMac ? '麦克风录音' : '手机录音');
     final file = File(path);
     var length = 0;
     var repaired = false;
@@ -245,6 +251,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       try {
         if (await file.exists()) await file.delete();
       } catch (_) {}
+      phoneRecordingPermissionDenied = false;
       phoneRecordingError = '没有录到声音，未保存';
       notifyListeners();
       return null;
@@ -253,7 +260,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       final hash = await audioVersion(path);
       final asset = RecordingAsset(
         path: path,
-        displayName: '$label ${_takeLabel(recordedAt)}',
+        displayName: '$effectiveLabel ${_takeLabel(recordedAt)}',
         source: RecordingSource.phone,
         recordedAt: recordedAt,
         importedAt: DateTime.now(),
@@ -262,10 +269,14 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       );
       await library.upsert(asset);
     } catch (_) {
-      phoneRecordingError = '录音已留在手机上，但没能加入资料库；重新打开 Koe 时会再试';
+      phoneRecordingPermissionDenied = false;
+      phoneRecordingError = runsOnMac
+          ? '录音已留在本机，但没能加入资料库；重新打开 Koe 时会再试'
+          : '录音已留在手机上，但没能加入资料库；重新打开 Koe 时会再试';
       notifyListeners();
       return null;
     }
+    phoneRecordingPermissionDenied = false;
     phoneRecordingError = null;
     _registerExportedPaths([...exportedPaths, path]);
     _invalidateLocalDuration(path);
@@ -300,7 +311,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       if (await _adoptPhoneTake(entity.path, started) != null) recovered++;
     }
     if (recovered > 0 && !_disposed) {
-      statusMessage = '找回了 $recovered 段中断的手机录音';
+      statusMessage = runsOnMac
+          ? '找回了 $recovered 段中断的麦克风录音'
+          : '找回了 $recovered 段中断的手机录音';
       notifyListeners();
     }
   }

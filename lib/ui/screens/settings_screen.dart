@@ -100,7 +100,7 @@ class SettingsScreen extends StatelessWidget {
                             key: const ValueKey('settings-all-day-listening'),
                             title: '全天监听',
                             subtitle:
-                                '打开后按「手机录音」或录音豆录音键，一直识别、只留文字，'
+                                '打开后按「${runsOnMac ? '麦克风录音' : '手机录音'}」或录音豆录音键，一直识别、只留文字，'
                                 '安静约 10 分钟另起一条；安静时不上传声音',
                             value: c.allDayListening,
                             onChanged: c.setAllDayListening,

@@ -38,6 +38,8 @@
 	<string>Koe 使用蓝牙查找并连接已适配的安克录音豆（soundcore Work / D3200），管理录音。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Koe 需要直连安克录音豆的 Wi-Fi 热点来导出录音，并在你配对后直连同一局域网内的 Mac 归档原件。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Koe 只在你点「麦克风录音」或使用语音记录后使用麦克风，把录音作为原件保存在 Mac 上，之后可转写和回听。</string>
 	<key>CFBundleDisplayName</key>
 	<string>Koe</string>
 	<key>CFBundleURLTypes</key>

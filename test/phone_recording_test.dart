@@ -1,13 +1,21 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:koe/ai/apple_speech.dart';
+import 'package:koe/ai/doubao_stt.dart';
+import 'package:koe/ai/qwen_stt.dart';
+import 'package:koe/ai/stt_types.dart';
 import 'package:koe/main.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
+import 'package:koe/state/context/commitments.dart';
 import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/state/recording_analysis.dart';
 
 import 'support/fake_foreground_service.dart';
 
@@ -297,6 +305,450 @@ void main() {
     expect(header.getUint32(40, Endian.little), 32000);
     expect(controller.statusMessage, contains('找回了 1 段'));
   });
+
+  group('macOS 麦克风录音 (#378)', () {
+    RecorderController buildOnMac({
+      bool permission = true,
+      bool? phoneRecordingEnabled,
+    }) {
+      mic = _FakePhoneRecorder(permission: permission);
+      return RecorderController(
+        loadPersistedState: false,
+        topicsEnabled: false,
+        libraryDirectory: imports,
+        phoneRecorder: mic,
+        phoneRecordingEnabled: phoneRecordingEnabled,
+        placeCapture: _FixedPlace(),
+      );
+    }
+
+    testWidgets(
+      '(1) macOS 目标平台下新建录音入口出现「麦克风录音」，文案不含「手机」',
+      (tester) async {
+        controller = (await tester.runAsync(() async => buildOnMac()))!;
+        addTearDown(controller.dispose);
+        await pump(tester);
+
+        await tester.tap(find.byKey(const ValueKey('new-recording')));
+        await tester.pumpAndSettle();
+
+        expect(find.text('麦克风录音'), findsOneWidget);
+        expect(find.text('用麦克风录下来，保存为原件'), findsOneWidget);
+        expect(find.textContaining('手机'), findsNothing);
+        expect(controller.phoneRecordingEnabled, isTrue);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+
+    testWidgets(
+      '(2) 用假录音器在 macOS 目标平台录一段，暂停再继续，结束后作为原件出现在录音库',
+      (tester) async {
+        controller = (await tester.runAsync(() async => buildOnMac()))!;
+        addTearDown(controller.dispose);
+        await pump(tester);
+        final before = DateTime.now();
+
+        await openPhoneRecording(tester);
+        await settle(tester, () => controller.phoneRecordingActive);
+        expect(find.text('麦克风录音中'), findsOneWidget);
+        expect(find.textContaining('手机'), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('pause-phone-recording')));
+        await tester.pump();
+        expect(controller.phoneRecordingPaused, isTrue);
+        expect(mic.pauses, 1);
+        expect(find.text('已暂停'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('resume-phone-recording')));
+        await tester.pump();
+        expect(controller.phoneRecordingPaused, isFalse);
+        expect(mic.resumes, 1);
+        expect(find.text('麦克风录音中'), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('stop-phone-recording')));
+        await settle(
+          tester,
+          () => controller.library.assets.any(
+            (a) => a.source == RecordingSource.phone && a.place != null,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final asset = controller.library.assets.single;
+        expect(asset.source, RecordingSource.phone);
+        expect(asset.displayName, startsWith('麦克风录音 '));
+        expect(asset.displayName, isNot(contains('手机')));
+        expect(asset.recordedAt!.isBefore(asset.importedAt), isTrue);
+        expect(asset.recordedAt!.isBefore(before), isFalse);
+        expect(controller.exportedPaths, contains(asset.path));
+        final file = File(asset.path);
+        expect(file.existsSync(), isTrue);
+        final bytes = file.readAsBytesSync();
+        expect(bytes.length, greaterThan(44));
+        expect(String.fromCharCodes(bytes.sublist(0, 4)), 'RIFF');
+        expect(String.fromCharCodes(bytes.sublist(8, 12)), 'WAVE');
+        expect(find.text('麦克风录音已保存为原件'), findsOneWidget);
+        expect(controller.phoneRecordingActive, isFalse);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+
+    test(
+      '(3) macOS 目标平台下进程被杀后下次启动找回未结束的录音',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+        final started = DateTime(2026, 10, 22, 14, 30);
+        await imports.create(recursive: true);
+        final path =
+            '${imports.path}/phone_${started.microsecondsSinceEpoch}.wav';
+        await File(path).writeAsBytes(_wav(dataBytes: 32000, headerSizes: 0));
+
+        controller = buildOnMac();
+        addTearDown(controller.dispose);
+        await controller.waitForPhoneTakeRecovery();
+
+        final asset = controller.library.assetForPath(path);
+        expect(asset, isNotNull);
+        expect(asset!.source, RecordingSource.phone);
+        expect(asset.displayName, startsWith('麦克风录音 '));
+        expect(asset.recordedAt, started);
+        final header = ByteData.sublistView(await File(path).readAsBytes());
+        expect(header.getUint32(4, Endian.little), 32000 + 36);
+        expect(header.getUint32(40, Endian.little), 32000);
+        expect(controller.statusMessage, '找回了 1 段中断的麦克风录音');
+      },
+    );
+
+    testWidgets(
+      '(4) macOS 目标平台下麦克风权限被拒时显示中文原因并提供去系统设置的入口',
+      (tester) async {
+        final launchedUrls = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const macPigeonChannel =
+            'dev.flutter.pigeon.url_launcher_macos.UrlLauncherApi.launchUrl';
+        messenger.setMockMessageHandler(macPigeonChannel, (message) async {
+          final decoded =
+              const StandardMessageCodec().decodeMessage(message) as List?;
+          if (decoded != null && decoded.isNotEmpty) {
+            launchedUrls.add(decoded.first as String);
+          }
+          final reply = WriteBuffer()
+            ..putUint8(12)
+            ..putUint8(1)
+            ..putUint8(130)
+            ..putUint8(12)
+            ..putUint8(2)
+            ..putUint8(1)
+            ..putUint8(0);
+          return reply.done();
+        });
+        const methodChannel = MethodChannel('plugins.flutter.io/url_launcher');
+        messenger.setMockMethodCallHandler(methodChannel, (call) async {
+          if (call.method == 'launch') {
+            final args = call.arguments as Map;
+            launchedUrls.add(args['url'] as String);
+            return true;
+          }
+          return true;
+        });
+        addTearDown(() {
+          messenger.setMockMessageHandler(macPigeonChannel, null);
+          messenger.setMockMethodCallHandler(methodChannel, null);
+        });
+
+        controller = (await tester.runAsync(
+          () async =>
+              buildOnMac(permission: false, phoneRecordingEnabled: true),
+        ))!;
+        addTearDown(controller.dispose);
+        await pump(tester);
+
+        await openPhoneRecording(tester);
+        await settle(tester, () => controller.phoneRecordingError != null);
+        await tester.pump();
+
+        expect(find.textContaining('没有麦克风权限'), findsOneWidget);
+        expect(mic.path, isNull);
+        final settingsButton = find.byKey(
+          const ValueKey('open-microphone-settings'),
+        );
+        expect(settingsButton, findsOneWidget);
+        expect(find.text('去系统设置'), findsOneWidget);
+
+        await tester.tap(settingsButton);
+        await settle(tester, () => launchedUrls.isNotEmpty);
+        expect(
+          launchedUrls,
+          ['x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'],
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+
+    test(
+      '(5) 「录音只留本机」开启时，Mac 麦克风会议录音的转写不发任何音频请求',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+        final wire = _WireRecordingClient();
+        final apple = _OnDeviceAppleSpeech(supported: true);
+        final macMic = _FakePhoneRecorder(permission: true);
+
+        controller = RecorderController(
+          loadPersistedState: false,
+          topicsEnabled: false,
+          appleSpeech: apple,
+          qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+            ..apiKeyOverride = 'qwen-test-key',
+          doubaoSpeech: DoubaoSttService(client: wire)
+            ..apiKeyOverride = 'doubao-test-key',
+          analysisController: RecordingAnalysis(
+            inMemory: true,
+            service: QwenAnalysisService(client: wire),
+          ),
+          contextAnalysisService: QwenAnalysisService(
+            client: wire,
+            systemPrompt: commitmentSystemPrompt,
+            instructionLabel: '要求',
+            sourceLabel: '资料',
+          ),
+          phoneRecorder: macMic,
+          placeCapture: _FixedPlace(),
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: imports,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.refreshAppleCapabilities();
+        await controller.setAutoOrganize(true);
+
+        await controller.startPhoneRecording();
+        final recordedPath = await controller.stopPhoneRecording();
+        expect(recordedPath, isNotNull);
+        final recordedBytes = await File(recordedPath!).readAsBytes();
+        expect(_containsSublist(recordedBytes, ascii.encode('RIFF')), isTrue);
+        expect(_containsSublist(recordedBytes, _pcmPattern), isTrue);
+
+        await until(
+          () =>
+              controller.organizeStatusFor(recordedPath).stage ==
+              OrganizeStage.done,
+        );
+
+        expect(wire.requests, isNotEmpty, reason: '整理请求正常发出');
+        final base64SampleFragment = base64Encode(_pcmPattern).substring(0, 24);
+        final audioCarryingRequests = [
+          for (final req in wire.requests)
+            if (_containsSublist(req.bodyBytes, ascii.encode('RIFF')) ||
+                _containsSublist(req.bodyBytes, ascii.encode('WAVE')) ||
+                _containsSublist(req.bodyBytes, ascii.encode('ftyp')) ||
+                _containsSublist(req.bodyBytes, ascii.encode('M4A ')) ||
+                _containsSublist(req.bodyBytes, ascii.encode('OggS')) ||
+                _containsSublist(req.bodyBytes, ascii.encode('OpusHead')) ||
+                _containsSublist(req.bodyBytes, _pcmPattern) ||
+                req.bodyText.contains(base64SampleFragment))
+              '${req.method} ${req.url}',
+        ];
+        expect(audioCarryingRequests, isEmpty);
+
+        final uploadEndpoints = [
+          for (final req in wire.requests)
+            if (req.url.host.contains('oss') ||
+                req.url.path.contains('/api/v1/uploads') ||
+                req.url.path.contains('/services/audio/asr/transcription') ||
+                req.url.host.contains('openspeech.bytedance.com') ||
+                req.url.path.contains('/auc/bigmodel/recognize'))
+              '${req.method} ${req.url}',
+        ];
+        expect(uploadEndpoints, isEmpty);
+
+        // macOS < 26 无本机引擎时提示原因，不回落云端
+        final lowVerWire = _WireRecordingClient();
+        final lowVerController = RecorderController(
+          loadPersistedState: false,
+          topicsEnabled: false,
+          appleSpeech: _OnDeviceAppleSpeech(supported: false),
+          qwenSpeech: QwenSttService(
+            client: lowVerWire,
+            pollInterval: Duration.zero,
+          )..apiKeyOverride = 'qwen-test-key',
+          phoneRecorder: _FakePhoneRecorder(permission: true),
+          placeCapture: _FixedPlace(),
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${directory.path}/imports-low'),
+        );
+        addTearDown(lowVerController.dispose);
+        await lowVerController.refreshAppleCapabilities();
+        await lowVerController.setAutoOrganize(true);
+        await lowVerController.startPhoneRecording();
+        final lowVerPath = await lowVerController.stopPhoneRecording();
+        expect(lowVerPath, isNotNull);
+        await until(
+          () =>
+              lowVerController.organizeStatusFor(lowVerPath!).stage ==
+              OrganizeStage.failed,
+        );
+        expect(lowVerWire.requests, isEmpty);
+        expect(
+          lowVerController.organizeStatusFor(lowVerPath!).message,
+          '已开启「录音只留本机」，此设备暂无可用的本机语音引擎，不会回落到云端',
+        );
+      },
+    );
+  });
+}
+
+final Uint8List _pcmPattern = Uint8List.fromList([
+  0x5A,
+  0xA5,
+  0x3C,
+  0xC3,
+  0x7E,
+  0xE7,
+  0x18,
+  0x81,
+  0x42,
+  0x24,
+  0x99,
+  0x66,
+  0xBD,
+  0xDB,
+  0xAA,
+  0x55,
+  0x13,
+  0x37,
+  0xDE,
+  0xAD,
+  0xBE,
+  0xEF,
+  0xCA,
+  0xFE,
+]);
+
+bool _containsSublist(List<int> haystack, List<int> needle) {
+  if (needle.isEmpty || haystack.length < needle.length) return false;
+  final limit = haystack.length - needle.length;
+  for (var i = 0; i <= limit; i++) {
+    var matched = true;
+    for (var j = 0; j < needle.length; j++) {
+      if (haystack[i + j] != needle[j]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return true;
+  }
+  return false;
+}
+
+class _RecordedWireRequest {
+  _RecordedWireRequest({
+    required this.method,
+    required this.url,
+    required this.bodyBytes,
+  });
+
+  final String method;
+  final Uri url;
+  final Uint8List bodyBytes;
+
+  String get bodyText => utf8.decode(bodyBytes, allowMalformed: true);
+}
+
+class _WireRecordingClient extends http.BaseClient {
+  final List<_RecordedWireRequest> requests = [];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final bodyBytes = await request.finalize().toBytes();
+    requests.add(
+      _RecordedWireRequest(
+        method: request.method,
+        url: request.url,
+        bodyBytes: bodyBytes,
+      ),
+    );
+    if (request.url.path.endsWith('/chat/completions')) {
+      final decoded =
+          jsonDecode(utf8.decode(bodyBytes)) as Map<String, dynamic>;
+      final messages = (decoded['messages'] as List).cast<Map>();
+      final userContent = '${messages.last['content']}';
+      final content =
+          userContent.contains('提取出用户自己承诺要做的事') ||
+              userContent.contains('"items"')
+          ? '{"items":[{"type":"mine","title":"确认录音不上传","due":null,"segment":1}],"updates":[]}'
+          : '会议决定默认打开录音只留本机，确认录音不上传 [S1]。';
+      final reply = jsonEncode({
+        'choices': [
+          {
+            'finish_reason': 'stop',
+            'message': {'content': content},
+          },
+        ],
+      });
+      return http.StreamedResponse(
+        Stream.value(utf8.encode(reply)),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.StreamedResponse(
+      Stream.value(utf8.encode('{"error":"unexpected endpoint"}')),
+      500,
+    );
+  }
+}
+
+class _OnDeviceAppleSpeech extends AppleSpeechService {
+  _OnDeviceAppleSpeech({required this.supported});
+
+  final bool supported;
+
+  @override
+  bool get offered => true;
+
+  @override
+  Future<AppleSpeechCapabilities> capabilities({
+    String? sourceLanguage,
+    String? targetLanguage,
+  }) async {
+    if (!supported) return const AppleSpeechCapabilities.unsupported();
+    return const AppleSpeechCapabilities(
+      supported: true,
+      speechStatus: SpeechResourceStatus.ready,
+      translationStatus: SpeechResourceStatus.ready,
+      suggestedSourceLanguage: 'zh-CN',
+      speechLanguages: [
+        SpeechLanguage(code: 'zh-CN', name: '简体中文'),
+        SpeechLanguage(code: 'en-US', name: 'English'),
+      ],
+    );
+  }
+
+  @override
+  Future<SttResult> transcribePath(
+    String path, {
+    required String sourceLanguage,
+    SttFileProgressCallback? onProgress,
+  }) async {
+    if (!supported) throw StateError('unsupported');
+    return SttResult(
+      text: '今天讨论了 Mac 麦克风会议录音方案。',
+      sourcePath: path,
+      language: sourceLanguage,
+      segments: const [
+        SttSegment(
+          text: '今天讨论了 Mac 麦克风会议录音方案。',
+          startMs: 0,
+          endMs: 3000,
+        ),
+      ],
+    );
+  }
 }
 
 Uint8List _wav({required int dataBytes, int? headerSizes}) {
@@ -321,7 +773,7 @@ Uint8List _wav({required int dataBytes, int? headerSizes}) {
   tag(36, 'data');
   bytes.setUint32(40, headerSizes ?? dataBytes, Endian.little);
   for (var i = 0; i < dataBytes; i++) {
-    bytes.setUint8(44 + i, i % 251);
+    bytes.setUint8(44 + i, _pcmPattern[i % _pcmPattern.length]);
   }
   return bytes.buffer.asUint8List();
 }
@@ -344,6 +796,7 @@ class _FakePhoneRecorder implements PhoneRecorder {
   String? path;
   int starts = 0;
   int pauses = 0;
+  int resumes = 0;
 
   @override
   Future<bool> requestPermission() async => permission;
@@ -362,7 +815,7 @@ class _FakePhoneRecorder implements PhoneRecorder {
   Future<void> pause() async => pauses++;
 
   @override
-  Future<void> resume() async {}
+  Future<void> resume() async => resumes++;
 
   @override
   Future<void> stop() async {
