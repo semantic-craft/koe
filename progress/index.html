@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-22T03:36:52.529789Z</p>
-<p>Main: <code>main: da19d282f013e6d954ad2bfc71b75437a352013e</code></p>
+<p>Observed: 2026-10-22T05:11:05.762682Z</p>
+<p>Main: <code>main: e6c0595585683d6a86345144d657d9236dd8cb13</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -13,8 +13,8 @@
 <article id="android-background"><h3>Android 后台同步与持续录音</h3><span class="badge">done</span><p>覆盖录音豆后台同步、常驻通知，以及手机录音、纯文字记录、全天监听的后台服务；Koe 不在屏幕上时开始的麦克风工作被 Android 拒绝时，停下并说明原因（#362）。真实效果需依据锁屏运行记录判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/351">pull 351: PR 提供后台同步和录音服务的实现依据。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/354">pull 354: PR 提供后台同步和录音服务的实现依据。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/pull/362">pull 362: Koe 不在屏幕上时 Android 不让麦克风前台服务运行：手机录音、纯文字记录和全天监听停下并说明原因，全天监听在 Koe 回到屏幕后接着听。PR 提供实现与单元测试；真机场景在 #366，2026-10-22 全天监听那项在 Pixel 上通过，手机录音那项因场景检查过早失败。</a></li>
-</ul><p>Next: 锁屏运行与通知上的停止已有场景记录（见 Android 综合验收），录音豆连接仍待按 #345 由人走一遍。被拒时停下：全天监听那项在 Pixel 上通过（main da19d28），手机录音那项要先改场景再跑。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/362">pull 362: Koe 不在屏幕上时 Android 不让麦克风前台服务运行：手机录音、纯文字记录和全天监听停下并说明原因，全天监听在 Koe 回到屏幕后接着听。PR 提供实现与单元测试；真机场景在 #366，2026-10-22 全天监听那项在 Pixel 上通过，手机录音那项起初因场景检查过早失败，#380 让场景等原因写出后在 Pixel 上通过。</a></li>
+</ul><p>Next: 锁屏运行与通知上的停止已有场景记录（见 Android 综合验收），录音豆连接仍待按 #345 由人走一遍。被拒时停下：两项都在 Pixel 上通过，全天监听在 main da19d28 和 #380 的分支 33e2d62 上，手机录音在 33e2d62 上。</p></article>
 <article id="android-storage"><h3>Android 凭据存储与备份策略</h3><span class="badge">done</span><p>覆盖 Android Keystore 安全存储和关闭备份的策略；验收需核对安装升级、换机及实际凭据读取。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/350">pull 350: PR 提供安全存储与备份策略的实现依据。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/353">pull 353: PR 提供安全存储与备份策略的实现依据。</a></li>
@@ -64,14 +64,16 @@
 </ul><p>Next: 逐项对照实现和验收证据，避免用总工单状态代替子功能结论。</p></article>
 </section>
 <section id="acceptance"><h2>设备与用户验收范围</h2>
-<article id="android-acceptance"><h3>Android 综合验收</h3><span class="badge">in_progress</span><p>覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 三次无人值守跑 scripts/android-check（Pixel 插着 USB、解锁后没人动）。main cd25be1 上 8 个文件全部通过，共 13 个测试：回答朗读、日历、凭据、启动、快捷方式开始录音、后台同步、导入音频转码 6 项、手机录音锁屏（锁屏录 120.5 秒，最后一分钟电平 2137、零值 0%）。11:26–11:31 在 main da19d28 上跑了全天监听锁屏和 #366 的两个新场景：全天监听锁屏通过（锁屏约 60 秒里发出 52.8 秒音频，识别 26 句），快捷录音没开始时的屏幕提示通过；麦克风被拒场景里全天监听那项通过，手机录音那项失败：Android 拒绝了、录音也停了，但场景在 Koe 写入原因之前就读了 phoneRecordingError（据代码与日志判断，改场景后还没复跑）。自动场景不连录音豆，D3200 的连接、取回和实体键还没有设备记录。</p><ul>
+<article id="android-acceptance"><h3>Android 综合验收</h3><span class="badge">in_progress</span><p>覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 四次无人值守跑 scripts/android-check（Pixel 插着 USB、解锁后没人动）。main cd25be1 上 8 个文件全部通过，共 13 个测试：回答朗读、日历、凭据、启动、快捷方式开始录音、后台同步、导入音频转码 6 项、手机录音锁屏（锁屏录 120.5 秒，最后一分钟电平 2137、零值 0%）。11:26–11:31 在 main da19d28 上跑了全天监听锁屏和 #366 的两个新场景：全天监听锁屏通过（锁屏约 60 秒里发出 52.8 秒音频，识别 26 句），快捷录音没开始时的屏幕提示通过；麦克风被拒场景里全天监听那项通过，手机录音那项失败：Android 拒绝了、录音也停了，但场景在 Koe 写入原因之前就读了 phoneRecordingError。#380 让场景先等原因写出，13:04–13:06 在分支 33e2d62 上重跑 microphone_refused，2 项都通过，Android 两次拒绝都记在 logcat 里（13:06:07、13:06:30）。自动场景不连录音豆，D3200 的连接、取回和实体键还没有设备记录。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/331">issue 331: Android 功能范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/345">issue 345: 统一真机验收要求，以及各次运行结果的评论。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/commit/8d30c8992f6d36e18350035fd2e8894dbe30ee67">commit 8d30c8992f6d36e18350035fd2e8894dbe30ee67: 全天监听锁屏通过的那次运行（PR #360 分支）：8 个场景文件通过，手机录音锁屏场景因 PIN 跳过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/commit/cd25be12adbadad9a6fdd807704a83e4ffe193ec">commit cd25be12adbadad9a6fdd807704a83e4ffe193ec: main 上的运行：除全天监听外 8 个场景文件全部通过，含手机录音锁屏。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/pull/366">pull 366: 新增麦克风被拒（microphone_refused_test）与快捷录音没开始（shortcut_failure_test）两个场景，都不锁屏。2026-10-22 在 main da19d28 上：shortcut_failure 通过；microphone_refused 的全天监听项通过，手机录音项因场景检查过早失败。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/366">pull 366: 新增麦克风被拒（microphone_refused_test）与快捷录音没开始（shortcut_failure_test）两个场景，都不锁屏。2026-10-22 在 main da19d28 上：shortcut_failure 通过；microphone_refused 的全天监听项通过，手机录音项因场景检查过早失败，#380 改场景后通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/commit/da19d282f013e6d954ad2bfc71b75437a352013e">commit da19d282f013e6d954ad2bfc71b75437a352013e: main 上跑全天监听锁屏与 #366 两个场景的那次运行：全天监听锁屏、shortcut_failure 通过，microphone_refused 2 项里 1 项失败。</a></li>
-</ul><p>Next: 改 microphone_refused_test 的手机录音项：先等 phoneRecordingError 有值再断言，然后在手机解锁时跑 scripts/android-check integration_test/android/microphone_refused_test.dart。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/380">pull 380: microphone_refused_test 的手机录音项改为先等 Koe 写出原因再断言，只改场景。PR 记录改动前后同一台 Pixel 上的两次运行。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/commit/33e2d627565923d6c86e117ff0ca8792c3729086">commit 33e2d627565923d6c86e117ff0ca8792c3729086: #380 分支上重跑 microphone_refused 的那次运行（2026-10-22 13:04–13:06）：全天监听与手机录音 2 项都通过。</a></li>
+</ul><p>Next: D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。11 个自动场景文件都至少在 Pixel 上通过过一次（cd25be1、da19d28、33e2d62），没有待跑的。</p></article>
 <article id="capture-acceptance"><h3>Apple 端日常录音与文字记录</h3><span class="badge">planned</span><p>覆盖 iOS/macOS 日常使用、取回后自动转写、纯文字记录、文字资料联动和全天监听；设备结果与用户确认分别记录。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/15">issue 15: 工单规定相应真实使用或设备验收场景。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/16">issue 16: 工单规定相应真实使用或设备验收场景。</a></li>
@@ -119,5 +121,6 @@
 </ul><p>Next: 有网络时 refresh 核对事实，再 render 与 check；新增范围先明确 tracked，设备验收独立补证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/379">#379</a> <code>f547cc961be2c6a072a8efd1b9e7063c90b1bc5d</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
