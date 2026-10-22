@@ -45,9 +45,7 @@ void main() {
         speechStream: (config) =>
             QwenSttStreamSession(apiKey: 'stand-in', endpoint: cloud.endpoint),
       )..allDayListening = true;
-      final tone = await Tone.play();
       addTearDown(() async {
-        await tone.stop();
         if (controller.textCaptureActive) {
           await controller.discardTextCapture();
         }
@@ -83,6 +81,8 @@ void main() {
         markTestSkipped(reason);
         return;
       }
+      final tone = await Tone.play();
+      addTearDown(tone.stop);
       expect(controller.textCaptureActive, isFalse);
 
       // ignore: avoid_print

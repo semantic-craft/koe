@@ -23,10 +23,10 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/348">pull 348: PR 提供音频转换、系统朗读或日历导出的实现依据。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/349">pull 349: PR 提供音频转换、系统朗读或日历导出的实现依据。</a></li>
 </ul><p>Next: 在综合验收中逐项核对音频转写、听感和日历事件。</p></article>
-<article id="android-shortcut"><h3>Android 长按图标开始录音</h3><span class="badge">done</span><p>长按 Koe 图标出现「开始录音」，走 iPhone 快捷录音的同一入口，全天监听开着时进全天监听。Pixel 上已确认快捷方式注册、点击后到达 Koe；手机有 PIN 锁着时 Android 拒绝麦克风前台服务，场景记为跳过，解锁后的端到端未在真机验证。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/357">pull 357: PR 提供长按图标快捷录音的实现与单元测试，以及 Pixel 上快捷方式注册、点击送达和锁屏时跳过的运行记录。</a></li>
+<article id="android-shortcut"><h3>Android 长按图标开始录音</h3><span class="badge">done</span><p>长按 Koe 图标出现「开始录音」，走 iPhone 快捷录音的同一入口，全天监听开着时进全天监听。Pixel 上手机解锁时场景通过：快捷方式已注册，点击后 Koe 回到前台、进入全天监听、麦克风前台服务启动并识别出文字；手机有 PIN 锁着时 Android 拒绝麦克风前台服务，场景记为跳过。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/357">pull 357: PR 提供长按图标快捷录音的实现与单元测试，以及 Pixel 上快捷方式场景的运行记录（解锁时通过、锁着时跳过）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/344">issue 344: 工单规定长按图标开始录音的需求与验收范围。</a></li>
-</ul><p>Next: 按 #345 在解锁的 Pixel 上跑快捷方式场景，并在桌面长按图标确认入口、冷启动只开始一次。</p></article>
+</ul><p>Next: 按 #345 在桌面长按图标确认入口的图标和标题、冷启动只开始一次、旋转或从最近任务重开不重放、release 包图标。</p></article>
 <article id="device-switch"><h3>手机与 Mac 一键断开及接回录音豆</h3><span class="badge">done</span><p>覆盖不解绑的一键断开与接回；双端切换效果需依据设备验收记录判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/330">pull 330: PR 提供一键断开与接回的实现依据。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/329">issue 329: 工单规定双端切换的验收范围。</a></li>
