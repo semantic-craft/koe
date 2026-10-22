@@ -219,6 +219,8 @@ mixin _RecorderDevice on ChangeNotifier {
     _finishRecordingShortcut();
     statusMessage = '快捷录音未开始';
     errorMessage = message;
+    recordingShortcutFailure = message;
+    recordingShortcutFailureRevision++;
     notifyListeners();
   }
 
@@ -246,10 +248,7 @@ mixin _RecorderDevice on ChangeNotifier {
     _recordingShortcutStarting = true;
     try {
       final started = await _startRecordChecked();
-      if (!started) {
-        statusMessage = '快捷录音未开始';
-        notifyListeners();
-      }
+      if (!started) _failRecordingShortcut(errorMessage ?? '录音豆没有开始录音');
       return started;
     } finally {
       _recordingShortcutStarting = false;
@@ -312,6 +311,11 @@ mixin _RecorderDevice on ChangeNotifier {
 
   /// Incremented for each shortcut invocation so AppShell can select Home.
   int shortcutNavigationRevision = 0;
+
+  /// Why the latest shortcut did not start; AppShell says it once per
+  /// [recordingShortcutFailureRevision].
+  String? recordingShortcutFailure;
+  int recordingShortcutFailureRevision = 0;
   bool _recordingShortcutPending = false;
   bool _recordingShortcutConnecting = false;
   bool _recordingShortcutStarting = false;

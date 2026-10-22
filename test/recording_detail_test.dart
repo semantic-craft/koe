@@ -342,6 +342,26 @@ void main() {
     },
   );
 
+  testWidgets('a shortcut that cannot start says why', (tester) async {
+    final c = _RecordingController();
+    addTearDown(c.dispose);
+    await pump(tester, c, const AppShell());
+    await c.requestRecordingFromShortcut();
+    await tester.pumpAndSettle();
+    expect(find.text('快捷录音未开始：未找到已绑定的录音豆，请先在应用中连接设备'), findsOneWidget);
+  });
+
+  testWidgets('Home shows a shortcut still connecting to its recorder', (
+    tester,
+  ) async {
+    final c = _RecordingController()
+      ..shortcutWaiting = true
+      ..statusMessage = '快捷录音：正在连接 soundcore Work…';
+    addTearDown(c.dispose);
+    await pump(tester, c, const AppShell());
+    expect(find.text('快捷录音：正在连接 soundcore Work…'), findsOneWidget);
+  });
+
   testWidgets('paused current detail offers continue without hiding its text', (
     tester,
   ) async {
@@ -1809,6 +1829,9 @@ class _RecordingController extends RecorderController {
   bool audioReplaced = false;
   (String, String)? preparedTranslation;
   RecordingReference? _current;
+  bool shortcutWaiting = false;
+  @override
+  bool get recordingShortcutPending => shortcutWaiting;
   @override
   RecordingReference? get currentRecordingReference => _current;
   @override

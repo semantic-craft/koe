@@ -39,6 +39,7 @@ class _AppShellState extends State<AppShell> {
   bool _sectionVisible = false;
   int _handledLiveRevision = 0;
   int _handledShortcutRevision = 0;
+  int _handledShortcutFailureRevision = 0;
 
   void _routeChanged() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -212,6 +213,18 @@ class _AppShellState extends State<AppShell> {
           });
         });
       }
+    }
+    // Home shows the recorder's status only while it is connected, and the
+    // shortcut can fail on any tab.
+    final failure = c.recordingShortcutFailure;
+    if (c.recordingShortcutFailureRevision != _handledShortcutFailureRevision) {
+      _handledShortcutFailureRevision = c.recordingShortcutFailureRevision;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || failure == null) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text('快捷录音未开始：$failure')));
+      });
     }
     final covered = _wide && _sectionVisible;
     final visible = covered ? null : _routes.visibleReference;
