@@ -228,6 +228,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     String path,
     DateTime recordedAt, {
     String label = '手机录音',
+    bool voiceNote = false,
   }) async {
     final file = File(path);
     var length = 0;
@@ -257,6 +258,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         recordedAt: recordedAt,
         importedAt: DateTime.now(),
         contentHash: hash,
+        voiceNote: voiceNote,
       );
       await library.upsert(asset);
     } catch (_) {

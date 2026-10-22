@@ -27,12 +27,18 @@ class ExportCatalog {
     return null;
   }
 
+  static String? _stemPrefix(String path) {
+    final name = path.split('/').last;
+    final match = RegExp(r'^(phone_\d+|\d+)').firstMatch(name);
+    return match?.group(1);
+  }
+
   /// Builds a user-friendly filename while retaining the leading device file
-  /// id used to match the recording with the device inventory.
+  /// id (or phone-take prefix) used to match the recording.
   static String renamedFileName(String path, String label) {
     final name = path.split('/').last;
-    final id = fileIdFromPath(path);
-    if (id == null) throw ArgumentError('无法识别录音编号');
+    final prefix = _stemPrefix(path);
+    if (prefix == null) throw ArgumentError('无法识别录音编号');
 
     final suffix = _suffixForPath(name);
     if (suffix == null) throw ArgumentError('不支持此文件格式');
@@ -42,17 +48,17 @@ class ExportCatalog {
     if (RegExp(r'[\\/:*?"<>|\x00-\x1f]').hasMatch(trimmed)) {
       throw ArgumentError('文件名不能包含 \\ / : * ? " < > |');
     }
-    return '${id}_$trimmed$suffix';
+    return '${prefix}_$trimmed$suffix';
   }
 
   static String editableLabelFromPath(String path) {
     final name = path.split('/').last;
-    final id = fileIdFromPath(path);
-    if (id == null) return name;
+    final prefixId = _stemPrefix(path);
+    if (prefixId == null) return name;
     final suffix = _suffixForPath(name);
     if (suffix == null) return name;
     final stem = name.substring(0, name.length - suffix.length);
-    final prefix = '${id}_';
+    final prefix = '${prefixId}_';
     return stem.startsWith(prefix) ? stem.substring(prefix.length) : '';
   }
 

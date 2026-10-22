@@ -41,6 +41,8 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   void _registerExportedPaths(Iterable<String> paths);
   Future<void> _scheduleTopicAssist(String recordingKey, String transcript);
   Future<void> _send(List<int> frame, {String? label});
+  abstract int _capabilityRevision;
+  SpeechConfiguration get _meetingConfiguration;
   SpeechConfiguration get _settingsConfiguration;
   abstract final Future<void> _settingsLoaded;
   void _stopBatteryPoll();
@@ -49,6 +51,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   abstract final WifiExportService _wifi;
   abstract bool autoRealtime;
   abstract bool autoTranscribe;
+  abstract bool meetingLocalOnly;
+  String get meetingLocalOnlyUnavailableMessage;
+  bool get onDeviceSpeechSupported;
+  Future<void> refreshAppleCapabilities();
   abstract final Duration blePullInactivityTimeout;
   abstract bool bound;
   abstract bool connected;
@@ -237,11 +243,19 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     }
     if (!autoTranscribe) return;
     if (_isRecordingAudioLocked(fileIdFromPath(path), path)) return;
-    final config = _settingsConfiguration;
+    if (meetingLocalOnly && _capabilityRevision == 0) {
+      await refreshAppleCapabilities();
+      if (_disposed) return;
+    }
+    final config = _meetingConfiguration;
     if (!_isConfigured(config) &&
+        transferComplete &&
+        !File(path).existsSync() &&
         !_fileJobs.jobs.containsKey(key) &&
         (transcriptForPath(path) ?? '').trim().isEmpty) {
-      _recordingErrors[key] = '录音已保存，请先配置语音服务后重试转写';
+      _recordingErrors[key] = meetingLocalOnly && !onDeviceSpeechSupported
+          ? meetingLocalOnlyUnavailableMessage
+          : '录音已保存，请先配置语音服务后重试转写';
       notifyListeners();
       return;
     }
@@ -307,7 +321,9 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       return;
     }
     if (!_isConfigured(config)) {
-      _recordingErrors[key] = '录音已保存，请先配置语音服务后重试转写';
+      _recordingErrors[key] = meetingLocalOnly && !onDeviceSpeechSupported
+          ? meetingLocalOnlyUnavailableMessage
+          : '录音已保存，请先配置语音服务后重试转写';
       notifyListeners();
       return;
     }
