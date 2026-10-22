@@ -210,7 +210,7 @@
         "number": 331,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T02:44:47Z"
+        "updated_at": "2026-10-22T03:35:43Z"
       },
       {
         "number": 335,
@@ -228,10 +228,10 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T02:54:17Z"
+        "updated_at": "2026-10-22T03:35:42Z"
       }
     ],
-    "main": "2a416f5ea4a9e743d6cf4126052e39a9f51d7a81",
+    "main": "da19d282f013e6d954ad2bfc71b75437a352013e",
     "open_pulls": [],
     "pulls": [
       {
@@ -374,7 +374,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-22T03:00:28.460482Z",
+  "observed_at": "2026-10-22T03:36:52.529789Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -420,12 +420,12 @@
             },
             {
               "kind": "pull",
-              "note": "Koe 不在屏幕上时 Android 不让麦克风前台服务运行：手机录音、纯文字记录和全天监听停下并说明原因，全天监听在 Koe 回到屏幕后接着听。PR 提供实现与单元测试；真机场景在 #366，还没在设备上跑。",
+              "note": "Koe 不在屏幕上时 Android 不让麦克风前台服务运行：手机录音、纯文字记录和全天监听停下并说明原因，全天监听在 Koe 回到屏幕后接着听。PR 提供实现与单元测试；真机场景在 #366，2026-10-22 全天监听那项在 Pixel 上通过，手机录音那项因场景检查过早失败。",
               "ref": 362
             }
           ],
           "id": "android-background",
-          "next": "在设备上验证锁屏、通知停止操作与录音豆连接；被拒时停下的场景（#366）待在 main 上跑。",
+          "next": "锁屏运行与通知上的停止已有场景记录（见 Android 综合验收），录音豆连接仍待按 #345 由人走一遍。被拒时停下：全天监听那项在 Pixel 上通过（main da19d28），手机录音那项要先改场景再跑。",
           "status": "done",
           "summary": "覆盖录音豆后台同步、常驻通知，以及手机录音、纯文字记录、全天监听的后台服务；Koe 不在屏幕上时开始的麦克风工作被 Android 拒绝时，停下并说明原因（#362）。真实效果需依据锁屏运行记录判断。",
           "title": "Android 后台同步与持续录音"
@@ -487,7 +487,7 @@
             },
             {
               "kind": "pull",
-              "note": "快捷录音没开始时在屏幕底部说明原因。PR 提供实现与单元测试；真机场景在 #366，还没在设备上跑。",
+              "note": "快捷录音没开始时在屏幕底部说明原因。PR 提供实现与单元测试；#366 的 shortcut_failure_test 2026-10-22 在 Pixel 上通过（main da19d28）。",
               "ref": 364
             },
             {
@@ -497,7 +497,7 @@
             }
           ],
           "id": "android-shortcut",
-          "next": "没开始时的屏幕提示场景（#366 的 shortcut_failure_test）待在 main 上跑。",
+          "next": "没有待跑的自动场景；桌面长按菜单本身仍没人看过。",
           "status": "done",
           "summary": "长按 Koe 图标出现「开始录音」，走 iPhone 快捷录音的同一入口，全天监听开着时进全天监听；没开始时屏幕底部说明原因（#364），不改用手机录音，与 iPhone 一致。Pixel 上手机解锁时场景通过：快捷方式已注册，点击后 Koe 回到前台、进入全天监听、麦克风前台服务启动并识别出文字；手机有 PIN 锁着时 Android 拒绝麦克风前台服务，场景记为跳过。#345 留下的人工项改用代码与测试依据：release 包里 drawable/ic_shortcut_record 是完整矢量（aapt2）；冷启动只开始一次由单元测试覆盖；旋转不重建页面（configChanges），重建或从最近任务打开时 onCreate 丢掉快捷方式参数。桌面长按菜单本身没人看过。",
           "title": "Android 长按图标开始录音"
@@ -678,14 +678,19 @@
             },
             {
               "kind": "pull",
-              "note": "新增麦克风被拒（microphone_refused_test）与快捷录音没开始（shortcut_failure_test）两个场景，都不锁屏；合并时还没在设备上跑。",
+              "note": "新增麦克风被拒（microphone_refused_test）与快捷录音没开始（shortcut_failure_test）两个场景，都不锁屏。2026-10-22 在 main da19d28 上：shortcut_failure 通过；microphone_refused 的全天监听项通过，手机录音项因场景检查过早失败。",
               "ref": 366
+            },
+            {
+              "kind": "commit",
+              "note": "main 上跑全天监听锁屏与 #366 两个场景的那次运行：全天监听锁屏、shortcut_failure 通过，microphone_refused 2 项里 1 项失败。",
+              "ref": "da19d282f013e6d954ad2bfc71b75437a352013e"
             }
           ],
           "id": "android-acceptance",
-          "next": "下次手机解锁时在 main 上一次跑完：全天监听锁屏场景，和 #366 新加的 microphone_refused_test、shortcut_failure_test（都不锁屏；android-check 把锁屏场景排到最后，一次解锁就够）：scripts/android-check integration_test/android/microphone_refused_test.dart integration_test/android/shortcut_failure_test.dart integration_test/android/all_day_listening_background_test.dart。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。",
+          "next": "改 microphone_refused_test 的手机录音项：先等 phoneRecordingError 有值再断言，然后在手机解锁时跑 scripts/android-check integration_test/android/microphone_refused_test.dart。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。",
           "status": "in_progress",
-          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 两次无人值守跑 scripts/android-check（Pixel 插着 USB、解锁后没人动），9 个场景文件都至少通过一次。10:31–10:39 在 main cd25be1 上 8 个文件全部通过，共 13 个测试：回答朗读、日历、凭据、启动、快捷方式开始录音、后台同步、导入音频转码 6 项、手机录音锁屏（锁屏录 120.5 秒，最后一分钟电平 2137、零值 0%）。全天监听锁屏在之前 8d30c89 的运行里通过（锁屏 60 秒里发出 60.4 秒音频，识别 30 句），还没在 main 上复跑。自动场景不连录音豆，D3200 的连接、取回和实体键还没有设备记录。#366 新加的两个场景（麦克风被拒、快捷录音没开始）还没在设备上跑。",
+          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 三次无人值守跑 scripts/android-check（Pixel 插着 USB、解锁后没人动）。main cd25be1 上 8 个文件全部通过，共 13 个测试：回答朗读、日历、凭据、启动、快捷方式开始录音、后台同步、导入音频转码 6 项、手机录音锁屏（锁屏录 120.5 秒，最后一分钟电平 2137、零值 0%）。11:26–11:31 在 main da19d28 上跑了全天监听锁屏和 #366 的两个新场景：全天监听锁屏通过（锁屏约 60 秒里发出 52.8 秒音频，识别 26 句），快捷录音没开始时的屏幕提示通过；麦克风被拒场景里全天监听那项通过，手机录音那项失败：Android 拒绝了、录音也停了，但场景在 Koe 写入原因之前就读了 phoneRecordingError（据代码与日志判断，改场景后还没复跑）。自动场景不连录音豆，D3200 的连接、取回和实体键还没有设备记录。",
           "title": "Android 综合验收"
         },
         {
