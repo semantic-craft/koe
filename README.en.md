@@ -165,7 +165,7 @@ flutter analyze
 flutter test
 ```
 
-With a Pixel connected, `scripts/android-check` builds and installs a debug build and runs the unattended scenarios in [integration_test/android](integration_test/android/) on the phone; it exits 77 (skipped) when the device is offline.
+With a Pixel connected, `scripts/android-check` builds and installs a debug build and runs the unattended scenarios in [integration_test/android](integration_test/android/) on the phone. Unlock the phone first and leave it alone: the script keeps the screen on and runs the scenarios that lock the screen last; while the phone is locked, scenarios that need Koe on screen are skipped. It exits 77 (skipped) when the device is offline or a scenario was skipped.
 
 ## Architecture
 

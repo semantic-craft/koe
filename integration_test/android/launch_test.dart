@@ -6,10 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:koe/main.dart' as app;
 
+import 'background_support.dart';
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('launches to the phone navigation, edge to edge', (tester) async {
+    if (await skipIfLocked('launch_test.dart')) return;
     await app.main();
     final navigation = find.byKey(const ValueKey('bottom-navigation-bar'));
     final deadline = DateTime.now().add(const Duration(seconds: 30));
@@ -22,8 +25,13 @@ void main() {
     }
 
     // Edge to edge: the app is laid out under the status bar and gesture
-    // bar, and keeps the navigation clear of the gesture bar itself.
+    // bar, and keeps the navigation clear of the gesture bar itself. The
+    // window gets its insets once it is on screen, just after the wake.
     final view = tester.view;
+    final insets = DateTime.now().add(const Duration(seconds: 10));
+    while (view.viewPadding.top == 0 && DateTime.now().isBefore(insets)) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
     final ratio = view.devicePixelRatio;
     final top = view.viewPadding.top / ratio;
     final bottom = view.viewPadding.bottom / ratio;

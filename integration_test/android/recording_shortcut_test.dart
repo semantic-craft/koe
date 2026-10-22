@@ -29,6 +29,10 @@ void main() {
     '开始录音 on the Koe icon brings Koe back and enters all-day listening',
     timeout: const Timeout(Duration(minutes: 2)),
     (tester) async {
+      // Behind a lock screen with a PIN the shortcut still reaches Koe, but
+      // Koe stays behind it without microphone work. Nobody fires the
+      // shortcut there: the icon is only on the home screen, after unlocking.
+      if (await skipIfLocked('recording_shortcut_test.dart')) return;
       final dir = await Directory.systemTemp.createTemp('koe-shortcut-');
       final cloud = await StandInRecognizer.start();
       final controller = RecorderController(
@@ -70,17 +74,6 @@ void main() {
         AppLifecycleState.paused,
         reason: 'scripts/android-check did not take Koe off screen',
       );
-      // Behind a lock screen with a PIN the shortcut still reaches Koe, but
-      // Koe stays behind the lock screen and Android refuses it microphone
-      // work. Nobody fires the shortcut there: the icon is only on the home
-      // screen, after unlocking.
-      if ((await serviceStatus())['deviceLocked'] == true) {
-        const reason = '手机锁着，有锁屏密码；解锁后再跑 recording_shortcut_test.dart';
-        // ignore: avoid_print
-        print('KOE_ADB: skip $reason');
-        markTestSkipped(reason);
-        return;
-      }
       final tone = await Tone.play();
       addTearDown(tone.stop);
       expect(controller.textCaptureActive, isFalse);

@@ -25,6 +25,7 @@ void main() {
     'its notification saves the text',
     timeout: const Timeout(Duration(minutes: 4)),
     (tester) async {
+      if (await skipIfLocked('all_day_listening_background_test.dart')) return;
       final dir = await Directory.systemTemp.createTemp('koe-all-day-bg-');
       final cloud = await StandInRecognizer.start();
       RecorderController build() => RecorderController(

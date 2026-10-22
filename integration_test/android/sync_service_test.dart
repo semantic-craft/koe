@@ -4,38 +4,23 @@
 // `scripts/android-check`, which grants notifications and Bluetooth first.
 import 'dart:async';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:koe/platform/background_sync_service.dart';
 
-const _native = MethodChannel('com.anker.anker_recorder/background_sync');
-
-Future<Map<String, Object?>> _status() async =>
-    Map<String, Object?>.from((await _native.invokeMapMethod('status'))!);
-
-Future<Map<String, Object?>> _statusWhen(
-  bool Function(Map<String, Object?>) ready,
-) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 10));
-  var status = await _status();
-  while (!ready(status) && DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    status = await _status();
-  }
-  return status;
-}
+import 'background_support.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('recorder sync keeps running in the background with a '
       'notification that opens Koe', (tester) async {
+    if (await skipIfLocked('sync_service_test.dart')) return;
     final sync = BackgroundSyncService();
     addTearDown(() => sync.end(BackgroundWork.recorderSync));
 
     await sync.begin(BackgroundWork.recorderSync);
-    final started = await _statusWhen(
+    final started = await serviceStatusWhen(
       (s) => s['running'] == true && s['notificationPosted'] == true,
     );
     expect(started['types'], ['connectedDevice']);
@@ -45,23 +30,20 @@ void main() {
 
     // Leave the screen as the Home gesture does. No frames are drawn from
     // here on, so wait on real time rather than pumping.
-    expect(await _native.invokeMethod<bool>('moveTaskToBack'), isTrue);
+    expect(await native.invokeMethod<bool>('moveTaskToBack'), isTrue);
     var ticks = 0;
-    final timer = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => ticks++,
-    );
+    final timer = Timer.periodic(const Duration(seconds: 1), (_) => ticks++);
     await Future<void>.delayed(const Duration(seconds: 30));
     timer.cancel();
 
     expect(ticks, greaterThanOrEqualTo(25), reason: 'Dart kept running');
-    final behind = await _status();
+    final behind = await serviceStatus();
     expect(behind['running'], isTrue);
     expect(behind['notificationPosted'], isTrue);
     expect(behind['wakeLockHeld'], isTrue);
 
     await sync.end(BackgroundWork.recorderSync);
-    final stopped = await _statusWhen(
+    final stopped = await serviceStatusWhen(
       (s) => s['running'] == false && s['notificationPosted'] == false,
     );
     expect(stopped['running'], isFalse);
