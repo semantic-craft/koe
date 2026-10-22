@@ -70,4 +70,21 @@ class FakeForegroundService {
       (_) {},
     );
   }
+
+  /// Android refuses the types the service was starting as, after `update`
+  /// answered, as it does microphone work while Koe is behind the lock
+  /// screen: the service stops and tells Dart.
+  Future<void> refuse() async {
+    final refused = types.toList();
+    types = {};
+    text = null;
+    stoppable = false;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    await messenger.handlePlatformMessage(
+      _channel.name,
+      _channel.codec.encodeMethodCall(MethodCall('refused', refused)),
+      (_) {},
+    );
+  }
 }

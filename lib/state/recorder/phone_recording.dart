@@ -90,14 +90,26 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       await _phoneMicStates?.cancel();
       _phoneMicStates = _phoneRecorder.states.listen(_onPhoneMicState);
       notifyListeners();
-      // Started from the sheet, while Koe is on screen, as Android requires.
-      await BackgroundSyncService.shared.begin(
-        BackgroundWork.phoneRecording,
-        onStop: () => unawaited(stopPhoneRecording()),
-      );
     } finally {
       _phoneTakeBusy = false;
     }
+    // Started from the sheet, while Koe is on screen, as Android requires;
+    // outside the busy guard, so a refusal can stop the take.
+    await BackgroundSyncService.shared.begin(
+      BackgroundWork.phoneRecording,
+      onStop: () => unawaited(stopPhoneRecording()),
+      onRefused: () => unawaited(_onPhoneBackgroundRefused()),
+    );
+  }
+
+  /// Android refused the microphone service, so the take cannot go on: save
+  /// what was recorded and say why.
+  Future<void> _onPhoneBackgroundRefused() async {
+    if (!phoneRecordingActive) return;
+    await stopPhoneRecording();
+    if (_disposed || phoneRecordingActive) return;
+    phoneRecordingError = 'Koe 不在屏幕上时 Android 不让它开始用麦克风，录音已停下';
+    notifyListeners();
   }
 
   void _onPhoneMicState(PhoneMicState state) {

@@ -288,6 +288,33 @@ void main() {
       await controller.stopTextCapture();
     });
 
+    test('on Android, listening Android refuses while Koe is off screen '
+        'stops and says why, and starts again once Koe is back on '
+        'screen', () async {
+      final service = FakeForegroundService();
+      final controller = build()..allDayListening = true;
+      expect(await controller.startTextCapture(allDay: true), isTrue);
+      await until(() => service.running);
+
+      await service.refuse();
+
+      await until(() => !controller.textCaptureActive);
+      expect(
+        controller.textCaptureError,
+        'Koe 不在屏幕上时 Android 不让它开始用麦克风，回到 Koe 后接着听',
+      );
+
+      final binding = TestWidgetsFlutterBinding.instance;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+      await until(() => controller.textCaptureActive);
+      expect(controller.textCaptureAllDay, isTrue);
+      expect(controller.textCaptureError, isNull);
+      await until(() => service.running);
+      await controller.stopTextCapture();
+    });
+
     test('a cold launch from 开始录音 waits for the saved switch', () async {
       await AppSettingsStore.save(
         const AppSettings(
