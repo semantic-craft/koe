@@ -7,13 +7,18 @@ part of '../recorder_controller.dart';
 /// it keeps recording behind the lock screen; its notification says whether
 /// it records or is paused, and 停止 there saves the take like the sheet does.
 ///
+/// Notes typed and highlights marked during a take (#400) are kept in a file
+/// beside it while it records and become its bookmarks when it is saved.
+///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderPhoneRecording on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
   abstract bool _disposed;
   abstract final Future<void> _libraryLoaded;
+  abstract final Future<void> _bookmarksLoaded;
   abstract final MacArchiveController archive;
+  abstract final RecordingBookmarkStore bookmarks;
   abstract String? errorMessage;
   abstract List<String> exportedPaths;
   abstract final RecordingLibraryStore library;
@@ -23,6 +28,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   Future<void> attachAutomaticPlace(String path);
   Future<Directory> _importDirectory();
   void _invalidateLocalDuration(String path);
+  // ignore: unused_element_parameter
+  String _recordingKey({int? fileId, String? path});
   void _registerExportedPaths(Iterable<String> paths);
   Future<void> stopPlayback();
   // END DEPS
@@ -39,6 +46,18 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   /// Paused by the user rather than by the system (a call).
   bool _phoneTakeHeld = false;
   StreamSubscription<PhoneMicState>? _phoneMicStates;
+
+  String _phoneTakeNotes = '';
+  List<Duration> _phoneTakeHighlights = const [];
+  Future<void> _phoneNotesWrites = Future<void>.value();
+  bool _phoneNotesQueued = false;
+
+  /// The notes typed during the current take; each line begins with the
+  /// recording time it was started at.
+  String get phoneRecordingNotes => _phoneTakeNotes;
+
+  /// Recording times marked with 标重点 during the current take.
+  List<Duration> get phoneRecordingHighlights => _phoneTakeHighlights;
 
   /// Why the last start or save did not complete; null when it did.
   String? phoneRecordingError;
@@ -87,6 +106,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         return;
       }
       phoneRecordingError = null;
+      _phoneTakeNotes = '';
+      _phoneTakeHighlights = const [];
       _phoneTakePath = path;
       _phoneTakeStartedAt = startedAt;
       _phoneTakeRunningSince = startedAt;
@@ -175,6 +196,85 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     notifyListeners();
   }
 
+  /// Keeps the notes typed so far and writes them beside the take.
+  void setPhoneRecordingNotes(String text) {
+    if (!phoneRecordingActive || text == _phoneTakeNotes) return;
+    _phoneTakeNotes = text;
+    unawaited(_writePhoneTakeNotes());
+  }
+
+  /// Marks the current recording time as a highlight and returns it; null
+  /// when no take records.
+  Duration? markPhoneRecordingHighlight() {
+    if (!phoneRecordingActive) return null;
+    final at = phoneRecordingElapsed;
+    _phoneTakeHighlights = [..._phoneTakeHighlights, at];
+    unawaited(_writePhoneTakeNotes());
+    notifyListeners();
+    return at;
+  }
+
+  /// Writes the current notes beside the take. At most one write waits
+  /// behind the one running, and it writes what is current when it starts,
+  /// so fast typing never piles up writes.
+  Future<void> _writePhoneTakeNotes() {
+    final path = _phoneTakePath;
+    if (path == null || _phoneNotesQueued) return _phoneNotesWrites;
+    _phoneNotesQueued = true;
+    return _phoneNotesWrites = _phoneNotesWrites.then((_) async {
+      _phoneNotesQueued = false;
+      if (_phoneTakePath != path) return;
+      final draft = TakeNotes(
+        text: _phoneTakeNotes,
+        highlights: _phoneTakeHighlights,
+      );
+      try {
+        await draft.writeTo(TakeNotes.fileFor(path));
+      } catch (error) {
+        debugPrint('[PhoneRecording] notes draft not written: $error');
+      }
+    });
+  }
+
+  /// Saves the notes of the take at [path] as its bookmarks: [draft] for a
+  /// take just stopped, else the file a killed take left beside it. On
+  /// failure the notes stay in that file and the next launch tries again.
+  Future<void> _saveTakeNotes(String path, {TakeNotes? draft}) async {
+    final file = TakeNotes.fileFor(path);
+    try {
+      final notes = draft ?? await TakeNotes.read(file);
+      if (notes != null && !notes.isEmpty) {
+        await _bookmarksLoaded;
+        final marks = notes.bookmarks(
+          recordingKey: _recordingKey(path: path),
+          takeName: p.basenameWithoutExtension(path),
+          audioVersion: library.assetForPath(path)?.contentHash,
+          now: DateTime.now(),
+        );
+        await bookmarks.addNew(marks);
+        if (!_disposed) notifyListeners();
+      }
+      if (await file.exists()) await file.delete();
+    } catch (error) {
+      debugPrint('[PhoneRecording] notes not saved as bookmarks: $error');
+      if (draft != null) {
+        try {
+          await draft.writeTo(file);
+        } catch (_) {}
+      }
+      if (_disposed) return;
+      statusMessage = '录音已保存，但笔记没能存成书签；重新打开 Koe 时会再试';
+      notifyListeners();
+    }
+  }
+
+  Future<void> _deleteTakeNotes(String path) async {
+    try {
+      final file = TakeNotes.fileFor(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   /// Stops the take and saves it as an original. Returns the saved path, or
   /// null when nothing usable was recorded or the save failed; a failed save
   /// keeps the audio file and is retried on the next launch.
@@ -189,9 +289,25 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       } catch (_) {
         // The file written so far is still adopted below.
       }
+      // Every change schedules a write, so once these finish the notes are
+      // on disk before the take is, and a kill from here on loses nothing.
+      await _phoneNotesWrites;
+      final notes = TakeNotes(
+        text: _phoneTakeNotes,
+        highlights: _phoneTakeHighlights,
+      );
       _clearPhoneTake();
       notifyListeners();
-      return await _adoptPhoneTake(path, startedAt);
+      final saved = await _adoptPhoneTake(path, startedAt);
+      if (notes.isEmpty) {
+        // Nothing to keep; a draft is left only if clearing it failed.
+        unawaited(_deleteTakeNotes(path));
+      } else if (saved != null) {
+        await _saveTakeNotes(saved, draft: notes);
+      } else if (!await File(path).exists()) {
+        await _deleteTakeNotes(path);
+      }
+      return saved;
     } finally {
       _phoneTakeBusy = false;
     }
@@ -211,6 +327,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         final file = File(path);
         if (await file.exists()) await file.delete();
       } catch (_) {}
+      await _phoneNotesWrites;
+      await _deleteTakeNotes(path);
       statusMessage = '已放弃这段录音';
       notifyListeners();
     } finally {
@@ -226,6 +344,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeRunningSince = null;
     _phoneTakeElapsed = Duration.zero;
     _phoneTakeHeld = false;
+    _phoneTakeNotes = '';
+    _phoneTakeHighlights = const [];
     unawaited(BackgroundSyncService.shared.end(BackgroundWork.phoneRecording));
   }
 
@@ -290,15 +410,24 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   /// Adopts takes that never reached the library because the app was killed
   /// mid-recording or the save failed. The start time comes from the name.
+  /// Notes left beside a take become its bookmarks once it is in the library.
   Future<void> _recoverInterruptedPhoneTakes() async {
     if (!phoneRecordingEnabled) return;
     await _libraryLoaded;
     final dir = await _importDirectory();
     if (!await dir.exists()) return;
     var recovered = 0;
+    final drafts = <String>[];
     await for (final entity in dir.list()) {
       if (_disposed) return;
       if (entity is! File) continue;
+      final base = p.basename(entity.path);
+      if (base.startsWith(_takePrefix) &&
+          (base.endsWith(TakeNotes.draftExtension) ||
+              base.endsWith('${TakeNotes.draftExtension}.part'))) {
+        drafts.add(entity.path);
+        continue;
+      }
       final name = p.basenameWithoutExtension(entity.path);
       if (!name.startsWith(_takePrefix) || p.extension(entity.path) != '.wav') {
         continue;
@@ -309,6 +438,28 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       if (micros == null) continue;
       final started = DateTime.fromMicrosecondsSinceEpoch(micros);
       if (await _adoptPhoneTake(entity.path, started) != null) recovered++;
+    }
+    for (final draft in drafts) {
+      if (_disposed) return;
+      final partial = draft.endsWith('.part');
+      final stem = draft.substring(
+        0,
+        draft.length -
+            TakeNotes.draftExtension.length -
+            (partial ? '.part'.length : 0),
+      );
+      final take = '$stem.wav';
+      if (take == _phoneTakePath) continue;
+      if (partial) {
+        // A write cut off by the kill; the file it was replacing is kept.
+        try {
+          await File(draft).delete();
+        } catch (_) {}
+      } else if (library.assetForPath(take) != null) {
+        await _saveTakeNotes(take);
+      } else if (!await File(take).exists()) {
+        await _deleteTakeNotes(take);
+      }
     }
     if (recovered > 0 && !_disposed) {
       statusMessage = runsOnMac

@@ -805,6 +805,11 @@ class RecordingAnalysis extends ChangeNotifier {
 
   /// Set [slotClaimed] when the caller already holds [claim] for the computed
   /// slot and wants [run] to consume it.
+  ///
+  /// [userNotes] is what the user noted on the material themselves (#400),
+  /// given to the model ahead of every input. It is not part of [source]: a
+  /// result made before a note was added stays current, and its citations
+  /// still count only the transcript blocks.
   Future<void> run({
     required String recording,
     required String source,
@@ -820,6 +825,7 @@ class RecordingAnalysis extends ChangeNotifier {
     bool preserveInputCitations = false,
     bool confirmedRestart = false,
     bool slotClaimed = false,
+    String userNotes = '',
     required String Function() currentSource,
   }) async {
     final k = slotKey(
@@ -883,8 +889,11 @@ class RecordingAnalysis extends ChangeNotifier {
     }
     final sourceHash = analysisFingerprint(source);
     final templateVersion = template?.version ?? 1;
+    final notes = userNotes.trim();
+    // Checkpoints made with other notes were made from other inputs.
     final jobHash = analysisFingerprint(
-      '$sourceHash/$selected/${template?.id ?? 'custom'}/v$templateVersion/$prompt',
+      '$sourceHash/$selected/${template?.id ?? 'custom'}/v$templateVersion/$prompt'
+      '${notes.isEmpty ? '' : '/notes:${analysisFingerprint(notes)}'}',
     );
     final legacyJobHash = analysisFingerprint(
       '$sourceHash/$selected/$prompt/v1',
@@ -984,6 +993,9 @@ class RecordingAnalysis extends ChangeNotifier {
       return value;
     }
 
+    String withNotes(String input, String label) =>
+        notes.isEmpty ? input : '$notes\n\n$label：\n$input';
+
     try {
       final sources = sourceBlocks ?? analysisSourceBlocks(source);
       List<String> level;
@@ -993,7 +1005,10 @@ class RecordingAnalysis extends ChangeNotifier {
         level = [
           await node(
             id,
-            preserveInputCitations ? sources.first : '[S1] ${sources.first}',
+            withNotes(
+              preserveInputCitations ? sources.first : '[S1] ${sources.first}',
+              '原文',
+            ),
             prompt,
           ),
         ];
@@ -1003,7 +1018,12 @@ class RecordingAnalysis extends ChangeNotifier {
           level.add(
             await node(
               '片段 ${i + 1}/${sources.length}',
-              preserveInputCitations ? sources[i] : '[S${i + 1}] ${sources[i]}',
+              withNotes(
+                preserveInputCitations
+                    ? sources[i]
+                    : '[S${i + 1}] ${sources[i]}',
+                '原文片段',
+              ),
               '$prompt\n这是全文中的一个片段。保留与要求有关的事实、'
                   '${preserveInputCitations ? '输入中原有的 N 编号' : '原文引用编号'}'
                   '和不确定性，勿当作全文总结。用不超过 1500 字的笔记输出。',
@@ -1020,7 +1040,7 @@ class RecordingAnalysis extends ChangeNotifier {
             next.add(
               await node(
                 id,
-                group.join('\n\n'),
+                withNotes(group.join('\n\n'), '分段笔记'),
                 '$prompt\n依据这些覆盖原文的笔记合并整理，'
                 '${preserveInputCitations ? '保留笔记 [N数字] 引用' : '保留原文 [S数字] 引用'}'
                 '，勿把笔记当作新事实。用不超过 1500 字输出。',
