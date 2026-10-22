@@ -75,6 +75,7 @@ launch_shortcut() {
 #   KOE_ADB: lock-screen            turn the screen off, as the power button does
 #   KOE_ADB: wake-screen            turn it on and dismiss a non-secure keyguard
 #   KOE_ADB: launch-shortcut <id>   choose shortcut <id> on the Koe icon
+#   KOE_ADB: open-koe               wake-screen, then tap the Koe icon: Koe comes back as it was
 #   KOE_ADB: skip <reason>          the scenario could not run; exit 77
 # adb shell reads its stdin, which here is the scenario output still to come,
 # so the answers read /dev/null instead.
@@ -95,6 +96,11 @@ answer_scenarios() {
       *"KOE_ADB: launch-shortcut "*)
         local id="${line##*KOE_ADB: launch-shortcut }"
         launch_shortcut "${id%%[[:space:]]*}"
+        ;;
+      *"KOE_ADB: open-koe"*)
+        wake_screen
+        adb -s "$serial" shell am start -a android.intent.action.MAIN \
+          -c android.intent.category.LAUNCHER -f 0x10200000 -n "$package/.MainActivity"
         ;;
       *"KOE_ADB: skip "*) printf '%s\n' "${line##*KOE_ADB: skip }" >>"$skips" ;;
     esac </dev/null
