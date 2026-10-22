@@ -210,13 +210,13 @@
         "number": 331,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-20T06:13:53Z"
+        "updated_at": "2026-10-22T01:20:57Z"
       },
       {
         "number": 335,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-20T17:50:56Z"
+        "updated_at": "2026-10-22T02:11:29Z"
       },
       {
         "number": 344,
@@ -228,14 +228,14 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T01:04:15Z"
+        "updated_at": "2026-10-22T01:18:52Z"
       }
     ],
-    "main": "03d038530ac1a81461d6772b5a2a0ab5caa32f30",
+    "main": "26c5229df9fd9c1d1116fd6be8f0bc07e15be1ae",
     "open_pulls": [
       {
-        "head": "a9c21151179b2dc9e8345f5835c2627394fa88b9",
-        "number": 358
+        "head": "8d30c8992f6d36e18350035fd2e8894dbe30ee67",
+        "number": 360
       }
     ],
     "pulls": [
@@ -355,7 +355,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-22T01:18:05.101954Z",
+  "observed_at": "2026-10-22T02:23:28.241202Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -634,14 +634,14 @@
             },
             {
               "kind": "commit",
-              "note": "这次整套真机运行用的提交：8 项通过，其余被 USB 断开、手机被拿起和屏保打断。",
-              "ref": "03d038530ac1a81461d6772b5a2a0ab5caa32f30"
+              "note": "这次整套真机运行用的提交（PR #360 分支）：8 个场景文件通过，手机录音锁屏场景因 PIN 跳过。",
+              "ref": "8d30c8992f6d36e18350035fd2e8894dbe30ee67"
             }
           ],
           "id": "android-acceptance",
-          "next": "先让脚本适应这台日常用机：需要 Koe 在屏幕上的场景先亮屏、锁着就记为跳过，锁屏场景放到最后跑；然后在 Pixel 插着且没人动时整套重跑。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。",
+          "next": "解锁手机后单独跑手机录音锁屏场景：scripts/android-check integration_test/android/phone_recording_background_test.dart。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。",
           "status": "in_progress",
-          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 在 03d0385 上整套跑 scripts/android-check：回答朗读、日历、导入音频转码 6 项共 8 项通过；其余场景被环境打断，没有结论：约 09:08–09:10 USB 断开（凭据、后台同步、快捷方式装不上 App），09:11 手机被拿起亮屏（全天监听锁屏检查失败），最后屏保盖住 Koe（启动场景读不到状态栏高度），手机录音场景未跑完。",
+          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 在 8d30c89 上整套跑 scripts/android-check，Pixel 插着 USB、解锁后没人动：9 个场景文件中 8 个通过，共 13 个测试——回答朗读、日历、凭据、启动、快捷方式开始录音、后台同步、导入音频转码 6 项、全天监听锁屏（锁屏 60 秒里发出 60.4 秒音频，识别 30 句）。手机录音锁屏场景跳过：前一个锁屏场景锁上后手机有 PIN、保持锁着。自动场景不连录音豆，D3200 的连接、取回和实体键还没有设备记录。",
           "title": "Android 综合验收"
         },
         {
