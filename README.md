@@ -165,7 +165,7 @@ flutter analyze
 flutter test
 ```
 
-连着 Pixel 时，`scripts/android-check` 构建并安装调试包，在手机上跑 [integration_test/android](integration_test/android/) 的无人值守场景；设备离线时以 77 退出，记为跳过。
+连着 Pixel 时，`scripts/android-check` 构建并安装调试包，在手机上跑 [integration_test/android](integration_test/android/) 的无人值守场景。跑之前解锁手机、放着别动：脚本让屏幕一直亮着，锁屏的场景排在最后；手机锁着时，需要 Koe 在屏幕上的场景记为跳过。设备离线或有场景跳过时以 77 退出，记为跳过。
 
 ## 架构
 

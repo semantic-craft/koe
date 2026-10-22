@@ -1,5 +1,5 @@
-// Shared by the microphone scenarios: the native service's status, leaving
-// the screen and locking it, and a tone the phone plays into its own
+// Shared by the device scenarios: the native service's status, waking,
+// leaving and locking the screen, and a tone the phone plays into its own
 // microphone so there is sound to record and recognize unattended.
 import 'dart:async';
 import 'dart:convert';
@@ -46,7 +46,9 @@ Future<void> waitUntil(
 }
 
 /// Leaves Koe the way the Home gesture does, then has `scripts/android-check`
-/// turn the screen off as the power button does, and waits until it is.
+/// turn the screen off as the power button does, and waits until it is. The
+/// phone's PIN then keeps it locked, so android-check runs the scenarios
+/// that call this after all the others.
 Future<void> leaveAndLockScreen() async {
   expect(await native.invokeMethod<bool>('moveTaskToBack'), isTrue);
   // ignore: avoid_print
@@ -63,10 +65,27 @@ Future<void> leaveAndLockScreen() async {
 }
 
 /// Turns the screen back on and dismisses a non-secure keyguard, so later
-/// scenarios start on screen. android-check does this at the end too.
+/// scenarios start on screen. android-check does this before each scenario
+/// and at the end too.
 void wakeScreen() {
   // ignore: avoid_print
   print('KOE_ADB: wake-screen');
+}
+
+/// For a scenario that needs Koe on screen: wakes the screen, and when the
+/// phone is locked marks [scenario] skipped and returns true. Nobody is there
+/// to type the PIN, and Android keeps Koe behind the lock screen and refuses
+/// it microphone work; android-check then exits 77. Call it before the
+/// scenario starts anything.
+Future<bool> skipIfLocked(String scenario) async {
+  wakeScreen();
+  final status = await serviceStatusWhen((s) => s['screenInteractive'] == true);
+  if (status['deviceLocked'] != true) return false;
+  final reason = '手机锁着，有锁屏密码；解锁后再跑 $scenario';
+  // ignore: avoid_print
+  print('KOE_ADB: skip $reason');
+  markTestSkipped(reason);
+  return true;
 }
 
 class NoPlace implements PlaceCapture {

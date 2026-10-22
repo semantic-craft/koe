@@ -21,6 +21,7 @@ void main() {
     'notification saves the original',
     timeout: const Timeout(Duration(minutes: 5)),
     (tester) async {
+      if (await skipIfLocked('phone_recording_background_test.dart')) return;
       final dir = await Directory.systemTemp.createTemp('koe-phone-bg-');
       final controller = RecorderController(
         loadPersistedState: false,

@@ -23,7 +23,7 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 - 要逐文件确认跑过哪些测试，用 `flutter test --reporter expanded`；终端默认 compact 输出会覆盖进度行（见 [CONTRIBUTING](CONTRIBUTING.md) 规则 8）。
 - 验证：`check`（运行 `scripts/check`：`flutter analyze` 与 `flutter test`；依赖先按上条 `flutter pub get` 装好，真机、签名与安装验收不在其中）。
 - 性能：`scripts/perf-check`（约 2 分钟，不在 `check` 里）在本机以 profile 模式跑 [integration_test/perf](integration_test/perf/) 的场景，按 `thresholds.json` 判定；屏幕需解锁，窗口进不了前台时超时退出。改动 BLE、播放、音频转换、JSON 存储或问答检索时跑一次，把数字写进 PR。
-- Android：`scripts/android-check`（不在 `check` 里）在 adb 连着的 Pixel 上构建、安装（预授予运行时权限）并无人值守跑 [integration_test/android](integration_test/android/) 的场景；新场景加 `*_test.dart` 即可。设备离线输出「跳过（设备离线）」并以 77 退出，不算通过。SDK 与 JDK 21 用 Homebrew 装，release 签名读仓库外的 `~/.config/koe/android-signing.properties`（或 `KOE_ANDROID_SIGNING`），缺失时回落 debug 签名。
+- Android：`scripts/android-check`（不在 `check` 里）在 adb 连着的 Pixel 上构建、安装（预授予运行时权限）并无人值守跑 [integration_test/android](integration_test/android/) 的场景：每个文件单独跑，调 `leaveAndLockScreen` 锁屏的场景排最后。新场景加 `*_test.dart` 即可，要 Koe 在屏幕上的场景开头调 `skipIfLocked`，手机有 PIN 锁着就跳过。设备离线或有场景跳过时以 77 退出，不算通过。SDK 与 JDK 21 用 Homebrew 装，release 签名读仓库外的 `~/.config/koe/android-signing.properties`（或 `KOE_ANDROID_SIGNING`），缺失时回落 debug 签名。
 - 构建、真机运行与安装脚本按 [README](README.md)；[scripts](scripts/) 运行前核对目标设备和副作用。
 - 实现、评审或验收前先读 [CONTRIBUTING](CONTRIBUTING.md) 的十条规则。
 - 写 BLE、录音、音频或记忆/待办类代码前，先用 `scripts/ref search` 检索上游、omi 和锁定版本依赖的同类实现，引用 `路径:行号` 再写；何时用、语料和存放位置见 [reference-code](docs/agents/reference-code.md)。
