@@ -101,6 +101,7 @@ class TodayScreen extends StatelessWidget {
                   connected: c.connected,
                   name: c.displayDeviceName,
                   status: c.statusMessage,
+                  shortcutPending: c.recordingShortcutPending,
                   handedOff:
                       c.manuallyDisconnected && c.canReconnectBoundDevice,
                   onScan: c.canReconnectBoundDevice
@@ -407,12 +408,17 @@ class _DeviceStatusCard extends StatelessWidget {
     required this.onScan,
     required this.scanLabel,
     required this.onDisconnect,
+    this.shortcutPending = false,
     this.handedOff = false,
   });
 
   final bool connected;
   final String name;
   final String? status;
+
+  /// A shortcut recording waits for the recorder; [status] says how far it
+  /// got.
+  final bool shortcutPending;
   final VoidCallback onScan;
   final String scanLabel;
 
@@ -450,6 +456,8 @@ class _DeviceStatusCard extends StatelessWidget {
                 Text(
                   connected
                       ? (status == null || status!.isEmpty ? '已连接' : status!)
+                      : shortcutPending && status != null
+                      ? status!
                       : handedOff
                       ? '录音豆可以在另一台设备上用；点「连接」接回这里'
                       : '扫描后连接录音豆；也可以直接导入本地音频。',
