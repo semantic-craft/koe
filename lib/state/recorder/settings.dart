@@ -31,6 +31,7 @@ mixin _RecorderSettings on ChangeNotifier {
   void _revokeCloudLiveStreamIfNeeded();
   String _speechErrorMessage(Object error);
   abstract bool connected;
+  abstract final DiarizationModelStore diarizationModels;
   abstract DeviceInfoModel? info;
   abstract bool recording;
   Future<void> refreshFilesOnTabEnter();
@@ -162,6 +163,12 @@ mixin _RecorderSettings on ChangeNotifier {
 
   /// Whether this device currently offers a supported on-device speech engine.
   bool get onDeviceSpeechSupported => appleCapabilities.supported;
+
+  Future<bool> downloadDiarizationModels() => diarizationModels.download();
+
+  Future<void> pauseDiarizationModels() => diarizationModels.pause();
+
+  Future<void> deleteDiarizationModels() => diarizationModels.delete();
 
   /// Why a meeting recording cannot be transcribed locally when
   /// [meetingLocalOnly] is on and no on-device engine is ready.

@@ -150,6 +150,8 @@ class SettingsScreen extends StatelessWidget {
                             ),
                           ),
                         ],
+                        const SizedBox(height: 12),
+                        _DiarizationModelSettings(controller: c),
                         const SizedBox(height: 16),
                         if (c.speechProvider.usesEngineTrio) ...[
                           _CloudEngineSettings(
@@ -1138,4 +1140,104 @@ Future<void> showOrganizeHistorySheet(BuildContext context) async {
   messenger.showSnackBar(
     SnackBar(content: Text(added == 0 ? '这些录音已在整理中' : '已加入整理：$added 条')),
   );
+}
+
+class _DiarizationModelSettings extends StatelessWidget {
+  const _DiarizationModelSettings({required this.controller});
+
+  final RecorderController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final store = controller.diarizationModels;
+    final status = store.status;
+    final percent = (store.progress * 100).round().clamp(0, 100);
+    final subtitle = switch (status) {
+      DiarizationModelStatus.ready =>
+        '已就绪 · pyannote 分段 + 3D-Speaker 嵌入（约 33 MB）',
+      DiarizationModelStatus.downloading =>
+        '正在下载（$percent%）· 仅在 Wi-Fi 下下载',
+      DiarizationModelStatus.paused => '已暂停 · 可继续下载或删除已缓存文件',
+      DiarizationModelStatus.wifiRequired ||
+      DiarizationModelStatus.failed =>
+        store.errorMessage ?? '本机发言人模型尚未就绪',
+      DiarizationModelStatus.notInstalled =>
+        '首次本机区分发言人时在 Wi-Fi 下自动下载（约 33 MB）',
+    };
+    final isError =
+        status == DiarizationModelStatus.wifiRequired ||
+        status == DiarizationModelStatus.failed;
+
+    return Container(
+      key: const ValueKey('settings-diarization-model'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.bgPanel,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '本机发言人区分模型',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              if (status == DiarizationModelStatus.downloading) ...[
+                TextButton(
+                  key: const ValueKey('diarization-model-pause'),
+                  onPressed: controller.pauseDiarizationModels,
+                  child: const Text('暂停'),
+                ),
+                TextButton(
+                  key: const ValueKey('diarization-model-delete'),
+                  onPressed: controller.deleteDiarizationModels,
+                  child: const Text('删除'),
+                ),
+              ] else if (status == DiarizationModelStatus.paused) ...[
+                TextButton(
+                  key: const ValueKey('diarization-model-resume'),
+                  onPressed: controller.downloadDiarizationModels,
+                  child: const Text('继续下载'),
+                ),
+                TextButton(
+                  key: const ValueKey('diarization-model-delete'),
+                  onPressed: controller.deleteDiarizationModels,
+                  child: const Text('删除'),
+                ),
+              ] else if (status == DiarizationModelStatus.ready)
+                TextButton(
+                  key: const ValueKey('diarization-model-delete'),
+                  onPressed: controller.deleteDiarizationModels,
+                  child: const Text('删除模型'),
+                )
+              else
+                TextButton(
+                  key: const ValueKey('diarization-model-download'),
+                  onPressed: controller.downloadDiarizationModels,
+                  child: const Text('下载模型'),
+                ),
+            ],
+          ),
+          Text(
+            subtitle,
+            key: isError ? const ValueKey('diarization-model-error') : null,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.35,
+              color: isError ? AppColors.coral : AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

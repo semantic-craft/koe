@@ -22,6 +22,7 @@ import '../ai/engine_config.dart';
 import '../ai/speech_languages.dart';
 import '../ai/stt_types.dart';
 import '../ai/apple_speech.dart';
+import '../ai/diarization_model_store.dart';
 import '../ai/speech_provider.dart';
 import '../audio/audio_duration.dart';
 import '../audio/audio_version.dart';
@@ -102,6 +103,7 @@ export '../archive/archive_store.dart';
 export '../archive/archive_pairing.dart';
 export '../archive/archive_wire.dart';
 export '../ai/speech_provider.dart';
+export '../ai/diarization_model_store.dart';
 
 part 'recorder/playback.dart';
 part 'recorder/library.dart';
@@ -277,6 +279,7 @@ class RecorderController extends ChangeNotifier
     AskStore? askStore,
     SystemTasks? systemTasks,
     AnalysisService? contextAnalysisService,
+    DiarizationModelStore? diarizationModelStore,
     bool meetingLocalOnly = true,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
@@ -302,6 +305,12 @@ class RecorderController extends ChangeNotifier
        _transcriptPersister = transcriptPersister,
        _player = player ?? AudioPlayer() {
     this.meetingLocalOnly = meetingLocalOnly;
+    _ownsDiarizationModels = diarizationModelStore == null;
+    diarizationModels = diarizationModelStore ?? DiarizationModelStore();
+    diarizationModels.addListener(notifyListeners);
+    if (loadPersistedState || diarizationModelStore != null) {
+      unawaited(diarizationModels.refreshStatus());
+    }
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
     playbackHistory =
@@ -931,6 +940,9 @@ class RecorderController extends ChangeNotifier
 
   @override
   final TranscriptPersister? _transcriptPersister;
+  late final bool _ownsDiarizationModels;
+  @override
+  late final DiarizationModelStore diarizationModels;
 
   /// Available playback rates for the speed dropdown.
   static const List<double> playbackSpeeds = [
@@ -1031,6 +1043,8 @@ class RecorderController extends ChangeNotifier
     _topicRecommender.dispose();
     _qwenStt.dispose();
     _doubaoStt.dispose();
+    diarizationModels.removeListener(notifyListeners);
+    if (_ownsDiarizationModels) diarizationModels.dispose();
     _deferredJobs.dispose();
     unawaited(_appleSpeech.dispose());
     _wifi.dispose();
