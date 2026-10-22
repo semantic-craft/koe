@@ -78,6 +78,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
       resultSlot: 'minutes',
       instruction: template.prompt,
       validateResult: validateMinutes,
+      userNotes: widget.controller.analysisNotesFor(widget.reference),
       currentSource: () =>
           widget.controller.recordingAudioChanged(widget.reference)
           ? ''
@@ -367,6 +368,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
       }
       final busy = manager.busy(key);
       final running = manager.running(key);
+      final notes = widget.controller.bookmarksFor(widget.reference).length;
       final sourceMatches = <int, TranscriptSourceMatch>{};
       if (result != null &&
           result.sourceHash == analysisFingerprint(view.text) &&
@@ -446,6 +448,15 @@ class _MinutesPanelState extends State<MinutesPanel> {
                       ? null
                       : () => generate(result),
                   child: Text(result == null ? '生成纪要' : '重新生成纪要'),
+                ),
+              if (!busy && notes > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '生成时一并参考这条录音的 $notes 条书签（笔记和重点）。',
+                    key: const ValueKey('minutes-notes-hint'),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
               if (manager.errors[key] != null) Text(manager.errors[key]!),
               if (result != null &&

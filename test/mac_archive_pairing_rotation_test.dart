@@ -29,6 +29,23 @@ class _NoopSource implements ArchiveSource {
   }) async => isCurrent();
 }
 
+/// Holds every restart until [beforeRestart] completes, so a test can land the
+/// phone's reconnect in the gap a pairing reset leaves between stopping and
+/// restarting the listener.
+class _GatedRestartServer extends ArchiveDeskServer {
+  _GatedRestartServer({required super.store});
+
+  Future<void> Function()? beforeRestart;
+  bool _started = false;
+
+  @override
+  Future<void> start({int? port}) async {
+    if (_started) await beforeRestart?.call();
+    _started = true;
+    await super.start(port: port);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -60,50 +77,78 @@ void main() {
     }
   }
 
-  test('Mac 重置配对凭据或关闭接收后，手机不再显示已连接', () async {
+  // The link tests restart the desk while a phone still points at its port.
+  // Other archive test files bind the default port and could take it in that
+  // gap, so these desks ask the OS for a port of their own.
+  Future<MacArchiveController> openDesk({
+    ArchiveDeskServerFactory? deskServerFactory,
+  }) async {
     final deskStore = ArchiveDeskStore(
       directory: Directory('${root.path}/desk'),
     );
     await deskStore.load();
+    await deskStore.updatePreferredPort(0);
     final desk = MacArchiveController(
       source: _NoopSource(),
       isDesk: true,
       phoneStore: ArchivePhoneStore(inMemory: true),
       deskStore: deskStore,
+      deskServerFactory: deskServerFactory,
     );
     addTearDown(desk.dispose);
     await desk.initialize();
     await desk.setDeskReceiving(true);
-    MacArchiveController phone() => MacArchiveController(
+    return desk;
+  }
+
+  Future<MacArchiveController> connectedPhone(MacArchiveController desk) async {
+    final phone = MacArchiveController(
       source: _NoopSource(),
       isDesk: false,
       phoneStore: ArchivePhoneStore(inMemory: true),
       deskStore: ArchiveDeskStore(inMemory: true),
       linkCheckInterval: const Duration(milliseconds: 50),
     );
+    addTearDown(phone.dispose);
+    await phone.initialize();
+    await phone.pairWithCode(desk.deskPairing!.encode());
+    await phone.connectNow();
+    expect(phone.linkLabel, '已连接');
+    return phone;
+  }
 
-    final reset = phone();
-    addTearDown(reset.dispose);
-    await reset.initialize();
-    await reset.pairWithCode(desk.deskPairing!.encode());
-    await reset.connectNow();
-    expect(reset.linkLabel, '已连接');
+  test('Mac 重置配对凭据或关闭接收后，手机不再显示已连接', () async {
+    final desk = await openDesk();
 
+    final reset = await connectedPhone(desk);
     await desk.resetDeskPairing();
-    await until(() => !{'已连接', '连接中'}.contains(reset.linkLabel));
+    await until(() => reset.linkLabel == '连接失败');
     expect(reset.linkLabel, '连接失败');
     expect(reset.linkDetail, contains('配对密钥无效'));
 
-    final closed = phone();
-    addTearDown(closed.dispose);
-    await closed.initialize();
-    await closed.pairWithCode(desk.deskPairing!.encode());
-    await closed.connectNow();
-    expect(closed.linkLabel, '已连接');
-
+    final closed = await connectedPhone(desk);
     await desk.setDeskReceiving(false);
     await until(() => !{'已连接', '连接中'}.contains(closed.linkLabel));
     expect(closed.linkLabel, isNot('已连接'));
+  });
+
+  test('手机的重连落在 Mac 重置配对时的重启空档，之后仍提示配对密钥无效', () async {
+    late _GatedRestartServer server;
+    final desk = await openDesk(
+      deskServerFactory: (store) => server = _GatedRestartServer(store: store),
+    );
+    final phone = await connectedPhone(desk);
+
+    String? labelInGap;
+    server.beforeRestart = () async {
+      await until(() => phone.linkLabel == '等待 Mac');
+      labelInGap = phone.linkLabel;
+    };
+    await desk.resetDeskPairing();
+    expect(labelInGap, '等待 Mac');
+    await until(() => phone.linkLabel == '连接失败');
+    expect(phone.linkLabel, '连接失败');
+    expect(phone.linkDetail, contains('配对密钥无效'));
   });
 
   test(

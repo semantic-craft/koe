@@ -138,6 +138,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
       final result = manager.results[key];
       final busy = manager.busy(key);
       final running = manager.running(key);
+      final notes = widget.controller.bookmarksFor(widget.reference).length;
       final audioChanged = widget.controller.recordingAudioChanged(
         widget.reference,
       );
@@ -345,6 +346,9 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                           custom: custom,
                           templateId: custom ? null : activeTemplate.id,
                           instruction: custom ? instruction.text : null,
+                          userNotes: widget.controller.analysisNotesFor(
+                            widget.reference,
+                          ),
                           currentSource: () =>
                               widget.controller.recordingAudioChanged(
                                 widget.reference,
@@ -360,6 +364,15 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                               ? '开始分析'
                               : '生成摘要')
                         : '重新生成',
+                  ),
+                ),
+              if (!busy && notes > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '生成时一并参考这条录音的 $notes 条书签（笔记和重点）。',
+                    key: const ValueKey('analysis-notes-hint'),
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
               if (manager.errors[key] != null)
