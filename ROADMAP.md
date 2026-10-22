@@ -1,6 +1,6 @@
 # Koe 路线图
 
-更新：2026-10-21（Android 按用户 2026-10-20 决定解冻，范围以 #331 为准；P2 代码已合并，真机验收另列）。本文是 [#6 总工单](https://github.com/semantic-craft/koe/issues/6)、[#106 产品路线](https://github.com/semantic-craft/koe/issues/106) 与 [#124 手机优先规格](https://github.com/semantic-craft/koe/issues/124) 的一页摘要；需求细节和验收条件以工单为准，本文只回答「做完了什么、下一步做什么、什么先不做」。
+更新：2026-10-22（Android 开发工单 #336–#344 已全部合并，只剩真机验收 #345；P2 代码已合并，真机验收另列）。本文是 [#6 总工单](https://github.com/semantic-craft/koe/issues/6)、[#106 产品路线](https://github.com/semantic-craft/koe/issues/106) 与 [#124 手机优先规格](https://github.com/semantic-craft/koe/issues/124) 的一页摘要；需求细节和验收条件以工单为准，本文只回答「做完了什么、下一步做什么、什么先不做」。
 
 **方向：** 手机优先的个人记录与持续事项工具。原音频永久保留、文字可点回原声；在此之上整理今日事件、项目、待办、地点和日记，最后再开放给外部 AI。主导航为「今日 / 项目 / 资料」。Mac 是辅助阅读与归档端，不阻塞手机。
 
@@ -20,10 +20,11 @@
 - **P2 已解冻**：资料包导出与重新导入（#145）——资料详情「更多 → 导出…」选阅读稿（Markdown）或可恢复资料包（`.koepack`），原音频由用户明确选择是否带上；「新记录 → 导入资料包」（Mac 在录音库栏，导出可存成文件）在另一台设备或重装后恢复校订、时码、发言人、书签、地点和主题，同一资料重复导入不产生第二份，手改不同的正文并列保留不覆盖；不带音频的包先作为文字资料，补配同一原音频后完整恢复。格式见 [material-pack](docs/material-pack.md)；待真机验收（#280）。
 - **P2 已完成**：按住说话记录与提问（#142）——按 #112 的决定按入口区分意图：「新记录」里按住说话保存为原件并照常转写，「问 Koe」里按住说话识别后进连续问答；上滑或拖离按钮取消、不保存不发送；两处都保留文字输入。权限被拒、识别失败、断网时说明原因，语音问题保留到发出为止（重启后仍可重新识别或丢弃）。外部交办只回「暂未开放」、不执行；回答朗读可选、默认关闭、标明合成语音。待真机验收（#283）。
 - **Mac 辅助**：手机到 Mac 自动原件归档（#148）。
+- **Android 版**（[#331](https://github.com/semantic-craft/koe/issues/331)，用户 2026-10-20 解冻，只适配 Pixel 11 Pro / Android 17）：工具链、应用身份与图标（#336），界面按「手机」判断（#337），密钥进 Keystore 并关闭备份（#338），录音豆后台同步与常驻通知（#339），手机录音、纯文字记录、全天监听后台继续并可从通知停止（#340），导入音频转码（#341），回答朗读（#342），待办导出到系统日历（#343），长按图标「开始录音」（#344）。待真机验收（#345）。
 - **工程**：iOS 模拟器在 Apple Silicon 上可构建（#88）。
 - **产品决策已全部定稿**（#107–#110、#113、#116–#119、#121、#122）。
 
-仍待用户真机验收：#15、#16（双端日常使用），#71、#95、#96、#97，#166、#168、#170、#174，#176、#177、#178、#179。
+仍待用户真机验收：#15、#16（双端日常使用），#71、#95、#96、#97，#166、#168、#170、#174，#176、#177、#178、#179，Android #345。
 
 ## 下一个里程碑
 
@@ -47,16 +48,9 @@
 
 **3. Apple 端：统一真机验收。** P1 代码已全部合并，P2（#143、#147、#145、#142）也已按此顺序全部合并，真机验收见 #273、#280、#283 等。已有验收集中执行；用户已解冻的 Android 开发按下一项推进，不受旧「验收前不开新功能」表述限制。
 
-**4. Android：进行中（用户 2026-10-20 解冻）。** 以 [#331](https://github.com/semantic-craft/koe/issues/331) 为唯一现行规格，只适配 Pixel 11 Pro / Android 17，拆成子工单（依赖关系见各工单的 blocked-by）：
+**4. Android：代码已全部合并，待真机验收（用户 2026-10-20 解冻）。** 以 [#331](https://github.com/semantic-craft/koe/issues/331) 为唯一现行规格，只适配 Pixel 11 Pro / Android 17。开发工单 #336–#344 已合并（内容见「已交付」）；剩 [#345](https://github.com/semantic-craft/koe/issues/345)：`scripts/android-check` 的无人值守场景先在 Pixel 上跑，再由人带 D3200 统一走一遍它覆盖不到的项目（连接与取回、断开/接回、实体键与双击标记、真实录音与全天监听）。设备离线记为跳过，不算通过。
 
-- [#336](https://github.com/semantic-craft/koe/issues/336) 工具链、应用身份与图标、edge-to-edge、预测性返回，以及 `scripts/android-check` 真机冒烟脚本
-- [#337](https://github.com/semantic-craft/koe/issues/337) 界面按「手机」判断，不支持的能力明确提示
-- [#338](https://github.com/semantic-craft/koe/issues/338) 密钥存进 Android 安全存储
-- [#339](https://github.com/semantic-craft/koe/issues/339) 录音豆后台同步与常驻通知；[#340](https://github.com/semantic-craft/koe/issues/340) 手机录音、纯文字记录、全天监听在后台持续运行
-- [#341](https://github.com/semantic-craft/koe/issues/341) 导入本地音频；[#342](https://github.com/semantic-craft/koe/issues/342) 回答朗读；[#343](https://github.com/semantic-craft/koe/issues/343) 待办导出到系统日历；[#344](https://github.com/semantic-craft/koe/issues/344) 长按图标「开始录音」
-- [#345](https://github.com/semantic-craft/koe/issues/345) 需要真机：接录音豆与全部功能统一走一遍
-
-旧 #38 与 PR #62 已被新范围取代，不再作为独立任务恢复。代码交付与设备验收分开记录，D3200 最后集中验证一次；设备离线记为跳过。解冻不包含其他 Android 机型、Play 上架、本机识别/翻译的 Android 替代、Mac 双端同步或 P4。
+旧 #38 与 PR #62 已被新范围取代并关闭。解冻不包含其他 Android 机型、Play 上架、本机识别/翻译的 Android 替代、Mac 双端同步或 P4。
 
 ## 冻结（暂不开工，除非用户重新排期）
 
