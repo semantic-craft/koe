@@ -83,6 +83,7 @@ class BackgroundSyncService {
   final _works = <String, BackgroundWork>{};
   final _texts = <String, String>{};
   final _onStops = <String, VoidCallback>{};
+  final _onRefused = <String, VoidCallback>{};
   bool _askedForNotifications = false;
   _Request? _applied;
 
@@ -93,16 +94,24 @@ class BackgroundSyncService {
   /// [onStop] runs when the user taps 停止 on the notification of
   /// [BackgroundWork.stoppable] work. It should finish the work and [end] it;
   /// nothing restarts the work afterwards.
+  ///
+  /// [onRefused] runs when Android will not run the service as the work's
+  /// type, as it refuses microphone work begun while Koe is off screen
+  /// (behind the lock screen, say). The work is already ended by then; its
+  /// owner should stop it and may begin it again once Koe is on screen.
+  /// Work without [onRefused] stays and is retried on the next begin.
   Future<void> begin(
     BackgroundWork work, {
     String? text,
     VoidCallback? onStop,
+    VoidCallback? onRefused,
   }) async {
     if (!_enabled) return;
     _works.remove(work.id);
     _works[work.id] = work;
     _texts[work.id] = text ?? work.text;
     if (onStop != null) _onStops[work.id] = onStop;
+    if (onRefused != null) _onRefused[work.id] = onRefused;
     await _ensureNotificationPermission();
     await _apply();
   }
@@ -119,14 +128,27 @@ class BackgroundSyncService {
     if (!_enabled || _works.remove(work.id) == null) return;
     _texts.remove(work.id);
     _onStops.remove(work.id);
+    _onRefused.remove(work.id);
     await _apply();
   }
 
-  /// The notification's 停止 was tapped: stops every stoppable work.
   Future<Object?> _onNativeCall(MethodCall call) async {
-    if (call.method != 'stopRequested') {
-      throw MissingPluginException(call.method);
+    switch (call.method) {
+      case 'stopRequested':
+        await _stopRequested();
+      case 'refused':
+        // The service has stopped: Android refused the types it was
+        // starting as after `update` had answered.
+        _applied = null;
+        await _refuse({...(call.arguments as List).cast<String>()});
+      default:
+        throw MissingPluginException(call.method);
     }
+    return null;
+  }
+
+  /// The notification's 停止 was tapped: stops every stoppable work.
+  Future<void> _stopRequested() async {
     final handlers = <VoidCallback>[];
     var dropped = false;
     for (final work in [..._works.values]) {
@@ -146,7 +168,27 @@ class BackgroundSyncService {
     for (final handler in handlers) {
       handler();
     }
-    return null;
+  }
+
+  /// Ends the works of the refused [types] that have an `onRefused`, runs
+  /// the service as what is left and tells their owners. Nothing changes
+  /// when none has one, so a refusal never starts a retry loop.
+  Future<void> _refuse(Set<String> types) async {
+    final handlers = <VoidCallback>[];
+    for (final work in [..._works.values]) {
+      final handler = _onRefused[work.id];
+      if (handler == null || !types.contains(work.type.name)) continue;
+      _works.remove(work.id);
+      _texts.remove(work.id);
+      _onStops.remove(work.id);
+      _onRefused.remove(work.id);
+      handlers.add(handler);
+    }
+    if (handlers.isEmpty) return;
+    await _apply();
+    for (final handler in handlers) {
+      handler();
+    }
   }
 
   /// Before the first background work, ask for notifications so the
@@ -186,16 +228,17 @@ class BackgroundSyncService {
         _applied = null;
         return;
       }
-      // The service answers with the types it could start; a type whose
-      // permission is still missing is left out and retried on next begin.
+      // The service answers with the types it could start. One left out,
+      // for a missing permission or refused by Android, ends the works that
+      // can be told; the others are retried on the next begin.
       final started = await _channel.invokeListMethod<String>('update', {
         'types': request.types.toList(),
         'text': request.text,
         'stoppable': request.stoppable,
       });
-      _applied = started != null && started.toSet().containsAll(request.types)
-          ? request
-          : null;
+      final missing = request.types.difference({...?started});
+      _applied = missing.isEmpty ? request : null;
+      if (missing.isNotEmpty) await _refuse(missing);
     } on PlatformException catch (error) {
       debugPrint('[BackgroundSync] Could not update: $error');
     } on MissingPluginException catch (error) {

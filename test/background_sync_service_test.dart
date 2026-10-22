@@ -60,6 +60,14 @@ void main() {
         (_) {},
       );
 
+  Future<void> nativeRefuses(List<String> types) =>
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            channel.name,
+            channel.codec.encodeMethodCall(MethodCall('refused', types)),
+            (_) {},
+          );
+
   List<String> methods() => [for (final call in calls) call.method];
 
   Map<String, Object?> lastUpdate() => Map<String, Object?>.from(
@@ -161,6 +169,52 @@ void main() {
     await pumpEventQueue();
 
     expect(stopped, ['phoneRecording']);
+    expect(lastUpdate(), {
+      'types': ['connectedDevice'],
+      'text': 'Koe 正在同步录音',
+      'stoppable': false,
+    });
+  });
+
+  test('microphone work Android refuses after update answered is dropped and '
+      'its owner told; recorder sync starts again on its own', () async {
+    final sync = service();
+    final refused = <String>[];
+    await sync.begin(BackgroundWork.recorderSync);
+    await sync.begin(
+      BackgroundWork.textCapture,
+      onRefused: () => refused.add('textCapture'),
+    );
+
+    // Behind the lock screen startForeground throws in the service, which
+    // then stops.
+    await nativeRefuses(['connectedDevice', 'microphone']);
+    await pumpEventQueue();
+
+    expect(refused, ['textCapture']);
+    expect(lastUpdate(), {
+      'types': ['connectedDevice'],
+      'text': 'Koe 正在同步录音',
+      'stoppable': false,
+    });
+  });
+
+  test('microphone work the running service cannot add is dropped and its '
+      'owner told', () async {
+    nativeStarts = (types) => [
+      for (final type in types)
+        if (type != 'microphone') type,
+    ];
+    final sync = service();
+    final refused = <String>[];
+    await sync.begin(BackgroundWork.recorderSync);
+
+    await sync.begin(
+      BackgroundWork.phoneRecording,
+      onRefused: () => refused.add('phoneRecording'),
+    );
+
+    expect(refused, ['phoneRecording']);
     expect(lastUpdate(), {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',

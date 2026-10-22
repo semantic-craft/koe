@@ -246,6 +246,24 @@ void main() {
     expect(mic.starts, 1);
   });
 
+  test('on Android a take Android refuses while Koe is off screen stops, is '
+      'saved and says why', () async {
+    final service = FakeForegroundService();
+    controller = build();
+    addTearDown(controller.dispose);
+    await controller.startPhoneRecording();
+    expect(service.running, isTrue);
+
+    await service.refuse();
+
+    await until(() => controller.library.assets.isNotEmpty);
+    expect(controller.phoneRecordingActive, isFalse);
+    expect(
+      controller.phoneRecordingError,
+      'Koe 不在屏幕上时 Android 不让它开始用麦克风，录音已停下',
+    );
+  });
+
   test('a pause the user made survives the system resuming after a '
       'notification sound', () async {
     controller = build();

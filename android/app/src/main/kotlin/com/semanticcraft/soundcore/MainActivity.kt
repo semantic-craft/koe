@@ -53,6 +53,11 @@ class MainActivity : AudioServiceActivity() {
                 )
             }
         }
+        // Android would not run the service as these types (microphone while
+        // Koe is behind the lock screen): Dart stops that work and says why.
+        RecordingSyncService.refusedListener = { types ->
+            mainThread.post { backgroundSync.invokeMethod("refused", types) }
+        }
         // audio_service caches the engine past this activity, so Dart (and a
         // take) can outlive it. When the engine itself goes, nothing is left
         // to record or to answer 停止: stop the service with it.
@@ -63,6 +68,7 @@ class MainActivity : AudioServiceActivity() {
 
                 override fun onEngineWillDestroy() {
                     RecordingSyncService.stopListener = null
+                    RecordingSyncService.refusedListener = null
                     RecordingSyncService.stop(appContext)
                     if (watchedEngine === flutterEngine) watchedEngine = null
                 }

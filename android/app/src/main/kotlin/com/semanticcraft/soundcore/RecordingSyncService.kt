@@ -66,6 +66,10 @@ class RecordingSyncService : Service() {
             return START_NOT_STICKY
         }
         if (!apply()) {
+            // Typically microphone while Koe is behind the lock screen: the
+            // start was allowed but not the type. Dart drops that work.
+            refusedListener?.invoke(namesOf(requestedTypes))
+            requestedTypes = 0
             shutDown()
             return START_NOT_STICKY
         }
@@ -225,6 +229,13 @@ class RecordingSyncService : Service() {
 
         /** Asks Dart to finish the stoppable work; set while Flutter runs. */
         @Volatile var stopListener: (() -> Unit)? = null
+
+        /**
+         * Tells Dart the service stopped because Android refused the types
+         * it was starting as, after [update] had answered; set while Flutter
+         * runs.
+         */
+        @Volatile var refusedListener: ((List<String>) -> Unit)? = null
 
         /**
          * Runs the service as [types] with [text] on its notification.

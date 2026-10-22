@@ -181,6 +181,10 @@ mixin _RecorderTextCapture on ChangeNotifier {
   /// The microphone is paused by the system, for example by a call.
   bool textCapturePaused = false;
 
+  /// All-day listening Android refused waits for Koe to be on screen.
+  bool _textResumeOnScreen = false;
+  AppLifecycleListener? _textLifecycle;
+
   bool get textCaptureActive => _textId != null;
   bool get textCaptureStopping => _textStopping;
   bool get textCaptureConnected => _textSession?.isServerReady ?? false;
@@ -338,6 +342,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
             BackgroundWork.textCapture,
             text: _textNotice(),
             onStop: () => unawaited(stopTextCapture()),
+            onRefused: () => unawaited(_onTextBackgroundRefused()),
           ),
         );
       }
@@ -1007,6 +1012,31 @@ mixin _RecorderTextCapture on ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Android refused the microphone service, as it does when listening
+  /// begins while Koe is behind the lock screen: stop and keep the text.
+  /// All-day listening starts again the next time Koe is on screen.
+  Future<void> _onTextBackgroundRefused() async {
+    if (!textCaptureActive) return;
+    final allDay = _textAllDay;
+    await stopTextCapture();
+    if (_disposed || textCaptureActive) return;
+    textCaptureError = allDay
+        ? 'Koe 不在屏幕上时 Android 不让它开始用麦克风，回到 Koe 后接着听'
+        : 'Koe 不在屏幕上时 Android 不让它开始用麦克风，纯文字记录已停下';
+    if (allDay) {
+      await _writeAllDayMarker();
+      _textResumeOnScreen = true;
+      _textLifecycle ??= AppLifecycleListener(onResume: _onTextBackOnScreen);
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  void _onTextBackOnScreen() {
+    if (!_textResumeOnScreen) return;
+    _textResumeOnScreen = false;
+    unawaited(_resumeAllDayListening());
+  }
+
   /// Continues all-day listening that was still on when Koe last closed.
   Future<void> _resumeAllDayListening() async {
     try {
@@ -1116,6 +1146,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
   }
 
   void _disposeTextCapture() {
+    _textLifecycle?.dispose();
     _textTicker?.cancel();
     _textRetryTimer?.cancel();
     _textDraftTimer?.cancel();
