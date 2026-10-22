@@ -71,6 +71,7 @@ mixin _RecorderOrganize on ChangeNotifier {
   _RecordingSession? _sessionForReference(RecordingReference ref);
   bool _takenAsVoiceNote(String? path);
   String analysisKey(RecordingReference ref);
+  String analysisNotesFor(RecordingReference ref);
   Future<int> extractTodos(RecordingReference ref, {bool confirmRetry = false});
   int? fileIdFromPath(String path);
   abstract bool meetingLocalOnly;
@@ -484,6 +485,7 @@ mixin _RecorderOrganize on ChangeNotifier {
       templateId: summaryTemplateId,
       avoidDuplicateCharges: true,
       confirmedRestart: confirmed,
+      userNotes: analysisNotesFor(ref),
       currentSource: () =>
           recordingAudioChanged(ref) ? '' : _transcriptOf(path),
     );

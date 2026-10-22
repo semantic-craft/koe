@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../platform/device_kind.dart';
 import '../../state/recorder_controller.dart';
+import '../../state/recording_bookmarks.dart';
 import '../../theme/app_theme.dart';
 import '../import_audio.dart';
 import '../import_pack.dart';
@@ -85,6 +87,7 @@ Future<void> showPhoneRecordingSheet(BuildContext context) async {
     sheetAnimationStyle: AppMotion.sheetStyle(context),
     isDismissible: false,
     enableDrag: false,
+    isScrollControlled: true,
     builder: (_) => const PhoneRecordingPanel(),
   );
   if (saved != null) {
@@ -104,10 +107,17 @@ class PhoneRecordingPanel extends StatefulWidget {
 class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
   Timer? _ticker;
   bool _stopping = false;
+  final _notes = TextEditingController();
+
+  /// The notes as last kept, without text an input method is composing.
+  String _keptNotes = '';
 
   @override
   void initState() {
     super.initState();
+    _keptNotes = context.read<RecorderController>().phoneRecordingNotes;
+    _notes.text = _keptNotes;
+    _notes.addListener(_onNotesEdited);
     _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (mounted) setState(() {});
     });
@@ -123,7 +133,35 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _notes.dispose();
     super.dispose();
+  }
+
+  /// Puts the recording time in front of each line the user begins (#400),
+  /// then keeps the notes.
+  void _onNotesEdited() {
+    final value = _notes.value;
+    if (value.composing.isValid || value.text == _keptNotes) return;
+    final controller = context.read<RecorderController>();
+    final stamped = stampNewNoteLine(
+      _keptNotes,
+      value.text,
+      controller.phoneRecordingElapsed,
+    );
+    _keptNotes = stamped ?? value.text;
+    if (stamped != null) {
+      _notes.value = TextEditingValue(
+        text: stamped,
+        selection: TextSelection.collapsed(offset: stamped.length),
+      );
+    }
+    controller.setPhoneRecordingNotes(_keptNotes);
+  }
+
+  void _markHighlight() {
+    if (_stopping) return;
+    final at = context.read<RecorderController>().markPhoneRecordingHighlight();
+    if (at != null) unawaited(HapticFeedback.selectionClick());
   }
 
   Future<void> _stop() async {
@@ -197,118 +235,180 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
     final active = controller.phoneRecordingActive;
     final paused = controller.phoneRecordingPaused;
     final error = controller.phoneRecordingError;
+    final highlights = controller.phoneRecordingHighlights;
+    final markButton = OutlinedButton.icon(
+      key: const ValueKey('mark-phone-recording-highlight'),
+      onPressed: _stopping ? null : _markHighlight,
+      icon: const Icon(Icons.star_border_rounded),
+      label: const Text('标重点'),
+    );
     return PopScope(
       canPop: !active,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) unawaited(_confirmLeave());
       },
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+      child: CallbackShortcuts(
+        bindings: {
+          SingleActivator(
+            LogicalKeyboardKey.keyB,
+            meta: runsOnApple,
+            control: !runsOnApple,
+          ): _markHighlight,
+        },
+        child: Focus(
+          autofocus: true,
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                24,
+                20,
+                20 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (active && !paused) ...[
-                    const BreathingDot(),
-                    const SizedBox(width: 8),
-                  ],
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (active && !paused) ...[
+                        const BreathingDot(),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        active
+                            ? (paused
+                                  ? '已暂停'
+                                  : (runsOnMac ? '麦克风录音中' : '手机录音中'))
+                            : (runsOnMac ? '麦克风录音' : '手机录音'),
+                        key: const ValueKey('phone-recording-title'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   Text(
-                    active
-                        ? (paused
-                              ? '已暂停'
-                              : (runsOnMac ? '麦克风录音中' : '手机录音中'))
-                        : (runsOnMac ? '麦克风录音' : '手机录音'),
-                    key: const ValueKey('phone-recording-title'),
+                    _clock(controller.phoneRecordingElapsed),
+                    key: const ValueKey('phone-recording-elapsed'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
+                      fontSize: 40,
+                      fontWeight: FontWeight.w300,
+                      fontFeatures: [FontFeature.tabularFigures()],
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _clock(controller.phoneRecordingElapsed),
-                key: const ValueKey('phone-recording-elapsed'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 40,
-                  fontWeight: FontWeight.w300,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-              if (error != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  error,
-                  key: const ValueKey('phone-recording-error'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-                if (controller.phoneRecordingPermissionDenied) ...[
-                  const SizedBox(height: 8),
-                  Center(
-                    child: OutlinedButton(
-                      key: const ValueKey('open-microphone-settings'),
-                      onPressed: openMicrophonePrivacySettings,
-                      child: const Text('去系统设置'),
+                  if (error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      error,
+                      key: const ValueKey('phone-recording-error'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppColors.textSecondary),
                     ),
-                  ),
-                ],
-              ],
-              const SizedBox(height: 20),
-              if (active) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        key: ValueKey(
-                          paused
-                              ? 'resume-phone-recording'
-                              : 'pause-phone-recording',
+                    if (controller.phoneRecordingPermissionDenied) ...[
+                      const SizedBox(height: 8),
+                      Center(
+                        child: OutlinedButton(
+                          key: const ValueKey('open-microphone-settings'),
+                          onPressed: openMicrophonePrivacySettings,
+                          child: const Text('去系统设置'),
                         ),
-                        onPressed: _stopping
-                            ? null
-                            : paused
-                            ? controller.resumePhoneRecording
-                            : controller.pausePhoneRecording,
-                        icon: Icon(
-                          paused
-                              ? Icons.fiber_manual_record_rounded
-                              : Icons.pause_rounded,
-                        ),
-                        label: Text(paused ? '继续' : '暂停'),
+                      ),
+                    ],
+                  ],
+                  if (active) ...[
+                    const SizedBox(height: 16),
+                    TextField(
+                      key: const ValueKey('phone-recording-notes'),
+                      controller: _notes,
+                      minLines: 3,
+                      maxLines: 6,
+                      keyboardType: TextInputType.multiline,
+                      decoration: const InputDecoration(
+                        labelText: '我的笔记',
+                        hintText: '边听边记，每行会记下当时的录音时间',
+                        alignLabelWithHint: true,
+                        border: OutlineInputBorder(),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton.icon(
-                        key: const ValueKey('stop-phone-recording'),
-                        onPressed: _stopping ? null : _stop,
-                        icon: const Icon(Icons.stop_rounded),
-                        label: const Text('结束并保存'),
-                      ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        runsOnMac
+                            ? Tooltip(message: '标重点（⌘B）', child: markButton)
+                            : markButton,
+                        const SizedBox(width: 12),
+                        if (highlights.isNotEmpty)
+                          Expanded(
+                            child: Text(
+                              '已标 ${highlights.length} 处 · 最近 '
+                              '${recordingTimeLabel(highlights.last)}',
+                              key: const ValueKey('phone-recording-highlights'),
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ],
-                ),
-                const SizedBox(height: 4),
-                TextButton(
-                  key: const ValueKey('discard-phone-recording'),
-                  onPressed: _stopping ? null : _discard,
-                  child: const Text('放弃这段录音'),
-                ),
-              ] else
-                TextButton(
-                  key: const ValueKey('close-phone-recording'),
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('关闭'),
-                ),
-            ],
+                  const SizedBox(height: 20),
+                  if (active) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            key: ValueKey(
+                              paused
+                                  ? 'resume-phone-recording'
+                                  : 'pause-phone-recording',
+                            ),
+                            onPressed: _stopping
+                                ? null
+                                : paused
+                                ? controller.resumePhoneRecording
+                                : controller.pausePhoneRecording,
+                            icon: Icon(
+                              paused
+                                  ? Icons.fiber_manual_record_rounded
+                                  : Icons.pause_rounded,
+                            ),
+                            label: Text(paused ? '继续' : '暂停'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton.icon(
+                            key: const ValueKey('stop-phone-recording'),
+                            onPressed: _stopping ? null : _stop,
+                            icon: const Icon(Icons.stop_rounded),
+                            label: const Text('结束并保存'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    TextButton(
+                      key: const ValueKey('discard-phone-recording'),
+                      onPressed: _stopping ? null : _discard,
+                      child: const Text('放弃这段录音'),
+                    ),
+                  ] else
+                    TextButton(
+                      key: const ValueKey('close-phone-recording'),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('关闭'),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
