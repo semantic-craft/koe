@@ -52,3 +52,11 @@
 - Done right: 停掉真机运行后先看 `ls -ld ~/.cache/koe-pixel.lock`，是自己拿的就放回。手机上大家共用的状态（logcat 缓冲、系统设置）不清不改，只读自己这一轮的部分。
 - 验证点：没有运行在用 Pixel 时，`ls -ld ~/.cache/koe-pixel.lock` 报不存在。
 - Seen 1x (2026-10-22)
+
+### 修一个页面的布局缺陷，要把同写法的页面一起查
+
+- 出事：2026-10-19 #260 发现资料页上滑后分段控件进了状态栏，#265 只给资料页加了只让顶部的 `SafeArea`。今日页、项目页同样是 `GradientScaffold(child: ListView(...))`，页头自带的状态栏留白随列表滚走；设置页的返回键是叠在列表上的 `Positioned`。同类缺陷一直留到 2026-10-22 在 Pixel 上跑 Artemis 冒烟测试、逐张看截图才发现（#384），Artemis 自己给的结论是 PASS。
+- 修复（#384）：今日页、项目页加只让顶部的 `SafeArea`，设置页的返回键移到列表上方单独一行；没滚动时各元素位置不变。
+- Done right: 修布局缺陷前先 `rg -n 'GradientScaffold\(' lib/ui` 列出同写法的页面逐个确认（有 AppBar 的、页头固定不随列表滚动的不受影响），回退测试一次覆盖所有同写法的页面。冒烟或探索式测试的 PASS 不看画面，截图要自己逐张看。
+- 验证点：`flutter test test/status_bar_scroll_test.dart test/library_screen_scroll_test.dart` 通过（顶部安全区 62pt，上滑后列表顶边 ≥ 62；设置页列表顶边 ≥ 返回键底边）。
+- Seen 2x (2026-10-19, 2026-10-22)
