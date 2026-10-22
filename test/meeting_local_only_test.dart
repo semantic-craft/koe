@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,9 +12,15 @@ import 'package:koe/ai/doubao_stt.dart';
 import 'package:koe/ai/engine_config.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
+import 'package:koe/audio/audio_transcoder.dart';
+import 'package:koe/audio/opus_pcm_decoder.dart';
+import 'package:koe/ble/ble_service.dart';
+import 'package:koe/ble/realtime_stream.dart';
 import 'package:koe/platform/phone_mic_stream.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
+import 'package:koe/protocol/frame.dart';
+import 'package:koe/protocol/models.dart';
 import 'package:koe/state/app_settings_store.dart';
 import 'package:koe/state/context/commitments.dart';
 import 'package:koe/state/file_job_journal.dart';
@@ -120,6 +127,7 @@ class _WireRecordingClient extends http.BaseClient {
           'oss_access_key_id': 'access',
           'x_oss_object_acl': 'private',
           'x_oss_forbid_overwrite': 'true',
+          'max_file_size_mb': 100,
         },
       };
     } else if (request.url.host == 'oss.example.com') {
@@ -274,29 +282,48 @@ class _OnDeviceAppleSpeech extends AppleSpeechService {
 }
 
 class _FakeStreamSession implements SttStreamSession {
-  _FakeStreamSession(this.finalText);
+  _FakeStreamSession(
+    this.finalText, {
+    this.startGate,
+    bool initiallyReady = false,
+  }) : _open = initiallyReady,
+       _ready = initiallyReady;
 
   final String finalText;
+  final Completer<void>? startGate;
+  final Completer<void> startCalled = Completer<void>();
   final _events = StreamController<SttStreamEvent>.broadcast();
-  bool _open = false;
+  final BytesBuilder sentPcm = BytesBuilder(copy: false);
+  bool _open;
+  bool _ready;
+  bool closed = false;
 
   @override
   Stream<SttStreamEvent> get events => _events.stream;
 
   @override
-  bool get isOpen => _open;
+  bool get isOpen => _open && !closed;
 
   @override
-  bool get isServerReady => _open;
+  bool get isServerReady => _open && _ready && !closed;
+
+  void markServerReady() {
+    _open = true;
+    _ready = true;
+  }
 
   @override
   Future<void> start({Duration timeout = const Duration(seconds: 15)}) async {
     _open = true;
+    if (!startCalled.isCompleted) startCalled.complete();
+    if (startGate != null) await startGate!.future;
+    if (!closed) _ready = true;
   }
 
   @override
   void sendPcm(Uint8List pcm16le) {
-    if (!_open) return;
+    if (!isServerReady) return;
+    sentPcm.add(pcm16le);
     _events.add(
       SttStreamEvent(type: 'partial', text: finalText, speechFinal: true),
     );
@@ -310,17 +337,22 @@ class _FakeStreamSession implements SttStreamSession {
     Duration timeout = const Duration(seconds: 20),
   }) async {
     _open = false;
+    _ready = false;
     return SttStreamEvent(type: 'done', text: finalText, isFinal: true);
   }
 
   @override
   Future<void> close() async {
+    closed = true;
     _open = false;
+    _ready = false;
   }
 
   @override
   Future<void> dispose() async {
+    closed = true;
     _open = false;
+    _ready = false;
     await _events.close();
   }
 }
@@ -425,6 +457,285 @@ class _ControllableFileJobJournal extends FileJobJournal {
       await gate.future;
     }
     await super.save();
+  }
+}
+
+class _ControllableTranscoder implements AudioTranscoder {
+  final Completer<void> toWavReached = Completer<void>();
+  Completer<void>? toWavGate;
+
+  @override
+  Future<void> toWav(String input, String output) async {
+    if (!toWavReached.isCompleted) toWavReached.complete();
+    if (toWavGate != null) await toWavGate!.future;
+    await File(output).writeAsBytes(_patternedWav(repeats: 100));
+  }
+}
+
+class _LengthInterceptingFile extends FileSystemEntity implements File {
+  _LengthInterceptingFile(this._delegate, this._onLength);
+
+  final File _delegate;
+  final Future<void> Function(String path) _onLength;
+
+  @override
+  Future<int> length() async {
+    await _onLength(path);
+    return _delegate.length();
+  }
+
+  @override
+  int lengthSync() => _delegate.lengthSync();
+
+  @override
+  String get path => _delegate.path;
+
+  @override
+  Uri get uri => _delegate.uri;
+
+  @override
+  File get absolute => _LengthInterceptingFile(_delegate.absolute, _onLength);
+
+  @override
+  Future<bool> exists() => _delegate.exists();
+
+  @override
+  bool existsSync() => _delegate.existsSync();
+
+  @override
+  Future<FileStat> stat() => _delegate.stat();
+
+  @override
+  FileStat statSync() => _delegate.statSync();
+
+  @override
+  Future<RandomAccessFile> open({FileMode mode = FileMode.read}) =>
+      _delegate.open(mode: mode);
+
+  @override
+  RandomAccessFile openSync({FileMode mode = FileMode.read}) =>
+      _delegate.openSync(mode: mode);
+
+  @override
+  Stream<List<int>> openRead([int? start, int? end]) =>
+      _delegate.openRead(start, end);
+
+  @override
+  IOSink openWrite({
+    FileMode mode = FileMode.write,
+    Encoding encoding = utf8,
+  }) => _delegate.openWrite(mode: mode, encoding: encoding);
+
+  @override
+  Future<Uint8List> readAsBytes() => _delegate.readAsBytes();
+
+  @override
+  Uint8List readAsBytesSync() => _delegate.readAsBytesSync();
+
+  @override
+  Future<String> readAsString({Encoding encoding = utf8}) =>
+      _delegate.readAsString(encoding: encoding);
+
+  @override
+  String readAsStringSync({Encoding encoding = utf8}) =>
+      _delegate.readAsStringSync(encoding: encoding);
+
+  @override
+  Future<List<String>> readAsLines({Encoding encoding = utf8}) =>
+      _delegate.readAsLines(encoding: encoding);
+
+  @override
+  List<String> readAsLinesSync({Encoding encoding = utf8}) =>
+      _delegate.readAsLinesSync(encoding: encoding);
+
+  @override
+  Future<File> writeAsBytes(
+    List<int> bytes, {
+    FileMode mode = FileMode.write,
+    bool flush = false,
+  }) => _delegate.writeAsBytes(bytes, mode: mode, flush: flush);
+
+  @override
+  void writeAsBytesSync(
+    List<int> bytes, {
+    FileMode mode = FileMode.write,
+    bool flush = false,
+  }) => _delegate.writeAsBytesSync(bytes, mode: mode, flush: flush);
+
+  @override
+  Future<File> writeAsString(
+    String contents, {
+    FileMode mode = FileMode.write,
+    Encoding encoding = utf8,
+    bool flush = false,
+  }) => _delegate.writeAsString(
+    contents,
+    mode: mode,
+    encoding: encoding,
+    flush: flush,
+  );
+
+  @override
+  void writeAsStringSync(
+    String contents, {
+    FileMode mode = FileMode.write,
+    Encoding encoding = utf8,
+    bool flush = false,
+  }) => _delegate.writeAsStringSync(
+    contents,
+    mode: mode,
+    encoding: encoding,
+    flush: flush,
+  );
+
+  @override
+  Future<File> create({bool recursive = false, bool exclusive = false}) =>
+      _delegate.create(recursive: recursive, exclusive: exclusive);
+
+  @override
+  void createSync({bool recursive = false, bool exclusive = false}) =>
+      _delegate.createSync(recursive: recursive, exclusive: exclusive);
+
+  @override
+  Future<File> rename(String newPath) => _delegate.rename(newPath);
+
+  @override
+  File renameSync(String newPath) => _delegate.renameSync(newPath);
+
+  @override
+  Future<File> copy(String newPath) => _delegate.copy(newPath);
+
+  @override
+  File copySync(String newPath) => _delegate.copySync(newPath);
+
+  @override
+  Future<FileSystemEntity> delete({bool recursive = false}) =>
+      _delegate.delete(recursive: recursive);
+
+  @override
+  void deleteSync({bool recursive = false}) =>
+      _delegate.deleteSync(recursive: recursive);
+
+  @override
+  Future<DateTime> lastAccessed() => _delegate.lastAccessed();
+
+  @override
+  DateTime lastAccessedSync() => _delegate.lastAccessedSync();
+
+  @override
+  Future<dynamic> setLastAccessed(DateTime time) =>
+      _delegate.setLastAccessed(time);
+
+  @override
+  void setLastAccessedSync(DateTime time) =>
+      _delegate.setLastAccessedSync(time);
+
+  @override
+  Future<DateTime> lastModified() => _delegate.lastModified();
+
+  @override
+  DateTime lastModifiedSync() => _delegate.lastModifiedSync();
+
+  @override
+  Future<dynamic> setLastModified(DateTime time) =>
+      _delegate.setLastModified(time);
+
+  @override
+  void setLastModifiedSync(DateTime time) =>
+      _delegate.setLastModifiedSync(time);
+
+  @override
+  Future<String> resolveSymbolicLinks() => _delegate.resolveSymbolicLinks();
+
+  @override
+  String resolveSymbolicLinksSync() => _delegate.resolveSymbolicLinksSync();
+
+  @override
+  Stream<FileSystemEvent> watch({
+    int events = FileSystemEvent.all,
+    bool recursive = false,
+  }) => _delegate.watch(events: events, recursive: recursive);
+
+  @override
+  bool get isAbsolute => _delegate.isAbsolute;
+
+  @override
+  Directory get parent => _delegate.parent;
+}
+
+final class _LengthHookIOOverrides extends IOOverrides {
+  _LengthHookIOOverrides(this._onLength);
+  final Future<void> Function(String path) _onLength;
+
+  @override
+  File createFile(String path) =>
+      _LengthInterceptingFile(super.createFile(path), _onLength);
+}
+
+class _LiveTestBle extends BleService {
+  final _packets = StreamController<DecodedPacket>.broadcast();
+  final _connections = StreamController<bool>.broadcast();
+
+  @override
+  Stream<DecodedPacket> get packets => _packets.stream;
+
+  @override
+  Stream<List<ScannedDevice>> get scanResults => const Stream.empty();
+
+  @override
+  Stream<bool> get connectionState => _connections.stream;
+
+  @override
+  Stream<String> get logs => const Stream.empty();
+
+  @override
+  bool get isConnected => true;
+
+  @override
+  Future<void> writeCommand(List<int> frame) async {}
+
+  @override
+  Future<void> dispose() async {
+    await _packets.close();
+    await _connections.close();
+  }
+}
+
+const String _opus20msPacketHex =
+    '7881a75d6c9e99ac0000067e5639f73b1ea2dc310f523839393ea3d08447cbe1'
+    'b6b8ff44143d7621af0734dd0787ec99fec0f544189d5f482942ded82f85b618'
+    'f43b6492de947050e097687d6c10d0af638553a27165e791290180531504';
+
+Uint8List _opusPacketBytes() => Uint8List.fromList(<int>[
+  for (var i = 0; i < _opus20msPacketHex.length; i += 2)
+    int.parse(_opus20msPacketHex.substring(i, i + 2), radix: 16),
+]);
+
+void _ensureMacosOpusLibraryLoaded() {
+  if (!Platform.isMacOS) return;
+  final configFile = File(
+    '${Directory.current.path}/.dart_tool/package_config.json',
+  );
+  if (!configFile.existsSync()) return;
+  final config =
+      jsonDecode(configFile.readAsStringSync()) as Map<String, Object?>;
+  final packages = config['packages'] as List<Object?>;
+  for (final entry in packages) {
+    final package = entry as Map<String, Object?>;
+    if (package['name'] != 'opus_codec_macos') continue;
+    final rootUri = configFile.parent.uri.resolve(package['rootUri'] as String);
+    final rootDir = Directory(rootUri.toFilePath());
+    final binaries = Directory('${rootDir.path}/macos/opus.xcframework')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('/opus.framework/opus'))
+        .toList();
+    if (binaries.isNotEmpty) {
+      OpusPcmDecoder.debugUseOpusLibrary(
+        DynamicLibrary.open(binaries.first.path),
+      );
+    }
+    break;
   }
 }
 
@@ -1049,6 +1360,71 @@ void main() {
       );
       expect(queueController.recordingView(secondRef).text, isEmpty);
       expect(queueController.recordingView(secondRef).error, contains('确认'));
+
+      // 覆盖「开关已打开时从磁盘恢复已有 taskId 的 running 云端任务」：只查询结果、不上传音频
+      wire.requests.clear();
+      final submittedAudio = File('${dir.path}/1760000955.wav');
+      await submittedAudio.writeAsBytes(_patternedWav(repeats: 100));
+      final submittedJournalFile = File('${dir.path}/submitted_jobs.json');
+      final submittedSeed = FileJobJournal(file: submittedJournalFile);
+      final submittedJob = await submittedSeed.enqueue(
+        'file:1760000955',
+        submittedAudio.path,
+        const SpeechConfiguration(
+          provider: SttProvider.qwen,
+          sourceLanguage: 'auto',
+          targetLanguage: 'zh',
+          ownerLanguage: 'zh',
+          guestLanguage: 'en',
+          mode: SttDisplayMode.transcription,
+          enabled: true,
+          appleReady: false,
+          appleTranslationReady: false,
+          engines: {
+            SttProvider.qwen: EngineConfig(
+              apiKey: 'qwen-test-key',
+              baseUrl: QwenSttService.defaultBaseUrl,
+              model: QwenSttService.defaultModel,
+            ),
+          },
+        ),
+      );
+      submittedJob
+        ..stage = 'running'
+        ..taskId = 'task-cloud-1';
+      await submittedSeed.save();
+
+      final resumeSubmittedController = RecorderController(
+        loadPersistedState: false,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        fileJobJournal: FileJobJournal(file: submittedJournalFile),
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-submitted'),
+      )..exportedPaths = [submittedAudio.path];
+      addTearDown(resumeSubmittedController.dispose);
+
+      final submittedRef = RecordingReference(
+        fileId: 1760000955,
+        path: submittedAudio.path,
+      );
+      await _until(
+        () =>
+            resumeSubmittedController.recordingView(submittedRef).text ==
+                '云端千问转写结果' &&
+            !resumeSubmittedController.fileProcessingBusy &&
+            !resumeSubmittedController.recordingView(submittedRef).processing,
+      );
+      expect(
+        wire.requests.map((r) => '${r.method} ${r.url.path}').toList(),
+        ['GET /api/v1/tasks/task-cloud-1', 'GET /transcript.json'],
+        reason: '已有 taskId 的恢复任务在开关打开时应仅查询结果而不重新上传音频',
+      );
+      expect(
+        wire.requests.every((r) => r.bodyBytes.isEmpty),
+        isTrue,
+      );
     },
   );
 
@@ -1403,6 +1779,262 @@ void main() {
       final reloaded = FileJobJournal(file: journalFile);
       await reloaded.load();
       expect(reloaded.jobs['file:1760000977']?.stage, 'failed');
+
+      // 子场景 2：已进入千问本地准备阶段（running 落盘已完成、尚未发 policy 请求），打开开关后零 policy / 零 OSS 请求
+      wire.requests.clear();
+      final prePolicyAudio = File('${dir.path}/1760000978.wav');
+      await prePolicyAudio.writeAsBytes(_patternedWav(repeats: 100));
+      final prePolicyJournalFile = File('${dir.path}/pre_policy_jobs.json');
+      final prePolicyController = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        fileJobJournal: FileJobJournal(file: prePolicyJournalFile),
+        retrievedAudioSettleTime: Duration.zero,
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-pre-policy'),
+      )..exportedPaths = [prePolicyAudio.path];
+      addTearDown(prePolicyController.dispose);
+
+      final lengthReached = Completer<void>();
+      final lengthGate = Completer<void>();
+      var interceptCount = 0;
+      await IOOverrides.runWithIOOverrides(
+        () async {
+          final future = prePolicyController.transcribeLocalFile(
+            prePolicyAudio.path,
+          );
+          await lengthReached.future;
+          // 此时 running 落盘已完成，正处于 QwenSttService 内部本地准备阶段（_policy 之前）
+          prePolicyController.setMeetingLocalOnly(true);
+          lengthGate.complete();
+          await future;
+        },
+        _LengthHookIOOverrides((path) async {
+          if (path == prePolicyAudio.path) {
+            interceptCount++;
+            // 第 2 次 length() 在 qwenUploadAudio 之后、_upload/_policy 之前
+            if (interceptCount == 2 && !lengthReached.isCompleted) {
+              lengthReached.complete();
+              await lengthGate.future;
+            }
+          }
+        }),
+      );
+      expect(
+        wire.requests.map((r) => '${r.method} ${r.url}').toList(),
+        isEmpty,
+        reason: '千问本地准备阶段打开开关后，不得发出 policy 或 OSS 请求',
+      );
+      expect(
+        prePolicyController
+            .recordingView(
+              RecordingReference(fileId: 1760000978, path: prePolicyAudio.path),
+            )
+            .error,
+        contains('确认'),
+      );
+
+      // 子场景 3：千问 policy 返回后、OSS send 前（max_file_size_mb 校验 file.length() 窗口）打开开关，零 OSS 请求
+      wire.requests.clear();
+      final postPolicyAudio = File('${dir.path}/1760000979.wav');
+      await postPolicyAudio.writeAsBytes(_patternedWav(repeats: 100));
+      final postPolicyJournalFile = File('${dir.path}/post_policy_jobs.json');
+      final postPolicyController = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        fileJobJournal: FileJobJournal(file: postPolicyJournalFile),
+        retrievedAudioSettleTime: Duration.zero,
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-post-policy'),
+      )..exportedPaths = [postPolicyAudio.path];
+      addTearDown(postPolicyController.dispose);
+
+      final postPolicyLengthReached = Completer<void>();
+      final postPolicyLengthGate = Completer<void>();
+      var postPolicyLengthCalls = 0;
+      await IOOverrides.runWithIOOverrides(
+        () async {
+          final future = postPolicyController.transcribeLocalFile(
+            postPolicyAudio.path,
+          );
+          await postPolicyLengthReached.future;
+          // 此时 _policy 已返回，正处于 _postToOss / client.send 之前的 file.length() 窗口
+          postPolicyController.setMeetingLocalOnly(true);
+          postPolicyLengthGate.complete();
+          await future;
+        },
+        _LengthHookIOOverrides((path) async {
+          if (path == postPolicyAudio.path) {
+            postPolicyLengthCalls++;
+            // 第 3 次 length() 在 _policy 返回后校验 maxFileSizeMb 处（_postToOss 前）
+            if (postPolicyLengthCalls == 3 &&
+                !postPolicyLengthReached.isCompleted) {
+              postPolicyLengthReached.complete();
+              await postPolicyLengthGate.future;
+            }
+          }
+        }),
+      );
+      expect(
+        wire.requests
+            .where((r) => r.url.host.contains('oss'))
+            .map((r) => '${r.method} ${r.url}')
+            .toList(),
+        isEmpty,
+        reason: 'policy 之后、OSS send 之前打开开关，不得向 OSS 发出上传请求',
+      );
+
+      // 子场景 4：豆包音频准备（AudioTranscoder.toWav）期间打开开关，释放后零上传请求
+      wire.requests.clear();
+      final doubaoM4a = File('${dir.path}/1760000980.m4a');
+      final m4aHeader = Uint8List(400);
+      m4aHeader.setRange(0, 4, const [0, 0, 0, 0x18]);
+      m4aHeader.setRange(4, 12, ascii.encode('ftypM4A '));
+      await doubaoM4a.writeAsBytes(m4aHeader);
+
+      final transcoder = _ControllableTranscoder()
+        ..toWavGate = Completer<void>();
+      final doubaoController = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        doubaoSpeech: DoubaoSttService(client: wire, transcoder: transcoder)
+          ..apiKeyOverride = 'doubao-test-key',
+        fileJobJournal: FileJobJournal(
+          file: File('${dir.path}/doubao_window_jobs.json'),
+        ),
+        retrievedAudioSettleTime: Duration.zero,
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-doubao-window'),
+      )
+        ..setSpeechProvider(SttProvider.doubao)
+        ..exportedPaths = [doubaoM4a.path];
+      addTearDown(doubaoController.dispose);
+
+      final doubaoFuture = doubaoController.transcribeLocalFile(doubaoM4a.path);
+      await transcoder.toWavReached.future;
+      // 此时已通过 running 落盘并进入 DoubaoSttService 内部准备阶段
+      doubaoController.setMeetingLocalOnly(true);
+      transcoder.toWavGate!.complete();
+      await doubaoFuture;
+
+      expect(
+        wire.requests.map((r) => '${r.method} ${r.url}').toList(),
+        isEmpty,
+        reason: '豆包准备阶段打开开关后，不得向豆包上传端点发送任何请求或音频字节',
+      );
+      expect(
+        doubaoController
+            .recordingView(
+              RecordingReference(fileId: 1760000980, path: doubaoM4a.path),
+            )
+            .error,
+        contains('确认'),
+      );
+    },
+  );
+
+  test(
+    '(i) 会议云端实时转写「已连接」与「握手中」期间打开「录音只留本机」开关：此后不再发送任何音频字节',
+    () async {
+      _ensureMacosOpusLibraryLoaded();
+      final wire = _WireRecordingClient();
+      final ble = _LiveTestBle();
+      addTearDown(ble.dispose);
+
+      // 1. 「已连接」场景：实时流已连接并已发送音频，打开开关后继续收到实时帧，不再发送任何音频字节
+      final connectedStream = _FakeStreamSession(
+        '实时已识别前半段',
+        initiallyReady: true,
+      );
+      final controller = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        ble: ble,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-live-connected'),
+      )
+        ..connected = true
+        ..phase = AppPhase.ready;
+      addTearDown(controller.dispose);
+
+      await controller.startRecord();
+      controller.attachSttStreamForTesting(connectedStream);
+
+      // 打开开关前发送一帧真实 Opus 包，解码后向流发送 640 字节 PCM
+      controller.handleRealtimeOpusFrameForTesting(_opusPacketBytes());
+      final bytesBeforeToggle = connectedStream.sentPcm.length;
+      expect(bytesBeforeToggle, greaterThan(0));
+
+      // 录音中途打开「录音只留本机」开关
+      controller.setMeetingLocalOnly(true);
+
+      // 打开开关后继续收到多帧实时 Opus 包，不得再向云端流发送任何字节
+      controller.handleRealtimeOpusFrameForTesting(_opusPacketBytes());
+      controller.handleRealtimeOpusFrameForTesting(_opusPacketBytes());
+      final bytesAfterToggle =
+          connectedStream.sentPcm.length - bytesBeforeToggle;
+      expect(
+        bytesAfterToggle,
+        0,
+        reason: '实时流「已连接」期间打开「录音只留本机」开关后，不得再向云端流发送任何音频字节',
+      );
+      expect(connectedStream.closed, isTrue);
+
+      // 2. 「握手中」场景：_ensureStreamStt 正在执行 start() 异步握手且早期帧已缓存在 _pendingPcm，
+      // 握手期间打开开关后再释放握手，缓冲帧与后续帧均不得发送且流被关闭
+      final handshakeGate = Completer<void>();
+      final handshakingStream = _FakeStreamSession(
+        '握手中文本',
+        startGate: handshakeGate,
+        initiallyReady: false,
+      );
+      final handshakeController = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        ble: ble,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        speechStream: (_) => handshakingStream,
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-live-handshake'),
+      )
+        ..connected = true
+        ..phase = AppPhase.ready;
+      addTearDown(handshakeController.dispose);
+
+      await handshakeController.startRecord();
+      // 送入第一帧 Opus：解码后 640 字节进入 _pendingPcm，并触发 _ensureStreamStt -> start()
+      handshakeController.handleRealtimeOpusFrameForTesting(_opusPacketBytes());
+      await handshakingStream.startCalled.future;
+      expect(handshakingStream.sentPcm.length, 0);
+
+      // 在 start() 异步握手尚未返回时打开「录音只留本机」开关，然后释放握手并继续送帧
+      handshakeController.setMeetingLocalOnly(true);
+      handshakeGate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      handshakeController.handleRealtimeOpusFrameForTesting(_opusPacketBytes());
+      handshakeController.handleRealtimeStateForTesting(
+        const RealtimeStreamState(active: false),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(
+        handshakingStream.sentPcm.length,
+        0,
+        reason: '实时流「握手中」期间打开「录音只留本机」开关后，缓冲帧与新帧均不得发送到云端流',
+      );
+      expect(handshakingStream.closed, isTrue);
     },
   );
 }

@@ -28,6 +28,7 @@ mixin _RecorderSettings on ChangeNotifier {
   abstract bool _preferStreamStt;
   abstract final QwenSttService _qwenStt;
   void _resetTranslationTurns();
+  void _revokeCloudLiveStreamIfNeeded();
   String _speechErrorMessage(Object error);
   abstract bool connected;
   abstract DeviceInfoModel? info;
@@ -360,6 +361,7 @@ mixin _RecorderSettings on ChangeNotifier {
   void setMeetingLocalOnly(bool v) {
     if (meetingLocalOnly == v) return;
     meetingLocalOnly = v;
+    if (v) _revokeCloudLiveStreamIfNeeded();
     notifyListeners();
     unawaited(_persistSettings());
     if (v) unawaited(refreshAppleCapabilities());
