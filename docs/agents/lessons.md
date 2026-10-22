@@ -40,6 +40,15 @@
 
 - 出事：2026-10-22 #344 快捷方式场景头一次真正在 Pixel 上跑（#347 到 #354 的场景提交时 Pixel 都离线；#345 的记录里，之后只有 credentials_test 在真机上跑通过），接连失败。`moveTaskToBack` 后 Koe 的生命周期一直是 resumed：手机充电，息屏 30 秒就进时钟屏保（`com.google.assistant.hubui` 的 `EverydayClockDreamService`），Koe 留在屏保后面，只收到 `wm_on_top_resumed_lost_called`。改按 Home 键后，屏保一退就露出锁屏；锁屏要 PIN，`wm dismiss-keyguard` 解不开。点快捷方式时 Koe 只在锁屏后面恢复一下又暂停（`wm_pause_activity … sleep`、`wm_set_keyguard_occluded [0,0,0]`），麦克风前台服务被拒：logcat 里服务本身获准启动（`ACTIVITY_VISIBILITY_GRACE_PERIOD`），但 uidState 是 `TPSL`（置顶但在睡眠）、`allowWiu:-1`，接着报 `can not have location/camera/microphone access`，`startForeground` 抛 SecurityException。
 - 修复：`KOE_ADB: home` 先 `wake-screen` 再按 Home，场景等 Koe 真进了后台。原生状态加 `deviceLocked`（`KeyguardManager.isDeviceLocked`）；手机锁着时场景打印 `KOE_ADB: skip <原因>` 并跳过，`scripts/android-check` 以 77 退出：记为跳过，不算通过也不算失败。试过离屏 8 秒后再点快捷方式，锁着时照样被拒。手机解锁后同一场景通过，logcat 里是 `uidState: TOP`、`code:PROC_STATE_TOP`、`allowWiu:12`。
-- Done right: 写需要 Koe 在屏幕上的场景前，先用 `adb shell dumpsys power`（`mWakefulness`、`mDreamsActivateOnSleepSetting`）和 `dumpsys trust`（`deviceLocked`）看设备实际状态；失败时看 `adb logcat -b events` 里 `wm_pause_activity` 的原因，和 `ActivityManager` 对前台服务的判定（`uidState`、`allowWiu`）。没人值守解不开 PIN 锁屏：要 Koe 在屏幕上的场景，手机锁着时跳过。
-- 验证点：`rg -n 'deviceLocked' android/app/src/main/kotlin integration_test/android/recording_shortcut_test.dart` 有结果（原生状态带 `isDeviceLocked`，场景锁着时打印 `KOE_ADB: skip`）；`rg -n 'skipped=77' scripts/android-check` 有结果。
+- 跨运行也一样（同日）：#360 让一次运行里的锁屏场景排最后，但锁屏场景一关屏手机就要 PIN，一次解锁只够一个锁屏场景跑通。10:31–10:39 在 main cd25be1 上整套跑，最后的手机录音锁屏场景 10:36:53 关屏；10:38:37 `dumpsys trust` 已是 `deviceLocked=1`，当时 `settings get secure lock_screen_lock_after_timeout` 为 null（默认）。紧接着拿到设备的另一次运行（#366 的两个新场景）开头就打印「手机锁着」，构建完被停下；不停的话两个场景都会跳过。
+- Done right: 写需要 Koe 在屏幕上的场景前，先用 `adb shell dumpsys power`（`mWakefulness`、`mDreamsActivateOnSleepSetting`）和 `dumpsys trust`（`deviceLocked`）看设备实际状态；失败时看 `adb logcat -b events` 里 `wm_pause_activity` 的原因，和 `ActivityManager` 对前台服务的判定（`uidState`、`allowWiu`）。没人值守解不开 PIN 锁屏：要 Koe 在屏幕上的场景，手机锁着时跳过。排队等设备的运行先读 `dumpsys trust`，`deviceLocked=0` 才开跑；要在一次解锁里跑完，就把不锁屏的场景和至多一个锁屏场景放进同一次运行。
+- 验证点：`rg -n 'deviceLocked' android/app/src/main/kotlin integration_test/android/background_support.dart` 有结果（原生状态带 `isDeviceLocked`，`skipIfLocked` 锁着时打印 `KOE_ADB: skip`）；`rg -n 'skipped=77' scripts/android-check` 有结果。
+- Seen 1x (2026-10-22)；同日跨运行又遇到一次，只算一次。
+
+### 几个会话共用 Pixel：停掉的运行要放回设备锁，取证不清 logcat
+
+- 出事：2026-10-22 几个会话按约定共用 Pixel：用前 `mkdir ~/.cache/koe-pixel.lock`，用完 `rmdir`。10:39:30 排队的 #366 场景运行在上一轮跑完后拿到锁、开始构建。手机这时 PIN 锁着，两个场景只会跳过，于是用 TaskStop 停掉了它。进程被杀，没走到 `rmdir`，锁目录留了下来，别的会话就拿不到设备。约 10:41 发现，确认没有残留进程后删掉。同一天还写过一条先 `adb logcat -c` 再取证的命令；它会把另一个会话还要看的记录一起清掉，在拿到设备锁之前停下了。
+- 修复：排队脚本用 `trap` 在退出和收到 TERM 时放回自己拿的锁。取证改用 `adb logcat -d -T '<开始时间>'`，只读这一轮开始以后的日志。
+- Done right: 停掉真机运行后先看 `ls -ld ~/.cache/koe-pixel.lock`，是自己拿的就放回。手机上大家共用的状态（logcat 缓冲、系统设置）不清不改，只读自己这一轮的部分。
+- 验证点：没有运行在用 Pixel 时，`ls -ld ~/.cache/koe-pixel.lock` 报不存在。
 - Seen 1x (2026-10-22)
