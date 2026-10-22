@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-21T13:28:38.604069Z</p>
-<p>Main: <code>main: f2be3ffc5e9ed87dc9622253755416e5a9e9ce07</code></p>
+<p>Observed: 2026-10-22T00:59:07.305584Z</p>
+<p>Main: <code>main: b060e80f05288b5854b5ac5a32893728e7dd21e5</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -23,6 +23,10 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/348">pull 348: PR 提供音频转换、系统朗读或日历导出的实现依据。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/349">pull 349: PR 提供音频转换、系统朗读或日历导出的实现依据。</a></li>
 </ul><p>Next: 在综合验收中逐项核对音频转写、听感和日历事件。</p></article>
+<article id="android-shortcut"><h3>Android 长按图标开始录音</h3><span class="badge">done</span><p>长按 Koe 图标出现「开始录音」，走 iPhone 快捷录音的同一入口，全天监听开着时进全天监听。Pixel 上已确认快捷方式注册、点击后到达 Koe；手机有 PIN 锁着时 Android 拒绝麦克风前台服务，场景记为跳过，解锁后的端到端未在真机验证。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/357">pull 357: PR 提供长按图标快捷录音的实现与单元测试，以及 Pixel 上快捷方式注册、点击送达和锁屏时跳过的运行记录。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/344">issue 344: 工单规定长按图标开始录音的需求与验收范围。</a></li>
+</ul><p>Next: 按 #345 在解锁的 Pixel 上跑快捷方式场景，并在桌面长按图标确认入口、冷启动只开始一次。</p></article>
 <article id="device-switch"><h3>手机与 Mac 一键断开及接回录音豆</h3><span class="badge">done</span><p>覆盖不解绑的一键断开与接回；双端切换效果需依据设备验收记录判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/330">pull 330: PR 提供一键断开与接回的实现依据。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/329">issue 329: 工单规定双端切换的验收范围。</a></li>
@@ -40,9 +44,6 @@
 </ul><p>Next: 先核对其差异与 Android 实现，再由维护者依据范围处理 PR。</p></article>
 </section>
 <section id="pending"><h2>问题与功能范围</h2>
-<article id="android-shortcut"><h3>Android 长按图标开始录音</h3><span class="badge">planned</span><p>覆盖从桌面长按图标开始录音的快捷入口，以入口操作和实际录音结果作为验收依据。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/344">issue 344: 工单规定长按图标开始录音的需求与验收范围。</a></li>
-</ul><p>Next: 按工单实现入口并验证从桌面开始录音。</p></article>
 <article id="reconnect-flake"><h3>一键重连测试偶发失败</h3><span class="badge">planned</span><p>工单记录手动断开后一键重连测试偶发失败；需依据复现时序和行为测试判断根因与修复效果。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/335">issue 335: 工单记录 recording_shortcut_test.dart 的偶发失败。</a></li>
 </ul><p>Next: 先复现实际异步时序，再用改前失败、修后通过的行为测试验证修复。</p></article>
@@ -62,7 +63,7 @@
 <article id="android-acceptance"><h3>Android 综合验收</h3><span class="badge">planned</span><p>覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/331">issue 331: 工单提供 Android 功能范围或统一真机验收要求。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/345">issue 345: 工单提供 Android 功能范围或统一真机验收要求。</a></li>
-</ul><p>Next: 依工单在 Pixel 11 Pro / Android 17 上走完场景，分别记录安装、运行和用户确认。</p></article>
+</ul><p>Next: 依工单在 Pixel 11 Pro / Android 17 上走完场景，分别记录安装、运行和用户确认。测试机有 PIN 锁屏、充电时会进屏保：需要 Koe 在屏幕上的场景要先解锁并保持亮屏，或测试机不设 PIN，由用户决定。</p></article>
 <article id="capture-acceptance"><h3>Apple 端日常录音与文字记录</h3><span class="badge">planned</span><p>覆盖 iOS/macOS 日常使用、取回后自动转写、纯文字记录、文字资料联动和全天监听；设备结果与用户确认分别记录。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/15">issue 15: 工单规定相应真实使用或设备验收场景。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/16">issue 16: 工单规定相应真实使用或设备验收场景。</a></li>
@@ -111,5 +112,6 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/62">#62</a> <code>9feb7079350074f75d134348330711105500f47c</code></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/357">#357</a> <code>3ef75e43b96bd727907cf7288acb1797573da187</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
