@@ -219,6 +219,13 @@ class RecorderController extends ChangeNotifier
   }
 
   @override
+  bool _takenAsVoiceNote(String? path) {
+    if (path == null) return false;
+    final name = library.assetForPath(path)?.displayName ?? '';
+    return name.startsWith('语音记录 ');
+  }
+
+  @override
   String get analysisApiKey => _qwenStt.apiKey ?? '';
 
   RecorderController({
@@ -716,6 +723,9 @@ class RecorderController extends ChangeNotifier
         asset?.importedAt ??
         archiveRecord?.updatedAt ??
         _localFileTimestamp(path);
+    final defaultConfig = _takenAsVoiceNote(path)
+        ? _settingsConfiguration
+        : _meetingConfiguration;
     return RecordingViewData(
       reference: RecordingReference(
         sessionId: ref.sessionId,
@@ -733,10 +743,10 @@ class RecorderController extends ChangeNotifier
       provider:
           metadata?.provider ??
           session?.configuration.provider ??
-          speechProvider,
+          defaultConfig.provider,
       transcriptionEnabled: session?.configuration.enabled ?? autoTranscribe,
       speechReady: _isConfigured(
-        session?.configuration ?? _settingsConfiguration,
+        session?.configuration ?? defaultConfig,
       ),
       live: current && recording,
       paused: current && _recordWireStatus == 2 && session.paused,

@@ -33,6 +33,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   void _registerExportedPaths(Iterable<String> paths);
   void _scheduleAutoTransferMissing();
   _RecordingSession? _sessionForReference(RecordingReference ref);
+  SpeechConfiguration get _meetingConfiguration;
   SpeechConfiguration get _settingsConfiguration;
   String get activeGuestLanguage;
   String get activeOwnerLanguage;
@@ -43,6 +44,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   abstract bool connected;
   int? fileIdFromPath(String path);
   abstract SttFileProgress? fileTranscriptionProgress;
+  abstract bool meetingLocalOnly;
+  String get meetingLocalOnlyUnavailableMessage;
+  bool get onDeviceSpeechSupported;
   abstract bool recording;
   void rememberTranscript(
     String path,
@@ -74,7 +78,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   // Final BLE/file callbacks can arrive after capture and stream flags clear.
   // They still belong to this take and must never adopt the next provider.
   SpeechConfiguration get _activeConfiguration =>
-      _liveConfiguration ?? _settingsConfiguration;
+      _liveConfiguration ?? _meetingConfiguration;
   bool _isConfigured(SpeechConfiguration config) {
     if (config.provider.retired) return false;
     if (config.provider.needsCredentials) {
@@ -157,7 +161,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     if (error is SocketException) return '网络连接失败，请检查网络后重试';
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
-      'unsupported' => '此设备不支持设备端处理，请在设置中选择云端语音服务',
+      'unsupported' =>
+        meetingLocalOnly
+            ? meetingLocalOnlyUnavailableMessage
+            : '此设备不支持设备端处理，请在设置中选择云端语音服务',
       'language_unsupported' => '不支持此语言，请更换语言',
       'resources_missing' => '请在设置中下载所需语言',
       'cancelled' => '处理已取消，可重试',
@@ -683,7 +690,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     final textOnly = allDayListening;
     final config = textOnly
         ? _settingsConfiguration.withoutTranscription()
-        : _settingsConfiguration;
+        : _meetingConfiguration;
     _currentSessionId =
         '${DateTime.now().microsecondsSinceEpoch}-${++liveSessionRevision}';
     _recordingSessions[_currentSessionId!] = _RecordingSession(
@@ -714,6 +721,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     if (config.enabled && !_isConfigured(config)) {
       transcriptError = config.provider.needsCredentials
           ? '请在设置中配置 ${config.provider.label}，下次录音生效'
+          : meetingLocalOnly && !onDeviceSpeechSupported
+          ? meetingLocalOnlyUnavailableMessage
           : '请在设置中选择并下载录音语言，下次录音生效';
       _currentRecording?.error = transcriptError;
     }

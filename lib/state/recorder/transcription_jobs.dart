@@ -43,6 +43,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     List<TranscriptSegment>? segments,
   });
   Map<String, String> speakerAliasesForPath(String path);
+  abstract bool meetingLocalOnly;
   abstract SttProvider speechProvider;
   abstract String? statusMessage;
   abstract bool streamingSttActive;
@@ -110,6 +111,35 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     return capabilities.speechStatus;
   }
 
+  bool _cloudUploadConfirmed = false;
+
+  /// Runs manual transcription on [ref] after the user explicitly confirmed
+  /// uploading this recording's audio to a cloud engine (#376).
+  Future<void> confirmCloudTranscribeRecording(
+    RecordingReference ref, {
+    SttProvider? provider,
+    String? sourceLanguage,
+    bool prepareLanguages = false,
+  }) async {
+    final previousProvider = speechProvider;
+    _cloudUploadConfirmed = true;
+    try {
+      if (provider != null && !provider.retired) {
+        speechProvider = provider;
+      }
+      await transcribeRecording(
+        ref,
+        sourceLanguage: sourceLanguage,
+        prepareLanguages: prepareLanguages,
+      );
+    } finally {
+      _cloudUploadConfirmed = false;
+      if (provider != null && speechProvider == provider) {
+        speechProvider = previousProvider;
+      }
+    }
+  }
+
   Future<void> transcribeRecording(
     RecordingReference ref, {
     String? sourceLanguage,
@@ -118,6 +148,16 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     final view = recordingView(ref);
     if (view.path == null) {
       _recordingErrors[_referenceKey(ref)] = '请先下载录音';
+      notifyListeners();
+      return;
+    }
+    await _settingsLoaded;
+    if (_disposed) return;
+    if (meetingLocalOnly &&
+        !speechProvider.onDevice &&
+        !_cloudUploadConfirmed) {
+      _recordingErrors[_referenceKey(ref)] =
+          '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
       notifyListeners();
       return;
     }

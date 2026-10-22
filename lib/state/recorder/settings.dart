@@ -60,6 +60,7 @@ mixin _RecorderSettings on ChangeNotifier {
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
     allDayListening = s.allDayListening;
+    meetingLocalOnly = s.meetingLocalOnly;
     transcriptLanguage = s.transcriptLanguage;
     appleSourceLanguage = s.appleSourceLanguage;
     translationTargetLanguage = s.translationTargetLanguage;
@@ -111,6 +112,7 @@ mixin _RecorderSettings on ChangeNotifier {
             autoTranscribe: autoTranscribe,
             autoRealtime: autoRealtime,
             allDayListening: allDayListening,
+            meetingLocalOnly: meetingLocalOnly,
             transcriptLanguage: transcriptLanguage,
             sttMode: sttMode,
             translationTargetLanguage: translationTargetLanguage,
@@ -156,6 +158,15 @@ mixin _RecorderSettings on ChangeNotifier {
     for (final provider in SttProvider.available)
       if (!provider.onDevice || _appleSpeech.offered) provider,
   ];
+
+  /// Whether this device currently offers a supported on-device speech engine.
+  bool get onDeviceSpeechSupported => appleCapabilities.supported;
+
+  /// Why a meeting recording cannot be transcribed locally when
+  /// [meetingLocalOnly] is on and no on-device engine is ready.
+  String get meetingLocalOnlyUnavailableMessage => !onDeviceSpeechSupported
+      ? '已开启「录音只留本机」，此设备暂无可用的本机语音引擎，不会回落到云端'
+      : '请在设置中选择并下载本机识别语言';
 
   Future<void> refreshAppleCapabilities() async {
     final revision = ++_capabilityRevision;
@@ -224,8 +235,20 @@ mixin _RecorderSettings on ChangeNotifier {
     }
   }
 
-  void setSpeechProvider(SttProvider provider) {
-    if (provider.retired || provider == speechProvider) return;
+  void setSpeechProvider(
+    SttProvider provider, {
+    bool preserveMeetingLocalOnly = false,
+  }) {
+    if (provider.retired) return;
+    if (!provider.onDevice &&
+        !preserveMeetingLocalOnly &&
+        !_meetingLocalOnlyExplicit) {
+      meetingLocalOnly = false;
+    }
+    if (provider == speechProvider) {
+      notifyListeners();
+      return;
+    }
     speechProvider = provider;
     if (!provider.supportsMode(sttMode)) {
       sttMode = SttDisplayMode.transcription;
@@ -263,6 +286,41 @@ mixin _RecorderSettings on ChangeNotifier {
     },
   );
 
+  /// Speech configuration for meeting / formal recordings (#376).
+  ///
+  /// When [meetingLocalOnly] is on, only an [SttProvider.onDevice] engine may
+  /// run and no cloud credentials are carried in the snapshot; if this device
+  /// has no available on-device engine, the configuration stays unconfigured
+  /// rather than falling back to a cloud service.
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  SpeechConfiguration get _meetingConfiguration {
+    if (!meetingLocalOnly) return _settingsConfiguration;
+    final source = appleSourceLanguage.isNotEmpty
+        ? appleSourceLanguage
+        : (appleCapabilities.suggestedSourceLanguage ?? '');
+    final ready =
+        onDeviceSpeechSupported &&
+        source.isNotEmpty &&
+        appleCapabilities.speechStatus == SpeechResourceStatus.ready &&
+        !appleCapabilitiesLoading;
+    return SpeechConfiguration(
+      provider: SttProvider.apple,
+      sourceLanguage: source,
+      targetLanguage: translationTargetLanguage,
+      ownerLanguage: ownerLanguage,
+      guestLanguage: guestLanguage,
+      mode: SttProvider.apple.supportsMode(sttMode)
+          ? sttMode
+          : SttDisplayMode.transcription,
+      enabled: autoTranscribe,
+      appleReady: ready,
+      appleTranslationReady:
+          onDeviceSpeechSupported && appleTranslationAvailable,
+      engines: const {},
+    );
+  }
+
   // Used by other parts through their abstract declarations.
   // ignore: unused_element
   bool get _activeSttConfigured => _isConfigured(_activeConfiguration);
@@ -288,6 +346,15 @@ mixin _RecorderSettings on ChangeNotifier {
     allDayListening = v;
     notifyListeners();
     unawaited(_persistSettings());
+  }
+
+  void setMeetingLocalOnly(bool v) {
+    _meetingLocalOnlyExplicit = true;
+    if (meetingLocalOnly == v) return;
+    meetingLocalOnly = v;
+    notifyListeners();
+    unawaited(_persistSettings());
+    if (v) unawaited(refreshAppleCapabilities());
   }
 
   void setAutoRealtime(bool v) {
@@ -433,6 +500,10 @@ mixin _RecorderSettings on ChangeNotifier {
 
   /// The record buttons start all-day, text-only listening (#319).
   bool allDayListening = false;
+
+  /// Meeting / formal recordings stay on the device (#376).
+  bool meetingLocalOnly = true;
+  bool _meetingLocalOnlyExplicit = false;
 
   /// Near-realtime AI transcription (PCM WS stream + Ogg batch fallback).
   bool autoTranscribe = true;

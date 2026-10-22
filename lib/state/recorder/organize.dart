@@ -62,14 +62,21 @@ mixin _RecorderOrganize on ChangeNotifier {
   abstract final RecordingAnalysis analysis;
   abstract List<String> exportedPaths;
   abstract final TodoStore todos;
+  abstract int _capabilityRevision;
+  SpeechConfiguration get _meetingConfiguration;
   SpeechConfiguration get _settingsConfiguration;
   String get analysisApiKey;
   bool _isConfigured(SpeechConfiguration config);
   bool _isTrashedPath(String path);
   _RecordingSession? _sessionForReference(RecordingReference ref);
+  bool _takenAsVoiceNote(String? path);
   String analysisKey(RecordingReference ref);
   Future<int> extractTodos(RecordingReference ref, {bool confirmRetry = false});
   int? fileIdFromPath(String path);
+  abstract bool meetingLocalOnly;
+  String get meetingLocalOnlyUnavailableMessage;
+  bool get onDeviceSpeechSupported;
+  Future<void> refreshAppleCapabilities();
   bool recordingAudioChanged(RecordingReference ref);
   DateTime? recordingRecordedAtForPath(String path);
   RecordingViewData recordingView(RecordingReference ref);
@@ -382,8 +389,17 @@ mixin _RecorderOrganize on ChangeNotifier {
           recordingAudioChanged(ref)) {
         return;
       }
-      if (!_isConfigured(_settingsConfiguration)) {
-        _organizeFailures[path] = '先在设置里配置语音服务，再重试整理';
+      final voiceNote = _takenAsVoiceNote(path);
+      if (meetingLocalOnly && !voiceNote && _capabilityRevision == 0) {
+        await refreshAppleCapabilities();
+        if (_disposed) return;
+      }
+      final config = voiceNote ? _settingsConfiguration : _meetingConfiguration;
+      if (!_isConfigured(config)) {
+        _organizeFailures[path] =
+            meetingLocalOnly && !voiceNote && !onDeviceSpeechSupported
+            ? meetingLocalOnlyUnavailableMessage
+            : '先在设置里配置语音服务，再重试整理';
         notifyListeners();
         return;
       }
@@ -391,7 +407,7 @@ mixin _RecorderOrganize on ChangeNotifier {
       await _deferredJobs.enqueue(
         analysisKey(ref),
         path,
-        _settingsConfiguration,
+        config,
       );
       notifyListeners();
       return;

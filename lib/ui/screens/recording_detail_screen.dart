@@ -587,6 +587,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     RecordingViewData recording, {
     String? sourceLanguage,
     bool prepareLanguages = false,
+    SttProvider? cloudProvider,
   }) async {
     final controller = context.read<RecorderController>();
     if (recording.audioLocked ||
@@ -594,7 +595,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         controller.fileProcessingBusy) {
       return;
     }
-    final chooseLanguage = controller.speechProvider.requiresSourceLanguage;
+    final targetProvider = cloudProvider ?? controller.speechProvider;
+    final chooseLanguage = targetProvider.requiresSourceLanguage;
     if (recording.text.isNotEmpty) {
       if (chooseLanguage) {
         final choice = await showDialog<(String, bool)>(
@@ -636,13 +638,19 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('重新转写？'),
-            content: const Text('成功后将替换当前文本和自定义说话人姓名，旧译文会标为过时。失败时保留现有结果。'),
+            content: Text(
+              controller.meetingLocalOnly
+                  ? '当前已开启「录音只留本机」，使用${targetProvider.label}会将这段录音的音频上传到云端服务。'
+                        '成功后将替换当前文本和自定义说话人姓名，旧译文会标为过时。失败时保留现有结果。'
+                  : '成功后将替换当前文本和自定义说话人姓名，旧译文会标为过时。失败时保留现有结果。',
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
                 child: const Text('取消'),
               ),
               FilledButton(
+                key: const ValueKey('confirm-cloud-transcribe'),
                 onPressed: () => Navigator.pop(context, true),
                 child: const Text('重新转写'),
               ),
@@ -651,8 +659,39 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         );
         if (confirmed != true || !mounted) return;
       }
+    } else if (controller.meetingLocalOnly && !targetProvider.onDevice) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('使用${targetProvider.label}云端转写？'),
+          content: Text(
+            '当前已开启「录音只留本机」，使用${targetProvider.label}转写会将这段录音的音频上传到云端服务。确认上传音频并转写吗？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: const ValueKey('confirm-cloud-transcribe'),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认上传并转写'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
     }
     if (chooseLanguage && sourceLanguage == null) return;
+    if (controller.meetingLocalOnly && !targetProvider.onDevice) {
+      await controller.confirmCloudTranscribeRecording(
+        widget.reference,
+        provider: cloudProvider,
+        sourceLanguage: chooseLanguage ? sourceLanguage : null,
+        prepareLanguages: chooseLanguage && prepareLanguages,
+      );
+      return;
+    }
     await controller.transcribeRecording(
       widget.reference,
       sourceLanguage: chooseLanguage ? sourceLanguage : null,
@@ -1446,6 +1485,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         showMaterialExportSheet(context, widget.reference);
                       case 'transcribe':
                         _transcribe(recording);
+                      case 'transcribe-qwen':
+                        _transcribe(recording, cloudProvider: SttProvider.qwen);
+                      case 'transcribe-doubao':
+                        _transcribe(
+                          recording,
+                          cloudProvider: SttProvider.doubao,
+                        );
                       case 'edit':
                         _editTranscript(recording);
                       case 'speakers':
@@ -1488,6 +1534,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             (c.speechProvider.requiresSourceLanguage ||
                                 c.sttConfigured),
                         child: const Text('重新转写'),
+                      ),
+                    if (c.speechProvider.onDevice &&
+                        c.engineConfigured(SttProvider.qwen))
+                      PopupMenuItem(
+                        value: 'transcribe-qwen',
+                        enabled: canProcess,
+                        child: const Text('使用通义 Qwen 转写…'),
+                      ),
+                    if (c.speechProvider.onDevice &&
+                        c.engineConfigured(SttProvider.doubao))
+                      PopupMenuItem(
+                        value: 'transcribe-doubao',
+                        enabled: canProcess,
+                        child: const Text('使用豆包转写…'),
                       ),
                     if (source.isNotEmpty)
                       PopupMenuItem(

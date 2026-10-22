@@ -106,6 +106,32 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       const Divider(height: 20),
                       _ProviderSelector(controller: c),
+                      const Divider(height: 20),
+                      _SettingsSwitch(
+                        key: const ValueKey('settings-meeting-local-only'),
+                        title: '录音只留本机',
+                        subtitle:
+                            '会议录音只用本机引擎转写，不上传音频；'
+                            '纯文字记录、按住说话与全天监听不受影响，纪要与问答只发文字',
+                        value: c.meetingLocalOnly,
+                        onChanged: c.setMeetingLocalOnly,
+                      ),
+                      if (c.meetingLocalOnly &&
+                          !c.onDeviceSpeechSupported &&
+                          !c.appleCapabilitiesLoading) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          c.meetingLocalOnlyUnavailableMessage,
+                          key: const ValueKey(
+                            'meeting-local-only-unavailable',
+                          ),
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 16),
                       if (c.speechProvider.usesEngineTrio) ...[
                         _CloudEngineSettings(
@@ -329,6 +355,8 @@ class _ProviderSelector extends StatelessWidget {
             provider: providers[i],
             selected: controller.speechProvider == providers[i],
             meta: _metaFor(providers[i], tokens),
+            meetingDisabled:
+                controller.meetingLocalOnly && !providers[i].onDevice,
             enabled:
                 !providers[i].needsCredentials ||
                 controller.engineConfigured(providers[i]),
@@ -341,7 +369,10 @@ class _ProviderSelector extends StatelessWidget {
 
   void _tap(BuildContext context, SttProvider provider) {
     if (!provider.needsCredentials || controller.engineConfigured(provider)) {
-      controller.setSpeechProvider(provider);
+      controller.setSpeechProvider(
+        provider,
+        preserveMeetingLocalOnly: true,
+      );
       return;
     }
     showDialog<void>(
@@ -355,7 +386,10 @@ class _ProviderSelector extends StatelessWidget {
               controller: controller,
               provider: provider,
               onSaved: () {
-                controller.setSpeechProvider(provider);
+                controller.setSpeechProvider(
+                  provider,
+                  preserveMeetingLocalOnly: true,
+                );
                 Navigator.pop(context);
               },
             ),
@@ -379,11 +413,13 @@ class _EngineOptionCard extends StatelessWidget {
     required this.meta,
     required this.enabled,
     required this.onTap,
+    this.meetingDisabled = false,
   });
 
   final SttProvider provider;
   final bool selected;
   final bool enabled;
+  final bool meetingDisabled;
   final ({
     IconData icon,
     String description,
@@ -480,6 +516,30 @@ class _EngineOptionCard extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                              if (meetingDisabled)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: tokens.textMuted.withValues(
+                                      alpha: 0.12,
+                                    ),
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadii.pill,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '已关闭：会上传音频',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: tokens.textSecondary,
+                                      height: 1.2,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                           const SizedBox(height: 3),

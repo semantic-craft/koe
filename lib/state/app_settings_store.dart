@@ -133,6 +133,7 @@ class AppSettings {
     this.autoTranscribe = true,
     this.autoRealtime = true,
     this.allDayListening = false,
+    this.meetingLocalOnly = true,
     this.transcriptLanguage = 'auto',
     this.sttMode = SttDisplayMode.transcription,
     this.translationTargetLanguage = 'zh',
@@ -154,6 +155,11 @@ class AppSettings {
   /// The record buttons start all-day, text-only listening instead of a
   /// recording.
   final bool allDayListening;
+
+  /// Meeting / formal recordings stay on the device (#376): live and
+  /// post-recording transcription only use [SttProvider.onDevice] engines,
+  /// while everyday voice input continues to use [speechProvider].
+  final bool meetingLocalOnly;
   final String transcriptLanguage;
   final SttDisplayMode sttMode;
   final String translationTargetLanguage;
@@ -172,6 +178,7 @@ class AppSettings {
     bool? autoTranscribe,
     bool? autoRealtime,
     bool? allDayListening,
+    bool? meetingLocalOnly,
     String? transcriptLanguage,
     SttDisplayMode? sttMode,
     String? translationTargetLanguage,
@@ -186,6 +193,7 @@ class AppSettings {
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
       allDayListening: allDayListening ?? this.allDayListening,
+      meetingLocalOnly: meetingLocalOnly ?? this.meetingLocalOnly,
       transcriptLanguage: transcriptLanguage ?? this.transcriptLanguage,
       sttMode: sttMode ?? this.sttMode,
       translationTargetLanguage:
@@ -202,6 +210,7 @@ class AppSettings {
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
     'allDayListening': allDayListening,
+    'meetingLocalOnly': meetingLocalOnly,
     'transcriptLanguage': transcriptLanguage,
     'sttMode': sttMode.name,
     'translationTargetLanguage': translationTargetLanguage,
@@ -240,6 +249,7 @@ class AppSettings {
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,
       allDayListening: map['allDayListening'] == true,
+      meetingLocalOnly: map['meetingLocalOnly'] != false,
       transcriptLanguage: _str(map['transcriptLanguage']) ?? 'auto',
       sttMode: sttMode,
       translationTargetLanguage: _str(map['translationTargetLanguage']) ?? 'zh',
