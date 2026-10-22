@@ -69,8 +69,9 @@ void main() {
     qwen.pending.complete();
     await transcribed;
     final extracted = controller.extractTodos(RecordingReference(path: path));
+    await until(() => assistant.calls == 1);
+    // Past the grace that followed the transcription, the service stays.
     await Future<void>.delayed(grace * 2);
-    expect(assistant.calls, 1);
     expect(service.types, {'dataSync'});
     expect(service.stops, 0);
 

@@ -24,6 +24,10 @@ void main() {
         );
   });
   tearDown(() async {
+    // A controller still saves the device record after a test's last step,
+    // for example right after it reconnects. Without the folder or the mock
+    // that save lands in the system temp folder, or the delete below fails.
+    await DeviceStore.waitForWrites();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.flutter.io/path_provider'),
@@ -78,18 +82,7 @@ void main() {
         persistedDeviceLoader: DeviceStore.load,
       );
       _disposeAfterSettling(restarted);
-      final boundLoaded = Completer<void>();
-      void onRestored() {
-        if (restarted.bound && !boundLoaded.isCompleted) boundLoaded.complete();
-      }
-
-      restarted.addListener(onRestored);
-      onRestored();
-      try {
-        await boundLoaded.future.timeout(const Duration(seconds: 5));
-      } finally {
-        restarted.removeListener(onRestored);
-      }
+      await _until(restarted, () => restarted.bound);
       expect(restarted.bound, isTrue);
       expect(
         ble.startScanCalls,
@@ -218,7 +211,9 @@ void main() {
       await controller.reconnectBoundDevice();
       expect(ble.startScanCalls, 1);
       ble.emitScan([_device]);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      // The connection starts once the device record is on disk, behind the
+      // saves from disconnecting and reconnecting (#335).
+      await _until(controller, () => controller.connected);
       expect(ble.connectCalls, 1);
       expect(controller.manuallyDisconnected, isFalse);
     },
@@ -350,7 +345,7 @@ void main() {
       await controller.requestRecordingFromShortcut();
       expect(controller.recordingShortcutPending, isTrue);
       ble.emitScan([_device]);
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      await _until(controller, () => controller.recording);
 
       expect(ble.connectCalls, 1);
       expect(ble.startRecordWrites, 1);
@@ -427,6 +422,25 @@ RecorderController _controller(_FakeBleService ble) => RecorderController(
   topicsEnabled: false,
   recordingShortcutScanTimeout: const Duration(seconds: 1),
 );
+
+/// Waits until [condition] holds, checking again on every controller change.
+Future<void> _until(
+  RecorderController controller,
+  bool Function() condition,
+) async {
+  final met = Completer<void>();
+  void check() {
+    if (condition() && !met.isCompleted) met.complete();
+  }
+
+  controller.addListener(check);
+  check();
+  try {
+    await met.future.timeout(const Duration(seconds: 5));
+  } finally {
+    controller.removeListener(check);
+  }
+}
 
 void _disposeAfterSettling(RecorderController controller) {
   addTearDown(() async {
