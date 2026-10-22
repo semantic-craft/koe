@@ -33,6 +33,120 @@ void main() {
     }
   });
 
+  for (final staleWifi in [true, false]) {
+    for (final immediateResume in [false, true]) {
+      test(
+        'pause then resume ignores stale Wi-Fi result $staleWifi (immediate=$immediateResume)',
+        () async {
+          final errors = <Object>[];
+          final finished = Completer<void>();
+          runZonedGuarded(
+            () async {
+              try {
+                final oldCheck = Completer<bool>();
+                final checkEntered = Completer<void>();
+                final resumed = Completer<void>();
+                final oldResponse = StreamController<List<int>>();
+                final newResponse = StreamController<List<int>>();
+                var holdNextCheck = false;
+                var requests = 0;
+                final good = utf8.encode('new valid model');
+                final spec = DiarizationModelFileSpec(
+                  id: 'seg',
+                  fileName: 'model.onnx',
+                  expectedBytes: good.length,
+                  sha256: _sha256Hex(good),
+                  modelScopeUrl: 'https://modelscope.cn/model',
+                  huggingFaceUrl: 'https://huggingface.co/model',
+                );
+                final store = DiarizationModelStore(
+                  directory: tempDir,
+                  customSpecs: [spec],
+                  isWifiConnected: () async {
+                    if (holdNextCheck) {
+                      holdNextCheck = false;
+                      checkEntered.complete();
+                      return oldCheck.future;
+                    }
+                    return true;
+                  },
+                  client: _FakeStreamingClient((_) async {
+                    requests++;
+                    if (requests == 1) {
+                      // onListen precedes the data event, so the blocked check belongs
+                      // to the old chunk, not a request or periodic network check.
+                      oldResponse.onListen = () {
+                        holdNextCheck = true;
+                        oldResponse.add(utf8.encode('stale bytes'));
+                      };
+                      return http.StreamedResponse(oldResponse.stream, 200);
+                    }
+                    newResponse.onListen = () => resumed.complete();
+                    return http.StreamedResponse(
+                      newResponse.stream,
+                      200,
+                      contentLength: good.length,
+                    );
+                  }),
+                );
+                try {
+                  final first = store.download();
+                  await checkEntered.future.timeout(const Duration(seconds: 3));
+                  final pausing = store.pause();
+                  final Future<bool> second;
+                  if (immediateResume) {
+                    second = store.download();
+                  } else {
+                    await pausing;
+                    second = store.download();
+                  }
+                  await pausing;
+                  expect(await first, isFalse);
+                  await resumed.future.timeout(const Duration(seconds: 3));
+                  expect(store.status, DiarizationModelStatus.downloading);
+                  oldCheck.complete(staleWifi);
+                  // Drain the old async callback before delivering the new bytes.
+                  await pumpEventQueue();
+                  expect(store.status, DiarizationModelStatus.downloading);
+                  newResponse.add(good);
+                  await newResponse.close();
+                  expect(
+                    await second.timeout(const Duration(seconds: 3)),
+                    isTrue,
+                  );
+                  expect(store.status, DiarizationModelStatus.ready);
+                  expect(store.errorMessage, isNull);
+                  expect(requests, 2);
+                  final bytes = await File(
+                    '${tempDir.path}/model.onnx',
+                  ).readAsBytes();
+                  expect(bytes, good);
+                  expect(_sha256Hex(bytes), spec.sha256);
+                } finally {
+                  store.dispose();
+                  unawaited(oldResponse.close());
+                }
+              } catch (error) {
+                errors.add(error);
+              } finally {
+                finished.complete();
+              }
+            },
+            (error, stack) {
+              errors.add(error);
+            },
+          );
+          await finished.future.timeout(const Duration(seconds: 5));
+          expect(
+            errors,
+            isEmpty,
+            reason: 'stale callback must not escape its zone',
+          );
+        },
+      );
+    }
+  }
+
   test(
     'default checksum rejects corrupt cache and falls back on corrupt download',
     () async {

@@ -126,6 +126,8 @@ class DiarizationModelStore extends ChangeNotifier {
   Completer<void>? _activeRequestAbort;
   _CancelReason _cancelReason = _CancelReason.none;
   bool _disposed = false;
+  int _requestGeneration = 0;
+  Future<void>? _stopping;
 
   bool get isReady => status == DiarizationModelStatus.ready;
   bool get isDownloading => status == DiarizationModelStatus.downloading;
@@ -237,6 +239,9 @@ class DiarizationModelStore extends ChangeNotifier {
   }
 
   Future<bool> download() {
+    if (_disposed) return Future.value(false);
+    final stopping = _stopping;
+    if (stopping != null) return stopping.then((_) => download());
     final running = _activeDownload;
     if (running != null) return running;
     final task = _runDownload();
@@ -249,6 +254,7 @@ class DiarizationModelStore extends ChangeNotifier {
   }
 
   Future<bool> _runDownload() async {
+    _cancelReason = _CancelReason.none;
     final dir = await _resolveDirectory();
     var allInstalled = true;
     for (final spec in _specs) {
@@ -257,6 +263,7 @@ class DiarizationModelStore extends ChangeNotifier {
         break;
       }
     }
+    if (_cancelReason != _CancelReason.none || _disposed) return false;
     if (allInstalled) {
       status = DiarizationModelStatus.ready;
       progress = 1.0;
@@ -265,14 +272,15 @@ class DiarizationModelStore extends ChangeNotifier {
       return true;
     }
 
-    if (!await _wifiAvailable()) {
+    final wifi = await _wifiAvailable();
+    if (_cancelReason != _CancelReason.none || _disposed) return false;
+    if (!wifi) {
       status = DiarizationModelStatus.wifiRequired;
       errorMessage = const DiarizationWifiRequiredException().message;
       _notify();
       return false;
     }
 
-    _cancelReason = _CancelReason.none;
     status = DiarizationModelStatus.downloading;
     errorMessage = null;
     _notify();
@@ -280,7 +288,9 @@ class DiarizationModelStore extends ChangeNotifier {
     for (var i = 0; i < _specs.length; i++) {
       final spec = _specs[i];
       if (_cancelReason != _CancelReason.none || _disposed) break;
-      if (await _isSpecInstalled(dir, spec)) {
+      final installed = await _isSpecInstalled(dir, spec);
+      if (_cancelReason != _CancelReason.none || _disposed) break;
+      if (installed) {
         progress = (i + 1) / _specs.length;
         _notify();
         continue;
@@ -339,6 +349,7 @@ class DiarizationModelStore extends ChangeNotifier {
       return false;
     }
 
+    if (_disposed) return false;
     activeSource = null;
     status = DiarizationModelStatus.ready;
     progress = 1.0;
@@ -378,10 +389,13 @@ class DiarizationModelStore extends ChangeNotifier {
     required String url,
     required void Function(double fraction) onSpecProgress,
   }) async {
+    final generation = ++_requestGeneration;
+    bool isCurrent() => generation == _requestGeneration && !_disposed;
     final partFile = File(p.join(dir.path, '${spec.fileName}.part'));
     final targetFile = File(p.join(dir.path, spec.fileName));
     IOSink? sink;
     Timer? networkMonitor;
+    StreamSubscription<List<int>>? requestSubscription;
     final abort = Completer<void>();
     _activeRequestAbort = abort;
     var monitoring = true;
@@ -394,7 +408,7 @@ class DiarizationModelStore extends ChangeNotifier {
         checking = true;
         try {
           final wifi = await _wifiAvailable();
-          if (monitoring && !wifi) {
+          if (monitoring && isCurrent() && !wifi) {
             if (_cancelReason == _CancelReason.none) {
               _cancelReason = _CancelReason.wifi;
             }
@@ -411,7 +425,7 @@ class DiarizationModelStore extends ChangeNotifier {
       var uri = Uri.parse(url);
       http.StreamedResponse? response;
       for (var redirects = 0; redirects <= 10; redirects++) {
-        if (!await _checkWifi()) return false;
+        if (!await _checkWifi(generation)) return false;
         if (_cancelReason != _CancelReason.none || _disposed) return false;
         final request = http.AbortableRequest(
           'GET',
@@ -419,10 +433,14 @@ class DiarizationModelStore extends ChangeNotifier {
           abortTrigger: abort.future,
         )..followRedirects = false;
         response = await _client.send(request);
+        if (!isCurrent() || _cancelReason != _CancelReason.none) {
+          await response.stream.listen(null).cancel();
+          return false;
+        }
         if (![301, 302, 303, 307, 308].contains(response.statusCode)) break;
         final location = response.headers['location'];
         await response.stream.listen(null).cancel();
-        if (location == null || redirects == 10) return false;
+        if (!isCurrent() || location == null || redirects == 10) return false;
         uri = uri.resolve(location);
         if (uri.scheme != 'https') return false;
       }
@@ -444,19 +462,26 @@ class DiarizationModelStore extends ChangeNotifier {
       sub = response.stream.listen(
         (chunk) async {
           sub.pause();
-          await _checkWifi();
-          if (_cancelReason != _CancelReason.none || _disposed) {
-            if (!completer.isCompleted) completer.complete(false);
-            return;
+          try {
+            final wifi = await _checkWifi(generation);
+            // listen does not await this callback. Cancellation can close the
+            // sink while the platform Wi-Fi check is still outstanding.
+            if (!isCurrent()) return;
+            if (!wifi || _cancelReason != _CancelReason.none) {
+              if (!completer.isCompleted) completer.complete(false);
+              return;
+            }
+            sink!.add(chunk);
+            received += chunk.length;
+            onSpecProgress(
+              total > 0 ? (received / total).clamp(0.0, 1.0) : 0.5,
+            );
+            sub.resume();
+          } catch (_) {
+            if (isCurrent() && !completer.isCompleted) {
+              completer.complete(false);
+            }
           }
-          sink!.add(chunk);
-          received += chunk.length;
-          if (total > 0) {
-            onSpecProgress((received / total).clamp(0.0, 1.0));
-          } else {
-            onSpecProgress(0.5);
-          }
-          sub.resume();
         },
         onDone: () {
           if (!completer.isCompleted) {
@@ -470,8 +495,12 @@ class DiarizationModelStore extends ChangeNotifier {
         },
         cancelOnError: true,
       );
+      requestSubscription = sub;
       _activeSubscription = sub;
       final finished = await completer.future;
+      // Invalidate callbacks BEFORE cancelling the subscription / closing its
+      // sink, including when an async callback is waiting on a platform call.
+      if (isCurrent()) _requestGeneration++;
       if (identical(_activeSubscription, sub)) {
         _activeSubscription = null;
       }
@@ -497,9 +526,12 @@ class DiarizationModelStore extends ChangeNotifier {
           return false;
         }
       }
+      if (_cancelReason != _CancelReason.none || _disposed) return false;
       await partFile.rename(targetFile.path);
       return true;
     } catch (_) {
+      if (isCurrent()) _requestGeneration++;
+      await requestSubscription?.cancel();
       try {
         await sink?.close();
       } catch (_) {}
@@ -511,7 +543,14 @@ class DiarizationModelStore extends ChangeNotifier {
       return false;
     } finally {
       monitoring = false;
+      if (isCurrent()) _requestGeneration++;
       networkMonitor?.cancel();
+      _activeSubscription = null;
+      _activeStreamCompleter = null;
+      await requestSubscription?.cancel();
+      try {
+        await sink?.close();
+      } catch (_) {}
       if (identical(_activeRequestAbort, abort)) _activeRequestAbort = null;
     }
   }
@@ -524,15 +563,33 @@ class DiarizationModelStore extends ChangeNotifier {
     }
   }
 
-  Future<bool> _checkWifi() async {
+  Future<bool> _checkWifi(int generation) async {
+    if (generation != _requestGeneration || _disposed) return false;
     final wifi = await _wifiAvailable();
+    if (generation != _requestGeneration || _disposed) return false;
     if (!wifi && _cancelReason == _CancelReason.none) {
       _cancelReason = _CancelReason.wifi;
     }
     return wifi;
   }
 
-  Future<void> pause() async {
+  // A resume requested before pause/delete finishes must wait for cancellation
+  // and sink closure, not join the cancelled download or reopen its .part file.
+  Future<void> _stop(Future<void> Function() action) {
+    final previous = _stopping;
+    final task = previous == null ? action() : previous.then((_) => action());
+    late final Future<void> completion;
+    completion = task.whenComplete(() {
+      if (identical(_stopping, completion)) _stopping = null;
+    });
+    _stopping = completion;
+    return completion;
+  }
+
+  Future<void> pause() => _stop(_pause);
+
+  Future<void> _pause() async {
+    _requestGeneration++;
     _cancelReason = _CancelReason.pause;
     _abortRequest();
     final completer = _activeStreamCompleter;
@@ -554,7 +611,10 @@ class DiarizationModelStore extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> delete() async {
+  Future<void> delete() => _stop(_delete);
+
+  Future<void> _delete() async {
+    _requestGeneration++;
     _cancelReason = _CancelReason.delete;
     _abortRequest();
     final completer = _activeStreamCompleter;
@@ -597,6 +657,7 @@ class DiarizationModelStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _requestGeneration++;
     _cancelReason = _CancelReason.pause;
     _abortRequest();
     final completer = _activeStreamCompleter;

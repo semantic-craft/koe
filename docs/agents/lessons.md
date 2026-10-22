@@ -3,6 +3,13 @@
 只给 agent 用：记每条教训的出处、修复、验证点和复发次数（Seen N×）；验证点写明之后怎么核对这条已改到位（看哪个文件、跑什么命令、查什么结果）。对外的十条规则在 [CONTRIBUTING](../../CONTRIBUTING.md)；同一条教训在 3 个不同日子出现，就升为 [AGENTS.md](../../AGENTS.md) 交付规则，能写成测试或检查的写成测试或检查。
 #286 开源准备时根目录 `lessons.md` 并入了 CONTRIBUTING，Seen 计数随归档一起删了；本文件从 2026-10-19 起接着记，旧条目原文在 git 历史 `ae0cfa5^:lessons.md`（#286 删除前的最后一版）。
 
+### 流回调的 await 必须绑定请求代际
+
+- 出处：2026-10-22 PR #389 的 2B 复审 B1：下载暂停后立即继续，旧 onData 等待 Wi-Fi 的结果可写已关闭 sink，或取消新请求。
+- 修复：每个 HTTP 下载分配代际；取消与资源关闭前使代际失效，Wi-Fi 检查返回后先核对；继续下载等待暂停/删除完成订阅取消与 sink 关闭。
+- 验证：`test/diarization_model_store_test.dart` 的 `pause then resume ignores stale Wi-Fi result` 用 Completer 控制 true/false 旧结果，并覆盖等待暂停与立即继续；改前空 sink 异常、新请求失败或超时，修后新文件内容与 SHA 正确且 zone 无异常。
+- Seen 1x (2026-10-22)
+
 ### 本机区分验收必须覆盖生产默认输入与真实时间轴
 
 - 出处：2026-10-22 PR #389 评审：测试显式开 SHA 校验、假 Apple 服务带精确时间戳，遮住了正式默认配置不校验和真实 Apple 仅返回全文的问题；48 kHz 样本直接交给只接收模型采样率样本的分段器，产生错误时间轴。
