@@ -32,13 +32,7 @@ class DevicePhoneMicStream implements PhoneMicStream {
   );
 
   @override
-  Future<bool> requestPermission() async {
-    try {
-      return await _recorder.hasPermission();
-    } catch (_) {
-      return false;
-    }
-  }
+  Future<bool> requestPermission() => _recorder.hasPermission();
 
   @override
   Stream<PhoneMicState> get states => _recorder.onStateChanged().map(
