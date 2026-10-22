@@ -73,7 +73,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
   Future<String?> _adoptPhoneTake(
     String path,
     DateTime recordedAt, {
-    String label,
+    String? label,
     // ignore: unused_element_parameter
     bool voiceNote,
   });
@@ -567,7 +567,9 @@ mixin _RecorderTextCapture on ChangeNotifier {
       if (generation != _textGeneration) return;
       debugPrint('[TextCapture] connect failed: $e');
       _detachTextSession();
-      textCaptureError = '暂时连不上语音服务，说的话先存在手机上，连上后补识别';
+      textCaptureError = runsOnMac
+          ? '暂时连不上语音服务，说的话先存在本机上，连上后补识别'
+          : '暂时连不上语音服务，说的话先存在手机上，连上后补识别';
       _retryTextLater();
       notifyListeners();
       return;

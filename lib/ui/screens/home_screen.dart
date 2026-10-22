@@ -7,6 +7,7 @@ import '../widgets/scan_sheet.dart';
 import '../recording_navigation.dart';
 import '../widgets/widgets.dart';
 import 'files_screen.dart';
+import 'new_recording_sheet.dart';
 import 'topics_screen.dart';
 import '../widgets/koe_icon_button.dart';
 
@@ -49,7 +50,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
                   ),
                 ),
-                if (RecordingNavigation.of(context)?.wide ?? false)
+                if (RecordingNavigation.of(context)?.wide ?? false) ...[
+                  KoeIconButton(
+                    key: const ValueKey('new-recording'),
+                    tooltip: '新记录',
+                    onPressed: () async {
+                      final action = await showNewRecordingSheet(context);
+                      if (action == null || !context.mounted) return;
+                      await handleNewRecordingAction(context, action);
+                    },
+                    icon: const Icon(Icons.add_rounded),
+                  ),
                   Consumer<RecorderController>(
                     builder: (_, c, _) => KoeIconButton(
                       tooltip: '刷新录音库',
@@ -64,6 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: const Icon(Icons.refresh_rounded),
                     ),
                   ),
+                ],
               ],
             ),
           ),

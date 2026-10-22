@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../platform/answer_speaker.dart';
+import '../../platform/device_kind.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/cited_text.dart';
@@ -352,7 +353,9 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
                         key: const ValueKey('ask-hold-to-talk'),
                         label: c.phoneRecordingEnabled
                             ? '按住说话提问'
-                            : '按住说话仅在 iPhone 上提供',
+                            : (runsOnMac
+                                  ? '按住说话当前不可用'
+                                  : '按住说话仅在 iPhone 上提供'),
                         enabled:
                             c.phoneRecordingEnabled &&
                             !busy &&

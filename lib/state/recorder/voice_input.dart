@@ -42,7 +42,7 @@ mixin _RecorderVoiceInput on ChangeNotifier {
   Future<String?> _adoptPhoneTake(
     String path,
     DateTime recordedAt, {
-    String label,
+    String? label,
     bool voiceNote,
   });
   Future<SttResult> _transcribePath(
@@ -81,12 +81,16 @@ mixin _RecorderVoiceInput on ChangeNotifier {
   Future<bool> startVoiceHold(VoiceTarget target, {String? sessionId}) async {
     if (_voiceTarget != null || _voiceBusy) return false;
     if (!phoneRecordingEnabled) {
-      voiceInputErrors[target] = '按住说话只在 iPhone 上提供，可以直接输入文字';
+      voiceInputErrors[target] = runsOnMac
+          ? '按住说话当前不可用，可以直接输入文字'
+          : '按住说话只在 iPhone 上提供，可以直接输入文字';
       notifyListeners();
       return false;
     }
     if (phoneRecordingActive) {
-      voiceInputErrors[target] = '手机录音正在进行，结束后再按住说话';
+      voiceInputErrors[target] = runsOnMac
+          ? '麦克风录音正在进行，结束后再按住说话'
+          : '手机录音正在进行，结束后再按住说话';
       notifyListeners();
       return false;
     }
@@ -306,7 +310,9 @@ mixin _RecorderVoiceInput on ChangeNotifier {
       await _settingsLoaded;
       final config = _settingsConfiguration;
       if (!await File(clip.path).exists()) {
-        failure = '这句语音已经不在手机上了，请重新说或输入文字';
+        failure = runsOnMac
+            ? '这句语音已经不在本机上了，请重新说或输入文字'
+            : '这句语音已经不在手机上了，请重新说或输入文字';
       } else if (!_isConfigured(config)) {
         failure = '还没配置语音识别，这句话已保留；配置后点重试，或直接输入文字';
       } else if (fileProcessingBusy) {

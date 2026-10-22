@@ -295,7 +295,8 @@ class RecorderController extends ChangeNotifier
        _micStreamOverride = micStream,
        _speechStreamOverride = speechStream,
        answerSpeaker = answerSpeaker ?? SystemAnswerSpeaker(),
-       phoneRecordingEnabled = phoneRecordingEnabled ?? runsOnPhone,
+       phoneRecordingEnabled =
+           phoneRecordingEnabled ?? (runsOnPhone || runsOnMac),
        // Keep the injection seam public while the field stays private.
        // ignore: prefer_initializing_formals
        _transcriptPersister = transcriptPersister,

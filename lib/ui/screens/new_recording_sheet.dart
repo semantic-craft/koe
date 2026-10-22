@@ -1,8 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../platform/device_kind.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../import_audio.dart';
@@ -12,6 +15,20 @@ import '../widgets/hold_to_talk.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/status_indicators.dart';
 import 'text_capture_sheet.dart';
+
+const macMicrophonePrivacyUrl =
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone';
+
+Future<void> openMicrophonePrivacySettings() async {
+  if (runsOnMac) {
+    await launchUrl(
+      Uri.parse(macMicrophonePrivacyUrl),
+      mode: LaunchMode.externalApplication,
+    ).catchError((_) => false);
+    return;
+  }
+  await openAppSettings();
+}
 
 enum NewRecordingAction {
   phone,
@@ -71,7 +88,9 @@ Future<void> showPhoneRecordingSheet(BuildContext context) async {
     builder: (_) => const PhoneRecordingPanel(),
   );
   if (saved != null) {
-    messenger.showSnackBar(const SnackBar(content: Text('手机录音已保存为原件')));
+    messenger.showSnackBar(
+      SnackBar(content: Text(runsOnMac ? '麦克风录音已保存为原件' : '手机录音已保存为原件')),
+    );
   }
 }
 
@@ -198,7 +217,11 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                     const SizedBox(width: 8),
                   ],
                   Text(
-                    active ? (paused ? '已暂停' : '手机录音中') : '手机录音',
+                    active
+                        ? (paused
+                              ? '已暂停'
+                              : (runsOnMac ? '麦克风录音中' : '手机录音中'))
+                        : (runsOnMac ? '麦克风录音' : '手机录音'),
                     key: const ValueKey('phone-recording-title'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
@@ -227,6 +250,16 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: AppColors.textSecondary),
                 ),
+                if (controller.phoneRecordingPermissionDenied) ...[
+                  const SizedBox(height: 8),
+                  Center(
+                    child: OutlinedButton(
+                      key: const ValueKey('open-microphone-settings'),
+                      onPressed: openMicrophonePrivacySettings,
+                      child: const Text('去系统设置'),
+                    ),
+                  ),
+                ],
               ],
               const SizedBox(height: 20),
               if (active) ...[
@@ -377,9 +410,12 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
-            const Text(
-              '原件先保存到手机，再决定是否转写或整理。',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            Text(
+              runsOnMac ? '原件先保存到本机，再决定是否转写或整理。' : '原件先保存到手机，再决定是否转写或整理。',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
             ),
             const SizedBox(height: 16),
             if (_typing) ...[
@@ -417,7 +453,9 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
             ] else ...[
               HoldToTalkButton(
                 key: const ValueKey('new-record-hold-to-talk'),
-                label: phoneRecording ? '按住说话记一条' : '按住说话仅在 iPhone 上提供',
+                label: phoneRecording
+                    ? '按住说话记一条'
+                    : (runsOnMac ? '按住说话当前不可用' : '按住说话仅在 iPhone 上提供'),
                 enabled: phoneRecording,
                 onStart: () => controller.startVoiceHold(VoiceTarget.note),
                 onSend: _sendVoice,
@@ -446,13 +484,15 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
             _RecordOption(
               key: const ValueKey('new-record-phone'),
               icon: Icons.mic_none_rounded,
-              title: '手机录音',
+              title: runsOnMac ? '麦克风录音' : '手机录音',
               subtitle: phoneRecording
                   ? controller.allDayListening
                         ? '全天监听已打开：开始后一直识别、只留文字'
-                        : '用手机麦克风录下来，保存为原件'
-                  : '只在 iPhone 上提供；这里请用录音豆或导入音频',
-              trailing: phoneRecording ? null : '仅 iPhone',
+                        : (runsOnMac ? '用麦克风录下来，保存为原件' : '用手机麦克风录下来，保存为原件')
+                  : (runsOnMac
+                        ? '当前不可用；这里请用录音豆或导入音频'
+                        : '只在 iPhone 上提供；这里请用录音豆或导入音频'),
+              trailing: phoneRecording ? null : (runsOnMac ? '不可用' : '仅 iPhone'),
               onTap: phoneRecording
                   ? () => Navigator.pop(context, NewRecordingAction.phone)
                   : null,
@@ -463,8 +503,8 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
               title: '纯文字记录',
               subtitle: phoneRecording
                   ? '一直识别你说的话，只留文字、不存录音；断网也不丢'
-                  : '只在 iPhone 上提供',
-              trailing: phoneRecording ? null : '仅 iPhone',
+                  : (runsOnMac ? '当前不可用' : '只在 iPhone 上提供'),
+              trailing: phoneRecording ? null : (runsOnMac ? '不可用' : '仅 iPhone'),
               onTap: phoneRecording
                   ? () => Navigator.pop(context, NewRecordingAction.textCapture)
                   : null,

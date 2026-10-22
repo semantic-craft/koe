@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import '../platform/device_kind.dart';
 import 'context/context_file.dart';
 
 enum RecordingSource { device, localImport, phone }
@@ -387,5 +388,5 @@ class RecordingLibraryStore {
 String recordingSourceLabel(RecordingSource source) => switch (source) {
   RecordingSource.device => '设备录音',
   RecordingSource.localImport => '本地导入',
-  RecordingSource.phone => '手机录音',
+  RecordingSource.phone => runsOnMac ? '麦克风录音' : '手机录音',
 };
