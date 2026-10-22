@@ -22,9 +22,9 @@
       },
       {
         "number": 38,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-10-20T06:13:55Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-10-22T01:09:44Z"
       },
       {
         "number": 49,
@@ -220,22 +220,22 @@
       },
       {
         "number": 344,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-10-21T02:19:20Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-10-22T01:05:25Z"
       },
       {
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-21T03:51:15Z"
+        "updated_at": "2026-10-22T01:04:15Z"
       }
     ],
-    "main": "f2be3ffc5e9ed87dc9622253755416e5a9e9ce07",
+    "main": "03d038530ac1a81461d6772b5a2a0ab5caa32f30",
     "open_pulls": [
       {
-        "head": "9feb7079350074f75d134348330711105500f47c",
-        "number": 62
+        "head": "a9c21151179b2dc9e8345f5835c2627394fa88b9",
+        "number": 358
       }
     ],
     "pulls": [
@@ -245,7 +245,7 @@
         "merge_commit": null,
         "merged": false,
         "number": 62,
-        "state": "open"
+        "state": "closed"
       },
       {
         "base": "21abe2954999a00ff887135e013fde745d0b80a3",
@@ -342,12 +342,20 @@
         "merged": true,
         "number": 354,
         "state": "closed"
+      },
+      {
+        "base": "b060e80f05288b5854b5ac5a32893728e7dd21e5",
+        "head": "f560f9585748b9cbf69801d766e4a6c1169497f0",
+        "merge_commit": "03d038530ac1a81461d6772b5a2a0ab5caa32f30",
+        "merged": true,
+        "number": 357,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-21T13:28:38.604069Z",
+  "observed_at": "2026-10-22T01:18:05.101954Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -445,6 +453,25 @@
           "evidence": [
             {
               "kind": "pull",
+              "note": "PR 提供长按图标快捷录音的实现与单元测试，以及 Pixel 上快捷方式场景的运行记录（解锁时通过、锁着时跳过）。",
+              "ref": 357
+            },
+            {
+              "kind": "issue",
+              "note": "工单规定长按图标开始录音的需求与验收范围。",
+              "ref": 344
+            }
+          ],
+          "id": "android-shortcut",
+          "next": "按 #345 在桌面长按图标确认入口的图标和标题、冷启动只开始一次、旋转或从最近任务重开不重放、release 包图标。",
+          "status": "done",
+          "summary": "长按 Koe 图标出现「开始录音」，走 iPhone 快捷录音的同一入口，全天监听开着时进全天监听。Pixel 上手机解锁时场景通过：快捷方式已注册，点击后 Koe 回到前台、进入全天监听、麦克风前台服务启动并识别出文字；手机有 PIN 锁着时 Android 拒绝麦克风前台服务，场景记为跳过。",
+          "title": "Android 长按图标开始录音"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
               "note": "PR 提供一键断开与接回的实现依据。",
               "ref": 330
             },
@@ -489,25 +516,30 @@
           "evidence": [
             {
               "kind": "pull",
-              "note": "PR 提供应用身份相关差异的核对入口。",
+              "note": "已关闭，未合并。",
               "ref": 62
             },
             {
               "kind": "issue",
-              "note": "总工单规定 Android 功能对齐范围。",
-              "ref": 331
+              "note": "旧工单，已关闭（not planned）。",
+              "ref": 38
             },
             {
-              "kind": "file",
-              "note": "Android 章节规定现行工作范围及 PR #62 的处理背景。",
-              "ref": "ROADMAP.md"
+              "kind": "pull",
+              "note": "取代它的应用名称与图标实现。",
+              "ref": 347
+            },
+            {
+              "kind": "pull",
+              "note": "取代它的后台同步通知实现。",
+              "ref": 351
             }
           ],
           "id": "android-identity-pr",
-          "next": "先核对其差异与 Android 实现，再由维护者依据范围处理 PR。",
-          "status": "in_progress",
-          "summary": "PR #62 涉及启动器名称、同步通知与图标。以 ROADMAP 的 Android 范围和 #331 为依据核对差异，判断是否需要独立实施。",
-          "title": "Android 应用身份 PR"
+          "next": "无后续实现；Android 设备验收按 #345。",
+          "status": "done",
+          "summary": "PR #62 与工单 #38 已被 #331 的范围取代：Koe 名称与图标由 #336（PR #347）完成，后台同步通知由 #339（PR #351）、录音与监听通知由 #340（PR #354）完成。2026-10-22 关闭 PR #62 与 #38，不再合并。",
+          "title": "旧 Android 应用身份 PR（已关闭）"
         }
       ],
       "title": "实现差异与范围核对"
@@ -515,20 +547,6 @@
     {
       "id": "pending",
       "items": [
-        {
-          "evidence": [
-            {
-              "kind": "issue",
-              "note": "工单规定长按图标开始录音的需求与验收范围。",
-              "ref": 344
-            }
-          ],
-          "id": "android-shortcut",
-          "next": "按工单实现入口并验证从桌面开始录音。",
-          "status": "planned",
-          "summary": "覆盖从桌面长按图标开始录音的快捷入口，以入口操作和实际录音结果作为验收依据。",
-          "title": "Android 长按图标开始录音"
-        },
         {
           "evidence": [
             {
@@ -606,19 +624,24 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "工单提供 Android 功能范围或统一真机验收要求。",
+              "note": "Android 功能范围。",
               "ref": 331
             },
             {
               "kind": "issue",
-              "note": "工单提供 Android 功能范围或统一真机验收要求。",
+              "note": "统一真机验收要求，以及各次运行结果的评论。",
               "ref": 345
+            },
+            {
+              "kind": "commit",
+              "note": "这次整套真机运行用的提交：8 项通过，其余被 USB 断开、手机被拿起和屏保打断。",
+              "ref": "03d038530ac1a81461d6772b5a2a0ab5caa32f30"
             }
           ],
           "id": "android-acceptance",
-          "next": "依工单在 Pixel 11 Pro / Android 17 上走完场景，分别记录安装、运行和用户确认。",
-          "status": "planned",
-          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。",
+          "next": "先让脚本适应这台日常用机：需要 Koe 在屏幕上的场景先亮屏、锁着就记为跳过，锁屏场景放到最后跑；然后在 Pixel 插着且没人动时整套重跑。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。",
+          "status": "in_progress",
+          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 在 03d0385 上整套跑 scripts/android-check：回答朗读、日历、导入音频转码 6 项共 8 项通过；其余场景被环境打断，没有结论：约 09:08–09:10 USB 断开（凭据、后台同步、快捷方式装不上 App），09:11 手机被拿起亮屏（全天监听锁屏检查失败），最后屏保盖住 Koe（启动场景读不到状态栏高度），手机录音场景未跑完。",
           "title": "Android 综合验收"
         },
         {
@@ -891,7 +914,8 @@
       351,
       352,
       353,
-      354
+      354,
+      357
     ]
   }
 }

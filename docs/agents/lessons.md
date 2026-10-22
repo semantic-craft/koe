@@ -31,6 +31,15 @@
 
 - 出事：2026-10-21 #337 在本机跑 `check`，干净 main 也红 5 条（`engine_lineup_test`、`recording_processing_test`、`context_export_test`）：agent 的 shell 带着 `DASHSCOPE_API_KEY` 等变量，`lib/ai/cloud_stt_service.dart` 会读它们，「未配置」的用例因此看到已配置。CI 运行机没有这些变量，所以只在本机红。
 - 修复：只改跑法：`env -u DASHSCOPE_API_KEY -u ARK_API_KEY -u DOUBAO_TTS_API_KEY check`，main 与分支都全绿。没有读取或打印变量值。
-- Done right: 本机 `check` 出现与改动无关的「已配置」类失败，先在干净 worktree 用同样去掉密钥变量的命令复跑一遍对照，再判断是不是回归。
+- 反过来也会漏：2026-10-22 #344 新加的冷启动用例在本机单跑 `flutter test` 时全过，靠的是 shell 里的密钥；去掉变量跑 `check` 才红：读回已保存设置时 Qwen 的 key 被换成保存的空值。修复在测试保存的设置里带上替身 key。
+- Done right: 本机 `check` 出现与改动无关的「已配置」类失败，先在干净 worktree 用同样去掉密钥变量的命令复跑一遍对照，再判断是不是回归。单跑 `flutter test <文件>` 也加同样的 `env -u …` 前缀。
 - 验证点：
-- Seen 1x (2026-10-21)
+- Seen 2x (2026-10-21, 2026-10-22)
+
+### 真机场景不能假设 Pixel 停在解锁的桌面：充电时会进屏保，锁屏要 PIN
+
+- 出事：2026-10-22 #344 快捷方式场景头一次真正在 Pixel 上跑（#347 到 #354 的场景提交时 Pixel 都离线；#345 的记录里，之后只有 credentials_test 在真机上跑通过），接连失败。`moveTaskToBack` 后 Koe 的生命周期一直是 resumed：手机充电，息屏 30 秒就进时钟屏保（`com.google.assistant.hubui` 的 `EverydayClockDreamService`），Koe 留在屏保后面，只收到 `wm_on_top_resumed_lost_called`。改按 Home 键后，屏保一退就露出锁屏；锁屏要 PIN，`wm dismiss-keyguard` 解不开。点快捷方式时 Koe 只在锁屏后面恢复一下又暂停（`wm_pause_activity … sleep`、`wm_set_keyguard_occluded [0,0,0]`），麦克风前台服务被拒：logcat 里服务本身获准启动（`ACTIVITY_VISIBILITY_GRACE_PERIOD`），但 uidState 是 `TPSL`（置顶但在睡眠）、`allowWiu:-1`，接着报 `can not have location/camera/microphone access`，`startForeground` 抛 SecurityException。
+- 修复：`KOE_ADB: home` 先 `wake-screen` 再按 Home，场景等 Koe 真进了后台。原生状态加 `deviceLocked`（`KeyguardManager.isDeviceLocked`）；手机锁着时场景打印 `KOE_ADB: skip <原因>` 并跳过，`scripts/android-check` 以 77 退出：记为跳过，不算通过也不算失败。试过离屏 8 秒后再点快捷方式，锁着时照样被拒。手机解锁后同一场景通过，logcat 里是 `uidState: TOP`、`code:PROC_STATE_TOP`、`allowWiu:12`。
+- Done right: 写需要 Koe 在屏幕上的场景前，先用 `adb shell dumpsys power`（`mWakefulness`、`mDreamsActivateOnSleepSetting`）和 `dumpsys trust`（`deviceLocked`）看设备实际状态；失败时看 `adb logcat -b events` 里 `wm_pause_activity` 的原因，和 `ActivityManager` 对前台服务的判定（`uidState`、`allowWiu`）。没人值守解不开 PIN 锁屏：要 Koe 在屏幕上的场景，手机锁着时跳过。
+- 验证点：`rg -n 'deviceLocked' android/app/src/main/kotlin integration_test/android/recording_shortcut_test.dart` 有结果（原生状态带 `isDeviceLocked`，场景锁着时打印 `KOE_ADB: skip`）；`rg -n 'skipped=77' scripts/android-check` 有结果。
+- Seen 1x (2026-10-22)

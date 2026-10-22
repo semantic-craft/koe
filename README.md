@@ -10,6 +10,7 @@
   <a href="https://flutter.dev"><img alt="Flutter 3.47.7" src="https://img.shields.io/badge/Flutter-3.47.7-02569B?style=flat-square&logo=flutter&logoColor=white"></a>
   <img alt="iOS 15+" src="https://img.shields.io/badge/iOS-15%2B-000000?style=flat-square&logo=apple&logoColor=white">
   <img alt="macOS 12+" src="https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Android 17 (Pixel 11 Pro)" src="https://img.shields.io/badge/Android-17%20%C2%B7%20Pixel%2011%20Pro-3DDC84?style=flat-square&logo=android&logoColor=white">
   <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <img alt="License pending" src="https://img.shields.io/badge/License-pending-lightgrey?style=flat-square">
 </p>
@@ -38,9 +39,9 @@ Koe 让这枚录音豆脱离飞书独立工作：手机或 Mac 通过蓝牙直�
 - 蓝牙扫描、配对和绑定录音豆；查看录音豆与充电盒电量，远程开始、暂停、停止录音
 - 实时转写：录音时边说边出文字，可选实时翻译（Apple 设备端）
 - 从录音豆取回录音（蓝牙或 Wi‑Fi 直连批量导出），续录变长的录音会自动补取
-- iPhone 麦克风也能直接录音，来电自动暂停，进程被杀后下次启动找回
+- 手机（iPhone、Pixel）麦克风也能直接录音，锁屏继续，来电自动暂停，进程被杀后下次启动找回
 - 文件转写：千问长录音分块上传，豆包极速版；提交后的任务在重启后继续查询
-- iPhone 操作按钮 / 快捷指令一键让录音豆开始录音
+- iPhone 操作按钮 / 快捷指令一键让录音豆开始录音；Android 长按 Koe 图标选「开始录音」
 
 ### 回听与校订
 
@@ -55,7 +56,7 @@ Koe 让这枚录音豆脱离飞书独立工作：手机或 Mac 通过蓝牙直�
 
 - 「今日」时间线汇总当天的录音和记录，可纠正它们所属的主题
 - 项目跨天持续跟进；主题笔记与主题汇总
-- 从对话里的承诺自动生成待办，可导出到 iPhone 的提醒事项和日历
+- 从对话里的承诺自动生成待办，可导出到 iPhone 的提醒事项和日历（Android 导出到系统日历）
 - 录音自动记录大致地点，也可手动补充
 - 新录音自动整理：转写 → 摘要 → 提取待办，中断后可恢复
 
@@ -91,13 +92,14 @@ Koe 让这枚录音豆脱离飞书独立工作：手机或 Mac 通过蓝牙直�
 | --- | --- |
 | iOS 15+ | 主力平台。Apple 设备端转写与翻译需要 iOS 26+ |
 | macOS 12+ | 辅助阅读与原件归档端 |
-| Android | 代码目录保留，当前冻结，不维护 |
+| Android 17 | 只适配 Pixel 11 Pro，代码已合并，待真机验收（#345）。没有 Apple 设备端转写与翻译、提醒事项和 Mac 归档 |
 
 ## 快速开始
 
 ### 准备
 
 - macOS 与 Xcode（含 iOS 平台），CocoaPods
+- Android：Android SDK（compileSdk 37）与 JDK 21
 - Flutter 3.47.7（与 CI 一致）
 - 一枚 soundcore Work D3200 录音豆（没有录音豆也能用手机录音、导入音频和其余功能）
 - 可选：[通义千问（DashScope）](https://dashscope.aliyun.com/) 或 [豆包语音](https://www.volcengine.com/product/voice-tech) 的 API Key
@@ -116,6 +118,10 @@ flutter run -d macos
 
 ```bash
 flutter run -d ios
+```
+
+```bash
+flutter run -d pixel
 ```
 
 iOS 真机需要在 Xcode 里为 `ios/Runner.xcworkspace` 选择你自己的开发团队。仓库里的 `scripts/install-ios.sh`、`scripts/install-macos.sh` 和 `scripts/build-dmg.sh` 是维护者的安装与打包脚本，运行前先看清目标设备和签名身份。
@@ -147,7 +153,7 @@ iOS 真机需要在 Xcode 里为 `ios/Runner.xcworkspace` 选择你自己的开�
    - **Apple 设备端**：不需要 Key，iOS 26+ 可用，处理全部在本机完成。
 3. 保存后自动启用。服务地址和模型由程序选择。
 
-Key 保存在系统 Keychain 中，不写入设置文件。开发与调试构建默认使用隔离的内存存储，不会读写你个人 Keychain 里的 Key。
+Key 保存在系统 Keychain（Android 上是 Keystore 加密存储）中，不写入设置文件。开发与调试构建默认使用隔离的内存存储，不会读写你个人 Keychain 里的 Key。
 
 ### 测试
 
@@ -158,6 +164,8 @@ flutter analyze
 ```bash
 flutter test
 ```
+
+连着 Pixel 时，`scripts/android-check` 构建并安装调试包，在手机上跑 [integration_test/android](integration_test/android/) 的无人值守场景；设备离线时以 77 退出，记为跳过。
 
 ## 架构
 
@@ -186,9 +194,10 @@ Koe 是一个 Flutter 应用，状态由 Provider 管理的 `RecorderController`
 | [lib/ai](lib/ai/) | 转写服务：Apple 设备端、千问、豆包 |
 | [lib/state](lib/state/) | 控制器与持久化；[recorder/](lib/state/recorder/) 按功能分块，[context/](lib/state/context/) 是个人记录 |
 | [lib/archive](lib/archive/) | 手机到 Mac 的原件归档 |
-| [lib/platform](lib/platform/) | 钥匙串、地点、提醒事项、快捷指令等平台接入 |
+| [lib/platform](lib/platform/) | 钥匙串与 Keystore、地点、提醒事项与日历、快捷指令、Android 前台服务等平台接入 |
 | [lib/ui](lib/ui/) | 页面与组件 |
 | [darwin](darwin/)、[ios](ios/)、[macos](macos/) | Apple 原生代码 |
+| [android](android/) | Android 原生代码：前台服务与通知、快捷方式 |
 | [test](test/)、[integration_test](integration_test/) | 单元、组件与性能测试 |
 
 术语见 [GLOSSARY](GLOSSARY.md)，设计决策见 [docs/adr](docs/adr/)，界面规范见 [docs/design/ui-guidelines.md](docs/design/ui-guidelines.md)。

@@ -10,6 +10,7 @@
   <a href="https://flutter.dev"><img alt="Flutter 3.47.7" src="https://img.shields.io/badge/Flutter-3.47.7-02569B?style=flat-square&logo=flutter&logoColor=white"></a>
   <img alt="iOS 15+" src="https://img.shields.io/badge/iOS-15%2B-000000?style=flat-square&logo=apple&logoColor=white">
   <img alt="macOS 12+" src="https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Android 17 (Pixel 11 Pro)" src="https://img.shields.io/badge/Android-17%20%C2%B7%20Pixel%2011%20Pro-3DDC84?style=flat-square&logo=android&logoColor=white">
   <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <img alt="License pending" src="https://img.shields.io/badge/License-pending-lightgrey?style=flat-square">
 </p>
@@ -38,9 +39,9 @@ On top of that, Koe is growing into a phone-first personal record: recordings, p
 - Scan, pair and bind the recorder over Bluetooth; see recorder and charging-case battery; start, pause and stop recording remotely
 - Live transcription while you record, with optional live translation (Apple on-device)
 - Pull recordings from the recorder (Bluetooth, or Wi‑Fi direct batch export); recordings that grew after a resumed session are fetched again automatically
-- Record with the iPhone microphone too; pauses on incoming calls and recovers after the app is killed
+- Record with the phone microphone too (iPhone or Pixel); keeps recording when locked, pauses on incoming calls and recovers after the app is killed
 - File transcription: chunked uploads for long Qwen recordings, Doubao turbo; submitted jobs keep being polled after a restart
-- Start the recorder from the iPhone Action button or a Shortcut
+- Start the recorder from the iPhone Action button or a Shortcut; on Android, long-press the Koe icon and pick Start recording
 
 ### Playback and correction
 
@@ -55,7 +56,7 @@ On top of that, Koe is growing into a phone-first personal record: recordings, p
 
 - A "Today" timeline of the day's recordings and notes, with correctable topic assignment
 - Projects followed across days; per-topic notes and topic summaries
-- To-dos generated from commitments in conversations, exportable to iPhone Reminders and Calendar
+- To-dos generated from commitments in conversations, exportable to iPhone Reminders and Calendar (on Android, to the system calendar)
 - Approximate place recorded automatically for recordings, or added by hand
 - New recordings are processed automatically (transcribe → summarize → extract to-dos) and resume after interruption
 
@@ -91,13 +92,14 @@ Other soundcore recorders are untested. Protocol details are in [PROTOCOL.md](PR
 | --- | --- |
 | iOS 15+ | Primary platform. Apple on-device transcription and translation need iOS 26+ |
 | macOS 12+ | Companion for reading and archiving originals |
-| Android | Code kept but frozen and unmaintained |
+| Android 17 | Pixel 11 Pro only. Code merged, device acceptance pending (#345). No Apple on-device transcription or translation, Reminders or Mac archiving |
 
 ## Quick start
 
 ### Prerequisites
 
 - macOS with Xcode (including the iOS platform) and CocoaPods
+- Android: the Android SDK (compileSdk 37) and JDK 21
 - Flutter 3.47.7 (same as CI)
 - A soundcore Work D3200 recorder (without one you can still record on the phone, import audio and use everything else)
 - Optional: an API key for [Alibaba Qwen (DashScope)](https://dashscope.aliyun.com/) or [Doubao Speech](https://www.volcengine.com/product/voice-tech)
@@ -116,6 +118,10 @@ flutter run -d macos
 
 ```bash
 flutter run -d ios
+```
+
+```bash
+flutter run -d pixel
 ```
 
 On a physical iPhone, choose your own development team for `ios/Runner.xcworkspace` in Xcode. `scripts/install-ios.sh`, `scripts/install-macos.sh` and `scripts/build-dmg.sh` are the maintainer's install and packaging scripts; check the target device and signing identity before running them.
@@ -147,7 +153,7 @@ After installing Koe and connecting the recorder at least once:
    - **Apple on-device**: no key needed; available on iOS 26+, with all processing on the device.
 3. The provider is enabled once saved. Endpoints and models are chosen by the app.
 
-Keys are stored in the system Keychain, never in the settings file. Development and debug builds use an isolated in-memory store and never read or write keys in your personal Keychain.
+Keys are stored in the system Keychain (on Android, in Keystore-encrypted storage), never in the settings file. Development and debug builds use an isolated in-memory store and never read or write keys in your personal Keychain.
 
 ### Tests
 
@@ -158,6 +164,8 @@ flutter analyze
 ```bash
 flutter test
 ```
+
+With a Pixel connected, `scripts/android-check` builds and installs a debug build and runs the unattended scenarios in [integration_test/android](integration_test/android/) on the phone; it exits 77 (skipped) when the device is offline.
 
 ## Architecture
 
@@ -186,9 +194,10 @@ D3200 recorder ──BLE/Wi‑Fi──▶ ble/ wifi/ protocol/ crypto/
 | [lib/ai](lib/ai/) | Transcription providers: Apple on-device, Qwen, Doubao |
 | [lib/state](lib/state/) | Controller and persistence; [recorder/](lib/state/recorder/) is split by feature, [context/](lib/state/context/) is the personal record |
 | [lib/archive](lib/archive/) | Phone-to-Mac archive of originals |
-| [lib/platform](lib/platform/) | Keychain, location, Reminders, Shortcuts and other platform bridges |
+| [lib/platform](lib/platform/) | Keychain and Keystore, location, Reminders and calendar, Shortcuts, the Android foreground service and other platform bridges |
 | [lib/ui](lib/ui/) | Screens and widgets |
 | [darwin](darwin/), [ios](ios/), [macos](macos/) | Native Apple code |
+| [android](android/) | Native Android code: foreground service and notification, launcher shortcut |
 | [test](test/), [integration_test](integration_test/) | Unit, widget and performance tests |
 
 Terms are in [GLOSSARY](GLOSSARY.md), design decisions in [docs/adr](docs/adr/), UI rules in [docs/design/ui-guidelines.md](docs/design/ui-guidelines.md). Project docs are written in Chinese.

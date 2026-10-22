@@ -2,6 +2,7 @@ package com.semanticcraft.soundcore
 
 import android.app.AlertDialog
 import android.content.Intent
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -10,6 +11,18 @@ import io.flutter.plugin.common.MethodChannel
 import com.ryanheise.audioservice.AudioServiceActivity
 
 class MainActivity : AudioServiceActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // 开始录音 from the launcher acts once. Android hands its intent back
+        // when it recreates this activity or reopens Koe from recents, so the
+        // shortcut is dropped there before quick_actions reads it.
+        if (savedInstanceState != null ||
+            (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        ) {
+            intent.removeExtra(QUICK_ACTION_EXTRA)
+        }
+        super.onCreate(savedInstanceState)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val backgroundSync = MethodChannel(
@@ -93,6 +106,9 @@ class MainActivity : AudioServiceActivity() {
 
     companion object {
         private var watchedEngine: FlutterEngine? = null
+
+        // quick_actions_android's QuickActions.EXTRA_ACTION.
+        private const val QUICK_ACTION_EXTRA = "some unique action key"
     }
 
     private fun explainNotificationsOff() {

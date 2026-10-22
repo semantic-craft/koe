@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/main.dart';
+import 'package:koe/ai/engine_config.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/ble/ble_service.dart';
@@ -13,6 +14,7 @@ import 'package:koe/protocol/models.dart';
 import 'package:koe/platform/phone_mic_stream.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
+import 'package:koe/state/app_settings_store.dart';
 import 'package:koe/state/minutes_document.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
@@ -45,10 +47,14 @@ void main() {
   Directory spoolDir() => Directory('${directory.path}/text_capture');
   File minutesFile() => File('${directory.path}/minutes.json');
 
-  RecorderController build({bool disposeAtEnd = true, BleService? ble}) {
+  RecorderController build({
+    bool disposeAtEnd = true,
+    BleService? ble,
+    bool loadPersistedState = false,
+  }) {
     final controller = RecorderController(
       ble: ble,
-      loadPersistedState: false,
+      loadPersistedState: loadPersistedState,
       analysisController: RecordingAnalysis(inMemory: true),
       qwenSpeech: fileStt..apiKeyOverride = 'test-key',
       transcriptPersister: ({bool strict = false}) async {},
@@ -264,6 +270,51 @@ void main() {
       expect(second.textCaptureActive, isFalse);
       expect(mic.started, isFalse);
       expect(service.running, isFalse);
+    });
+
+    test('on Android 开始录音 on the Koe icon enters it from the phone, as '
+        'microphone work of the foreground service', () async {
+      final service = FakeForegroundService();
+      final controller = build()..allDayListening = true;
+
+      await controller.requestRecordingFromShortcut();
+
+      expect(controller.textCaptureActive, isTrue);
+      expect(controller.textCaptureAllDay, isTrue);
+      expect(mic.started, isTrue);
+      await until(() => service.running);
+      expect(service.types, {'microphone'});
+      expect(controller.errorMessage, isNull);
+      await controller.stopTextCapture();
+    });
+
+    test('a cold launch from 开始录音 waits for the saved switch', () async {
+      await AppSettingsStore.save(
+        const AppSettings(
+          allDayListening: true,
+          engines: {'qwen': EngineConfig(apiKey: 'test-key')},
+        ),
+        strict: true,
+      );
+      final controller = build(loadPersistedState: true);
+      expect(controller.allDayListening, isFalse, reason: 'not read yet');
+
+      await controller.requestRecordingFromShortcut();
+
+      expect(controller.textCaptureActive, isTrue);
+      expect(controller.textCaptureAllDay, isTrue);
+      await controller.stopTextCapture();
+    });
+
+    test('开始录音 says why listening did not start', () async {
+      mic.allowed = false;
+      final controller = build()..allDayListening = true;
+
+      await controller.requestRecordingFromShortcut();
+
+      expect(controller.textCaptureActive, isFalse);
+      expect(controller.statusMessage, '快捷录音未开始');
+      expect(controller.errorMessage, '没有麦克风权限。可在系统设置里允许 Koe 使用麦克风');
     });
 
     test('reopening Koe continues listening that was left on', () async {
@@ -504,6 +555,7 @@ class _Ble extends BleService {
 class _Mic implements PhoneMicStream {
   StreamController<Uint8List>? _samples;
   bool get started => _samples != null;
+  bool allowed = true;
 
   void speak(int bytes) => _samples!.add(Uint8List(bytes));
 
@@ -517,7 +569,7 @@ class _Mic implements PhoneMicStream {
   }
 
   @override
-  Future<bool> requestPermission() async => true;
+  Future<bool> requestPermission() async => allowed;
 
   @override
   Stream<PhoneMicState> get states => const Stream.empty();

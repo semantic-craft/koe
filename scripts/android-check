@@ -6,7 +6,8 @@
 #   scripts/android-check <file>...       only these scenarios
 #
 # KOE_ANDROID_SERIAL picks the device (default: the Pixel 11 Pro).
-# Exit codes: 0 passed, 1 failed, 77 skipped because the device is offline.
+# Exit codes: 0 passed, 1 failed, 77 skipped: the device is offline, or a
+# scenario could not run on it (the line before says why).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -31,22 +32,54 @@ wake_screen() {
   adb -s "$serial" shell wm dismiss-keyguard
 }
 
+# Opens Koe through its launcher shortcut <id> with the intent quick_actions
+# registered for it, as a long press on the icon does; the launcher only
+# offers shortcuts Koe has registered, so an unregistered one is not fired.
+launch_shortcut() {
+  local id="$1" shortcuts listed
+  shortcuts="$(adb -s "$serial" shell cmd shortcut get-shortcuts --flags 2 "$package")"
+  listed="$(grep -F "id=$id," <<<"$shortcuts" || true)"
+  if [[ -z "$listed" ]]; then
+    echo "android-check: $package has no launcher shortcut $id:"
+    printf '%s\n' "$shortcuts"
+    return
+  fi
+  echo "android-check: launcher shortcut: $listed"
+  adb -s "$serial" shell "am start -a android.intent.action.RUN -c android.intent.category.LAUNCHER -f 0x30000000 -n $package/.MainActivity --es 'some unique action key' $id"
+}
+
 # Scenarios ask for what only adb can do by printing a marker line:
-#   KOE_ADB: lock-screen   turn the screen off, as the power button does
-#   KOE_ADB: wake-screen   turn it on and dismiss a non-secure keyguard
+#   KOE_ADB: home                   wake-screen, then go to the home screen with Home
+#   KOE_ADB: lock-screen            turn the screen off, as the power button does
+#   KOE_ADB: wake-screen            turn it on and dismiss a non-secure keyguard
+#   KOE_ADB: launch-shortcut <id>   choose shortcut <id> on the Koe icon
+#   KOE_ADB: skip <reason>          the scenario could not run; exit 77
+# adb shell reads its stdin, which here is the scenario output still to come,
+# so the answers read /dev/null instead.
 answer_scenarios() {
   local line
   while IFS= read -r line; do
     printf '%s\n' "$line"
     case "$line" in
+      *"KOE_ADB: home"*)
+        wake_screen
+        adb -s "$serial" shell input keyevent KEYCODE_HOME
+        ;;
       *"KOE_ADB: lock-screen"*) adb -s "$serial" shell input keyevent KEYCODE_SLEEP ;;
       *"KOE_ADB: wake-screen"*) wake_screen ;;
-    esac
+      *"KOE_ADB: launch-shortcut "*)
+        local id="${line##*KOE_ADB: launch-shortcut }"
+        launch_shortcut "${id%%[[:space:]]*}"
+        ;;
+      *"KOE_ADB: skip "*) printf '%s\n' "${line##*KOE_ADB: skip }" >>"$skips" ;;
+    esac </dev/null
   done
 }
 
 targets=("$@")
 [[ ${#targets[@]} -gt 0 ]] || targets=(integration_test/android)
+skips="$(mktemp)"
+trap 'rm -f "$skips"' EXIT
 wake_screen
 set +e
 flutter test "${targets[@]}" -d "$serial" --reporter expanded 2>&1 | answer_scenarios
@@ -54,5 +87,9 @@ status=${PIPESTATUS[0]}
 set -e
 # Leave the phone on screen whatever the scenarios did.
 wake_screen
+while IFS= read -r reason; do
+  echo "android-check: 跳过（$reason）"
+done <"$skips"
 [[ $status -eq 0 ]] || exit 1
+[[ ! -s "$skips" ]] || exit "$skipped"
 echo "android-check: passed on $serial ($package)"
