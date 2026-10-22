@@ -219,11 +219,16 @@ class RecorderController extends ChangeNotifier
   }
 
   @override
-  bool _takenAsVoiceNote(String? path) {
-    if (path == null) return false;
-    final name = library.assetForPath(path)?.displayName ?? '';
-    return name.startsWith('语音记录 ');
-  }
+  bool _takenAsVoiceNote(String? path) =>
+      path != null && (library.assetForPath(path)?.voiceNote ?? false);
+
+  /// Whether [path] is treated as a meeting/formal recording (#376).
+  ///
+  /// Only hold-to-talk voice notes ([RecordingAsset.voiceNote]) are daily
+  /// voice input; all other recordings, imports, device files and legacy
+  /// records without a persisted flag are conservatively treated as meeting
+  /// recordings.
+  bool isMeetingRecording(String? path) => !_takenAsVoiceNote(path);
 
   @override
   String get analysisApiKey => _qwenStt.apiKey ?? '';
@@ -272,6 +277,7 @@ class RecorderController extends ChangeNotifier
     AskStore? askStore,
     SystemTasks? systemTasks,
     AnalysisService? contextAnalysisService,
+    bool meetingLocalOnly = true,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled = topicsEnabled ?? runsOnPhone,
@@ -294,6 +300,7 @@ class RecorderController extends ChangeNotifier
        // ignore: prefer_initializing_formals
        _transcriptPersister = transcriptPersister,
        _player = player ?? AudioPlayer() {
+    this.meetingLocalOnly = meetingLocalOnly;
     library =
         libraryStore ?? RecordingLibraryStore(inMemory: !loadPersistedState);
     playbackHistory =

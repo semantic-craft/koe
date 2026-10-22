@@ -597,6 +597,9 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     }
     final targetProvider = cloudProvider ?? controller.speechProvider;
     final chooseLanguage = targetProvider.requiresSourceLanguage;
+    final isMeeting = controller.isMeetingRecording(recording.path);
+    final needsCloudConfirm =
+        controller.meetingLocalOnly && isMeeting && !targetProvider.onDevice;
     if (recording.text.isNotEmpty) {
       if (chooseLanguage) {
         final choice = await showDialog<(String, bool)>(
@@ -639,7 +642,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           builder: (context) => AlertDialog(
             title: const Text('重新转写？'),
             content: Text(
-              controller.meetingLocalOnly
+              needsCloudConfirm
                   ? '当前已开启「录音只留本机」，使用${targetProvider.label}会将这段录音的音频上传到云端服务。'
                         '成功后将替换当前文本和自定义说话人姓名，旧译文会标为过时。失败时保留现有结果。'
                   : '成功后将替换当前文本和自定义说话人姓名，旧译文会标为过时。失败时保留现有结果。',
@@ -659,7 +662,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         );
         if (confirmed != true || !mounted) return;
       }
-    } else if (controller.meetingLocalOnly && !targetProvider.onDevice) {
+    } else if (needsCloudConfirm) {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -683,12 +686,13 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       if (confirmed != true || !mounted) return;
     }
     if (chooseLanguage && sourceLanguage == null) return;
-    if (controller.meetingLocalOnly && !targetProvider.onDevice) {
+    if (cloudProvider != null || needsCloudConfirm) {
       await controller.confirmCloudTranscribeRecording(
         widget.reference,
-        provider: cloudProvider,
+        provider: targetProvider,
         sourceLanguage: chooseLanguage ? sourceLanguage : null,
         prepareLanguages: chooseLanguage && prepareLanguages,
+        confirmCloudUpload: !targetProvider.onDevice,
       );
       return;
     }

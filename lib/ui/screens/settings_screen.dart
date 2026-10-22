@@ -111,7 +111,7 @@ class SettingsScreen extends StatelessWidget {
                         key: const ValueKey('settings-meeting-local-only'),
                         title: '录音只留本机',
                         subtitle:
-                            '会议录音只用本机引擎转写，不上传音频；'
+                            '会议录音只用本机引擎转写，不向云端上传音频（局域网加密直连归档到自己的 Mac 不受影响）；'
                             '纯文字记录、按住说话与全天监听不受影响，纪要与问答只发文字',
                         value: c.meetingLocalOnly,
                         onChanged: c.setMeetingLocalOnly,
@@ -369,10 +369,7 @@ class _ProviderSelector extends StatelessWidget {
 
   void _tap(BuildContext context, SttProvider provider) {
     if (!provider.needsCredentials || controller.engineConfigured(provider)) {
-      controller.setSpeechProvider(
-        provider,
-        preserveMeetingLocalOnly: true,
-      );
+      controller.setSpeechProvider(provider);
       return;
     }
     showDialog<void>(
@@ -386,10 +383,7 @@ class _ProviderSelector extends StatelessWidget {
               controller: controller,
               provider: provider,
               onSaved: () {
-                controller.setSpeechProvider(
-                  provider,
-                  preserveMeetingLocalOnly: true,
-                );
+                controller.setSpeechProvider(provider);
                 Navigator.pop(context);
               },
             ),
@@ -531,7 +525,7 @@ class _EngineOptionCard extends StatelessWidget {
                                     ),
                                   ),
                                   child: Text(
-                                    '已关闭：会上传音频',
+                                    '会议录音已关闭：会上传音频',
                                     style: TextStyle(
                                       fontSize: 10.5,
                                       fontWeight: FontWeight.w600,

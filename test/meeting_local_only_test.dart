@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/doubao_stt.dart';
+import 'package:koe/ai/engine_config.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/platform/phone_mic_stream.dart';
@@ -15,9 +16,11 @@ import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
 import 'package:koe/state/app_settings_store.dart';
 import 'package:koe/state/context/commitments.dart';
+import 'package:koe/state/file_job_journal.dart';
 import 'package:koe/state/minutes_document.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
+import 'package:koe/state/speech_configuration.dart';
 import 'package:koe/ui/screens/recording_detail_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:provider/provider.dart';
@@ -542,6 +545,17 @@ void main() {
       expect(apple.fileCalls, 1);
       expect(controller.todos.openMine.single.title, '周五前提交纪要方案');
       expect(const AppSettings().toJson()['meetingLocalOnly'], isTrue);
+      expect(AppSettings.fromJson(const {}).meetingLocalOnly, isTrue);
+      await AppSettingsStore.save(
+        const AppSettings(meetingLocalOnly: false),
+        strict: true,
+      );
+      expect((await AppSettingsStore.load()).meetingLocalOnly, isFalse);
+      await AppSettingsStore.save(
+        const AppSettings(meetingLocalOnly: true),
+        strict: true,
+      );
+      expect((await AppSettingsStore.load()).meetingLocalOnly, isTrue);
 
       // 5. 本端没有可用本机引擎时明确提示，不回落到云端
       wire.requests.clear();
@@ -644,7 +658,7 @@ void main() {
         matching: find.byType(Switch),
       );
       expect(tester.widget<Switch>(switchFinder).value, isTrue);
-      expect(find.text('已关闭：会上传音频'), findsWidgets);
+      expect(find.text('会议录音已关闭：会上传音频'), findsWidgets);
 
       // 1. 纯文字记录与全天监听走千问（不走 Apple 设备端）
       await tester.runAsync(() async {
@@ -665,11 +679,17 @@ void main() {
         expect(await controller.startVoiceHold(VoiceTarget.note), isTrue);
         final notePath = await controller.finishVoiceNote();
         expect(notePath, isNotNull);
+        final noteRef = RecordingReference(path: notePath);
         await _until(
-          () => controller.transcriptForPath(notePath!) == '云端千问转写结果',
+          () =>
+              controller.transcriptForPath(notePath!) == '云端千问转写结果' &&
+              !controller.fileProcessingBusy &&
+              !controller.recordingView(noteRef).processing,
         );
+        expect(controller.fileProcessingBusy, isFalse);
+        expect(controller.recordingView(noteRef).processing, isFalse);
         expect(
-          controller.recordingView(RecordingReference(path: notePath)).provider,
+          controller.recordingView(noteRef).provider,
           SttProvider.qwen,
         );
         expect(apple.fileCalls, 0);
@@ -750,7 +770,8 @@ void main() {
         var i = 0;
         i < 100 &&
             (controller.recordingView(ref).text != '云端千问转写结果' ||
-                controller.recordingView(ref).processing);
+                controller.recordingView(ref).processing ||
+                controller.fileProcessingBusy);
         i++
       ) {
         await tester.runAsync(
@@ -759,8 +780,441 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
       await tester.pumpAndSettle();
+      expect(controller.fileProcessingBusy, isFalse);
+      expect(controller.recordingView(ref).processing, isFalse);
       expect(wire.requests, isNotEmpty);
       expect(controller.recordingView(ref).text, '云端千问转写结果');
+    },
+  );
+
+  testWidgets(
+    '(d) 本机不可用→整理失败→点重试：零音频上传（检查序列化后的真实字节）',
+    (tester) async {
+      final wire = _WireRecordingClient();
+      final apple = _OnDeviceAppleSpeech(supported: false);
+      late RecorderController controller;
+      late String path;
+
+      await tester.runAsync(() async {
+        controller = RecorderController(
+          loadPersistedState: false,
+          appleSpeech: apple,
+          qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+            ..apiKeyOverride = 'qwen-test-key',
+          doubaoSpeech: DoubaoSttService(client: wire)
+            ..apiKeyOverride = 'doubao-test-key',
+          analysisController: RecordingAnalysis(
+            inMemory: true,
+            service: QwenAnalysisService(client: wire),
+          ),
+          contextAnalysisService: QwenAnalysisService(client: wire),
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${dir.path}/imports-retry'),
+        );
+        await controller.setAutoOrganize(true);
+        final source = File('${dir.path}/meeting-fail.wav');
+        await source.writeAsBytes(_patternedWav(repeats: 100));
+        path = (await controller.importLocalAudio(source.path)).path;
+        await _until(
+          () => controller.organizeStatusFor(path).stage == OrganizeStage.failed,
+        );
+      });
+      addTearDown(controller.dispose);
+
+      expect(wire.requests, isEmpty);
+
+      final ref = RecordingReference(path: path);
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: controller,
+          child: MaterialApp(home: RecordingDetailScreen(reference: ref)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 点击整理横幅上的「重试」按钮
+      expect(find.byKey(const ValueKey('organize-retry')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('organize-retry')));
+      for (
+        var i = 0;
+        i < 40 &&
+            (i < 5 ||
+                controller.fileProcessingBusy ||
+                controller.recordingView(ref).processing);
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      final audioRequests = [
+        for (final req in wire.requests)
+          if (_containsSublist(req.bodyBytes, ascii.encode('RIFF')) ||
+              _containsSublist(req.bodyBytes, _pcmPattern) ||
+              req.url.host.contains('oss') ||
+              req.url.path.contains('/api/v1/uploads') ||
+              req.url.path.contains('/services/audio/asr/transcription'))
+            '${req.method} ${req.url} (${req.bodyBytes.length} bytes)',
+      ];
+      expect(
+        audioRequests,
+        isEmpty,
+        reason: '本机不可用导致整理失败后点重试，不得绕过本机限制上传音频',
+      );
+      expect(wire.requests, isEmpty);
+      expect(controller.organizeStatusFor(path).stage, OrganizeStage.failed);
+      expect(controller.fileProcessingBusy, isFalse);
+    },
+  );
+
+  test(
+    '(e) 启动恢复旧的 queued 云端会议任务（无 taskId）：开关打开时不上传',
+    () async {
+      final wire = _WireRecordingClient();
+      final audio = File('${dir.path}/1760000950.wav');
+      await audio.writeAsBytes(_patternedWav(repeats: 100));
+
+      final journalFile = File('${dir.path}/file_jobs.json');
+      final seededJournal = FileJobJournal(file: journalFile);
+      await seededJournal.enqueue(
+        'file:1760000950',
+        audio.path,
+        const SpeechConfiguration(
+          provider: SttProvider.qwen,
+          sourceLanguage: 'auto',
+          targetLanguage: 'zh',
+          ownerLanguage: 'zh',
+          guestLanguage: 'en',
+          mode: SttDisplayMode.transcription,
+          enabled: true,
+          appleReady: false,
+          appleTranslationReady: false,
+          engines: {
+            SttProvider.qwen: EngineConfig(
+              apiKey: 'qwen-test-key',
+              baseUrl: QwenSttService.defaultBaseUrl,
+              model: QwenSttService.defaultModel,
+            ),
+          },
+        ),
+      );
+      expect(seededJournal.jobs['file:1760000950']?.stage, 'queued');
+      expect(seededJournal.jobs['file:1760000950']?.taskId, isNull);
+
+      final controller = RecorderController(
+        loadPersistedState: false,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        fileJobJournal: FileJobJournal(file: journalFile),
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-restore'),
+      )..exportedPaths = [audio.path];
+      addTearDown(controller.dispose);
+
+      // 等待启动恢复任务完成检查
+      final ref = RecordingReference(fileId: 1760000950, path: audio.path);
+      await _until(
+        () =>
+            (controller.recordingView(ref).error != null ||
+                controller.recordingView(ref).text.isNotEmpty) &&
+            !controller.fileProcessingBusy &&
+            !controller.recordingView(ref).processing,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        wire.requests.map((r) => '${r.method} ${r.url}').toList(),
+        isEmpty,
+        reason: '启动恢复无 taskId 的 queued 云端会议任务时，在开关打开下不得上传音频',
+      );
+      expect(controller.fileProcessingBusy, isFalse);
+      expect(controller.recordingView(ref).processing, isFalse);
+      expect(controller.recordingView(ref).error, contains('确认'));
+
+      // 覆盖「已排队后才打开开关」：先关开关排队后一个任务，在它执行前打开开关，轮到它时也不上传
+      final secondAudio = File('${dir.path}/1760000951.wav');
+      await secondAudio.writeAsBytes(_patternedWav(repeats: 100));
+      controller.exportedPaths.add(secondAudio.path);
+      final secondRef = RecordingReference(
+        fileId: 1760000951,
+        path: secondAudio.path,
+      );
+      controller.setMeetingLocalOnly(false);
+      // 发起未确认的入队前先打开开关模拟排队期间策略切换
+      controller.setMeetingLocalOnly(true);
+      await controller.processRetrievedRecording(secondAudio.path);
+      await controller.transcribeLocalFile(secondAudio.path);
+      await _until(
+        () =>
+            !controller.fileProcessingBusy &&
+            !controller.recordingView(secondRef).processing,
+      );
+      expect(
+        wire.requests.map((r) => '${r.method} ${r.url}').toList(),
+        isEmpty,
+        reason: '开关打开时执行层必须拦截未经确认的云端音频上传',
+      );
+    },
+  );
+
+  test(
+    '(f) 导入文件名为「语音记录 会议.wav」的音频仍按会议处理不上传；按住说话记一条后改标题仍按日常处理',
+    () async {
+      final wire = _WireRecordingClient();
+      final apple = _OnDeviceAppleSpeech(supported: true);
+      final phoneRecorder = _FakePhoneRecorder();
+
+      final controller = RecorderController(
+        loadPersistedState: false,
+        appleSpeech: apple,
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        analysisController: RecordingAnalysis(
+          inMemory: true,
+          service: QwenAnalysisService(client: wire),
+        ),
+        contextAnalysisService: QwenAnalysisService(
+          client: wire,
+          systemPrompt: commitmentSystemPrompt,
+          instructionLabel: '要求',
+          sourceLabel: '资料',
+        ),
+        phoneRecorder: phoneRecorder,
+        phoneRecordingEnabled: true,
+        placeCapture: const _NoPlace(),
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-title'),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.refreshAppleCapabilities();
+      await controller.setAutoOrganize(true);
+
+      // 1. 导入文件名为「语音记录 会议.wav」的音频：不得因标题前缀误判为日常语音记录
+      final spoofedFile = File('${dir.path}/语音记录 会议.wav');
+      await spoofedFile.writeAsBytes(_patternedWav(repeats: 100));
+      final imported = await controller.importLocalAudio(spoofedFile.path);
+      expect(imported.asset.displayName, '语音记录 会议');
+
+      await _until(
+        () =>
+            controller.organizeStatusFor(imported.path).stage ==
+                OrganizeStage.done &&
+            !controller.fileProcessingBusy,
+      );
+
+      final uploadRequests = [
+        for (final req in wire.requests)
+          if (req.url.host.contains('oss') ||
+              req.url.path.contains('/api/v1/uploads') ||
+              req.url.path.contains('/services/audio/asr/transcription') ||
+              _containsSublist(req.bodyBytes, ascii.encode('RIFF')) ||
+              _containsSublist(req.bodyBytes, _pcmPattern))
+            '${req.method} ${req.url}',
+      ];
+      expect(
+        uploadRequests,
+        isEmpty,
+        reason: '导入文件名为「语音记录 会议.wav」时仍须按会议录音处理，不得上传音频',
+      );
+      expect(
+        controller
+            .recordingView(RecordingReference(path: imported.path))
+            .provider,
+        SttProvider.apple,
+      );
+
+      // 2. 按住说话记一条后改标题（去掉「语音记录 」前缀），仍按日常用途处理
+      await controller.setAutoOrganize(false);
+      wire.requests.clear();
+      expect(await controller.startVoiceHold(VoiceTarget.note), isTrue);
+      final notePath = await controller.finishVoiceNote();
+      expect(notePath, isNotNull);
+      await _until(
+        () =>
+            controller.transcriptForPath(notePath!) == '云端千问转写结果' &&
+            !controller.fileProcessingBusy,
+      );
+      final renamedPath = await controller.renameLocalExport(
+        notePath!,
+        '客户回访备忘',
+      );
+      expect(
+        controller.library.assetForPath(renamedPath)?.displayName,
+        '客户回访备忘',
+      );
+      // 改名后清除文字并直接重跑转写（无需会议二次确认，仍走千问日常通道）
+      controller.transcriptsByPath.remove(renamedPath);
+      wire.requests.clear();
+      await controller.transcribeRecording(
+        RecordingReference(path: renamedPath),
+      );
+      await _until(
+        () =>
+            controller.transcriptForPath(renamedPath) == '云端千问转写结果' &&
+            !controller.fileProcessingBusy,
+      );
+      expect(
+        controller
+            .recordingView(RecordingReference(path: renamedPath))
+            .error,
+        isNull,
+      );
+      expect(
+        controller
+            .recordingView(RecordingReference(path: renamedPath))
+            .text,
+        '云端千问转写结果',
+      );
+      expect(
+        controller
+            .recordingView(RecordingReference(path: renamedPath))
+            .provider,
+        SttProvider.qwen,
+      );
+    },
+  );
+
+  testWidgets(
+    '(g) 开关关闭或开启、全局引擎 Apple 时，点「使用通义 Qwen 转写…」「使用豆包转写…」请求真实发往对应服务且不改全局引擎',
+    (tester) async {
+      final wire = _WireRecordingClient();
+      final apple = _OnDeviceAppleSpeech(supported: true);
+      late RecorderController controller;
+      late File audio;
+
+      await tester.runAsync(() async {
+        audio = File('${dir.path}/1760000999.wav');
+        await audio.writeAsBytes(_patternedWav(repeats: 100));
+        controller = RecorderController(
+          loadPersistedState: false,
+          appleSpeech: apple,
+          qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+            ..apiKeyOverride = 'qwen-test-key',
+          doubaoSpeech: DoubaoSttService(client: wire)
+            ..apiKeyOverride = 'doubao-test-key',
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${dir.path}/imports-menu'),
+        )..exportedPaths = [audio.path];
+        await controller.refreshAppleCapabilities();
+        controller.setMeetingLocalOnly(false);
+        controller.setSpeechProvider(SttProvider.apple);
+      });
+      addTearDown(controller.dispose);
+
+      final ref = RecordingReference(fileId: 1760000999, path: audio.path);
+      expect(controller.meetingLocalOnly, isFalse);
+      expect(controller.speechProvider, SttProvider.apple);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: controller,
+          child: MaterialApp(home: RecordingDetailScreen(reference: ref)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 1. 开关关闭时点「使用通义 Qwen 转写…」：无需二次确认，请求真实发到千问
+      await tester.tap(find.byTooltip('更多操作'));
+      await tester.pumpAndSettle();
+      expect(find.text('使用通义 Qwen 转写…'), findsOneWidget);
+      expect(find.text('使用豆包转写…'), findsOneWidget);
+      await tester.tap(find.text('使用通义 Qwen 转写…'));
+      for (
+        var i = 0;
+        i < 100 &&
+            (controller.recordingView(ref).text != '云端千问转写结果' ||
+                controller.recordingView(ref).processing ||
+                controller.fileProcessingBusy);
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.pumpAndSettle();
+
+      expect(
+        wire.requests.any(
+          (r) => r.url.path.endsWith('/services/audio/asr/transcription'),
+        ),
+        isTrue,
+        reason: '开关关闭且全局引擎为 Apple 时，点「使用通义 Qwen 转写…」必须真实发请求到千问',
+      );
+      expect(controller.recordingView(ref).text, '云端千问转写结果');
+      expect(controller.recordingView(ref).provider, SttProvider.qwen);
+      expect(controller.speechProvider, SttProvider.apple);
+      expect(controller.fileProcessingBusy, isFalse);
+      expect(controller.recordingView(ref).processing, isFalse);
+
+      // 2. 开关关闭时点「使用豆包转写…」：请求真实发到豆包
+      wire.requests.clear();
+      await tester.tap(find.byTooltip('更多操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('使用豆包转写…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm-cloud-transcribe')));
+      for (
+        var i = 0;
+        i < 100 &&
+            (controller.recordingView(ref).text != '云端豆包转写结果' ||
+                controller.recordingView(ref).processing ||
+                controller.fileProcessingBusy);
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.pumpAndSettle();
+      expect(
+        wire.requests.any((r) => r.url.path.contains('/auc/bigmodel/recognize')),
+        isTrue,
+        reason: '点「使用豆包转写…」必须真实发请求到豆包',
+      );
+      expect(controller.recordingView(ref).text, '云端豆包转写结果');
+      expect(controller.recordingView(ref).provider, SttProvider.doubao);
+      expect(controller.speechProvider, SttProvider.apple);
+
+      // 3. 开关开启时点「使用通义 Qwen 转写…」：先二次确认，确认后发到千问且全局仍为 Apple
+      controller.setMeetingLocalOnly(true);
+      wire.requests.clear();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('更多操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('使用通义 Qwen 转写…'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.textContaining('录音只留本机'), findsOneWidget);
+      expect(wire.requests, isEmpty);
+      await tester.tap(find.byKey(const ValueKey('confirm-cloud-transcribe')));
+      for (
+        var i = 0;
+        i < 100 &&
+            (controller.recordingView(ref).text != '云端千问转写结果' ||
+                controller.recordingView(ref).processing ||
+                controller.fileProcessingBusy);
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.pumpAndSettle();
+      expect(
+        wire.requests.any(
+          (r) => r.url.path.endsWith('/services/audio/asr/transcription'),
+        ),
+        isTrue,
+      );
+      expect(controller.recordingView(ref).text, '云端千问转写结果');
+      expect(controller.speechProvider, SttProvider.apple);
     },
   );
 }

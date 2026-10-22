@@ -84,6 +84,8 @@ mixin _RecorderOrganize on ChangeNotifier {
     String path, {
     String? sourceLanguage,
     bool prepareLanguages = false,
+    SttProvider? provider,
+    bool confirmCloudUpload = false,
   });
   // END DEPS
 
@@ -193,7 +195,7 @@ mixin _RecorderOrganize on ChangeNotifier {
       );
       if (_transcriptOf(path).isEmpty) {
         _organizeTranscribeRequested.add(path);
-        unawaited(transcribeLocalFile(path));
+        unawaited(_retryOrganizeTranscription(path));
       } else if (analysis.hasUnconfirmedNode(summaryKey)) {
         await _runSummary(path, confirmed: true);
       } else {
@@ -203,10 +205,36 @@ mixin _RecorderOrganize on ChangeNotifier {
         _transcriptOf(path).isEmpty) {
       _recordingErrors.remove(analysisKey(ref));
       _organizeTranscribeRequested.add(path);
-      unawaited(transcribeLocalFile(path));
+      unawaited(_retryOrganizeTranscription(path));
     }
     notifyListeners();
     _scheduleOrganize();
+  }
+
+  Future<void> _retryOrganizeTranscription(String path) async {
+    await _libraryLoaded;
+    await _settingsLoaded;
+    if (_disposed) return;
+    final voiceNote = _takenAsVoiceNote(path);
+    if (meetingLocalOnly && !voiceNote && _capabilityRevision == 0) {
+      await refreshAppleCapabilities();
+      if (_disposed) return;
+    }
+    final config = voiceNote ? _settingsConfiguration : _meetingConfiguration;
+    if (!_isConfigured(config)) {
+      final message = meetingLocalOnly && !voiceNote && !onDeviceSpeechSupported
+          ? meetingLocalOnlyUnavailableMessage
+          : '先在设置里配置语音服务，再重试整理';
+      _organizeFailures[path] = message;
+      _recordingErrors[analysisKey(_organizeRef(path))] = message;
+      notifyListeners();
+      return;
+    }
+    await transcribeLocalFile(
+      path,
+      provider: config.provider,
+      sourceLanguage: config.sourceLanguage,
+    );
   }
 
   /// The queue lives in memory either way; a failed write only means a

@@ -74,6 +74,8 @@ mixin _RecorderTextCapture on ChangeNotifier {
     String path,
     DateTime recordedAt, {
     String label,
+    // ignore: unused_element_parameter
+    bool voiceNote,
   });
   Future<SttResult> _transcribePath(
     String path, {

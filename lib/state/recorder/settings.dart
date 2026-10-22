@@ -235,20 +235,8 @@ mixin _RecorderSettings on ChangeNotifier {
     }
   }
 
-  void setSpeechProvider(
-    SttProvider provider, {
-    bool preserveMeetingLocalOnly = false,
-  }) {
-    if (provider.retired) return;
-    if (!provider.onDevice &&
-        !preserveMeetingLocalOnly &&
-        !_meetingLocalOnlyExplicit) {
-      meetingLocalOnly = false;
-    }
-    if (provider == speechProvider) {
-      notifyListeners();
-      return;
-    }
+  void setSpeechProvider(SttProvider provider) {
+    if (provider.retired || provider == speechProvider) return;
     speechProvider = provider;
     if (!provider.supportsMode(sttMode)) {
       sttMode = SttDisplayMode.transcription;
@@ -264,6 +252,50 @@ mixin _RecorderSettings on ChangeNotifier {
     appleSourceLanguage = code;
     unawaited(refreshAppleCapabilities());
     unawaited(_persistSettings());
+  }
+
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  SpeechConfiguration _configurationForProvider(
+    SttProvider provider, {
+    String? sourceLanguage,
+    bool cloudUploadConfirmed = false,
+  }) {
+    final source = provider.requiresSourceLanguage
+        ? (sourceLanguage?.trim().isNotEmpty == true
+              ? sourceLanguage!.trim()
+              : (appleSourceLanguage.isNotEmpty
+                    ? appleSourceLanguage
+                    : (appleCapabilities.suggestedSourceLanguage ?? '')))
+        : (sourceLanguage?.trim().isNotEmpty == true
+              ? sourceLanguage!.trim()
+              : transcriptLanguage);
+    final ready =
+        onDeviceSpeechSupported &&
+        source.isNotEmpty &&
+        appleCapabilities.speechStatus == SpeechResourceStatus.ready &&
+        !appleCapabilitiesLoading;
+    return SpeechConfiguration(
+      provider: provider,
+      sourceLanguage: source,
+      targetLanguage: translationTargetLanguage,
+      ownerLanguage: ownerLanguage,
+      guestLanguage: guestLanguage,
+      mode: provider.supportsMode(sttMode)
+          ? sttMode
+          : SttDisplayMode.transcription,
+      enabled: autoTranscribe,
+      appleReady: ready,
+      appleTranslationReady:
+          onDeviceSpeechSupported && appleTranslationAvailable,
+      engines: provider.onDevice
+          ? const {}
+          : {
+              for (final entry in _engineAdapters.entries)
+                entry.key: entry.value.snapshot(),
+            },
+      cloudUploadConfirmed: cloudUploadConfirmed,
+    );
   }
 
   SpeechConfiguration get _settingsConfiguration => SpeechConfiguration(
@@ -294,32 +326,9 @@ mixin _RecorderSettings on ChangeNotifier {
   /// rather than falling back to a cloud service.
   // Used by other parts through their abstract declarations.
   // ignore: unused_element
-  SpeechConfiguration get _meetingConfiguration {
-    if (!meetingLocalOnly) return _settingsConfiguration;
-    final source = appleSourceLanguage.isNotEmpty
-        ? appleSourceLanguage
-        : (appleCapabilities.suggestedSourceLanguage ?? '');
-    final ready =
-        onDeviceSpeechSupported &&
-        source.isNotEmpty &&
-        appleCapabilities.speechStatus == SpeechResourceStatus.ready &&
-        !appleCapabilitiesLoading;
-    return SpeechConfiguration(
-      provider: SttProvider.apple,
-      sourceLanguage: source,
-      targetLanguage: translationTargetLanguage,
-      ownerLanguage: ownerLanguage,
-      guestLanguage: guestLanguage,
-      mode: SttProvider.apple.supportsMode(sttMode)
-          ? sttMode
-          : SttDisplayMode.transcription,
-      enabled: autoTranscribe,
-      appleReady: ready,
-      appleTranslationReady:
-          onDeviceSpeechSupported && appleTranslationAvailable,
-      engines: const {},
-    );
-  }
+  SpeechConfiguration get _meetingConfiguration => meetingLocalOnly
+      ? _configurationForProvider(SttProvider.apple)
+      : _settingsConfiguration;
 
   // Used by other parts through their abstract declarations.
   // ignore: unused_element
@@ -349,7 +358,6 @@ mixin _RecorderSettings on ChangeNotifier {
   }
 
   void setMeetingLocalOnly(bool v) {
-    _meetingLocalOnlyExplicit = true;
     if (meetingLocalOnly == v) return;
     meetingLocalOnly = v;
     notifyListeners();
@@ -503,7 +511,6 @@ mixin _RecorderSettings on ChangeNotifier {
 
   /// Meeting / formal recordings stay on the device (#376).
   bool meetingLocalOnly = true;
-  bool _meetingLocalOnlyExplicit = false;
 
   /// Near-realtime AI transcription (PCM WS stream + Ogg batch fallback).
   bool autoTranscribe = true;
