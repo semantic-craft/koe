@@ -1,18 +1,39 @@
 import AVFoundation
-import Flutter
 import Speech
 import SwiftUI
 import Translation
+#if os(iOS)
+import Flutter
 import UIKit
+#else
+import AppKit
+import FlutterMacOS
+#endif
 
-private func speechError(_ code: String) -> NSError {
-  NSError(domain: "SoundcoreAppleSpeech", code: 1, userInfo: [NSLocalizedDescriptionKey: code])
+private func speechError(_ code: String, message: String? = nil) -> NSError {
+  var info: [String: Any] = [NSLocalizedDescriptionKey: code]
+  if let message { info[NSLocalizedFailureReasonErrorKey] = message }
+  return NSError(domain: "SoundcoreAppleSpeech", code: 1, userInfo: info)
 }
 
 private func speechErrorCode(_ error: Error) -> String {
   if error is CancellationError { return "cancelled" }
   let error = error as NSError
   return error.domain == "SoundcoreAppleSpeech" ? error.localizedDescription : "processing_failed"
+}
+
+private func speechErrorMessage(_ error: Error) -> String? {
+  let error = error as NSError
+  guard error.domain == "SoundcoreAppleSpeech" else { return nil }
+  return error.localizedFailureReason
+}
+
+private var appleSpeechUnavailableReason: String {
+  #if os(iOS)
+  return "需要 iOS 26 及以上"
+  #else
+  return "需要 macOS 26 及以上"
+  #endif
 }
 
 /// Pure accumulation also used by the native regression tests. A volatile range
@@ -94,7 +115,7 @@ final class AppleSpeechBridge: NSObject, @preconcurrency FlutterStreamHandler {
     return nil
   }
 
-  @available(iOS 26.0, *)
+  @available(iOS 26.0, macOS 26.0, *)
   private var runtime: AppleSpeechRuntime {
     if let value = runtimeStorage as? AppleSpeechRuntime { return value }
     let value = AppleSpeechRuntime { [weak self] event in self?.sink?(event) }
@@ -103,12 +124,22 @@ final class AppleSpeechBridge: NSObject, @preconcurrency FlutterStreamHandler {
   }
 
   private func handle(_ call: FlutterMethodCall, reply: @escaping FlutterResult) {
-    guard #available(iOS 26.0, *) else {
+    guard #available(iOS 26.0, macOS 26.0, *) else {
       if call.method == "capabilities" {
-        reply(["supported": false, "speechStatus": "unsupported", "translationStatus": "unsupported"])
+        reply([
+          "supported": false,
+          "speechStatus": "unsupported",
+          "translationStatus": "unsupported",
+          "unavailableReason": appleSpeechUnavailableReason,
+          "reason": appleSpeechUnavailableReason,
+        ])
       } else if call.method == "closeStream" || call.method == "cancelFile" {
         reply(nil)
-      } else { reply(FlutterError(code: "unsupported", message: nil, details: nil)) }
+      } else {
+        reply(
+          FlutterError(
+            code: "unsupported", message: appleSpeechUnavailableReason, details: nil))
+      }
       return
     }
     let args = call.arguments as? [String: Any] ?? [:]
@@ -121,7 +152,11 @@ final class AppleSpeechBridge: NSObject, @preconcurrency FlutterStreamHandler {
         else { throw speechError("audio_invalid") }
         try runtime.append(id: id, data: data.data)
         reply(nil)
-      } catch { reply(FlutterError(code: speechErrorCode(error), message: nil, details: nil)) }
+      } catch {
+        reply(
+          FlutterError(
+            code: speechErrorCode(error), message: speechErrorMessage(error), details: nil))
+      }
       return
     }
     Task { @MainActor in
@@ -141,7 +176,8 @@ final class AppleSpeechBridge: NSObject, @preconcurrency FlutterStreamHandler {
           reply(nil)
         case "startStream":
           try await runtime.start(id: try required("sessionId", args),
-            source: try required("sourceLanguage", args), target: args["targetLanguage"] as? String)
+            source: try required("sourceLanguage", args), target: args["targetLanguage"] as? String,
+            useMicrophone: (args["microphone"] as? Bool) == true)
           reply(nil)
         case "finalizeUtterance":
           try await runtime.finalize(id: try required("sessionId", args))
@@ -163,7 +199,11 @@ final class AppleSpeechBridge: NSObject, @preconcurrency FlutterStreamHandler {
           reply(nil)
         default: reply(FlutterMethodNotImplemented)
         }
-      } catch { reply(FlutterError(code: speechErrorCode(error), message: nil, details: nil)) }
+      } catch {
+        reply(
+          FlutterError(
+            code: speechErrorCode(error), message: speechErrorMessage(error), details: nil))
+      }
     }
   }
 
@@ -174,10 +214,31 @@ final class AppleSpeechBridge: NSObject, @preconcurrency FlutterStreamHandler {
   }
 }
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private enum AppleSpeechResources {
+  /// Primary source languages: Simplified Mainland Chinese, English, Japanese (ADR 0002 §6).
+  static let primarySourceLanguages: [(code: String, name: String)] = [
+    ("zh-CN", "中文（简体）"),
+    ("en-US", "English"),
+    ("ja-JP", "日本語"),
+  ]
+
+  static func normalizedSourceCode(_ source: String) -> String {
+    let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch trimmed.lowercased().replacingOccurrences(of: "_", with: "-") {
+    case "zh", "zh-cn", "zh-hans", "zh-hans-cn":
+      return "zh-CN"
+    case "en", "en-us":
+      return "en-US"
+    case "ja", "ja-jp":
+      return "ja-JP"
+    default:
+      return trimmed.replacingOccurrences(of: "_", with: "-")
+    }
+  }
+
   static func module(source: String, live: Bool, requireInstalled: Bool) async throws -> any SpeechModule {
-    let locale = Locale(identifier: source)
+    let locale = Locale(identifier: normalizedSourceCode(source))
     if SpeechTranscriber.isAvailable,
       let supported = await SpeechTranscriber.supportedLocale(equivalentTo: locale)
     {
@@ -207,9 +268,10 @@ private enum AppleSpeechResources {
 
   static func translationStatus(source: String?, target: String?) async -> String {
     guard let source, !source.isEmpty, let target, !target.isEmpty else { return "unsupported" }
-    if Locale.Language(identifier: source) == Locale.Language(identifier: target) { return "ready" }
+    let normalizedSource = normalizedSourceCode(source)
+    if Locale.Language(identifier: normalizedSource) == Locale.Language(identifier: target) { return "ready" }
     switch await LanguageAvailability().status(
-      from: Locale.Language(identifier: source), to: Locale.Language(identifier: target))
+      from: Locale.Language(identifier: normalizedSource), to: Locale.Language(identifier: target))
     {
     case .installed: return "ready"
     case .supported: return "needsDownload"
@@ -228,21 +290,43 @@ private enum AppleSpeechResources {
       if SpeechTranscriber.isAvailable,
         let locale = await SpeechTranscriber.supportedLocale(equivalentTo: preferred)
       {
-        suggested = locale.identifier.replacingOccurrences(of: "_", with: "-")
+        suggested = normalizedSourceCode(locale.identifier)
         break
       }
       if let locale = await DictationTranscriber.supportedLocale(equivalentTo: preferred) {
-        suggested = locale.identifier.replacingOccurrences(of: "_", with: "-")
+        suggested = normalizedSourceCode(locale.identifier)
         break
+      }
+    }
+    var speechLanguageItems = [[String: String]]()
+    var seenCodes = Set<String>()
+    if !locales.isEmpty {
+      for item in primarySourceLanguages {
+        speechLanguageItems.append(["code": item.code, "name": item.name])
+        seenCodes.insert(item.code.lowercased())
+      }
+      for locale in locales {
+        let entry = language(locale.identifier)
+        if let code = entry["code"]?.lowercased(), !seenCodes.contains(code) {
+          seenCodes.insert(code)
+          speechLanguageItems.append(entry)
+        }
+      }
+      if suggested == nil {
+        suggested = primarySourceLanguages.first?.code
       }
     }
     var response: [String: Any] = [
       "supported": !locales.isEmpty,
       "speechStatus": await speechStatus(source),
       "translationStatus": await translationStatus(source: source, target: target),
-      "speechLanguages": locales.map { language($0.identifier) },
+      "speechLanguages": speechLanguageItems,
       "translationLanguages": translationLanguages.map { language($0.minimalIdentifier) },
     ]
+    if locales.isEmpty {
+      response["unavailableReason"] = appleSpeechUnavailableReason
+      response["reason"] = appleSpeechUnavailableReason
+    }
     if let suggested { response["suggestedSourceLanguage"] = suggested }
     return response
   }
@@ -288,7 +372,7 @@ private enum AppleSpeechResources {
   }
 }
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 @MainActor
 private final class AppleSpeechRuntime {
   let emit: ([String: Any]) -> Void
@@ -344,6 +428,7 @@ private final class AppleSpeechRuntime {
     try Task.checkCancellation()
     if status == "ready" { return }
     guard status != "unsupported" else { throw speechError("language_unsupported") }
+    #if os(iOS)
     guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
       .first(where: { $0.activationState == .foregroundActive }),
       var presenter = scene.windows.first(where: \.isKeyWindow)?.rootViewController
@@ -366,6 +451,28 @@ private final class AppleSpeechRuntime {
       controller.modalPresentationStyle = .formSheet
       presenter.present(controller, animated: true)
     }
+    #else
+    guard let window = NSApplication.shared.keyWindow ?? NSApplication.shared.mainWindow
+      ?? NSApplication.shared.windows.first,
+      let presenter = window.contentViewController
+    else { throw speechError("preparation_unavailable") }
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      weak var host: NSViewController?
+      var finished = false
+      let completion: (Error?) -> Void = { error in
+        guard !finished else { return }
+        finished = true
+        if let host { presenter.dismiss(host) }
+        if let error { continuation.resume(throwing: error) }
+        else { continuation.resume() }
+      }
+      cancelPreparationPresentation = { completion(speechError("cancelled")) }
+      let controller = NSHostingController(rootView:
+        ApplePrepareTranslationView(source: source, target: target, completion: completion))
+      host = controller
+      presenter.presentAsSheet(controller)
+    }
+    #endif
     try Task.checkCancellation()
   }
 
@@ -378,11 +485,15 @@ private final class AppleSpeechRuntime {
     cancelPreparationPresentation = nil
   }
 
-  func start(id: String, source: String, target: String?) async throws {
+  func start(id: String, source: String, target: String?, useMicrophone: Bool = false) async throws {
     guard stream == nil, pendingStreamID == nil else { throw speechError("busy") }
     pendingStreamID = id
     defer { if pendingStreamID == id { pendingStreamID = nil } }
     await cancelFile(id: nil)
+    if useMicrophone {
+      try await AppleMicrophoneCapture.ensurePermission()
+      guard pendingStreamID == id else { throw speechError("cancelled") }
+    }
     let module = try await AppleSpeechResources.module(source: source, live: true, requireInstalled: true)
     guard pendingStreamID == id else { throw speechError("cancelled") }
     // Missing translation assets fail before accepting audio, never upload it.
@@ -393,7 +504,8 @@ private final class AppleSpeechRuntime {
       }
     }
     guard pendingStreamID == id else { throw speechError("cancelled") }
-    let value = AppleLiveSpeech(id: id, module: module, source: source, target: target, emit: emit)
+    let value = AppleLiveSpeech(
+      id: id, module: module, source: source, target: target, useMicrophone: useMicrophone, emit: emit)
     stream = value
     do {
       try await value.start()
@@ -498,7 +610,7 @@ private final class AppleSpeechRuntime {
   }
 }
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 @MainActor
 private func collectAppleResults(_ module: any SpeechModule,
   receive: (String, CMTimeRange, Bool) -> Void) async throws
@@ -513,6 +625,118 @@ private func collectAppleResults(_ module: any SpeechModule,
       try Task.checkCancellation()
       receive(String(result.text.characters), result.range, result.isFinal)
     }
+  }
+}
+
+/// Platform microphone capture for live transcription. On iOS, configures
+/// `AVAudioSession`; on macOS, uses `AVAudioEngine` directly and verifies
+/// microphone authorization and input channel availability before installing a
+/// tap so builds without `com.apple.security.device.audio-input` fail with a
+/// clear reason rather than crashing in AVFAudio/TCC.
+final class AppleMicrophoneCapture {
+  private let engine = AVAudioEngine()
+  private var installed = false
+
+  static func ensurePermission() async throws {
+    let deniedError = speechError(
+      "microphone_permission_denied", message: "没有麦克风权限，无法开始实时转写")
+    #if os(iOS)
+    let session = AVAudioSession.sharedInstance()
+    switch session.recordPermission {
+    case .granted:
+      return
+    case .undetermined:
+      guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil else {
+        throw deniedError
+      }
+      let granted = await withCheckedContinuation { continuation in
+        session.requestRecordPermission { allowed in
+          continuation.resume(returning: allowed)
+        }
+      }
+      guard granted else { throw deniedError }
+    default:
+      throw deniedError
+    }
+    #else
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized:
+      return
+    case .notDetermined:
+      guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil else {
+        throw deniedError
+      }
+      let granted = await AVCaptureDevice.requestAccess(for: .audio)
+      guard granted else { throw deniedError }
+    default:
+      throw deniedError
+    }
+    #endif
+  }
+
+  func start(outputFormat: AVAudioFormat, emit: @escaping (AVAudioPCMBuffer) -> Void) throws {
+    let deniedError = speechError(
+      "microphone_permission_denied", message: "没有麦克风权限，无法开始实时转写")
+    #if os(iOS)
+    let session = AVAudioSession.sharedInstance()
+    do {
+      try session.setCategory(
+        .playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetoothHFP])
+      try session.setActive(true, options: .notifyOthersOnDeactivation)
+    } catch {
+      throw deniedError
+    }
+    #endif
+    let inputNode = engine.inputNode
+    let inputFormat = inputNode.inputFormat(forBus: 0)
+    guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
+      throw deniedError
+    }
+    guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+      throw speechError("audio_invalid")
+    }
+    inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
+      let capacity = AVAudioFrameCount(
+        max(
+          1024,
+          ceil(Double(buffer.frameLength) * outputFormat.sampleRate / inputFormat.sampleRate) + 64))
+      guard let converted = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else {
+        return
+      }
+      var supplied = false
+      var error: NSError?
+      let status = converter.convert(to: converted, error: &error) { _, inputStatus in
+        if !supplied {
+          supplied = true
+          inputStatus.pointee = .haveData
+          return buffer
+        }
+        inputStatus.pointee = .noDataNow
+        return nil
+      }
+      if error == nil, status != .error, converted.frameLength > 0 {
+        emit(converted)
+      }
+    }
+    installed = true
+    engine.prepare()
+    do {
+      try engine.start()
+    } catch {
+      stop()
+      throw deniedError
+    }
+  }
+
+  func stop() {
+    if installed {
+      engine.inputNode.removeTap(onBus: 0)
+      installed = false
+    }
+    engine.stop()
+    #if os(iOS)
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    #endif
   }
 }
 
@@ -577,16 +801,18 @@ final class ApplePCMConverter {
   }
 }
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 @MainActor
 private final class AppleLiveSpeech {
   let id: String
   let module: any SpeechModule
   let source: String
   let target: String?
+  let useMicrophone: Bool
   let emit: ([String: Any]) -> Void
   let analyzer: SpeechAnalyzer
   private var converter: ApplePCMConverter?
+  private var microphoneCapture: AppleMicrophoneCapture?
   private var continuation: AsyncStream<AnalyzerInput>.Continuation?
   private var resultsTask: Task<Void, Error>?
   private var analysisTask: Task<Void, Error>?
@@ -602,9 +828,10 @@ private final class AppleLiveSpeech {
   private var failure: Error?
 
   init(id: String, module: any SpeechModule, source: String, target: String?,
-    emit: @escaping ([String: Any]) -> Void)
+    useMicrophone: Bool = false, emit: @escaping ([String: Any]) -> Void)
   {
-    self.id = id; self.module = module; self.source = source; self.target = target; self.emit = emit
+    self.id = id; self.module = module; self.source = source; self.target = target
+    self.useMicrophone = useMicrophone; self.emit = emit
     analyzer = SpeechAnalyzer(modules: [module])
   }
 
@@ -618,6 +845,15 @@ private final class AppleLiveSpeech {
     // bounds bytes waiting on the method channel; neither layer drops silently.
     let (input, continuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingOldest(50))
     self.continuation = continuation
+    if useMicrophone {
+      let capture = AppleMicrophoneCapture()
+      try capture.start(outputFormat: format) { [weak self] buffer in
+        Task { @MainActor [weak self] in
+          try? self?.enqueue(buffer)
+        }
+      }
+      microphoneCapture = capture
+    }
     resultsTask = Task { @MainActor [weak self, module] in
       do {
         try await collectAppleResults(module) { text, range, final in
@@ -719,6 +955,8 @@ private final class AppleLiveSpeech {
     finishing = true
     do {
       if let failure { throw failure }
+      microphoneCapture?.stop()
+      microphoneCapture = nil
       try converter?.finish { try enqueue($0) }
       continuation?.finish()
       try await analysisTask?.value
@@ -747,6 +985,8 @@ private final class AppleLiveSpeech {
   func cancel() async {
     guard !cancelled else { return }
     cancelled = true
+    microphoneCapture?.stop()
+    microphoneCapture = nil
     stopTranslation()
     continuation?.finish()
     continuation = nil
@@ -775,30 +1015,26 @@ private final class AppleLiveSpeech {
   }
 }
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct ApplePrepareTranslationView: View {
   let source: String
   let target: String
   let completion: (Error?) -> Void
-  @State private var completed = false
 
   var body: some View {
     VStack(spacing: 20) {
       ProgressView("准备翻译语言")
-      Button("取消") { finish(speechError("cancelled")) }
+      Button("取消") { completion(speechError("cancelled")) }
     }
     .padding(40)
-    .translationTask(source: Locale.Language(identifier: source), target: Locale.Language(identifier: target)) { session in
-      do { try await session.prepareTranslation(); finish(nil) }
-      catch { finish(error) }
+    .translationTask(
+      source: Locale.Language(identifier: AppleSpeechResources.normalizedSourceCode(source)),
+      target: Locale.Language(identifier: target)
+    ) { session in
+      do { try await session.prepareTranslation(); completion(nil) }
+      catch { completion(error) }
     }
-    .onDisappear { if !completed { finish(speechError("cancelled")) } }
-  }
-
-  private func finish(_ error: Error?) {
-    guard !completed else { return }
-    completed = true
-    completion(error)
+    .onDisappear { completion(speechError("cancelled")) }
   }
 }
 

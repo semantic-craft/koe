@@ -49,7 +49,13 @@ class DevicePhoneRecorder implements PhoneRecorder {
   );
 
   @override
-  Future<bool> requestPermission() => _recorder.hasPermission();
+  Future<bool> requestPermission() async {
+    try {
+      return await _recorder.hasPermission();
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   Stream<PhoneMicState> get states => _recorder.onStateChanged().map(

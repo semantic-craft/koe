@@ -16,6 +16,14 @@ class SpeechLanguage {
   final String name;
 }
 
+/// Primary source languages offered for Apple on-device speech recognition
+/// (Simplified Mainland Chinese, English, Japanese; ADR 0002 §6).
+const appleSpeechSourceLanguages = <SpeechLanguage>[
+  SpeechLanguage(code: 'zh-CN', name: '中文（简体）'),
+  SpeechLanguage(code: 'en-US', name: 'English'),
+  SpeechLanguage(code: 'ja-JP', name: '日本語'),
+];
+
 class AppleSpeechCapabilities {
   const AppleSpeechCapabilities({
     required this.supported,
@@ -24,15 +32,17 @@ class AppleSpeechCapabilities {
     this.speechLanguages = const [],
     this.translationLanguages = const [],
     this.suggestedSourceLanguage,
+    this.unavailableReasonText,
   });
 
-  const AppleSpeechCapabilities.unsupported()
+  const AppleSpeechCapabilities.unsupported({String? unavailableReason})
     : supported = false,
       speechStatus = SpeechResourceStatus.unsupported,
       translationStatus = SpeechResourceStatus.unsupported,
       speechLanguages = const [],
       translationLanguages = const [],
-      suggestedSourceLanguage = null;
+      suggestedSourceLanguage = null,
+      unavailableReasonText = unavailableReason;
 
   final bool supported;
   final SpeechResourceStatus speechStatus;
@@ -40,6 +50,24 @@ class AppleSpeechCapabilities {
   final List<SpeechLanguage> speechLanguages;
   final List<SpeechLanguage> translationLanguages;
   final String? suggestedSourceLanguage;
+  final String? unavailableReasonText;
+
+  static String get defaultUnavailableReason =>
+      defaultTargetPlatform == TargetPlatform.macOS
+      ? '需要 macOS 26 及以上'
+      : '需要 iOS 26 及以上';
+
+  String? get unavailableReason => supported
+      ? null
+      : (unavailableReasonText != null &&
+                unavailableReasonText!.trim().isNotEmpty
+            ? unavailableReasonText
+            : defaultUnavailableReason);
+
+  String get statusLabel {
+    if (!supported) return '不可用';
+    return speechStatus == SpeechResourceStatus.ready ? '已就绪' : '待准备';
+  }
 
   factory AppleSpeechCapabilities.fromMap(Map<dynamic, dynamic> map) {
     SpeechResourceStatus status(String key) =>
@@ -55,13 +83,24 @@ class AppleSpeechCapabilities {
             name: item['name'] as String? ?? item['code'] as String,
           ),
     ];
+    final supported = map['supported'] == true;
+    final parsedSpeechLanguages = languages('speechLanguages');
+    final rawReason =
+        (map['unavailableReason'] as String?) ??
+        (map['reason'] as String?) ??
+        (map['message'] as String?);
     return AppleSpeechCapabilities(
-      supported: map['supported'] == true,
+      supported: supported,
       speechStatus: status('speechStatus'),
       translationStatus: status('translationStatus'),
-      speechLanguages: languages('speechLanguages'),
+      speechLanguages: supported && parsedSpeechLanguages.isEmpty
+          ? appleSpeechSourceLanguages
+          : parsedSpeechLanguages,
       translationLanguages: languages('translationLanguages'),
       suggestedSourceLanguage: map['suggestedSourceLanguage'] as String?,
+      unavailableReasonText: supported
+          ? null
+          : (rawReason ?? defaultUnavailableReason),
     );
   }
 }
@@ -85,8 +124,7 @@ class AppleSpeechService {
   static String _identifier() =>
       '${DateTime.now().microsecondsSinceEpoch}-${_sequence++}';
 
-  bool get _supportedPlatform =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  bool get _supportedPlatform => runsOnApple;
 
   /// Whether the Apple engine belongs in the engine list at all. Apple
   /// devices list it, marked limited when [capabilities] says so; other
@@ -112,7 +150,9 @@ class AppleSpeechService {
       return const AppleSpeechCapabilities.unsupported();
     } on PlatformException catch (error) {
       if (error.code == 'unsupported') {
-        return const AppleSpeechCapabilities.unsupported();
+        return AppleSpeechCapabilities.unsupported(
+          unavailableReason: error.message,
+        );
       }
       rethrow;
     }
@@ -145,6 +185,7 @@ class AppleSpeechService {
   SttStreamSession createStreamSession({
     required String sourceLanguage,
     String? targetLanguage,
+    bool microphone = false,
   }) {
     _checkAvailable();
     final session = _AppleSttStreamSession(
@@ -153,6 +194,7 @@ class AppleSpeechService {
       identifier: _identifier(),
       sourceLanguage: sourceLanguage,
       targetLanguage: targetLanguage,
+      microphone: microphone,
       beforeStart: cancelFileProcessing,
     );
     _sessions.add(session);
@@ -241,6 +283,7 @@ class _AppleSttStreamSession implements SttStreamSession {
     required this.sourceLanguage,
     required this.targetLanguage,
     required this.beforeStart,
+    this.microphone = false,
   });
 
   final Future<void> Function() beforeStart;
@@ -249,6 +292,7 @@ class _AppleSttStreamSession implements SttStreamSession {
   final String identifier;
   final String sourceLanguage;
   final String? targetLanguage;
+  final bool microphone;
   final _events = StreamController<SttStreamEvent>.broadcast();
   final _pendingPcm = Queue<Uint8List>();
   StreamSubscription<dynamic>? _subscription;
@@ -330,6 +374,7 @@ class _AppleSttStreamSession implements SttStreamSession {
             'sessionId': identifier,
             'sourceLanguage': sourceLanguage,
             'targetLanguage': targetLanguage,
+            if (microphone) 'microphone': true,
           })
           .timeout(timeout);
       if (_closed) return;

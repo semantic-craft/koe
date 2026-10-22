@@ -20,11 +20,14 @@ const speechLanguages = <SpeechLanguage>[
   SpeechLanguage('bg', 'Bulgarian'),
   SpeechLanguage('ca', 'Catalan'),
   SpeechLanguage('zh', '中文'),
+  SpeechLanguage('zh-cn', '中文（简体）'),
+  SpeechLanguage('zh-hans', '中文（简体）'),
   SpeechLanguage('hr', 'Croatian'),
   SpeechLanguage('cs', 'Czech'),
   SpeechLanguage('da', 'Danish'),
   SpeechLanguage('nl', 'Dutch'),
   SpeechLanguage('en', 'English'),
+  SpeechLanguage('en-us', 'English'),
   SpeechLanguage('et', 'Estonian'),
   SpeechLanguage('fi', 'Finnish'),
   SpeechLanguage('fr', 'French'),
@@ -38,6 +41,7 @@ const speechLanguages = <SpeechLanguage>[
   SpeechLanguage('id', 'Indonesian'),
   SpeechLanguage('it', 'Italian'),
   SpeechLanguage('ja', '日本語'),
+  SpeechLanguage('ja-jp', '日本語'),
   SpeechLanguage('kn', 'Kannada'),
   SpeechLanguage('kk', 'Kazakh'),
   SpeechLanguage('ko', '한국어'),
@@ -72,7 +76,7 @@ const speechLanguages = <SpeechLanguage>[
 ];
 
 SpeechLanguage speechLanguageFor(String code) {
-  final normalized = code.trim().toLowerCase();
+  final normalized = code.trim().replaceAll('_', '-').toLowerCase();
   return speechLanguages.firstWhere(
     (language) => language.code == normalized,
     orElse: () => SpeechLanguage(normalized, normalized.toUpperCase()),
@@ -80,6 +84,6 @@ SpeechLanguage speechLanguageFor(String code) {
 }
 
 bool isSpeechLanguage(String code) {
-  final normalized = code.trim().toLowerCase();
+  final normalized = code.trim().replaceAll('_', '-').toLowerCase();
   return speechLanguages.any((language) => language.code == normalized);
 }
