@@ -31,7 +31,14 @@ Future<void> main() async {
     );
   }
   LicenseRegistry.addLicense(() async* {
-    for (final name in ['meetily', 'ownscribe']) {
+    for (final name in [
+      'meetily',
+      'ownscribe',
+      'shiyin',
+      'sherpa_onnx',
+      'pyannote_segmentation_3_0',
+      '3dspeaker_campplus',
+    ]) {
       yield LicenseEntryWithLineBreaks([
         name,
       ], await rootBundle.loadString('assets/licenses/$name.txt'));

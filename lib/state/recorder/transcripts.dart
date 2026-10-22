@@ -8,7 +8,15 @@ part of '../recorder_controller.dart';
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderTranscripts on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
+  Future<String> _convertExportToWav(
+    String path, {
+    // ignore: unused_element_parameter
+    bool register = true,
+    // ignore: unused_element_parameter
+    List<String>? conversionFailures,
+  });
   _RecordingSession? get _currentRecording;
+  SpeakerDiarizer get _effectiveSpeakerDiarizer;
   bool _isRecordingAudioLocked(int? id, String? path);
   Future<void> _maybeAutoGenerateTopicNoteForKey(
     String key, {
@@ -75,6 +83,16 @@ mixin _RecorderTranscripts on ChangeNotifier {
         () => Map<int, String>.from(entry.value),
       );
     }
+    for (final entry in saved.expectedSpeakersByKey.entries) {
+      _expectedSpeakers.putIfAbsent(entry.key, () => entry.value);
+    }
+    for (final entry in saved.diarizationQualityByKey.entries) {
+      _diarizationQuality.putIfAbsent(entry.key, () => entry.value);
+    }
+    _speakerHintDismissed.addAll(saved.speakerHintDismissedKeys);
+    for (final entry in saved.speakerUndoByKey.entries) {
+      _speakerUndo.putIfAbsent(entry.key, () => entry.value);
+    }
     notifyListeners();
   }
 
@@ -96,6 +114,10 @@ mixin _RecorderTranscripts on ChangeNotifier {
       manualByKey: _manualTranscripts,
       incomingByKey: _incomingTranscripts,
       segmentSpeakersByKey: _segmentSpeakers,
+      expectedSpeakersByKey: _expectedSpeakers,
+      diarizationQualityByKey: _diarizationQuality,
+      speakerHintDismissedKeys: _speakerHintDismissed,
+      speakerUndoByKey: _speakerUndo,
       strict: strict,
     );
   }
@@ -123,6 +145,8 @@ mixin _RecorderTranscripts on ChangeNotifier {
       // Keep them when a manual transcript already protects the visible text.
       _clearSpeakerAliases(path);
       _transcriptSegments.remove(key);
+      _speakerUndo.remove(key);
+      _speakerHintDismissed.remove(key);
     }
     // Segment speaker fixes are indexed into the stored segment list; they do
     // not carry over to a different list from another provider run.
@@ -545,6 +569,304 @@ mixin _RecorderTranscripts on ChangeNotifier {
     if (id != null) speakerAliasesByFileId.remove(id);
   }
 
+  int? expectedSpeakersForPath(String path) =>
+      _expectedSpeakers[_recordingKey(path: path)];
+
+  Future<void> setExpectedSpeakers(String path, int? count) async {
+    final key = _recordingKey(path: path);
+    if (count == null || count <= 0) {
+      _expectedSpeakers.remove(key);
+    } else {
+      _expectedSpeakers[key] = count;
+    }
+    notifyListeners();
+    await _persistTranscripts();
+  }
+
+  DiarizationQuality? diarizationQualityForPath(String path) =>
+      _diarizationQuality[_recordingKey(path: path)];
+
+  void _recordDiarizationQuality(String path, DiarizationQuality? quality) {
+    final key = _recordingKey(path: path);
+    if (quality == null) {
+      _diarizationQuality.remove(key);
+    } else {
+      _diarizationQuality[key] = quality;
+    }
+    _speakerHintDismissed.remove(key);
+  }
+
+  Future<void> setDiarizationQualityForPath(
+    String path,
+    DiarizationQuality? quality,
+  ) async {
+    _recordDiarizationQuality(path, quality);
+    notifyListeners();
+    await _persistTranscripts();
+  }
+
+  bool speakerHintDismissed(String path) =>
+      _speakerHintDismissed.contains(_recordingKey(path: path));
+
+  /// Whether the merge-risk hint banner should be shown above the transcript
+  /// for [path] (S24).
+  ///
+  /// Shown when [DiarizationQuality.shouldSuggestRediarize] is true, the user
+  /// has not dismissed the hint, and the user has not already pinned an
+  /// explicit [expectedSpeakersForPath].
+  bool shouldShowSpeakerMergeHint(String path) {
+    final key = _recordingKey(path: path);
+    if (_speakerHintDismissed.contains(key)) return false;
+    if (_expectedSpeakers.containsKey(key)) return false;
+    final quality = _diarizationQuality[key];
+    return quality != null && quality.shouldSuggestRediarize;
+  }
+
+  Future<void> dismissSpeakerMergeHint(String path) async {
+    final key = _recordingKey(path: path);
+    _speakerHintDismissed.add(key);
+    notifyListeners();
+    await _persistTranscripts();
+  }
+
+  bool canUndoSpeakerEdit(String path) =>
+      _speakerUndo.containsKey(_recordingKey(path: path));
+
+  String? speakerUndoLabel(String path) =>
+      _speakerUndo[_recordingKey(path: path)]?.label;
+
+  void _saveSpeakerUndoSnapshot(String path, {required String label}) {
+    final key = _recordingKey(path: path);
+    final segments = _transcriptSegments[key] ?? const <TranscriptSegment>[];
+    final overrides = _segmentSpeakers[key] ?? const <int, String>{};
+    final aliases = _speakerAliasesForPath(path);
+    _speakerUndo[key] = SpeakerEditSnapshot(
+      label: label,
+      segments: List<TranscriptSegment>.unmodifiable(segments),
+      segmentSpeakers: Map<int, String>.unmodifiable(
+        Map<int, String>.of(overrides),
+      ),
+      aliases: Map<String, String>.unmodifiable(Map<String, String>.of(aliases)),
+      rawTranscript: transcriptsByPath[path],
+      expectedSpeakers: _expectedSpeakers[key],
+      quality: _diarizationQuality[key],
+      hintDismissed: _speakerHintDismissed.contains(key),
+    );
+  }
+
+  /// Merges all segments of [fromSpeakerId] into [intoSpeakerId] for [path]
+  /// (S23).
+  ///
+  /// Alias rule: if [intoSpeakerId] already has a custom alias, it keeps its
+  /// own alias; otherwise, if [fromSpeakerId] had a custom alias,
+  /// [intoSpeakerId] inherits it. [fromSpeakerId]'s alias is removed.
+  Future<void> mergeTranscriptSpeakers(
+    String path, {
+    required String fromSpeakerId,
+    required String intoSpeakerId,
+  }) async {
+    final from = fromSpeakerId.trim();
+    final into = intoSpeakerId.trim();
+    if (from.isEmpty || into.isEmpty || from == into) {
+      throw ArgumentError('请选择两位不同的发言人进行合并');
+    }
+    final knownIds = {
+      for (final s in transcriptSpeakersForPath(path)) s.id,
+    };
+    if (!knownIds.contains(from) || !knownIds.contains(into)) {
+      throw ArgumentError('说话人不存在');
+    }
+
+    final key = _recordingKey(path: path);
+    _saveSpeakerUndoSnapshot(path, label: '复原合并发言人');
+
+    final existingSegments = _transcriptSegments[key];
+    if (existingSegments != null && existingSegments.isNotEmpty) {
+      final updated = <TranscriptSegment>[];
+      String? prevSpeaker;
+      for (final seg in existingSegments) {
+        final nextSpeaker = seg.speaker == from ? into : seg.speaker;
+        final changed = nextSpeaker != null && nextSpeaker != prevSpeaker;
+        updated.add(
+          seg.copyWith(
+            speaker: nextSpeaker,
+            clearSpeaker: nextSpeaker == null,
+            speakerChanged: changed,
+          ),
+        );
+        prevSpeaker = nextSpeaker;
+      }
+      _transcriptSegments[key] = List<TranscriptSegment>.unmodifiable(updated);
+    }
+
+    final overrides = _segmentSpeakers[key];
+    if (overrides != null && overrides.isNotEmpty) {
+      for (final index in overrides.keys.toList()) {
+        if (overrides[index] == from) {
+          overrides[index] = into;
+        }
+      }
+    }
+
+    final rawText = transcriptsByPath[path];
+    if (rawText != null && rawText.isNotEmpty) {
+      final prefixRegex = RegExp(
+        '^(\\s*)说话人\\s+${RegExp.escape(from)}：',
+        multiLine: true,
+      );
+      final replaced = rawText.replaceAllMapped(
+        prefixRegex,
+        (m) => '${m.group(1) ?? ''}说话人 $into：',
+      );
+      transcriptsByPath[path] = replaced;
+      final fileId = fileIdFromPath(path);
+      if (fileId != null && transcriptsByFileId.containsKey(fileId)) {
+        transcriptsByFileId[fileId] = replaced;
+      }
+    }
+
+    final currentAliases = Map<String, String>.of(_speakerAliasesForPath(path));
+    final intoAlias = currentAliases[into]?.trim();
+    final fromAlias = currentAliases.remove(from)?.trim();
+    if ((intoAlias == null || intoAlias.isEmpty) &&
+        fromAlias != null &&
+        fromAlias.isNotEmpty &&
+        fromAlias != '说话人 $into') {
+      currentAliases[into] = fromAlias;
+    }
+    if (currentAliases.isEmpty) {
+      speakerAliasesByPath.remove(path);
+    } else {
+      speakerAliasesByPath[path] = currentAliases;
+    }
+    final fileId = fileIdFromPath(path);
+    if (fileId != null) {
+      if (currentAliases.isEmpty) {
+        speakerAliasesByFileId.remove(fileId);
+      } else {
+        speakerAliasesByFileId[fileId] = Map<String, String>.of(currentAliases);
+      }
+    }
+
+    notifyListeners();
+    await _persistTranscripts(strict: true);
+  }
+
+  /// Re-runs speaker diarization on [path] with optional [expectedSpeakers]
+  /// (`大约几个人`, null = auto) while keeping the transcript text unchanged
+  /// and preserving all manually edited segment speakers in [_segmentSpeakers]
+  /// (S10, S22).
+  Future<void> rediarizeSpeakers(
+    String path, {
+    int? expectedSpeakers,
+    List<DiarizationTurn>? turnsOverride,
+    DiarizationQuality? qualityOverride,
+  }) async {
+    final key = _recordingKey(path: path);
+    final currentSegments = _transcriptSegments[key];
+    if (currentSegments == null || currentSegments.isEmpty) {
+      throw StateError('当前录音没有可区分发言人的时间分段');
+    }
+
+    final List<DiarizationTurn> turns;
+    final DiarizationQuality? quality;
+    if (turnsOverride != null) {
+      turns = turnsOverride;
+      quality = qualityOverride;
+    } else {
+      final wavPath = await _convertExportToWav(path);
+      final diarized = await _effectiveSpeakerDiarizer.diarize(
+        wavPath,
+        expectedSpeakers: expectedSpeakers,
+      );
+      turns = diarized.turns;
+      quality = qualityOverride ?? diarized.quality;
+    }
+
+    _saveSpeakerUndoSnapshot(path, label: '复原重新区分发言人');
+    if (expectedSpeakers == null || expectedSpeakers <= 0) {
+      _expectedSpeakers.remove(key);
+    } else {
+      _expectedSpeakers[key] = expectedSpeakers;
+    }
+
+    final assigned = assignSpeakersToSegments(turns, currentSegments);
+    _transcriptSegments[key] = assigned.segments;
+    // Manual per-segment speaker edits in _segmentSpeakers[key] are intentionally
+    // preserved so transcriptSegmentsForPath(path) keeps user corrections.
+    _recordDiarizationQuality(path, quality);
+
+    notifyListeners();
+    await _persistTranscripts(strict: true);
+  }
+
+  /// Restores the state saved before the most recent [mergeTranscriptSpeakers]
+  /// or [rediarizeSpeakers] on [path] (S23).
+  Future<bool> undoSpeakerEdit(String path) async {
+    final key = _recordingKey(path: path);
+    final snapshot = _speakerUndo.remove(key);
+    if (snapshot == null) return false;
+
+    if (snapshot.segments.isEmpty) {
+      _transcriptSegments.remove(key);
+    } else {
+      _transcriptSegments[key] = List<TranscriptSegment>.unmodifiable(
+        snapshot.segments,
+      );
+    }
+
+    if (snapshot.segmentSpeakers.isEmpty) {
+      _segmentSpeakers.remove(key);
+    } else {
+      _segmentSpeakers[key] = Map<int, String>.of(snapshot.segmentSpeakers);
+    }
+
+    if (snapshot.aliases.isEmpty) {
+      speakerAliasesByPath.remove(path);
+    } else {
+      speakerAliasesByPath[path] = Map<String, String>.of(snapshot.aliases);
+    }
+    final fileId = fileIdFromPath(path);
+    if (fileId != null) {
+      if (snapshot.aliases.isEmpty) {
+        speakerAliasesByFileId.remove(fileId);
+      } else {
+        speakerAliasesByFileId[fileId] = Map<String, String>.of(
+          snapshot.aliases,
+        );
+      }
+    }
+
+    if (snapshot.rawTranscript != null) {
+      transcriptsByPath[path] = snapshot.rawTranscript!;
+      if (fileId != null && transcriptsByFileId.containsKey(fileId)) {
+        transcriptsByFileId[fileId] = snapshot.rawTranscript!;
+      }
+    }
+
+    if (snapshot.expectedSpeakers == null) {
+      _expectedSpeakers.remove(key);
+    } else {
+      _expectedSpeakers[key] = snapshot.expectedSpeakers!;
+    }
+
+    if (snapshot.quality == null) {
+      _diarizationQuality.remove(key);
+    } else {
+      _diarizationQuality[key] = snapshot.quality!;
+    }
+
+    if (snapshot.hintDismissed) {
+      _speakerHintDismissed.add(key);
+    } else {
+      _speakerHintDismissed.remove(key);
+    }
+
+    notifyListeners();
+    await _persistTranscripts(strict: true);
+    return true;
+  }
+
   /// path → last STT text for that local export.
   final Map<String, String> transcriptsByPath = {};
 
@@ -568,6 +890,10 @@ mixin _RecorderTranscripts on ChangeNotifier {
 
   /// Recording key → segment index → corrected speaker id.
   final Map<String, Map<int, String>> _segmentSpeakers = {};
+  final Map<String, int> _expectedSpeakers = {};
+  final Map<String, DiarizationQuality> _diarizationQuality = {};
+  final Set<String> _speakerHintDismissed = {};
+  final Map<String, SpeakerEditSnapshot> _speakerUndo = {};
   // Used by other parts through their abstract declarations.
   // ignore: prefer_final_fields
   Future<void> _transcriptsLoaded = Future<void>.value();

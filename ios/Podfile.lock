@@ -43,6 +43,8 @@ PODS:
     - Flutter
   - share_plus (0.0.1):
     - Flutter
+  - sherpa_onnx_ios (1.13.8):
+    - Flutter
   - sqflite_darwin (0.0.4):
     - Flutter
     - FlutterMacOS
@@ -69,6 +71,7 @@ DEPENDENCIES:
   - quick_actions_ios (from `.symlinks/plugins/quick_actions_ios/ios`)
   - record_ios (from `.symlinks/plugins/record_ios/ios`)
   - share_plus (from `.symlinks/plugins/share_plus/ios`)
+  - sherpa_onnx_ios (from `.symlinks/plugins/sherpa_onnx_ios/ios`)
   - sqflite_darwin (from `.symlinks/plugins/sqflite_darwin/darwin`)
   - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
 
@@ -111,6 +114,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/record_ios/ios"
   share_plus:
     :path: ".symlinks/plugins/share_plus/ios"
+  sherpa_onnx_ios:
+    :path: ".symlinks/plugins/sherpa_onnx_ios/ios"
   sqflite_darwin:
     :path: ".symlinks/plugins/sqflite_darwin/darwin"
   url_launcher_ios:
@@ -136,6 +141,7 @@ SPEC CHECKSUMS:
   quick_actions_ios: 500fcc11711d9f646739093395c4ae8eec25f779
   record_ios: 390a30c7caaf8b5d0fb1cb1d2fd5064b48b4520c
   share_plus: 50da8cb520a8f0f65671c6c6a99b3617ed10a58a
+  sherpa_onnx_ios: 11c4152cbeb113aebbfaa15f8c4720cc9618d281
   sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
   url_launcher_ios: 7a95fa5b60cc718a708b8f2966718e93db0cef1b
 

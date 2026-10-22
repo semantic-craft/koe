@@ -364,6 +364,8 @@ void main() {
           ),
         );
         await tester.pump();
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pump();
 
         expect(
           find.byKey(const ValueKey('settings-diarization-model')),

@@ -150,8 +150,6 @@ class SettingsScreen extends StatelessWidget {
                             ),
                           ),
                         ],
-                        const SizedBox(height: 12),
-                        _DiarizationModelSettings(controller: c),
                         const SizedBox(height: 16),
                         if (c.speechProvider.usesEngineTrio) ...[
                           _CloudEngineSettings(
@@ -203,6 +201,11 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 18),
+                  const SectionLabel('本机发言人模型'),
+                  _SettingsGroup(
+                    child: _DiarizationModelSettings(controller: c),
                   ),
                   if (runsOnApple) ...[
                     const SizedBox(height: 18),

@@ -958,6 +958,7 @@ class RecorderController extends ChangeNotifier
   late final SpeakerDiarizer _defaultSpeakerDiarizer;
   late final bool _autoDiarizeLocalMeetings;
 
+  @override
   SpeakerDiarizer get _effectiveSpeakerDiarizer =>
       _speakerDiarizerOverride ?? _defaultSpeakerDiarizer;
 
@@ -1009,10 +1010,6 @@ class RecorderController extends ChangeNotifier
       return result;
     }
   }
-
-  int? expectedSpeakersForPath(String path) => null;
-
-  void _recordDiarizationQuality(String path, DiarizationQuality? quality) {}
 
   /// Available playback rates for the speed dropdown.
   static const List<double> playbackSpeeds = [
