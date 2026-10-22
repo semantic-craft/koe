@@ -23,121 +23,129 @@ class ProjectsScreen extends StatelessWidget {
       for (final project in c.projects.projects)
         if (project.status != ProjectStatus.active) project,
     ];
+    // Starts below the status bar like Today, so scrolled projects stop there
+    // instead of sliding under it.
     return GradientScaffold(
-      child: ListView(
-        padding: const EdgeInsets.only(bottom: 108),
-        children: [
-          KoeMobileHeader(
-            onNewRecording: () => _newRecording(context),
-            onOpenSettings: () => openMobileSettings(context),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  '项目',
-                  style: TextStyle(
-                    fontSize: 30,
-                    height: 1.15,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.6,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  '把跨天的讨论、目标和承诺放在一起。',
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.45,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                const SizedBox(height: 22),
-                SectionLabel(
-                  '进行中项目',
-                  trailing: TextButton(
-                    key: const ValueKey('create-project'),
-                    onPressed: () => _createProject(context),
-                    child: const Text('新建项目'),
-                  ),
-                ),
-                if (c.projects.active.isEmpty)
-                  SurfaceCard(
-                    key: const ValueKey('projects-empty'),
-                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '还没有进行中的项目',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          '新建一个目标项目，再把不同日子的录音和待办关联进来。',
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.45,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            FilledButton(
-                              key: const ValueKey('create-project-empty'),
-                              onPressed: () => _createProject(context),
-                              child: const Text('新建项目'),
-                            ),
-                            if (c.topicsEnabled)
-                              OutlinedButton(
-                                key: const ValueKey('create-topic'),
-                                onPressed: () =>
-                                    showCreateTopicDialog(context, c.topics),
-                                child: const Text('新建主题'),
-                              ),
-                          ],
-                        ),
-                      ],
+      child: SafeArea(
+        left: false,
+        right: false,
+        bottom: false,
+        child: ListView(
+          padding: const EdgeInsets.only(bottom: 108),
+          children: [
+            KoeMobileHeader(
+              onNewRecording: () => _newRecording(context),
+              onOpenSettings: () => openMobileSettings(context),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    '项目',
+                    style: TextStyle(
+                      fontSize: 30,
+                      height: 1.15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.6,
                     ),
-                  )
-                else
-                  for (final project in c.projects.active)
-                    _ProjectCard(project: project),
-                if (closed.isNotEmpty) ...[
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '把跨天的讨论、目标和承诺放在一起。',
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.45,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
                   const SizedBox(height: 22),
-                  const SectionLabel('已完成或归档'),
-                  for (final project in closed) _ProjectCard(project: project),
-                ],
-                const SizedBox(height: 22),
-                const SectionLabel('书籍与主题'),
-                if (c.topicsEnabled)
-                  TopicsEntry(
-                    padding: EdgeInsets.zero,
-                    key: const ValueKey('projects-topics-entry'),
-                  )
-                else
-                  const SurfaceCard(
-                    padding: EdgeInsets.all(14),
-                    child: Text(
-                      '主题在当前平台暂不可用；录音与资料仍可正常使用。',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
+                  SectionLabel(
+                    '进行中项目',
+                    trailing: TextButton(
+                      key: const ValueKey('create-project'),
+                      onPressed: () => _createProject(context),
+                      child: const Text('新建项目'),
+                    ),
+                  ),
+                  if (c.projects.active.isEmpty)
+                    SurfaceCard(
+                      key: const ValueKey('projects-empty'),
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '还没有进行中的项目',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            '新建一个目标项目，再把不同日子的录音和待办关联进来。',
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.45,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              FilledButton(
+                                key: const ValueKey('create-project-empty'),
+                                onPressed: () => _createProject(context),
+                                child: const Text('新建项目'),
+                              ),
+                              if (c.topicsEnabled)
+                                OutlinedButton(
+                                  key: const ValueKey('create-topic'),
+                                  onPressed: () =>
+                                      showCreateTopicDialog(context, c.topics),
+                                  child: const Text('新建主题'),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    for (final project in c.projects.active)
+                      _ProjectCard(project: project),
+                  if (closed.isNotEmpty) ...[
+                    const SizedBox(height: 22),
+                    const SectionLabel('已完成或归档'),
+                    for (final project in closed)
+                      _ProjectCard(project: project),
+                  ],
+                  const SizedBox(height: 22),
+                  const SectionLabel('书籍与主题'),
+                  if (c.topicsEnabled)
+                    TopicsEntry(
+                      padding: EdgeInsets.zero,
+                      key: const ValueKey('projects-topics-entry'),
+                    )
+                  else
+                    const SurfaceCard(
+                      padding: EdgeInsets.all(14),
+                      child: Text(
+                        '主题在当前平台暂不可用；录音与资料仍可正常使用。',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

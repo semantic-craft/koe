@@ -288,9 +288,21 @@ void main() {
     }
 
     BuildContext shell() => tester.element(find.byType(Scaffold).first);
-    Future<void> pushAndShot(String name, Widget page) async {
+    Future<void> pushAndShot(
+      String name,
+      Widget page, {
+      bool scrolled = false,
+    }) async {
       Navigator.of(shell()).push(MaterialPageRoute<void>(builder: (_) => page));
       await shot(name);
+      if (scrolled) {
+        final list = find.descendant(
+          of: find.byWidget(page),
+          matching: find.byType(Scrollable),
+        );
+        await tester.drag(list.first, const Offset(0, -500));
+        await shot('$name-scrolled');
+      }
       Navigator.of(shell()).pop();
       await tester.pumpAndSettle();
     }
@@ -309,7 +321,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('nav-today')));
     await tester.pumpAndSettle();
 
-    await pushAndShot('06-settings', const SettingsScreen(showBack: true));
+    await pushAndShot(
+      '06-settings',
+      const SettingsScreen(showBack: true),
+      scrolled: true,
+    );
     await pushAndShot('07-ask-koe', const AskKoeScreen());
     await pushAndShot('08-todos', const TodosScreen());
 
