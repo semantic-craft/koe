@@ -14,38 +14,79 @@ void main() {
 
   test('active BLE transfer can outlive the inactivity timeout', () async {
     final packets = StreamController<DecodedPacket>();
-    final scheduledPackets = <Future<void>>[];
+    final lastSliceSent = Completer<void>();
     final file = OfflineFileEntry(
       fileId: DateTime.now().microsecondsSinceEpoch,
       sizeBytes: 640,
     );
+    // Each slice comes half a timeout after the one before, so the next one
+    // is always due before the timeout runs out.
+    void sendSlice(int sequence) {
+      packets.add(_packet(RxCmd.fileSliceId, _sliceFrame(sequence)));
+      if (sequence == 3) {
+        lastSliceSent.complete();
+      } else {
+        Timer(const Duration(milliseconds: 25), () => sendSlice(sequence + 1));
+      }
+    }
+
     final pull = BleFilePull(
       packets: packets.stream,
       write: (_) async {
         packets.add(_packet(RxCmd.fileHeadId, Uint8List(10)));
-        for (var i = 0; i < 4; i++) {
-          scheduledPackets.add(
-            Future<void>.delayed(Duration(milliseconds: 25 * (i + 1)), () {
-              packets.add(_packet(RxCmd.fileSliceId, _sliceFrame(i)));
-            }),
-          );
-        }
+        Timer(const Duration(milliseconds: 25), () => sendSlice(0));
       },
       crypto: DeviceCrypto(),
     );
+    addTearDown(() async {
+      await lastSliceSent.future;
+      await packets.close();
+    });
 
     final path = await pull.pullFile(
       file,
       timeout: const Duration(milliseconds: 50),
+      onProgress: (received, _) {
+        // The app is busy for twice the timeout while the last slice is due,
+        // as on a loaded test machine.
+        if (received == 480) sleep(const Duration(milliseconds: 100));
+      },
     );
     addTearDown(() async {
-      await Future.wait(scheduledPackets);
-      await packets.close();
       final output = File(path);
       if (await output.exists()) await output.delete();
     });
 
     expect(await File(path).length(), 640);
+  });
+
+  test('cancelled pull drops slices the recorder sends afterwards', () async {
+    final packets = StreamController<DecodedPacket>.broadcast();
+    addTearDown(packets.close);
+    late final BleFilePull pull;
+    pull = BleFilePull(
+      packets: packets.stream,
+      write: (_) async {
+        // The app gives up on the file right away, and the recorder sends it
+        // anyway.
+        pull.cancel();
+        Timer.run(() {
+          packets.add(_packet(RxCmd.fileHeadId, Uint8List(10)));
+          packets.add(_packet(RxCmd.fileSliceId, _sliceFrame(0)));
+        });
+      },
+      crypto: DeviceCrypto(),
+    );
+
+    await expectLater(
+      pull.pullFile(
+        OfflineFileEntry(
+          fileId: DateTime.now().microsecondsSinceEpoch,
+          sizeBytes: 640,
+        ),
+      ),
+      throwsA(isA<BleFilePullCancelled>()),
+    );
   });
 }
 
