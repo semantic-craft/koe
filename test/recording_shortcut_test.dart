@@ -328,6 +328,7 @@ void main() {
       loaded.complete((
         bound: true,
         manuallyDisconnected: false,
+        residentOffered: false,
         device: _device,
         info: null,
       ));

@@ -291,8 +291,13 @@ RecorderController _controller({BleService? ble, AudioPlayer? player}) =>
       player: player ?? _PerfPlayer(),
       loadPersistedState: false,
       playbackHistoryStore: PlaybackHistoryStore(inMemory: true),
-      persistedDeviceLoader: () async =>
-          (bound: false, manuallyDisconnected: false, device: null, info: null),
+      persistedDeviceLoader: () async => (
+        bound: false,
+        manuallyDisconnected: false,
+        residentOffered: false,
+        device: null,
+        info: null,
+      ),
     );
 
 Future<void> _keepScrolling(ScrollController scroll) async {
