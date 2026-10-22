@@ -48,179 +48,189 @@ class TodayScreen extends StatelessWidget {
         : 0;
     final continuePath = c.continuePath;
 
+    // The scroll view starts below the status bar, so scrolled content stops
+    // there instead of sliding under it (as in the library, #260); the
+    // header's own status-bar inset becomes zero, so the page looks the same.
     return GradientScaffold(
-      child: ListView(
-        padding: const EdgeInsets.only(bottom: 108),
-        children: [
-          KoeMobileHeader(
-            onNewRecording: () => _newRecording(context),
-            onOpenSettings: () => openMobileSettings(context),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  _dateLine(now),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    letterSpacing: 0.4,
-                    color: AppColors.textSecondary,
+      child: SafeArea(
+        left: false,
+        right: false,
+        bottom: false,
+        child: ListView(
+          padding: const EdgeInsets.only(bottom: 108),
+          children: [
+            KoeMobileHeader(
+              onNewRecording: () => _newRecording(context),
+              onOpenSettings: () => openMobileSettings(context),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    _dateLine(now),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      letterSpacing: 0.4,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  '把心力留给\n重要的事。',
-                  style: TextStyle(
-                    fontSize: 30,
-                    height: 1.15,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.6,
+                  const SizedBox(height: 8),
+                  const Text(
+                    '把心力留给\n重要的事。',
+                    style: TextStyle(
+                      fontSize: 30,
+                      height: 1.15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.6,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 18),
-                _FocusCard(
-                  project: focus,
-                  progress: focus == null ? null : c.projectProgress(focus.id),
-                  topicTitle: currentTopic?.title,
-                  onOpenProjects: () => focus == null
-                      ? RecordingNavigation.of(context)?.onSelectTab?.call(1)
-                      : openProject(context, focus.id),
-                  onOpenTopic: c.topicsEnabled
-                      ? () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            settings: const RouteSettings(name: 'topics'),
-                            builder: (_) => const TopicsScreen(),
-                          ),
-                        )
-                      : null,
-                ),
-                const SizedBox(height: 12),
-                _DeviceStatusCard(
-                  connected: c.connected,
-                  name: c.displayDeviceName,
-                  status: c.statusMessage,
-                  shortcutPending: c.recordingShortcutPending,
-                  handedOff:
-                      c.manuallyDisconnected && c.canReconnectBoundDevice,
-                  onScan: c.canReconnectBoundDevice
-                      ? c.reconnectBoundDevice
-                      : () => showScanDevicesSheet(context),
-                  scanLabel: c.canReconnectBoundDevice ? '连接' : '扫描',
-                  onDisconnect: c.disconnect,
-                ),
-                if (c.organizeStore.queued.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  _FocusCard(
+                    project: focus,
+                    progress: focus == null
+                        ? null
+                        : c.projectProgress(focus.id),
+                    topicTitle: currentTopic?.title,
+                    onOpenProjects: () => focus == null
+                        ? RecordingNavigation.of(context)?.onSelectTab?.call(1)
+                        : openProject(context, focus.id),
+                    onOpenTopic: c.topicsEnabled
+                        ? () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              settings: const RouteSettings(name: 'topics'),
+                              builder: (_) => const TopicsScreen(),
+                            ),
+                          )
+                        : null,
+                  ),
                   const SizedBox(height: 12),
-                  _OrganizeProgressCard(
-                    progress: c.organizeProgress,
+                  _DeviceStatusCard(
+                    connected: c.connected,
+                    name: c.displayDeviceName,
+                    status: c.statusMessage,
+                    shortcutPending: c.recordingShortcutPending,
+                    handedOff:
+                        c.manuallyDisconnected && c.canReconnectBoundDevice,
+                    onScan: c.canReconnectBoundDevice
+                        ? c.reconnectBoundDevice
+                        : () => showScanDevicesSheet(context),
+                    scanLabel: c.canReconnectBoundDevice ? '连接' : '扫描',
+                    onDisconnect: c.disconnect,
+                  ),
+                  if (c.organizeStore.queued.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _OrganizeProgressCard(
+                      progress: c.organizeProgress,
+                      onOpenLibrary: () =>
+                          RecordingNavigation.of(context)?.onSelectTab?.call(2),
+                    ),
+                  ],
+                  const SizedBox(height: 22),
+                  const SectionLabel('下一步行动'),
+                  _ActionsSection(
+                    today: today,
+                    pendingTopics: pending,
+                    onOpenProjects: () =>
+                        RecordingNavigation.of(context)?.onSelectTab?.call(1),
+                  ),
+                  const SizedBox(height: 22),
+                  const SectionLabel('继续回听'),
+                  _ContinueListeningCard(
+                    path: continuePath,
+                    playing: c.playingPath == continuePath && c.isPlaying,
+                    onToggle: () => c.playingPath == continuePath
+                        ? c.togglePlayPause()
+                        : c.toggleLatestPlayback(),
+                    onOpen: continuePath == null
+                        ? null
+                        : () => RecordingNavigation.open(
+                            context,
+                            RecordingReference(
+                              fileId: c.fileIdFromPath(continuePath),
+                              path: continuePath,
+                            ),
+                          ),
+                    title: continuePath == null
+                        ? null
+                        : c
+                              .recordingView(
+                                RecordingReference(
+                                  fileId: c.fileIdFromPath(continuePath),
+                                  path: continuePath,
+                                ),
+                              )
+                              .title,
+                    subtitle: continuePath == null
+                        ? '还没有回听中的资料'
+                        : c.continueDetail,
                     onOpenLibrary: () =>
                         RecordingNavigation.of(context)?.onSelectTab?.call(2),
                   ),
-                ],
-                const SizedBox(height: 22),
-                const SectionLabel('下一步行动'),
-                _ActionsSection(
-                  today: today,
-                  pendingTopics: pending,
-                  onOpenProjects: () =>
-                      RecordingNavigation.of(context)?.onSelectTab?.call(1),
-                ),
-                const SizedBox(height: 22),
-                const SectionLabel('继续回听'),
-                _ContinueListeningCard(
-                  path: continuePath,
-                  playing: c.playingPath == continuePath && c.isPlaying,
-                  onToggle: () => c.playingPath == continuePath
-                      ? c.togglePlayPause()
-                      : c.toggleLatestPlayback(),
-                  onOpen: continuePath == null
-                      ? null
-                      : () => RecordingNavigation.open(
-                          context,
-                          RecordingReference(
-                            fileId: c.fileIdFromPath(continuePath),
-                            path: continuePath,
+                  const SizedBox(height: 22),
+                  const MorningBriefCard(),
+                  const SizedBox(height: 22),
+                  const SectionLabel('日记'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        key: const ValueKey('today-diary'),
+                        onPressed: () => openDiary(context, weekly: false),
+                        icon: const Icon(Icons.menu_book_outlined, size: 18),
+                        label: const Text('今天的日记'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('today-week'),
+                        onPressed: () => openDiary(context, weekly: true),
+                        icon: const Icon(Icons.date_range_outlined, size: 18),
+                        label: const Text('本周小结'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                  SectionLabel(
+                    '今日时间线',
+                    trailing: today.isEmpty
+                        ? null
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              KoeIconButton(
+                                key: const ValueKey('today-export'),
+                                tooltip: '导出给外部 AI',
+                                onPressed: () => showContextExportSheet(
+                                  context,
+                                  DayExport(now),
+                                ),
+                                icon: const Icon(
+                                  Icons.ios_share_rounded,
+                                  size: 20,
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => RecordingNavigation.of(
+                                  context,
+                                )?.onSelectTab?.call(2),
+                                child: const Text('全部资料'),
+                              ),
+                            ],
                           ),
-                        ),
-                  title: continuePath == null
-                      ? null
-                      : c
-                            .recordingView(
-                              RecordingReference(
-                                fileId: c.fileIdFromPath(continuePath),
-                                path: continuePath,
-                              ),
-                            )
-                            .title,
-                  subtitle: continuePath == null
-                      ? '还没有回听中的资料'
-                      : c.continueDetail,
-                  onOpenLibrary: () =>
-                      RecordingNavigation.of(context)?.onSelectTab?.call(2),
-                ),
-                const SizedBox(height: 22),
-                const MorningBriefCard(),
-                const SizedBox(height: 22),
-                const SectionLabel('日记'),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      key: const ValueKey('today-diary'),
-                      onPressed: () => openDiary(context, weekly: false),
-                      icon: const Icon(Icons.menu_book_outlined, size: 18),
-                      label: const Text('今天的日记'),
-                    ),
-                    OutlinedButton.icon(
-                      key: const ValueKey('today-week'),
-                      onPressed: () => openDiary(context, weekly: true),
-                      icon: const Icon(Icons.date_range_outlined, size: 18),
-                      label: const Text('本周小结'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 22),
-                SectionLabel(
-                  '今日时间线',
-                  trailing: today.isEmpty
-                      ? null
-                      : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            KoeIconButton(
-                              key: const ValueKey('today-export'),
-                              tooltip: '导出给外部 AI',
-                              onPressed: () => showContextExportSheet(
-                                context,
-                                DayExport(now),
-                              ),
-                              icon: const Icon(
-                                Icons.ios_share_rounded,
-                                size: 20,
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: () => RecordingNavigation.of(
-                                context,
-                              )?.onSelectTab?.call(2),
-                              child: const Text('全部资料'),
-                            ),
-                          ],
-                        ),
-                ),
-                if (today.isEmpty)
-                  _TodayEmpty(
-                    onNewRecording: () => _newRecording(context),
-                    onLibrary: () =>
-                        RecordingNavigation.of(context)?.onSelectTab?.call(2),
-                  )
-                else
-                  for (final item in today) ContextTimelineRow(item: item),
-              ],
+                  ),
+                  if (today.isEmpty)
+                    _TodayEmpty(
+                      onNewRecording: () => _newRecording(context),
+                      onLibrary: () =>
+                          RecordingNavigation.of(context)?.onSelectTab?.call(2),
+                    )
+                  else
+                    for (final item in today) ContextTimelineRow(item: item),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

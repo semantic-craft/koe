@@ -29,202 +29,14 @@ class SettingsScreen extends StatelessWidget {
 
     return GradientScaffold(
       child: SafeArea(
-        child: Stack(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ListView(
-              padding: EdgeInsets.fromLTRB(20, showBack ? 56 : 8, 20, 24),
-              children: [
-                const Padding(
-                  padding: EdgeInsets.only(top: 8, bottom: 24),
-                  child: Text(
-                    '处理与偏好',
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600),
-                  ),
-                ),
-                if (c.settingsStorageError != null)
-                  Text(
-                    c.settingsStorageError!,
-                    style: const TextStyle(color: AppColors.coral),
-                  ),
-                if (c.settingsStorageError != null)
-                  TextButton(
-                    onPressed: c.reloadSettings,
-                    child: const Text('重试读取安全配置'),
-                  ),
-                const SectionLabel('传输'),
-                _SettingsGroup(
-                  key: const ValueKey('settings-transfer-group'),
-                  child: _SettingsSwitch(
-                    title: '自动传输',
-                    subtitle: c.autoTransferActive
-                        ? '正在传输设备端未导出录音…'
-                        : '自动下载设备上的历史录音',
-                    value: c.autoRealtime,
-                    onChanged: c.setAutoRealtime,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const SectionLabel('语音与翻译'),
-                _SettingsGroup(
-                  key: const ValueKey('settings-stt-group'),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _SettingsSwitch(
-                        title: '自动转写',
-                        subtitle: '连接录音时实时转写，取回独立录音后自动处理',
-                        value: c.autoTranscribe,
-                        onChanged: c.setAutoTranscribe,
-                      ),
-                      if (c.phoneRecordingEnabled) ...[
-                        const Divider(height: 20),
-                        _SettingsSwitch(
-                          key: const ValueKey('settings-all-day-listening'),
-                          title: '全天监听',
-                          subtitle:
-                              '打开后按「${runsOnMac ? '麦克风录音' : '手机录音'}」或录音豆录音键，一直识别、只留文字，'
-                              '安静约 10 分钟另起一条；安静时不上传声音',
-                          value: c.allDayListening,
-                          onChanged: c.setAllDayListening,
-                        ),
-                      ],
-                      const Divider(height: 20),
-                      _SettingsSwitch(
-                        key: const ValueKey('settings-auto-organize'),
-                        title: '自动整理新录音',
-                        subtitle: '之后的新录音自动转写、写摘要并提取待办；以前的录音不会自动处理',
-                        value: c.autoOrganize,
-                        onChanged: c.setAutoOrganize,
-                      ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          key: const ValueKey('settings-organize-history'),
-                          onPressed: () => showOrganizeHistorySheet(context),
-                          child: const Text('整理以前的录音…'),
-                        ),
-                      ),
-                      const Divider(height: 20),
-                      _ProviderSelector(controller: c),
-                      const Divider(height: 20),
-                      _SettingsSwitch(
-                        key: const ValueKey('settings-meeting-local-only'),
-                        title: '录音只留本机',
-                        subtitle:
-                            '会议录音只用本机引擎转写，不向云端上传音频（局域网加密直连归档到自己的 Mac 不受影响）；'
-                            '纯文字记录、按住说话与全天监听不受影响，纪要与问答只发文字',
-                        value: c.meetingLocalOnly,
-                        onChanged: c.setMeetingLocalOnly,
-                      ),
-                      if (c.meetingLocalOnly &&
-                          !c.onDeviceSpeechSupported &&
-                          !c.appleCapabilitiesLoading) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          c.meetingLocalOnlyUnavailableMessage,
-                          key: const ValueKey(
-                            'meeting-local-only-unavailable',
-                          ),
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 12,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      if (c.speechProvider.usesEngineTrio) ...[
-                        _CloudEngineSettings(
-                          key: ValueKey(c.speechProvider),
-                          controller: c,
-                          provider: c.speechProvider,
-                        ),
-                        const SizedBox(height: 14),
-                        _TranscriptLanguageSelector(controller: c),
-                      ] else
-                        _AppleLanguageSettings(controller: c),
-                      if (c.isLiveSession) ...[
-                        const SizedBox(height: 12),
-                        const Text(
-                          '更改将用于下一段录音',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                      if (!c.speechProvider.defersTranscription) ...[
-                        const Divider(height: 28),
-                        _SttModeSelector(controller: c),
-                      ],
-                      if (c.fileJobRecoveryError != null)
-                        Text(c.fileJobRecoveryError!),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const SectionLabel('设备'),
-                _SettingsGroup(
-                  child: ListTile(
-                    key: const ValueKey('device-entry'),
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.headphones_rounded),
-                    title: const Text('安克录音豆'),
-                    subtitle: Text(
-                      c.connected
-                          ? '已连接 · ${c.displayDeviceName}'
-                          : '未连接设备 · 打开后扫描',
-                    ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        settings: const RouteSettings(name: 'device'),
-                        builder: (_) => const DeviceScreen(showBack: true),
-                      ),
-                    ),
-                  ),
-                ),
-                if (runsOnApple) ...[
-                  const SizedBox(height: 18),
-                  const SectionLabel('Mac 原件归档'),
-                  MacArchiveSettings(controller: c),
-                ],
-                const SizedBox(height: 18),
-                const SectionLabel('外部 AI'),
-                _SettingsGroup(
-                  child: ListTile(
-                    key: const ValueKey('external-ai-entry'),
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.hub_outlined),
-                    title: const Text('外部 AI 连接'),
-                    subtitle: const Text('尚未开放 · 后续用于让授权客户端读取资料'),
-                    trailing: const Text(
-                      '未开放',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    onTap: () => _showExternalAiNotice(context),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                _SettingsGroup(
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.info_outline_rounded),
-                    title: const Text('关于 Koe'),
-                    subtitle: const Text(AppIdentity.subtitle),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => showKoeAboutDialog(context),
-                  ),
-                ),
-              ],
-            ),
+            // Above the list rather than over it, so scrolled settings stop
+            // below the back button instead of running behind it.
             if (showBack)
-              Positioned(
-                left: 8,
-                top: 4,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: KoeIconButton(
                   key: const ValueKey('settings-back'),
                   tooltip: '返回',
@@ -233,6 +45,201 @@ class SettingsScreen extends StatelessWidget {
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
               ),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(20, showBack ? 0 : 8, 20, 24),
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8, bottom: 24),
+                    child: Text(
+                      '处理与偏好',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (c.settingsStorageError != null)
+                    Text(
+                      c.settingsStorageError!,
+                      style: const TextStyle(color: AppColors.coral),
+                    ),
+                  if (c.settingsStorageError != null)
+                    TextButton(
+                      onPressed: c.reloadSettings,
+                      child: const Text('重试读取安全配置'),
+                    ),
+                  const SectionLabel('传输'),
+                  _SettingsGroup(
+                    key: const ValueKey('settings-transfer-group'),
+                    child: _SettingsSwitch(
+                      title: '自动传输',
+                      subtitle: c.autoTransferActive
+                          ? '正在传输设备端未导出录音…'
+                          : '自动下载设备上的历史录音',
+                      value: c.autoRealtime,
+                      onChanged: c.setAutoRealtime,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const SectionLabel('语音与翻译'),
+                  _SettingsGroup(
+                    key: const ValueKey('settings-stt-group'),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _SettingsSwitch(
+                          title: '自动转写',
+                          subtitle: '连接录音时实时转写，取回独立录音后自动处理',
+                          value: c.autoTranscribe,
+                          onChanged: c.setAutoTranscribe,
+                        ),
+                        if (c.phoneRecordingEnabled) ...[
+                          const Divider(height: 20),
+                          _SettingsSwitch(
+                            key: const ValueKey('settings-all-day-listening'),
+                            title: '全天监听',
+                            subtitle:
+                                '打开后按「${runsOnMac ? '麦克风录音' : '手机录音'}」或录音豆录音键，一直识别、只留文字，'
+                                '安静约 10 分钟另起一条；安静时不上传声音',
+                            value: c.allDayListening,
+                            onChanged: c.setAllDayListening,
+                          ),
+                        ],
+                        const Divider(height: 20),
+                        _SettingsSwitch(
+                          key: const ValueKey('settings-auto-organize'),
+                          title: '自动整理新录音',
+                          subtitle: '之后的新录音自动转写、写摘要并提取待办；以前的录音不会自动处理',
+                          value: c.autoOrganize,
+                          onChanged: c.setAutoOrganize,
+                        ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            key: const ValueKey('settings-organize-history'),
+                            onPressed: () => showOrganizeHistorySheet(context),
+                            child: const Text('整理以前的录音…'),
+                          ),
+                        ),
+                        const Divider(height: 20),
+                        _ProviderSelector(controller: c),
+                        const Divider(height: 20),
+                        _SettingsSwitch(
+                          key: const ValueKey('settings-meeting-local-only'),
+                          title: '录音只留本机',
+                          subtitle:
+                              '会议录音只用本机引擎转写，不向云端上传音频（局域网加密直连归档到自己的 Mac 不受影响）；'
+                              '纯文字记录、按住说话与全天监听不受影响，纪要与问答只发文字',
+                          value: c.meetingLocalOnly,
+                          onChanged: c.setMeetingLocalOnly,
+                        ),
+                        if (c.meetingLocalOnly &&
+                            !c.onDeviceSpeechSupported &&
+                            !c.appleCapabilitiesLoading) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            c.meetingLocalOnlyUnavailableMessage,
+                            key: const ValueKey(
+                              'meeting-local-only-unavailable',
+                            ),
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        if (c.speechProvider.usesEngineTrio) ...[
+                          _CloudEngineSettings(
+                            key: ValueKey(c.speechProvider),
+                            controller: c,
+                            provider: c.speechProvider,
+                          ),
+                          const SizedBox(height: 14),
+                          _TranscriptLanguageSelector(controller: c),
+                        ] else
+                          _AppleLanguageSettings(controller: c),
+                        if (c.isLiveSession) ...[
+                          const SizedBox(height: 12),
+                          const Text(
+                            '更改将用于下一段录音',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                        if (!c.speechProvider.defersTranscription) ...[
+                          const Divider(height: 28),
+                          _SttModeSelector(controller: c),
+                        ],
+                        if (c.fileJobRecoveryError != null)
+                          Text(c.fileJobRecoveryError!),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const SectionLabel('设备'),
+                  _SettingsGroup(
+                    child: ListTile(
+                      key: const ValueKey('device-entry'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.headphones_rounded),
+                      title: const Text('安克录音豆'),
+                      subtitle: Text(
+                        c.connected
+                            ? '已连接 · ${c.displayDeviceName}'
+                            : '未连接设备 · 打开后扫描',
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          settings: const RouteSettings(name: 'device'),
+                          builder: (_) => const DeviceScreen(showBack: true),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (runsOnApple) ...[
+                    const SizedBox(height: 18),
+                    const SectionLabel('Mac 原件归档'),
+                    MacArchiveSettings(controller: c),
+                  ],
+                  const SizedBox(height: 18),
+                  const SectionLabel('外部 AI'),
+                  _SettingsGroup(
+                    child: ListTile(
+                      key: const ValueKey('external-ai-entry'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.hub_outlined),
+                      title: const Text('外部 AI 连接'),
+                      subtitle: const Text('尚未开放 · 后续用于让授权客户端读取资料'),
+                      trailing: const Text(
+                        '未开放',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      onTap: () => _showExternalAiNotice(context),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _SettingsGroup(
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.info_outline_rounded),
+                      title: const Text('关于 Koe'),
+                      subtitle: const Text(AppIdentity.subtitle),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => showKoeAboutDialog(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
