@@ -1,6 +1,7 @@
 package com.semanticcraft.soundcore
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -303,6 +304,8 @@ class RecordingSyncService : Service() {
                 "actions" to (posted?.notification?.actions?.map { it.title.toString() } ?: emptyList<String>()),
                 // False once the screen is off, as behind the lock screen.
                 "screenInteractive" to (context.getSystemService(POWER_SERVICE) as PowerManager).isInteractive,
+                // True while a lock screen that needs a PIN, pattern or password is up.
+                "deviceLocked" to context.getSystemService(KeyguardManager::class.java).isDeviceLocked,
             )
         }
 
