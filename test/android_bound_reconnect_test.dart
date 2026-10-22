@@ -163,10 +163,7 @@ void main() {
 
       controller.markResidentOffered();
       expect(controller.offersResident, isFalse);
-      for (var i = 0; i < 100; i++) {
-        if ((await DeviceStore.load()).residentOffered) break;
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
+      await DeviceStore.waitForWrites();
       final restarted = build(_FakeBleService(), loader: DeviceStore.load);
       await restarted.connect(_device);
       expect(restarted.offersResident, isFalse);
