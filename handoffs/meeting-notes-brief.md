@@ -1,6 +1,6 @@
 # 会议纪要功能：对照拾音（Shiyin）的缺口与分期方案
 
-> 状态：方案稿，只规划、不含代码。写于 2026-10-22，代表开发部（图灵）。
+> 状态：方案已定稿，§7 的问题用户已于 2026-10-22 决定（「照推荐全部定，开工」），决定见 [ADR 0002](../docs/adr/0002-meeting-notes-decisions.md)。六期总工单：#370–#375。写于 2026-10-22，代表开发部（图灵）。
 > 需求来源：用户经亚里士多德转述——「他提到的所有功能都要集成到我们这个项目里面……Mac 端也得做到，iOS 端、安卓端都得具备，至少具备他说的这些功能。」
 > 参照对象：[@jaywcjlove 的帖子](https://x.com/jaywcjlove/status/2113063815495782528)介绍的 [juinwei7/Shiyin](https://github.com/juinwei7/Shiyin)（拾音）。本文读的是 commit `7ffd7d4b43b3f3cf06012cf3abfbe8e2b0e257f9`（2026-10-21）。下面的「文件:行」，拾音一侧都相对于 `Sources/Shiyin/`（README 和 docs 除外），Koe 一侧都相对于仓库根目录，以 main `58425a4` 为准。
 > 用户已定的范围：Mac、iOS、Android 三端都至少具备下面列出的拾音功能。
@@ -10,7 +10,7 @@
 - 拾音是**仅 macOS 26 + Apple Silicon** 的 Swift 原生应用，用 MIT 许可证。录音、转写、发言人区分都在本机做；**但大模型整理会把转写文字、用户笔记、词汇表和会议信息发给用户选的服务**，默认是 Claude Code CLI（等于发给 Anthropic）。帖子里说的「全程不上传录音」，准确的意思是**不上传音频，文字照样上传**（README.md:160、`Services/JobRunner.swift:46`）。
 - Koe 已有的会议相关能力（结构化纪要带出处回听、发言人改名与分布、书签、问答、模板）三端基本一样，因为都是同一套 Dart 代码。缺口集中在四件事：**①Mac 没有本机录音和系统声音采集；②本地转写只在 iOS 26+ 有（Apple 设备端），Mac 和 Android 只能用云端，而云端转写要上传音频；③发言人区分全靠云端（千问 / 豆包），本机没有；④纪要周边功能（词汇表、草稿纪要、待确认问题、声纹、多种整理后端、PDF/Word/字幕导出）都还没有。**
 - 推荐路线：**三端统一用 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（Apache-2.0，有官方 Flutter 包 `sherpa_onnx`）做本地发言人区分，也用它做 Android 的本地转写**；Apple 两端继续用现成的 Apple 设备端识别，再把 iOS 的桥接挪到 `darwin/`，这样 macOS 26 也能用。Mac 的系统声音用 Core Audio tap，可以照 MIT 许可证借用拾音的 `SystemAudioSource`。大模型整理默认**只发文字**，另加「完全离线」开关。
-- **平台硬限制（要用户拍板）**：iOS 和 Android 都没有通用办法录下其他应用的通话声音，所以「系统声音」和「线上会议检测」这两项在手机上没法做到跟 Mac 一样（见 §5.4、§7 第 1 条）。
+- **平台硬限制**：iOS 和 Android 都没有通用办法录下其他应用的通话声音，所以手机开会用麦克风或录音豆收音，系统声音只在 Mac 上录；手机上的会议提醒按日历事件触发（见 §5.4、§7 第 1、9 条）。
 
 ## 2. 拾音的全部功能（带出处）
 
@@ -104,7 +104,7 @@ Koe 是**一个 Flutter 仓库同时出三端**（`ios/`、`macos/`、`android/`
 
 | 方面 | Mac | iOS | Android |
 | --- | --- | --- | --- |
-| 定位（ROADMAP） | 「辅助阅读与归档端」，不阻塞手机 | 主力平台 | 只适配 Pixel 11 Pro / Android 17，代码已合并，待真机验收（#345）；解冻范围**不包括**「本机识别/翻译的 Android 替代」 |
+| 定位（ROADMAP） | 完整的会议纪要端，兼手机原件归档；不阻塞手机 | 主力平台 | 只适配 Pixel 11 Pro / Android 17，代码已合并，待真机验收（#345）；本机识别在本方案第 3 期 |
 | 本机录音 | **没有**：`phoneRecordingEnabled = runsOnPhone`（`lib/state/recorder_controller.dart:285`、`lib/platform/device_kind.dart:9-15`）；`macos/Runner/Release.entitlements` 只有蓝牙和网络权限，没有 `audio-input`。只能远程控制录音豆录音 | 手机麦克风录音：锁屏继续、来电暂停、进程被杀后找回；也能控制录音豆 | 同 iOS（#340），前台服务加通知 |
 | 本地转写 | **没有**：`AppleSpeechService._supportedPlatform` 只认 iOS（`lib/ai/apple_speech.dart:88-89`），桥接代码只在 `ios/Runner/AppleSpeechBridge.swift` | Apple 设备端（iOS 26+，`SpeechTranscriber`，`ios/Runner/AppleSpeechBridge.swift:97-106`、`:177-187`）：实时和文件转写都在本机，还能实时翻译 | **没有** |
 | 云端转写 | 千问、豆包（`lib/ai/speech_provider.dart:3-16`）。**会上传音频**：千问走 OSS 临时上传（`lib/ai/oss_upload_request.dart:8`），豆包上传文件 | 同左 | 同左 |
@@ -168,15 +168,19 @@ Koe 是**一个 Flutter 仓库同时出三端**（`ios/`、`macos/`、`android/`
 
 ### 5.1 第 1 期：「录音不上传」的底座 + Mac 本机录音
 
+工单：[#370](https://github.com/semantic-craft/koe/issues/370)（子工单 #376、#377、#378）
+
 - **目标**：三端都有「仅本地」开关，打开后任何音频都不出设备；Mac 能用麦克风录音，macOS 26 上能用 Apple 设备端做实时和文件转写。
 - **范围**
-  1. 设置里新增「录音只留本机」（暂名）：打开后，引擎列表只留 `onDevice` 类引擎，云端引擎显示「已关闭：会上传音频」；对已有录音手动点云端转写时要二次确认。
+  1. 设置里新增「录音只留本机」（暂名），只在会议场景默认打开，平常语音输入照旧用千问（§7 第 2 条）：打开后，引擎列表只留 `onDevice` 类引擎，云端引擎显示「已关闭：会上传音频」；对已有录音手动点云端转写时要二次确认。
   2. 把 `ios/Runner/AppleSpeechBridge.swift` 挪到 `darwin/`，iOS 和 macOS 共用；`_supportedPlatform` 改成 iOS 26+ 或 macOS 26+（运行时判断版本，**不提高** macOS 12 的最低要求）。
   3. Mac 加 `com.apple.security.device.audio-input` 权限，`phoneRecordingEnabled` 在 Mac 上打开，复用手机录音这条路径。
 - **验收（agent 能跑的）**：`scripts/check`；新增回退测试——(a)「仅本地」打开时，用假 HTTP 客户端跑一次完整的录音 → 转写 → 整理，断言**没有任何请求体含音频字节**，也没有请求发到 OSS 或豆包上传端点（对应 CONTRIBUTING 第 5 条「检查序列化后的真实字节」）；(b) macOS 目标平台下 Apple 引擎出现在引擎列表里，可用性按版本判断。
 - **用户真机验收**：Mac（macOS 26）断网后用麦克风录 5 分钟，实时文字出现，结束后本机转写完成；Mac 小于 26 时 Apple 引擎标「不可用」并说明原因。
 
 ### 5.2 第 2 期：本机发言人区分（三端）+ 发言人编辑补齐
+
+工单：[#371](https://github.com/semantic-craft/koe/issues/371)
 
 - **目标**：不上传音频也能分出发言人；补齐 S10、S22、S23、S24。
 - **范围**：接入 `sherpa_onnx`（Dart FFI，三端同一套代码），用 pyannote segmentation-3.0 加一个说话人嵌入模型（3D-Speaker 或 NeMo，sherpa-onnx 官方都有转好的 ONNX）做离线区分；转写段落按时间重叠分给发言人（思路参考拾音 `Transcribe/Diarizer.swift:140-165` 的 `assignNumbering`）；可选「大约几个人」；重新区分时保留手动改过的归属；合并发言人和复原。模型首次使用时下载（见 §7 第 7 条）。
@@ -185,6 +189,8 @@ Koe 是**一个 Flutter 仓库同时出三端**（`ios/`、`macos/`、`android/`
 
 ### 5.3 第 3 期：Android 本地转写 + 本地引擎补齐
 
+工单：[#372](https://github.com/semantic-craft/koe/issues/372)
+
 - **目标**：Android 不靠云端也能实时和事后转写；iOS/macOS 26 以下也有本地选项。
 - **范围**：新增 `SttProvider.local`（暂名，`onDevice = true`），用 sherpa-onnx：实时用流式 zipformer 中英双语模型，事后用非流式模型。候选：SenseVoice、Paraformer、Whisper 系列，按 §5.5 的许可证和实测选。加 silero VAD 切段；模型下载管理放进设置。sherpa 的 transducer 模型支持 hotwords，可以接上第 4 期的词汇表。
 - **验收**：`scripts/check`；回退测试——引擎可用性判断、「仅本地」下的引擎排序；`scripts/android-check` 加本地转写场景（Pixel 离线跑通）；`scripts/perf-check` 记 1 小时音频的转写耗时和峰值内存。
@@ -192,15 +198,20 @@ Koe 是**一个 Flutter 仓库同时出三端**（`ios/`、`macos/`、`android/`
 
 ### 5.4 第 4 期：Mac 系统声音 + 会议录音体验
 
+工单：[#373](https://github.com/semantic-craft/koe/issues/373)
+
 - **目标**：在 Mac 上开线上会议时能把对方的声音录进来；三端录音页补齐会议常用功能。
 - **范围**
   1. Mac 系统声音：Core Audio process tap，可以照 MIT 许可证借用拾音 `Capture/AudioSources.swift:107-187` 的 `SystemAudioSource`。需要 macOS 14.2+（[Apple 文档：Capturing system audio with Core Audio taps](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps)），版本不够时退到只录麦克风。Koe 的 Mac 版开了 App Sandbox，**沙盒里 process tap 能不能用还没验证**，先做一个技术验证工单。分两个声道写文件，回音去重的思路参考 `TranscriptionPipeline.swift:234-270`。
   2. 录音页：音量和收音提醒（S2）、录音中带时间戳的文字笔记（S9）、大约几个人（S10）；Mac 全局快捷键（S4）；Mac 会议检测提醒（S6，参考 `Services/MeetingDetector.swift`）。
-  3. 手机端：**系统声音做不了通用方案**。Android 的 AudioPlaybackCapture 只能抓 `USAGE_MEDIA/GAME/UNKNOWN` 用途的声音，通话类声音抓不到（[Android 文档](https://developer.android.com/media/platform/av-capture)）；iOS 没有公开 API 能录其他应用的通话声音（ReplayKit 广播扩展能否拿到会议应用的声音未验证）。手机上开会改用麦克风外放加录音豆收音，这一点在 §7 请用户确认。
+  3. 手机端：**系统声音做不了通用方案**。Android 的 AudioPlaybackCapture 只能抓 `USAGE_MEDIA/GAME/UNKNOWN` 用途的声音，通话类声音抓不到（[Android 文档](https://developer.android.com/media/platform/av-capture)）；iOS 没有公开 API 能录其他应用的通话声音（ReplayKit 广播扩展能否拿到会议应用的声音未验证）。手机上开会用麦克风外放加录音豆收音（§7 第 1 条）。
+  4. 会议提醒：Mac 检测会议应用开始用麦克风时提醒开录；手机按日历事件提醒开录（§7 第 9 条）。两端都只提醒，不自动录。
 - **验收**：`scripts/check`；回退测试——双声道写入和恢复、回音去重的文字相似度判断（纯 Dart）、收音提醒的阈值状态机；Mac 系统声音只能真机验收。
-- **用户真机验收**：Mac 上开 Zoom 或腾讯会议，用「麦克风 + 系统声音」录 10 分钟，对方的声音进了逐字稿，自己的回音没有重复出现。
+- **用户真机验收**：Mac 上开 Zoom 或腾讯会议，用「麦克风 + 系统声音」录 10 分钟，对方的声音进了逐字稿，自己的回音没有重复出现；手机上日历会议到点收到开录提醒。
 
 ### 5.5 第 5 期：纪要质量（词汇表、草稿、待确认、模板、后端）
+
+工单：[#374](https://github.com/semantic-craft/koe/issues/374)
 
 - **范围**：词汇表（S14），作为 Apple 引擎的上下文提示、sherpa 的 hotwords 和整理提示词的一部分，再加上词汇建议；停止录音后用实时稿先出草稿纪要（S28）；待确认问题和回答后修订（S29）；纪要版本历史（S30）；内置一对一、访谈、课堂、脑暴模板（S25）；AI 校正建议（S16）；AI 猜发言人名字（S21）；整理后端加「OpenAI 兼容接口」（可以填 Mac 或局域网上的 Ollama/LM Studio）和「不整理」（S26）。提示词结构可以参考拾音 `Notes/NotesPrompt.swift`（MIT，复制要署名），但 Koe 继续用 `[S#]` 出处，不改成 mm:ss，保持跟 #129 一致。
 - **验收**：`scripts/check`；回退测试——草稿被正式版替换且不覆盖用户的编辑、待确认回答后 `[S#]` 出处保持合法（复用 `validateMinutes`）、版本复原、兼容接口的请求体只含文字（检查真实字节）。按 CONTRIBUTING 第 5 条，至少用授权测试音频真跑一次千问。
@@ -208,9 +219,11 @@ Koe 是**一个 Flutter 仓库同时出三端**（`ios/`、`macos/`、`android/`
 
 ### 5.6 第 6 期：导出与管理、声纹
 
-- **范围**：导出 PDF、Word、srt、vtt，复制富文本（S32）；全文搜索（S33）；用词全局替换并顺手加进词汇表（S34）；完成/失败通知（S34）；导入 srt/vtt/Markdown（S11）；声纹（S20）用第 2 期的说话人嵌入，**只存本机**，不进 `.koepack`、不进 Mac 归档，可以删除、可以关闭。
+工单：[#375](https://github.com/semantic-craft/koe/issues/375)
+
+- **范围**：纪要导出 PDF、Word、Markdown，逐字稿导出字幕 srt、vtt，复制富文本（S32）；全文搜索（S33）；用词全局替换并顺手加进词汇表（S34）；完成/失败通知（S34）；导入 srt/vtt/Markdown（S11）；声纹（S20）用第 2 期的说话人嵌入，**只存本机**，不进 `.koepack`、不进 Mac 归档，可以删除、可以关闭。
 - **验收**：`scripts/check`；回退测试——srt/vtt 时间格式往返、导出包里不含声纹、全文搜索命中校订后的文字（对照 #235 的教训）。
-- **用户真机验收**：三端各导出一次 PDF 和 srt，用别的应用打开确认；同一人在两场会议里被自动认出来。
+- **用户真机验收**：三端各导出一次 PDF、Word、Markdown 和 srt，用别的应用打开确认；同一人在两场会议里被自动认出来。
 
 ### 5.7 借代码还是借思路
 
@@ -249,15 +262,15 @@ Koe 是**一个 Flutter 仓库同时出三端**（`ios/`、`macos/`、`android/`
 
 **推荐**：sherpa-onnx。拾音放弃它的理由是「要另外接 C++ 和 ONNX Runtime」（docs/design.md:1054），对纯 Swift 应用成立；Koe 用 Flutter，有官方 Dart 包，这条理由不成立。
 
-**非流式中文模型的许可证提醒**：SenseVoiceSmall 用的是 FunASR 自定义的 [MODEL_LICENSE](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE)（HF 上标为 `other`），条款没读完，选用前必须核对；Whisper 系列是 MIT，比较稳。
+**非流式中文模型的许可证**：SenseVoiceSmall 用的是 FunASR 自定义的 [MODEL_LICENSE](https://github.com/modelscope/FunASR/blob/58830eca4012644aac0c3218c3ccc7d98f003fda/MODEL_LICENSE)（HF 上标为 `other`）。全文结论见 [ADR 0002](../docs/adr/0002-meeting-notes-decisions.md)：可署名使用，但有自动失权和单方修订条款，只作可选引擎；Whisper 系列是 MIT，优先。
 
 ### 5.9 怎么保持「录音不上传」
 
 | 环节 | 默认（建议） | 开关 |
 | --- | --- | --- |
-| 实时转写和事后转写 | 「录音只留本机」**打开**：只用本机引擎（Apple 设备端 / sherpa） | 关掉后才能选千问、豆包（会上传音频，界面上写明） |
+| 实时转写和事后转写 | 会议场景「录音只留本机」**打开**：只用本机引擎（Apple 设备端 / sherpa）；平常语音输入（纯文字记录、按住说话、全天监听）照旧用千问 | 关掉后会议录音也能选千问、豆包（会上传音频，界面上写明） |
 | 发言人区分 | 本机（sherpa） | 跟随上面的开关；用云端引擎时用云端自带的区分 |
-| 纪要、问答、校正、猜名 | **只发文字**到千问：逐字稿、笔记、词汇表、标题；跨记录问答只发命中的片段（Koe 现在就是这样，`recording_analysis.dart:253-299`） | 「整理时发送文字给大模型」可以关；后端可以换成 OpenAI 兼容接口指向本机或局域网模型；「完全离线」= 不整理，或者只用本机后端 |
+| 纪要、问答、校正、猜名 | **只发文字**到千问：逐字稿、笔记、词汇表、标题；跨记录问答只发命中的片段（Koe 现在就是这样，`recording_analysis.dart:253-299`） | 「整理时发送文字给大模型」可以关；后端可以换成 OpenAI 兼容接口或本机 Ollama；「完全离线」= 不整理，或者只用本机后端 |
 | 声纹 | 只存本机 | 可以关、可以删；不进导出包、不进 Mac 归档 |
 | Mac 归档 | 维持现状（局域网加密直连到自己的 Mac，#148） | 不算「上传」，但要在设置说明里写清楚 |
 
@@ -271,27 +284,29 @@ Koe 是**一个 Flutter 仓库同时出三端**（`ios/`、`macos/`、`android/`
 | sherpa-onnx / `sherpa_onnx` | Apache-2.0 | 保留 LICENSE，若上游有 NOTICE 也一并保留；改过的文件要注明 |
 | pyannote segmentation-3.0 | MIT | 署名 |
 | 嵌入模型（3D-Speaker / NeMo） | 待核对 | 选定后补进本表 |
-| 非流式中文模型（SenseVoice / Paraformer） | FunASR MODEL_LICENSE（待核对） | 读完条款再决定 |
+| 非流式中文模型（SenseVoice / Paraformer） | FunASR MODEL_LICENSE 1.1 | 署名并保留模型名称；含自动失权和单方修订条款，只作可选引擎（结论见 [ADR 0002](../docs/adr/0002-meeting-notes-decisions.md)） |
 | Whisper 模型（若用） | MIT | 署名 |
 | FluidAudio 及其模型（若作为 Apple 端升级） | Apache-2.0 / CC-BY-4.0 | 署名和保留 NOTICE |
 
-## 7. 待用户决定的问题
+## 7. 已定结论
 
-1. **手机端的系统声音**：iOS 和 Android 都没有通用办法录其他应用的通话声音（§5.4 第 3 条）。能否接受「手机开会用麦克风或录音豆收音，只有 Mac 支持系统声音」？
-2. **「录音只留本机」的默认值**：只对会议场景默认打开，还是全局默认打开？全局打开的话，会改变现在「配了千问就默认用千问」的行为（`lib/ai/speech_provider.dart` 里的 `initialSpeechProvider`）。
-3. **纪要用哪个大模型**：继续默认用千问云端（只发文字），还是默认本机模型？要不要支持 OpenAI 兼容接口和本机 Ollama？
-4. **路线图变化**：Mac 从「辅助阅读与归档端」变成完整的会议纪要端，Android 增加本机识别。这和 ROADMAP、#110、#331 的现有决定冲突，需要用户确认后改 ROADMAP。
-5. **最低系统版本**：Mac 系统声音要 macOS 14.2+，Apple 本地转写要 macOS / iOS 26+。按版本降级（推荐），还是提高最低版本？
-6. **语言范围**：只做中文和英文，还是像拾音一样也做日文？中文以简体和大陆口音为主吗（Breeze 偏台湾华语）？
-7. **模型下载**：本地模型首次使用要下载几十到几百 MB。从 HuggingFace 下还是 ModelScope 镜像？只在 Wi-Fi 下载？
-8. **声纹**：同意只存本机、不进导出包和 Mac 归档吗？
-9. **手机上的会议检测**：手机上做不了「检测会议应用开始用麦克风」。要不要改成按日历事件提醒（Koe 已经接了日历导出）？
-10. **PDF / Word 导出**是否必要，还是有 Markdown 和字幕文件就够？
-11. **工单**：本文只是方案，没开工单。用户同意后，按 §5 每期拆成 GitHub Issues。
+用户 2026-10-22 决定（「照推荐全部定，开工」），全文与理由见 [ADR 0002](../docs/adr/0002-meeting-notes-decisions.md)。
+
+1. **手机端的系统声音**：手机开会用麦克风或录音豆收音，系统声音只在 Mac 上录。
+2. **「录音只留本机」的默认值**：只在会议场景默认打开；平常语音输入照旧用千问（`lib/ai/speech_provider.dart` 的 `initialSpeechProvider` 行为不变）。
+3. **纪要用哪个大模型**：默认千问，只发文字；另加 OpenAI 兼容接口和本机 Ollama 可选。
+4. **路线图**：Mac 是完整的会议纪要端，Android 加本机识别；ROADMAP、#110、#331 已按此写。
+5. **最低系统版本**：按系统版本降级，不提高最低版本。
+6. **语言范围**：中文、英文、日文都做；中文以简体和大陆口音为主。
+7. **模型下载**：优先 ModelScope，失败再走 HuggingFace；只在 Wi-Fi 下下载。
+8. **声纹**：只存本机，不进导出包和 Mac 归档。
+9. **手机上的会议检测**：按日历事件提醒开录。
+10. **导出**：PDF、Word、Markdown 和字幕都做，放在第 6 期。
+11. **工单**：每期一个总工单——[第 1 期 #370](https://github.com/semantic-craft/koe/issues/370)（子工单 #376、#377、#378）、[第 2 期 #371](https://github.com/semantic-craft/koe/issues/371)、[第 3 期 #372](https://github.com/semantic-craft/koe/issues/372)、[第 4 期 #373](https://github.com/semantic-craft/koe/issues/373)、[第 5 期 #374](https://github.com/semantic-craft/koe/issues/374)、[第 6 期 #375](https://github.com/semantic-craft/koe/issues/375)。
 
 ## 8. 未验证的事项
 
 - 拾音的功能清单来自 README 和代码阅读，**没有构建、没有运行**（要 macOS 26 和 Apple Silicon）；准确度数字都引自它的 README。
 - Koe 三端的「已有 / 部分有」来自读 main 的代码和 README，**没有在真机上逐项点过**。Mac 宽屏布局下的「问 Koe」入口、「只看某位发言人」、纪要版本复原、导入视频，都未验证。
 - 下面几项都没有做技术验证：Mac App Sandbox 里能不能用 Core Audio process tap；`sherpa_onnx` 在 iOS 和 macOS 上的包体积和构建兼容性（Flutter 3.47.7、iOS 15 最低版本）；sherpa 发言人区分在中文会议上的 DER；iOS ReplayKit 能不能录到会议应用的声音。
-- 嵌入模型（3D-Speaker / NeMo）和 SenseVoice / Paraformer 的许可证条款，没有逐个读完。
+- 嵌入模型（3D-Speaker / NeMo）的许可证条款没有逐个读完；SenseVoice / Paraformer 的 FunASR MODEL_LICENSE 已读完（见 ADR 0002）。

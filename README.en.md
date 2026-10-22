@@ -91,7 +91,7 @@ Other soundcore recorders are untested. Protocol details are in [PROTOCOL.md](PR
 | Platform | Status |
 | --- | --- |
 | iOS 15+ | Primary platform. Apple on-device transcription and translation need iOS 26+ |
-| macOS 12+ | Companion for reading and archiving originals |
+| macOS 12+ | Meeting-notes client and archive for originals; meeting-notes features are being built in phases (see [ROADMAP](ROADMAP.md)); Apple on-device transcription needs macOS 26+ |
 | Android 17 | Pixel 11 Pro only. Code merged, device acceptance pending (#345). No Apple on-device transcription or translation, Reminders or Mac archiving |
 
 ## Quick start
