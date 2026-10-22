@@ -70,20 +70,23 @@ class _RecordedWireRequest {
     required this.method,
     required this.url,
     required this.headers,
-    required this.bodyBytes,
   });
 
   final String method;
   final Uri url;
   final Map<String, String> headers;
-  final Uint8List bodyBytes;
+  final _body = BytesBuilder(copy: false);
+  Object? streamError;
+
+  Uint8List get bodyBytes => _body.toBytes();
 
   String get bodyText => utf8.decode(bodyBytes, allowMalformed: true);
 }
 
-/// Fake HTTP client that serializes every outgoing request into real bytes via
-/// `request.finalize().toBytes()` before answering Qwen STT, OSS upload,
-/// Doubao STT, and Qwen chat-completion analysis endpoints.
+/// Fake HTTP client that records every outgoing request's method and URL at the
+/// entry of `send` and collects request body chunks incrementally via
+/// `request.finalize()`, retaining already emitted bytes even if a streaming
+/// upload aborts mid-flight.
 class _WireRecordingClient extends http.BaseClient {
   final requests = <_RecordedWireRequest>[];
   Completer<void>? requestReached;
@@ -92,15 +95,20 @@ class _WireRecordingClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final wireBytes = await request.finalize().toBytes();
-    requests.add(
-      _RecordedWireRequest(
-        method: request.method,
-        url: request.url,
-        headers: Map<String, String>.from(request.headers),
-        bodyBytes: wireBytes,
-      ),
+    final recorded = _RecordedWireRequest(
+      method: request.method,
+      url: request.url,
+      headers: Map<String, String>.from(request.headers),
     );
+    requests.add(recorded);
+    try {
+      await for (final chunk in request.finalize()) {
+        recorded._body.add(chunk);
+      }
+    } catch (error) {
+      recorded.streamError = error;
+      rethrow;
+    }
     if (requestGate != null &&
         (gatePathSubstring == null ||
             request.url.path.contains(gatePathSubstring!))) {
@@ -161,7 +169,8 @@ class _WireRecordingClient extends http.BaseClient {
         'result': {'text': '云端豆包转写结果'},
       };
     } else if (path.endsWith('/compatible-mode/v1/chat/completions')) {
-      final decoded = jsonDecode(utf8.decode(wireBytes)) as Map<String, dynamic>;
+      final decoded =
+          jsonDecode(utf8.decode(recorded.bodyBytes)) as Map<String, dynamic>;
       final messages = (decoded['messages'] as List).cast<Map>();
       final userContent = '${messages.last['content']}';
       String content;
@@ -292,11 +301,18 @@ class _FakeStreamSession implements SttStreamSession {
   final String finalText;
   final Completer<void>? startGate;
   final Completer<void> startCalled = Completer<void>();
+  final Completer<void> startReturned = Completer<void>();
+  final Completer<void> disposedCompleter = Completer<void>();
+  final Completer<void> cleanedUpAfterStartReturn = Completer<void>();
+  final Completer<void> firstPcmReceived = Completer<void>();
   final _events = StreamController<SttStreamEvent>.broadcast();
   final BytesBuilder sentPcm = BytesBuilder(copy: false);
   bool _open;
   bool _ready;
   bool closed = false;
+  bool disposed = false;
+  bool closedAfterStartReturn = false;
+  bool _startFinished = false;
 
   @override
   Stream<SttStreamEvent> get events => _events.stream;
@@ -314,16 +330,23 @@ class _FakeStreamSession implements SttStreamSession {
 
   @override
   Future<void> start({Duration timeout = const Duration(seconds: 15)}) async {
-    _open = true;
     if (!startCalled.isCompleted) startCalled.complete();
     if (startGate != null) await startGate!.future;
-    if (!closed) _ready = true;
+    // Simulate an underlying socket handshake completing when startGate releases;
+    // post-start cleanup in _ensureStreamStt must close/dispose this session if
+    // the lifecycle revision or send permission was revoked during start().
+    _startFinished = true;
+    closed = false;
+    _open = true;
+    _ready = true;
+    if (!startReturned.isCompleted) startReturned.complete();
   }
 
   @override
   void sendPcm(Uint8List pcm16le) {
     if (!isServerReady) return;
     sentPcm.add(pcm16le);
+    if (!firstPcmReceived.isCompleted) firstPcmReceived.complete();
     _events.add(
       SttStreamEvent(type: 'partial', text: finalText, speechFinal: true),
     );
@@ -344,6 +367,7 @@ class _FakeStreamSession implements SttStreamSession {
   @override
   Future<void> close() async {
     closed = true;
+    if (_startFinished) closedAfterStartReturn = true;
     _open = false;
     _ready = false;
   }
@@ -351,9 +375,17 @@ class _FakeStreamSession implements SttStreamSession {
   @override
   Future<void> dispose() async {
     closed = true;
+    disposed = true;
+    if (_startFinished) {
+      closedAfterStartReturn = true;
+      if (!cleanedUpAfterStartReturn.isCompleted) {
+        cleanedUpAfterStartReturn.complete();
+      }
+    }
     _open = false;
     _ready = false;
-    await _events.close();
+    if (!disposedCompleter.isCompleted) disposedCompleter.complete();
+    if (!_events.isClosed) await _events.close();
   }
 }
 
@@ -1857,7 +1889,6 @@ void main() {
 
       final postPolicyLengthReached = Completer<void>();
       final postPolicyLengthGate = Completer<void>();
-      var postPolicyLengthCalls = 0;
       await IOOverrides.runWithIOOverrides(
         () async {
           final future = postPolicyController.transcribeLocalFile(
@@ -1870,14 +1901,11 @@ void main() {
           await future;
         },
         _LengthHookIOOverrides((path) async {
-          if (path == postPolicyAudio.path) {
-            postPolicyLengthCalls++;
-            // 第 3 次 length() 在 _policy 返回后校验 maxFileSizeMb 处（_postToOss 前）
-            if (postPolicyLengthCalls == 3 &&
-                !postPolicyLengthReached.isCompleted) {
-              postPolicyLengthReached.complete();
-              await postPolicyLengthGate.future;
-            }
+          if (path == postPolicyAudio.path &&
+              wire.requests.any((r) => r.url.path == '/api/v1/uploads') &&
+              !postPolicyLengthReached.isCompleted) {
+            postPolicyLengthReached.complete();
+            await postPolicyLengthGate.future;
           }
         }),
       );
@@ -1888,6 +1916,19 @@ void main() {
             .toList(),
         isEmpty,
         reason: 'policy 之后、OSS send 之前打开开关，不得向 OSS 发出上传请求',
+      );
+      expect(
+        wire.requests
+            .where(
+              (r) =>
+                  _containsSublist(r.bodyBytes, ascii.encode('RIFF')) ||
+                  _containsSublist(r.bodyBytes, ascii.encode('WAVE')) ||
+                  _containsSublist(r.bodyBytes, _pcmPattern),
+            )
+            .map((r) => '${r.method} ${r.url} (${r.bodyBytes.length} bytes)')
+            .toList(),
+        isEmpty,
+        reason: 'policy 之后、OSS send 之前打开开关，任何已发出请求体中不得含音频字节',
       );
 
       // 子场景 4：豆包音频准备（AudioTranscoder.toWav）期间打开开关，释放后零上传请求
@@ -1991,7 +2032,8 @@ void main() {
       expect(connectedStream.closed, isTrue);
 
       // 2. 「握手中」场景：_ensureStreamStt 正在执行 start() 异步握手且早期帧已缓存在 _pendingPcm，
-      // 握手期间打开开关后再释放握手，缓冲帧与后续帧均不得发送且流被关闭
+      // 握手期间打开开关后再释放握手，验证握手返回后的资源回收（closedAfterStartReturn & disposed）
+      // 且缓冲帧与后续帧均不得发送
       final handshakeGate = Completer<void>();
       final handshakingStream = _FakeStreamSession(
         '握手中文本',
@@ -2019,15 +2061,39 @@ void main() {
       await handshakingStream.startCalled.future;
       expect(handshakingStream.sentPcm.length, 0);
 
-      // 在 start() 异步握手尚未返回时打开「录音只留本机」开关，然后释放握手并继续送帧
+      // 在 start() 异步握手尚未返回时打开「录音只留本机」开关（等待握手前撤销完成）
       handshakeController.setMeetingLocalOnly(true);
+      await handshakingStream.disposedCompleter.future;
+      expect(handshakingStream.closed, isTrue, reason: '打开开关时同步撤销未完成握手的流');
+      expect(handshakingStream.closedAfterStartReturn, isFalse);
+
+      // 释放 start() 握手返回，等待握手返回后的异步清理微任务链完成（无固定时长 sleep）
+      Future<void> drainAsyncCleanup() async {
+        for (var i = 0; i < 8; i++) {
+          await Future<void>.value();
+        }
+      }
+
       handshakeGate.complete();
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await handshakingStream.startReturned.future;
+      await drainAsyncCleanup();
+      expect(
+        handshakingStream.closedAfterStartReturn,
+        isTrue,
+        reason: '迟返回的握手必须在 start() 返回后被关闭回收',
+      );
+      expect(
+        handshakeController.streamingSttActive,
+        isFalse,
+        reason: '握手期间已撤销的流在 start() 返回后不得将 streamingSttActive 置为 true',
+      );
+      expect(handshakingStream.disposed, isTrue);
+
       handshakeController.handleRealtimeOpusFrameForTesting(_opusPacketBytes());
       handshakeController.handleRealtimeStateForTesting(
         const RealtimeStreamState(active: false),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await _until(() => !handshakeController.streamingSttActive);
 
       expect(
         handshakingStream.sentPcm.length,
@@ -2035,6 +2101,100 @@ void main() {
         reason: '实时流「握手中」期间打开「录音只留本机」开关后，缓冲帧与新帧均不得发送到云端流',
       );
       expect(handshakingStream.closed, isTrue);
+
+      // 3. A/B 交错握手场景：A 握手未完成 → 打开开关撤销 A → 关闭开关再送帧启动 B 握手并缓存新 PCM →
+      // A 迟返回后只回收 A 自身会话，不得清空 B 已缓存的开头 PCM 音频
+      final gateA = Completer<void>();
+      final gateB = Completer<void>();
+      final streamA = _FakeStreamSession(
+        '会话A文本',
+        startGate: gateA,
+        initiallyReady: false,
+      );
+      final streamB = _FakeStreamSession(
+        '会话B文本',
+        startGate: gateB,
+        initiallyReady: false,
+      );
+      var createdStreams = 0;
+      final interleavedController = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        ble: ble,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        speechStream: (_) {
+          createdStreams++;
+          return createdStreams == 1 ? streamA : streamB;
+        },
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-live-interleaved'),
+      )
+        ..connected = true
+        ..phase = AppPhase.ready;
+      addTearDown(interleavedController.dispose);
+
+      // 开启录音并送入一帧，启动会话 A 握手（阻塞在 gateA）
+      await interleavedController.startRecord();
+      interleavedController.handleRealtimeOpusFrameForTesting(
+        _opusPacketBytes(),
+      );
+      await streamA.startCalled.future;
+      expect(createdStreams, 1);
+
+      // 打开开关撤销 A（此时 A 的 start() 仍未返回，等待握手前撤销完成）
+      interleavedController.setMeetingLocalOnly(true);
+      await streamA.disposedCompleter.future;
+      expect(streamA.closedAfterStartReturn, isFalse);
+
+      // 关闭开关并再次开录，送入两帧 Opus（共 2 * 640 = 1280 字节 PCM），启动会话 B 握手（阻塞在 gateB）
+      interleavedController.setMeetingLocalOnly(false);
+      await interleavedController.startRecord();
+      interleavedController.handleRealtimeOpusFrameForTesting(
+        _opusPacketBytes(),
+      );
+      await streamB.startCalled.future;
+      expect(createdStreams, 2);
+      interleavedController.handleRealtimeOpusFrameForTesting(
+        _opusPacketBytes(),
+      );
+      expect(streamB.sentPcm.length, 0, reason: 'B 尚在握手中，两帧 PCM 应缓存在缓冲里');
+
+      // 现在让旧会话 A 迟返回，等待 A 完成回收（不得清空 B 的缓冲！）
+      gateA.complete();
+      await streamA.startReturned.future;
+      await drainAsyncCleanup();
+      expect(
+        streamA.closedAfterStartReturn,
+        isTrue,
+        reason: '旧会话 A 迟返回后必须被关闭回收',
+      );
+      expect(streamA.disposed, isTrue);
+      expect(streamA.sentPcm.length, 0);
+
+      // 释放会话 B 握手完成，B 必须完整收到并发送其握手中已缓存的 1280 字节开头 PCM
+      gateB.complete();
+      await _until(() => interleavedController.streamingSttActive);
+      final referenceDecoder = OpusPcmDecoder(outputSampleRate: 16000);
+      addTearDown(referenceDecoder.dispose);
+      expect(referenceDecoder.ensureStarted(), isTrue);
+      // 第 1 帧对应会话 A 解码，第 2、3 帧对应会话 B 握手期间解码缓存的两帧
+      referenceDecoder.decodeFrame(_opusPacketBytes());
+      final expectedFrame1 = Uint8List.fromList(
+        referenceDecoder.decodeFrame(_opusPacketBytes())!,
+      );
+      final expectedFrame2 = Uint8List.fromList(
+        referenceDecoder.decodeFrame(_opusPacketBytes())!,
+      );
+      final bSentBytes = streamB.sentPcm.toBytes();
+      expect(
+        bSentBytes.length,
+        1280,
+        reason: '旧会话 A 迟返回后不得清空新会话 B 在握手期间缓存的 1280 字节开头音频',
+      );
+      expect(bSentBytes.sublist(0, 640), expectedFrame1);
+      expect(bSentBytes.sublist(640, 1280), expectedFrame2);
     },
   );
 }

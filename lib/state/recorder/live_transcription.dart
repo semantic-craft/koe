@@ -407,7 +407,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       _sttStreamSub = subscription;
       await session.start();
       if (revision != _sttLifecycleRevision || !_liveStreamSendPermitted) {
-        _pendingPcm.clear();
+        if (revision == _sttLifecycleRevision) {
+          _pendingPcm.clear();
+        }
         if (identical(_sttStream, session)) _sttStream = null;
         if (identical(_sttStreamSub, subscription)) _sttStreamSub = null;
         await subscription.cancel();
@@ -428,7 +430,14 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      if (revision != _sttLifecycleRevision) return false;
+      if (revision != _sttLifecycleRevision) {
+        if (identical(_sttStream, session)) _sttStream = null;
+        if (identical(_sttStreamSub, subscription)) _sttStreamSub = null;
+        await subscription?.cancel();
+        await session?.close();
+        await session?.dispose();
+        return false;
+      }
       debugPrint('[STT] ${config.provider.name} stream start failed: $e');
       streamingSttActive = false;
       _preferStreamStt = false;
