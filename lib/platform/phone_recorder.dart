@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
 import 'package:record/record.dart';
 
+export '../audio/input_level_watch.dart' show InputLevelHint, InputLevelWatch;
+
 /// What the microphone is doing, as reported by the platform.
 enum PhoneMicState { recording, paused, stopped }
 
@@ -27,7 +29,15 @@ abstract class PhoneRecorder {
   Future<void> dispose();
 }
 
-class DevicePhoneRecorder implements PhoneRecorder {
+/// A microphone that reports its input level while it records (#401); the
+/// levels are judged by [InputLevelWatch].
+abstract interface class PhoneMicLevels {
+  /// The input level of each [interval] of the take in dBFS, where 0 is full
+  /// scale and digital silence -160.
+  Stream<double> levels(Duration interval);
+}
+
+class DevicePhoneRecorder implements PhoneRecorder, PhoneMicLevels {
   DevicePhoneRecorder();
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -62,6 +72,15 @@ class DevicePhoneRecorder implements PhoneRecorder {
 
   @override
   Future<void> start(String path) => _recorder.start(config, path: path);
+
+  /// Apple platforms report the average power of each interval, Android its
+  /// peak.
+  @override
+  Stream<double> levels(Duration interval) => _recorder
+      .onAmplitudeChanged(interval)
+      .map(
+        (amplitude) => amplitude.current.isFinite ? amplitude.current : -160,
+      );
 
   @override
   Future<void> pause() => _recorder.pause();

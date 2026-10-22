@@ -12,6 +12,8 @@
 //                   recording without a cached .ogg
 // - transcript_save bursts of TranscriptStore.save with a large library
 // - ask_rank        question retrieval over a 400k-character corpus
+// - recording       a microphone take with its panel on screen: a level
+//                   every 100 ms, notes kept as they are typed, highlights
 //
 // Nothing touches personal data: path_provider points at a temporary folder,
 // stores are in memory, BLE never scans and no credential is read.
@@ -27,10 +29,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:koe/ble/ble_service.dart';
+import 'package:koe/platform/phone_recorder.dart';
+import 'package:koe/platform/place_capture.dart';
 import 'package:koe/protocol/commands.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/transcript_store.dart';
+import 'package:koe/ui/screens/new_recording_sheet.dart';
 import 'package:koe/ui/widgets/inline_player.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:provider/provider.dart';
@@ -59,6 +64,7 @@ void main() {
     required RecorderController controller,
     required Future<void> Function() workload,
     bool inlinePlayer = false,
+    bool recordingPanel = false,
   }) async {
     final scroll = ScrollController();
     await tester.pumpWidget(
@@ -69,6 +75,7 @@ void main() {
             scroll: scroll,
             documents: documents.path,
             inlinePlayer: inlinePlayer,
+            recordingPanel: recordingPanel,
           ),
         ),
       ),
@@ -283,22 +290,53 @@ void main() {
     );
     controller.dispose();
   });
+
+  testWidgets('recording', (tester) async {
+    final mic = _PerfMic();
+    final controller = _controller(phoneRecorder: mic);
+    await controller.startPhoneRecording();
+    await scenario(
+      tester,
+      'recording',
+      controller: controller,
+      recordingPanel: true,
+      workload: () async {
+        // Eight seconds of a conversation's levels, a note keystroke about
+        // every 300 ms and two highlights. Only the highlights notify.
+        var notes = '';
+        for (var tick = 1; tick <= 80; tick++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          mic.emit(tick % 10 < 6 ? -24.0 - tick % 5 : -55.0);
+          if (tick % 3 == 0) controller.setPhoneRecordingNotes(notes += '记');
+          if (tick % 40 == 0) controller.markPhoneRecordingHighlight();
+        }
+      },
+    );
+    await controller.discardPhoneRecording();
+    controller.dispose();
+  });
 }
 
-RecorderController _controller({BleService? ble, AudioPlayer? player}) =>
-    RecorderController(
-      ble: ble ?? _QuietBle(),
-      player: player ?? _PerfPlayer(),
-      loadPersistedState: false,
-      playbackHistoryStore: PlaybackHistoryStore(inMemory: true),
-      persistedDeviceLoader: () async => (
-        bound: false,
-        manuallyDisconnected: false,
-        residentOffered: false,
-        device: null,
-        info: null,
-      ),
-    );
+RecorderController _controller({
+  BleService? ble,
+  AudioPlayer? player,
+  PhoneRecorder? phoneRecorder,
+}) => RecorderController(
+  ble: ble ?? _QuietBle(),
+  player: player ?? _PerfPlayer(),
+  loadPersistedState: false,
+  playbackHistoryStore: PlaybackHistoryStore(inMemory: true),
+  persistedDeviceLoader: () async => (
+    bound: false,
+    manuallyDisconnected: false,
+    residentOffered: false,
+    device: null,
+    info: null,
+  ),
+  phoneRecorder: phoneRecorder,
+  phoneRecordingEnabled: phoneRecorder != null,
+  placeCapture: _NoPlace(),
+);
 
 Future<void> _keepScrolling(ScrollController scroll) async {
   var down = true;
@@ -318,17 +356,19 @@ Future<void> _keepScrolling(ScrollController scroll) async {
 }
 
 /// 40 rows that watch the controller, like the app's screens do, plus an
-/// optional inline player.
+/// optional inline player or recording panel.
 class _Workload extends StatelessWidget {
   const _Workload({
     required this.scroll,
     required this.documents,
     required this.inlinePlayer,
+    required this.recordingPanel,
   });
 
   final ScrollController scroll;
   final String documents;
   final bool inlinePlayer;
+  final bool recordingPanel;
 
   @override
   Widget build(BuildContext context) {
@@ -336,6 +376,8 @@ class _Workload extends StatelessWidget {
       body: Column(
         children: [
           if (inlinePlayer) InlinePlayer(path: '$documents/178.wav'),
+          if (recordingPanel)
+            const SizedBox(height: 420, child: PhoneRecordingPanel()),
           Expanded(
             child: ListView.builder(
               controller: scroll,
@@ -456,6 +498,45 @@ class _TempPathProvider extends PathProviderPlatform {
 
   @override
   Future<String?> getApplicationCachePath() async => root;
+}
+
+class _NoPlace implements PlaceCapture {
+  @override
+  Future<RecordingPlace?> capture() async => null;
+}
+
+/// A microphone that reports the levels it is given.
+class _PerfMic implements PhoneRecorder, PhoneMicLevels {
+  final _levels = StreamController<double>.broadcast();
+
+  void emit(double db) => _levels.add(db);
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Stream<PhoneMicState> get states => const Stream.empty();
+
+  @override
+  Stream<double> levels(Duration interval) => _levels.stream;
+
+  @override
+  Future<void> start(String path) => File(path).writeAsBytes(Uint8List(44));
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> resume() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() => _levels.close();
 }
 
 /// Real packet decoding and logging, but never scans or connects.

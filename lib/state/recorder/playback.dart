@@ -17,8 +17,10 @@ mixin _RecorderPlayback on ChangeNotifier {
   abstract String? expandedLocalPath;
   int? fileIdFromPath(String path);
   abstract final RecordingLibraryStore library;
+  Duration? localDurationForPath(String path);
   abstract final Map<int, String> localPathsByFileId;
   RecordingViewData recordingView(RecordingReference ref);
+  Map<String, String> speakerAliasesForPath(String path);
   abstract String? statusMessage;
   // END DEPS
 
@@ -745,6 +747,31 @@ mixin _RecorderPlayback on ChangeNotifier {
   /// Bookmarks of exactly this material, ordered by position.
   List<RecordingBookmark> bookmarksFor(RecordingReference ref) =>
       bookmarks.forRecording(_referenceKey(ref));
+
+  /// The bookmarks of this material written out for the model that
+  /// summarizes it (#400); empty without bookmarks. A highlight quotes the
+  /// sentence at its time only when the transcript's times can be trusted.
+  String analysisNotesFor(RecordingReference ref) {
+    final saved = bookmarksFor(ref);
+    if (saved.isEmpty) return '';
+    final view = recordingView(ref);
+    final path = view.path;
+    final segments = view.segments;
+    final locatable =
+        transcriptSegmentsMatchText(
+          segments,
+          normalizeSttText(view.text),
+          aliases: path == null ? const {} : speakerAliasesForPath(path),
+        ) &&
+        transcriptSegmentsLocatable(
+          segments,
+          duration: path == null ? null : localDurationForPath(path),
+        );
+    return bookmarkNotesForAnalysis(
+      saved,
+      segments: locatable ? segments : const [],
+    );
+  }
 
   /// Saves a bookmark at [position]; [segment] anchors it to the sentence the
   /// reader shows so a later transcript change cannot redirect it. Throws when
