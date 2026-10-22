@@ -110,9 +110,12 @@ keep_awake &
 awake=$!
 
 # Install with every runtime permission granted, so no system dialog waits
-# for a tap; each scenario run below reinstalls over it and keeps the grants.
+# for a tap. `flutter test` reinstalls over it and keeps the grants, but
+# uninstalls Koe when its file ends, so this runs before every scenario.
 flutter build apk --debug
-adb -s "$serial" install -r -g build/app/outputs/flutter-apk/app-debug.apk
+install_granted() {
+  adb -s "$serial" install -r -g build/app/outputs/flutter-apk/app-debug.apk </dev/null
+}
 
 targets=("$@")
 [[ ${#targets[@]} -gt 0 ]] || targets=(integration_test/android)
@@ -147,6 +150,16 @@ for scenario in "${scenarios[@]}"; do
     continue
   fi
   : >"$skips"
+  if ! install_granted; then
+    if online; then
+      summary+=("$name: 失败（安装失败）")
+      failed=1
+    else
+      summary+=("$name: 跳过（设备离线）")
+      skips_seen=1
+    fi
+    continue
+  fi
   wake_screen
   set +e
   flutter test "$scenario" -d "$serial" --reporter expanded 2>&1 | answer_scenarios
