@@ -16,6 +16,7 @@ import '../protocol/commands.dart';
 import '../protocol/frame.dart';
 import '../protocol/models.dart';
 import '../protocol/slice_marks.dart';
+import 'softap_link.dart';
 
 /// SoftAP credentials + endpoint returned by the device after 1A05.
 class WifiEndpoint {
@@ -126,7 +127,8 @@ class ExportProgress {
 /// Flow:
 /// 1. BLE `1A05` with phone-chosen SSID/password (`WiFi-{ts}` / `{ts}`)
 /// 2. Device replies `1A05` with IP:port over BLE
-/// 3. User joins SoftAP (manual on macOS/iOS; Android may auto-join later)
+/// 3. Join SoftAP: the user does it on macOS/iOS, Koe does it on Android
+///    ([SoftApLink])
 /// 4. WebSocket `ws|wss://ip:port` + UDP keepalive `:32003`
 /// 5. For each file: hex text `1A07` request → `1A07` head → `1A08` slices → `1A0A`
 /// 6. Text `FINISH` + BLE `1A02` close
@@ -135,11 +137,14 @@ class WifiExportService {
     required this.blePackets,
     required this.bleWrite,
     DeviceCrypto? crypto,
-  }) : crypto = crypto ?? DeviceCrypto();
+    SoftApLink? link,
+  }) : crypto = crypto ?? DeviceCrypto(),
+       link = link ?? SoftApLink.forPlatform();
 
   final Stream<DecodedPacket> blePackets;
   final Future<void> Function(List<int> frame) bleWrite;
   final DeviceCrypto crypto;
+  final SoftApLink link;
 
   /// Soundcore SDK default `wifiConnectionDelayMS` for D3200 SoftAP startup.
   static const softApStartupDelay = Duration(seconds: 10);
@@ -275,8 +280,6 @@ class WifiExportService {
   WebSocketChannel? _ws;
   HttpClient? _wsClient;
   StreamSubscription? _wsSub;
-  RawDatagramSocket? _udp;
-  Timer? _udpTimer;
   final _rxBuffer = <int>[];
   Completer<void>? _fileDone;
   Completer<FileHeadInfo>? _fileHead;
@@ -410,7 +413,8 @@ class WifiExportService {
     }
   }
 
-  /// Step 4–6: after user joined SoftAP, pull [files] over WebSocket.
+  /// Step 3–6: join SoftAP when [link] does that itself (the phase stays
+  /// [ExportPhase.awaitJoin] meanwhile), then pull [files] over WebSocket.
   Future<List<String>> transferFiles({
     required WifiEndpoint endpoint,
     required List<OfflineFileEntry> files,
@@ -420,11 +424,14 @@ class WifiExportService {
     if (files.isEmpty) return const [];
     if (_cancelled) throw StateError('已取消 Wi-Fi 导出');
     final saved = <String>[];
+    final joining = link.joinsItself;
 
     _emit(
       _progress.copyWith(
-        phase: ExportPhase.connectingWs,
-        message: '正在连接 WebSocket ${endpoint.displayEndpoint}…',
+        phase: joining ? ExportPhase.awaitJoin : ExportPhase.connectingWs,
+        message: joining
+            ? '正在加入录音豆的 Wi‑Fi「${endpoint.ssid}」…'
+            : '正在连接 WebSocket ${endpoint.displayEndpoint}…',
         endpoint: endpoint,
         totalFiles: files.length,
         currentFileIndex: 0,
@@ -433,8 +440,19 @@ class WifiExportService {
     );
 
     try {
+      if (joining) {
+        await Future.any<void>([
+          link.join(ssid: endpoint.ssid, password: endpoint.password),
+          _cancelSignal.future,
+        ]);
+        if (_cancelled) throw StateError('已取消 Wi-Fi 导出');
+      }
       await _connectWs(endpoint, useSsl: useSsl);
-      _startUdpKeepalive(endpoint.ip);
+      try {
+        await link.startKeepalive(endpoint.ip);
+      } catch (e) {
+        _log('UDP keepalive unavailable: $e');
+      }
 
       final outDir = await _exportDir();
       _log('Export dir: ${outDir.path}');
@@ -576,6 +594,12 @@ class WifiExportService {
           client = HttpClient();
           client.badCertificateCallback = (cert, host, port) => true;
           client.connectionTimeout = const Duration(seconds: 12);
+          final dial = link.dial;
+          if (dial != null) {
+            client.findProxy = (_) => 'DIRECT';
+            client.connectionFactory = (uri, proxyHost, proxyPort) async =>
+                ConnectionTask.fromSocket(_dialDevice(dial, uri), () {});
+          }
           _wsClient = client;
           final socket = connectSdkWebSocket(url, client);
           candidate = IOWebSocketChannel(socket);
@@ -617,26 +641,17 @@ class WifiExportService {
     throw StateError('WebSocket connect failed: $lastErr');
   }
 
-  void _startUdpKeepalive(String ip) {
-    () async {
-      try {
-        _udp = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-        final addr = InternetAddress(ip);
-        final payload = utf8.encode('soundcore-keep-alive-unicast');
-        void ping() {
-          try {
-            _udp?.send(payload, addr, 32003);
-          } catch (e) {
-            _log('UDP ping fail: $e');
-          }
-        }
-
-        ping();
-        _udpTimer = Timer.periodic(const Duration(seconds: 2), (_) => ping());
-      } catch (e) {
-        _log('UDP keepalive unavailable: $e');
-      }
-    }();
+  /// The device's TCP connection through [dial], wrapped in TLS for wss.
+  /// It trusts any certificate, as [HttpClient.badCertificateCallback] does
+  /// on the direct path: the recorder's is self-signed.
+  static Future<Socket> _dialDevice(SoftApDial dial, Uri uri) async {
+    final socket = await dial(uri.host, uri.port);
+    if (uri.scheme != 'https') return socket;
+    return SecureSocket.secure(
+      socket,
+      host: uri.host,
+      onBadCertificate: (_) => true,
+    );
   }
 
   void _onWsData(dynamic data) {
@@ -954,13 +969,6 @@ class WifiExportService {
   }
 
   Future<void> _teardownLink({required bool closeDeviceWifi}) async {
-    _udpTimer?.cancel();
-    _udpTimer = null;
-    try {
-      _udp?.close();
-    } catch (_) {}
-    _udp = null;
-
     final wsSub = _wsSub;
     _wsSub = null;
     final ws = _ws;
@@ -975,6 +983,12 @@ class WifiExportService {
     try {
       await ws?.sink.close().timeout(const Duration(seconds: 1));
     } catch (_) {}
+    // After the close frame: on Android leaving the hotspot cuts the tunnel.
+    try {
+      await link.release().timeout(const Duration(seconds: 1));
+    } catch (e) {
+      _log('release SoftAP link: $e');
+    }
 
     if (closeDeviceWifi) {
       try {

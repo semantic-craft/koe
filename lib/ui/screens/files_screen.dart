@@ -1141,6 +1141,14 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
   @override
   void initState() {
     super.initState();
+    if (widget.controller.joinsWifiItself) {
+      // Koe joins the hotspot as the transfer's first step, so start it now;
+      // the system's own dialog asks the user to confirm the network.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _continueExport();
+      });
+      return;
+    }
     // Match the SDK's Wi-Fi check without opening the device's WSS port first.
     _probeTimer = Timer.periodic(const Duration(seconds: 2), (_) => _probe());
     WidgetsBinding.instance.addPostFrameCallback((_) => _probe());
@@ -1266,6 +1274,12 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
         _running ||
         p.phase == ExportPhase.connectingWs ||
         p.phase == ExportPhase.transferring;
+    // On Android the transfer starts by joining the hotspot (awaitJoin).
+    final joinsItself = c.joinsWifiItself;
+    final joined = joinsItself
+        ? transferring && p.phase != ExportPhase.awaitJoin
+        : _reachable || transferring;
+    final pulling = transferring && joined;
 
     return Padding(
       padding: EdgeInsets.only(
@@ -1299,17 +1313,19 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
             _ExportStep(index: 1, title: '设备已应答热点（IP 已就绪）', done: true),
             _ExportStep(
               index: 2,
-              title: _reachable ? '已连接到设备 Wi‑Fi' : '手动加入热点（可能隐藏）',
-              done: _reachable || transferring,
-              active: !_reachable && !transferring,
+              title: joinsItself
+                  ? (joined ? '已加入录音豆的 Wi‑Fi' : '在系统弹窗里选「$ssid」，点「连接」')
+                  : (_reachable ? '已连接到设备 Wi‑Fi' : '手动加入热点（可能隐藏）'),
+              done: joined,
+              active: !joined,
             ),
             _ExportStep(
               index: 3,
-              title: transferring
+              title: pulling
                   ? (p.message.isNotEmpty ? p.message : '传输文件中…')
                   : '传输并保存到本机',
               done: p.phase == ExportPhase.done,
-              active: transferring,
+              active: pulling,
               last: true,
             ),
             const SizedBox(height: 12),
@@ -1319,18 +1335,24 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(
-                    Icons.visibility_off_outlined,
+                  Icon(
+                    joinsItself
+                        ? Icons.wifi_rounded
+                        : Icons.visibility_off_outlined,
                     color: AppColors.amber,
                     size: 18,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'SSID「$ssid」是发给录音豆的热点名（与飞书相同：WiFi-时间戳）。\n'
-                      '列表里经常看不到它——多为隐藏网络，请用系统「其他…」手动输入加入，'
-                      '不要只在「其他网络」列表里找。\n'
-                      '录音豆请保持开机并打开充电盒；热点为 2.4GHz，约需几秒才就绪。',
+                      joinsItself
+                          ? 'Koe 会自己加入录音豆的热点「$ssid」：系统弹出「连接设备」'
+                                '窗口时，选它并点「连接」，不用去 Wi‑Fi 设置里找。\n'
+                                '录音豆请保持开机并打开充电盒；热点为 2.4GHz，约需几秒才就绪。'
+                          : 'SSID「$ssid」是发给录音豆的热点名（与飞书相同：WiFi-时间戳）。\n'
+                                '列表里经常看不到它——多为隐藏网络，请用系统「其他…」手动输入加入，'
+                                '不要只在「其他网络」列表里找。\n'
+                                '录音豆请保持开机并打开充电盒；热点为 2.4GHz，约需几秒才就绪。',
                       style: const TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 12,
@@ -1341,66 +1363,69 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                 ],
               ),
             ),
-            const SizedBox(height: 14),
-            SurfaceCard(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                children: [
-                  _CredRow(
-                    label: 'SSID',
-                    value: ssid,
-                    onCopy: () => Clipboard.setData(ClipboardData(text: ssid)),
-                  ),
-                  const Divider(height: 18, color: AppColors.border),
-                  _CredRow(
-                    label: '密码',
-                    value: password,
-                    onCopy: () =>
-                        Clipboard.setData(ClipboardData(text: password)),
-                  ),
-                  if (ep != null) ...[
+            if (!joinsItself) ...[
+              const SizedBox(height: 14),
+              SurfaceCard(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  children: [
+                    _CredRow(
+                      label: 'SSID',
+                      value: ssid,
+                      onCopy: () =>
+                          Clipboard.setData(ClipboardData(text: ssid)),
+                    ),
                     const Divider(height: 18, color: AppColors.border),
                     _CredRow(
-                      label: '端点',
-                      value: ep.displayEndpoint,
-                      onCopy: () => Clipboard.setData(
-                        ClipboardData(text: ep.displayEndpoint),
-                      ),
+                      label: '密码',
+                      value: password,
+                      onCopy: () =>
+                          Clipboard.setData(ClipboardData(text: password)),
                     ),
+                    if (ep != null) ...[
+                      const Divider(height: 18, color: AppColors.border),
+                      _CredRow(
+                        label: '端点',
+                        value: ep.displayEndpoint,
+                        onCopy: () => Clipboard.setData(
+                          ClipboardData(text: ep.displayEndpoint),
+                        ),
+                      ),
+                    ],
                   ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: AccentButton(
+                      label: '打开 Wi‑Fi 设置',
+                      icon: Icons.settings_rounded,
+                      filled: false,
+                      onPressed: transferring ? null : _openWifiSettings,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: AccentButton(
+                      label: '复制凭证',
+                      icon: Icons.copy_all_rounded,
+                      filled: false,
+                      onPressed: transferring
+                          ? null
+                          : () => _copyJoinHint(ssid, password),
+                    ),
+                  ),
                 ],
               ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: AccentButton(
-                    label: '打开 Wi‑Fi 设置',
-                    icon: Icons.settings_rounded,
-                    filled: false,
-                    onPressed: transferring ? null : _openWifiSettings,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: AccentButton(
-                    label: '复制凭证',
-                    icon: Icons.copy_all_rounded,
-                    filled: false,
-                    onPressed: transferring
-                        ? null
-                        : () => _copyJoinHint(ssid, password),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '加入成功后会自动开始导出；也可手动点下方按钮。'
-              '检测仅检查本机网络，不会提前占用设备的 WebSocket 端口。',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
-            ),
+              const SizedBox(height: 8),
+              const Text(
+                '加入成功后会自动开始导出；也可手动点下方按钮。'
+                '检测仅检查本机网络，不会提前占用设备的 WebSocket 端口。',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+              ),
+            ],
             // Only shown before the first (automatic) attempt — once that's
             // resolved (success navigates away; failure shows p.error below
             // instead), this must not linger next to an idle "开始导出"
@@ -1461,7 +1486,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
             AccentButton(
               label: transferring
                   ? '导出中…'
-                  : _reachable
+                  : _reachable || joinsItself
                   ? '开始导出'
                   : '我已加入 Wi‑Fi — 继续',
               icon: Icons.download_done_rounded,
