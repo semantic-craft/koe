@@ -71,14 +71,17 @@ class FakeForegroundService {
     );
   }
 
-  /// Android refuses the types the service was starting as, after `update`
-  /// answered, as it does microphone work while Koe is behind the lock
-  /// screen: the service stops and tells Dart.
-  Future<void> refuse() async {
-    final refused = types.toList();
-    types = {};
-    text = null;
-    stoppable = false;
+  /// Android takes types away after `update` answered and the service tells
+  /// Dart: all of them when it refuses the start, as it does microphone work
+  /// while Koe is behind the lock screen (the service stops), or [only]
+  /// these, as dataSync at its daily time limit (the service keeps the rest).
+  Future<void> refuse([Set<String>? only]) async {
+    final refused = (only ?? types).toList();
+    types = types.difference(refused.toSet());
+    if (types.isEmpty) {
+      text = null;
+      stoppable = false;
+    }
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     await messenger.handlePlatformMessage(
