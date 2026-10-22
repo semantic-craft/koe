@@ -93,6 +93,12 @@ class MacArchiveController extends ChangeNotifier {
   /// How often an idle phone retries queued work and checks its open link.
   final Duration linkCheckInterval;
 
+  /// How long an idle phone keeps reconnecting after its link check lost the
+  /// link. A Mac that resets its pairing restarts its listener; a reconnect
+  /// that lands in that gap is refused like an offline Mac, and must not leave
+  /// the phone on 等待 Mac instead of 配对密钥无效.
+  static const Duration _lostLinkRetryWindow = Duration(seconds: 30);
+
   ArchiveDeskServer? _server;
   ArchiveClient? _workerClient;
   ArchiveClient? _interactiveClient;
@@ -113,6 +119,7 @@ class MacArchiveController extends ChangeNotifier {
   String? _inFlightPath;
   Timer? _retryTimer;
   bool _linkCheckRunning = false;
+  DateTime? _lostLinkRetryUntil;
   final Set<String> _explicitPaths = <String>{};
   final Map<String, DateTime> _nextAttempt = <String, DateTime>{};
   final Map<String, int> _recordGenerations = <String, int>{};
@@ -387,6 +394,7 @@ class MacArchiveController extends ChangeNotifier {
     _interactiveClient = probe;
     _manualPaused = false;
     _authFailed = false;
+    _lostLinkRetryUntil = null;
     _phoneError = probe == null ? offline?.message : null;
     _linkPhase = probe == null
         ? ArchiveLinkPhase.waiting
@@ -570,6 +578,7 @@ class MacArchiveController extends ChangeNotifier {
     _connectionEpoch++;
     await _closeWorkerClient();
     await _closeInteractiveClient();
+    _lostLinkRetryUntil = null;
     _linkPhase = ArchiveLinkPhase.disconnected;
     _notify();
     try {
@@ -1075,12 +1084,14 @@ class MacArchiveController extends ChangeNotifier {
       _linkPhase = ArchiveLinkPhase.connected;
       _phoneError = null;
       _authFailed = false;
+      _lostLinkRetryUntil = null;
       _notify();
       return client;
     } on ArchiveAuthException catch (error) {
       _authFailed = true;
       _linkPhase = ArchiveLinkPhase.failed;
       _phoneError = error.message;
+      _lostLinkRetryUntil = null;
       _notify();
       rethrow;
     } on ArchiveException catch (error) {
@@ -1147,8 +1158,10 @@ class MacArchiveController extends ChangeNotifier {
   /// An idle link is otherwise only exercised by the next transfer. The Mac
   /// drops every session when it resets its pairing or stops receiving, so
   /// ping the open connections each tick: a failed ping closes them and
-  /// reconnects once, which reports a revoked key as 配对密钥无效 instead of
-  /// showing 已连接 until the user reconnects by hand (#292).
+  /// reconnects, which reports a revoked key as 配对密钥无效 instead of
+  /// showing 已连接 until the user reconnects by hand (#292). A reconnect that
+  /// fails for another reason, such as landing while the Mac restarts its
+  /// listener, is retried on later ticks until [_lostLinkRetryWindow] ends.
   Future<void> _checkLink() async {
     final current = pairing;
     if (_disposed ||
@@ -1162,10 +1175,16 @@ class MacArchiveController extends ChangeNotifier {
       for (final client in [_workerClient, _interactiveClient])
         if (client != null && client.connected) client,
     ];
-    if (open.isEmpty) return;
+    final retryUntil = _lostLinkRetryUntil;
+    final retrying =
+        open.isEmpty && retryUntil != null && _clock().isBefore(retryUntil);
+    if (open.isEmpty && !retrying) {
+      _lostLinkRetryUntil = null;
+      return;
+    }
     _linkCheckRunning = true;
     try {
-      var lost = false;
+      var lost = retrying;
       for (final client in open) {
         try {
           await client.ping();
@@ -1184,10 +1203,12 @@ class MacArchiveController extends ChangeNotifier {
           pairing?.deskId != current.deskId) {
         return;
       }
+      if (!retrying) _lostLinkRetryUntil = _clock().add(_lostLinkRetryWindow);
       try {
         await _ensureWorkerClient(expectedDeskId: current.deskId);
       } on ArchiveException {
-        // _ensureClient has recorded the phase and the readable reason.
+        // _ensureClient has recorded the phase and the readable reason, and
+        // ends the retries once the Mac answers or rejects the key.
       }
     } finally {
       _linkCheckRunning = false;
