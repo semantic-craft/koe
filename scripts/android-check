@@ -34,7 +34,7 @@ echo "android-check: $serial $(adb -s "$serial" shell getprop ro.product.model |
 skips="$(mktemp)"
 dark="$skips.dark"
 awake=
-trap 'kill ${awake:+"$awake"} 2>/dev/null || true; rm -f "$skips" "$dark"' EXIT
+trap 'kill ${awake:+"$awake"} 2>/dev/null || true; free_screen; rm -f "$skips" "$dark"' EXIT
 
 wake_screen() {
   rm -f "$dark"
@@ -42,15 +42,40 @@ wake_screen() {
   adb -s "$serial" shell wm dismiss-keyguard
 }
 
-# Left alone, the phone dreams after its screen timeout (30 s) and its PIN
-# lock engages 5 s later, sooner than one scenario builds. A Shift press every
-# 10 s counts as use and keeps it unlocked between scenarios. It does not wake
-# a screen that is off, and none is sent while a scenario holds the screen off.
+# Left alone, the phone dreams after its screen timeout (30 s). While it
+# charges, that is a full-screen Hub screensaver: it covers Koe, takes the
+# Home key, and the PIN lock follows. Key presses sent over adb do not count
+# as use against it (on 2026-10-22 it dreamt every 30 s through a whole run),
+# so the run holds a screen wake lock; turning the screen off for a
+# lock-screen scenario still works. The lock stays on the phone until it is
+# released and counts acquisitions: a run that lost the phone or was killed
+# leaves it held, and the screen then never turns off by itself. So a run
+# takes over a lock it finds held instead of taking it again, and at the end
+# releases it until it is free. Should the phone dream anyway, it is woken at
+# once, except while a scenario holds the screen off.
+screen_lock() {
+  adb -s "$serial" shell cmd power set-wakelock "$1" SCREEN_BRIGHT_WAKE_LOCK </dev/null >/dev/null 2>&1 ||
+    true
+}
+screen_held() {
+  adb -s "$serial" shell cmd power set-wakelock list </dev/null 2>/dev/null |
+    grep -q 'SCREEN_BRIGHT_WAKE_LOCK: WakeLock{[^}]*held=true'
+}
+hold_screen() {
+  screen_held || screen_lock acquire
+}
+free_screen() {
+  for _ in 1 2 3 4 5; do
+    screen_held || return 0
+    screen_lock release
+  done
+}
 keep_awake() {
-  while sleep 10; do
-    [[ -e "$dark" ]] ||
-      adb -s "$serial" shell input keyevent KEYCODE_SHIFT_LEFT </dev/null >/dev/null 2>&1 ||
-      true
+  while sleep 2; do
+    [[ -e "$dark" ]] && continue
+    [[ "$(adb -s "$serial" shell dumpsys power </dev/null 2>/dev/null)" == *mWakefulness=Dreaming* ]] ||
+      continue
+    adb -s "$serial" shell input keyevent KEYCODE_WAKEUP </dev/null >/dev/null 2>&1 || true
   done
 }
 
@@ -108,6 +133,7 @@ answer_scenarios() {
 }
 
 wake_screen
+hold_screen
 trust="$(adb -s "$serial" shell dumpsys trust </dev/null)"
 if grep -q '(current).*deviceLocked=1' <<<"$trust"; then
   echo "android-check: 手机锁着；需要 Koe 在屏幕上的场景会跳过。解锁后放着别动再跑。"
