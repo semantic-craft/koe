@@ -8,6 +8,12 @@ part of '../recorder_controller.dart';
 mixin _RecorderTranscriptionJobs on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
   SpeechConfiguration get _activeConfiguration;
+  Future<SttResult> _applyLocalDiarizationIfNeeded(
+    String path,
+    SttResult result, {
+    required bool isMeeting,
+    required SpeechConfiguration config,
+  });
   abstract final AppleSpeechService _appleSpeech;
   abstract bool _disposed;
   abstract final DoubaoSttService _doubaoStt;
@@ -485,7 +491,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         await _fileJobs.save();
         return true;
       }
-      final result = job.stage == 'result'
+      var result = job.stage == 'result'
           ? SttResult(
               text: job.text!,
               sourcePath: path,
@@ -517,6 +523,15 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         job.error = _recordingErrors[key];
         await _fileJobs.save();
       } else {
+        if (job.stage != 'result') {
+          result = await _applyLocalDiarizationIfNeeded(
+            path,
+            result,
+            isMeeting: isMeeting,
+            config: config,
+          );
+          if (_disposed || revision != _fileJobRevision) return true;
+        }
         job.stage = 'result';
         job.text = result.text;
         job.language = result.language;

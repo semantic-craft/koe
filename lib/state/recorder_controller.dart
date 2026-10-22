@@ -23,6 +23,7 @@ import '../ai/speech_languages.dart';
 import '../ai/stt_types.dart';
 import '../ai/apple_speech.dart';
 import '../ai/diarization_model_store.dart';
+import '../ai/speaker_diarization.dart';
 import '../ai/speech_provider.dart';
 import '../audio/audio_duration.dart';
 import '../audio/audio_version.dart';
@@ -104,6 +105,7 @@ export '../archive/archive_pairing.dart';
 export '../archive/archive_wire.dart';
 export '../ai/speech_provider.dart';
 export '../ai/diarization_model_store.dart';
+export '../ai/speaker_diarization.dart';
 
 part 'recorder/playback.dart';
 part 'recorder/library.dart';
@@ -280,6 +282,7 @@ class RecorderController extends ChangeNotifier
     SystemTasks? systemTasks,
     AnalysisService? contextAnalysisService,
     DiarizationModelStore? diarizationModelStore,
+    SpeakerDiarizer? speakerDiarizer,
     bool meetingLocalOnly = true,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
@@ -305,8 +308,16 @@ class RecorderController extends ChangeNotifier
        _transcriptPersister = transcriptPersister,
        _player = player ?? AudioPlayer() {
     this.meetingLocalOnly = meetingLocalOnly;
+    _speakerDiarizerOverride = speakerDiarizer;
+    _autoDiarizeLocalMeetings =
+        loadPersistedState ||
+        speakerDiarizer != null ||
+        diarizationModelStore != null;
     _ownsDiarizationModels = diarizationModelStore == null;
     diarizationModels = diarizationModelStore ?? DiarizationModelStore();
+    _defaultSpeakerDiarizer = SherpaSpeakerDiarizer(
+      modelStore: diarizationModels,
+    );
     diarizationModels.addListener(notifyListeners);
     if (loadPersistedState || diarizationModelStore != null) {
       unawaited(diarizationModels.refreshStatus());
@@ -943,6 +954,65 @@ class RecorderController extends ChangeNotifier
   late final bool _ownsDiarizationModels;
   @override
   late final DiarizationModelStore diarizationModels;
+  late final SpeakerDiarizer? _speakerDiarizerOverride;
+  late final SpeakerDiarizer _defaultSpeakerDiarizer;
+  late final bool _autoDiarizeLocalMeetings;
+
+  SpeakerDiarizer get _effectiveSpeakerDiarizer =>
+      _speakerDiarizerOverride ?? _defaultSpeakerDiarizer;
+
+  @override
+  Future<SttResult> _applyLocalDiarizationIfNeeded(
+    String path,
+    SttResult result, {
+    required bool isMeeting,
+    required SpeechConfiguration config,
+  }) async {
+    if (!isMeeting || !meetingLocalOnly || !config.provider.onDevice) {
+      return result;
+    }
+    if (!_autoDiarizeLocalMeetings && !diarizationModels.isReady) {
+      return result;
+    }
+    try {
+      final wavPath = await _convertExportToWav(path);
+      final diarized = await _effectiveSpeakerDiarizer.diarize(
+        wavPath,
+        expectedSpeakers: expectedSpeakersForPath(path),
+      );
+      if (diarized.turns.isEmpty) return result;
+      final rawSegments = result.segments.isNotEmpty
+          ? result.segments
+          : synthesizeSegmentsFromTextAndTurns(result.text, diarized.turns);
+      if (rawSegments.isEmpty) return result;
+      final baseSegments = _rememberedSegments(rawSegments);
+      final assigned = assignSpeakersToSegments(diarized.turns, baseSegments);
+      _recordDiarizationQuality(path, diarized.quality);
+      return SttResult(
+        text: result.text,
+        durationSec: result.durationSec,
+        language: result.language,
+        sourcePath: result.sourcePath,
+        segments: [
+          for (final seg in assigned.segments)
+            SttSegment(
+              text: seg.text,
+              startMs: seg.start.inMilliseconds,
+              endMs: seg.end?.inMilliseconds,
+              speaker: seg.speaker,
+              speakerChanged: seg.speakerChanged,
+            ),
+        ],
+      );
+    } catch (e) {
+      debugPrint('[Diarization] local diarization skipped: $e');
+      return result;
+    }
+  }
+
+  int? expectedSpeakersForPath(String path) => null;
+
+  void _recordDiarizationQuality(String path, DiarizationQuality? quality) {}
 
   /// Available playback rates for the speed dropdown.
   static const List<double> playbackSpeeds = [
