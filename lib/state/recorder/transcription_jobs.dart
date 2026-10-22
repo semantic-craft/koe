@@ -64,6 +64,15 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   // END DEPS
 
   bool get doubaoFileProcessing => _fileJobProvider == SttProvider.doubao;
+
+  /// The provider currently running a file transcription job for [ref], or
+  /// null when no file job is actively running for this recording.
+  SttProvider? activeFileJobProviderFor(RecordingReference ref) {
+    final key = _referenceKey(ref);
+    if (_fileJobKey == null || _fileJobKey != key) return null;
+    return _fileJobProvider;
+  }
+
   void cancelDoubaoFileProcessing() {
     if (doubaoFileProcessing) {
       _doubaoStt.cancelCurrent();
@@ -410,6 +419,13 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     fileTranscriptionProgress = const SttFileProgress(SttFileStage.preparing);
     _recordingErrors.remove(key);
     notifyListeners();
+    bool uploadStillPermitted() =>
+        !isMeeting ||
+        !meetingLocalOnly ||
+        config.provider.onDevice ||
+        job.stage == 'result' ||
+        job.taskId != null ||
+        config.cloudUploadConfirmed;
     try {
       if (fromQueue && !await File(path).exists()) {
         throw StateError('录音文件不存在');
@@ -418,6 +434,14 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         job.stage = 'running';
         job.error = null;
         await _fileJobs.save();
+      }
+      if (!uploadStillPermitted()) {
+        const message = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+        job.stage = 'failed';
+        job.error = message;
+        _recordingErrors[key] = message;
+        await _fileJobs.save();
+        return true;
       }
       if (config.provider == SttProvider.qwen) {
         _qwenStt.recovery = QwenTaskRecovery(
@@ -453,6 +477,14 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         await _fileJobs.discard(key);
         return true;
       }
+      if (!uploadStillPermitted()) {
+        const message = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+        job.stage = 'failed';
+        job.error = message;
+        _recordingErrors[key] = message;
+        await _fileJobs.save();
+        return true;
+      }
       final result = job.stage == 'result'
           ? SttResult(
               text: job.text!,
@@ -463,7 +495,10 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
           : await _transcribePath(
               path,
               configuration: config,
-              isCurrent: () => !_disposed && revision == _fileJobRevision,
+              isCurrent: () =>
+                  !_disposed &&
+                  revision == _fileJobRevision &&
+                  uploadStillPermitted(),
               onProgress: (progress) {
                 if (_disposed || revision != _fileJobRevision) return;
                 fileTranscriptionProgress = progress;
@@ -533,8 +568,9 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       }
     } catch (error) {
       if (!_disposed && revision == _fileJobRevision) {
-        _recordingErrors[key] =
-            error is PlatformException && error.code == 'resources_missing'
+        _recordingErrors[key] = !uploadStillPermitted()
+            ? '已开启「录音只留本机」，云端转写会上传音频，请确认后再试'
+            : error is PlatformException && error.code == 'resources_missing'
             ? '请下载所选录音语言后重试'
             : error is _TranscriptSaveFailure
             ? '转写结果未能保存；请检查存储空间后重试'

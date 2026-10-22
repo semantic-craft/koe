@@ -1879,13 +1879,19 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                                         progress: recording.progress,
                                       ),
                                     if (recording.processing &&
-                                        c.speechProvider == SttProvider.qwen)
+                                        c.activeFileJobProviderFor(
+                                              widget.reference,
+                                            ) ==
+                                            SttProvider.qwen)
                                       TextButton(
                                         onPressed: c.cancelQwenFileProcessing,
                                         child: const Text('停止等待（保留已提交任务）'),
                                       ),
                                     if (recording.processing &&
-                                        c.doubaoFileProcessing)
+                                        c.activeFileJobProviderFor(
+                                              widget.reference,
+                                            ) ==
+                                            SttProvider.doubao)
                                       TextButton(
                                         onPressed: c.cancelDoubaoFileProcessing,
                                         child: const Text('停止等待（重试将重新上传）'),

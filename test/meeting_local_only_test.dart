@@ -79,6 +79,9 @@ class _RecordedWireRequest {
 /// Doubao STT, and Qwen chat-completion analysis endpoints.
 class _WireRecordingClient extends http.BaseClient {
   final requests = <_RecordedWireRequest>[];
+  Completer<void>? requestReached;
+  Completer<void>? requestGate;
+  String? gatePathSubstring;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -91,6 +94,17 @@ class _WireRecordingClient extends http.BaseClient {
         bodyBytes: wireBytes,
       ),
     );
+    if (requestGate != null &&
+        (gatePathSubstring == null ||
+            request.url.path.contains(gatePathSubstring!))) {
+      if (requestReached != null && !requestReached!.isCompleted) {
+        requestReached!.complete();
+      }
+      final gate = requestGate!;
+      requestGate = null;
+      gatePathSubstring = null;
+      await gate.future;
+    }
 
     final path = request.url.path;
     Object responseBody;
@@ -389,6 +403,29 @@ class _NoPlace implements PlaceCapture {
   const _NoPlace();
   @override
   Future<RecordingPlace?> capture() async => null;
+}
+
+class _ControllableFileJobJournal extends FileJobJournal {
+  _ControllableFileJobJournal({required super.file});
+
+  Completer<void>? runningSaveReached;
+  Completer<void>? runningSaveGate;
+
+  @override
+  Future<void> save() async {
+    final hasRunningWithoutTask = jobs.values.any(
+      (j) => j.stage == 'running' && j.taskId == null,
+    );
+    if (hasRunningWithoutTask && runningSaveGate != null) {
+      if (runningSaveReached != null && !runningSaveReached!.isCompleted) {
+        runningSaveReached!.complete();
+      }
+      final gate = runningSaveGate!;
+      runningSaveGate = null;
+      await gate.future;
+    }
+    await super.save();
+  }
 }
 
 Future<void> _until(bool Function() predicate) async {
@@ -914,49 +951,104 @@ void main() {
       )..exportedPaths = [audio.path];
       addTearDown(controller.dispose);
 
-      // 等待启动恢复任务完成检查
+      // 等待启动恢复任务完成检查，并从磁盘读回确认日志已持久化为 failed
       final ref = RecordingReference(fileId: 1760000950, path: audio.path);
-      await _until(
-        () =>
-            (controller.recordingView(ref).error != null ||
-                controller.recordingView(ref).text.isNotEmpty) &&
+      Future<FileJob?> rereadFromDisk() async {
+        final reader = FileJobJournal(file: journalFile);
+        await reader.load();
+        return reader.jobs['file:1760000950'];
+      }
+
+      FileJob? persistedJob;
+      await _until(() {
+        return controller.recordingView(ref).error != null &&
             !controller.fileProcessingBusy &&
-            !controller.recordingView(ref).processing,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+            !controller.recordingView(ref).processing;
+      });
+      for (var i = 0; i < 100; i++) {
+        persistedJob = await rereadFromDisk();
+        if (persistedJob?.stage == 'failed') break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
 
       expect(
         wire.requests.map((r) => '${r.method} ${r.url}').toList(),
         isEmpty,
         reason: '启动恢复无 taskId 的 queued 云端会议任务时，在开关打开下不得上传音频',
       );
+      expect(persistedJob?.stage, 'failed');
+      expect(persistedJob?.error, contains('确认'));
       expect(controller.fileProcessingBusy, isFalse);
       expect(controller.recordingView(ref).processing, isFalse);
       expect(controller.recordingView(ref).error, contains('确认'));
 
-      // 覆盖「已排队后才打开开关」：先关开关排队后一个任务，在它执行前打开开关，轮到它时也不上传
-      final secondAudio = File('${dir.path}/1760000951.wav');
+      // 覆盖「已排队后才打开开关」：阻塞第一个任务，在开关关闭时将第二个云端会议任务入队，
+      // 再打开开关并释放第一个任务，断言第二个任务零上传
+      final firstAudio = File('${dir.path}/1760000951.wav');
+      final secondAudio = File('${dir.path}/1760000952.wav');
+      await firstAudio.writeAsBytes(_patternedWav(repeats: 100));
       await secondAudio.writeAsBytes(_patternedWav(repeats: 100));
-      controller.exportedPaths.add(secondAudio.path);
-      final secondRef = RecordingReference(
+
+      final queueJournal = FileJobJournal(
+        file: File('${dir.path}/queue_jobs.json'),
+      );
+      final queueController = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        fileJobJournal: queueJournal,
+        retrievedAudioSettleTime: Duration.zero,
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-queue'),
+      )..exportedPaths = [firstAudio.path, secondAudio.path];
+      addTearDown(queueController.dispose);
+
+      final firstReached = Completer<void>();
+      final firstGate = Completer<void>();
+      wire.gatePathSubstring = '/api/v1/tasks/';
+      wire.requestReached = firstReached;
+      wire.requestGate = firstGate;
+
+      // 第一个任务在开关关闭时启动并阻塞在已提交后的轮询处
+      unawaited(queueController.processRetrievedRecording(firstAudio.path));
+      await firstReached.future;
+
+      // 开关仍关闭时将第二个任务真正排入 _deferredJobs 队列
+      expect(queueController.meetingLocalOnly, isFalse);
+      await queueController.processRetrievedRecording(secondAudio.path);
+
+      // 第二个任务尚在队列等待时打开「录音只留本机」，然后释放第一个任务
+      queueController.setMeetingLocalOnly(true);
+      firstGate.complete();
+
+      final firstRef = RecordingReference(
         fileId: 1760000951,
+        path: firstAudio.path,
+      );
+      final secondRef = RecordingReference(
+        fileId: 1760000952,
         path: secondAudio.path,
       );
-      controller.setMeetingLocalOnly(false);
-      // 发起未确认的入队前先打开开关模拟排队期间策略切换
-      controller.setMeetingLocalOnly(true);
-      await controller.processRetrievedRecording(secondAudio.path);
-      await controller.transcribeLocalFile(secondAudio.path);
       await _until(
         () =>
-            !controller.fileProcessingBusy &&
-            !controller.recordingView(secondRef).processing,
+            queueController.recordingView(firstRef).text == '云端千问转写结果' &&
+            queueController.recordingView(secondRef).error != null &&
+            !queueController.fileProcessingBusy &&
+            !queueController.recordingView(secondRef).processing,
       );
+
+      final ossUploads = wire.requests
+          .where((r) => r.url.host == 'oss.example.com')
+          .toList();
       expect(
-        wire.requests.map((r) => '${r.method} ${r.url}').toList(),
-        isEmpty,
-        reason: '开关打开时执行层必须拦截未经确认的云端音频上传',
+        ossUploads,
+        hasLength(1),
+        reason: '只有开关关闭时已执行的第一个任务允许上传，排队期间打开开关的第二个任务必须零上传',
       );
+      expect(queueController.recordingView(secondRef).text, isEmpty);
+      expect(queueController.recordingView(secondRef).error, contains('确认'));
     },
   );
 
@@ -967,6 +1059,7 @@ void main() {
       final apple = _OnDeviceAppleSpeech(supported: true);
       final phoneRecorder = _FakePhoneRecorder();
 
+      final libraryFile = File('${dir.path}/library-title.json');
       final controller = RecorderController(
         loadPersistedState: false,
         appleSpeech: apple,
@@ -986,6 +1079,7 @@ void main() {
         phoneRecordingEnabled: true,
         placeCapture: const _NoPlace(),
         transcriptPersister: ({bool strict = false}) async {},
+        libraryStore: RecordingLibraryStore(file: libraryFile),
         libraryDirectory: Directory('${dir.path}/imports-title'),
       );
       addTearDown(controller.dispose);
@@ -1046,6 +1140,11 @@ void main() {
         controller.library.assetForPath(renamedPath)?.displayName,
         '客户回访备忘',
       );
+      // 落盘后用新 RecordingLibraryStore 读回，确认 voiceNote: true 与导入录音的 false 均持久化
+      final reloadedLibrary = RecordingLibraryStore(file: libraryFile);
+      await reloadedLibrary.load();
+      expect(reloadedLibrary.assetForPath(renamedPath)?.voiceNote, isTrue);
+      expect(reloadedLibrary.assetForPath(imported.path)?.voiceNote, isFalse);
       // 改名后清除文字并直接重跑转写（无需会议二次确认，仍走千问日常通道）
       controller.transcriptsByPath.remove(renamedPath);
       wire.requests.clear();
@@ -1181,9 +1280,16 @@ void main() {
       expect(controller.recordingView(ref).provider, SttProvider.doubao);
       expect(controller.speechProvider, SttProvider.apple);
 
-      // 3. 开关开启时点「使用通义 Qwen 转写…」：先二次确认，确认后发到千问且全局仍为 Apple
+      // 3. 开关开启时点「使用通义 Qwen 转写…」：先二次确认，运行中显示「停止等待（保留已提交任务）」，确认后发到千问且全局仍为 Apple
       controller.setMeetingLocalOnly(true);
       wire.requests.clear();
+      final qwenReached = Completer<void>();
+      final qwenGate = Completer<void>();
+      addTearDown(() {
+        if (!qwenGate.isCompleted) qwenGate.complete();
+      });
+      wire.requestReached = qwenReached;
+      wire.requestGate = qwenGate;
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('更多操作'));
       await tester.pumpAndSettle();
@@ -1193,6 +1299,20 @@ void main() {
       expect(find.textContaining('录音只留本机'), findsOneWidget);
       expect(wire.requests, isEmpty);
       await tester.tap(find.byKey(const ValueKey('confirm-cloud-transcribe')));
+      for (var i = 0; i < 50 && !qwenReached.isCompleted; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(qwenReached.isCompleted, isTrue);
+      expect(controller.speechProvider, SttProvider.apple);
+      expect(
+        find.text('停止等待（保留已提交任务）'),
+        findsOneWidget,
+        reason: '全局引擎为 Apple 但当前任务实际运行千问时，详情页应显示千问停止等待按钮',
+      );
+      qwenGate.complete();
       for (
         var i = 0;
         i < 100 &&
@@ -1215,6 +1335,74 @@ void main() {
       );
       expect(controller.recordingView(ref).text, '云端千问转写结果');
       expect(controller.speechProvider, SttProvider.apple);
+    },
+  );
+
+  test(
+    '(h) running 阶段日志保存期间打开「录音只留本机」开关：释放后不上传音频（检查序列化后的真实字节与上传端点）',
+    () async {
+      final wire = _WireRecordingClient();
+      final audio = File('${dir.path}/1760000977.wav');
+      await audio.writeAsBytes(_patternedWav(repeats: 100));
+
+      final runningSaveReached = Completer<void>();
+      final runningSaveGate = Completer<void>();
+      final journalFile = File('${dir.path}/running_window_jobs.json');
+      final journal = _ControllableFileJobJournal(file: journalFile)
+        ..runningSaveReached = runningSaveReached
+        ..runningSaveGate = runningSaveGate;
+
+      final controller = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        appleSpeech: _OnDeviceAppleSpeech(supported: true),
+        qwenSpeech: QwenSttService(client: wire, pollInterval: Duration.zero)
+          ..apiKeyOverride = 'qwen-test-key',
+        fileJobJournal: journal,
+        retrievedAudioSettleTime: Duration.zero,
+        transcriptPersister: ({bool strict = false}) async {},
+        libraryDirectory: Directory('${dir.path}/imports-window'),
+      )..exportedPaths = [audio.path];
+      addTearDown(controller.dispose);
+
+      // 开关关闭时发起转写，使任务通过前置检查并进入 running 阶段落盘等待
+      final transcription = controller.transcribeLocalFile(audio.path);
+      await runningSaveReached.future;
+      expect(wire.requests, isEmpty, reason: 'running 落盘完成前尚未发起网络请求');
+
+      // 在 running 阶段落盘等待窗口内打开「录音只留本机」开关，然后释放落盘
+      controller.setMeetingLocalOnly(true);
+      runningSaveGate.complete();
+      await transcription;
+
+      final ref = RecordingReference(fileId: 1760000977, path: audio.path);
+      await _until(
+        () =>
+            !controller.fileProcessingBusy &&
+            !controller.recordingView(ref).processing,
+      );
+
+      final audioCarryingRequests = [
+        for (final req in wire.requests)
+          if (_containsSublist(req.bodyBytes, ascii.encode('RIFF')) ||
+              _containsSublist(req.bodyBytes, ascii.encode('WAVE')) ||
+              _containsSublist(req.bodyBytes, _pcmPattern) ||
+              req.url.host.contains('oss') ||
+              req.url.path.contains('/api/v1/uploads') ||
+              req.url.path.contains('/services/audio/asr/transcription'))
+            '${req.method} ${req.url} (${req.bodyBytes.length} bytes)',
+      ];
+      expect(
+        audioCarryingRequests,
+        isEmpty,
+        reason: 'running 落盘期间打开开关后，释放时不得开始上传任何音频字节或请求上传端点',
+      );
+      expect(wire.requests, isEmpty);
+      expect(controller.recordingView(ref).error, contains('确认'));
+
+      final reloaded = FileJobJournal(file: journalFile);
+      await reloaded.load();
+      expect(reloaded.jobs['file:1760000977']?.stage, 'failed');
     },
   );
 }
