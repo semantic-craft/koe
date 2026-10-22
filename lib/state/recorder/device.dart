@@ -44,7 +44,9 @@ mixin _RecorderDevice on ChangeNotifier {
   bool get needsWifiJoin;
   abstract int pcmFramesDecoded;
   abstract bool allDayListening;
+  bool get phoneRecordingEnabled;
   bool get textCaptureActive;
+  abstract String? textCaptureError;
   bool get textCaptureFromDevice;
   Future<bool> startTextCapture({bool allDay, bool fromDevice});
   Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio});
@@ -91,11 +93,15 @@ mixin _RecorderDevice on ChangeNotifier {
     await startScan();
   }
 
-  /// Handle the one-shot action exposed through the iOS Action Button.
+  /// Handle the one-shot action exposed through the iOS Action Button and
+  /// the Android launcher shortcut.
   ///
   /// Repeated invocations coalesce while a request is pending or sending. A
   /// request is never retained beyond its reconnect attempt, preventing a
   /// later unrelated auto-reconnect from unexpectedly starting a recording.
+  ///
+  /// On Android, with all-day listening switched on, the shortcut enters
+  /// all-day listening from the phone instead, as 手机录音 does.
   Future<void> requestRecordingFromShortcut() async {
     shortcutNavigationRevision++;
     notifyListeners();
@@ -106,6 +112,20 @@ mixin _RecorderDevice on ChangeNotifier {
       errorMessage = null;
       notifyListeners();
       return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        phoneRecordingEnabled) {
+      _recordingShortcutStarting = true;
+      try {
+        // A cold launch from the shortcut gets here before settings are read.
+        if (!_settingsReady) await _settingsLoaded;
+        if (allDayListening) {
+          await _listenAllDayFromShortcut();
+          return;
+        }
+      } finally {
+        _recordingShortcutStarting = false;
+      }
     }
     if (isWifiExportSession || isExporting) {
       _failRecordingShortcut('正在导出录音，暂时无法开始新的录音');
@@ -166,6 +186,18 @@ mixin _RecorderDevice on ChangeNotifier {
         _failRecordingShortcut(errorMessage!);
       }
     }
+  }
+
+  /// The shortcut opened Koe, so the microphone service starts while Koe is
+  /// on screen, as Android 14 requires.
+  Future<void> _listenAllDayFromShortcut() async {
+    if (textCaptureActive) return;
+    textCaptureError = null;
+    if (await startTextCapture(allDay: true)) return;
+    // No reason given: another start is under way, such as listening that
+    // resumes at launch, and it reports for itself.
+    final reason = textCaptureError;
+    if (reason != null) _failRecordingShortcut(reason);
   }
 
   void _startRecordingShortcutScanTimeout() {
