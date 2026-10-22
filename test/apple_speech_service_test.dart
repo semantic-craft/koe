@@ -2,9 +2,13 @@ import 'dart:async';
 
 import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/stt_types.dart';
+import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
@@ -366,6 +370,243 @@ void main() {
       expect(received.where((event) => event.type == 'done'), hasLength(1));
       await subscription.cancel();
       await session.dispose();
+    },
+  );
+
+  test(
+    'macOS target platform uses native capabilities when available and supports zh-CN, en-US, ja-JP',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      handler = (call) async {
+        if (call.method == 'capabilities') {
+          return {
+            'supported': true,
+            'speechStatus': 'ready',
+            'translationStatus': 'ready',
+            'suggestedSourceLanguage': 'zh-CN',
+          };
+        }
+        if (call.method == 'transcribeFile') {
+          return {'text': '会议纪要文件转写', 'durationSec': 12.5};
+        }
+        return null;
+      };
+
+      expect(service.offered, isTrue);
+      final capability = await service.capabilities(sourceLanguage: 'zh-CN');
+      expect(calls.map((c) => c.method), ['capabilities']);
+      expect(capability.supported, isTrue);
+      expect(capability.speechStatus, SpeechResourceStatus.ready);
+      expect(capability.statusLabel, '已就绪');
+      expect(capability.unavailableReason, isNull);
+      expect(
+        capability.speechLanguages.map((l) => l.code),
+        containsAll(['zh-CN', 'en-US', 'ja-JP']),
+      );
+
+      final controller = RecorderController(
+        loadPersistedState: false,
+        appleSpeech: service,
+      );
+      addTearDown(controller.dispose);
+      await controller.refreshAppleCapabilities();
+      expect(controller.speechProviders, contains(SttProvider.apple));
+      expect(controller.engineConfigured(SttProvider.apple), isTrue);
+      expect(controller.appleSpeechReady, isTrue);
+
+      final result = await service.transcribePath(
+        '/meeting.wav',
+        sourceLanguage: 'zh-CN',
+      );
+      expect(result.text, '会议纪要文件转写');
+      expect(result.language, 'zh-CN');
+    },
+  );
+
+  test(
+    'macOS below 26 reports unsupported with reason and marks engine unavailable',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      handler = (call) async => {
+        'supported': false,
+        'speechStatus': 'unsupported',
+        'translationStatus': 'unsupported',
+        'unavailableReason': '需要 macOS 26 及以上',
+      };
+
+      final capability = await service.capabilities(sourceLanguage: 'zh-CN');
+      expect(calls.map((c) => c.method), ['capabilities']);
+      expect(capability.supported, isFalse);
+      expect(capability.speechStatus, SpeechResourceStatus.unsupported);
+      expect(capability.statusLabel, '不可用');
+      expect(capability.unavailableReason, '需要 macOS 26 及以上');
+
+      final controller = RecorderController(
+        loadPersistedState: false,
+        appleSpeech: service,
+      );
+      addTearDown(controller.dispose);
+      await controller.refreshAppleCapabilities();
+      expect(controller.speechProviders, contains(SttProvider.apple));
+      expect(controller.engineConfigured(SttProvider.apple), isFalse);
+      expect(controller.appleCapabilities.statusLabel, '不可用');
+      expect(
+        controller.appleCapabilities.unavailableReason,
+        '需要 macOS 26 及以上',
+      );
+    },
+  );
+
+  test(
+    'macOS live stream propagates microphone_permission_denied error code and reason to Dart',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      handler = (call) async {
+        if (call.method == 'startStream') {
+          throw PlatformException(
+            code: 'microphone_permission_denied',
+            message: '没有麦克风权限，无法开始实时转写',
+          );
+        }
+        return null;
+      };
+
+      final session = service.createStreamSession(
+        sourceLanguage: 'zh-CN',
+        microphone: true,
+      );
+      await expectLater(
+        session.start(),
+        throwsA(
+          isA<PlatformException>()
+              .having((e) => e.code, 'code', 'microphone_permission_denied')
+              .having((e) => e.message, 'message', '没有麦克风权限，无法开始实时转写'),
+        ),
+      );
+      expect(session.isOpen, isFalse);
+      expect(session.isServerReady, isFalse);
+      expect(calls.first.method, 'startStream');
+      expect(calls.first.arguments, containsPair('microphone', true));
+      await session.dispose();
+    },
+  );
+
+  testWidgets(
+    'macOS settings screen lists Apple engine and shows 不可用 with macOS 26 reason when unsupported',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      handler = (call) async => {
+        'supported': false,
+        'speechStatus': 'unsupported',
+        'translationStatus': 'unsupported',
+        'unavailableReason': '需要 macOS 26 及以上',
+      };
+      final controller = RecorderController(
+        loadPersistedState: false,
+        appleSpeech: service,
+      );
+      addTearDown(controller.dispose);
+      await controller.refreshAppleCapabilities();
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: controller,
+          child: const MaterialApp(home: SettingsScreen()),
+        ),
+      );
+      await tester.pump();
+
+      final appleCard = find.byKey(
+        const ValueKey('speech-provider-option-apple'),
+      );
+      expect(appleCard, findsOneWidget);
+      expect(
+        find.descendant(of: appleCard, matching: find.text('Apple 设备端')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: appleCard, matching: find.text('不可用')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: appleCard, matching: find.text('需要 macOS 26 及以上')),
+        findsOneWidget,
+      );
+      expect(find.text('设备受限'), findsNothing);
+      expect(find.textContaining('iOS 本地神经网络'), findsNothing);
+
+      controller.setSpeechProvider(SttProvider.apple);
+      await tester.pump();
+      expect(find.text('需要 macOS 26 及以上'), findsNWidgets(2));
+      expect(find.textContaining('需要 iOS 26'), findsNothing);
+
+      handler = (call) async => {
+        'supported': true,
+        'speechStatus': 'ready',
+        'translationStatus': 'ready',
+        'suggestedSourceLanguage': 'zh-CN',
+      };
+      await controller.refreshAppleCapabilities();
+      await tester.pump();
+
+      expect(
+        find.descendant(of: appleCard, matching: find.text('使用中')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: appleCard,
+          matching: find.text('Apple 本地神经网络语音引擎，离线可用、隐私优先'),
+        ),
+        findsOneWidget,
+      );
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
+
+  testWidgets(
+    'iOS settings screen shows 不可用 with iOS 26 reason when unsupported',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      handler = (call) async => {
+        'supported': false,
+        'speechStatus': 'unsupported',
+        'translationStatus': 'unsupported',
+        'unavailableReason': '需要 iOS 26 及以上',
+      };
+      final controller = RecorderController(
+        loadPersistedState: false,
+        appleSpeech: service,
+      );
+      addTearDown(controller.dispose);
+      await controller.refreshAppleCapabilities();
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: controller,
+          child: const MaterialApp(home: SettingsScreen()),
+        ),
+      );
+      await tester.pump();
+
+      final appleCard = find.byKey(
+        const ValueKey('speech-provider-option-apple'),
+      );
+      expect(appleCard, findsOneWidget);
+      expect(
+        find.descendant(of: appleCard, matching: find.text('不可用')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: appleCard, matching: find.text('需要 iOS 26 及以上')),
+        findsOneWidget,
+      );
+      expect(find.text('设备受限'), findsNothing);
+
+      controller.setSpeechProvider(SttProvider.apple);
+      await tester.pump();
+      expect(find.text('需要 iOS 26 及以上'), findsNWidgets(2));
+      debugDefaultTargetPlatformOverride = null;
     },
   );
 }

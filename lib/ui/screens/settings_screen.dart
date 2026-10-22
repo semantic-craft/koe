@@ -270,7 +270,7 @@ class _ProviderSelector extends StatelessWidget {
   static const _metadata = <SttProvider, ({IconData icon, String description})>{
     SttProvider.apple: (
       icon: Icons.phone_iphone_rounded,
-      description: 'iOS 本地神经网络语音引擎，离线可用、隐私优先',
+      description: 'Apple 本地神经网络语音引擎，离线可用、隐私优先',
     ),
     SttProvider.qwen: (
       icon: Icons.auto_awesome_rounded,
@@ -294,12 +294,8 @@ class _ProviderSelector extends StatelessWidget {
           caps.supported && caps.speechStatus == SpeechResourceStatus.ready;
       return (
         icon: meta.icon,
-        description: meta.description,
-        statusLabel: !caps.supported
-            ? '设备受限'
-            : ready
-            ? (selected ? '使用中' : '已就绪')
-            : '待准备',
+        description: caps.unavailableReason ?? meta.description,
+        statusLabel: ready && selected ? '使用中' : caps.statusLabel,
         statusColor: !caps.supported
             ? tokens.textMuted
             : ready
@@ -587,7 +583,9 @@ class _AppleLanguageSettings extends StatelessWidget {
           Text(
             loading
                 ? '正在检查设备支持…'
-                : c.appleSetupError ?? 'Apple 设备端需要 iOS 26 和受支持的设备。',
+                : c.appleSetupError ??
+                      capabilities.unavailableReason ??
+                      AppleSpeechCapabilities.defaultUnavailableReason,
             style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
           ),
           if (!loading)

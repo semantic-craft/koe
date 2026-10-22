@@ -284,6 +284,7 @@ class _OnDeviceAppleSpeech extends AppleSpeechService {
   SttStreamSession createStreamSession({
     required String sourceLanguage,
     String? targetLanguage,
+    bool microphone = false,
   }) {
     streamCalls++;
     return _FakeStreamSession('本机实时转写文字。');

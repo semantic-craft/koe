@@ -15,6 +15,9 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
     CredentialBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
     AudioTranscodeBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
+    AppleSpeechBridge.shared.configure(
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
 
     // Unattended acceptance drives Koe through the accessibility API
     // (scripts/mac-ax), which only sees Flutter's widgets once the engine
