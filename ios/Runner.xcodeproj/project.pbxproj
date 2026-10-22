@@ -25,6 +25,7 @@
 		A90C71012F40000000A71002 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000000A71001 /* KeychainStore.swift */; };
 		A90C71012F40000100A71002 /* CredentialBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000100A71001 /* CredentialBridge.swift */; };
 		A90C71012F40000200A71002 /* AudioTranscodeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000200A71001 /* AudioTranscodeBridge.swift */; };
+		A90C71012F40000300A71002 /* WifiConnectivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000300A71001 /* WifiConnectivityBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +82,7 @@
 		A90C71012F40000000A71001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KeychainStore.swift; path = ../../darwin/KeychainStore.swift; sourceTree = "<group>"; };
 		A90C71012F40000100A71001 /* CredentialBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CredentialBridge.swift; path = ../../darwin/CredentialBridge.swift; sourceTree = "<group>"; };
 		A90C71012F40000200A71001 /* AudioTranscodeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AudioTranscodeBridge.swift; path = ../../darwin/AudioTranscodeBridge.swift; sourceTree = "<group>"; };
+		A90C71012F40000300A71001 /* WifiConnectivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WifiConnectivityBridge.swift; path = ../../darwin/WifiConnectivityBridge.swift; sourceTree = "<group>"; };
 		F02E455CAB446D82596D3461 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		F9204CEE42B106B3AC78734C /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -183,6 +185,7 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				A90C71012F40000100A71001 /* CredentialBridge.swift */,
 				A90C71012F40000200A71001 /* AudioTranscodeBridge.swift */,
+				A90C71012F40000300A71001 /* WifiConnectivityBridge.swift */,
 				A90C71012F40000000A71001 /* KeychainStore.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				A10C71012F40000100A71001 /* RecordingShortcut.swift */,
@@ -433,6 +436,7 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				A90C71012F40000100A71002 /* CredentialBridge.swift in Sources */,
 				A90C71012F40000200A71002 /* AudioTranscodeBridge.swift in Sources */,
+				A90C71012F40000300A71002 /* WifiConnectivityBridge.swift in Sources */,
 				A90C71012F40000000A71002 /* KeychainStore.swift in Sources */,
 				A10C71002F40000100A71001 /* RecordingShortcut.swift in Sources */,
 				A11271002F40000100A71001 /* AppleSpeechBridge.swift in Sources */,

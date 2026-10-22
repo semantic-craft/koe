@@ -972,6 +972,9 @@ class RecorderController extends ChangeNotifier
     if (!isMeeting || !meetingLocalOnly || !config.provider.onDevice) {
       return result;
     }
+    // Apple currently returns text without recognition timestamps. Preserve
+    // that text without inventing sentence timings or speaker assignments.
+    if (result.segments.isEmpty) return result;
     if (!_autoDiarizeLocalMeetings && !diarizationModels.isReady) {
       return result;
     }
@@ -982,9 +985,7 @@ class RecorderController extends ChangeNotifier
         expectedSpeakers: expectedSpeakersForPath(path),
       );
       if (diarized.turns.isEmpty) return result;
-      final rawSegments = result.segments.isNotEmpty
-          ? result.segments
-          : synthesizeSegmentsFromTextAndTurns(result.text, diarized.turns);
+      final rawSegments = result.segments;
       if (rawSegments.isEmpty) return result;
       final baseSegments = _rememberedSegments(rawSegments);
       final assigned = assignSpeakersToSegments(diarized.turns, baseSegments);

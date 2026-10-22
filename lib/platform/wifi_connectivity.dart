@@ -1,13 +1,14 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
 typedef WifiCheck = Future<bool> Function();
 
-/// Checks whether the device currently has an active Wi-Fi (or wired LAN)
-/// interface using `dart:io` [NetworkInterface.list], without extra packages.
-///
-/// On iOS/macOS, Wi-Fi/Ethernet interfaces are `en0`..`en9` while cellular is
-/// `pdp_ip*`; on Android, Wi-Fi is `wlan*`/`eth*` while cellular is
-/// `rmnet*`/`ccmni*`.
+/// Requires an addressed interface and an OS-confirmed Wi-Fi default path.
+/// Interface names cannot distinguish Ethernet, Wi-Fi and AP mode. Darwin uses
+/// NWPathMonitor; Android uses the active network's NetworkCapabilities.
+/// Unknown/missing platform support fails closed. This is a path snapshot, not
+/// socket binding: routing can change between a check and an HTTP operation.
 Future<bool> defaultIsWifiConnected({
   Future<List<NetworkInterface>> Function()? listInterfaces,
 }) async {
@@ -19,15 +20,15 @@ Future<bool> defaultIsWifiConnected({
           type: InternetAddressType.any,
         );
     final interfaces = await lister();
-    for (final iface in interfaces) {
-      final name = iface.name.toLowerCase();
-      final isWifiOrLan =
-          RegExp(r'^(en\d+|wlan\d+|eth\d+|ap\d+|wi-?fi)$').hasMatch(name);
-      if (!isWifiOrLan) continue;
-      final hasUsableAddress = iface.addresses.any((addr) => !addr.isLoopback);
-      if (hasUsableAddress) return true;
+    if (!interfaces.any(
+      (iface) => iface.addresses.any((addr) => !addr.isLoopback),
+    )) {
+      return false;
     }
-    return false;
+    return await const MethodChannel(
+          'com.semanticcraft.koe/wifi_connectivity',
+        ).invokeMethod<bool>('isWifiConnected') ==
+        true;
   } catch (_) {
     return false;
   }

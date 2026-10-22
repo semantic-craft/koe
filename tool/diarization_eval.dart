@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -31,7 +32,7 @@ Future<void> main(List<String> args) async {
     stderr.writeln('Models not found in $cacheDirPath');
     exit(1);
   }
-  stdout.writeln('Models verified ready:');
+  stdout.writeln('Model files found (verify SHA-256 before evaluation):');
   stdout.writeln('  segmentation: $segModelPath');
   stdout.writeln('  embedding:    $embModelPath');
 
@@ -103,15 +104,29 @@ Future<void> main(List<String> args) async {
       sw.stop();
       final elapsedSec = sw.elapsedMilliseconds / 1000.0;
       final hypSpeakers = result.turns.map((t) => t.speaker).toSet().length;
-      final metrics = _evaluateDer(refTurns, result.turns, evalSec);
+      final metrics = evaluateDer(refTurns, result.turns, evalSec);
+      await File(
+        '$cacheDirPath/ES2004a-${expected ?? "auto"}-prediction.json',
+      ).writeAsString(
+        jsonEncode([
+          for (final turn in result.turns)
+            {
+              'speaker': turn.speaker,
+              'start': turn.start.inMicroseconds / 1e6,
+              'end': turn.end.inMicroseconds / 1e6,
+            },
+        ]),
+      );
       stdout.writeln(
         '\n[AMI ES2004a 0-${evalSec.toStringAsFixed(0)}s (CC BY 4.0)] '
         'expectedSpeakers=${expected ?? "auto"}:\n'
         '  refSpeakers=$refSpeakers, hypSpeakers=$hypSpeakers, turns=${result.turns.length}\n'
-        '  speakerErrorRate (T-A3 single-speaker voiced time) = '
+        '  single-speaker error (all reference single speech, misses included, no collar) = '
         '${(metrics.speakerErrorRate * 100).toStringAsFixed(2)}% '
         '(accuracy ${(100 - metrics.speakerErrorRate * 100).toStringAsFixed(2)}%, threshold <= 15.0%)\n'
-        '  NIST DER (250ms collar) = ${(metrics.derCollar250ms * 100).toStringAsFixed(2)}%\n'
+        '  DER (exact 250ms each-side collar, overlap included) = ${(metrics.derCollar250ms * 100).toStringAsFixed(2)}%\n'
+        '  single error/reference=${metrics.singleErrorSeconds.toStringAsFixed(6)}/${metrics.singleReferenceSeconds.toStringAsFixed(6)}s; '
+        'DER error/reference=${metrics.derErrorSeconds.toStringAsFixed(6)}/${metrics.scoredReferenceSeconds.toStringAsFixed(6)}s\n'
         '  elapsed=${elapsedSec.toStringAsFixed(2)}s '
         '(RTF=${(elapsedSec / evalSec).toStringAsFixed(3)}), '
         'cohesion=${result.quality?.cohesion.toStringAsFixed(3)}',
@@ -143,116 +158,157 @@ List<({double start, double end, String speaker})> _parseRttm(
   return out;
 }
 
-({double speakerErrorRate, double derCollar250ms}) _evaluateDer(
+/// Exact interval scoring over [0, maxTimeSec], including overlapping speech.
+/// Reference boundaries exclude 250 ms on EACH side for DER. Speaker mapping
+/// maximizes scored reference/hypothesis overlap with a one-to-one assignment.
+/// Single-speaker error uses ALL reference single-speaker time, without collar;
+/// a missing prediction or an extra speaker counts as incorrect time.
+({
+  double speakerErrorRate,
+  double derCollar250ms,
+  double singleReferenceSeconds,
+  double singleErrorSeconds,
+  double scoredReferenceSeconds,
+  double derErrorSeconds,
+})
+evaluateDer(
   List<({double start, double end, String speaker})> refTurns,
   List<DiarizationTurn> hypTurns,
   double maxTimeSec,
 ) {
-  const step = 0.1;
-  final cells = (maxTimeSec / step).ceil() + 1;
-  final refGrid = List<Set<String>>.generate(cells, (_) => <String>{});
-  final collarCells = (0.25 / step).ceil();
-  final boundaryMask = List<bool>.filled(cells, false);
-
+  final boundaries = <double>{0, maxTimeSec};
+  final collars = <({double start, double end})>[];
+  void boundary(double value) => boundaries.add(value.clamp(0, maxTimeSec));
   for (final r in refTurns) {
-    final s = (r.start / step).floor().clamp(0, cells);
-    final e = (r.end / step).floor().clamp(0, cells);
-    for (var i = s; i < e; i++) {
-      refGrid[i].add(r.speaker);
-    }
-    for (
-      var i = math.max(0, s - collarCells);
-      i < math.min(cells, s + collarCells + 1);
-      i++
-    ) {
-      boundaryMask[i] = true;
-    }
-    for (
-      var i = math.max(0, e - collarCells);
-      i < math.min(cells, e + collarCells + 1);
-      i++
-    ) {
-      boundaryMask[i] = true;
+    boundary(r.start);
+    boundary(r.end);
+    for (final edge in [r.start, r.end]) {
+      final start = (edge - 0.25).clamp(0.0, maxTimeSec);
+      final end = (edge + 0.25).clamp(0.0, maxTimeSec);
+      collars.add((start: start, end: end));
+      boundary(start);
+      boundary(end);
     }
   }
-
-  final hypGrid = List<Set<int>>.generate(cells, (_) => <int>{});
   for (final h in hypTurns) {
-    final startSec = h.start.inMicroseconds / 1e6;
-    final endSec = h.end.inMicroseconds / 1e6;
-    final s = (startSec / step).floor().clamp(0, cells);
-    final e = (endSec / step).floor().clamp(0, cells);
-    for (var i = s; i < math.max(s, e); i++) {
-      hypGrid[i].add(h.speaker);
-    }
+    boundary(h.start.inMicroseconds / 1e6);
+    boundary(h.end.inMicroseconds / 1e6);
   }
-
-  final pairs = <int, Map<String, int>>{};
-  var scoredSingle = 0;
-  for (var i = 0; i < cells; i++) {
-    if (refGrid[i].length != 1 || hypGrid[i].isEmpty) continue;
-    final h = hypGrid[i].first;
-    scoredSingle++;
-    final r = refGrid[i].first;
-    final m = pairs.putIfAbsent(h, () => <String, int>{});
-    m[r] = (m[r] ?? 0) + 1;
-  }
-
-  final hs = pairs.keys.toList()..sort();
-  final rs = pairs.values.expand((m) => m.keys).toSet().toList()..sort();
-  int scoreMap(Map<int, String> map) {
-    var total = 0;
-    map.forEach((h, r) => total += pairs[h]?[r] ?? 0);
-    return total;
-  }
-
-  var best = <int, String>{};
-  void search(int idx, Set<String> used, Map<int, String> cur) {
-    if (idx == hs.length) {
-      if (scoreMap(cur) > scoreMap(best)) best = Map<int, String>.of(cur);
-      return;
-    }
-    search(idx + 1, used, cur);
-    for (final r in rs) {
-      if (used.contains(r)) continue;
-      cur[hs[idx]] = r;
-      search(idx + 1, {...used, r}, cur);
-      cur.remove(hs[idx]);
-    }
-  }
-
-  if (hs.length <= 7 && rs.length <= 7) {
-    search(0, <String>{}, <int, String>{});
-  } else {
-    final used = <String>{};
-    final triples = <({int h, String r, int c})>[
-      for (final h in hs)
-        for (final e in pairs[h]!.entries) (h: h, r: e.key, c: e.value),
-    ]..sort((a, b) => b.c.compareTo(a.c));
-    for (final t in triples) {
-      if (!best.containsKey(t.h) && !used.contains(t.r)) {
-        best[t.h] = t.r;
-        used.add(t.r);
+  final edges = boundaries.toList()..sort();
+  final intervals =
+      <({double seconds, Set<String> refs, Set<int> hyps, bool scored})>[];
+  final pairs = <int, Map<String, double>>{};
+  for (var i = 1; i < edges.length; i++) {
+    final start = edges[i - 1];
+    final end = edges[i];
+    if (end <= start) continue;
+    final mid = (start + end) / 2;
+    final refs = {
+      for (final r in refTurns)
+        if (r.start <= mid && mid < r.end) r.speaker,
+    };
+    final hyps = {
+      for (final h in hypTurns)
+        if (h.start.inMicroseconds / 1e6 <= mid &&
+            mid < h.end.inMicroseconds / 1e6)
+          h.speaker,
+    };
+    final scored = !collars.any((c) => c.start <= mid && mid < c.end);
+    final seconds = end - start;
+    intervals.add((seconds: seconds, refs: refs, hyps: hyps, scored: scored));
+    if (scored) {
+      for (final h in hyps) {
+        final overlaps = pairs.putIfAbsent(h, () => {});
+        for (final r in refs) {
+          overlaps[r] = (overlaps[r] ?? 0) + seconds;
+        }
       }
     }
   }
-
-  final correctSingle = scoreMap(best);
-  final speakerErrorRate = 1.0 - (correctSingle / math.max(scoredSingle, 1));
-
-  var totalRefCollar = 0;
-  var totalErrCollar = 0;
-  for (var i = 0; i < cells; i++) {
-    if (boundaryMask[i]) continue;
-    final rSet = refGrid[i];
-    final hMapped = hypGrid[i].map((h) => best[h] ?? 'unmapped_$h').toSet();
-    final nRef = rSet.length;
-    final nHyp = hMapped.length;
-    totalRefCollar += nRef;
-    final nCorrect = rSet.intersection(hMapped).length;
-    totalErrCollar += math.max(nRef, nHyp) - nCorrect;
+  final hs = hypTurns.map((h) => h.speaker).toSet().toList()..sort();
+  final rs = refTurns.map((r) => r.speaker).toSet().toList()..sort();
+  // Hungarian assignment on a square matrix with zero-weight dummy speakers.
+  // Polynomial time also covers severe over-clustering in automatic mode.
+  final n = math.max(hs.length, rs.length);
+  final u = List<double>.filled(n + 1, 0);
+  final v = List<double>.filled(n + 1, 0);
+  final matchedRow = List<int>.filled(n + 1, 0);
+  final previous = List<int>.filled(n + 1, 0);
+  for (var row = 1; row <= n; row++) {
+    matchedRow[0] = row;
+    var column = 0;
+    final minimum = List<double>.filled(n + 1, double.infinity);
+    final used = List<bool>.filled(n + 1, false);
+    do {
+      used[column] = true;
+      final currentRow = matchedRow[column];
+      var delta = double.infinity;
+      var nextColumn = 0;
+      for (var candidate = 1; candidate <= n; candidate++) {
+        if (used[candidate]) continue;
+        final overlap = currentRow <= hs.length && candidate <= rs.length
+            ? (pairs[hs[currentRow - 1]]?[rs[candidate - 1]] ?? 0.0)
+            : 0.0;
+        final cost = -overlap - u[currentRow] - v[candidate];
+        if (cost < minimum[candidate]) {
+          minimum[candidate] = cost;
+          previous[candidate] = column;
+        }
+        if (minimum[candidate] < delta) {
+          delta = minimum[candidate];
+          nextColumn = candidate;
+        }
+      }
+      for (var candidate = 0; candidate <= n; candidate++) {
+        if (used[candidate]) {
+          u[matchedRow[candidate]] += delta;
+          v[candidate] -= delta;
+        } else {
+          minimum[candidate] -= delta;
+        }
+      }
+      column = nextColumn;
+    } while (matchedRow[column] != 0);
+    do {
+      final parent = previous[column];
+      matchedRow[column] = matchedRow[parent];
+      column = parent;
+    } while (column != 0);
   }
-  final derCollar250ms = totalErrCollar / math.max(totalRefCollar, 1);
-
-  return (speakerErrorRate: speakerErrorRate, derCollar250ms: derCollar250ms);
+  final best = <int, String>{
+    for (var column = 1; column <= rs.length; column++)
+      if (matchedRow[column] > 0 && matchedRow[column] <= hs.length)
+        hs[matchedRow[column] - 1]: rs[column - 1],
+  };
+  var singleReference = 0.0;
+  var singleError = 0.0;
+  var scoredReference = 0.0;
+  var derError = 0.0;
+  for (final interval in intervals) {
+    final correct = interval.hyps
+        .where((h) => interval.refs.contains(best[h]))
+        .length;
+    if (interval.refs.length == 1) {
+      singleReference += interval.seconds;
+      if (interval.hyps.length != 1 || correct != 1) {
+        singleError += interval.seconds;
+      }
+    }
+    if (interval.scored) {
+      scoredReference += interval.refs.length * interval.seconds;
+      derError +=
+          (math.max(interval.refs.length, interval.hyps.length) - correct) *
+          interval.seconds;
+    }
+  }
+  return (
+    speakerErrorRate: singleReference > 0 ? singleError / singleReference : 0,
+    derCollar250ms: scoredReference > 0
+        ? derError / scoredReference
+        : (derError > 0 ? double.infinity : 0),
+    singleReferenceSeconds: singleReference,
+    singleErrorSeconds: singleError,
+    scoredReferenceSeconds: scoredReference,
+    derErrorSeconds: derError,
+  );
 }

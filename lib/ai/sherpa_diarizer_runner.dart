@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -44,36 +45,24 @@ class DiarizationTurn {
 /// - [hintThreshold] = 0.4, corresponding to mean intra-cluster cosine similarity
 ///   [cohesion] < 0.6 (in 15 benchmarked meetings, normal meetings had cohesion
 ///   0.71–0.87 while under-clustered multi-speaker recordings had 0.48).
-/// - Single-cluster multi-speaker collision: if [clusters] <= 1, at least
-///   [minMultiSpeakerChunksForCollision] = 10 windows had >= 2 active speakers,
-///   and [collisionRate] >= [minCollisionRate] (0.5), [mergeRisk] is 1.0.
+/// Only cohesion is available from sherpa's final turns. Those turns do not
+/// expose independent pre-clustering local speakers for collision detection.
 class DiarizationQuality {
   const DiarizationQuality({
     required this.chunks,
     required this.clusters,
     required this.cohesion,
-    this.multiSpeakerChunks = 0,
-    this.collisionRate = 0.0,
   });
 
   static const double hintThreshold = 0.4;
   static const int minChunksForCheck = 30;
-  static const int minMultiSpeakerChunksForCollision = 10;
-  static const double minCollisionRate = 0.5;
 
   final int chunks;
   final int clusters;
   final double cohesion;
-  final int multiSpeakerChunks;
-  final double collisionRate;
 
   double get mergeRisk {
     if (chunks < minChunksForCheck) return 0.0;
-    if (clusters <= 1 &&
-        multiSpeakerChunks >= minMultiSpeakerChunksForCollision &&
-        collisionRate >= minCollisionRate) {
-      return 1.0;
-    }
     return math.max(0.0, 1.0 - cohesion);
   }
 
@@ -82,33 +71,10 @@ class DiarizationQuality {
   /// Computes [DiarizationQuality] from per-window speaker embeddings and their
   /// assigned cluster labels.
   factory DiarizationQuality.fromTurnEmbeddings(
-    List<({
-      int chunkIndex,
-      int localSpeaker,
-      int clusterSpeaker,
-      List<double> embedding,
-    })>
-    items,
+    List<({int clusterSpeaker, List<double> embedding})> items,
   ) {
     if (items.isEmpty) {
       return const DiarizationQuality(chunks: 0, clusters: 0, cohesion: 1.0);
-    }
-
-    final byChunk = <int, List<({int localSpeaker, int clusterSpeaker})>>{};
-    for (final item in items) {
-      byChunk.putIfAbsent(item.chunkIndex, () => []).add((
-        localSpeaker: item.localSpeaker,
-        clusterSpeaker: item.clusterSpeaker,
-      ));
-    }
-    var multi = 0;
-    var collided = 0;
-    for (final group in byChunk.values) {
-      final locals = group.map((g) => g.localSpeaker).toSet();
-      if (locals.length < 2) continue;
-      multi++;
-      final assignedClusters = group.map((g) => g.clusterSpeaker).toSet();
-      if (assignedClusters.length < locals.length) collided++;
     }
 
     List<double> normalizeVec(List<double> v) {
@@ -158,8 +124,6 @@ class DiarizationQuality {
       chunks: items.length,
       clusters: byCluster.length,
       cohesion: count > 0 ? (totalSimilarity / count).clamp(-1.0, 1.0) : 1.0,
-      multiSpeakerChunks: multi,
-      collisionRate: multi > 0 ? collided / multi : 0.0,
     );
   }
 
@@ -167,8 +131,6 @@ class DiarizationQuality {
     'chunks': chunks,
     'clusters': clusters,
     'cohesion': cohesion,
-    'multiSpeakerChunks': multiSpeakerChunks,
-    'collisionRate': collisionRate,
   };
 
   static DiarizationQuality? decode(Object? value) {
@@ -177,14 +139,10 @@ class DiarizationQuality {
     final clusters = value['clusters'];
     final cohesion = value['cohesion'];
     if (chunks is! int || clusters is! int || cohesion is! num) return null;
-    final multi = value['multiSpeakerChunks'];
-    final collision = value['collisionRate'];
     return DiarizationQuality(
       chunks: chunks,
       clusters: clusters,
       cohesion: cohesion.toDouble(),
-      multiSpeakerChunks: multi is int ? multi : 0,
-      collisionRate: collision is num ? collision.toDouble() : 0.0,
     );
   }
 
@@ -194,25 +152,15 @@ class DiarizationQuality {
       other is DiarizationQuality &&
           other.chunks == chunks &&
           other.clusters == clusters &&
-          (other.cohesion - cohesion).abs() < 1e-9 &&
-          other.multiSpeakerChunks == multiSpeakerChunks &&
-          (other.collisionRate - collisionRate).abs() < 1e-9;
+          (other.cohesion - cohesion).abs() < 1e-9;
 
   @override
-  int get hashCode => Object.hash(
-    chunks,
-    clusters,
-    cohesion.toStringAsFixed(6),
-    multiSpeakerChunks,
-    collisionRate.toStringAsFixed(6),
-  );
+  int get hashCode =>
+      Object.hash(chunks, clusters, cohesion.toStringAsFixed(6));
 }
 
 class DiarizationResult {
-  const DiarizationResult({
-    required this.turns,
-    this.quality,
-  });
+  const DiarizationResult({required this.turns, this.quality});
 
   final List<DiarizationTurn> turns;
   final DiarizationQuality? quality;
@@ -260,6 +208,62 @@ Future<DiarizationResult> runSherpaDiarization({
   int numThreads = 4,
   void Function(double progress)? onProgress,
 }) async {
+  final progressPort = onProgress == null ? null : ReceivePort();
+  final subscription = progressPort?.listen(
+    (value) => onProgress!(value as double),
+  );
+  try {
+    return await _dispatchDiarization((
+      audioPath: audioPath,
+      segmentationModelPath: segmentationModelPath,
+      embeddingModelPath: embeddingModelPath,
+      expectedSpeakers: expectedSpeakers,
+      threshold: defaultClusteringThreshold,
+      numThreads: numThreads,
+      progress: progressPort?.sendPort,
+    ));
+  } finally {
+    await subscription?.cancel();
+    progressPort?.close();
+  }
+}
+
+// Keep the closure in a separate scope: it captures only transferable values,
+// never the UI callback, model store, ReceivePort or native handles.
+Future<DiarizationResult> _dispatchDiarization(
+  ({
+    String audioPath,
+    String segmentationModelPath,
+    String embeddingModelPath,
+    int? expectedSpeakers,
+    double threshold,
+    int numThreads,
+    SendPort? progress,
+  })
+  request,
+) => Isolate.run(
+  () => _runSherpaDiarization(
+    audioPath: request.audioPath,
+    segmentationModelPath: request.segmentationModelPath,
+    embeddingModelPath: request.embeddingModelPath,
+    expectedSpeakers: request.expectedSpeakers,
+    defaultClusteringThreshold: request.threshold,
+    numThreads: request.numThreads,
+    onProgress: request.progress == null
+        ? null
+        : (value) => request.progress!.send(value),
+  ),
+);
+
+Future<DiarizationResult> _runSherpaDiarization({
+  required String audioPath,
+  required String segmentationModelPath,
+  required String embeddingModelPath,
+  int? expectedSpeakers,
+  double defaultClusteringThreshold = 0.75,
+  int numThreads = 4,
+  void Function(double progress)? onProgress,
+}) async {
   await ensureSherpaBindingsInitialized();
 
   final wave = sherpa_onnx.readWave(audioPath);
@@ -267,8 +271,9 @@ Future<DiarizationResult> runSherpaDiarization({
     throw StateError('无法读取音频样本进行本机发言人区分');
   }
 
-  final numClusters =
-      expectedSpeakers != null && expectedSpeakers > 0 ? expectedSpeakers : -1;
+  final numClusters = expectedSpeakers != null && expectedSpeakers > 0
+      ? expectedSpeakers
+      : -1;
   final config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
     segmentation: sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
       pyannote: sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
@@ -294,10 +299,19 @@ Future<DiarizationResult> runSherpaDiarization({
 
   final sd = sherpa_onnx.OfflineSpeakerDiarization(config);
   List<sherpa_onnx.OfflineSpeakerDiarizationSegment> rawSegments;
+  late sherpa_onnx.WaveData modelWave;
   try {
+    modelWave = sherpa_onnx.WaveData(
+      samples: resampleDiarizationMono(
+        wave.samples,
+        wave.sampleRate,
+        sd.sampleRate,
+      ),
+      sampleRate: sd.sampleRate,
+    );
     if (onProgress != null) {
       rawSegments = sd.processWithCallback(
-        samples: wave.samples,
+        samples: modelWave.samples,
         callback: (processed, total) {
           if (total > 0) {
             onProgress((processed / total).clamp(0.0, 1.0));
@@ -306,7 +320,7 @@ Future<DiarizationResult> runSherpaDiarization({
         },
       );
     } else {
-      rawSegments = sd.process(samples: wave.samples);
+      rawSegments = sd.process(samples: modelWave.samples);
     }
   } finally {
     sd.free();
@@ -323,13 +337,65 @@ Future<DiarizationResult> runSherpaDiarization({
   ];
 
   final quality = _computeQualityFromWaveAndTurns(
-    wave: wave,
+    wave: modelWave,
     turns: turns,
     embeddingModelPath: embeddingModelPath,
     numThreads: numThreads,
   );
 
   return DiarizationResult(turns: turns, quality: quality);
+}
+
+/// Windowed-sinc conversion of mono PCM to the model rate. The low-pass cutoff
+/// follows the lower Nyquist frequency, so downsampling does not simply discard
+/// high-rate samples. Duration is preserved to one target sample; model seconds
+/// therefore remain recording seconds (no post-hoc time scaling).
+Float32List resampleDiarizationMono(
+  Float32List input,
+  int sourceRate,
+  int targetRate,
+) {
+  if (sourceRate <= 0 || targetRate <= 0) {
+    throw ArgumentError('Invalid sample rate');
+  }
+  if (sourceRate == targetRate || input.isEmpty) return input;
+  final ratio = sourceRate / targetRate;
+  final cutoff = math.min(1.0, 1.0 / ratio);
+  final radius = (16 / cutoff).ceil();
+  final output = Float32List((input.length / ratio).round());
+  // Cache kernels by fractional phase (48 -> 16 kHz has one phase).
+  final kernels = <int, List<double>>{};
+  for (var i = 0; i < output.length; i++) {
+    final position = i * ratio;
+    final center = position.floor();
+    final fraction = position - center;
+    final phase = (fraction * 1000000).round();
+    final kernel = kernels.putIfAbsent(
+      phase,
+      () => [
+        for (var offset = -radius; offset <= radius; offset++)
+          _resamplingWeight(offset - fraction, cutoff, radius),
+      ],
+    );
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var offset = -radius; offset <= radius; offset++) {
+      final index = center + offset;
+      if (index < 0 || index >= input.length) continue;
+      final w = kernel[offset + radius];
+      sum += input[index] * w;
+      weight += w;
+    }
+    output[i] = weight.abs() > 1e-12 ? sum / weight : 0;
+  }
+  return output;
+}
+
+double _resamplingWeight(double offset, double cutoff, int radius) {
+  if (offset.abs() > radius) return 0;
+  final x = math.pi * cutoff * offset;
+  final sinc = x.abs() < 1e-12 ? 1.0 : math.sin(x) / x;
+  return cutoff * sinc * (0.5 + 0.5 * math.cos(math.pi * offset / radius));
 }
 
 DiarizationQuality? _computeQualityFromWaveAndTurns({
@@ -351,13 +417,7 @@ DiarizationQuality? _computeQualityFromWaveAndTurns({
     final totalSamples = wave.samples.length;
     const windowSec = 2.0;
     final windowSamples = (windowSec * sr).round();
-    final observations = <({
-      int chunkIndex,
-      int localSpeaker,
-      int clusterSpeaker,
-      List<double> embedding,
-    })>[];
-    var chunkIdx = 0;
+    final observations = <({int clusterSpeaker, List<double> embedding})>[];
 
     for (final turn in turns) {
       final startSample = (turn.start.inMicroseconds * sr ~/ 1000000).clamp(
@@ -370,11 +430,7 @@ DiarizationQuality? _computeQualityFromWaveAndTurns({
       );
       if (endSample - startSample < sr ~/ 5) continue;
 
-      for (
-        var pos = startSample;
-        pos < endSample;
-        pos += windowSamples, chunkIdx++
-      ) {
+      for (var pos = startSample; pos < endSample; pos += windowSamples) {
         final sliceEnd = math.min(endSample, pos + windowSamples);
         if (sliceEnd - pos < sr ~/ 5) continue;
         final stream = extractor.createStream();
@@ -386,8 +442,6 @@ DiarizationQuality? _computeQualityFromWaveAndTurns({
             final emb = extractor.compute(stream);
             if (emb.isNotEmpty) {
               observations.add((
-                chunkIndex: chunkIdx,
-                localSpeaker: turn.speaker,
                 clusterSpeaker: turn.speaker,
                 embedding: emb.toList(growable: false),
               ));

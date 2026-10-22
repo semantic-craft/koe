@@ -2,6 +2,8 @@ package com.semanticcraft.soundcore
 
 import android.app.AlertDialog
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -31,6 +33,20 @@ class MainActivity : AudioServiceActivity() {
         )
         // Kept out of the lambdas below, which can outlive this activity.
         val appContext = applicationContext
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
+            "com.semanticcraft.koe/wifi_connectivity").setMethodCallHandler { call, result ->
+            if (call.method != "isWifiConnected") {
+                result.notImplemented()
+            } else {
+                val manager = appContext.getSystemService(ConnectivityManager::class.java)
+                val caps = manager.getNetworkCapabilities(manager.activeNetwork)
+                result.success(caps != null &&
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+            }
+        }
         val mainThread = Handler(Looper.getMainLooper())
         // 停止 on the notification: Dart saves the take or the text and ends
         // the work. If Dart cannot answer, the service just stops.

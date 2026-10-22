@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import '../state/recording.dart';
 import 'diarization_model_store.dart';
 import 'sherpa_diarizer_runner.dart';
-import 'stt_types.dart';
 
 export 'sherpa_diarizer_runner.dart';
 
@@ -104,51 +103,6 @@ assignSpeakersToSegments(
     segments: List<TranscriptSegment>.unmodifiable(assigned),
     speakerNumbering: Map<int, String>.unmodifiable(numbering),
   );
-}
-
-/// Synthesizes timed [SttSegment]s by splitting [text] into sentences and
-/// distributing their times proportionally across [turns] when an on-device
-/// engine returns plain text without sentence timestamps.
-List<SttSegment> synthesizeSegmentsFromTextAndTurns(
-  String text,
-  List<DiarizationTurn> turns,
-) {
-  final normalized = normalizeSttText(text);
-  if (normalized.isEmpty || turns.isEmpty) return const [];
-  final rawPieces = normalized
-      .split(RegExp(r'(?<=[。！？!?；;\n])\s*'))
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-  final pieces = rawPieces.isEmpty ? [normalized] : rawPieces;
-  final minStartMs = turns.map((t) => t.start.inMilliseconds).reduce(math.min);
-  final maxEndMs = math.max(
-    minStartMs + pieces.length * 100,
-    turns.map((t) => t.end.inMilliseconds).reduce(math.max),
-  );
-  final totalSpanMs = math.max(maxEndMs - minStartMs, pieces.length * 10);
-  final totalRunes = math.max(
-    1,
-    pieces.fold<int>(0, (sum, s) => sum + s.runes.length),
-  );
-
-  final out = <SttSegment>[];
-  var cursorRunes = 0;
-  var prevStartMs = -1;
-  for (var i = 0; i < pieces.length; i++) {
-    final piece = pieces[i];
-    final nextRunes = cursorRunes + piece.runes.length;
-    var startMs = minStartMs + (totalSpanMs * cursorRunes) ~/ totalRunes;
-    if (startMs <= prevStartMs) startMs = prevStartMs + 1;
-    var endMs = i == pieces.length - 1
-        ? maxEndMs
-        : minStartMs + (totalSpanMs * nextRunes) ~/ totalRunes;
-    if (endMs < startMs) endMs = startMs;
-    out.add(SttSegment(text: piece, startMs: startMs, endMs: endMs));
-    prevStartMs = startMs;
-    cursorRunes = nextRunes;
-  }
-  return out;
 }
 
 abstract interface class SpeakerDiarizer {

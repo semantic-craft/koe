@@ -34,6 +34,107 @@ void main() {
   });
 
   test(
+    'default checksum rejects corrupt cache and falls back on corrupt download',
+    () async {
+      final spec = DiarizationModelFileSpec(
+        id: 'seg',
+        fileName: 'model.onnx',
+        expectedBytes: 4,
+        sha256: _sha256Hex(utf8.encode('good')),
+        modelScopeUrl: 'https://modelscope.cn/model',
+        huggingFaceUrl: 'https://huggingface.co/model',
+      );
+      final file = File('${tempDir.path}/model.onnx');
+      await file.writeAsString('bad!');
+      final requests = <String>[];
+      final store = DiarizationModelStore(
+        directory: tempDir,
+        customSpecs: [spec],
+        isWifiConnected: () async => true,
+        client: _FakeStreamingClient((request) async {
+          requests.add(request.url.host);
+          return http.StreamedResponse(
+            Stream.value(
+              utf8.encode(
+                request.url.host == 'modelscope.cn' ? 'bad!' : 'good',
+              ),
+            ),
+            200,
+          );
+        }),
+      );
+      addTearDown(store.dispose);
+      await store.refreshStatus();
+      expect(store.isReady, isFalse);
+      expect(await store.download(), isTrue);
+      expect(requests, ['modelscope.cn', 'huggingface.co']);
+      expect(await file.readAsString(), 'good');
+      await file.writeAsString('bad!');
+      requests.clear();
+      await store.ensureReady();
+      expect(requests, ['modelscope.cn', 'huggingface.co']);
+      expect(await file.readAsString(), 'good');
+    },
+  );
+
+  test('Wi-Fi loss after first model prevents every later request', () async {
+    var wifi = true;
+    final requested = <Uri>[];
+    final store = DiarizationModelStore(
+      directory: tempDir,
+      verifyChecksum: false,
+      isWifiConnected: () async => wifi,
+      client: _FakeStreamingClient((request) async {
+        requested.add(request.url);
+        return http.StreamedResponse(Stream.value([1, 2, 3]), 200);
+      }),
+    );
+    addTearDown(store.dispose);
+    store.addListener(() {
+      if (store.progress == 0.5) wifi = false;
+    });
+    expect(await store.download(), isFalse);
+    expect(requested, hasLength(1));
+    expect(store.status, DiarizationModelStatus.wifiRequired);
+  });
+
+  test(
+    'Wi-Fi loss stops an idle response and resume waits for Wi-Fi',
+    () async {
+      var wifi = true;
+      final received = Completer<void>();
+      final response = StreamController<List<int>>();
+      var requests = 0;
+      final store = DiarizationModelStore(
+        directory: tempDir,
+        verifyChecksum: false,
+        isWifiConnected: () async => wifi,
+        client: _FakeStreamingClient((request) async {
+          requests++;
+          return http.StreamedResponse(
+            response.stream,
+            200,
+            contentLength: 100,
+          );
+        }),
+      );
+      addTearDown(store.dispose);
+      store.addListener(() {
+        if (store.progress > 0 && !received.isCompleted) received.complete();
+      });
+      final task = store.download();
+      response.add([1]);
+      await received.future;
+      wifi = false;
+      expect(await task.timeout(const Duration(seconds: 3)), isFalse);
+      expect(store.status, DiarizationModelStatus.wifiRequired);
+      expect(await store.download(), isFalse);
+      expect(requests, 1);
+      await response.close();
+    },
+  );
+
+  test(
     '(1) 源顺序 ModelScope → HuggingFace：ModelScope 成功时不请求 HuggingFace；第一源失败时才回退第二源',
     () async {
       final segBytes = utf8.encode('fake-pyannote-segmentation-onnx-bytes');
@@ -87,6 +188,7 @@ void main() {
         directory: dirA,
         client: client,
         isWifiConnected: () async => true,
+        verifyChecksum: false,
       );
       addTearDown(storeA.dispose);
 
@@ -111,6 +213,7 @@ void main() {
         directory: dirB,
         client: client,
         isWifiConnected: () async => true,
+        verifyChecksum: false,
       );
       addTearDown(storeB.dispose);
 
@@ -149,6 +252,7 @@ void main() {
         directory: tempDir,
         client: client,
         isWifiConnected: () async => wifiOn,
+        verifyChecksum: false,
       );
       addTearDown(store.dispose);
 
@@ -219,6 +323,7 @@ void main() {
         directory: tempDir,
         client: client,
         isWifiConnected: () async => true,
+        verifyChecksum: false,
       );
       addTearDown(store.dispose);
 
@@ -341,6 +446,7 @@ void main() {
           directory: Directory('${tempDir.path}/ui-models'),
           client: client,
           isWifiConnected: () async => true,
+          verifyChecksum: false,
         );
         modelStore.addListener(() {
           if (modelStore.isDownloading &&

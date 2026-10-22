@@ -13,6 +13,7 @@ class MainFlutterWindow: NSWindow {
     self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    WifiConnectivityBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
     CredentialBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
     AudioTranscodeBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
     AppleSpeechBridge.shared.configure(
