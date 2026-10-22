@@ -47,6 +47,7 @@ void main() {
     doubao?.apiKeyOverride = 'key';
     final c = RecorderController(
       loadPersistedState: false,
+      meetingLocalOnly: false,
       qwenSpeech: qwen,
       doubaoSpeech: doubao,
       fileJobJournal: journal,

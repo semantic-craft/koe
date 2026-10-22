@@ -33,7 +33,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   void _registerExportedPaths(Iterable<String> paths);
   void _scheduleAutoTransferMissing();
   _RecordingSession? _sessionForReference(RecordingReference ref);
+  SpeechConfiguration get _meetingConfiguration;
   SpeechConfiguration get _settingsConfiguration;
+  SttStreamSession Function(SpeechConfiguration config)?
+  get _speechStreamOverride;
   String get activeGuestLanguage;
   String get activeOwnerLanguage;
   String get activeTranslationTargetLanguage;
@@ -43,6 +46,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   abstract bool connected;
   int? fileIdFromPath(String path);
   abstract SttFileProgress? fileTranscriptionProgress;
+  abstract bool meetingLocalOnly;
+  String get meetingLocalOnlyUnavailableMessage;
+  bool get onDeviceSpeechSupported;
   abstract bool recording;
   void rememberTranscript(
     String path,
@@ -74,7 +80,52 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   // Final BLE/file callbacks can arrive after capture and stream flags clear.
   // They still belong to this take and must never adopt the next provider.
   SpeechConfiguration get _activeConfiguration =>
-      _liveConfiguration ?? _settingsConfiguration;
+      _liveConfiguration ?? _meetingConfiguration;
+
+  /// Whether the current live meeting recording is permitted to stream PCM
+  /// audio to [_activeConfiguration]'s speech engine (#376).
+  bool get _liveStreamSendPermitted {
+    final config = _activeConfiguration;
+    if (!config.provider.onDevice && meetingLocalOnly) return false;
+    return true;
+  }
+
+  /// Synchronously revokes an active or handshaking cloud live stream when
+  /// [meetingLocalOnly] is turned on mid-recording (#376).
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  void _revokeCloudLiveStreamIfNeeded() {
+    if (_liveStreamSendPermitted) return;
+    _pendingPcm.clear();
+    final session = _sttStream;
+    final subscription = _sttStreamSub;
+    if (session == null && subscription == null && !_streamSttStarting) {
+      return;
+    }
+    _snapshotLiveText();
+    _sttLifecycleRevision++;
+    _sttStream = null;
+    _sttStreamSub = null;
+    _streamSttStarting = false;
+    streamingSttActive = false;
+    if (transcribingPath == null) transcribing = false;
+    _snapshotLiveText();
+    Future<void>? closeFuture;
+    try {
+      closeFuture = session?.close();
+    } catch (e) {
+      debugPrint('[STT] local-only close: $e');
+    }
+    unawaited(() async {
+      try {
+        await subscription?.cancel();
+        await closeFuture;
+        await session?.dispose();
+      } catch (e) {
+        debugPrint('[STT] local-only dispose: $e');
+      }
+    }());
+  }
   bool _isConfigured(SpeechConfiguration config) {
     if (config.provider.retired) return false;
     if (config.provider.needsCredentials) {
@@ -157,7 +208,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     if (error is SocketException) return '网络连接失败，请检查网络后重试';
     final code = error is PlatformException ? error.code : error.toString();
     return switch (code) {
-      'unsupported' => '此设备不支持设备端处理，请在设置中选择云端语音服务',
+      'unsupported' =>
+        meetingLocalOnly
+            ? meetingLocalOnlyUnavailableMessage
+            : '此设备不支持设备端处理，请在设置中选择云端语音服务',
       'language_unsupported' => '不支持此语言，请更换语言',
       'resources_missing' => '请在设置中下载所需语言',
       'cancelled' => '处理已取消，可重试',
@@ -247,7 +301,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     }
     if (!_activeAutoTranscribe ||
         !_activeSttConfigured ||
+        !_liveStreamSendPermitted ||
         _recordWireStatus == 2) {
+      _pendingPcm.clear();
       return;
     }
     if (!_preferStreamStt) return;
@@ -263,6 +319,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     if (pcm == null || pcm.isEmpty) return;
     pcmFramesDecoded = _opusPcm.framesDecoded;
 
+    if (!_liveStreamSendPermitted) {
+      _pendingPcm.clear();
+      return;
+    }
     final session = _sttStream;
     if (session != null && session.isServerReady) {
       session.sendPcm(pcm);
@@ -282,7 +342,11 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   /// Prefer PCM WS when decode works; false after hard stream failure → Ogg batch.
 
   Future<bool> _ensureStreamStt() async {
-    if (!_activeAutoTranscribe || !_activeSttConfigured || !_preferStreamStt) {
+    if (!_activeAutoTranscribe ||
+        !_activeSttConfigured ||
+        !_liveStreamSendPermitted ||
+        !_preferStreamStt) {
+      _pendingPcm.clear();
       return false;
     }
     if (_sttStream != null && _sttStream!.isServerReady) {
@@ -326,6 +390,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         await _fileCancellation;
         if (revision != _sttLifecycleRevision) return false;
       }
+      if (!_liveStreamSendPermitted) {
+        _pendingPcm.clear();
+        return false;
+      }
 
       _streamTranscriptPrefix = (transcriptPartial ?? transcript).trim();
       _currentRecording?.transcriptionComplete = false;
@@ -338,7 +406,17 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       _sttStream = session;
       _sttStreamSub = subscription;
       await session.start();
-      if (revision != _sttLifecycleRevision) return false;
+      if (revision != _sttLifecycleRevision || !_liveStreamSendPermitted) {
+        if (revision == _sttLifecycleRevision) {
+          _pendingPcm.clear();
+        }
+        if (identical(_sttStream, session)) _sttStream = null;
+        if (identical(_sttStreamSub, subscription)) _sttStreamSub = null;
+        await subscription.cancel();
+        await session.close();
+        await session.dispose();
+        return false;
+      }
       streamingSttActive = true;
       _preferStreamStt = true;
       transcriptError =
@@ -352,7 +430,14 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      if (revision != _sttLifecycleRevision) return false;
+      if (revision != _sttLifecycleRevision) {
+        if (identical(_sttStream, session)) _sttStream = null;
+        if (identical(_sttStreamSub, subscription)) _sttStreamSub = null;
+        await subscription?.cancel();
+        await session?.close();
+        await session?.dispose();
+        return false;
+      }
       debugPrint('[STT] ${config.provider.name} stream start failed: $e');
       streamingSttActive = false;
       _preferStreamStt = false;
@@ -376,12 +461,18 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   }
 
   SttStreamSession _createStreamSession(SpeechConfiguration config) {
+    final override = _speechStreamOverride;
+    if (override != null) return override(config);
     final engine = _sttEngines[config.provider];
     if (engine == null) throw StateError('该语音服务已停用');
     return engine.openStream(config);
   }
 
   void _flushPendingPcm() {
+    if (!_liveStreamSendPermitted) {
+      _pendingPcm.clear();
+      return;
+    }
     final session = _sttStream;
     if (session == null || !session.isServerReady) return;
     if (_pendingPcm.isEmpty) return;
@@ -532,7 +623,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     _sttStreamSub = null;
     streamingSttActive = false;
     try {
-      if (session != null) {
+      if (session != null && _liveStreamSendPermitted) {
         _flushPendingPcmTo(session);
         final done = await session.finish();
         if (revision != _sttLifecycleRevision) return;
@@ -542,6 +633,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
           _applyServerFinalText(done.text);
           recordingSession?.transcriptionComplete = true;
         }
+      } else if (session != null) {
+        _pendingPcm.clear();
+        await session.close();
       }
       if (revision != _sttLifecycleRevision) return;
       _snapshotLiveText();
@@ -614,6 +708,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   }
 
   void _flushPendingPcmTo(SttStreamSession session) {
+    if (!_liveStreamSendPermitted) {
+      _pendingPcm.clear();
+      return;
+    }
     if (_pendingPcm.isEmpty) return;
     final buf = _pendingPcm.toBytes();
     _pendingPcm.clear();
@@ -683,7 +781,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     final textOnly = allDayListening;
     final config = textOnly
         ? _settingsConfiguration.withoutTranscription()
-        : _settingsConfiguration;
+        : _meetingConfiguration;
     _currentSessionId =
         '${DateTime.now().microsecondsSinceEpoch}-${++liveSessionRevision}';
     _recordingSessions[_currentSessionId!] = _RecordingSession(
@@ -714,6 +812,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     if (config.enabled && !_isConfigured(config)) {
       transcriptError = config.provider.needsCredentials
           ? '请在设置中配置 ${config.provider.label}，下次录音生效'
+          : meetingLocalOnly && !onDeviceSpeechSupported
+          ? meetingLocalOnlyUnavailableMessage
           : '请在设置中选择并下载录音语言，下次录音生效';
       _currentRecording?.error = transcriptError;
     }

@@ -212,6 +212,7 @@ class QwenSttService extends CloudFileSttService {
     bool Function()? isCurrent,
   }) async {
     Future<String> once() async {
+      _ensureCurrent(isCurrent);
       final policy = await _policy(
         origin: origin,
         apiKey: apiKey,
@@ -222,6 +223,7 @@ class QwenSttService extends CloudFileSttService {
       if (maxMb != null && await file.length() > maxMb * 1024 * 1024) {
         throw QwenSttException('音频超过通义允许的 $maxMb MB');
       }
+      _ensureCurrent(isCurrent);
       return _postToOss(
         policy: policy,
         file: file,
@@ -293,6 +295,7 @@ class QwenSttService extends CloudFileSttService {
         ),
       ),
     );
+    _ensureCurrent(isCurrent);
     final streamed = await _client
         .send(request)
         .timeout(const Duration(minutes: 10));

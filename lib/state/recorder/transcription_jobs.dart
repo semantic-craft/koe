@@ -26,9 +26,15 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   String _referenceKey(RecordingReference ref);
   Future<void> _scheduleTopicAssist(String recordingKey, String transcript);
   _RecordingSession? _sessionForReference(RecordingReference ref);
+  SpeechConfiguration _configurationForProvider(
+    SttProvider provider, {
+    String? sourceLanguage,
+    bool cloudUploadConfirmed,
+  });
   SpeechConfiguration get _settingsConfiguration;
   abstract final Future<void> _settingsLoaded;
   String _speechErrorMessage(Object error);
+  bool _takenAsVoiceNote(String? path);
   abstract final Map<String, TranscriptMetadata> _transcriptMetadata;
   abstract Future<void> _transcriptsLoaded;
   abstract String appleSourceLanguage;
@@ -43,6 +49,9 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     List<TranscriptSegment>? segments,
   });
   Map<String, String> speakerAliasesForPath(String path);
+  abstract bool meetingLocalOnly;
+  String get meetingLocalOnlyUnavailableMessage;
+  bool get onDeviceSpeechSupported;
   abstract SttProvider speechProvider;
   abstract String? statusMessage;
   abstract bool streamingSttActive;
@@ -55,6 +64,15 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   // END DEPS
 
   bool get doubaoFileProcessing => _fileJobProvider == SttProvider.doubao;
+
+  /// The provider currently running a file transcription job for [ref], or
+  /// null when no file job is actively running for this recording.
+  SttProvider? activeFileJobProviderFor(RecordingReference ref) {
+    final key = _referenceKey(ref);
+    if (_fileJobKey == null || _fileJobKey != key) return null;
+    return _fileJobProvider;
+  }
+
   void cancelDoubaoFileProcessing() {
     if (doubaoFileProcessing) {
       _doubaoStt.cancelCurrent();
@@ -80,17 +98,31 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
 
   Future<void> _restoreFileJobs() async {
     try {
-      await Future.wait([_settingsLoaded, _transcriptsLoaded]);
+      await Future.wait([_settingsLoaded, _transcriptsLoaded, _libraryLoaded]);
       await _fileJobs.load();
+      var blockedAny = false;
       for (final job in _fileJobs.jobs.values.toList()) {
         if (_disposed) return;
-        if (job.recoverable) {
-          await _deferredJobs.enqueue(
-            job.key,
-            job.path,
-            job.resolve(_settingsConfiguration),
-          );
+        if (!job.recoverable) continue;
+        final resolved = job.resolve(_settingsConfiguration);
+        final needsUpload =
+            !resolved.provider.onDevice &&
+            job.stage != 'result' &&
+            job.taskId == null;
+        if (meetingLocalOnly && !_takenAsVoiceNote(job.path) && needsUpload) {
+          const message = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+          job.stage = 'failed';
+          job.error = message;
+          _recordingErrors[job.key] = message;
+          blockedAny = true;
+          continue;
         }
+        await _deferredJobs.enqueue(job.key, job.path, resolved);
+      }
+      if (blockedAny) {
+        try {
+          await _fileJobs.save();
+        } catch (_) {}
       }
     } catch (_) {
       fileJobRecoveryError = '无法读取转写任务记录；请保留数据并检查存储空间';
@@ -110,22 +142,70 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     return capabilities.speechStatus;
   }
 
+  SttProvider? _pendingTranscribeProvider;
+  bool _pendingCloudUploadConfirmed = false;
+
+  /// Runs manual transcription on [ref] with an explicit [provider] and/or
+  /// user confirmation for uploading meeting audio to a cloud engine (#376).
+  /// Never mutates the global [speechProvider].
+  Future<void> confirmCloudTranscribeRecording(
+    RecordingReference ref, {
+    SttProvider? provider,
+    String? sourceLanguage,
+    bool prepareLanguages = false,
+    bool confirmCloudUpload = true,
+  }) async {
+    final previousProvider = _pendingTranscribeProvider;
+    final previousConfirmed = _pendingCloudUploadConfirmed;
+    _pendingTranscribeProvider = provider;
+    _pendingCloudUploadConfirmed = confirmCloudUpload;
+    try {
+      await transcribeRecording(
+        ref,
+        sourceLanguage: sourceLanguage,
+        prepareLanguages: prepareLanguages,
+      );
+    } finally {
+      _pendingTranscribeProvider = previousProvider;
+      _pendingCloudUploadConfirmed = previousConfirmed;
+    }
+  }
+
   Future<void> transcribeRecording(
     RecordingReference ref, {
     String? sourceLanguage,
     bool prepareLanguages = false,
   }) async {
+    final explicitProvider = _pendingTranscribeProvider;
+    final confirmCloudUpload = _pendingCloudUploadConfirmed;
+    _pendingTranscribeProvider = null;
+    _pendingCloudUploadConfirmed = false;
     final view = recordingView(ref);
     if (view.path == null) {
       _recordingErrors[_referenceKey(ref)] = '请先下载录音';
       notifyListeners();
       return;
     }
+    await _settingsLoaded;
+    await _libraryLoaded;
+    if (_disposed) return;
+    final targetProvider = explicitProvider ?? speechProvider;
+    if (meetingLocalOnly &&
+        !_takenAsVoiceNote(view.path) &&
+        !targetProvider.onDevice &&
+        !confirmCloudUpload) {
+      _recordingErrors[_referenceKey(ref)] =
+          '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+      notifyListeners();
+      return;
+    }
     await transcribeLocalFile(
       view.path!,
+      provider: targetProvider,
+      confirmCloudUpload: confirmCloudUpload,
       sourceLanguage:
           sourceLanguage ??
-          (speechProvider.requiresSourceLanguage &&
+          (targetProvider.requiresSourceLanguage &&
                   view.sourceLanguage != 'auto'
               ? view.sourceLanguage
               : null),
@@ -138,14 +218,17 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     String path, {
     String? sourceLanguage,
     bool prepareLanguages = false,
+    SttProvider? provider,
+    bool confirmCloudUpload = false,
   }) async {
     await _settingsLoaded;
     if (_disposed) return;
-    final settings = _settingsConfiguration;
-    final config =
-        settings.provider.requiresSourceLanguage && sourceLanguage != null
-        ? settings.withSourceLanguage(sourceLanguage.trim())
-        : settings;
+    final targetProvider = provider ?? speechProvider;
+    final config = _configurationForProvider(
+      targetProvider,
+      sourceLanguage: sourceLanguage,
+      cloudUploadConfirmed: confirmCloudUpload,
+    );
     await _fileJobsLoaded;
     await _libraryLoaded;
     // Manual retry runs straight through the deferred mechanism's executor so
@@ -167,6 +250,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     if (_disposed) return true;
     await _libraryLoaded;
     await _fileJobsLoaded;
+    await _settingsLoaded;
     final key = _recordingKey(path: path);
     if (_isTrashedPath(path)) {
       await _fileJobs.discard(key);
@@ -181,13 +265,48 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       }
       return !fromQueue;
     }
+    final isMeeting = !_takenAsVoiceNote(path);
+    final existingJob = _fileJobs.jobs[key];
+    final resumesWithoutUpload =
+        existingJob != null &&
+        (existingJob.stage == 'result' ||
+            existingJob.stage == 'running' && existingJob.taskId != null);
+    final effectiveProvider = resumesWithoutUpload
+        ? (SttProvider.parse(existingJob.config['provider']) ?? config.provider)
+        : config.provider;
+    if (isMeeting &&
+        meetingLocalOnly &&
+        !effectiveProvider.onDevice &&
+        !resumesWithoutUpload &&
+        !config.cloudUploadConfirmed) {
+      const message = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+      _recordingErrors[key] = message;
+      if (existingJob != null &&
+          existingJob.taskId == null &&
+          existingJob.stage != 'result') {
+        existingJob.stage = 'failed';
+        existingJob.error = message;
+        try {
+          await _fileJobs.save();
+        } catch (_) {}
+      }
+      notifyListeners();
+      return true;
+    }
     if (_fileJobs.jobs[key]?.stage != 'result' &&
         (config.provider.needsCredentials
             ? !_isConfigured(config)
             : config.sourceLanguage.isEmpty)) {
-      _recordingErrors[key] = config.provider.needsCredentials
-          ? '请在设置中配置 ${config.provider.label}'
-          : '请选择录音语言';
+      if (!config.provider.needsCredentials &&
+          isMeeting &&
+          meetingLocalOnly &&
+          !onDeviceSpeechSupported) {
+        _recordingErrors[key] = meetingLocalOnlyUnavailableMessage;
+      } else {
+        _recordingErrors[key] = config.provider.needsCredentials
+            ? '请在设置中配置 ${config.provider.label}'
+            : '请选择录音语言';
+      }
       final pending = _fileJobs.jobs[key];
       if (pending != null) {
         pending.error = _recordingErrors[key];
@@ -246,6 +365,22 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         return true;
       }
       config = job.resolve(config);
+      if (isMeeting &&
+          meetingLocalOnly &&
+          !config.provider.onDevice &&
+          job.stage != 'result' &&
+          job.taskId == null &&
+          !config.cloudUploadConfirmed) {
+        _fileJobPreparing = false;
+        const message = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+        job.stage = 'failed';
+        job.error = message;
+        _recordingErrors[key] = message;
+        await _fileJobs.save();
+        finishJobCompleter();
+        notifyListeners();
+        return true;
+      }
       if (job.stage != 'result' &&
           config.provider.needsCredentials &&
           !_isConfigured(config)) {
@@ -284,6 +419,13 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     fileTranscriptionProgress = const SttFileProgress(SttFileStage.preparing);
     _recordingErrors.remove(key);
     notifyListeners();
+    bool uploadStillPermitted() =>
+        !isMeeting ||
+        !meetingLocalOnly ||
+        config.provider.onDevice ||
+        job.stage == 'result' ||
+        job.taskId != null ||
+        config.cloudUploadConfirmed;
     try {
       if (fromQueue && !await File(path).exists()) {
         throw StateError('录音文件不存在');
@@ -292,6 +434,14 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         job.stage = 'running';
         job.error = null;
         await _fileJobs.save();
+      }
+      if (!uploadStillPermitted()) {
+        const message = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+        job.stage = 'failed';
+        job.error = message;
+        _recordingErrors[key] = message;
+        await _fileJobs.save();
+        return true;
       }
       if (config.provider == SttProvider.qwen) {
         _qwenStt.recovery = QwenTaskRecovery(
@@ -327,6 +477,14 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         await _fileJobs.discard(key);
         return true;
       }
+      if (!uploadStillPermitted()) {
+        const message = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+        job.stage = 'failed';
+        job.error = message;
+        _recordingErrors[key] = message;
+        await _fileJobs.save();
+        return true;
+      }
       final result = job.stage == 'result'
           ? SttResult(
               text: job.text!,
@@ -337,7 +495,10 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
           : await _transcribePath(
               path,
               configuration: config,
-              isCurrent: () => !_disposed && revision == _fileJobRevision,
+              isCurrent: () =>
+                  !_disposed &&
+                  revision == _fileJobRevision &&
+                  uploadStillPermitted(),
               onProgress: (progress) {
                 if (_disposed || revision != _fileJobRevision) return;
                 fileTranscriptionProgress = progress;
@@ -407,8 +568,9 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       }
     } catch (error) {
       if (!_disposed && revision == _fileJobRevision) {
-        _recordingErrors[key] =
-            error is PlatformException && error.code == 'resources_missing'
+        _recordingErrors[key] = !uploadStillPermitted()
+            ? '已开启「录音只留本机」，云端转写会上传音频，请确认后再试'
+            : error is PlatformException && error.code == 'resources_missing'
             ? '请下载所选录音语言后重试'
             : error is _TranscriptSaveFailure
             ? '转写结果未能保存；请检查存储空间后重试'

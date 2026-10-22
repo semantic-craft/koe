@@ -17,6 +17,7 @@ class SpeechConfiguration {
     required this.appleReady,
     required this.appleTranslationReady,
     this.engines = const {},
+    this.cloudUploadConfirmed = false,
   });
 
   final SttProvider provider;
@@ -34,6 +35,11 @@ class SpeechConfiguration {
   /// when unset, and a defaulted model. Key-only engines carry only the
   /// key; Apple is absent.
   final Map<SttProvider, EngineConfig> engines;
+
+  /// One-shot user confirmation allowing this file transcription to upload
+  /// meeting audio to a cloud engine while `meetingLocalOnly` is on (#376).
+  /// Never persisted to disk.
+  final bool cloudUploadConfirmed;
 
   /// The resolved credentials for [provider] (empty when never configured).
   EngineConfig engineConfig(SttProvider provider) =>
@@ -67,5 +73,6 @@ class SpeechConfiguration {
     appleReady: appleReady,
     appleTranslationReady: appleTranslationReady,
     engines: engines,
+    cloudUploadConfirmed: cloudUploadConfirmed,
   );
 }

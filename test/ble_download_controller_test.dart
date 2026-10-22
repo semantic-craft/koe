@@ -278,6 +278,7 @@ void main() {
       controller =
           RecorderController(
               loadPersistedState: false,
+              meetingLocalOnly: false,
               ble: ble,
               qwenSpeech: qwen,
               fileJobJournal: journal,
@@ -384,6 +385,7 @@ void main() {
       RecorderController open(_Ble link) =>
           RecorderController(
               loadPersistedState: false,
+              meetingLocalOnly: false,
               ble: link,
               qwenSpeech: qwen,
               fileJobJournal: FileJobJournal(file: journalFile),

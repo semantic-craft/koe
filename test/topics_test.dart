@@ -43,6 +43,7 @@ void main() {
   }) {
     final c = RecorderController(
       loadPersistedState: false,
+      meetingLocalOnly: false,
       topicsEnabled: true,
       topicStore: store,
       qwenSpeech: qwen ?? _Qwen(),

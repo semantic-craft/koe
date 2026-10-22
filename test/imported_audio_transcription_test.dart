@@ -236,6 +236,7 @@ void main() {
     final qwen = _QwenServer();
     final c = RecorderController(
       loadPersistedState: false,
+      meetingLocalOnly: false,
       qwenSpeech: QwenSttService(client: qwen, pollInterval: Duration.zero)
         ..apiKeyOverride = 'k',
       doubaoSpeech: DoubaoSttService(client: flash, transcoder: transcoder)

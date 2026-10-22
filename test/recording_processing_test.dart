@@ -54,6 +54,7 @@ void main() async {
     final qwen = _Qwen();
     final c = RecorderController(
       loadPersistedState: false,
+      meetingLocalOnly: false,
       qwenSpeech: qwen,
       fileJobJournal: _UnwritableJournal(),
     );
@@ -149,6 +150,7 @@ void main() async {
           ..modelOverride = 'new-model';
         final c = RecorderController(
           loadPersistedState: false,
+          meetingLocalOnly: false,
           qwenSpeech: qwen,
           fileJobJournal: reopened,
         );
@@ -188,6 +190,7 @@ void main() async {
       final journal = FileJobJournal(inMemory: true);
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         qwenSpeech: qwen,
         fileJobJournal: journal,
       );
@@ -228,6 +231,7 @@ void main() async {
       final journal = FileJobJournal(inMemory: true);
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         qwenSpeech: qwen,
         fileJobJournal: journal,
       )..setSpeechProvider(SttProvider.qwen);
@@ -265,6 +269,7 @@ void main() async {
       journal = FileJobJournal(inMemory: true);
       c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         qwenSpeech: qwen,
         fileJobJournal: journal,
         retrievedAudioSettleTime: const Duration(milliseconds: 150),
@@ -430,6 +435,7 @@ void main() async {
       () async {
         final slow = RecorderController(
           loadPersistedState: false,
+          meetingLocalOnly: false,
           qwenSpeech: qwen,
           fileJobJournal: journal,
           // Long enough that three serial windows would exceed the bound.
@@ -497,7 +503,11 @@ void main() async {
       final qwen = _Qwen()
         ..apiKeyOverride = 'key'
         ..pending = Completer<void>();
-      final c = RecorderController(loadPersistedState: false, qwenSpeech: qwen)
+      final c = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        qwenSpeech: qwen,
+      )
         ..setSpeechProvider(SttProvider.qwen)
         ..rememberTranscript(audio.path, '原有成功结果');
       addTearDown(c.dispose);
@@ -525,6 +535,7 @@ void main() async {
       final qwen = _Qwen()..apiKeyOverride = 'key';
       final first = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         qwenSpeech: qwen,
         fileJobJournal: journal,
       )..setSpeechProvider(SttProvider.qwen);
@@ -540,6 +551,7 @@ void main() async {
       final service = _Qwen()..apiKeyOverride = 'key';
       final restored = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         qwenSpeech: service,
         fileJobJournal: restoredJournal,
       );
@@ -566,7 +578,11 @@ void main() async {
     'retrieved raw audio and missing configuration do not make requests',
     () async {
       final qwen = _Qwen();
-      final c = RecorderController(loadPersistedState: false, qwenSpeech: qwen)
+      final c = RecorderController(
+        loadPersistedState: false,
+        meetingLocalOnly: false,
+        qwenSpeech: qwen,
+      )
         ..setSpeechProvider(SttProvider.qwen)
         ..setAutoTranscribe(true);
       addTearDown(c.dispose);
@@ -595,6 +611,7 @@ void main() async {
       final ble = _Ble();
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         ble: ble,
         qwenSpeech: qwen,
         appleSpeech: _Apple(),
@@ -647,6 +664,7 @@ void main() async {
       final ble = _Ble();
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         ble: ble,
         doubaoSpeech: doubao,
         appleSpeech: _Apple(),
@@ -699,6 +717,7 @@ void main() async {
     final ble = _Ble();
     final c = RecorderController(
       loadPersistedState: false,
+      meetingLocalOnly: false,
       ble: ble,
       qwenSpeech: qwen,
       appleSpeech: _Apple(),
@@ -749,6 +768,7 @@ void main() async {
     final ble = _Ble();
     final c = RecorderController(
       loadPersistedState: false,
+      meetingLocalOnly: false,
       ble: ble,
       qwenSpeech: qwen,
       appleSpeech: _Apple(),
@@ -792,6 +812,7 @@ void main() async {
       final ble = _Ble();
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         ble: ble,
         doubaoSpeech: doubao,
         appleSpeech: _Apple(),
@@ -846,6 +867,7 @@ void main() async {
         );
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         doubaoSpeech: doubao,
         appleSpeech: _Apple(),
       )..setSpeechProvider(SttProvider.doubao);
@@ -870,6 +892,7 @@ void main() async {
       final doubao = _Doubao();
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         doubaoSpeech: doubao,
         appleSpeech: _Apple(),
       )..setSpeechProvider(SttProvider.doubao);
@@ -909,6 +932,7 @@ void main() async {
       final ble = _Ble();
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         ble: ble,
         doubaoSpeech: service,
         appleSpeech: _Apple(),
@@ -971,6 +995,7 @@ void main() async {
         ..pending = Completer<void>();
       final c = RecorderController(
         loadPersistedState: false,
+        meetingLocalOnly: false,
         doubaoSpeech: doubao,
         appleSpeech: _Apple(),
       )..setSpeechProvider(SttProvider.doubao);
@@ -1004,6 +1029,7 @@ void main() async {
     final ble = _Ble();
     final c = RecorderController(
       loadPersistedState: false,
+      meetingLocalOnly: false,
       ble: ble,
       qwenSpeech: qwen,
       doubaoSpeech: doubao,
@@ -1505,7 +1531,7 @@ void main() async {
     'provider and language changes take effect only for the next take',
     () async {
       final ble = _Ble();
-      final c = controller(_Apple(), ble: ble);
+      final c = controller(_Apple(), ble: ble)..setMeetingLocalOnly(false);
       await c.refreshAppleCapabilities();
       await c.startRecord();
       final ref = c.currentRecordingReference!;

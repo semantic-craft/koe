@@ -67,6 +67,7 @@ class RecordingAsset {
     this.place,
     this.deletedAt,
     this.permanentlyDeleted = false,
+    this.voiceNote = false,
   });
 
   final String path;
@@ -87,6 +88,12 @@ class RecordingAsset {
   /// It prevents automatic transfer from recreating the same material.
   final bool permanentlyDeleted;
 
+  /// Recorded from hold-to-talk (按住说话记一条, #142) as everyday voice
+  /// input rather than a meeting/formal recording (#376). Missing in older
+  /// records defaults to false so unknown recordings are conservatively
+  /// treated as meeting recordings.
+  final bool voiceNote;
+
   bool get trashed => deletedAt != null || archived;
 
   RecordingAsset copyWith({
@@ -104,6 +111,7 @@ class RecordingAsset {
     DateTime? deletedAt,
     bool clearDeletedAt = false,
     bool? permanentlyDeleted,
+    bool? voiceNote,
   }) => RecordingAsset(
     path: path ?? this.path,
     displayName: displayName ?? this.displayName,
@@ -117,6 +125,7 @@ class RecordingAsset {
     place: clearPlace ? null : (place ?? this.place),
     deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
     permanentlyDeleted: permanentlyDeleted ?? this.permanentlyDeleted,
+    voiceNote: voiceNote ?? this.voiceNote,
   );
 
   Map<String, Object?> toJson() => {
@@ -132,6 +141,7 @@ class RecordingAsset {
     if (place != null) 'place': place!.toJson(),
     if (deletedAt != null) 'deletedAt': deletedAt!.toIso8601String(),
     if (permanentlyDeleted) 'permanentlyDeleted': true,
+    if (voiceNote) 'voiceNote': true,
   };
 
   static RecordingAsset? decode(Object? value) {
@@ -173,6 +183,7 @@ class RecordingAsset {
       place: RecordingPlace.decode(value['place']),
       deletedAt: deletedAt,
       permanentlyDeleted: value['permanentlyDeleted'] == true,
+      voiceNote: value['voiceNote'] == true,
     );
   }
 }

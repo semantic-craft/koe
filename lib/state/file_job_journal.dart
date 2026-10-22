@@ -160,6 +160,7 @@ class FileJob {
           model: config['model'] as String?,
         ),
       },
+      cloudUploadConfirmed: current.cloudUploadConfirmed,
     );
   }
 }

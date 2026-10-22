@@ -28,6 +28,7 @@ mixin _RecorderSettings on ChangeNotifier {
   abstract bool _preferStreamStt;
   abstract final QwenSttService _qwenStt;
   void _resetTranslationTurns();
+  void _revokeCloudLiveStreamIfNeeded();
   String _speechErrorMessage(Object error);
   abstract bool connected;
   abstract DeviceInfoModel? info;
@@ -60,6 +61,7 @@ mixin _RecorderSettings on ChangeNotifier {
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
     allDayListening = s.allDayListening;
+    meetingLocalOnly = s.meetingLocalOnly;
     transcriptLanguage = s.transcriptLanguage;
     appleSourceLanguage = s.appleSourceLanguage;
     translationTargetLanguage = s.translationTargetLanguage;
@@ -111,6 +113,7 @@ mixin _RecorderSettings on ChangeNotifier {
             autoTranscribe: autoTranscribe,
             autoRealtime: autoRealtime,
             allDayListening: allDayListening,
+            meetingLocalOnly: meetingLocalOnly,
             transcriptLanguage: transcriptLanguage,
             sttMode: sttMode,
             translationTargetLanguage: translationTargetLanguage,
@@ -156,6 +159,15 @@ mixin _RecorderSettings on ChangeNotifier {
     for (final provider in SttProvider.available)
       if (!provider.onDevice || _appleSpeech.offered) provider,
   ];
+
+  /// Whether this device currently offers a supported on-device speech engine.
+  bool get onDeviceSpeechSupported => appleCapabilities.supported;
+
+  /// Why a meeting recording cannot be transcribed locally when
+  /// [meetingLocalOnly] is on and no on-device engine is ready.
+  String get meetingLocalOnlyUnavailableMessage => !onDeviceSpeechSupported
+      ? '已开启「录音只留本机」，此设备暂无可用的本机语音引擎，不会回落到云端'
+      : '请在设置中选择并下载本机识别语言';
 
   Future<void> refreshAppleCapabilities() async {
     final revision = ++_capabilityRevision;
@@ -243,6 +255,50 @@ mixin _RecorderSettings on ChangeNotifier {
     unawaited(_persistSettings());
   }
 
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  SpeechConfiguration _configurationForProvider(
+    SttProvider provider, {
+    String? sourceLanguage,
+    bool cloudUploadConfirmed = false,
+  }) {
+    final source = provider.requiresSourceLanguage
+        ? (sourceLanguage?.trim().isNotEmpty == true
+              ? sourceLanguage!.trim()
+              : (appleSourceLanguage.isNotEmpty
+                    ? appleSourceLanguage
+                    : (appleCapabilities.suggestedSourceLanguage ?? '')))
+        : (sourceLanguage?.trim().isNotEmpty == true
+              ? sourceLanguage!.trim()
+              : transcriptLanguage);
+    final ready =
+        onDeviceSpeechSupported &&
+        source.isNotEmpty &&
+        appleCapabilities.speechStatus == SpeechResourceStatus.ready &&
+        !appleCapabilitiesLoading;
+    return SpeechConfiguration(
+      provider: provider,
+      sourceLanguage: source,
+      targetLanguage: translationTargetLanguage,
+      ownerLanguage: ownerLanguage,
+      guestLanguage: guestLanguage,
+      mode: provider.supportsMode(sttMode)
+          ? sttMode
+          : SttDisplayMode.transcription,
+      enabled: autoTranscribe,
+      appleReady: ready,
+      appleTranslationReady:
+          onDeviceSpeechSupported && appleTranslationAvailable,
+      engines: provider.onDevice
+          ? const {}
+          : {
+              for (final entry in _engineAdapters.entries)
+                entry.key: entry.value.snapshot(),
+            },
+      cloudUploadConfirmed: cloudUploadConfirmed,
+    );
+  }
+
   SpeechConfiguration get _settingsConfiguration => SpeechConfiguration(
     provider: speechProvider,
     sourceLanguage: speechProvider.requiresSourceLanguage
@@ -262,6 +318,18 @@ mixin _RecorderSettings on ChangeNotifier {
         entry.key: entry.value.snapshot(),
     },
   );
+
+  /// Speech configuration for meeting / formal recordings (#376).
+  ///
+  /// When [meetingLocalOnly] is on, only an [SttProvider.onDevice] engine may
+  /// run and no cloud credentials are carried in the snapshot; if this device
+  /// has no available on-device engine, the configuration stays unconfigured
+  /// rather than falling back to a cloud service.
+  // Used by other parts through their abstract declarations.
+  // ignore: unused_element
+  SpeechConfiguration get _meetingConfiguration => meetingLocalOnly
+      ? _configurationForProvider(SttProvider.apple)
+      : _settingsConfiguration;
 
   // Used by other parts through their abstract declarations.
   // ignore: unused_element
@@ -288,6 +356,15 @@ mixin _RecorderSettings on ChangeNotifier {
     allDayListening = v;
     notifyListeners();
     unawaited(_persistSettings());
+  }
+
+  void setMeetingLocalOnly(bool v) {
+    if (meetingLocalOnly == v) return;
+    meetingLocalOnly = v;
+    if (v) _revokeCloudLiveStreamIfNeeded();
+    notifyListeners();
+    unawaited(_persistSettings());
+    if (v) unawaited(refreshAppleCapabilities());
   }
 
   void setAutoRealtime(bool v) {
@@ -433,6 +510,9 @@ mixin _RecorderSettings on ChangeNotifier {
 
   /// The record buttons start all-day, text-only listening (#319).
   bool allDayListening = false;
+
+  /// Meeting / formal recordings stay on the device (#376).
+  bool meetingLocalOnly = true;
 
   /// Near-realtime AI transcription (PCM WS stream + Ogg batch fallback).
   bool autoTranscribe = true;

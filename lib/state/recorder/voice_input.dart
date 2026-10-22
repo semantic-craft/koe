@@ -43,6 +43,7 @@ mixin _RecorderVoiceInput on ChangeNotifier {
     String path,
     DateTime recordedAt, {
     String label,
+    bool voiceNote,
   });
   Future<SttResult> _transcribePath(
     String path, {
@@ -188,7 +189,12 @@ mixin _RecorderVoiceInput on ChangeNotifier {
     } catch (_) {
       // Whatever reached the file is still saved below.
     }
-    final saved = await _adoptPhoneTake(path, startedAt, label: '语音记录');
+    final saved = await _adoptPhoneTake(
+      path,
+      startedAt,
+      label: '语音记录',
+      voiceNote: true,
+    );
     if (saved == null) {
       voiceInputErrors[VoiceTarget.note] = phoneRecordingError ?? '没有保存';
       phoneRecordingError = null;
