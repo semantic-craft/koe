@@ -553,6 +553,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         p == ExportPhase.closing;
   }
 
+  /// Whether Koe joins the device's SoftAP itself during the transfer
+  /// (Android), so the user has nothing to join before it starts.
+  bool get joinsWifiItself => _wifi.link.joinsItself;
+
   /// Check whether a local interface joined the device's SoftAP subnet.
   /// This intentionally does not touch the device's WebSocket port.
   Future<bool> isOnSoftApNetwork() async {
@@ -1180,7 +1184,9 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
           await _ble.disconnect();
         },
       );
-      statusMessage = '请连接 Wi‑Fi「${ep.ssid}」，然后点「继续导出」';
+      statusMessage = joinsWifiItself
+          ? '正在加入录音豆的 Wi‑Fi「${ep.ssid}」…'
+          : '请连接 Wi‑Fi「${ep.ssid}」，然后点「继续导出」';
       // Stay "busy" while awaiting join so other ops don't collide.
       notifyListeners();
       return ep;
