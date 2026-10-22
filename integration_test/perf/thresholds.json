@@ -1,5 +1,5 @@
 {
-  "_comment": "Upper bounds checked by scripts/perf-check. Measured on the M-series Mac CI runner in profile mode; the 'before' values (main before #216) and 'after' values are in the PR that added this file. Bounds sit between the two with margin for noise.",
+  "_comment": "Upper bounds checked by scripts/perf-check. Measured on the M-series Mac CI runner in profile mode; the 'before' values (main before #216) and 'after' values are in the PR that added this file. Bounds sit between the two with margin for noise. 'recording' (#401) is a new scenario with no 'before': its bounds are the measured values with margin, and 80 level readings that each notified the controller would break them.",
   "ble_slices": {
     "controller_notifications": 20,
     "janky_frames": 10
@@ -18,5 +18,9 @@
   },
   "ask_rank": {
     "longest_frame_gap_ms": 50
+  },
+  "recording": {
+    "controller_notifications": 5,
+    "janky_frames": 10
   }
 }

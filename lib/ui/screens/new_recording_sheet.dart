@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../audio/input_level_watch.dart';
 import '../../platform/device_kind.dart';
 import '../../state/recorder_controller.dart';
 import '../../state/recording_bookmarks.dart';
@@ -105,7 +107,6 @@ class PhoneRecordingPanel extends StatefulWidget {
 }
 
 class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
-  Timer? _ticker;
   bool _stopping = false;
   final _notes = TextEditingController();
 
@@ -118,9 +119,6 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
     _keptNotes = context.read<RecorderController>().phoneRecordingNotes;
     _notes.text = _keptNotes;
     _notes.addListener(_onNotesEdited);
-    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (mounted) setState(() {});
-    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final controller = context.read<RecorderController>();
@@ -132,7 +130,6 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
 
   @override
   void dispose() {
-    _ticker?.cancel();
     _notes.dispose();
     super.dispose();
   }
@@ -221,21 +218,28 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
     if (leave == true && mounted) await _stop();
   }
 
-  String _clock(Duration d) {
-    String two(int v) => v.toString().padLeft(2, '0');
-    final hours = d.inHours;
-    final rest =
-        '${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
-    return hours > 0 ? '$hours:$rest' : rest;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final controller = context.watch<RecorderController>();
-    final active = controller.phoneRecordingActive;
-    final paused = controller.phoneRecordingPaused;
-    final error = controller.phoneRecordingError;
-    final highlights = controller.phoneRecordingHighlights;
+    // Only what the panel shows; the clock and the level meter redraw on
+    // their own, so a 71-minute take never redraws the whole panel (R25).
+    final (
+      active,
+      paused,
+      error,
+      permissionDenied,
+      highlights,
+      levelHint,
+    ) = context.select(
+      (RecorderController c) => (
+        c.phoneRecordingActive,
+        c.phoneRecordingPaused,
+        c.phoneRecordingError,
+        c.phoneRecordingPermissionDenied,
+        c.phoneRecordingHighlights,
+        c.phoneRecordingLevelHint,
+      ),
+    );
+    final controller = context.read<RecorderController>();
     final markButton = OutlinedButton.icon(
       key: const ValueKey('mark-phone-recording-highlight'),
       onPressed: _stopping ? null : _markHighlight,
@@ -292,16 +296,20 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    _clock(controller.phoneRecordingElapsed),
-                    key: const ValueKey('phone-recording-elapsed'),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 40,
-                      fontWeight: FontWeight.w300,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                  const _RecordingClock(),
+                  if (active) ...[
+                    const SizedBox(height: 8),
+                    Center(
+                      child: _LevelMeter(level: controller.phoneRecordingLevel),
                     ),
-                  ),
+                  ],
+                  if (active && levelHint != null) ...[
+                    const SizedBox(height: 12),
+                    _LevelHintNotice(
+                      hint: levelHint,
+                      onDismiss: controller.dismissPhoneRecordingLevelHint,
+                    ),
+                  ],
                   if (error != null) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -310,7 +318,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: AppColors.textSecondary),
                     ),
-                    if (controller.phoneRecordingPermissionDenied) ...[
+                    if (permissionDenied) ...[
                       const SizedBox(height: 8),
                       Center(
                         child: OutlinedButton(
@@ -410,6 +418,146 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The take's recording time. It ticks on its own, so the rest of the panel
+/// is not redrawn every half second.
+class _RecordingClock extends StatefulWidget {
+  const _RecordingClock();
+
+  @override
+  State<_RecordingClock> createState() => _RecordingClockState();
+}
+
+class _RecordingClockState extends State<_RecordingClock> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  String _clock(Duration d) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    final hours = d.inHours;
+    final rest =
+        '${two(d.inMinutes.remainder(60))}:${two(d.inSeconds.remainder(60))}';
+    return hours > 0 ? '$hours:$rest' : rest;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _clock(context.read<RecorderController>().phoneRecordingElapsed),
+      key: const ValueKey('phone-recording-elapsed'),
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        fontSize: 40,
+        fontWeight: FontWeight.w300,
+        fontFeatures: [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+}
+
+/// The microphone level of the take, redrawn on its own with each reading.
+class _LevelMeter extends StatelessWidget {
+  const _LevelMeter({required this.level});
+
+  final ValueListenable<double> level;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: '麦克风音量',
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadii.xs),
+        child: SizedBox(
+          width: 200,
+          height: 4,
+          child: ColoredBox(
+            color: AppColors.bgMuted,
+            child: ValueListenableBuilder(
+              valueListenable: level,
+              builder: (context, value, _) => FractionallySizedBox(
+                key: const ValueKey('phone-recording-level'),
+                alignment: Alignment.centerLeft,
+                widthFactor: value,
+                child: const ColoredBox(color: AppColors.accent),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shiyin's hints about the microphone (`Views/RecordingView.swift`), each
+/// dismissable for the rest of the take.
+class _LevelHintNotice extends StatelessWidget {
+  const _LevelHintNotice({required this.hint, required this.onDismiss});
+
+  final InputLevelHint hint;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = switch (hint) {
+      InputLevelHint.silent => '麦克风没有收到声音：可能被静音、被其他应用占用，或选错了输入设备。',
+      InputLevelHint.quiet => '声音有点小：把麦克风放近说话的人一点。',
+      InputLevelHint.noisy => '背景有点吵，转写和区分发言人可能不准。',
+    };
+    return DecoratedBox(
+      key: const ValueKey('phone-recording-level-hint'),
+      decoration: BoxDecoration(
+        color: AppColors.amberSoft,
+        border: Border.all(color: AppColors.amberBorder),
+        borderRadius: BorderRadius.circular(AppRadii.panel),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+        child: Row(
+          children: [
+            Icon(
+              hint == InputLevelHint.silent
+                  ? Icons.mic_off_rounded
+                  : Icons.graphic_eq_rounded,
+              size: 18,
+              color: AppColors.amber,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            Tooltip(
+              message: '这次录音不再提示这件事',
+              child: TextButton(
+                key: const ValueKey('dismiss-phone-recording-level-hint'),
+                onPressed: onDismiss,
+                child: const Text('知道了'),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -592,7 +740,9 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
                   : (runsOnMac
                         ? '当前不可用；这里请用录音豆或导入音频'
                         : '只在 iPhone 上提供；这里请用录音豆或导入音频'),
-              trailing: phoneRecording ? null : (runsOnMac ? '不可用' : '仅 iPhone'),
+              trailing: phoneRecording
+                  ? null
+                  : (runsOnMac ? '不可用' : '仅 iPhone'),
               onTap: phoneRecording
                   ? () => Navigator.pop(context, NewRecordingAction.phone)
                   : null,
@@ -604,7 +754,9 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
               subtitle: phoneRecording
                   ? '一直识别你说的话，只留文字、不存录音；断网也不丢'
                   : (runsOnMac ? '当前不可用' : '只在 iPhone 上提供'),
-              trailing: phoneRecording ? null : (runsOnMac ? '不可用' : '仅 iPhone'),
+              trailing: phoneRecording
+                  ? null
+                  : (runsOnMac ? '不可用' : '仅 iPhone'),
               onTap: phoneRecording
                   ? () => Navigator.pop(context, NewRecordingAction.textCapture)
                   : null,

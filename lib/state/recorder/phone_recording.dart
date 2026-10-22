@@ -10,6 +10,10 @@ part of '../recorder_controller.dart';
 /// Notes typed and highlights marked during a take (#400) are kept in a file
 /// beside it while it records and become its bookmarks when it is saved.
 ///
+/// While a take records, its input level drives a meter and hints about a
+/// silent, quiet or noisy microphone (#401); a take the system ends, such as
+/// on an unplugged microphone or a full disk, is saved like 结束并保存.
+///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderPhoneRecording on ChangeNotifier {
@@ -51,6 +55,16 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   List<Duration> _phoneTakeHighlights = const [];
   Future<void> _phoneNotesWrites = Future<void>.value();
   bool _phoneNotesQueued = false;
+
+  /// The input level of the running take, from 0 (-60 dBFS and below) to 1
+  /// (full scale), every 100 ms. Only the level meter listens, so a reading
+  /// redraws nothing else.
+  final phoneRecordingLevel = ValueNotifier<double>(0);
+  InputLevelWatch? _phoneLevelWatch;
+  StreamSubscription<double>? _phoneMicLevels;
+
+  /// What the microphone's level suggests checking, or null.
+  InputLevelHint? get phoneRecordingLevelHint => _phoneLevelWatch?.hint;
 
   /// The notes typed during the current take; each line begins with the
   /// recording time it was started at.
@@ -115,6 +129,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _phoneTakeHeld = false;
       await _phoneMicStates?.cancel();
       _phoneMicStates = _phoneRecorder.states.listen(_onPhoneMicState);
+      _watchPhoneMicLevels();
       notifyListeners();
     } finally {
       _phoneTakeBusy = false;
@@ -138,6 +153,44 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     notifyListeners();
   }
 
+  /// The system ended the take: save what was recorded, as 结束并保存 does,
+  /// and say why.
+  Future<void> _onPhoneTakeCutOff() async {
+    final saved = await stopPhoneRecording();
+    if (_disposed || phoneRecordingActive) return;
+    const why = '录音被系统停下了，可能是麦克风断开或磁盘已满';
+    phoneRecordingError = saved != null
+        ? '$why。已录的部分已保存'
+        : '$why。${phoneRecordingError ?? ''}';
+    notifyListeners();
+  }
+
+  /// Follows the take's input level for the meter and the hints, where the
+  /// platform reports it.
+  void _watchPhoneMicLevels() {
+    if (_phoneRecorder case final PhoneMicLevels mic) {
+      // Apple platforms report average power, the measure the hints were set
+      // for; Android reports peaks.
+      final watch = _phoneLevelWatch = InputLevelWatch(loudness: runsOnApple);
+      _phoneMicLevels = mic.levels(InputLevelWatch.interval).listen((db) {
+        if (_disposed || _phoneLevelWatch != watch || phoneRecordingPaused) {
+          return;
+        }
+        // Shiyin's meter scale (Capture/RecordingWriter.swift:96-100).
+        phoneRecordingLevel.value = ((db + 60) / 60).clamp(0.0, 1.0);
+        if (watch.add(db)) notifyListeners();
+      });
+    }
+  }
+
+  /// Hides the level hint shown now for the rest of the take.
+  void dismissPhoneRecordingLevelHint() {
+    final watch = _phoneLevelWatch;
+    if (watch == null || watch.hint == null) return;
+    watch.dismiss();
+    notifyListeners();
+  }
+
   void _onPhoneMicState(PhoneMicState state) {
     if (!phoneRecordingActive || _disposed) return;
     switch (state) {
@@ -152,7 +205,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         }
         _markPhoneTakeRunning();
       case PhoneMicState.stopped:
-        break;
+        // Stop and discard hold the take busy, so this is the system ending
+        // it: an unplugged microphone, a full disk.
+        if (!_phoneTakeBusy) unawaited(_onPhoneTakeCutOff());
+        return;
     }
     _showPhoneTakeState();
     notifyListeners();
@@ -172,6 +228,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     if (since == null) return;
     _phoneTakeElapsed += DateTime.now().difference(since);
     _phoneTakeRunningSince = null;
+    // The level is judged afresh after a pause, as Shiyin does.
+    _phoneLevelWatch?.restart();
+    phoneRecordingLevel.value = 0;
   }
 
   void _markPhoneTakeRunning() {
@@ -346,6 +405,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeHeld = false;
     _phoneTakeNotes = '';
     _phoneTakeHighlights = const [];
+    unawaited(_phoneMicLevels?.cancel());
+    _phoneMicLevels = null;
+    _phoneLevelWatch = null;
+    phoneRecordingLevel.value = 0;
     unawaited(BackgroundSyncService.shared.end(BackgroundWork.phoneRecording));
   }
 
@@ -467,6 +530,13 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
           : '找回了 $recovered 段中断的手机录音';
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_phoneMicLevels?.cancel());
+    phoneRecordingLevel.dispose();
+    super.dispose();
   }
 
   String _takeLabel(DateTime at) {
