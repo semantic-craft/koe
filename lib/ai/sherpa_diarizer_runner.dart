@@ -199,12 +199,15 @@ Future<void> ensureSherpaBindingsInitialized() async {
   _sherpaBindingsInitialized = true;
 }
 
+// Frozen using AMI ES2004a 420–840s; the 0–420s holdout is not used to tune.
+const defaultDiarizationClusteringThreshold = 1.0;
+
 Future<DiarizationResult> runSherpaDiarization({
   required String audioPath,
   required String segmentationModelPath,
   required String embeddingModelPath,
   int? expectedSpeakers,
-  double defaultClusteringThreshold = 0.75,
+  double defaultClusteringThreshold = defaultDiarizationClusteringThreshold,
   int numThreads = 4,
   void Function(double progress)? onProgress,
 }) async {
@@ -260,7 +263,7 @@ Future<DiarizationResult> _runSherpaDiarization({
   required String segmentationModelPath,
   required String embeddingModelPath,
   int? expectedSpeakers,
-  double defaultClusteringThreshold = 0.75,
+  double defaultClusteringThreshold = defaultDiarizationClusteringThreshold,
   int numThreads = 4,
   void Function(double progress)? onProgress,
 }) async {
@@ -290,7 +293,8 @@ Future<DiarizationResult> _runSherpaDiarization({
     ),
     clustering: sherpa_onnx.FastClusteringConfig(
       numClusters: numClusters,
-      threshold: defaultClusteringThreshold,
+      // Keep the explicit-count configuration independent of auto tuning.
+      threshold: numClusters > 0 ? 0.75 : defaultClusteringThreshold,
       computeConfidence: true,
     ),
     minDurationOn: 0.2,

@@ -210,7 +210,7 @@
         "number": 331,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T05:10:10Z"
+        "updated_at": "2026-10-22T06:04:11Z"
       },
       {
         "number": 335,
@@ -228,14 +228,14 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T05:10:08Z"
+        "updated_at": "2026-10-22T13:49:40Z"
       }
     ],
-    "main": "e6c0595585683d6a86345144d657d9236dd8cb13",
+    "main": "d24e2c7f47d3414ad1bcbf039624063c0fb6cd27",
     "open_pulls": [
       {
-        "head": "f547cc961be2c6a072a8efd1b9e7063c90b1bc5d",
-        "number": 379
+        "head": "47a79a791d30e99a1985c86673ae751deac49576",
+        "number": 389
       }
     ],
     "pulls": [
@@ -387,7 +387,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-22T05:11:05.762682Z",
+  "observed_at": "2026-10-22T13:52:15.521641Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -587,6 +587,35 @@
           "status": "done",
           "summary": "PR #62 与工单 #38 已被 #331 的范围取代：Koe 名称与图标由 #336（PR #347）完成，后台同步通知由 #339（PR #351）、录音与监听通知由 #340（PR #354）完成。2026-10-22 关闭 PR #62 与 #38，不再合并。",
           "title": "旧 Android 应用身份 PR（已关闭）"
+        },
+        {
+          "id": "meeting-diarization-p2",
+          "title": "会议纪要第 2 期：本机发言人区分",
+          "status": "in_progress",
+          "summary": "模型下载四种暂停/继续交错回归通过。自动聚类阈值在独立 AMI 420–840 秒片段选定并冻结为 1.0，0–420 秒留出 DER 14.43%（6 人）；指定 4 人 DER 13.66%，与 2B 相同。中文自动模式分成 2 人，存在过度合并；指定 4 人仍为 4 人。",
+          "next": "本地追加提交由维护者推送；中文自动人数退化、独立参考标注与三端 GUI/真实切网/会议验收待处理，AMI DER 门槛通过不能替代整体验收。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "lib/ai/diarization_model_store.dart",
+              "note": "请求代际和暂停/删除清理屏障。"
+            },
+            {
+              "kind": "file",
+              "ref": "test/diarization_model_store_test.dart",
+              "note": "旧 Wi-Fi 结果 true/false 与立即继续共四种回归。"
+            },
+            {
+              "kind": "file",
+              "ref": "tool/diarization_eval.dart",
+              "note": "独立时间区间评测、精确双侧 collar 与重叠计分。"
+            },
+            {
+              "kind": "file",
+              "ref": "scripts/check",
+              "note": "本轮默认并发一次：analyze 无问题，869 通过/1 失败；recording_shortcut_test.dart:222 与 2B main 同名等待断言一致，本轮不修。模型/Wi-Fi 定向 14/14、计分 4/4、真实模型自动聚类回归通过。"
+            }
+          ]
         }
       ],
       "title": "实现差异与范围核对"

@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-22T05:11:05.762682Z</p>
-<p>Main: <code>main: e6c0595585683d6a86345144d657d9236dd8cb13</code></p>
+<p>Observed: 2026-10-22T13:52:15.521641Z</p>
+<p>Main: <code>main: d24e2c7f47d3414ad1bcbf039624063c0fb6cd27</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -46,6 +46,12 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: 取代它的应用名称与图标实现。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/351">pull 351: 取代它的后台同步通知实现。</a></li>
 </ul><p>Next: 无后续实现；Android 设备验收按 #345。</p></article>
+<article id="meeting-diarization-p2"><h3>会议纪要第 2 期：本机发言人区分</h3><span class="badge">in_progress</span><p>模型下载四种暂停/继续交错回归通过。自动聚类阈值在独立 AMI 420–840 秒片段选定并冻结为 1.0，0–420 秒留出 DER 14.43%（6 人）；指定 4 人 DER 13.66%，与 2B 相同。中文自动模式分成 2 人，存在过度合并；指定 4 人仍为 4 人。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/lib/ai/diarization_model_store.dart">file lib/ai/diarization_model_store.dart: 请求代际和暂停/删除清理屏障。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/diarization_model_store_test.dart">file test/diarization_model_store_test.dart: 旧 Wi-Fi 结果 true/false 与立即继续共四种回归。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/tool/diarization_eval.dart">file tool/diarization_eval.dart: 独立时间区间评测、精确双侧 collar 与重叠计分。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 本轮默认并发一次：analyze 无问题，869 通过/1 失败；recording_shortcut_test.dart:222 与 2B main 同名等待断言一致，本轮不修。模型/Wi-Fi 定向 14/14、计分 4/4、真实模型自动聚类回归通过。</a></li>
+</ul><p>Next: 本地追加提交由维护者推送；中文自动人数退化、独立参考标注与三端 GUI/真实切网/会议验收待处理，AMI DER 门槛通过不能替代整体验收。</p></article>
 </section>
 <section id="pending"><h2>问题与功能范围</h2>
 <article id="reconnect-flake"><h3>一键重连测试偶发失败</h3><span class="badge">planned</span><p>工单记录手动断开后一键重连测试偶发失败；需依据复现时序和行为测试判断根因与修复效果。</p><ul>
@@ -121,6 +127,6 @@
 </ul><p>Next: 有网络时 refresh 核对事实，再 render 与 check；新增范围先明确 tracked，设备验收独立补证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/379">#379</a> <code>f547cc961be2c6a072a8efd1b9e7063c90b1bc5d</code></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/389">#389</a> <code>47a79a791d30e99a1985c86673ae751deac49576</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

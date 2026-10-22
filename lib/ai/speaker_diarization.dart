@@ -118,7 +118,7 @@ abstract interface class SpeakerDiarizer {
 class SherpaSpeakerDiarizer implements SpeakerDiarizer {
   SherpaSpeakerDiarizer({
     required this.modelStore,
-    this.defaultClusteringThreshold = 0.75,
+    this.defaultClusteringThreshold = defaultDiarizationClusteringThreshold,
     this.numThreads = 4,
   });
 

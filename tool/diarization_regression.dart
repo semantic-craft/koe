@@ -5,8 +5,11 @@ import 'dart:typed_data';
 import 'package:koe/ai/sherpa_diarizer_runner.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
+import 'diarization_eval.dart' as evaluation;
+
 // Real-model regression, intentionally outside scripts/check. Pass an existing
-// model/fixture directory, then "responsiveness" or "sample-rate".
+// model/fixture directory, then "responsiveness", "sample-rate" or
+// "auto-clustering" (AMI 420–840s only; never scores the holdout).
 Future<void> main(List<String> args) async {
   final dir = args[0];
   await ensureSherpaBindingsInitialized();
@@ -22,7 +25,25 @@ Future<void> main(List<String> args) async {
     expectedSpeakers: 4,
     onProgress: progress,
   );
-  if (args[1] == 'responsiveness') {
+  if (args[1] == 'auto-clustering') {
+    // Development-set regression guard: the old default scores 17.07%.
+    // This is not a substitute for the separate 0–420s holdout evaluation.
+    await evaluation.main([
+      '--cache-dir',
+      dir,
+      '--ami-only',
+      '--start-seconds',
+      '420',
+      '--clip-seconds',
+      '420',
+      '--mode',
+      'auto',
+      '--max-der',
+      '0.15',
+      '--output-prefix',
+      'regression-auto-clustering',
+    ]);
+  } else if (args[1] == 'responsiveness') {
     var ticks = 0;
     int? first;
     var last = 0;
@@ -92,6 +113,8 @@ Future<void> main(List<String> args) async {
       await File(upsampled).delete();
     }
   } else {
-    throw ArgumentError('Expected responsiveness or sample-rate');
+    throw ArgumentError(
+      'Expected responsiveness, sample-rate or auto-clustering',
+    );
   }
 }

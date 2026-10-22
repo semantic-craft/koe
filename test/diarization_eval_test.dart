@@ -3,6 +3,25 @@ import 'package:koe/ai/sherpa_diarizer_runner.dart';
 import '../tool/diarization_eval.dart';
 
 void main() {
+  test('RTTM interval excludes holdout and rebases crossing turns', () {
+    final reference = parseDiarizationRttm(
+      [
+        'SPEAKER test 1 0 5 <NA> <NA> holdout <NA> <NA>',
+        'SPEAKER test 1 419 2 <NA> <NA> A <NA> <NA>',
+        'SPEAKER test 1 420 2 <NA> <NA> B <NA> <NA>',
+        'SPEAKER test 1 839 2 <NA> <NA> A <NA> <NA>',
+        'SPEAKER test 1 840 1 <NA> <NA> outside <NA> <NA>',
+      ],
+      startTimeSec: 420,
+      maxTimeSec: 420,
+    );
+    expect(reference, [
+      (start: 0.0, end: 1.0, speaker: 'A'),
+      (start: 0.0, end: 2.0, speaker: 'B'),
+      (start: 419.0, end: 420.0, speaker: 'A'),
+    ]);
+  });
+
   test(
     'exact speaker mapping scores over-clustering beyond seven predictions',
     () {

@@ -16,14 +16,50 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 Future<void> main(List<String> args) async {
   var cacheDirPath = '/tmp/turing-koe-p2/models-cache';
   var clipSeconds = 420.0;
+  var startSeconds = 0.0;
+  double? threshold;
+  double? maxDer;
+  var amiOnly = false;
+  var mode = 'both';
+  var outputPrefix = 'ES2004a';
   for (var i = 0; i < args.length; i++) {
     if (args[i] == '--cache-dir' && i + 1 < args.length) {
       cacheDirPath = args[++i];
     } else if (args[i] == '--clip-seconds' && i + 1 < args.length) {
       clipSeconds = double.parse(args[++i]);
+    } else if (args[i] == '--start-seconds' && i + 1 < args.length) {
+      startSeconds = double.parse(args[++i]);
+    } else if (args[i] == '--threshold' && i + 1 < args.length) {
+      threshold = double.parse(args[++i]);
+    } else if (args[i] == '--max-der' && i + 1 < args.length) {
+      maxDer = double.parse(args[++i]);
+    } else if (args[i] == '--ami-only') {
+      amiOnly = true;
+    } else if (args[i] == '--mode' && i + 1 < args.length) {
+      mode = args[++i];
+    } else if (args[i] == '--output-prefix' && i + 1 < args.length) {
+      outputPrefix = args[++i];
+    } else {
+      throw ArgumentError('Unknown or incomplete option: ${args[i]}');
     }
   }
 
+  if (!startSeconds.isFinite ||
+      !clipSeconds.isFinite ||
+      (threshold != null && (!threshold.isFinite || threshold <= 0)) ||
+      (maxDer != null && (!maxDer.isFinite || maxDer < 0)) ||
+      startSeconds < 0 ||
+      clipSeconds <= 0 ||
+      !['auto', '4', 'both'].contains(mode) ||
+      !RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(outputPrefix)) {
+    throw ArgumentError('Invalid evaluation interval, mode or output prefix');
+  }
+  final modes = mode == 'both'
+      ? <int?>[4, null]
+      : <int?>[mode == '4' ? 4 : null];
+  stdout.writeln(
+    'start=$startSeconds duration=$clipSeconds threshold=${threshold ?? "default"} mode=$mode',
+  );
   final segModelPath = '$cacheDirPath/segmentation-model.onnx';
   final embModelPath =
       '$cacheDirPath/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx';
@@ -38,19 +74,33 @@ Future<void> main(List<String> args) async {
 
   // 1. Authorized Chinese 4-speaker test audio from k2-fsa/sherpa-onnx
   final zhWavPath = '$cacheDirPath/0-four-speakers-zh.wav';
-  if (await File(zhWavPath).exists()) {
+  if (!amiOnly && await File(zhWavPath).exists()) {
     await ensureSherpaBindingsInitialized();
     final zhWave = sherpa_onnx.readWave(zhWavPath);
     final zhDurationSec = zhWave.samples.length / zhWave.sampleRate;
-    for (final expected in <int?>[null, 4]) {
+    for (final expected in modes) {
       final sw = Stopwatch()..start();
       final result = await runSherpaDiarization(
         audioPath: zhWavPath,
         segmentationModelPath: segModelPath,
         embeddingModelPath: embModelPath,
         expectedSpeakers: expected,
+        defaultClusteringThreshold:
+            threshold ?? defaultDiarizationClusteringThreshold,
       );
       sw.stop();
+      await File(
+        '$cacheDirPath/$outputPrefix-zh-${expected ?? "auto"}-prediction.json',
+      ).writeAsString(
+        jsonEncode([
+          for (final turn in result.turns)
+            {
+              'speaker': turn.speaker,
+              'start': turn.start.inMicroseconds / 1e6,
+              'end': turn.end.inMicroseconds / 1e6,
+            },
+        ]),
+      );
       final speakers = result.turns.map((t) => t.speaker).toSet().length;
       final elapsedSec = sw.elapsedMilliseconds / 1000.0;
       stdout.writeln(
@@ -60,7 +110,8 @@ Future<void> main(List<String> args) async {
         'elapsed=${elapsedSec.toStringAsFixed(2)}s '
         '(RTF=${(elapsedSec / zhDurationSec).toStringAsFixed(3)}), '
         'cohesion=${result.quality?.cohesion.toStringAsFixed(3)}, '
-        'mergeRisk=${result.quality?.mergeRisk.toStringAsFixed(3)}',
+        'mergeRisk=${result.quality?.mergeRisk.toStringAsFixed(3)}; '
+        'DER=N/A, single-speaker error=N/A (no independent reference annotation)',
       );
     }
   }
@@ -68,45 +119,52 @@ Future<void> main(List<String> args) async {
   // 2. AMI ES2004a (CC BY 4.0) DER evaluation
   final amiWavPath = '$cacheDirPath/ES2004a.Mix-Headset.wav';
   final amiRttmPath = '$cacheDirPath/ES2004a.rttm';
-  if (await File(amiWavPath).exists() && await File(amiRttmPath).exists()) {
+  if (!await File(amiWavPath).exists() || !await File(amiRttmPath).exists()) {
+    throw StateError('AMI audio and independent RTTM reference are required');
+  }
+  {
     await ensureSherpaBindingsInitialized();
     final amiWave = sherpa_onnx.readWave(amiWavPath);
     final evalSec = math.min(
       clipSeconds,
-      amiWave.samples.length / amiWave.sampleRate,
+      amiWave.samples.length / amiWave.sampleRate - startSeconds,
     );
+    if (evalSec <= 0) throw ArgumentError('Start is beyond the audio');
     final clipSamples = Float32List.sublistView(
       amiWave.samples,
-      0,
-      (evalSec * amiWave.sampleRate).round(),
+      (startSeconds * amiWave.sampleRate).round(),
+      ((startSeconds + evalSec) * amiWave.sampleRate).round(),
     );
-    final clipPath = '$cacheDirPath/ES2004a_clip_${evalSec.round()}s.wav';
+    final clipPath = '$cacheDirPath/${outputPrefix}_clip.wav';
     sherpa_onnx.writeWave(
       filename: clipPath,
       samples: clipSamples,
       sampleRate: amiWave.sampleRate,
     );
 
-    final refTurns = _parseRttm(
+    final refTurns = parseDiarizationRttm(
       await File(amiRttmPath).readAsLines(),
       maxTimeSec: evalSec,
+      startTimeSec: startSeconds,
     );
     final refSpeakers = refTurns.map((t) => t.speaker).toSet().length;
 
-    for (final expected in <int?>[4, null]) {
+    for (final expected in modes) {
       final sw = Stopwatch()..start();
       final result = await runSherpaDiarization(
         audioPath: clipPath,
         segmentationModelPath: segModelPath,
         embeddingModelPath: embModelPath,
         expectedSpeakers: expected,
+        defaultClusteringThreshold:
+            threshold ?? defaultDiarizationClusteringThreshold,
       );
       sw.stop();
       final elapsedSec = sw.elapsedMilliseconds / 1000.0;
       final hypSpeakers = result.turns.map((t) => t.speaker).toSet().length;
       final metrics = evaluateDer(refTurns, result.turns, evalSec);
       await File(
-        '$cacheDirPath/ES2004a-${expected ?? "auto"}-prediction.json',
+        '$cacheDirPath/$outputPrefix-${expected ?? "auto"}-prediction.json',
       ).writeAsString(
         jsonEncode([
           for (final turn in result.turns)
@@ -118,7 +176,7 @@ Future<void> main(List<String> args) async {
         ]),
       );
       stdout.writeln(
-        '\n[AMI ES2004a 0-${evalSec.toStringAsFixed(0)}s (CC BY 4.0)] '
+        '\n[AMI ES2004a $startSeconds-${(startSeconds + evalSec).toStringAsFixed(0)}s (CC BY 4.0)] '
         'expectedSpeakers=${expected ?? "auto"}:\n'
         '  refSpeakers=$refSpeakers, hypSpeakers=$hypSpeakers, turns=${result.turns.length}\n'
         '  single-speaker error (all reference single speech, misses included, no collar) = '
@@ -131,6 +189,10 @@ Future<void> main(List<String> args) async {
         '(RTF=${(elapsedSec / evalSec).toStringAsFixed(3)}), '
         'cohesion=${result.quality?.cohesion.toStringAsFixed(3)}',
       );
+      if (maxDer != null && metrics.derCollar250ms > maxDer) {
+        stderr.writeln('FAIL DER ${metrics.derCollar250ms} exceeds $maxDer');
+        exitCode = 1;
+      }
     }
     try {
       await File(clipPath).delete();
@@ -138,19 +200,20 @@ Future<void> main(List<String> args) async {
   }
 }
 
-List<({double start, double end, String speaker})> _parseRttm(
+List<({double start, double end, String speaker})> parseDiarizationRttm(
   List<String> lines, {
   required double maxTimeSec,
+  double startTimeSec = 0,
 }) {
   final out = <({double start, double end, String speaker})>[];
   for (final line in lines) {
     final parts = line.trim().split(RegExp(r'\s+'));
     if (parts.length < 8 || parts[0] != 'SPEAKER') continue;
-    final start = double.parse(parts[3]);
+    final start = double.parse(parts[3]) - startTimeSec;
     final dur = double.parse(parts[4]);
-    if (start >= maxTimeSec) continue;
+    if (start >= maxTimeSec || start + dur <= 0) continue;
     out.add((
-      start: start,
+      start: math.max(0, start),
       end: math.min(maxTimeSec, start + dur),
       speaker: parts[7],
     ));
