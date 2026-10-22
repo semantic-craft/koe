@@ -38,6 +38,7 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 6. **一个文件同一时间只有一个写入者。** 一个工单只有一个在做的 PR；并行工作不得改同一文件，开工前查开放 PR 有无同文件冲突。
 7. **需要真机的步骤单独开工单。** 要 iPhone/Mac 真机、安装包、GUI、硬件或录音的验收写进 PR 的 `## 需要真机` 小节，并拆成独立「需要真机」工单；代码评审通过就先合并，不让真机闸住后续工作。
 8. 新教训先记进 [docs/agents/lessons.md](docs/agents/lessons.md)（出处、修复、Seen 计数），够分量的再补进 [CONTRIBUTING](CONTRIBUTING.md) 的十条规则；同一条教训在 3 个不同日子出现，就升为本节规则。
+9. **异步测试和真机场景都等确定的完成状态再断言。** 要读的结果如果在 I/O 或另一段异步流程之后才写出，就等到那个结果本身出现（轮询读回、Completer、等界面上的文字），不拿中间状态（「已停」「已保存」、一次 `pumpEventQueue`/`pumpAndSettle`）当完成信号；修这类问题要在改前把失败稳定复现出来。来由见 [docs/agents/lessons.md](docs/agents/lessons.md)「异步测试要等真实 I/O 结束的确定状态」（Seen 3x：2026-10-16、10-19、10-22）。
 
 完整原文（含阻塞链所有权、本机待办清单规则）见 [docs/agents/delivery-rules.md](docs/agents/delivery-rules.md)。
 
