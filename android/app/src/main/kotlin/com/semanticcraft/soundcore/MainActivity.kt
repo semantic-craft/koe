@@ -1,9 +1,12 @@
 package com.semanticcraft.soundcore
 
+import android.Manifest
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -86,6 +89,7 @@ class MainActivity : AudioServiceActivity() {
                     RecordingSyncService.stopListener = null
                     RecordingSyncService.refusedListener = null
                     RecordingSyncService.stop(appContext)
+                    SoftApNetwork.shared(appContext).release()
                     if (watchedEngine === flutterEngine) watchedEngine = null
                 }
             })
@@ -124,13 +128,89 @@ class MainActivity : AudioServiceActivity() {
                 )
             }
         }
+        configureSoftApNetwork(flutterEngine)
     }
+
+    // Wi-Fi export: joining the recorder's hotspot and reaching it there
+    // (SoftApNetwork). The permission prompt needs this activity.
+    private fun configureSoftApNetwork(flutterEngine: FlutterEngine) {
+        val softAp = SoftApNetwork.shared(applicationContext)
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.semanticcraft.koe/softap_network",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "ensureLocalNetwork" -> ensureLocalNetwork(result)
+                "join" -> softAp.join(
+                    call.argument<String>("ssid")!!,
+                    call.argument<String>("password")!!,
+                    call.argument<Int>("timeoutMs")!!,
+                ) { error -> result.success(error) }
+                "openTunnel" -> softAp.openTunnel(
+                    call.argument<String>("host")!!,
+                    call.argument<Int>("port")!!,
+                ) { port, error ->
+                    if (port != null) {
+                        result.success(port)
+                    } else {
+                        result.error("tunnel_failed", error, null)
+                    }
+                }
+                "startKeepalive" -> {
+                    softAp.startKeepalive(call.argument<String>("host")!!)
+                    result.success(null)
+                }
+                "release" -> {
+                    softAp.release()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /**
+     * Android 17 blocks LAN traffic for apps targeting it until they hold
+     * ACCESS_LOCAL_NETWORK. It sits in the Nearby devices group that Koe's
+     * Bluetooth permissions already opened, so this normally returns true
+     * without showing anything.
+     */
+    private fun ensureLocalNetwork(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.CINNAMON_BUN ||
+            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        pendingLocalNetwork?.success(false)
+        pendingLocalNetwork = result
+        requestPermissions(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK), LOCAL_NETWORK_REQUEST)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != LOCAL_NETWORK_REQUEST) return
+        pendingLocalNetwork?.success(
+            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED,
+        )
+        pendingLocalNetwork = null
+    }
+
+    private var pendingLocalNetwork: MethodChannel.Result? = null
 
     companion object {
         private var watchedEngine: FlutterEngine? = null
 
         // quick_actions_android's QuickActions.EXTRA_ACTION.
         private const val QUICK_ACTION_EXTRA = "some unique action key"
+
+        // Clear of permission_handler's request code (24).
+        private const val LOCAL_NETWORK_REQUEST = 3205
     }
 
     private fun explainNotificationsOff() {
