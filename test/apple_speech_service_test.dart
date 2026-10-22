@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:ffi';
+import 'dart:io';
 
 import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/stt_types.dart';
+import 'package:koe/audio/opus_pcm_decoder.dart';
+import 'package:koe/ble/ble_service.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:flutter/foundation.dart';
@@ -488,6 +493,48 @@ void main() {
       expect(calls.first.method, 'startStream');
       expect(calls.first.arguments, containsPair('microphone', true));
       await session.dispose();
+
+      // RecorderController 侧：本机引擎实时流启动抛 microphone_permission_denied 时，
+      // transcriptError 应映射为明确中文提示而非「处理失败，请重试」。
+      _ensureMacosOpusLibraryLoaded();
+      handler = (call) async {
+        if (call.method == 'capabilities') {
+          return {
+            'supported': true,
+            'speechStatus': 'ready',
+            'translationStatus': 'ready',
+            'suggestedSourceLanguage': 'zh-CN',
+          };
+        }
+        if (call.method == 'startStream') {
+          throw PlatformException(
+            code: 'microphone_permission_denied',
+            message: '没有麦克风权限，无法开始实时转写',
+          );
+        }
+        return null;
+      };
+      final controller = RecorderController(
+        loadPersistedState: false,
+        ble: _ConnectedBle(),
+        appleSpeech: service,
+        transcriptPersister: ({bool strict = false}) async {},
+      )
+        ..connected = true
+        ..phase = AppPhase.ready;
+      addTearDown(controller.dispose);
+      await controller.refreshAppleCapabilities();
+      controller.setSpeechProvider(SttProvider.apple);
+      await controller.startRecord();
+      controller.handleRealtimeOpusFrameForTesting(_validOpusFrame());
+      for (var i = 0; i < 20 && controller.transcriptError == null; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        controller.transcriptError,
+        '没有麦克风权限，请在系统设置中允许 Koe 使用麦克风',
+      );
+      debugDefaultTargetPlatformOverride = null;
     },
   );
 
@@ -609,4 +656,50 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     },
   );
+}
+
+class _ConnectedBle extends BleService {
+  @override
+  bool get isConnected => true;
+
+  @override
+  Future<void> writeCommand(List<int> frame) async {}
+}
+
+const String _opus20msPacketHex =
+    '7881a75d6c9e99ac0000067e5639f73b1ea2dc310f523839393ea3d08447cbe1'
+    'b6b8ff44143d7621af0734dd0787ec99fec0f544189d5f482942ded82f85b618'
+    'f43b6492de947050e097687d6c10d0af638553a27165e791290180531504';
+
+Uint8List _validOpusFrame() => Uint8List.fromList(<int>[
+  for (var i = 0; i < _opus20msPacketHex.length; i += 2)
+    int.parse(_opus20msPacketHex.substring(i, i + 2), radix: 16),
+]);
+
+void _ensureMacosOpusLibraryLoaded() {
+  if (!Platform.isMacOS) return;
+  final configFile = File(
+    '${Directory.current.path}/.dart_tool/package_config.json',
+  );
+  if (!configFile.existsSync()) return;
+  final config =
+      jsonDecode(configFile.readAsStringSync()) as Map<String, Object?>;
+  final packages = config['packages'] as List<Object?>;
+  for (final entry in packages) {
+    final package = entry as Map<String, Object?>;
+    if (package['name'] != 'opus_codec_macos') continue;
+    final rootUri = configFile.parent.uri.resolve(package['rootUri'] as String);
+    final rootDir = Directory(rootUri.toFilePath());
+    final binaries = Directory('${rootDir.path}/macos/opus.xcframework')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('/opus.framework/opus'))
+        .toList();
+    if (binaries.isNotEmpty) {
+      OpusPcmDecoder.debugUseOpusLibrary(
+        DynamicLibrary.open(binaries.first.path),
+      );
+    }
+    break;
+  }
 }
