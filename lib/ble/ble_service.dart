@@ -36,6 +36,21 @@ class BleService {
   /// True while [connect] is in progress (suppresses spurious disconnect UI).
   bool _connecting = false;
 
+  /// The device [waitForDevice] asked the system to connect, kept until
+  /// [connect] takes its link or the request is withdrawn.
+  BluetoothDevice? _awaited;
+  StreamSubscription<BluetoothConnectionState>? _awaitedSub;
+  Completer<bool>? _awaitedUp;
+
+  /// Whether the session's link came from [waitForDevice]. The system would
+  /// bring such a link back by itself after a drop; Koe turns that off and
+  /// decides itself (not during the Wi‑Fi handoff, say).
+  bool _linkFromWait = false;
+
+  /// Bumped whenever a wait is withdrawn, so one still being set up gives
+  /// up too.
+  int _waitGeneration = 0;
+
   /// Raw ads seen this scan (for diagnostics).
   int adsSeen = 0;
 
@@ -50,6 +65,11 @@ class BleService {
   bool get isConnected => _device != null && _writeChar != null && _fullyReady;
   bool get isConnecting => _connecting;
   BluetoothDevice? get device => _device;
+
+  /// Whether [waitForDevice] is available: on Android the Bluetooth stack
+  /// holds a connection request for a known address. Apple platforms bring
+  /// the recorder back through Core Bluetooth state restoration instead.
+  bool get canAwaitDevice => !kIsWeb && Platform.isAndroid;
 
   void _log(String msg) {
     debugPrint('[BLE] $msg');
@@ -293,6 +313,99 @@ class BleService {
     await Future<void>.delayed(const Duration(milliseconds: 200));
   }
 
+  /// Android: asks the system to connect [remoteId] whenever it is in range.
+  /// Completes true once the link is up, or false when the request is
+  /// withdrawn by [connect], [disconnect] or another wait.
+  ///
+  /// Android pauses the app's unfiltered scans while the screen is off, so a
+  /// reconnect that waits for a scan result stalls there. This request is a
+  /// background `connectGatt` held by the Bluetooth stack and goes through
+  /// with the screen off; [connect] then sets up GATT on the open link.
+  Future<bool> waitForDevice(String remoteId) async {
+    if (!canAwaitDevice || _connecting || isConnected) return false;
+    await _withdrawWait();
+    final generation = _waitGeneration;
+    if (_connecting || isConnected) return false;
+    // The dropped session's device has this id too, and disconnecting it
+    // later would cancel the request; its link is already gone.
+    await _notifySub?.cancel();
+    _notifySub = null;
+    await _connSub?.cancel();
+    _connSub = null;
+    _device = null;
+    _writeChar = null;
+    _fullyReady = false;
+    _rxBuffer.clear();
+    // While the adapter state is unread, FlutterBluePlus holds the request
+    // back for an adapter event that may never come. With Bluetooth off, it
+    // goes out once Bluetooth is back on.
+    await _waitForStableAdapterState(timeout: const Duration(seconds: 3));
+    if (generation != _waitGeneration || _connecting || isConnected) {
+      return false;
+    }
+
+    final device = BluetoothDevice.fromId(remoteId);
+    final up = Completer<bool>();
+    _awaited = device;
+    _awaitedUp = up;
+    _awaitedSub = device.connectionState.listen((state) {
+      if (state == BluetoothConnectionState.connected && !up.isCompleted) {
+        _log('System connected the awaited $remoteId');
+        up.complete(true);
+      }
+    });
+    _log('Waiting for $remoteId: the system connects it once in range');
+    try {
+      // Returns at once; the link comes whenever the recorder is back.
+      await device.connect(
+        license: License.nonprofit,
+        autoConnect: true,
+        mtu: null,
+      );
+    } catch (_) {
+      if (identical(_awaited, device)) await _withdrawWait();
+      rethrow;
+    }
+    return up.future;
+  }
+
+  /// Withdraws [waitForDevice]'s request, and with it a link that came up
+  /// but was not taken.
+  Future<void> _withdrawWait() async {
+    _waitGeneration++;
+    final device = _awaited;
+    if (device == null) return;
+    _awaited = null;
+    final sub = _awaitedSub;
+    _awaitedSub = null;
+    final up = _awaitedUp;
+    _awaitedUp = null;
+    if (up != null && !up.isCompleted) up.complete(false);
+    await sub?.cancel();
+    try {
+      await device.disconnect();
+    } catch (error) {
+      _log('Withdrawing the wait for ${device.remoteId.str} failed: $error');
+    }
+  }
+
+  /// The link [waitForDevice] brought up for [remoteId], taken as is.
+  BluetoothDevice? _takeAwaitedLink(String remoteId) {
+    final device = _awaited;
+    if (device == null ||
+        device.remoteId != DeviceIdentifier(remoteId) ||
+        !device.isConnected) {
+      return null;
+    }
+    _awaited = null;
+    unawaited(_awaitedSub?.cancel());
+    _awaitedSub = null;
+    final up = _awaitedUp;
+    _awaitedUp = null;
+    if (up != null && !up.isCompleted) up.complete(true);
+    return device;
+  }
+
   Future<void> connect(String remoteId, {String? serviceUuidHint}) async {
     if (_connecting) {
       _log('Connect already in progress — ignoring concurrent request');
@@ -310,6 +423,11 @@ class BleService {
 
     _connecting = true;
     try {
+      // A link the system brought up for [waitForDevice] is set up as is;
+      // any other wait is withdrawn.
+      var awaited = _takeAwaitedLink(remoteId);
+      await _withdrawWait();
+
       // Stop scanning first — concurrent scan often breaks GATT on macOS/iOS.
       await _stopScanAndWait();
 
@@ -317,9 +435,18 @@ class BleService {
       // storms if we were never fully ready.
       await _cleanupSession(emitDisconnect: _fullyReady);
       await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (awaited != null && !awaited.isConnected) {
+        // Gone again before set-up: withdraw the system's request and
+        // connect directly.
+        try {
+          await awaited.disconnect();
+        } catch (_) {}
+        awaited = null;
+      }
 
-      final device = BluetoothDevice.fromId(remoteId);
+      final device = awaited ?? BluetoothDevice.fromId(remoteId);
       _device = device;
+      _linkFromWait = awaited != null;
 
       Object? lastError;
       const maxAttempts = 4;
@@ -338,6 +465,8 @@ class BleService {
           _log('Connect attempt $attempt/$maxAttempts failed: $e');
           _writeChar = null;
           _fullyReady = false;
+          // The next attempts connect directly.
+          _linkFromWait = false;
           try {
             await device.disconnect();
           } catch (_) {}
@@ -387,6 +516,14 @@ class BleService {
       // mid-connect and allowing multi-tap races.
       if (!up) {
         _writeChar = null;
+        if (_linkFromWait) {
+          _linkFromWait = false;
+          unawaited(
+            device.disconnect().catchError((Object error) {
+              _log('Turning off system reconnect failed: $error');
+            }),
+          );
+        }
         if (_fullyReady) {
           _fullyReady = false;
           _emitConnection(false);
@@ -612,6 +749,7 @@ class BleService {
   }
 
   Future<void> _cleanupSession({required bool emitDisconnect}) async {
+    _linkFromWait = false;
     await _notifySub?.cancel();
     _notifySub = null;
     await _connSub?.cancel();
@@ -630,6 +768,7 @@ class BleService {
   }
 
   Future<void> disconnect() async {
+    await _withdrawWait();
     await _cleanupSession(emitDisconnect: false);
     // One operation emits one down event, including a partially ready session.
     _emitConnection(false);
