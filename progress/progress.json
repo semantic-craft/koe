@@ -210,7 +210,7 @@
         "number": 331,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T01:20:57Z"
+        "updated_at": "2026-10-22T02:26:59Z"
       },
       {
         "number": 335,
@@ -228,16 +228,11 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T01:18:52Z"
+        "updated_at": "2026-10-22T02:26:58Z"
       }
     ],
-    "main": "26c5229df9fd9c1d1116fd6be8f0bc07e15be1ae",
-    "open_pulls": [
-      {
-        "head": "8d30c8992f6d36e18350035fd2e8894dbe30ee67",
-        "number": 360
-      }
-    ],
+    "main": "cd25be12adbadad9a6fdd807704a83e4ffe193ec",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "75749acdf6c097eda495a29b9c6f31d48f16e067",
@@ -355,7 +350,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-22T02:23:28.241202Z",
+  "observed_at": "2026-10-22T02:40:26.377844Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -634,14 +629,19 @@
             },
             {
               "kind": "commit",
-              "note": "这次整套真机运行用的提交（PR #360 分支）：8 个场景文件通过，手机录音锁屏场景因 PIN 跳过。",
+              "note": "全天监听锁屏通过的那次运行（PR #360 分支）：8 个场景文件通过，手机录音锁屏场景因 PIN 跳过。",
               "ref": "8d30c8992f6d36e18350035fd2e8894dbe30ee67"
+            },
+            {
+              "kind": "commit",
+              "note": "main 上的运行：除全天监听外 8 个场景文件全部通过，含手机录音锁屏。",
+              "ref": "cd25be12adbadad9a6fdd807704a83e4ffe193ec"
             }
           ],
           "id": "android-acceptance",
-          "next": "解锁手机后单独跑手机录音锁屏场景：scripts/android-check integration_test/android/phone_recording_background_test.dart。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。",
+          "next": "下次手机解锁时在 main 上复跑全天监听锁屏场景：scripts/android-check integration_test/android/all_day_listening_background_test.dart；#362、#364 的 Android 场景待补。D3200 连接、取回、断开/接回、实体键与双击标记仍由人按 #345 走一遍。",
           "status": "in_progress",
-          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 在 8d30c89 上整套跑 scripts/android-check，Pixel 插着 USB、解锁后没人动：9 个场景文件中 8 个通过，共 13 个测试——回答朗读、日历、凭据、启动、快捷方式开始录音、后台同步、导入音频转码 6 项、全天监听锁屏（锁屏 60 秒里发出 60.4 秒音频，识别 30 句）。手机录音锁屏场景跳过：前一个锁屏场景锁上后手机有 PIN、保持锁着。自动场景不连录音豆，D3200 的连接、取回和实体键还没有设备记录。",
+          "summary": "覆盖指定 Pixel 上连接录音豆、锁屏运行和功能综合验收，以逐场景设备记录与用户确认为依据。2026-10-22 两次无人值守跑 scripts/android-check（Pixel 插着 USB、解锁后没人动），9 个场景文件都至少通过一次。10:31–10:39 在 main cd25be1 上 8 个文件全部通过，共 13 个测试：回答朗读、日历、凭据、启动、快捷方式开始录音、后台同步、导入音频转码 6 项、手机录音锁屏（锁屏录 120.5 秒，最后一分钟电平 2137、零值 0%）。全天监听锁屏在之前 8d30c89 的运行里通过（锁屏 60 秒里发出 60.4 秒音频，识别 30 句），还没在 main 上复跑。自动场景不连录音豆，D3200 的连接、取回和实体键还没有设备记录。",
           "title": "Android 综合验收"
         },
         {
