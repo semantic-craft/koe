@@ -62,6 +62,15 @@ struct AppleSpeechTranscript {
   }
 
   var text: String { segments.map(\.text).joined(separator: "\n") }
+
+  /// Finalized passages with their times in milliseconds, so a transcript can
+  /// jump to the audio. A passage may hold several sentences.
+  var finalSegments: [[String: Any]] {
+    segments.filter(\.isFinal).map {
+      ["text": $0.text, "startMs": Int(($0.start * 1000).rounded()),
+        "endMs": Int(($0.end * 1000).rounded())]
+    }
+  }
 }
 
 /// Split at paragraph/sentence/word boundaries when possible without breaking
@@ -562,7 +571,7 @@ private final class AppleSpeechRuntime {
       catch { throw speechError("audio_invalid") }
       let analyzer = SpeechAnalyzer(modules: [module])
       fileAnalyzer = analyzer
-      let collector = Task { @MainActor () throws -> String in
+      let collector = Task { @MainActor () throws -> AppleSpeechTranscript in
         var transcript = AppleSpeechTranscript()
         try await collectAppleResults(module) { text, range, final in
           if final {
@@ -570,13 +579,14 @@ private final class AppleSpeechRuntime {
               end: CMTimeRangeGetEnd(range).seconds, isFinal: true)
           }
         }
-        return transcript.text
+        return transcript
       }
       do {
         try await analyzer.start(inputAudioFile: file, finishAfterFile: true)
-        let text = try await collector.value
+        let transcript = try await collector.value
         try Task.checkCancellation()
-        return ["text": text, "durationSec": Double(file.length) / file.processingFormat.sampleRate]
+        return ["text": transcript.text, "segments": transcript.finalSegments,
+          "durationSec": Double(file.length) / file.processingFormat.sampleRate]
       } catch {
         collector.cancel()
         await analyzer.cancelAndFinishNow()

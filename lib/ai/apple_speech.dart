@@ -243,9 +243,38 @@ class AppleSpeechService {
           durationSec: (map['durationSec'] as num?)?.toDouble(),
           sourcePath: path,
           language: sourceLanguage,
+          segments: _timedSegments(map['segments']),
         );
       },
     );
+  }
+
+  /// The file transcript's passages with their times; Apple finalizes a
+  /// passage after a pause, so one may hold several sentences. One passage
+  /// without a usable time drops them all, as with the cloud engines: the
+  /// transcript view shows timed passages in place of the text, so a partial
+  /// list would hide words.
+  static List<SttSegment> _timedSegments(Object? value) {
+    if (value is! List) return const [];
+    final segments = <SttSegment>[];
+    for (final item in value) {
+      if (item is! Map) return const [];
+      final text = item['text'];
+      final startMs = item['startMs'];
+      final endMs = item['endMs'];
+      if (text is! String ||
+          startMs is! int ||
+          endMs is! int ||
+          startMs < 0 ||
+          endMs < startMs) {
+        return const [];
+      }
+      if (text.trim().isEmpty) continue;
+      segments.add(
+        SttSegment(text: text.trim(), startMs: startMs, endMs: endMs),
+      );
+    }
+    return segments;
   }
 
   Future<String> translate(
