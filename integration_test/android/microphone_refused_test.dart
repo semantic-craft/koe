@@ -127,6 +127,8 @@ void main() {
             ? 'Android ran the service as ${refused['types']} off screen'
             : 'Koe kept recording after Android refused it the microphone',
       );
+      // Koe says why only once it has dealt with the stopped take.
+      await waitUntil(() => controller.phoneRecordingError != null);
       expect(
         controller.phoneRecordingError,
         'Koe 不在屏幕上时 Android 不让它开始用麦克风，录音已停下',
