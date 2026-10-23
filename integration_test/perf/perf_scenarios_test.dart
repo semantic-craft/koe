@@ -14,6 +14,8 @@
 // - ask_rank        question retrieval over a 400k-character corpus
 // - recording       a microphone take with its panel on screen: a level
 //                   every 100 ms, notes kept as they are typed, highlights
+// - take_save       stopping an hour-long microphone take, which hashes the
+//                   115 MB file before it joins the library
 //
 // Nothing touches personal data: path_provider points at a temporary folder,
 // stores are in memory, BLE never scans and no credential is read.
@@ -315,6 +317,26 @@ void main() {
     await controller.discardPhoneRecording();
     controller.dispose();
   });
+
+  testWidgets('take_save', (tester) async {
+    final controller = _controller(phoneRecorder: _HourTakeMic());
+    // Launch recovery adopts takes it finds; a take still being written
+    // must not be one of them.
+    await controller.waitForPhoneTakeRecovery();
+    await controller.startPhoneRecording();
+    String? saved;
+    await scenario(
+      tester,
+      'take_save',
+      controller: controller,
+      recordingPanel: true,
+      workload: () async => saved = await controller.stopPhoneRecording(),
+    );
+    // A save that failed early would be fast too.
+    expect(controller.library.assetForPath(saved!)?.contentHash, hasLength(64));
+    await File(saved!).delete();
+    controller.dispose();
+  });
 }
 
 RecorderController _controller({
@@ -537,6 +559,43 @@ class _PerfMic implements PhoneRecorder, PhoneMicLevels {
 
   @override
   Future<void> dispose() => _levels.close();
+}
+
+/// A microphone whose take is an hour of 16 kHz mono audio by the time it
+/// is stopped, with the sizes left for the save to fill in as a recorder
+/// cut off mid-take leaves them.
+class _HourTakeMic extends _PerfMic {
+  @override
+  Future<void> start(String path) async {
+    final header = ByteData(44);
+    void tag(int at, String value) {
+      for (var i = 0; i < 4; i++) {
+        header.setUint8(at + i, value.codeUnitAt(i));
+      }
+    }
+
+    tag(0, 'RIFF');
+    tag(8, 'WAVE');
+    tag(12, 'fmt ');
+    header
+      ..setUint32(16, 16, Endian.little)
+      ..setUint16(20, 1, Endian.little)
+      ..setUint16(22, 1, Endian.little)
+      ..setUint32(24, 16000, Endian.little)
+      ..setUint32(28, 32000, Endian.little)
+      ..setUint16(32, 2, Endian.little)
+      ..setUint16(34, 16, Endian.little);
+    tag(36, 'data');
+    final second = Uint8List(32000);
+    for (var i = 0; i < second.length; i++) {
+      second[i] = (i * 31 + 7) & 0xFF;
+    }
+    final sink = File(path).openWrite()..add(header.buffer.asUint8List());
+    for (var s = 0; s < 3600; s++) {
+      sink.add(second);
+    }
+    await sink.close();
+  }
 }
 
 /// Real packet decoding and logging, but never scans or connects.
