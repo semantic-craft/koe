@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../audio/input_level_watch.dart';
 import '../../platform/device_kind.dart';
+import '../../platform/phone_recorder.dart' show MicInput;
 import '../../state/recorder_controller.dart';
 import '../../state/recording_bookmarks.dart';
 import '../../theme/app_theme.dart';
@@ -229,6 +230,8 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
       permissionDenied,
       highlights,
       levelHint,
+      mic,
+      micNotice,
     ) = context.select(
       (RecorderController c) => (
         c.phoneRecordingActive,
@@ -237,6 +240,8 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
         c.phoneRecordingPermissionDenied,
         c.phoneRecordingHighlights,
         c.phoneRecordingLevelHint,
+        c.phoneRecordingMic,
+        c.phoneRecordingMicNotice,
       ),
     );
     final controller = context.read<RecorderController>();
@@ -301,6 +306,31 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                     const SizedBox(height: 8),
                     Center(
                       child: _LevelMeter(level: controller.phoneRecordingLevel),
+                    ),
+                  ],
+                  if (active && runsOnMac) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      mic?.label ?? '系统默认麦克风',
+                      key: const ValueKey('phone-recording-mic'),
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                  if (active && micNotice != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      micNotice,
+                      key: const ValueKey('phone-recording-mic-notice'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.amber,
+                      ),
                     ),
                   ],
                   if (active && levelHint != null) ...[
@@ -596,6 +626,15 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
   String? _savedText;
 
   @override
+  void initState() {
+    super.initState();
+    final controller = context.read<RecorderController>();
+    if (runsOnMac && controller.phoneRecordingEnabled) {
+      unawaited(controller.refreshPhoneMicInputs());
+    }
+  }
+
+  @override
   void dispose() {
     _text.dispose();
     super.dispose();
@@ -761,6 +800,12 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
                   ? () => Navigator.pop(context, NewRecordingAction.textCapture)
                   : null,
             ),
+            if (runsOnMac && phoneRecording)
+              _MicPicker(
+                inputs: controller.phoneMicInputs,
+                choice: controller.phoneMicChoice,
+                onChanged: controller.choosePhoneMic,
+              ),
             _RecordOption(
               key: const ValueKey('new-record-import'),
               icon: Icons.audio_file_outlined,
@@ -849,6 +894,65 @@ class _SavedNote extends StatelessWidget {
             Text(text, maxLines: 4, overflow: TextOverflow.ellipsis),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// The microphone Koe records from on the Mac (#402), for the takes, text
+/// capture and hold-to-talk started after a change; one already running
+/// keeps its own.
+class _MicPicker extends StatelessWidget {
+  const _MicPicker({
+    required this.inputs,
+    required this.choice,
+    required this.onChanged,
+  });
+
+  static const _systemDefault = '';
+
+  final List<MicInput> inputs;
+  final MicInput? choice;
+  final ValueChanged<MicInput?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final chosen = choice;
+    final missing =
+        chosen != null && !inputs.any((input) => input.id == chosen.id);
+    final selected = chosen?.id ?? _systemDefault;
+    return Padding(
+      key: const ValueKey('phone-mic-picker'),
+      padding: const EdgeInsets.only(top: 12),
+      child: DropdownButtonFormField<String>(
+        key: ValueKey('phone-mic-picker-$selected'),
+        initialValue: selected,
+        isExpanded: true,
+        decoration: const InputDecoration(
+          labelText: '麦克风',
+          isDense: true,
+          border: OutlineInputBorder(),
+        ),
+        items: [
+          const DropdownMenuItem(value: _systemDefault, child: Text('系统默认')),
+          for (final input in inputs)
+            DropdownMenuItem(
+              value: input.id,
+              child: Text(input.label, overflow: TextOverflow.ellipsis),
+            ),
+          if (missing)
+            DropdownMenuItem(
+              value: chosen.id,
+              child: Text(
+                '${chosen.label}（没有连接，用系统默认）',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+        onChanged: (id) {
+          if (id == null || id == selected) return;
+          onChanged(inputs.where((input) => input.id == id).firstOrNull);
+        },
       ),
     );
   }

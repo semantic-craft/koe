@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform;
+    show TargetPlatform, debugPrint, defaultTargetPlatform;
 import 'package:record/record.dart';
+
+import '../state/atomic_file.dart';
 
 export '../audio/input_level_watch.dart' show InputLevelHint, InputLevelWatch;
 
@@ -37,10 +40,73 @@ abstract interface class PhoneMicLevels {
   Stream<double> levels(Duration interval);
 }
 
-class DevicePhoneRecorder implements PhoneRecorder, PhoneMicLevels {
+/// A microphone the system offers to record from (#402).
+class MicInput {
+  const MicInput({required this.id, required this.label});
+
+  /// What the system knows the input by; on macOS its Core Audio UID, which
+  /// stays the same when it is unplugged and plugged back in.
+  final String id;
+  final String label;
+
+  /// This input as the record plugin selects it.
+  InputDevice get device => InputDevice(id: id, label: label);
+
+  /// The input kept in [file], or null when there is none or it cannot be
+  /// read.
+  static Future<MicInput?> read(File file) async {
+    try {
+      if (!await file.exists()) return null;
+      final json = jsonDecode(await file.readAsString());
+      if (json case {'id': final String id, 'label': final String label}) {
+        return MicInput(id: id, label: label);
+      }
+    } catch (error) {
+      debugPrint('[MicInput] read failed: $error');
+    }
+    return null;
+  }
+
+  /// Keeps [input] in [file]; null removes it.
+  static Future<void> write(File file, MicInput? input) async {
+    if (input == null) {
+      if (await file.exists()) await file.delete();
+      return;
+    }
+    await file.parent.create(recursive: true);
+    await writeFileAtomically(
+      file,
+      jsonEncode({'id': input.id, 'label': input.label}),
+    );
+  }
+}
+
+/// A microphone that can record from an input other than the system default
+/// (#402).
+abstract interface class PhoneMicInputs {
+  /// The inputs connected now.
+  Future<List<MicInput>> inputs();
+
+  /// Starts the takes that follow from [input]; null is the system default.
+  void useInput(MicInput? input);
+}
+
+/// The inputs [recorder] can record from, each once.
+Future<List<MicInput>> micInputsOf(AudioRecorder recorder) async {
+  final seen = <String>{};
+  return [
+    for (final device in await recorder.listInputDevices())
+      if (device.id.isNotEmpty && seen.add(device.id))
+        MicInput(id: device.id, label: device.label),
+  ];
+}
+
+class DevicePhoneRecorder
+    implements PhoneRecorder, PhoneMicLevels, PhoneMicInputs {
   DevicePhoneRecorder();
 
   final AudioRecorder _recorder = AudioRecorder();
+  InputDevice? _input;
 
   /// WAV keeps every sample written before a crash readable; speech-rate mono
   /// keeps an hour near 115 MB.
@@ -71,7 +137,14 @@ class DevicePhoneRecorder implements PhoneRecorder, PhoneMicLevels {
   );
 
   @override
-  Future<void> start(String path) => _recorder.start(config, path: path);
+  Future<void> start(String path) =>
+      _recorder.start(config.copyWith(device: (value: _input)), path: path);
+
+  @override
+  Future<List<MicInput>> inputs() => micInputsOf(_recorder);
+
+  @override
+  void useInput(MicInput? input) => _input = input?.device;
 
   /// Apple platforms report the average power of each interval, Android its
   /// peak.

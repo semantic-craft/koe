@@ -70,6 +70,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
   VoiceTarget? get voiceHoldTarget;
   bool _isConfigured(SpeechConfiguration config);
   Future<Directory> _importDirectory();
+  Future<({MicInput? used, MicInput? missing})> _useChosenMic(Object mic);
   Future<String?> _adoptPhoneTake(
     String path,
     DateTime recordedAt, {
@@ -301,6 +302,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
         await _textCaptureDirectory(),
         id,
       );
+      if (!fromDevice) await _useChosenMic(_micStream);
       Stream<Uint8List>? samples;
       try {
         if (!fromDevice) samples = await _micStream.start();
