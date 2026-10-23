@@ -20,6 +20,7 @@ import '../recording_navigation.dart';
 import '../transcript_layout.dart';
 import '../transcript_jump.dart';
 import '../widgets/analysis_panel.dart';
+import '../widgets/expected_speakers.dart';
 import '../widgets/inline_player.dart';
 import '../widgets/material_export_sheet.dart';
 import '../widgets/scan_sheet.dart';
@@ -3679,24 +3680,9 @@ class _RediarizeSpeakersDialogState extends State<_RediarizeSpeakersDialog> {
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                ChoiceChip(
-                  key: const ValueKey('expected-speakers-auto'),
-                  label: const Text('自动判断'),
-                  selected: _selected == null,
-                  onSelected: (_) => setState(() => _selected = null),
-                ),
-                for (var n = 2; n <= 8; n++)
-                  ChoiceChip(
-                    key: ValueKey('expected-speakers-$n'),
-                    label: Text('$n 人'),
-                    selected: _selected == n,
-                    onSelected: (_) => setState(() => _selected = n),
-                  ),
-              ],
+            ExpectedSpeakersChips(
+              selected: _selected,
+              onSelected: (count) => setState(() => _selected = count),
             ),
           ],
         ),

@@ -97,6 +97,30 @@ void main() {
     expect(qwenLanguageHints(model: 'paraformer-v2', language: 'yue'), ['yue']);
   });
 
+  test('the speaker count goes only to diarizing models, and only for two '
+      'or more people', () {
+    Map<dynamic, dynamic> parameters(String model, int? expected) =>
+        qwenTranscriptionBody(
+              model: model,
+              fileUrl: 'oss://x/audio.ogg',
+              expectedSpeakers: expected,
+            )['parameters']
+            as Map;
+
+    expect(parameters(QwenSttService.defaultModel, 4)['speaker_count'], 4);
+    expect(parameters('paraformer-v2', 2)['speaker_count'], 2);
+    // DashScope rejects a count below 2, and a model that does not diarize
+    // has no use for one.
+    expect(
+      parameters(QwenSttService.defaultModel, 1).containsKey('speaker_count'),
+      isFalse,
+    );
+    expect(
+      parameters('qwen-audio-3.1-asr-flash', 3).containsKey('speaker_count'),
+      isFalse,
+    );
+  });
+
   test('base URL stays an https origin', () {
     expect(
       normalizeDashScopeBaseUrl('dashscope-intl.aliyuncs.com/api/v1/'),

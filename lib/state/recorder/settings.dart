@@ -585,20 +585,23 @@ mixin _RecorderSettings on ChangeNotifier {
   // ignore: unused_field
   late final Map<SttProvider, _SttEngine> _sttEngines = {
     SttProvider.apple: _SttEngine(
-      transcribe: (path, config, {onProgress, isCurrent}) async {
-        final wavPath = await _convertExportToWav(path);
-        if (isCurrent != null && !isCurrent()) {
-          throw PlatformException(code: 'cancelled');
-        }
-        if (!wavPath.endsWith('.wav')) {
-          throw PlatformException(code: 'audio_invalid');
-        }
-        return _appleSpeech.transcribePath(
-          wavPath,
-          sourceLanguage: config.sourceLanguage,
-          onProgress: onProgress,
-        );
-      },
+      // Speakers are labelled on this device afterwards, with the number of
+      // people the recording carries.
+      transcribe:
+          (path, config, {expectedSpeakers, onProgress, isCurrent}) async {
+            final wavPath = await _convertExportToWav(path);
+            if (isCurrent != null && !isCurrent()) {
+              throw PlatformException(code: 'cancelled');
+            }
+            if (!wavPath.endsWith('.wav')) {
+              throw PlatformException(code: 'audio_invalid');
+            }
+            return _appleSpeech.transcribePath(
+              wavPath,
+              sourceLanguage: config.sourceLanguage,
+              onProgress: onProgress,
+            );
+          },
       openStream: (config) => _appleSpeech.createStreamSession(
         sourceLanguage: config.sourceLanguage,
         targetLanguage:
@@ -609,7 +612,7 @@ mixin _RecorderSettings on ChangeNotifier {
       ),
     ),
     SttProvider.qwen: _SttEngine(
-      transcribe: (path, config, {onProgress, isCurrent}) {
+      transcribe: (path, config, {expectedSpeakers, onProgress, isCurrent}) {
         final engine = config.engineConfig(SttProvider.qwen);
         return _qwenStt.transcribePath(
           path,
@@ -617,6 +620,7 @@ mixin _RecorderSettings on ChangeNotifier {
           baseUrl: engine.baseUrl,
           model: engine.model,
           language: _cloudLanguage(config),
+          expectedSpeakers: expectedSpeakers,
           onProgress: onProgress,
           isCurrent: isCurrent,
         );
@@ -632,7 +636,7 @@ mixin _RecorderSettings on ChangeNotifier {
     ),
     SttProvider.doubao: _SttEngine(
       // The service maps ISO short codes (`zh`) to Volcano BCP-47 (`zh-CN`).
-      transcribe: (path, config, {onProgress, isCurrent}) {
+      transcribe: (path, config, {expectedSpeakers, onProgress, isCurrent}) {
         final engine = config.engineConfig(SttProvider.doubao);
         return _doubaoStt.transcribePath(
           path,
