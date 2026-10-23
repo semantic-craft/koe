@@ -1,3 +1,4 @@
+import '../../platform/mac_dual_recorder.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
@@ -38,6 +39,7 @@ Future<void> openMicrophonePrivacySettings() async {
 
 enum NewRecordingAction {
   phone,
+  dual,
   textCapture,
   importAudio,
   importPack,
@@ -67,6 +69,15 @@ Future<void> handleNewRecordingAction(
         context,
       ).showSnackBar(const SnackBar(content: Text('在「设备端」标签选择要取回的录音')));
       break;
+    case NewRecordingAction.dual:
+      final accepted = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+        title: const Text('录制麦克风与系统声音'),
+        content: const Text('将分别保存两份录音原件，并在本机显示实时文字。macOS 会询问麦克风、系统音频录制与语音识别权限。系统声音包含其他应用播放的内容，请先告知会议参与者。macOS 14.2 之前仅录麦克风。'),
+        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('开始录音'))],
+      ));
+      if (accepted == true && context.mounted) await showPhoneRecordingSheet(context, captureSystem: true);
+      break;
     case NewRecordingAction.phone:
       if (context.read<RecorderController>().allDayListening) {
         await showTextCaptureSheet(context, allDay: true);
@@ -89,6 +100,7 @@ Future<void> handleNewRecordingAction(
 Future<void> showPhoneRecordingSheet(
   BuildContext context, {
   bool startedElsewhere = false,
+  bool captureSystem = false,
 }) async {
   final controller = context.read<RecorderController>();
   if (startedElsewhere &&
@@ -104,7 +116,7 @@ Future<void> showPhoneRecordingSheet(
     isDismissible: false,
     enableDrag: false,
     isScrollControlled: true,
-    builder: (_) => PhoneRecordingPanel(startsTake: !startedElsewhere),
+    builder: (_) => PhoneRecordingPanel(startsTake: !startedElsewhere, captureSystem: captureSystem),
   );
   if (saved != null) {
     messenger.showSnackBar(
@@ -114,7 +126,9 @@ Future<void> showPhoneRecordingSheet(
 }
 
 class PhoneRecordingPanel extends StatefulWidget {
-  const PhoneRecordingPanel({super.key, this.startsTake = true});
+  const PhoneRecordingPanel({super.key, this.startsTake = true, this.captureSystem = false});
+
+  final bool captureSystem;
 
   /// Starts the take once shown; false for one started elsewhere.
   final bool startsTake;
@@ -160,7 +174,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!_controller.phoneRecordingActive) {
-        unawaited(_controller.startPhoneRecording());
+        unawaited(_controller.startPhoneRecording(captureSystem: widget.captureSystem));
       }
     });
   }
@@ -385,6 +399,17 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                       child: _LevelMeter(level: controller.phoneRecordingLevel),
                     ),
                   ],
+                  if (controller.dualRecordingView case final view?)
+                    ValueListenableBuilder<DualRecordingView>(valueListenable: view,
+                      builder: (context, state, _) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        if (state.active) ...[const SizedBox(height: 8), const Text('系统声音', textAlign: TextAlign.center),
+                          LinearProgressIndicator(value: state.systemLevel, semanticsLabel: '系统声音音量')],
+                        for (final notice in [state.notice, state.systemNotice, state.speechNotice])
+                          if (notice.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(notice)),
+                        if (state.systemNotice.isNotEmpty) TextButton(onPressed: () => launchUrl(Uri.parse('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')), child: const Text('打开系统音频权限设置')),
+                        if (state.text.isNotEmpty) ...[const SizedBox(height: 12), const Text('本机实时识别 · 未校对'),
+                          SizedBox(height: 160, child: SingleChildScrollView(child: SelectableText(state.text)))],
+                      ])),
                   if (active && runsOnMac) ...[
                     const SizedBox(height: 6),
                     Text(
@@ -869,6 +894,10 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
             if (_savedText != null)
               _SavedNote(title: _savedText!, line: '文字已保存到资料'),
             const SizedBox(height: 8),
+            if (runsOnMac && phoneRecording)
+              _RecordOption(key: const ValueKey('new-record-dual'), icon: Icons.speaker_rounded,
+                title: '麦克风 + 系统声音', subtitle: '分别保存双路原件，本机实时显示文字',
+                onTap: () => Navigator.pop(context, NewRecordingAction.dual)),
             _RecordOption(
               key: const ValueKey('new-record-phone'),
               icon: Icons.mic_none_rounded,

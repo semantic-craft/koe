@@ -379,6 +379,35 @@ void main() {
     expect(controller.phoneRecordingPaused, isTrue);
   });
 
+  test('both lanes of an interrupted dual take recover independently', () async {
+    final started = DateTime(2026, 10, 24, 8, 15);
+    await imports.create(recursive: true);
+    final path = '${imports.path}/phone_${started.microsecondsSinceEpoch}.wav';
+    for (final lane in [path, '$path.system.wav']) {
+      await File(lane).writeAsBytes(_wav(dataBytes: 32000, headerSizes: 0));
+    }
+    controller = build(); addTearDown(controller.dispose);
+    await controller.waitForPhoneTakeRecovery();
+    expect(controller.library.assets, hasLength(2));
+    expect(controller.library.assetForPath('$path.system.wav')?.displayName, startsWith('系统声音'));
+    for (final lane in [path, '$path.system.wav']) {
+      final bytes = ByteData.sublistView(await File(lane).readAsBytes());
+      expect(bytes.getUint32(40, Endian.little), 32000);
+    }
+  });
+
+  test('discard marker prevents a companion from being recovered after a failed delete', () async {
+    final started = DateTime(2026, 10, 24, 8, 16);
+    await imports.create(recursive: true);
+    final path = '${imports.path}/phone_${started.microsecondsSinceEpoch}.wav';
+    await File('$path.system.wav').writeAsBytes(_wav(dataBytes: 32000, headerSizes: 0));
+    await File('$path.discarded').writeAsString('discarded');
+    controller = build(); addTearDown(controller.dispose);
+    await controller.waitForPhoneTakeRecovery();
+    expect(controller.library.assets, isEmpty);
+    expect(await File('$path.system.wav').exists(), isFalse);
+  });
+
   test('a take cut off by a kill is recovered on the next launch', () async {
     final started = DateTime(2026, 10, 19, 8, 15);
     await imports.create(recursive: true);
