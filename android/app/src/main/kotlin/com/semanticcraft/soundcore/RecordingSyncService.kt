@@ -18,15 +18,21 @@ import android.util.Log
 /**
  * Koe's one foreground service. It keeps the process, and with it the Dart
  * BLE session, alive while work runs behind the lock screen. The work itself
- * stays in Dart; this only holds the foreground state, the notification and
- * a partial wake lock.
+ * stays in Dart; this only holds the foreground state, the notification and,
+ * while a work asks for it, a partial wake lock.
  *
  * Dart sends the full state on every change: the service types of all active
- * works (connectedDevice for recorder sync, microphone for phone recording
- * and listening, dataSync for transcribing and analysing recordings), the
- * notification text, and whether the notification offers 停止. The service
- * runs as their union. 停止 only asks Dart to finish the microphone work
- * (save the take, keep the text); Dart then ends it as usual.
+ * works (connectedDevice for the recorder link and recorder sync, microphone
+ * for phone recording and listening, dataSync for transcribing and analysing
+ * recordings), the notification text, whether the notification offers 停止,
+ * and whether any work needs the phone kept awake. The service runs as the
+ * union of the types. 停止 only asks Dart to finish the microphone work (save
+ * the take, keep the text); Dart then ends it as usual.
+ *
+ * Linked to the recorder with nothing to move, the service holds no wake
+ * lock; retrieving, exporting, recording and transcribing do (#438). Pattern
+ * from omi, whose connection service holds none and whose
+ * SyncTransferForegroundService holds one only while a transfer runs.
  *
  * Android 14+ crashes the process when a startForegroundService() start is
  * not followed by a successful startForeground(), so a rejected type falls
@@ -82,21 +88,26 @@ class RecordingSyncService : Service() {
             shutDown()
             return START_NOT_STICKY
         }
-        acquireWakeLock()
         return START_NOT_STICKY
     }
 
-    /** Brings foreground types and notification in line with the request. */
+    /**
+     * Brings foreground types, notification and wake lock in line with the
+     * request. Work starting or ending while the types stay the same, as a
+     * retrieval does on an idle link, only changes the text and wake lock.
+     */
     private fun apply(): Boolean {
         val types = requestedTypes
         val notification = buildNotification(requestedText, requestedStoppable)
         if (types == appliedTypes) {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+            holdWakeLock(requestedWakeLock)
             return true
         }
         return try {
             startForeground(NOTIFICATION_ID, notification, types)
             appliedTypes = types
+            holdWakeLock(requestedWakeLock)
             true
         } catch (error: Exception) {
             Log.e(TAG, "startForeground($types) rejected", error)
@@ -166,6 +177,10 @@ class RecordingSyncService : Service() {
         if (instance === this) instance = null
         KoeEngine.release(this, HOLDER)
         super.onDestroy()
+    }
+
+    private fun holdWakeLock(held: Boolean) {
+        if (held) acquireWakeLock() else releaseWakeLock()
     }
 
     private fun acquireWakeLock() {
@@ -263,6 +278,7 @@ class RecordingSyncService : Service() {
         @Volatile private var requestedTypes = 0
         @Volatile private var requestedText = DEFAULT_TEXT
         @Volatile private var requestedStoppable = false
+        @Volatile private var requestedWakeLock = true
 
         /** Asks Dart to finish the stoppable work; set while Flutter runs. */
         @Volatile var stopListener: (() -> Unit)? = null
@@ -276,15 +292,17 @@ class RecordingSyncService : Service() {
         @Volatile var refusedListener: ((List<String>) -> Unit)? = null
 
         /**
-         * Runs the service as [types] with [text] on its notification.
-         * Returns the types it started with; one whose permission is not yet
-         * granted is left out, and the service does not start without any.
+         * Runs the service as [types] with [text] on its notification,
+         * holding a partial wake lock when [wakeLock]. Returns the types it
+         * started with; one whose permission is not yet granted is left out,
+         * and the service does not start without any.
          */
         fun update(
             context: Context,
             types: List<String>,
             text: String?,
             stoppable: Boolean,
+            wakeLock: Boolean,
         ): List<String> {
             val usable = types.filter { name ->
                 if (name !in typeFlags) return@filter false
@@ -298,6 +316,7 @@ class RecordingSyncService : Service() {
             requestedTypes = usable.fold(0) { flags, name -> flags or typeFlags.getValue(name) }
             requestedText = text?.takeIf { it.isNotBlank() } ?: DEFAULT_TEXT
             requestedStoppable = stoppable
+            requestedWakeLock = wakeLock
             val running = instance
             if (running != null && running.appliedTypes != 0) {
                 // Already in the foreground: change it in place, which also

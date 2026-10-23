@@ -40,6 +40,11 @@ class DeviceStore {
 
   static Future<void> _writes = Future<void>.value();
 
+  /// What the last save wrote to each file, without its time. A save with
+  /// the same content leaves the file alone: the recorder answers the
+  /// battery poll every 15 seconds, mostly with nothing new (#438).
+  static final _written = <String, String>{};
+
   /// Completes once the saves queued so far are on disk.
   @visibleForTesting
   static Future<void> waitForWrites() => _writes;
@@ -77,7 +82,6 @@ class DeviceStore {
         'bound': bound,
         'manuallyDisconnected': manuallyDisconnected,
         'residentOffered': residentOffered,
-        'savedAt': DateTime.now().toIso8601String(),
       };
       if (device != null) {
         map['device'] = {
@@ -104,12 +108,16 @@ class DeviceStore {
           'boxMac': info.boxMac,
         };
       }
+      final content = jsonEncode(map);
+      if (_written[f.path] == content) return;
+      map['savedAt'] = DateTime.now().toIso8601String();
       final pending = File('${f.path}.part');
       await pending.writeAsString(
         const JsonEncoder.withIndent('  ').convert(map),
         flush: true,
       );
       await pending.rename(f.path);
+      _written[f.path] = content;
       debugPrint('[DeviceStore] saved bound=$bound id=${device?.id}');
     } catch (e) {
       debugPrint('[DeviceStore] save failed: $e');
@@ -185,6 +193,7 @@ class DeviceStore {
   static Future<void> clear() async {
     try {
       final f = await _file();
+      _written.remove(f.path);
       if (await f.exists()) await f.delete();
       debugPrint('[DeviceStore] cleared');
     } catch (e) {

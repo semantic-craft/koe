@@ -183,7 +183,7 @@ mixin _RecorderResident on ChangeNotifier {
     if (_disposed || !_recorderAway) return;
     statusMessage = '录音豆不在身边，回来后会自动连上';
     notifyListeners();
-    await BackgroundSyncService.shared.end(BackgroundWork.recorderSync);
+    await BackgroundSyncService.shared.end(BackgroundWork.recorderLink);
   }
 
   void _disposeResident() {

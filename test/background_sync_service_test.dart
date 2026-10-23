@@ -90,6 +90,7 @@ void main() {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',
       'stoppable': false,
+      'wakeLock': true,
     });
   });
 
@@ -123,6 +124,7 @@ void main() {
       'types': ['connectedDevice', 'microphone'],
       'text': 'Koe 正在录音',
       'stoppable': true,
+      'wakeLock': true,
     });
 
     await sync.updateText(BackgroundWork.phoneRecording, 'Koe 正在录音 · 03:12');
@@ -133,10 +135,41 @@ void main() {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',
       'stoppable': false,
+      'wakeLock': true,
     });
 
     await sync.end(BackgroundWork.recorderSync);
     expect(methods().last, 'stop');
+  });
+
+  test('the recorder link keeps the service running without keeping the '
+      'phone awake, and gives the line to a sync while it waits', () async {
+    final sync = service();
+
+    await sync.begin(BackgroundWork.recorderLink);
+    expect(lastUpdate(), {
+      'types': ['connectedDevice'],
+      'text': 'Koe 已连接录音豆',
+      'stoppable': false,
+      'wakeLock': false,
+    });
+
+    await sync.begin(BackgroundWork.recorderSync);
+    await sync.begin(BackgroundWork.recorderLink, text: 'Koe 正在等录音豆回来');
+    expect(lastUpdate(), {
+      'types': ['connectedDevice'],
+      'text': 'Koe 正在同步录音',
+      'stoppable': false,
+      'wakeLock': true,
+    });
+
+    await sync.end(BackgroundWork.recorderSync);
+    expect(lastUpdate(), {
+      'types': ['connectedDevice'],
+      'text': 'Koe 正在等录音豆回来',
+      'stoppable': false,
+      'wakeLock': false,
+    });
   });
 
   test('a start refused for a missing permission is retried on the next '
@@ -173,6 +206,7 @@ void main() {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',
       'stoppable': false,
+      'wakeLock': true,
     });
   });
 
@@ -196,6 +230,7 @@ void main() {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',
       'stoppable': false,
+      'wakeLock': true,
     });
   });
 
@@ -219,6 +254,7 @@ void main() {
       'types': ['connectedDevice'],
       'text': 'Koe 正在同步录音',
       'stoppable': false,
+      'wakeLock': true,
     });
   });
 

@@ -14,10 +14,11 @@ enum ForegroundServiceType { connectedDevice, microphone, dataSync }
 /// One piece of work that must keep running after Koe leaves the screen.
 ///
 /// Works share a single Android foreground service and notification: the
-/// service runs as the union of the active works' types and shows the text
-/// of the work begun last, passing over [secondary] work while other work
-/// runs. New kinds of work (phone recording, all-day listening) add a
-/// `static const` here.
+/// service runs as the union of the active works' types, shows the text of
+/// the work begun last, passing over [secondary] work while other work runs,
+/// and keeps the phone awake while any work asks for it ([wakeLock]). New
+/// kinds of work (phone recording, all-day listening) add a `static const`
+/// here.
 @immutable
 class BackgroundWork {
   const BackgroundWork(
@@ -25,9 +26,24 @@ class BackgroundWork {
     required this.type,
     required this.text,
     this.secondary = false,
+    this.wakeLock = true,
   });
 
-  /// Pulling recordings from the recorder over Bluetooth.
+  /// Linked to the recorder, or waiting for it to come back. Keeps Koe
+  /// running for the link without keeping the phone awake; what the
+  /// recorder sends over Bluetooth still reaches Koe (#438). Its line gives
+  /// way to other work's, such as a sync that goes on while Koe waits for
+  /// the recorder after a Wi‑Fi export.
+  static const recorderLink = BackgroundWork(
+    'recorderLink',
+    type: ForegroundServiceType.connectedDevice,
+    text: 'Koe 已连接录音豆',
+    secondary: true,
+    wakeLock: false,
+  );
+
+  /// Moving recordings off the recorder: retrieving them over Bluetooth, a
+  /// Wi‑Fi export, or a take streamed live.
   static const recorderSync = BackgroundWork(
     'recorderSync',
     type: ForegroundServiceType.connectedDevice,
@@ -71,6 +87,10 @@ class BackgroundWork {
   /// Keeps the service running without taking the notification's text
   /// from other work.
   final bool secondary;
+
+  /// Holds a partial wake lock while this work runs, so it goes on with the
+  /// screen off.
+  final bool wakeLock;
 
   @override
   bool operator ==(Object other) => other is BackgroundWork && other.id == id;
@@ -255,6 +275,7 @@ class BackgroundSyncService {
                 )
                 .id]!,
             stoppable: _works.values.any((work) => work.stoppable),
+            wakeLock: _works.values.any((work) => work.wakeLock),
           );
     if (request == _applied) return;
     try {
@@ -270,6 +291,7 @@ class BackgroundSyncService {
         'types': request.types.toList(),
         'text': request.text,
         'stoppable': request.stoppable,
+        'wakeLock': request.wakeLock,
       });
       final missing = request.types.difference({...?started});
       _applied = missing.isEmpty ? request : null;
@@ -288,20 +310,23 @@ class _Request {
     required this.types,
     required this.text,
     required this.stoppable,
+    required this.wakeLock,
   });
 
   final Set<String> types;
   final String text;
   final bool stoppable;
+  final bool wakeLock;
 
   @override
   bool operator ==(Object other) =>
       other is _Request &&
       other.text == text &&
       other.stoppable == stoppable &&
+      other.wakeLock == wakeLock &&
       setEquals(other.types, types);
 
   @override
   int get hashCode =>
-      Object.hash(text, stoppable, Object.hashAllUnordered(types));
+      Object.hash(text, stoppable, wakeLock, Object.hashAllUnordered(types));
 }

@@ -49,6 +49,7 @@ void main() {
       persistedDeviceLoader: loader,
       phoneRecordingEnabled: false,
       topicsEnabled: false,
+      rawExportConverter: (raw) async => raw,
     );
     addTearDown(() async {
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -77,7 +78,32 @@ void main() {
     await until(() => controller.connected);
     expect(ble.connectCalls, 2);
     await until(() => ble.fileListRequests > listed);
+    await until(() => service.text == 'Koe 已连接录音豆');
+  });
+
+  test('linked with nothing to move, the service keeps Koe running without '
+      'keeping the phone awake; retrieving a recording keeps it awake until '
+      'the recording is saved', () async {
+    final service = FakeForegroundService();
+    final ble = _FakeBleService();
+    final controller = build(ble);
+    await controller.connect(_device);
+    await until(() => service.text == 'Koe 已连接录音豆');
+    expect(service.wakeLock, isFalse);
+
+    final download = controller.downloadFileOverBle(
+      OfflineFileEntry(fileId: 1761100001, sizeBytes: 160),
+    );
+    await until(() => ble.pulls.contains(1761100001));
+    await until(() => service.wakeLock);
     expect(service.text, 'Koe 正在同步录音');
+
+    ble.finishPull();
+    await download;
+    expect(controller.localPathFor(1761100001), isNotNull);
+    await until(() => !service.wakeLock);
+    expect(service.running, isTrue);
+    expect(service.text, 'Koe 已连接录音豆');
   });
 
   test('a set-up that fails keeps the service and asks the system again; an '
@@ -281,6 +307,9 @@ class _FakeBleService extends BleService {
   int connectCalls = 0;
   int scans = 0;
 
+  /// Device files Koe asked to retrieve, in order.
+  final pulls = <int>[];
+
   bool get waiting => _wait != null;
 
   int get fileListRequests =>
@@ -363,7 +392,27 @@ class _FakeBleService extends BleService {
     _frames.add(List<int>.from(frame));
     // Skips the encryption handshake's wait; the controller goes on without.
     if (frame[5] == 0x2E) throw StateError('encryption unavailable in test');
+    if (frame[5] == 0x1A && frame[6] == 0x07) {
+      pulls.add(readU32Le(frame, 13));
+      _emit(0x07, Uint8List(10));
+    }
   }
+
+  /// Sends the file asked for last: one slice, then the done signal.
+  void finishPull() {
+    _emit(0x08, Uint8List(175)..fillRange(14, 174, 1));
+    _emit(0x0A, Uint8List(10));
+  }
+
+  void _emit(int id, Uint8List raw) => _packets.add(
+    DecodedPacket(
+      raw: raw,
+      statusByte: 1,
+      cmdType: 0x1A,
+      cmdId: id,
+      payload: Uint8List(0),
+    ),
+  );
 
   @override
   Future<void> disconnect() async {
