@@ -46,6 +46,10 @@
 	<string>Koe 只在你确认「导出到提醒事项」后，把选定的待办写入提醒事项，并读回标题、期限和完成状态保持一致。</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>Koe 只在你确认「导出到提醒事项」后，把选定的待办写入提醒事项，并读回标题、期限和完成状态保持一致。</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Koe 在你选择双路录音后录制其他应用播放的系统声音，作为独立原件保存在本机。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Koe 使用本机语音识别显示录音的实时文字。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Koe 只在你点「麦克风录音」或使用语音记录后使用麦克风，把录音作为原件保存在 Mac 上，之后可转写和回听。</string>
 	<key>CFBundleDisplayName</key>

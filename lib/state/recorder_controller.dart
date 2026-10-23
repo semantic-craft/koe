@@ -1,4 +1,5 @@
 import '../platform/credential_store.dart';
+import '../platform/mac_dual_recorder.dart';
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -635,7 +636,7 @@ class RecorderController extends ChangeNotifier
   @override
   PhoneRecorder get _phoneRecorder =>
       _phoneRecorderOverride ??
-      (_devicePhoneRecorder ??= DevicePhoneRecorder());
+      (_devicePhoneRecorder ??= (runsOnMac ? MacDualRecorder() as PhoneRecorder : DevicePhoneRecorder()));
   final PhoneMicStream? _micStreamOverride;
   PhoneMicStream? _deviceMicStream;
   @override
