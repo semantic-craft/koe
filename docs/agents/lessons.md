@@ -49,7 +49,7 @@
 - 修复：只改跑法：`env -u DASHSCOPE_API_KEY -u ARK_API_KEY -u DOUBAO_TTS_API_KEY check`，main 与分支都全绿。没有读取或打印变量值。
 - 反过来也会漏：2026-10-22 #344 新加的冷启动用例在本机单跑 `flutter test` 时全过，靠的是 shell 里的密钥；去掉变量跑 `check` 才红：读回已保存设置时 Qwen 的 key 被换成保存的空值。修复在测试保存的设置里带上替身 key。
 - Done right: 本机 `check` 出现与改动无关的「已配置」类失败，先在干净 worktree 用同样去掉密钥变量的命令复跑一遍对照，再判断是不是回归。单跑 `flutter test <文件>` 也加同样的 `env -u …` 前缀。
-- 验证点：
+- 验证点：`rg -n "EngineConfig\(apiKey: 'test-key'\)" test/text_capture_test.dart` 应有结果；`env -u DASHSCOPE_API_KEY -u ARK_API_KEY -u DOUBAO_API_KEY -u DOUBAO_TTS_API_KEY flutter test test/engine_lineup_test.dart test/text_capture_test.dart --reporter expanded` 应全绿。2026-10-23 本机实跑：rg 命中第 327 行，两文件 37 条测试通过。`scripts/check` 在启动 Flutter 前 unset 这四个变量（`DASHSCOPE_API_KEY`、`ARK_API_KEY`、`DOUBAO_API_KEY`、`DOUBAO_TTS_API_KEY`）；入口隔离可用 `env DASHSCOPE_API_KEY=test-key ARK_API_KEY=test-key DOUBAO_API_KEY=test-key DOUBAO_TTS_API_KEY=test-key scripts/check` 验证，值仅为测试替身；2026-10-23 本机实跑静态分析无问题、920 条测试全绿。
 - Seen 2x (2026-10-21, 2026-10-22)
 
 ### 真机场景不能假设 Pixel 停在解锁的桌面：充电时会进屏保，锁屏要 PIN

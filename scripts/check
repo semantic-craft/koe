@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Keep unconfigured-provider tests independent of the caller's credentials.
+unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_API_KEY DOUBAO_TTS_API_KEY
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 # Static analysis and unit tests. Device, install and signing acceptance stay manual (see AGENTS.md).
 flutter analyze
