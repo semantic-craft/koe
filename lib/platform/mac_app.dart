@@ -39,6 +39,7 @@ class MacAppStatus {
     this.keepAwake,
     this.quitMessage,
     this.quitInfo = '',
+    this.saving = false,
   });
 
   final MacAppState state;
@@ -64,6 +65,10 @@ class MacAppStatus {
   final String? quitMessage;
   final String quitInfo;
 
+  /// Stop was pressed and the take or text is being saved: quitting waits
+  /// for it without asking.
+  final bool saving;
+
   Map<String, Object?> toMap() => {
     'state': state.name,
     'take': take,
@@ -76,6 +81,7 @@ class MacAppStatus {
     'keepAwake': keepAwake,
     'quitMessage': quitMessage,
     'quitInfo': quitInfo,
+    'saving': saving,
   };
 
   @override
@@ -88,7 +94,8 @@ class MacAppStatus {
       listEquals(other.actions, actions) &&
       other.keepAwake == keepAwake &&
       other.quitMessage == quitMessage &&
-      other.quitInfo == quitInfo;
+      other.quitInfo == quitInfo &&
+      other.saving == saving;
 
   @override
   int get hashCode => Object.hash(
@@ -100,6 +107,7 @@ class MacAppStatus {
     keepAwake,
     quitMessage,
     quitInfo,
+    saving,
   );
 }
 

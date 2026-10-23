@@ -133,7 +133,8 @@ void main() {
       expect(shown()['state'], 'recording');
 
       await tester.runAsync(() => fromMac('menu', 'stop'));
-      await settle(tester, () => controller.library.assets.length == 1);
+      await settle(tester, () => !controller.phoneRecordingSaving);
+      expect(controller.library.assets, hasLength(1));
       expect(shown()['state'], 'idle');
       expect(menu(), ['开始录音']);
       expect(shown()['keepAwake'], isNull);
@@ -157,6 +158,38 @@ void main() {
     );
     await tester.pump();
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets(
+    'quitting while a stopped take is still being saved waits for the save '
+    'without asking again',
+    (tester) async {
+      final mic = _Mic()..stopping = Completer<void>();
+      final controller = await openKoe(tester, mic);
+      await startFromMenu(tester, controller);
+
+      await tester.runAsync(() => fromMac('menu', 'stop'));
+      expect(shown()['state'], 'working');
+      expect(shown()['lines'], ['正在保存录音']);
+      expect(shown()['saving'], isTrue);
+      expect(shown()['quitMessage'], isNull);
+
+      // What the library holds when Koe answers, which lets the Mac quit.
+      int? savedWhenQuit;
+      await tester.runAsync(() async {
+        unawaited(
+          fromMac('quit').then(
+            (_) => savedWhenQuit = controller.library.assets.length,
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        mic.stopping!.complete();
+      });
+      await settle(tester, () => savedWhenQuit != null);
+      expect(savedWhenQuit, 1);
+      expect(shown()['saving'], isFalse);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
 
   group('room left on the disk', () {
     setUp(() => TakeSpaceCheck.checkEvery = const Duration(milliseconds: 300));
@@ -283,6 +316,9 @@ class _Mic implements PhoneRecorder, PhoneDiskSpace {
   int? space;
   int spaceChecks = 0;
 
+  /// When set, stopping waits for it, as a slow save does.
+  Completer<void>? stopping;
+
   @override
   Future<int?> availableSpace(String path) async {
     spaceChecks++;
@@ -307,7 +343,9 @@ class _Mic implements PhoneRecorder, PhoneDiskSpace {
   Future<void> resume() async {}
 
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async {
+    await stopping?.future;
+  }
 
   @override
   Future<void> cancel() async {}

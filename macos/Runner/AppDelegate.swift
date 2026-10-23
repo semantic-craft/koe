@@ -77,6 +77,7 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     var keepAwake: String?
     var quitMessage: String?
     var quitInfo = ""
+    var saving = false
   }
 
   init(binaryMessenger: FlutterBinaryMessenger, window: NSWindow?) {
@@ -126,6 +127,7 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     next.keepAwake = args["keepAwake"] as? String
     next.quitMessage = args["quitMessage"] as? String
     next.quitInfo = args["quitInfo"] as? String ?? ""
+    next.saving = args["saving"] as? Bool ?? false
     status = next
     showState()
     holdAwake(next.keepAwake)
@@ -191,17 +193,22 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
 
   /// Asks before quitting while Koe records or transcribes. On 退出, Dart
   /// saves the take and stops listening, and Koe quits once it answers or
-  /// after ten seconds. Nil when there is nothing to ask about.
+  /// after ten seconds. A take or text already being saved is waited for
+  /// the same way, without asking. Nil when there is nothing to ask about
+  /// or wait for.
   func confirmQuit() -> NSApplication.TerminateReply? {
-    guard let message = status.quitMessage else { return nil }
     if quitting { return .terminateLater }
-    let alert = NSAlert()
-    alert.messageText = message
-    alert.informativeText = status.quitInfo
-    alert.addButton(withTitle: "退出")
-    alert.addButton(withTitle: "取消")
-    NSApp.activate(ignoringOtherApps: true)
-    guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+    if let message = status.quitMessage {
+      let alert = NSAlert()
+      alert.messageText = message
+      alert.informativeText = status.quitInfo
+      alert.addButton(withTitle: "退出")
+      alert.addButton(withTitle: "取消")
+      NSApp.activate(ignoringOtherApps: true)
+      guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+    } else if !status.saving {
+      return nil
+    }
     quitting = true
     channel.invokeMethod("quit", arguments: nil) { [weak self] _ in self?.finishQuit() }
     // The app waits in the modal panel run loop mode until it is answered;

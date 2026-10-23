@@ -402,6 +402,50 @@ void main() {
       await until(() => second.textCaptureActive);
       expect(second.textCaptureAllDay, isTrue);
     });
+
+    test('quitting on the Mac while a stopped capture is still being saved '
+        'waits for the save', () async {
+      const channel = MethodChannel('test/mac_app');
+      final controller = build()..allDayListening = true;
+      final bar = MacMenuBar(
+        controller,
+        onStart: () {},
+        app: MacApp(channel: channel, enabled: true),
+      );
+      addTearDown(bar.dispose);
+      expect(await controller.startTextCapture(allDay: true), isTrue);
+      mic.say(_second);
+      await until(() => streams.length == 1 && streams.first.received > 0);
+      streams.first.emit('停下前说的。', speechFinal: true);
+      streams.first.finalText = '停下前说的。';
+      mic.stopping = Completer<void>();
+
+      Future<void> fromMac(String method, [Object? arguments]) {
+        final answered = Completer<void>();
+        unawaited(
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .handlePlatformMessage(
+                channel.name,
+                channel.codec.encodeMethodCall(MethodCall(method, arguments)),
+                (_) => answered.complete(),
+              ),
+        );
+        return answered.future;
+      }
+
+      // 停止全天监听 from the menu, then quitting before the text is saved.
+      await fromMac('menu', 'stop');
+      expect(controller.textCaptureSaving, isTrue);
+      String? savedWhenQuit;
+      final quit = fromMac('quit').then(
+        (_) => savedWhenQuit = controller.minutesDocuments.firstOrNull?.bodyText,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      mic.stopping!.complete();
+      await quit;
+      expect(savedWhenQuit, '停下前说的。');
+      expect(controller.textCaptureActive, isFalse);
+    });
   });
 
   test('keeping the audio saves an original that carries the text', () async {
@@ -662,8 +706,12 @@ class _Mic implements PhoneMicStream {
     return _samples!.stream;
   }
 
+  /// When set, stopping waits for it, as a slow microphone does.
+  Completer<void>? stopping;
+
   @override
   Future<void> stop() async {
+    await stopping?.future;
     await _samples?.close();
   }
 

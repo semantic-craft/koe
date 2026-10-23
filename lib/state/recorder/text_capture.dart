@@ -150,6 +150,9 @@ mixin _RecorderTextCapture on ChangeNotifier {
   bool _textBusy = false;
   bool _textStopping = false;
 
+  /// The stop under way; a second stop, or quitting, waits for it.
+  Future<TextCaptureOutcome?>? _textStop;
+
   /// A connection is being finished on purpose (quiet or a new record);
   /// its closing events are not a lost connection.
   bool _textEnding = false;
@@ -190,6 +193,10 @@ mixin _RecorderTextCapture on ChangeNotifier {
 
   bool get textCaptureActive => _textId != null;
   bool get textCaptureStopping => _textStopping;
+
+  /// Stop was pressed and the text is being saved.
+  bool get textCaptureSaving => _textStop != null;
+
   bool get textCaptureConnected => _textSession?.isServerReady ?? false;
   bool get textCaptureAllDay => _textAllDay;
   bool _textFromDevice = false;
@@ -964,21 +971,36 @@ mixin _RecorderTextCapture on ChangeNotifier {
   /// service never received is recognized from the phone, now or once the
   /// network is back. Ends all-day listening too, unless [keepAllDay]: Koe
   /// is quitting, and listening continues when it opens again, as after it
-  /// was closed.
+  /// was closed. A stop while one is under way waits for that one, which
+  /// keeps its own options.
   Future<TextCaptureOutcome?> stopTextCapture({
     bool keepAudio = false,
     bool keepAllDay = false,
-  }) async {
+  }) {
+    if (_textStop case final stopping?) return stopping;
     final config = _textConfig;
     if (_textId == null ||
         _textSpool == null ||
         _textStartedAt == null ||
         config == null ||
         _textStopping) {
-      return null;
+      return Future.value();
     }
-    _textStopping = true;
+    final stopping = _textStop = _stopTextCapture(
+      config,
+      keepAudio: keepAudio,
+      keepAllDay: keepAllDay,
+    );
     notifyListeners();
+    return stopping;
+  }
+
+  Future<TextCaptureOutcome?> _stopTextCapture(
+    SpeechConfiguration config, {
+    required bool keepAudio,
+    required bool keepAllDay,
+  }) async {
+    _textStopping = true;
     try {
       await _stopTextMicrophone();
       while (_textRolling) {
@@ -997,6 +1019,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
       return outcome;
     } finally {
       _textStopping = false;
+      _textStop = null;
       if (!_disposed) notifyListeners();
     }
   }

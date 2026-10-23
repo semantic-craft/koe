@@ -44,8 +44,13 @@ class MacMenuBar {
     String? keepAwake;
     String? quitMessage;
     final quitInfo = <String>[];
+    final saving = c.phoneRecordingSaving || c.textCaptureSaving;
 
-    if (c.phoneRecordingActive) {
+    if (saving) {
+      // Stop was pressed, so quitting does not ask again; it waits.
+      state = MacAppState.working;
+      lines.add(c.phoneRecordingSaving ? '正在保存录音' : '正在保存文字');
+    } else if (c.phoneRecordingActive) {
       final paused = c.phoneRecordingPaused;
       state = paused ? MacAppState.paused : MacAppState.recording;
       take = paused ? '录音已暂停' : '录音中';
@@ -117,6 +122,7 @@ class MacMenuBar {
       keepAwake: keepAwake,
       quitMessage: quitMessage,
       quitInfo: quitInfo.join('\n'),
+      saving: saving,
     );
   }
 
@@ -165,12 +171,13 @@ class MacMenuBar {
   }
 
   /// Saves the take, and the text with all-day listening kept for the next
-  /// launch. Transcription is left to its journal.
+  /// launch; a save under way is waited for. Transcription is left to its
+  /// journal.
   Future<void> _beforeQuit() async {
     final c = _controller;
     await Future.wait<Object?>([
-      if (c.phoneRecordingActive) c.stopPhoneRecording(),
-      if (c.textCaptureActive) c.stopTextCapture(keepAllDay: true),
+      c.stopPhoneRecording(),
+      c.stopTextCapture(keepAllDay: true),
     ]).timeout(quitWait, onTimeout: () => const []);
   }
 

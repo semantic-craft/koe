@@ -81,6 +81,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   Duration _phoneTakeElapsed = Duration.zero;
   bool _phoneTakeBusy = false;
 
+  /// The stop under way; a second stop, or quitting, waits for it.
+  Future<String?>? _phoneTakeStop;
+
   /// Paused by the user rather than by the system (a call).
   bool _phoneTakeHeld = false;
   StreamSubscription<PhoneMicState>? _phoneMicStates;
@@ -135,6 +138,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   bool phoneRecordingPermissionDenied = false;
 
   bool get phoneRecordingActive => _phoneTakePath != null;
+
+  /// Stop was pressed and the take is being saved.
+  bool get phoneRecordingSaving => _phoneTakeStop != null;
+
   bool get phoneRecordingPaused =>
       phoneRecordingActive && _phoneTakeRunningSince == null;
 
@@ -495,11 +502,21 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   /// Stops the take and saves it as an original. Returns the saved path, or
   /// null when nothing usable was recorded or the save failed; a failed save
-  /// keeps the audio file and is retried on the next launch.
-  Future<String?> stopPhoneRecording() async {
+  /// keeps the audio file and is retried on the next launch. A stop while
+  /// one is under way waits for it.
+  Future<String?> stopPhoneRecording() {
+    if (_phoneTakeStop case final stopping?) return stopping;
     final path = _phoneTakePath;
     final startedAt = _phoneTakeStartedAt;
-    if (path == null || startedAt == null || _phoneTakeBusy) return null;
+    if (path == null || startedAt == null || _phoneTakeBusy) {
+      return Future.value();
+    }
+    final stopping = _phoneTakeStop = _stopPhoneTake(path, startedAt);
+    notifyListeners();
+    return stopping;
+  }
+
+  Future<String?> _stopPhoneTake(String path, DateTime startedAt) async {
     _phoneTakeBusy = true;
     try {
       try {
@@ -528,6 +545,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       return saved;
     } finally {
       _phoneTakeBusy = false;
+      _phoneTakeStop = null;
+      if (!_disposed) notifyListeners();
     }
   }
 
