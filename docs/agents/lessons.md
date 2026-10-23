@@ -69,6 +69,14 @@
 - 验证点：没有运行在用 Pixel 时，`ls -ld ~/.cache/koe-pixel.lock` 报不存在。
 - Seen 1x (2026-10-22)
 
+### 已知会卡住的外部条件要直接检测、尽快失败；停后台命令要停它的整个进程组
+
+- 出事：2026-10-23 为 #422 跑 `scripts/perf-check`，4 次里 3 次空等满 480 秒才以退出码 3 结束，共白等约 24 分钟。原因是 Mac 正被使用，Koe profile 窗口不在屏幕上，macOS 不出帧，场景里的 pump 一直等。#240 起就知道这种情况会卡住，当时只加了总超时。超时后脚本只杀了 `flutter drive` 本身，它起的子进程继续往日志里写，盖掉了调用方追加在末尾的退出码行。
+- 修复（#448）：`integration_test/perf/perf_scenarios_test.dart` 的 `_stopWhenNoFrames` 发现一帧该出却 30 秒没画出时，经驱动结束运行；驱动写 `build/perf/no_frames.txt`，`perf-check` 以退出码 3 和「窗口不在屏幕上，不是性能超标」退出。总超时改成退出码 4。`flutter drive` 自成进程组（Koe 和驱动都在组里），超时、中断时停整组。
+- Done right: 已知会让运行卡住的外部条件（窗口、设备、锁屏）要在出现时直接检测，几十秒内带着原因失败，退出码和真实的失败分开；总超时只兜底未知的卡住。后台起的命令放进它自己的进程组，停的时候停整组，组里没进程了再退出。
+- 验证点：`scripts/perf-check` 运行中隐藏 Koe 测试 app，Koe 启动后约 35 秒以退出码 3 退出，消息含 `no frame drawn for 30 s (app lifecycle: hidden)`。`KOE_PERF_TIMEOUT=25 scripts/perf-check` 以退出码 4 退出后，`ps -axo command | grep -E 'flutter_tools|Profile/Koe.app'` 没有匹配。
+- Seen 1x (2026-10-23)
+
 ### 修一个页面的布局缺陷，要把同写法的页面一起查
 
 - 出事：2026-10-19 #260 发现资料页上滑后分段控件进了状态栏，#265 只给资料页加了只让顶部的 `SafeArea`。今日页、项目页同样是 `GradientScaffold(child: ListView(...))`，页头自带的状态栏留白随列表滚走；设置页的返回键是叠在列表上的 `Positioned`。同类缺陷一直留到 2026-10-22 在 Pixel 上跑 Artemis 冒烟测试、逐张看截图才发现（#384），Artemis 自己给的结论是 PASS。
