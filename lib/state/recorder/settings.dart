@@ -12,6 +12,7 @@ mixin _RecorderSettings on ChangeNotifier {
   abstract final AppleSpeechService _appleSpeech;
   abstract bool _autoTransferRunning;
   abstract final BleFilePull _blePull;
+  abstract final CalendarMeetings _calendarMeetings;
   Future<String> _convertExportToWav(
     String path, {
     // ignore: unused_element_parameter
@@ -67,6 +68,7 @@ mixin _RecorderSettings on ChangeNotifier {
     highlightHotKey = s.highlightHotKey;
     meetingAppPrompts = s.meetingAppPrompts;
     meetingAppPromptsMuted = s.meetingAppPromptsMuted;
+    meetingFromCalendar = s.meetingFromCalendar;
     transcriptLanguage = s.transcriptLanguage;
     appleSourceLanguage = s.appleSourceLanguage;
     translationTargetLanguage = s.translationTargetLanguage;
@@ -123,6 +125,7 @@ mixin _RecorderSettings on ChangeNotifier {
             highlightHotKey: highlightHotKey,
             meetingAppPrompts: meetingAppPrompts,
             meetingAppPromptsMuted: meetingAppPromptsMuted,
+            meetingFromCalendar: meetingFromCalendar,
             transcriptLanguage: transcriptLanguage,
             sttMode: sttMode,
             translationTargetLanguage: translationTargetLanguage,
@@ -408,6 +411,15 @@ mixin _RecorderSettings on ChangeNotifier {
     unawaited(_persistSettings());
   }
 
+  /// Turning it on asks for calendar access, which the system does only the
+  /// first time.
+  void setMeetingFromCalendar(bool v) {
+    meetingFromCalendar = v;
+    notifyListeners();
+    unawaited(_persistSettings());
+    if (v) unawaited(_calendarMeetings.requestAccess());
+  }
+
   void setMeetingLocalOnly(bool v) {
     if (meetingLocalOnly == v) return;
     meetingLocalOnly = v;
@@ -577,6 +589,10 @@ mixin _RecorderSettings on ChangeNotifier {
 
   /// The meeting apps, by bundle ID, the user chose 不再提醒 for.
   List<String> meetingAppPromptsMuted = const [];
+
+  /// On the Mac, names a microphone take after the calendar meeting it was
+  /// recorded in and gives its invitees to the minutes (#407).
+  bool meetingFromCalendar = true;
 
   /// Near-realtime AI transcription (PCM WS stream + Ogg batch fallback).
   bool autoTranscribe = true;

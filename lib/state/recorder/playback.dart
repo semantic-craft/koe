@@ -748,13 +748,24 @@ mixin _RecorderPlayback on ChangeNotifier {
   List<RecordingBookmark> bookmarksFor(RecordingReference ref) =>
       bookmarks.forRecording(_referenceKey(ref));
 
-  /// The bookmarks of this material written out for the model that
-  /// summarizes it (#400); empty without bookmarks. A highlight quotes the
-  /// sentence at its time only when the transcript's times can be trusted.
+  /// The calendar meeting of this material (#407) and its bookmarks (#400)
+  /// written out for the model that summarizes it; empty without either. A
+  /// highlight quotes the sentence at its time only when the transcript's
+  /// times can be trusted.
   String analysisNotesFor(RecordingReference ref) {
+    final view = recordingView(ref);
+    final path = view.path;
+    final meeting = path == null ? null : library.assetForPath(path)?.meeting;
+    final bookmarks = _bookmarkNotesFor(ref, view);
+    return [
+      ?meeting?.analysisNotes,
+      if (bookmarks.isNotEmpty) bookmarks,
+    ].join('\n\n');
+  }
+
+  String _bookmarkNotesFor(RecordingReference ref, RecordingViewData view) {
     final saved = bookmarksFor(ref);
     if (saved.isEmpty) return '';
-    final view = recordingView(ref);
     final path = view.path;
     final segments = view.segments;
     final locatable =

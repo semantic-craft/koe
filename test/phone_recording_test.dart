@@ -12,8 +12,10 @@ import 'package:koe/ai/doubao_stt.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/main.dart';
+import 'package:koe/platform/credential_store.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
+import 'package:koe/state/app_settings_store.dart';
 import 'package:koe/state/context/commitments.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
@@ -401,10 +403,11 @@ void main() {
     RecorderController buildOnMac({
       bool permission = true,
       bool? phoneRecordingEnabled,
+      bool loadPersistedState = false,
     }) {
       mic = _FakePhoneRecorder(permission: permission);
       return RecorderController(
-        loadPersistedState: false,
+        loadPersistedState: loadPersistedState,
         topicsEnabled: false,
         libraryDirectory: imports,
         phoneRecorder: mic,
@@ -734,6 +737,195 @@ void main() {
           lowVerController.organizeStatusFor(lowVerPath!).message,
           '已开启「录音只留本机」，此设备暂无可用的本机语音引擎，不会回落到云端',
         );
+      },
+    );
+
+    test(
+      '(6) macOS 目标平台下录音以日历里正在开的会议命名，受邀的人交给会议纪要；关掉后不读日历',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+        // Stands in for EventKit behind darwin/SystemTasksBridge.swift.
+        var allDayOnly = false;
+        final calls = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const channel = MethodChannel('com.semanticcraft.koe/system_tasks');
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          if (call.method == 'access') return true;
+          if (call.method != 'events') return null;
+          final at = DateTime.fromMillisecondsSinceEpoch(
+            (call.arguments as Map)['start'] as int,
+          );
+          int ms(DateTime t) => t.millisecondsSinceEpoch;
+          final day = DateTime(at.year, at.month, at.day);
+          final trip = {
+            'title': '出差',
+            'start': ms(day),
+            'end': ms(day.add(const Duration(days: 1))),
+            'allDay': true,
+          };
+          if (allDayOnly) return [trip];
+          return [
+            trip,
+            {
+              'title': '面试',
+              'start': ms(at),
+              'end': ms(at.add(const Duration(minutes: 30))),
+              'declined': true,
+            },
+            {
+              'title': '产品周会',
+              'start': ms(at.subtract(const Duration(minutes: 2))),
+              'end': ms(at.add(const Duration(minutes: 58))),
+              'people': [
+                {'name': '王芳', 'kind': 'person'},
+                {
+                  'name': 'li.lei@example.com',
+                  'url': 'mailto:li.lei@example.com',
+                  'kind': 'person',
+                },
+                {'url': 'mailto:zhao@example.com', 'kind': 'person'},
+                {'name': '3 楼大会议室', 'kind': 'room'},
+                {'name': '张伟', 'kind': 'person', 'declined': true},
+              ],
+            },
+          ];
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+        controller = buildOnMac();
+        addTearDown(controller.dispose);
+        await controller.waitForPhoneTakeRecovery();
+
+        Future<RecordingAsset> take() async {
+          await controller.startPhoneRecording();
+          final path = await controller.stopPhoneRecording();
+          return controller.library.assetForPath(path!)!;
+        }
+
+        final meeting = await take();
+        expect(meeting.displayName, startsWith('产品周会 '));
+        final notes = controller.analysisNotesFor(
+          RecordingReference(path: meeting.path),
+        );
+        expect(
+          notes.split('\n'),
+          containsAll(['会议名：产品周会', '受邀参会人：王芳、li.lei、zhao']),
+        );
+
+        allDayOnly = true;
+        expect((await take()).displayName, startsWith('麦克风录音 '));
+
+        controller.setMeetingFromCalendar(false);
+        calls.clear();
+        expect((await take()).displayName, startsWith('麦克风录音 '));
+        expect(calls, isNot(contains('events')));
+      },
+    );
+
+    test(
+      'a Mac take started while settings load respects the saved calendar opt-out',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final calls = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const channel = MethodChannel('com.semanticcraft.koe/system_tasks');
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          if (call.method == 'access') return true;
+          final at = (call.arguments as Map)['start'] as int;
+          return [
+            {'title': '产品周会', 'start': at, 'end': at + 3600000},
+          ];
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        await AppSettingsStore.save(
+          const AppSettings(meetingFromCalendar: false),
+          strict: true,
+        );
+        final keychain = Completer<void>();
+        final keychainRead = Completer<void>();
+        messenger.setMockMethodCallHandler(CredentialStore.channel, (
+          call,
+        ) async {
+          if (!keychainRead.isCompleted) keychainRead.complete();
+          await keychain.future;
+          return call.method == 'mode' ? 'system' : null;
+        });
+        controller = buildOnMac(loadPersistedState: true);
+        addTearDown(controller.dispose);
+        await keychainRead.future;
+        await controller.waitForRecordingLibrary();
+        // The user starts immediately, before their saved opt-out is known.
+        // Release the blocked settings read later, then await actual recording
+        // and library completion rather than asserting on an intermediate frame.
+        final opens = Timer(const Duration(milliseconds: 500), keychain.complete);
+        addTearDown(opens.cancel);
+        await controller.startPhoneRecording();
+        final path = await controller.stopPhoneRecording();
+        await controller.waitForPhoneTakeRecovery();
+
+        expect(calls, isEmpty);
+        expect(
+          controller.library.assetForPath(path!)?.displayName,
+          startsWith('麦克风录音 '),
+        );
+      },
+    );
+
+    test(
+      '(7) macOS 目标平台下关掉「日历」后，崩溃找回的录音也不按会议命名',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final calls = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const channel = MethodChannel('com.semanticcraft.koe/system_tasks');
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          if (call.method != 'events') return null;
+          final at = (call.arguments as Map)['start'] as int;
+          return [
+            {'title': '产品周会', 'start': at, 'end': at + 3600000},
+          ];
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        await AppSettingsStore.save(
+          const AppSettings(meetingFromCalendar: false),
+          strict: true,
+        );
+        // The saved settings come back after the library, as they do when
+        // the Keychain is slow to answer.
+        final keychain = Completer<void>();
+        final opens = Timer(const Duration(milliseconds: 500), keychain.complete);
+        addTearDown(opens.cancel);
+        messenger.setMockMethodCallHandler(CredentialStore.channel, (
+          call,
+        ) async {
+          await keychain.future;
+          return call.method == 'mode' ? 'system' : null;
+        });
+        final started = DateTime(2026, 10, 22, 14, 30);
+        await imports.create(recursive: true);
+        final path =
+            '${imports.path}/phone_${started.microsecondsSinceEpoch}.wav';
+        await File(path).writeAsBytes(_wav(dataBytes: 32000, headerSizes: 0));
+
+        controller = buildOnMac(loadPersistedState: true);
+        addTearDown(controller.dispose);
+        await controller.waitForPhoneTakeRecovery();
+
+        expect(
+          controller.library.assetForPath(path)?.displayName,
+          startsWith('麦克风录音 '),
+        );
+        expect(calls, isNot(contains('events')));
       },
     );
   });

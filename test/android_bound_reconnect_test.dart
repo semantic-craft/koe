@@ -92,7 +92,7 @@ void main() {
     expect(service.wakeLock, isFalse);
 
     final download = controller.downloadFileOverBle(
-      OfflineFileEntry(fileId: 1761100001, sizeBytes: 160),
+      OfflineFileEntry(fileId: 1761100001, durationMs: 20),
     );
     await until(() => ble.pulls.contains(1761100001));
     await until(() => service.wakeLock);

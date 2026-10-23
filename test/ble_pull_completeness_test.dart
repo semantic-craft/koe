@@ -53,11 +53,11 @@ class _Device {
 
   Future<String> pull(
     int fileId,
-    int sizeBytes, {
+    int audioBytes, {
     int alreadyTransferred = 0,
   }) async {
     final path = await puller.pullFile(
-      OfflineFileEntry(fileId: fileId, sizeBytes: sizeBytes),
+      OfflineFileEntry(fileId: fileId, durationMs: audioBytes ~/ 8),
       timeout: const Duration(milliseconds: 150),
       alreadyTransferred: alreadyTransferred,
     );

@@ -466,7 +466,11 @@ Min length 19. Payload from offset 9:
 | currTransportFileTimestamp | 4 | u32 LE |
 | currTransportFileDuration | 4 | i32 LE |
 
-Duration heuristic in app: `size/20*166` (approximate ms/time units).
+The list `size` field is duration in milliseconds (#456, five D3200 files
+verified on Pixel). Each 20 ms represents a 166-byte transport record and
+160 local Opus bytes. For example, 21,600,000 ms (6 hours) corresponds to
+179,280,000 transport bytes and 172,800,000 Opus bytes. File heads report
+transport bytes instead; never compare list milliseconds to local byte counts.
 
 ### 6.3 Offline file list with end time (`type=0x1B id=0x0E`)
 

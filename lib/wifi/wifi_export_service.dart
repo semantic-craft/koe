@@ -507,7 +507,7 @@ class WifiExportService {
             currentFileIndex: i,
             totalFiles: files.length,
             bytesReceived: 0,
-            bytesExpected: f.sizeBytes,
+            bytesExpected: f.estimatedTransferBytes,
           ),
         );
         final path = await _transferOne(f, outDir);
@@ -866,7 +866,7 @@ class WifiExportService {
       ..reset()
       ..start();
     _headSize = 0;
-    _expectedSize = file.sizeBytes;
+    _expectedSize = file.estimatedTransferBytes;
     _doneSeen = false;
     _fileHead = Completer<FileHeadInfo>();
     _activeFileId = '${file.fileId}';

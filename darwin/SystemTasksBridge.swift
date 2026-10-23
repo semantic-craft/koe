@@ -1,8 +1,14 @@
 import EventKit
+#if os(iOS)
 import Flutter
+#else
+import FlutterMacOS
+#endif
 
 /// Writes the one Reminders item or Calendar event Koe made for a todo, and
-/// reads it back. Called only after the user confirms an export in Koe.
+/// reads it back. Called only after the user confirms an export in Koe. On
+/// the Mac it also reads the events around a microphone take, which Koe
+/// names the take after (#407).
 enum SystemTasksBridge {
   private static let store = EKEventStore()
 
@@ -36,6 +42,12 @@ enum SystemTasksBridge {
           return
         }
         result(fetch(args["id"] as? String ?? ""))
+      case "events":
+        guard authorized(.event) else {
+          result(FlutterError(code: "denied", message: nil, details: nil))
+          return
+        }
+        result(events(from: date(args["start"]), to: date(args["end"])))
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -44,7 +56,7 @@ enum SystemTasksBridge {
 
   private static func authorized(_ type: EKEntityType) -> Bool {
     let status = EKEventStore.authorizationStatus(for: type)
-    if #available(iOS 17.0, *) { return status == .fullAccess }
+    if #available(iOS 17.0, macOS 14.0, *) { return status == .fullAccess }
     return status == .authorized
   }
 
@@ -53,7 +65,7 @@ enum SystemTasksBridge {
       done(true)
       return
     }
-    if #available(iOS 17.0, *) {
+    if #available(iOS 17.0, macOS 14.0, *) {
       if type == .reminder {
         store.requestFullAccessToReminders { granted, _ in done(granted) }
       } else {
@@ -120,6 +132,52 @@ enum SystemTasksBridge {
     event.endDate = date(args["end"]) ?? start.addingTimeInterval(3600)
     try store.save(event, span: .thisEvent, commit: true)
     return event.calendarItemIdentifier
+  }
+
+  /// The events in the user's own calendars overlapping the range. Koe picks
+  /// the meeting among them; subscribed and birthday calendars are not
+  /// meetings the user attends.
+  private static func events(from start: Date?, to end: Date?) -> [[String: Any]] {
+    guard let start, let end else { return [] }
+    let calendars = store.calendars(for: .event).filter {
+      $0.type != .subscription && $0.type != .birthday
+    }
+    if calendars.isEmpty { return [] }
+    let predicate = store.predicateForEvents(withStart: start, end: end, calendars: calendars)
+    return store.events(matching: predicate).map { event in
+      let attendees = event.attendees ?? []
+      var people = attendees.map(person)
+      if let organizer = event.organizer, !attendees.contains(where: { $0.url == organizer.url }) {
+        people.insert(person(organizer), at: 0)
+      }
+      return [
+        "title": event.title ?? "",
+        "start": ms(event.startDate),
+        "end": ms(event.endDate),
+        "allDay": event.isAllDay,
+        "canceled": event.status == .canceled,
+        "declined": attendees.contains { $0.isCurrentUser && $0.participantStatus == .declined },
+        "people": people,
+      ]
+    }
+  }
+
+  private static func person(_ participant: EKParticipant) -> [String: Any] {
+    let kind: String
+    switch participant.participantType {
+    case .person: kind = "person"
+    case .room: kind = "room"
+    case .resource: kind = "resource"
+    case .group: kind = "group"
+    default: kind = "unknown"
+    }
+    var out: [String: Any] = [
+      "kind": kind,
+      "url": participant.url.absoluteString,
+      "declined": participant.participantStatus == .declined,
+    ]
+    if let name = participant.name { out["name"] = name }
+    return out
   }
 
   private static func fetch(_ id: String) -> [String: Any]? {

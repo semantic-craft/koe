@@ -34,6 +34,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:koe/ble/ble_service.dart';
+import 'package:koe/platform/calendar_meetings.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
 import 'package:koe/protocol/commands.dart';
@@ -379,7 +380,7 @@ void main() {
             ip: '192.0.2.1',
             port: 443,
           ),
-          files: [OfflineFileEntry(fileId: 1761100001, sizeBytes: 21600)],
+          files: [OfflineFileEntry(fileId: 1761100001, durationMs: 21600)],
         );
         saved = clock.elapsed;
       },
@@ -453,6 +454,7 @@ RecorderController _controller({
   phoneRecorder: phoneRecorder,
   phoneRecordingEnabled: phoneRecorder != null,
   placeCapture: _NoPlace(),
+  calendarMeetings: _NoCalendar(),
   wifiExport: wifiExport,
 );
 
@@ -638,6 +640,16 @@ class _TempPathProvider extends PathProviderPlatform {
 class _NoPlace implements PlaceCapture {
   @override
   Future<RecordingPlace?> capture() async => null;
+}
+
+/// Keeps the takes from asking for the calendar, which would put a system
+/// prompt in front of the unattended run.
+class _NoCalendar implements CalendarMeetings {
+  @override
+  Future<bool> requestAccess() async => false;
+
+  @override
+  Future<RecordingMeeting?> meetingAt(DateTime at) async => null;
 }
 
 /// A microphone that reports the levels it is given.

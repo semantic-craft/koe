@@ -41,7 +41,7 @@ void main() {
   ) async {
     final handle = tester.ensureSemantics();
     final c = newController()
-      ..files = [OfflineFileEntry(fileId: 102, sizeBytes: 160)];
+      ..files = [OfflineFileEntry(fileId: 102, durationMs: 160)];
     await pump(
       tester,
       c,

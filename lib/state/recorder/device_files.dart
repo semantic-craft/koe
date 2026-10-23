@@ -149,7 +149,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     required bool decrypted,
     bool Function(String rawPath)? transferComplete,
     List<String>? conversionFailures,
-    Map<int, int> listedSizes = const {},
+    Map<int, int> listedDurations = const {},
   }) async {
     final converted = <({String path, bool complete, bool written})>[];
     for (final rawPath in rawPaths) {
@@ -165,7 +165,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
           await _copies.recordRetrieval(
             fileId,
             complete: complete,
-            listedBytes: listedSizes[fileId],
+            listedDurationMs: listedDurations[fileId],
           );
         } catch (error) {
           // The in-memory mark still holds for this session.
@@ -926,7 +926,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
               [rawPath],
               decrypted: true,
               transferComplete: (raw) => !_blePull.isIncomplete(raw),
-              listedSizes: {file.fileId: file.sizeBytes},
+              listedDurations: {file.fileId: file.durationMs},
             );
           });
           await _applyDeviceMarks(file.fileId);
@@ -1054,7 +1054,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
           [rawPath],
           decrypted: true,
           transferComplete: (raw) => !_blePull.isIncomplete(raw),
-          listedSizes: {file.fileId: file.sizeBytes},
+          listedDurations: {file.fileId: file.durationMs},
         );
       });
       await _applyDeviceMarks(file.fileId);

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../state/context/todo.dart';
 import 'android_calendar_tasks.dart';
+import 'device_kind.dart';
 
 enum SystemTaskTarget { reminder, event }
 
@@ -42,9 +43,9 @@ abstract class SystemTasks {
   Future<SystemSnapshot?> fetch(SystemTaskTarget target, String id);
 }
 
-/// EventKit bridge on iOS (`ios/Runner/SystemTasksBridge.swift`); on Android
-/// it hands over to [AndroidCalendarTasks] (Calendar only). Other platforms
-/// have no handler: [supports] is false and calls report
+/// EventKit bridge on iOS and macOS (`darwin/SystemTasksBridge.swift`); on
+/// Android it hands over to [AndroidCalendarTasks] (Calendar only). Other
+/// platforms have no handler: [supports] is false and calls report
 /// [SystemTasksUnavailable].
 class ChannelSystemTasks implements SystemTasks {
   const ChannelSystemTasks();
@@ -55,9 +56,8 @@ class ChannelSystemTasks implements SystemTasks {
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   @override
-  bool supports(SystemTaskTarget target) => _onAndroid
-      ? _android.supports(target)
-      : !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  bool supports(SystemTaskTarget target) =>
+      _onAndroid ? _android.supports(target) : runsOnApple;
 
   static const _channel = MethodChannel('com.semanticcraft.koe/system_tasks');
 

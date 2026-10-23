@@ -46,7 +46,8 @@ abstract final class TakeSpaceCheck {
 /// the start gives way to the system default, and the take says so.
 ///
 /// On the Mac a take also says when the disk is filling up (#403), as
-/// [TakeSpaceCheck] sets out.
+/// [TakeSpaceCheck] sets out, and is named after the calendar meeting it was
+/// recorded in (#407), whose invitees go to its minutes.
 ///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
@@ -54,8 +55,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
   abstract bool _disposed;
   abstract final Future<void> _libraryLoaded;
+  abstract final Future<void> _settingsLoaded;
   abstract final Future<void> _bookmarksLoaded;
   abstract Future<void> _transcriptsLoaded;
+  abstract final CalendarMeetings _calendarMeetings;
   abstract final MacArchiveController archive;
   abstract final RecordingBookmarkStore bookmarks;
   abstract String? errorMessage;
@@ -64,6 +67,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   abstract String? statusMessage;
   PhoneRecorder get _phoneRecorder;
   bool get phoneRecordingEnabled;
+  bool get meetingFromCalendar;
   Future<void> attachAutomaticPlace(String path);
   int? expectedSpeakersForPath(String path);
   Future<void> setExpectedSpeakers(String path, int? count);
@@ -177,6 +181,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeBusy = true;
     try {
       await _libraryLoaded;
+      // A take started right after launch must respect the saved calendar
+      // choice even when loading settings is still waiting on the Keychain.
+      if (runsOnMac) await _settingsLoaded;
       if (!await _phoneRecorder.requestPermission()) {
         phoneRecordingPermissionDenied = true;
         phoneRecordingError = '没有麦克风权限。可在系统设置里允许 Koe 使用麦克风，或先导入音频';
@@ -217,6 +224,11 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _phoneMicStates = _phoneRecorder.states.listen(_onPhoneMicState);
       _watchPhoneMicLevels();
       _watchPhoneSpace(path);
+      // The first take asks for the calendar here rather than when it is
+      // saved; the meeting is looked up then.
+      if (runsOnMac && meetingFromCalendar) {
+        unawaited(_calendarMeetings.requestAccess());
+      }
       notifyListeners();
     } finally {
       _phoneTakeBusy = false;
@@ -644,16 +656,24 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       notifyListeners();
       return null;
     }
+    // Looked up by the start time, so a take found after a crash is named
+    // the same way.
+    final meeting =
+        label == null && !voiceNote && runsOnMac && meetingFromCalendar
+        ? await _calendarMeetings.meetingAt(recordedAt)
+        : null;
     try {
       final hash = await audioVersion(path);
       final asset = RecordingAsset(
         path: path,
-        displayName: '$effectiveLabel ${_takeLabel(recordedAt)}',
+        displayName:
+            '${meeting?.title ?? effectiveLabel} ${_takeLabel(recordedAt)}',
         source: RecordingSource.phone,
         recordedAt: recordedAt,
         importedAt: DateTime.now(),
         contentHash: hash,
         voiceNote: voiceNote,
+        meeting: meeting,
       );
       await library.upsert(asset);
     } catch (_) {
@@ -682,6 +702,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   Future<void> _recoverInterruptedPhoneTakes() async {
     if (!phoneRecordingEnabled) return;
     await _libraryLoaded;
+    // Whether a take is named after its calendar meeting is a saved choice.
+    await _settingsLoaded;
     final dir = await _importDirectory();
     if (!await dir.exists()) return;
     var recovered = 0;

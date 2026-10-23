@@ -58,7 +58,7 @@ void main() {
             // The file list's size is not in the head's units.
             files: [
               for (final id in ids)
-                OfflineFileEntry(fileId: id, sizeBytes: 21600),
+                OfflineFileEntry(fileId: id, durationMs: 21600000),
             ],
           )
           .timeout(const Duration(seconds: 5));
@@ -81,6 +81,8 @@ void main() {
 
     expect(await File(saved.single).readAsBytes(), audio);
     expect(service.incompletePaths, isEmpty);
+    expect(seen.map((e) => e.bytesExpected), contains(179280000));
+    expect(seen.map((e) => e.bytesExpected), contains(498));
     expect(
       seen.where((e) => e.currentFileIndex == 0).map((e) => e.fileFraction),
       contains(1.0),
