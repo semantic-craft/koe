@@ -547,7 +547,7 @@ class _LevelHintNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = switch (hint) {
-      InputLevelHint.silent => '麦克风没有收到声音：可能被静音、被其他应用占用，或选错了输入设备。',
+      InputLevelHint.silent => '麦克风没有收到声音：可能被静音、被其他应用占用，或选错了麦克风。',
       InputLevelHint.quiet => '声音有点小：把麦克风放近说话的人一点。',
       InputLevelHint.noisy => '背景有点吵，转写和区分发言人可能不准。',
     };
