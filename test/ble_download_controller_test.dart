@@ -59,7 +59,9 @@ void main() {
     final exports = await Directory(
       '${directory.path}/AnkerRecorder/exports',
     ).create(recursive: true);
-    await File('${exports.path}/101.wav').writeAsBytes(List.filled(200, 0));
+    await File(
+      '${exports.path}/101.wav',
+    ).writeAsBytes(wavBytes(List.filled(640, 0)));
     await controller.listFiles();
     ble.filePage([103, 102, 101]);
     await _until(() => ble.downloads.isNotEmpty);
@@ -77,7 +79,7 @@ void main() {
     expect(controller.localPathFor(101), isNotNull);
 
     await controller.listFiles();
-    ble.filePage([101], size: 400);
+    ble.filePage([101], durationMs: 50);
     await _until(() => controller.files.isNotEmpty);
     await _until(() => controller.unexportedFiles.isNotEmpty);
     expect(
@@ -127,7 +129,7 @@ void main() {
       ..encryptReady = true
       ..phase = AppPhase.ready;
     await controller.listFiles();
-    ble.filePage([104], size: 480);
+    ble.filePage([104], durationMs: 60);
     await _until(() => controller.files.isNotEmpty);
     expect(controller.unexportedFiles.map((f) => f.fileId), [
       104,
@@ -168,12 +170,12 @@ void main() {
 
     // Tapping it again explains instead of waiting for a pull to time out.
     await controller.downloadFileOverBle(
-      OfflineFileEntry(fileId: 105, sizeBytes: 160),
+      OfflineFileEntry(fileId: 105, durationMs: 20),
     );
     expect(ble.downloads.where((id) => id == 105), hasLength(1));
     expect(controller.errorMessage, contains('按一下录音豆按键结束录音'));
     expect(
-      controller.copyStatusOf(OfflineFileEntry(fileId: 105, sizeBytes: 160)),
+      controller.copyStatusOf(OfflineFileEntry(fileId: 105, durationMs: 20)),
       DeviceCopyStatus.unfinished,
     );
 
@@ -211,7 +213,7 @@ void main() {
             ..phase = AppPhase.ready;
 
       final work = controller.downloadFileOverBle(
-        OfflineFileEntry(fileId: 106, sizeBytes: 480),
+        OfflineFileEntry(fileId: 106, durationMs: 60),
       );
       await _until(() => ble.downloads.contains(106));
       ble.slice(sequence: 0);
@@ -310,7 +312,7 @@ void main() {
 
     test('BLE manual download submits through the shared entry', () async {
       final work = controller.downloadFileOverBle(
-        OfflineFileEntry(fileId: 102, sizeBytes: 160),
+        OfflineFileEntry(fileId: 102, durationMs: 20),
       );
       await _until(() => ble.downloads.contains(102));
       ble.finish();
@@ -324,7 +326,7 @@ void main() {
         'complete pull transcribes it', () async {
       // An earlier, fully retrieved and transcribed recording.
       final earlier = controller.downloadFileOverBle(
-        OfflineFileEntry(fileId: 101, sizeBytes: 160),
+        OfflineFileEntry(fileId: 101, durationMs: 20),
       );
       await _until(() => ble.downloads.contains(101));
       ble.finish();
@@ -335,7 +337,7 @@ void main() {
 
       // The link drops after 160 of 168 bytes (95.2%): no done signal.
       final cut = controller.downloadFileOverBle(
-        OfflineFileEntry(fileId: 102, sizeBytes: 168),
+        OfflineFileEntry(fileId: 102, durationMs: 21),
       );
       await _until(() => ble.downloads.contains(102));
       ble.slice();
@@ -359,7 +361,7 @@ void main() {
 
       // Retrieving again pulls the file instead of reusing the partial one.
       final again = controller.downloadFileOverBle(
-        OfflineFileEntry(fileId: 102, sizeBytes: 168),
+        OfflineFileEntry(fileId: 102, durationMs: 21),
       );
       await _until(() => ble.downloads.where((id) => id == 102).length == 2);
       ble.finish();
@@ -409,7 +411,7 @@ void main() {
       controller = open(ble);
       // 160 of 168 bytes (95.2%), no done signal.
       final cut = controller.downloadFileOverBle(
-        OfflineFileEntry(fileId: 102, sizeBytes: 168),
+        OfflineFileEntry(fileId: 102, durationMs: 21),
       );
       await _until(() => ble.downloads.contains(102));
       ble.slice();
@@ -524,13 +526,13 @@ class _Ble extends BleService {
     );
   }
 
-  void filePage(List<int> ids, {int size = 160}) {
+  void filePage(List<int> ids, {int durationMs = 20}) {
     final data = ByteData(2 + ids.length * 12)
       ..setUint16(0, ids.length, Endian.little);
     for (var i = 0; i < ids.length; i++) {
       data.setUint32(2 + i * 12, ids[i], Endian.little);
       data.setUint32(6 + i * 12, ids[i] + 1, Endian.little);
-      data.setUint32(10 + i * 12, size, Endian.little);
+      data.setUint32(10 + i * 12, durationMs, Endian.little);
     }
     _packets.add(
       DecodedPacket(

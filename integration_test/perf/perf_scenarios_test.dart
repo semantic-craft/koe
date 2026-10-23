@@ -379,7 +379,7 @@ void main() {
             ip: '192.0.2.1',
             port: 443,
           ),
-          files: [OfflineFileEntry(fileId: 1761100001, sizeBytes: 21600)],
+          files: [OfflineFileEntry(fileId: 1761100001, durationMs: 21600)],
         );
         saved = clock.elapsed;
       },

@@ -17,7 +17,7 @@ void main() {
     final lastSliceSent = Completer<void>();
     final file = OfflineFileEntry(
       fileId: DateTime.now().microsecondsSinceEpoch,
-      sizeBytes: 640,
+      durationMs: 80,
     );
     // Each slice comes half a timeout after the one before, so the next one
     // is always due before the timeout runs out.
@@ -49,7 +49,7 @@ void main() {
       onProgress: (received, _) {
         // The app is busy for twice the timeout while the last slice is due,
         // as on a loaded test machine.
-        if (received == 480) sleep(const Duration(milliseconds: 100));
+        if (received == 498) sleep(const Duration(milliseconds: 100));
       },
     );
     addTearDown(() async {
@@ -82,7 +82,7 @@ void main() {
       pull.pullFile(
         OfflineFileEntry(
           fileId: DateTime.now().microsecondsSinceEpoch,
-          sizeBytes: 640,
+          durationMs: 80,
         ),
       ),
       throwsA(isA<BleFilePullCancelled>()),

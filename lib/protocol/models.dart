@@ -319,16 +319,24 @@ class DeviceInfoModel {
 class OfflineFileEntry {
   OfflineFileEntry({
     required this.fileId,
-    required this.sizeBytes,
+    required this.durationMs,
     this.endTime,
   });
 
   final int fileId;
-  final int sizeBytes;
+  final int durationMs;
   final int? endTime;
 
-  int get estimatedDurationMs =>
-      sizeBytes > 0 ? ((sizeBytes / 20) * 166).round() : 0;
+  /// The listing reports milliseconds, not bytes (#456). File heads instead
+  /// count 166-byte records, each containing 20 ms / 160 bytes of Opus.
+  bool get hasDuration => durationMs > 0 && durationMs != 0xFFFFFFFF;
+  int get estimatedTransferBytes => hasDuration ? durationMs * 166 ~/ 20 : 0;
+
+  String get durationLabel {
+    if (!hasDuration) return '时长未知';
+    final seconds = durationMs ~/ 1000;
+    return '${seconds ~/ 3600}:${_p(seconds ~/ 60 % 60)}:${_p(seconds % 60)}';
+  }
 
   DateTime? get fileIdAsDate {
     if (fileId > 1e9 && fileId < 2e10) {
@@ -346,11 +354,11 @@ class OfflineFileEntry {
   }
 
   String get sizeLabel {
-    if (sizeBytes < 1024) return '$sizeBytes B';
-    if (sizeBytes < 1024 * 1024) {
-      return '${(sizeBytes / 1024).toStringAsFixed(1)} KB';
-    }
-    return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    if (!hasDuration) return '大小未知';
+    final bytes = estimatedTransferBytes;
+    if (bytes < 1024) return '约 $bytes B';
+    if (bytes < 1024 * 1024) return '约 ${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '约 ${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 
   static String _p(int n) => n.toString().padLeft(2, '0');
@@ -388,11 +396,15 @@ class OfflineFileList {
         endTime = readU32Le(payload, o);
         o += 4;
       }
-      final size = readU32Le(payload, o);
+      final durationMs = readU32Le(payload, o);
       o += 4;
-      if (size > 0) {
+      if (durationMs > 0) {
         files.add(
-          OfflineFileEntry(fileId: fileId, sizeBytes: size, endTime: endTime),
+          OfflineFileEntry(
+            fileId: fileId,
+            durationMs: durationMs,
+            endTime: endTime,
+          ),
         );
       }
     }

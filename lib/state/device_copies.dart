@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../ble/ble_file_pull.dart';
+import '../audio/audio_duration.dart';
 import '../protocol/models.dart';
 import 'atomic_file.dart';
 
@@ -56,7 +57,7 @@ abstract interface class DeviceCopyContext {
 ///
 /// Partial ids and retrieved sizes are saved under `AnkerRecorder/` as
 /// `incomplete_retrievals.json` (sorted id list) and `retrieved_sizes.json`
-/// (`{"<id>": bytes}`), so they survive a restart. An unreadable file only
+/// (`{"<id>": durationMs}`; the historical filename is retained), so they survive a restart. An unreadable file only
 /// loses a re-pull hint, never billed work, so loading never fails.
 class DeviceCopies {
   DeviceCopies({this.directory, this.inMemory = false});
@@ -67,6 +68,10 @@ class DeviceCopies {
 
   final Set<int> _partial = {};
   final Map<int, int> _retrievedSizes = {};
+  // Old reconcile versions compared bytes to milliseconds. A separate marker
+  // keeps the old baseline format readable while rechecking each legacy copy
+  // once against its duration. Values bind verification to a specific baseline.
+  final Map<int, int> _verifiedDurations = {};
   final Set<int> _unfinished = {};
   final Set<int> _retrieving = {};
   final Map<String, String> _completenessFailures = {};
@@ -110,6 +115,21 @@ class DeviceCopies {
         }
       }
     } catch (_) {}
+    try {
+      final file = File(p.join(dir.path, 'verified_retrieved_durations.json'));
+      if (await file.exists()) {
+        final decoded = jsonDecode(await file.readAsString());
+        if (decoded is Map) {
+          for (final entry in decoded.entries) {
+            final id = int.tryParse('${entry.key}');
+            final duration = entry.value;
+            if (id != null && duration is int) {
+              _verifiedDurations[id] = duration;
+            }
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   DeviceCopyStatus statusOf(OfflineFileEntry file) {
@@ -117,7 +137,7 @@ class DeviceCopies {
     final hasLocal = _context.localPathFor(id) != null;
     final retrievedAt = _retrievedSizes[id];
     final partial = _partial.contains(id);
-    final outgrown = retrievedAt != null && file.sizeBytes > retrievedAt;
+    final outgrown = retrievedAt != null && file.durationMs > retrievedAt;
     if (hasLocal && !partial && !outgrown) return DeviceCopyStatus.downloaded;
     if (_isUnfinished(file)) return DeviceCopyStatus.unfinished;
     if (!hasLocal && _context.isDismissed(id)) {
@@ -129,7 +149,7 @@ class DeviceCopies {
   }
 
   bool _isUnfinished(OfflineFileEntry file) {
-    if (file.sizeBytes == BleFilePull.unfinishedFileSize) return true;
+    if (file.durationMs == BleFilePull.unfinishedFileSize) return true;
     if (_context.recorderStatus == 0) return false;
     return _unfinished.contains(file.fileId) ||
         _context.currentRecordingFileId == file.fileId;
@@ -163,16 +183,16 @@ class DeviceCopies {
     }
   }
 
-  /// Records the outcome of a retrieval. A complete one with [listedBytes]
+  /// Records the outcome of a retrieval. A complete one with [listedDurationMs]
   /// becomes the baseline [statusOf] compares later listings to.
   Future<void> recordRetrieval(
     int fileId, {
     required bool complete,
-    int? listedBytes,
+    int? listedDurationMs,
   }) async {
     await load();
-    if (complete && listedBytes != null && _hasSize(listedBytes)) {
-      await _setRetrievedSize(fileId, listedBytes);
+    if (complete && listedDurationMs != null && _hasSize(listedDurationMs)) {
+      await _setRetrievedSize(fileId, listedDurationMs);
     } else if (!complete) {
       await _setRetrievedSize(fileId, null);
     }
@@ -191,24 +211,33 @@ class DeviceCopies {
   /// The recorder closed its file: unfinished ones can be pulled now.
   void recorderStopped() => _unfinished.clear();
 
-  /// Gives copies retrieved before sizes were recorded a baseline, once:
-  /// a decoded WAV of at least 95% of the listed size counts as complete,
-  /// a smaller one as partial. Returns whether any status changed.
+  /// Gives old copies a baseline and rechecks legacy byte-based decisions
+  /// once. Audio must cover 95% of its saved baseline (or the listing when
+  /// there is no baseline). Keep an older valid baseline so later growth is
+  /// still outgrown. Returns whether any status changed.
   Future<bool> reconcile(Iterable<OfflineFileEntry> files) async {
     await load();
     var changed = false;
     for (final file in files) {
       final id = file.fileId;
-      if (!_hasSize(file.sizeBytes)) continue;
-      if (_retrievedSizes.containsKey(id) || _partial.contains(id)) continue;
+      if (!_hasSize(file.durationMs)) continue;
+      if (_partial.contains(id)) continue;
+      final baseline = _retrievedSizes[id];
+      if (baseline != null && _verifiedDurations[id] == baseline) continue;
+      final expectedDuration = baseline ?? file.durationMs;
       final path = _context.localPathFor(id);
       if (path == null) continue;
       try {
         final local = File(path);
         if (!await local.exists()) continue;
-        final size = await local.length();
-        if (size >= (file.sizeBytes * 0.95).floor()) {
-          await _setRetrievedSize(id, file.sizeBytes);
+        // Local paths may be raw Opus or decoded WAV: compare durations,
+        // never compressed bytes with milliseconds (or WAV bytes).
+        final duration = await AudioDuration.read(path);
+        // A retrieval may have finished while the local metadata was read.
+        if (_retrievedSizes[id] != baseline || _partial.contains(id)) continue;
+        if (duration != null &&
+            duration.inMicroseconds >= expectedDuration * 1000 * 0.95) {
+          await _setRetrievedSize(id, expectedDuration);
         } else {
           await recordRetrieval(id, complete: false);
           changed = true;
@@ -230,15 +259,23 @@ class DeviceCopies {
   static bool _hasSize(int bytes) =>
       bytes > 0 && bytes != BleFilePull.unfinishedFileSize;
 
-  Future<void> _setRetrievedSize(int fileId, int? bytes) {
-    if (_retrievedSizes[fileId] == bytes) return Future.value();
-    if (bytes == null) {
+  Future<void> _setRetrievedSize(int fileId, int? durationMs) async {
+    final baselineChanged = _retrievedSizes[fileId] != durationMs;
+    if (!baselineChanged && _verifiedDurations[fileId] == durationMs) return;
+    if (durationMs == null) {
       _retrievedSizes.remove(fileId);
+      _verifiedDurations.remove(fileId);
     } else {
-      _retrievedSizes[fileId] = bytes;
+      _retrievedSizes[fileId] = durationMs;
+      _verifiedDurations[fileId] = durationMs;
     }
-    return _save('retrieved_sizes.json', {
-      for (final entry in _retrievedSizes.entries) '${entry.key}': entry.value,
+    if (baselineChanged) {
+      await _save('retrieved_sizes.json', {
+        for (final entry in _retrievedSizes.entries) '${entry.key}': entry.value,
+      });
+    }
+    await _save('verified_retrieved_durations.json', {
+      for (final entry in _verifiedDurations.entries) '${entry.key}': entry.value,
     });
   }
 

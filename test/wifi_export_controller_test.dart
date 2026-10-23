@@ -73,7 +73,7 @@ void main() {
           ..phase = AppPhase.ready
           ..files = [
             for (final id in fileIds)
-              OfflineFileEntry(fileId: id, sizeBytes: 21600),
+              OfflineFileEntry(fileId: id, durationMs: 21600),
           ];
     addTearDown(() async {
       await recorder.close();

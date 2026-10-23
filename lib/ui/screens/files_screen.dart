@@ -1735,7 +1735,7 @@ class _DeviceFileTile extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${file.sizeLabel}${complete
+                        '${file.durationLabel} · ${file.sizeLabel}${complete
                             ? ' · 已下载'
                             : unfinished
                             ? ' · 录音豆上未结束'
