@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/ble/ble_service.dart';
+import 'package:koe/platform/recorder_presence.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
+import 'package:koe/state/device_store.dart';
 import 'package:koe/state/recorder_controller.dart';
 
 import 'support/fake_foreground_service.dart';
@@ -37,10 +39,14 @@ void main() {
     expect(done(), isTrue);
   }
 
-  RecorderController build(_FakeBleService ble) {
+  RecorderController build(
+    _FakeBleService ble, {
+    PersistedDeviceLoader? loader,
+  }) {
     final controller = RecorderController(
       ble: ble,
       loadPersistedState: false,
+      persistedDeviceLoader: loader,
       phoneRecordingEnabled: false,
       topicsEnabled: false,
     );
@@ -94,7 +100,98 @@ void main() {
     expect(ble.waiting, isFalse);
     expect(service.running, isFalse);
   });
+
+  group('全天常驻', () {
+    test('nothing waits for the recorder while Android says it is away; '
+        'Android saying it is near brings it back', () async {
+      final service = FakeForegroundService();
+      final presence = _FakePresence(address: 'D3200-TEST');
+      final ble = _FakeBleService();
+      final controller = build(ble, loader: _bound);
+      await until(() => ble.scans > 0);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(ble.waiting, isFalse);
+      expect(service.running, isFalse);
+
+      await presence.tell(near: true);
+      await until(() => ble.waiting);
+      expect(service.text, 'Koe 正在等录音豆回来');
+      ble.deviceBack();
+      await until(() => controller.connected);
+      expect(presence.observing, isTrue);
+
+      // Out of range, Koe waits as it does without 全天常驻 until Android
+      // says the recorder is gone, then lets go of it.
+      ble.drop();
+      await until(() => ble.waiting);
+      await presence.tell(near: false);
+      await until(() => !ble.waiting);
+      expect(service.running, isFalse);
+      expect(controller.statusMessage, '录音豆不在身边，回来后会自动连上');
+    });
+
+    test('switched on, Android associates the recorder; switched off, Koe '
+        'waits for it itself again', () async {
+      final service = FakeForegroundService();
+      final presence = _FakePresence();
+      final ble = _FakeBleService();
+      final controller = build(ble, loader: _bound);
+      await until(() => ble.waiting);
+      ble.deviceBack();
+      await until(() => controller.connected);
+
+      expect(await controller.setResident(true), isTrue);
+      expect(presence.address, 'D3200-TEST');
+      expect(presence.observing, isTrue);
+      ble.drop();
+      await until(() => ble.waiting);
+      await presence.tell(near: false);
+      await until(() => !ble.waiting);
+
+      expect(await controller.setResident(false), isFalse);
+      expect(presence.address, isNull);
+      await until(() => ble.waiting);
+      expect(service.text, 'Koe 正在等录音豆回来');
+    });
+
+    test('is offered once, also after Koe restarts', () async {
+      FakeForegroundService();
+      _FakePresence();
+      final controller = build(_FakeBleService(), loader: DeviceStore.load);
+      await controller.connect(_device);
+      expect(controller.offersResident, isTrue);
+
+      controller.markResidentOffered();
+      expect(controller.offersResident, isFalse);
+      await DeviceStore.waitForWrites();
+      final restarted = build(_FakeBleService(), loader: DeviceStore.load);
+      await restarted.connect(_device);
+      expect(restarted.offersResident, isFalse);
+    });
+
+    test('binding another recorder drops the old association and asks '
+        'again', () async {
+      FakeForegroundService();
+      final presence = _FakePresence();
+      final controller = build(_FakeBleService(), loader: DeviceStore.load);
+      await controller.connect(_device);
+      expect(await controller.setResident(true), isTrue);
+
+      await controller.connect(_otherDevice);
+      await until(() => presence.address == null);
+      expect(controller.resident, isFalse);
+      expect(controller.offersResident, isTrue);
+    });
+  });
 }
+
+Future<PersistedDeviceState> _bound() async => (
+  bound: true,
+  manuallyDisconnected: false,
+  residentOffered: false,
+  device: _device,
+  info: null,
+);
 
 final _device = ScannedDevice(
   id: 'D3200-test',
@@ -104,6 +201,68 @@ final _device = ScannedDevice(
   isBoundAdvertised: true,
   isD3200: true,
 );
+
+final _otherDevice = ScannedDevice(
+  id: 'D3200-other',
+  name: 'soundcore Work',
+  rssi: -40,
+  productCode: 'D3200',
+  isBoundAdvertised: true,
+  isD3200: true,
+);
+
+/// Android's companion device manager: Koe is associated with [address]
+/// (none when null), and [tell] says whether the recorder is near, as
+/// Android does while Koe observes it.
+class _FakePresence {
+  _FakePresence({this.address}) {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(_channel, (call) async {
+      final args = (call.arguments as Map?)?.cast<String, Object?>();
+      switch (call.method) {
+        case 'state':
+          return {'supported': true, 'address': address, 'present': present};
+        case 'associate':
+          address = (args!['address'] as String).toUpperCase();
+          return true;
+        case 'observe':
+          observing = args!['on'] == true;
+          return null;
+        case 'disassociate':
+          address = null;
+          observing = false;
+          return null;
+      }
+      return null;
+    });
+    final previous = RecorderPresence.shared;
+    RecorderPresence.shared = RecorderPresence(
+      channel: _channel,
+      enabled: true,
+    );
+    addTearDown(() {
+      RecorderPresence.shared = previous;
+      messenger.setMockMethodCallHandler(_channel, null);
+    });
+  }
+
+  static const _channel = MethodChannel('test/recorder_presence');
+
+  String? address;
+  bool present = false;
+  bool observing = false;
+
+  Future<void> tell({required bool near}) async {
+    present = near;
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          _channel.name,
+          _channel.codec.encodeMethodCall(MethodCall('presence', near)),
+          (_) {},
+        );
+  }
+}
 
 /// Android's Bluetooth: [waitForDevice] stands for the system's connection
 /// request, which [deviceBack] answers.
@@ -120,6 +279,7 @@ class _FakeBleService extends BleService {
   bool ready = false;
   bool failConnect = false;
   int connectCalls = 0;
+  int scans = 0;
 
   bool get waiting => _wait != null;
 
@@ -153,7 +313,9 @@ class _FakeBleService extends BleService {
   @override
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 30),
-  }) async {}
+  }) async {
+    scans++;
+  }
 
   @override
   Future<void> stopScan() async {}
@@ -164,6 +326,9 @@ class _FakeBleService extends BleService {
     waits.add(remoteId);
     return (_wait = Completer<bool>()).future;
   }
+
+  @override
+  Future<void> withdrawWait() async => _withdraw();
 
   /// The recorder is back in range and the system has connected it.
   void deviceBack() {

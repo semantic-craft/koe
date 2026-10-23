@@ -89,11 +89,19 @@ class BleService {
         return true;
       case TargetPlatform.android:
         // Scan is declared neverForLocation, so finding the recorder needs
-        // no location; location is asked for only by place tagging.
-        final statuses = await [
+        // no location; location is asked for only by place tagging. Only
+        // missing ones are asked for: asking needs Koe on screen, and
+        // Android starts Koe without it when the recorder comes near.
+        final missing = <Permission>[];
+        for (final permission in [
           Permission.bluetoothScan,
           Permission.bluetoothConnect,
-        ].request();
+        ]) {
+          final status = await permission.status;
+          if (!status.isGranted && !status.isLimited) missing.add(permission);
+        }
+        if (missing.isEmpty) return true;
+        final statuses = await missing.request();
         return statuses.values.every((s) => s.isGranted || s.isLimited);
       case TargetPlatform.iOS:
         final s = await Permission.bluetooth.request();
@@ -368,6 +376,10 @@ class BleService {
     }
     return up.future;
   }
+
+  /// Withdraws [waitForDevice]'s request because the recorder is away;
+  /// Android says when it is near again (全天常驻).
+  Future<void> withdrawWait() => _withdrawWait();
 
   /// Withdraws [waitForDevice]'s request, and with it a link that came up
   /// but was not taken.
