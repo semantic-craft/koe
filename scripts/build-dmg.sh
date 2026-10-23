@@ -87,8 +87,21 @@ echo "==> Verifying signature"
 "${ROOT}/scripts/sign-macos.sh" --verify-only "$RELEASE_APP"
 
 echo "==> Staging DMG contents"
-rm -rf "$STAGING" "$DMG_RW" "$DMG_OUT"
+python3 "$ROOT/scripts/cleanup_app_registrations.py" --remove "$STAGING"
+rm -f "$DMG_RW" "$DMG_OUT"
 mkdir -p "$STAGING" "$DIST_DIR"
+cleanup_stage() {
+  local status=$?
+  trap - EXIT
+  if ! python3 "$ROOT/scripts/cleanup_app_registrations.py" --remove "$STAGING"; then
+    echo "cleanup: retained $STAGING; unregister failed or the build is running" >&2
+    [[ "$status" != 0 ]] || status=1
+  fi
+  exit "$status"
+}
+trap cleanup_stage EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Copy .app (preserve symlinks / resource forks as much as possible)
 ditto "$RELEASE_APP" "${STAGING}/${DISPLAY_NAME}.app"
@@ -119,7 +132,7 @@ hdiutil convert "$DMG_RW" \
   -o "$DMG_OUT" >/dev/null
 
 rm -f "$DMG_RW"
-rm -rf "$STAGING"
+python3 "$ROOT/scripts/cleanup_app_registrations.py" --remove "$STAGING"
 
 echo "==> Done"
 ls -lh "$DMG_OUT"

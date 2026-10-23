@@ -228,7 +228,7 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-23T12:06:28Z"
+        "updated_at": "2026-10-23T15:38:12Z"
       },
       {
         "number": 371,
@@ -375,8 +375,13 @@
         "updated_at": "2026-10-23T15:25:46Z"
       }
     ],
-    "main": "89b9db8c7acae0cae16fd70df4d2165b4666a0b8",
-    "open_pulls": [],
+    "main": "db8679e66b2cb5c63869d0c55b67464783184c6a",
+    "open_pulls": [
+      {
+        "head": "cdb748ba0d2f8fdcd6bbac5d0efbec8bc5087b3b",
+        "number": 463
+      }
+    ],
     "pulls": [
       {
         "base": "75749acdf6c097eda495a29b9c6f31d48f16e067",
@@ -633,12 +638,20 @@
         "merged": true,
         "number": 459,
         "state": "closed"
+      },
+      {
+        "base": "db8679e66b2cb5c63869d0c55b67464783184c6a",
+        "head": "cdb748ba0d2f8fdcd6bbac5d0efbec8bc5087b3b",
+        "merge_commit": "da2f82c6ce911817bbb257d6e78b8cc06d20e44c",
+        "merged": false,
+        "number": 463,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-23T15:33:02.688856Z",
+  "observed_at": "2026-10-23T15:47:38.634588Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1445,6 +1458,31 @@
         }
       ],
       "title": "下一步与覆盖范围"
+    },
+    {
+      "id": "build-cleanup",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "限定临时目录，包含嵌套 App、大小写别名及延迟注册复核",
+              "ref": "scripts/cleanup_app_registrations.py"
+            },
+            {
+              "kind": "pull",
+              "note": "清理脚本改动、复审与验证记录；不代表安装或用户体验验收。",
+              "ref": 463
+            }
+          ],
+          "id": "build-registration-cleanup",
+          "next": "后续打包和验收沿用清理入口；运行副本或注销失败时保留目录并报告。",
+          "status": "done",
+          "summary": "构建清理入口已实现；7 项保护回归、真实 macOS 隔离样例与项目 scripts/check 通过。代码合并状态见关联 PR；未发布安装。",
+          "title": "临时 App 注册清理"
+        }
+      ],
+      "title": "构建清理"
     }
   ],
   "title": "Koe 开发进度",
@@ -1545,7 +1583,8 @@
       449,
       451,
       457,
-      459
+      459,
+      463
     ]
   }
 }
