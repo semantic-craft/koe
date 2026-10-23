@@ -51,8 +51,7 @@ class AppDelegate: FlutterAppDelegate {
 /// Koe's app-level Mac controls, driven from Dart (`lib/platform/mac_app.dart`)
 /// over `com.semanticcraft.koe/mac_app`: the menu bar item, keeping the Mac
 /// awake while Koe records or transcribes, the question before quitting then,
-/// and the space left for takes. Kept in this file while #389 changes the
-/// Xcode project.
+/// the space left for takes and the global hot keys.
 final class MacAppChannel: NSObject, NSMenuDelegate {
   private let channel: FlutterMethodChannel
   private weak var window: NSWindow?
@@ -64,6 +63,10 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
   private var takeItem: NSMenuItem?
   private var clock: Timer?
   private var quitting = false
+  private let hotKeys = GlobalHotKeys()
+
+  /// Shows for a moment that ⌃⌥⌘B marked the take, in place of the state.
+  private var flash: Timer?
 
   /// What Dart last reported; see `MacAppStatus` there.
   private struct Status {
@@ -89,6 +92,7 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     menu.autoenablesItems = false
     statusItem.menu = menu
     showState()
+    hotKeys.onPress = { [weak self] name in self?.pressed(name) }
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call, result: result)
     }
@@ -100,8 +104,7 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     let args = call.arguments as? [String: Any] ?? [:]
     switch call.method {
     case "update":
-      update(args)
-      result(nil)
+      result(update(args))
     case "availableSpace":
       guard let path = args["path"] as? String else {
         result(FlutterError(code: "invalid_argument", message: "参数无效", details: nil))
@@ -113,7 +116,8 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     }
   }
 
-  private func update(_ args: [String: Any]) {
+  /// Shows what Dart reported. Returns the hot keys another app holds.
+  private func update(_ args: [String: Any]) -> [String] {
     var next = Status()
     next.state = args["state"] as? String ?? "idle"
     next.take = args["take"] as? String
@@ -132,9 +136,42 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     showState()
     holdAwake(next.keepAwake)
     if clock != nil { rebuildMenu() }
+    return hotKeys.hold(Set(args["hotKeys"] as? [String] ?? []))
+  }
+
+  /// Runs a hot key pressed in any app. Starting and stopping show in the
+  /// menu bar icon, a mark flashes it, and Koe comes forward to say why a
+  /// take did not start or save. Nothing done beeps. Success makes no sound,
+  /// which the take would record.
+  private func pressed(_ name: String) {
+    channel.invokeMethod("hotKey", arguments: name) { [weak self] result in
+      switch result as? String {
+      case "started", "stopped":
+        break
+      case "marked":
+        self?.flashHighlight()
+      case "failed":
+        NSSound.beep()
+        self?.showWindow()
+      default:
+        NSSound.beep()
+      }
+    }
+  }
+
+  private func flashHighlight() {
+    flash?.invalidate()
+    let flash = Timer(timeInterval: 1, repeats: false) { [weak self] _ in
+      self?.flash = nil
+      self?.showState()
+    }
+    RunLoop.main.add(flash, forMode: .common)
+    self.flash = flash
+    showIcon("star.circle.fill", label: "Koe 标了重点")
   }
 
   private func showState() {
+    guard flash == nil else { return }
     let symbol: String
     let label: String
     switch status.state {
@@ -147,6 +184,10 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     default:
       (symbol, label) = ("waveform", "Koe")
     }
+    showIcon(symbol, label: label)
+  }
+
+  private func showIcon(_ symbol: String, label: String) {
     let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
     image?.isTemplate = true
     statusItem.button?.image = image
@@ -291,7 +332,8 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
 
   @objc private func choose(_ item: NSMenuItem) {
     guard let id = item.representedObject as? String else { return }
-    // A take starts from the recording sheet, which needs the window.
+    // A take started from the menu shows its controls in the window; one
+    // started with ⌃⌥⌘R leaves the app in front where it is.
     if id == "start" { showWindow() }
     channel.invokeMethod("menu", arguments: id)
   }

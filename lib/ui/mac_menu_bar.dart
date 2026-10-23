@@ -8,22 +8,26 @@ import '../state/recorder_controller.dart';
 
 /// Shows on Koe's Mac menu bar item what [RecorderController] is doing,
 /// keeps the Mac awake meanwhile and asks before quitting then (#403). The
-/// take and the text captured so far are saved before Koe quits.
+/// take and the text captured so far are saved before Koe quits. ⌃⌥⌘R and
+/// ⌃⌥⌘B work from any app (#405).
 class MacMenuBar {
   MacMenuBar(this._controller, {required this.onStart, MacApp? app})
     : _app = app ?? MacApp.shared {
     _app
       ..onAction = _run
-      ..onQuit = _beforeQuit;
+      ..onQuit = _beforeQuit
+      ..onHotKey = _hotKey;
     _controller.addListener(_show);
     _controller.modelWorking.addListener(_show);
+    _app.hotKeysTaken.addListener(_show);
     _show();
   }
 
   final RecorderController _controller;
   final MacApp _app;
 
-  /// Opens the recording sheet, as 新录音 does.
+  /// Shows the controls of the take, or all-day listening, just started
+  /// from the menu or ⌃⌥⌘R, or why it did not start.
   final VoidCallback onStart;
 
   /// How long quitting waits for the take and text to be saved; the Mac
@@ -32,6 +36,7 @@ class MacMenuBar {
 
   String? _titlePath;
   String _title = '';
+  bool _starting = false;
 
   void _show() => unawaited(_app.show(_status()));
 
@@ -82,6 +87,18 @@ class MacMenuBar {
         MacMenuAction('start', c.allDayListening ? '开始全天监听' : '开始录音'),
       );
     }
+    // ⌃⌥⌘B is left to other apps while there is nothing to mark.
+    final hotKeys = [
+      if (c.recordHotKey && c.phoneRecordingEnabled) 'record',
+      if (c.highlightHotKey &&
+          !saving &&
+          (c.phoneRecordingActive || c.textCaptureActive))
+        'highlight',
+    ];
+    if (hotKeys.contains('highlight') &&
+        _app.hotKeysTaken.value.contains('highlight')) {
+      lines.add('⌃⌥⌘B 被别的应用占用，回到 Koe 标重点');
+    }
 
     final transcribing = c.transcribing || c.fileProcessingBusy;
     final retrieving =
@@ -120,6 +137,7 @@ class MacMenuBar {
       quitMessage: quitMessage,
       quitInfo: quitInfo.join('\n'),
       saving: saving,
+      hotKeys: hotKeys,
     );
   }
 
@@ -153,7 +171,7 @@ class MacMenuBar {
     final c = _controller;
     switch (action) {
       case 'start':
-        onStart();
+        unawaited(_start());
       case 'pause':
         unawaited(c.pausePhoneRecording());
       case 'resume':
@@ -165,6 +183,52 @@ class MacMenuBar {
           unawaited(c.stopTextCapture());
         }
     }
+  }
+
+  /// Starts a take, or all-day listening when it is on, here rather than
+  /// from the sheet, which starts its take once drawn: a closed window
+  /// draws nothing. True when it runs.
+  Future<bool> _start() async {
+    final c = _controller;
+    if (_starting) return false;
+    _starting = true;
+    try {
+      if (c.allDayListening) {
+        await c.startTextCapture(allDay: true);
+      } else {
+        await c.startPhoneRecording();
+      }
+    } finally {
+      _starting = false;
+    }
+    onStart();
+    return c.phoneRecordingActive || c.textCaptureActive;
+  }
+
+  /// A global hot key pressed in any app; see [MacApp.onHotKey]. ⌃⌥⌘R
+  /// answers once the take is saved, so a save that failed is told too.
+  Future<String?> _hotKey(String key) async {
+    final c = _controller;
+    if (_starting || c.phoneRecordingSaving || c.textCaptureSaving) {
+      return null;
+    }
+    switch (key) {
+      case 'record':
+        if (c.phoneRecordingActive) {
+          return await c.stopPhoneRecording() != null ? 'stopped' : 'failed';
+        }
+        if (c.textCaptureActive) {
+          return await c.stopTextCapture() != null ? 'stopped' : 'failed';
+        }
+        if (!c.phoneRecordingEnabled) return null;
+        return await _start() ? 'started' : 'failed';
+      case 'highlight':
+        final marked =
+            c.markPhoneRecordingHighlight() != null ||
+            c.markTextCaptureHighlight();
+        return marked ? 'marked' : null;
+    }
+    return null;
   }
 
   /// Saves the take, and the text with all-day listening kept for the next
@@ -181,8 +245,10 @@ class MacMenuBar {
   void dispose() {
     _controller.removeListener(_show);
     _controller.modelWorking.removeListener(_show);
+    _app.hotKeysTaken.removeListener(_show);
     _app
       ..onAction = null
-      ..onQuit = null;
+      ..onQuit = null
+      ..onHotKey = null;
   }
 }

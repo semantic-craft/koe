@@ -134,6 +134,8 @@ class AppSettings {
     this.autoRealtime = true,
     this.allDayListening = false,
     this.meetingLocalOnly = true,
+    this.recordHotKey = true,
+    this.highlightHotKey = true,
     this.transcriptLanguage = 'auto',
     this.sttMode = SttDisplayMode.transcription,
     this.translationTargetLanguage = 'zh',
@@ -160,6 +162,13 @@ class AppSettings {
   /// post-recording transcription only use [SttProvider.onDevice] engines,
   /// while everyday voice input continues to use [speechProvider].
   final bool meetingLocalOnly;
+
+  /// On the Mac, ⌃⌥⌘R starts or stops a take from any app (#405).
+  final bool recordHotKey;
+
+  /// On the Mac, ⌃⌥⌘B marks a highlight from any app while a take or text
+  /// capture runs (#405).
+  final bool highlightHotKey;
   final String transcriptLanguage;
   final SttDisplayMode sttMode;
   final String translationTargetLanguage;
@@ -179,6 +188,8 @@ class AppSettings {
     bool? autoRealtime,
     bool? allDayListening,
     bool? meetingLocalOnly,
+    bool? recordHotKey,
+    bool? highlightHotKey,
     String? transcriptLanguage,
     SttDisplayMode? sttMode,
     String? translationTargetLanguage,
@@ -194,6 +205,8 @@ class AppSettings {
       autoRealtime: autoRealtime ?? this.autoRealtime,
       allDayListening: allDayListening ?? this.allDayListening,
       meetingLocalOnly: meetingLocalOnly ?? this.meetingLocalOnly,
+      recordHotKey: recordHotKey ?? this.recordHotKey,
+      highlightHotKey: highlightHotKey ?? this.highlightHotKey,
       transcriptLanguage: transcriptLanguage ?? this.transcriptLanguage,
       sttMode: sttMode ?? this.sttMode,
       translationTargetLanguage:
@@ -211,6 +224,8 @@ class AppSettings {
     'autoRealtime': autoRealtime,
     'allDayListening': allDayListening,
     'meetingLocalOnly': meetingLocalOnly,
+    'recordHotKey': recordHotKey,
+    'highlightHotKey': highlightHotKey,
     'transcriptLanguage': transcriptLanguage,
     'sttMode': sttMode.name,
     'translationTargetLanguage': translationTargetLanguage,
@@ -250,6 +265,8 @@ class AppSettings {
       autoRealtime: map['autoRealtime'] != false,
       allDayListening: map['allDayListening'] == true,
       meetingLocalOnly: map['meetingLocalOnly'] != false,
+      recordHotKey: map['recordHotKey'] != false,
+      highlightHotKey: map['highlightHotKey'] != false,
       transcriptLanguage: _str(map['transcriptLanguage']) ?? 'auto',
       sttMode: sttMode,
       translationTargetLanguage: _str(map['translationTargetLanguage']) ?? 'zh',

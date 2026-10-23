@@ -810,6 +810,8 @@ mixin _RecorderTextCapture on ChangeNotifier {
     _textHeld.clear();
     _textMarks.clear();
     textCapturePaused = false;
+    // What went wrong while it ran is over with it.
+    textCaptureError = null;
     unawaited(BackgroundSyncService.shared.end(BackgroundWork.textCapture));
   }
 
@@ -1099,7 +1101,6 @@ mixin _RecorderTextCapture on ChangeNotifier {
       await spool.delete();
       await _clearAllDayMarker();
       _clearTextCapture();
-      textCaptureError = null;
     } finally {
       _textStopping = false;
       if (!_disposed) notifyListeners();

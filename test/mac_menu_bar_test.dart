@@ -10,14 +10,18 @@ import 'package:koe/main.dart';
 import 'package:koe/platform/mac_app.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
+import 'package:koe/state/app_settings_store.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/ui/mac_menu_bar.dart';
+import 'package:koe/ui/screens/settings_screen.dart';
+import 'package:provider/provider.dart';
 
+import 'support/settings_completion.dart';
 import 'support/wav_fixture.dart';
 
 /// Koe on the Mac menu bar (#403): the take and the work under way, the Mac
 /// kept awake meanwhile, a question and a saved take before quitting, and a
-/// notice when the disk fills up.
+/// notice when the disk fills up. The global hot keys ⌃⌥⌘R and ⌃⌥⌘B (#405).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('test/mac_app');
@@ -26,12 +30,21 @@ void main() {
   late Directory directory;
   late List<Map<Object?, Object?>> updates;
 
+  /// The hot keys other apps hold, which the Mac cannot give Koe.
+  late Set<String> othersHold;
+
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('koe-mac-menu-bar-');
     updates = [];
+    othersHold = {};
     messenger.setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'update') {
-        updates.add(call.arguments as Map<Object?, Object?>);
+        final update = call.arguments as Map<Object?, Object?>;
+        updates.add(update);
+        return [
+          for (final key in update['hotKeys']! as List<Object?>)
+            if (othersHold.contains(key)) key,
+        ];
       }
       return null;
     });
@@ -50,14 +63,16 @@ void main() {
       (action! as Map<Object?, Object?>)['title'],
   ];
 
-  /// Sends [method] as the Mac side does; completes once Koe answers.
-  Future<void> fromMac(String method, [Object? arguments]) {
-    final answered = Completer<void>();
+  /// Sends [method] as the Mac side does; completes with Koe's answer.
+  Future<Object?> fromMac(String method, [Object? arguments]) {
+    final answered = Completer<Object?>();
     unawaited(
       messenger.handlePlatformMessage(
         channel.name,
         channel.codec.encodeMethodCall(MethodCall(method, arguments)),
-        (_) => answered.complete(),
+        (reply) => answered.complete(
+          reply == null ? null : channel.codec.decodeEnvelope(reply),
+        ),
       ),
     );
     return answered.future;
@@ -94,10 +109,15 @@ void main() {
     return controller;
   }
 
+  final sheet = find.byKey(const ValueKey('phone-recording-title'));
+
   /// Starts a take from the menu, which opens the recording sheet.
   Future<void> startFromMenu(WidgetTester tester, RecorderController c) async {
     await tester.runAsync(() => fromMac('menu', 'start'));
-    await settle(tester, () => c.phoneRecordingActive);
+    await settle(
+      tester,
+      () => c.phoneRecordingActive && sheet.evaluate().isNotEmpty,
+    );
   }
 
   testWidgets(
@@ -111,7 +131,6 @@ void main() {
       expect(shown()['quitMessage'], isNull);
 
       await startFromMenu(tester, controller);
-      expect(find.byKey(const ValueKey('phone-recording-title')), findsOne);
       expect(shown()['state'], 'recording');
       expect(shown()['take'], '录音中');
       expect(shown()['running'], isTrue);
@@ -139,6 +158,143 @@ void main() {
       expect(menu(), ['开始录音']);
       expect(shown()['keepAwake'], isNull);
       expect(shown()['quitMessage'], isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  testWidgets(
+    '⌃⌥⌘R starts a take from another app while the window draws nothing, '
+    '⌃⌥⌘B marks it, and ⌃⌥⌘R saves it with the mark',
+    (tester) async {
+      final controller = await openKoe(tester, _Mic());
+      expect(shown()['hotKeys'], ['record']);
+
+      // No frame between the key and the answer: Koe's window draws none
+      // while it is closed or behind other windows.
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'started',
+      );
+      expect(controller.phoneRecordingActive, isTrue);
+      expect(shown()['hotKeys'], ['record', 'highlight']);
+      // The window shows the take's controls once it draws.
+      await settle(tester, () => sheet.evaluate().isNotEmpty);
+
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'highlight')),
+        'marked',
+      );
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'stopped',
+      );
+      final take = controller.library.assets.single.path;
+      expect(
+        controller
+            .bookmarksFor(RecordingReference(path: take))
+            .map((bookmark) => bookmark.note),
+        ['录音中标的重点'],
+      );
+      expect(shown()['hotKeys'], ['record']);
+      await settle(tester, () => sheet.evaluate().isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  testWidgets(
+    'a take stopped from the menu closes its sheet, and one the system cut '
+    'off keeps it open to say why, where the next take shows too',
+    (tester) async {
+      final mic = _Mic();
+      final controller = await openKoe(tester, mic);
+      await startFromMenu(tester, controller);
+
+      await tester.runAsync(() => fromMac('menu', 'stop'));
+      await settle(tester, () => sheet.evaluate().isEmpty);
+      expect(controller.library.assets, hasLength(1));
+
+      await startFromMenu(tester, controller);
+      mic.cutOff();
+      await settle(tester, () => controller.library.assets.length == 2);
+      await settle(
+        tester,
+        () => find.textContaining('录音被系统停下了').evaluate().isNotEmpty,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(sheet, findsOne);
+
+      // A take started again shows in that sheet, not in a second one.
+      await startFromMenu(tester, controller);
+      await tester.pump(const Duration(seconds: 1));
+      expect(sheet, findsOne);
+      await tester.runAsync(() => fromMac('menu', 'stop'));
+      await settle(tester, () => sheet.evaluate().isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  testWidgets(
+    'hot keys another app holds are pointed out, and once turned off they '
+    'are let go and stay off',
+    (tester) async {
+      othersHold = {'record', 'highlight'};
+      final controller = (await tester.runAsync(
+        () async => RecorderController(
+          loadPersistedState: false,
+          libraryDirectory: Directory('${directory.path}/imports'),
+          phoneRecorder: _Mic(),
+          phoneRecordingEnabled: true,
+          placeCapture: _NoPlace(),
+        ),
+      ))!;
+      addTearDown(controller.dispose);
+      final bar = MacMenuBar(controller, onStart: () {});
+      addTearDown(bar.dispose);
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: controller,
+          child: const MaterialApp(home: SettingsScreen()),
+        ),
+      );
+      final taken = find.byKey(const ValueKey('settings-record-hot-key-taken'));
+      await tester.scrollUntilVisible(
+        taken,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        tester.widget<Text>(taken).data,
+        '⌃⌥⌘R 已被别的应用占用。退出那个应用后，把这个开关关掉再打开。',
+      );
+
+      // ⌃⌥⌘B is asked for only during a take, and the menu says it is held.
+      await tester.runAsync(controller.startPhoneRecording);
+      await settle(
+        tester,
+        () => (shown()['lines']! as List<Object?>).contains(
+          '⌃⌥⌘B 被别的应用占用，回到 Koe 标重点',
+        ),
+      );
+      await tester.runAsync(controller.stopPhoneRecording);
+
+      for (final key in [
+        'settings-record-hot-key',
+        'settings-highlight-hot-key',
+      ]) {
+        final toggle = find.descendant(
+          of: find.byKey(ValueKey(key)),
+          matching: find.byType(Switch),
+        );
+        await tester.ensureVisible(toggle);
+        await tester.tap(toggle);
+        await tester.pump();
+      }
+      expect(shown()['hotKeys'], isEmpty);
+      expect(taken, findsNothing);
+      await waitForSettings(tester, controller);
+      final saved = (await tester.runAsync(AppSettingsStore.load))!;
+      expect(saved.recordHotKey, isFalse);
+      expect(saved.highlightHotKey, isFalse);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.macOS),
   );
@@ -177,9 +333,9 @@ void main() {
       int? savedWhenQuit;
       await tester.runAsync(() async {
         unawaited(
-          fromMac('quit').then(
-            (_) => savedWhenQuit = controller.library.assets.length,
-          ),
+          fromMac(
+            'quit',
+          ).then((_) => savedWhenQuit = controller.library.assets.length),
         );
         await Future<void>.delayed(const Duration(milliseconds: 20));
         mic.stopping!.complete();
@@ -319,6 +475,11 @@ class _Mic implements PhoneRecorder, PhoneDiskSpace {
   /// When set, stopping waits for it, as a slow save does.
   Completer<void>? stopping;
 
+  final _states = StreamController<PhoneMicState>.broadcast();
+
+  /// The system ends the take, as an unplugged microphone does.
+  void cutOff() => _states.add(PhoneMicState.stopped);
+
   @override
   Future<int?> availableSpace(String path) async {
     spaceChecks++;
@@ -329,7 +490,7 @@ class _Mic implements PhoneRecorder, PhoneDiskSpace {
   Future<bool> requestPermission() async => true;
 
   @override
-  Stream<PhoneMicState> get states => const Stream.empty();
+  Stream<PhoneMicState> get states => _states.stream;
 
   @override
   Future<void> start(String path) async {

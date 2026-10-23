@@ -8,6 +8,7 @@ import '../../ai/stt_types.dart';
 import '../../ai/apple_speech.dart';
 import '../../state/recorder_controller.dart';
 import '../../platform/credential_store.dart';
+import '../../platform/mac_app.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import '../widgets/about_koe.dart';
@@ -199,6 +200,11 @@ class SettingsScreen extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (runsOnMac && c.phoneRecordingEnabled) ...[
+                    const SizedBox(height: 18),
+                    const SectionLabel('快捷键'),
+                    _SettingsGroup(child: _HotKeySettings(controller: c)),
+                  ],
                   const SizedBox(height: 18),
                   const SectionLabel('设备'),
                   _SettingsGroup(
@@ -860,6 +866,54 @@ class _SttModeSelector extends StatelessWidget {
   }
 }
 
+/// The global hot keys, which work while another app is in front (#405),
+/// and which of them another app holds.
+class _HotKeySettings extends StatelessWidget {
+  const _HotKeySettings({required this.controller});
+
+  final RecorderController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    return ValueListenableBuilder(
+      valueListenable: MacApp.shared.hotKeysTaken,
+      builder: (context, taken, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsSwitch(
+            key: const ValueKey('settings-record-hot-key'),
+            title: '⌃⌥⌘R 开始或停止录音',
+            subtitle: '在别的应用里也能按；打开全天监听时开始或停止全天监听',
+            value: c.recordHotKey,
+            onChanged: c.setRecordHotKey,
+          ),
+          if (c.recordHotKey && taken.contains('record')) ...[
+            const SizedBox(height: 6),
+            const Text(
+              '⌃⌥⌘R 已被别的应用占用。退出那个应用后，把这个开关关掉再打开。',
+              key: ValueKey('settings-record-hot-key-taken'),
+              style: TextStyle(
+                color: AppColors.amber,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ],
+          const Divider(height: 20),
+          _SettingsSwitch(
+            key: const ValueKey('settings-highlight-hot-key'),
+            title: '⌃⌥⌘B 标重点',
+            subtitle: '录音或纯文字记录时在别的应用里也能按；只在这时占用这组按键',
+            value: c.highlightHotKey,
+            onChanged: c.setHighlightHotKey,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SettingsSwitch extends StatelessWidget {
   const _SettingsSwitch({
     super.key,
@@ -1177,14 +1231,11 @@ class _DiarizationModelSettings extends StatelessWidget {
     final subtitle = switch (status) {
       DiarizationModelStatus.ready =>
         '已就绪 · pyannote 分段 + 3D-Speaker 嵌入（约 33 MB）',
-      DiarizationModelStatus.downloading =>
-        '正在下载（$percent%）· 仅在 Wi-Fi 下下载',
+      DiarizationModelStatus.downloading => '正在下载（$percent%）· 仅在 Wi-Fi 下下载',
       DiarizationModelStatus.paused => '已暂停 · 可继续下载或删除已缓存文件',
       DiarizationModelStatus.wifiRequired ||
-      DiarizationModelStatus.failed =>
-        store.errorMessage ?? '本机发言人模型尚未就绪',
-      DiarizationModelStatus.notInstalled =>
-        '首次本机区分发言人时在 Wi-Fi 下自动下载（约 33 MB）',
+      DiarizationModelStatus.failed => store.errorMessage ?? '本机发言人模型尚未就绪',
+      DiarizationModelStatus.notInstalled => '首次本机区分发言人时在 Wi-Fi 下自动下载（约 33 MB）',
     };
     final isError =
         status == DiarizationModelStatus.wifiRequired ||

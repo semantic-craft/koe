@@ -438,7 +438,8 @@ void main() {
       expect(controller.textCaptureSaving, isTrue);
       String? savedWhenQuit;
       final quit = fromMac('quit').then(
-        (_) => savedWhenQuit = controller.minutesDocuments.firstOrNull?.bodyText,
+        (_) =>
+            savedWhenQuit = controller.minutesDocuments.firstOrNull?.bodyText,
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       mic.stopping!.complete();
@@ -478,6 +479,51 @@ void main() {
 
     expect(choosable.startedFrom, [usb.id]);
     await controller.stopTextCapture();
+  });
+
+  test('on the Mac ⌃⌥⌘R starts and ends all-day listening from any app, and '
+      '⌃⌥⌘B marks the sentence said', () async {
+    const channel = MethodChannel('test/mac_app');
+    final controller = build()..allDayListening = true;
+    final bar = MacMenuBar(
+      controller,
+      onStart: () {},
+      app: MacApp(channel: channel, enabled: true),
+    );
+    addTearDown(bar.dispose);
+    Future<Object?> hotKey(String key) {
+      final answered = Completer<Object?>();
+      unawaited(
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+              channel.name,
+              channel.codec.encodeMethodCall(MethodCall('hotKey', key)),
+              (reply) => answered.complete(
+                reply == null ? null : channel.codec.decodeEnvelope(reply),
+              ),
+            ),
+      );
+      return answered.future;
+    }
+
+    expect(await hotKey('record'), 'started');
+    expect(controller.textCaptureAllDay, isTrue);
+    mic.say(_second);
+    await until(() => streams.length == 1 && streams.first.received > 0);
+    streams.first.emit('先说点闲话。\n合同周五前要签。', speechFinal: true);
+    streams.first.finalText = '先说点闲话。\n合同周五前要签。';
+    await until(() => controller.textCaptureText.isNotEmpty);
+
+    expect(await hotKey('highlight'), 'marked');
+    expect(await hotKey('record'), 'stopped');
+    expect(controller.textCaptureActive, isFalse);
+    expect(
+      [
+        for (final segment in controller.minutesDocuments.single.segments)
+          if (segment.highlighted) segment.text,
+      ],
+      ['合同周五前要签。'],
+    );
   });
 
   test('a marked sentence stays marked in the saved text', () async {
@@ -644,6 +690,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('all-day-listening-bar')), findsNothing);
   });
+
+  testWidgets(
+    'all-day listening started from the Mac menu bar shows its sheet, which '
+    'closes when listening is ended from the menu, also after the system '
+    'cut the microphone off',
+    (tester) async {
+      const channel = MethodChannel('test/mac_app');
+      final shared = MacApp.shared;
+      MacApp.shared = MacApp(channel: channel, enabled: true);
+      addTearDown(() => MacApp.shared = shared);
+      final controller = (await tester.runAsync(() async => build()))!
+        ..allDayListening = true;
+      await tester.pumpWidget(KoeApp(controller: controller));
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 5),
+      );
+      Future<void> settle(bool Function() done) async {
+        for (var i = 0; i < 100 && !done(); i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(done(), isTrue);
+      }
+
+      Future<void> menu(String action) => tester.runAsync(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+              channel.name,
+              channel.codec.encodeMethodCall(MethodCall('menu', action)),
+              (_) {},
+            ),
+      );
+      final sheet = find.text('全天监听中');
+
+      await menu('start');
+      await settle(() => sheet.evaluate().isNotEmpty);
+      expect(controller.textCaptureAllDay, isTrue);
+      mic.cutOff();
+      await settle(() => controller.textCaptureError != null);
+
+      await menu('stop');
+      await settle(
+        () =>
+            find.byKey(const ValueKey('text-capture-title')).evaluate().isEmpty,
+      );
+      expect(controller.textCaptureActive, isFalse);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
 }
 
 class _Ble extends BleService {
@@ -684,6 +783,9 @@ class _Mic implements PhoneMicStream {
   bool allowed = true;
 
   void speak(int bytes) => _samples!.add(Uint8List(bytes));
+
+  /// Ends the samples, as the system does when it takes the microphone.
+  void cutOff() => _samples!.close();
 
   /// [bytes] of audio loud enough to count as speech.
   void say(int bytes) {

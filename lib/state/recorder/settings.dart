@@ -63,6 +63,8 @@ mixin _RecorderSettings on ChangeNotifier {
     autoRealtime = s.autoRealtime;
     allDayListening = s.allDayListening;
     meetingLocalOnly = s.meetingLocalOnly;
+    recordHotKey = s.recordHotKey;
+    highlightHotKey = s.highlightHotKey;
     transcriptLanguage = s.transcriptLanguage;
     appleSourceLanguage = s.appleSourceLanguage;
     translationTargetLanguage = s.translationTargetLanguage;
@@ -115,6 +117,8 @@ mixin _RecorderSettings on ChangeNotifier {
             autoRealtime: autoRealtime,
             allDayListening: allDayListening,
             meetingLocalOnly: meetingLocalOnly,
+            recordHotKey: recordHotKey,
+            highlightHotKey: highlightHotKey,
             transcriptLanguage: transcriptLanguage,
             sttMode: sttMode,
             translationTargetLanguage: translationTargetLanguage,
@@ -365,6 +369,18 @@ mixin _RecorderSettings on ChangeNotifier {
     unawaited(_persistSettings());
   }
 
+  void setRecordHotKey(bool v) {
+    recordHotKey = v;
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
+  void setHighlightHotKey(bool v) {
+    highlightHotKey = v;
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
   void setMeetingLocalOnly(bool v) {
     if (meetingLocalOnly == v) return;
     meetingLocalOnly = v;
@@ -520,6 +536,13 @@ mixin _RecorderSettings on ChangeNotifier {
 
   /// Meeting / formal recordings stay on the device (#376).
   bool meetingLocalOnly = true;
+
+  /// On the Mac, ⌃⌥⌘R starts or stops a take from any app (#405).
+  bool recordHotKey = true;
+
+  /// On the Mac, ⌃⌥⌘B marks a highlight from any app while a take or text
+  /// capture runs (#405).
+  bool highlightHotKey = true;
 
   /// Near-realtime AI transcription (PCM WS stream + Ogg batch fallback).
   bool autoTranscribe = true;

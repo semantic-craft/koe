@@ -26,7 +26,8 @@ class MacMenuAction {
 }
 
 /// Everything the Mac shows for Koe at one moment: the menu bar item and
-/// its menu, whether the Mac stays awake, and what to ask before quitting.
+/// its menu, whether the Mac stays awake, what to ask before quitting, and
+/// the global hot keys Koe holds.
 @immutable
 class MacAppStatus {
   const MacAppStatus({
@@ -40,6 +41,7 @@ class MacAppStatus {
     this.quitMessage,
     this.quitInfo = '',
     this.saving = false,
+    this.hotKeys = const [],
   });
 
   final MacAppState state;
@@ -69,6 +71,11 @@ class MacAppStatus {
   /// for it without asking.
   final bool saving;
 
+  /// The global hot keys to hold, which work while another app is in front
+  /// (#405): `record` (⌃⌥⌘R) and `highlight` (⌃⌥⌘B), as [MacApp.onHotKey]
+  /// receives them. Those left out are let go for other apps.
+  final List<String> hotKeys;
+
   Map<String, Object?> toMap() => {
     'state': state.name,
     'take': take,
@@ -82,6 +89,7 @@ class MacAppStatus {
     'quitMessage': quitMessage,
     'quitInfo': quitInfo,
     'saving': saving,
+    'hotKeys': hotKeys,
   };
 
   @override
@@ -95,7 +103,8 @@ class MacAppStatus {
       other.keepAwake == keepAwake &&
       other.quitMessage == quitMessage &&
       other.quitInfo == quitInfo &&
-      other.saving == saving;
+      other.saving == saving &&
+      listEquals(other.hotKeys, hotKeys);
 
   @override
   int get hashCode => Object.hash(
@@ -108,12 +117,14 @@ class MacAppStatus {
     quitMessage,
     quitInfo,
     saving,
+    Object.hashAll(hotKeys),
   );
 }
 
 /// Koe's app-level Mac controls, run by `macos/Runner/AppDelegate.swift`:
-/// the menu bar item, keeping the Mac awake, asking before quitting and the
-/// space left for takes. Elsewhere every call does nothing.
+/// the menu bar item, keeping the Mac awake, asking before quitting, the
+/// space left for takes and the global hot keys. Elsewhere every call does
+/// nothing.
 class MacApp {
   MacApp({this._channel = const MethodChannel(_channelName), bool? enabled})
     : _enabled = enabled ?? runsOnMac {
@@ -137,6 +148,18 @@ class MacApp {
   /// confirmed quitting. Koe quits when it returns, or after ten seconds.
   Future<void> Function()? onQuit;
 
+  /// Runs a global hot key pressed in any app; see [MacAppStatus.hotKeys].
+  /// What it did goes back to the Mac, which shows it: `started`,
+  /// `stopped` or `marked`; `failed` when a take could not start or be
+  /// saved, which brings the window up to say why; null when there was
+  /// nothing to do.
+  Future<String?> Function(String key)? onHotKey;
+
+  /// The hot keys another app holds, so Koe could not take them; checked
+  /// again whenever [show] sends a change.
+  ValueListenable<List<String>> get hotKeysTaken => _hotKeysTaken;
+  final _hotKeysTaken = ValueNotifier<List<String>>(const []);
+
   MacAppStatus _status = const MacAppStatus();
   MacAppStatus? _sent;
 
@@ -151,8 +174,14 @@ class MacApp {
   Future<void> _send() async {
     final status = _status;
     try {
-      await _channel.invokeMethod<void>('update', status.toMap());
+      final taken = await _channel.invokeListMethod<String>(
+        'update',
+        status.toMap(),
+      );
       _sent = status;
+      if (!listEquals(taken ?? const [], _hotKeysTaken.value)) {
+        _hotKeysTaken.value = taken ?? const [];
+      }
     } on MissingPluginException {
       // Not listening yet; it says `ready` once it is.
     } on PlatformException catch (error) {
@@ -183,6 +212,8 @@ class MacApp {
         onAction?.call(call.arguments as String);
       case 'quit':
         await onQuit?.call();
+      case 'hotKey':
+        return onHotKey?.call(call.arguments as String);
       default:
         throw MissingPluginException(call.method);
     }
