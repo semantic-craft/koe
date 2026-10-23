@@ -52,7 +52,7 @@ void main() {
     final saved = await service
         .transferFiles(
           endpoint: endpoint(recorder.port),
-          files: [OfflineFileEntry(fileId: 1761100000, sizeBytes: 160)],
+          files: [OfflineFileEntry(fileId: 1761100000, durationMs: 160)],
         )
         .timeout(const Duration(seconds: 10));
 
@@ -86,7 +86,7 @@ void main() {
     await expectLater(
       service.transferFiles(
         endpoint: endpoint(9),
-        files: [OfflineFileEntry(fileId: 1761100000, sizeBytes: 160)],
+        files: [OfflineFileEntry(fileId: 1761100000, durationMs: 160)],
       ),
       throwsA(isA<SoftApJoinException>()),
     );

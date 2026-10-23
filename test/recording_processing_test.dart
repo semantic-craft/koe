@@ -1156,7 +1156,7 @@ void main() async {
     final c = RecorderController(loadPersistedState: false, ble: _Ble())
       ..connected = true
       ..autoRealtime = false
-      ..files = [OfflineFileEntry(fileId: 100, sizeBytes: 160)];
+      ..files = [OfflineFileEntry(fileId: 100, durationMs: 160)];
     addTearDown(c.dispose);
     final refresh = c.refreshDeviceFiles();
     await tester.pump();

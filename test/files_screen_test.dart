@@ -187,7 +187,7 @@ void main() async {
           final c = _RefreshRecorderController()..connected = true;
           if (populated) {
             c.exportedPaths = ['/tmp/1783917051.wav'];
-            c.files = [OfflineFileEntry(fileId: 1783917051, sizeBytes: 160)];
+            c.files = [OfflineFileEntry(fileId: 1783917051, durationMs: 160)];
           }
           addTearDown(c.dispose);
           await pumpFiles(tester, c);
@@ -224,7 +224,7 @@ void main() async {
       final c = RecorderController(loadPersistedState: false)
         ..connected = true
         ..exportedPaths = [path]
-        ..files = [OfflineFileEntry(fileId: 1783917051, sizeBytes: 160)]
+        ..files = [OfflineFileEntry(fileId: 1783917051, durationMs: 160)]
         ..localPathsByFileId[1783917051] = path;
       addTearDown(c.dispose);
       await pumpFiles(tester, c);
@@ -322,8 +322,8 @@ void main() async {
           ..connected = true
           ..exportedPaths = [path]
           ..files = [
-            OfflineFileEntry(fileId: 1783917051, sizeBytes: 160),
-            OfflineFileEntry(fileId: 1783917052, sizeBytes: 160),
+            OfflineFileEntry(fileId: 1783917051, durationMs: 160),
+            OfflineFileEntry(fileId: 1783917052, durationMs: 160),
           ];
         addTearDown(c.dispose);
         await pumpFiles(tester, c, size: variant.$1, scale: variant.$2);
@@ -439,8 +439,8 @@ class _AutoTransferController extends RecorderController {
     connected = true;
     phase = AppPhase.busy;
     files = [
-      OfflineFileEntry(fileId: 103, sizeBytes: 160),
-      OfflineFileEntry(fileId: 102, sizeBytes: 160),
+      OfflineFileEntry(fileId: 103, durationMs: 160),
+      OfflineFileEntry(fileId: 102, durationMs: 160),
     ];
   }
 

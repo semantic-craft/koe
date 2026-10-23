@@ -67,9 +67,9 @@ void main() {
   test('unexported device recordings are newest first', () {
     final missing = ExportCatalog.unexportedNewestFirst(
       [
-        OfflineFileEntry(fileId: 100, sizeBytes: 160),
-        OfflineFileEntry(fileId: 300, sizeBytes: 160),
-        OfflineFileEntry(fileId: 200, sizeBytes: 160),
+        OfflineFileEntry(fileId: 100, durationMs: 160),
+        OfflineFileEntry(fileId: 300, durationMs: 160),
+        OfflineFileEntry(fileId: 200, durationMs: 160),
       ],
       {200},
     );

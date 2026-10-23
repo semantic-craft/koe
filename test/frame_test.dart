@@ -342,7 +342,7 @@ void main() {
     expect(page.fileCount, 1);
     expect(page.files.single.fileId, 100);
     expect(page.files.single.endTime, 200);
-    expect(page.files.single.sizeBytes, 300);
+    expect(page.files.single.durationMs, 300);
     expect(page.currentTransportTimestamp, 400);
     expect(page.currentTransportDuration, 500);
   });

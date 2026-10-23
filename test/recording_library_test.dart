@@ -466,7 +466,7 @@ void main() {
     );
 
     expect(
-      c.copyStatusOf(OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4)),
+      c.copyStatusOf(OfflineFileEntry(fileId: int.parse(id), durationMs: 4)),
       DeviceCopyStatus.dismissed,
     );
   });
@@ -499,7 +499,7 @@ void main() {
     expect(restarted.trashedAssets, isEmpty);
     expect(
       restarted.copyStatusOf(
-        OfflineFileEntry(fileId: int.parse(id), sizeBytes: 4),
+        OfflineFileEntry(fileId: int.parse(id), durationMs: 4),
       ),
       DeviceCopyStatus.dismissed,
     );

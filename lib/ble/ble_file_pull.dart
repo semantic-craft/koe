@@ -79,14 +79,14 @@ class BleFilePull {
   }) async {
     _cancelled = false;
     _cancelCompleter = Completer<void>();
-    // Audio bytes the device skips for this offset.
-    final skipped = alreadyTransferred ~/ sliceRecordBytes * 160;
+    // Transport bytes, in the same units as the file head and progress.
+    final skipped = alreadyTransferred;
     final dir = await _exportDir();
     final path = p.join(dir.path, '${file.fileId}.opus');
     final sink = File(path).openWrite();
 
     var received = 0;
-    var expected = file.sizeBytes;
+    var expected = file.estimatedTransferBytes;
     var decryptOn = false;
     var unfinished = false;
     final fileIdStr = '${file.fileId}';
@@ -129,13 +129,16 @@ class BleFilePull {
       if (pkt.cmdId == RxCmd.fileSliceId ||
           pkt.cmdId == RxCmd.fileSliceMarkId) {
         onFilePacket();
-        received += _writeSlices(
-          pkt.raw,
-          sink,
-          fileId: fileIdStr,
-          decrypt: decryptOn,
-          onMark: onMark,
-        );
+        received +=
+            _writeSlices(
+              pkt.raw,
+              sink,
+              fileId: fileIdStr,
+              decrypt: decryptOn,
+              onMark: onMark,
+            ) ~/
+            160 *
+            sliceRecordBytes;
         onProgress?.call(received, expected);
         return;
       }
