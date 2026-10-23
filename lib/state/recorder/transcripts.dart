@@ -791,9 +791,17 @@ mixin _RecorderTranscripts on ChangeNotifier {
     }
 
     final assigned = assignSpeakersToSegments(turns, currentSegments);
-    _transcriptSegments[key] = assigned.segments;
     // Manual per-segment speaker edits in _segmentSpeakers[key] are intentionally
     // preserved so transcriptSegmentsForPath(path) keeps user corrections.
+    final overrides = _segmentSpeakers[key] ?? const <int, String>{};
+    _transcriptSegments[key] = List<TranscriptSegment>.unmodifiable(
+      keepSpeakerIds(
+        currentSegments,
+        assigned.segments,
+        corrected: overrides.keys.toSet(),
+        reserved: {..._speakerAliasesForPath(path).keys, ...overrides.values},
+      ),
+    );
     _recordDiarizationQuality(path, quality);
 
     notifyListeners();

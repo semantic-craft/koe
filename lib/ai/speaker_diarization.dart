@@ -105,6 +105,79 @@ assignSpeakersToSegments(
   );
 }
 
+/// Carries speaker ids over a re-diarization, so names and manual
+/// corrections, both keyed by id, stay with the same person (Shiyin R22.2).
+///
+/// A speaker in [fresh] keeps the id a segment had in [previous] when at
+/// least 60% of its time was that old speaker and most of that old
+/// speaker's time went to it, counting only segments outside [corrected].
+/// Every other speaker takes, in order of first appearance, the smallest
+/// free id that no kept speaker and nothing in [reserved] uses.
+///
+/// The share rule follows Shiyin
+/// `Sources/Shiyin/Services/JobRunner.swift:403-436` (`oldToNew`,
+/// `inheritNames`, commit `d4deacf`); Shiyin moves the names to the new
+/// numbers, Koe keeps the numbers instead.
+List<TranscriptSegment> keepSpeakerIds(
+  List<TranscriptSegment> previous,
+  List<TranscriptSegment> fresh, {
+  Set<int> corrected = const {},
+  Set<String> reserved = const {},
+}) {
+  final byNew = <String, Map<String, int>>{};
+  final byOld = <String, Map<String, int>>{};
+  for (var i = 0; i < fresh.length && i < previous.length; i++) {
+    final next = fresh[i].speaker;
+    final old = previous[i].speaker;
+    if (next == null || old == null || corrected.contains(i)) continue;
+    final segment = fresh[i];
+    final us = math.max(
+      0,
+      (segment.end ?? segment.start).inMicroseconds -
+          segment.start.inMicroseconds,
+    );
+    final shares = byNew.putIfAbsent(next, () => {});
+    shares[old] = (shares[old] ?? 0) + us;
+    final spread = byOld.putIfAbsent(old, () => {});
+    spread[next] = (spread[next] ?? 0) + us;
+  }
+
+  // Ties go to the earlier entry, which is the earlier speaker to appear.
+  String largest(Map<String, int> times) {
+    var best = times.entries.first;
+    for (final entry in times.entries) {
+      if (entry.value > best.value) best = entry;
+    }
+    return best.key;
+  }
+
+  final ids = <String, String>{};
+  for (final MapEntry(key: next, value: shares) in byNew.entries) {
+    final total = shares.values.fold(0, (sum, us) => sum + us);
+    if (total == 0) continue;
+    final old = largest(shares);
+    if (shares[old]! < 0.6 * total || largest(byOld[old]!) != next) continue;
+    ids[next] = old;
+  }
+
+  final taken = {...reserved, ...ids.values};
+  var candidate = 1;
+  return [
+    for (final segment in fresh)
+      if (segment.speaker case final next?)
+        segment.copyWith(
+          speaker: ids.putIfAbsent(next, () {
+            while (!taken.add('$candidate')) {
+              candidate++;
+            }
+            return '$candidate';
+          }),
+        )
+      else
+        segment,
+  ];
+}
+
 abstract interface class SpeakerDiarizer {
   Future<DiarizationResult> diarize(
     String audioPath, {

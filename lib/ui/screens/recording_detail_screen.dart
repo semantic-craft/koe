@@ -811,7 +811,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         path,
         expectedSpeakers: choice.expectedSpeakers,
       );
-      if (mounted) _notice('已重新区分发言人');
+      if (!mounted) return;
+      // Names stay with the person only where the new grouping clearly
+      // matches the old one (Shiyin R22.2), so ask for a second look.
+      _notice(
+        controller.speakerAliasesForPath(path).isEmpty
+            ? '已重新区分发言人'
+            : '已重新区分发言人。取过的名字尽量留在原来的人身上，请再确认一下',
+      );
     } catch (e) {
       if (mounted) _notice('重新区分发言人失败：$e');
     }

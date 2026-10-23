@@ -982,8 +982,8 @@ class RecorderController extends ChangeNotifier
     if (!isMeeting || !meetingLocalOnly || !config.provider.onDevice) {
       return result;
     }
-    // Apple currently returns text without recognition timestamps. Preserve
-    // that text without inventing sentence timings or speaker assignments.
+    // Speakers go only to recognized passages with their own times. A result
+    // without them keeps its text, with no invented timings or speakers.
     if (result.segments.isEmpty) return result;
     if (!_autoDiarizeLocalMeetings && !diarizationModels.isReady) {
       return result;

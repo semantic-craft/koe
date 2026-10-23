@@ -148,8 +148,8 @@ void main() {
         updated.map((s) => s.text).toList(),
         ['第一句内容不变。', '第二句人工确认归属。', '第三句重分给第三人。'],
       );
-      // 未手改的第 0、2 段按新 turn 更新为 '1'、'3'，手改过的第 1 段保持 '9'
-      expect(updated.map((s) => s.speaker).toList(), ['1', '9', '3']);
+      // 未手改的第 0、2 段新分群都只有原来的 '1'、'2'，沿用原编号；手改过的第 1 段保持 '9'
+      expect(updated.map((s) => s.speaker).toList(), ['1', '9', '2']);
 
       // 旧格式 JSON（缺 expectedSpeakersByKey / diarizationQualityByKey / speakerUndoByKey）读回兼容
       final legacyDecoded = TranscriptStore.decode({
@@ -173,6 +173,74 @@ void main() {
         },
       });
       expect(legacyDecoded.segmentSpeakersByKey['path:$path'], {1: '9'});
+    },
+  );
+
+  test(
+    '(2b) 重新区分后，取过的名字跟着人走：新发言人的话大部分原来是同一个名字，就沿用这个名字（拾音 R22.2）',
+    () async {
+      const path = '/tmp/koe-rediarize-names-test.wav';
+      final c = RecorderController(
+        loadPersistedState: false,
+        transcriptPersister: ({bool strict = false}) async {},
+      );
+      addTearDown(c.dispose);
+
+      // 第一次区分把王五的开场并进了张总（1）。
+      c.rememberTranscript(
+        path,
+        '王五开场。\n李工汇报。\n张总提问。\n李工回答。\n张总总结。',
+        segments: [
+          seg('王五开场。', 0, 6, speaker: '1', changed: true),
+          seg('李工汇报。', 6, 16, speaker: '2', changed: true),
+          seg('张总提问。', 16, 30, speaker: '1', changed: true),
+          seg('李工回答。', 30, 40, speaker: '2', changed: true),
+          seg('张总总结。', 40, 52, speaker: '1', changed: true),
+        ],
+      );
+      await c.renameTranscriptSpeaker(path, '1', '张总');
+      await c.renameTranscriptSpeaker(path, '2', '李工');
+
+      // 按「大约 3 人」重新区分：王五、李工、张总各成一群，王五最先说话。
+      await c.rediarizeSpeakers(
+        path,
+        expectedSpeakers: 3,
+        turnsOverride: const [
+          DiarizationTurn(
+            speaker: 0,
+            start: Duration.zero,
+            end: Duration(seconds: 6),
+          ),
+          DiarizationTurn(
+            speaker: 1,
+            start: Duration(seconds: 6),
+            end: Duration(seconds: 16),
+          ),
+          DiarizationTurn(
+            speaker: 2,
+            start: Duration(seconds: 16),
+            end: Duration(seconds: 30),
+          ),
+          DiarizationTurn(
+            speaker: 1,
+            start: Duration(seconds: 30),
+            end: Duration(seconds: 40),
+          ),
+          DiarizationTurn(
+            speaker: 2,
+            start: Duration(seconds: 40),
+            end: Duration(seconds: 52),
+          ),
+        ],
+      );
+
+      final labels = {
+        for (final s in c.transcriptSpeakersForPath(path)) s.id: s.displayLabel,
+      };
+      expect(
+        [for (final s in c.transcriptSegmentsForPath(path)) labels[s.speaker]],
+        ['说话人 3', '李工', '张总', '李工', '张总'],
+      );
     },
   );
 
