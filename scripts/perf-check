@@ -5,6 +5,15 @@
 #
 #   scripts/perf-check            run and check
 #   scripts/perf-check --report   run and print numbers without failing
+#
+# macOS draws no frames for a window that is not on screen, so the scenarios
+# stop after 30 s without one. KOE_PERF_FOREGROUND=1 brings the Koe window to
+# the front once the app starts, taking focus from the app in use.
+#
+# Exit codes: 0 within thresholds (with --report, whatever the numbers),
+# 1 over threshold, 2 flutter drive failed, 3 no frames because the Koe
+# window was not on screen, 4 no result after KOE_PERF_TIMEOUT seconds
+# (default 480).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,24 +25,77 @@ report_only=0
 unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_TTS_API_KEY || true
 
 rm -rf build/perf
-flutter drive --profile -d macos \
+# flutter drive leads its own process group, which the app and the driver it
+# starts join, so stopping the group leaves nothing writing to the output.
+python3 -c 'import os, sys; os.setpgrp(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  flutter drive --profile -d macos \
   --driver=test_driver/perf_driver.dart \
-  --target=integration_test/perf/perf_scenarios_test.dart &
+  --target=integration_test/perf/perf_scenarios_test.dart </dev/null &
 drive=$!
 
-# macOS gives a window that never reached the foreground no frames, and the
-# scenarios then wait forever. Stop after a bounded time instead of hanging.
+stop_drive() {
+  kill -TERM -- "-$drive" 2>/dev/null || return 0
+  for _ in {1..20}; do
+    sleep 0.5
+    kill -0 -- "-$drive" 2>/dev/null || return 0
+  done
+  kill -KILL -- "-$drive" 2>/dev/null || true
+  sleep 0.5
+}
+trap stop_drive EXIT
+trap 'exit 130' INT TERM HUP
+
+# Unhides and activates the app with this pid. By pid rather than `open -a`,
+# which can start a second copy before this one has checked in, or pick an
+# installed Koe with the same bundle id. Fails until the app has launched.
+bring_to_front() {
+  osascript -l JavaScript -e "ObjC.import('AppKit')
+const app = \$.NSRunningApplication.runningApplicationWithProcessIdentifier($1)
+if (app.isNil() || !app.finishedLaunching) throw new Error('not launched yet')
+app.unhide
+app.activateWithOptions(\$.NSApplicationActivateAllWindows)" >/dev/null 2>&1
+}
+
+no_frames=build/perf/no_frames.txt
 deadline=$((SECONDS + ${KOE_PERF_TIMEOUT:-480}))
+foreground=${KOE_PERF_FOREGROUND:-0}
+timed_out=0
 while kill -0 "$drive" 2>/dev/null; do
-  if (( SECONDS > deadline )); then
-    kill "$drive" 2>/dev/null || true
-    pkill -f 'Build/Products/Profile/Koe.app/Contents/MacOS/Koe' || true
-    echo "perf-check: timed out; the Koe profile window probably never came to the foreground, so macOS rendered no frames. Rerun with the screen unlocked." >&2
-    exit 3
+  if [[ $foreground == 1 ]]; then
+    app=$(pgrep -n -g "$drive" -f 'Profile/Koe.app/Contents/MacOS/Koe' || true)
+    if [[ -n $app ]] && bring_to_front "$app"; then
+      echo "perf-check: brought the Koe window to the front (KOE_PERF_FOREGROUND=1)" >&2
+      foreground=0
+    fi
   fi
-  sleep 2
+  # The driver has written why the run stopped; flutter drive only has to
+  # stop the app now.
+  if [[ -f $no_frames ]] && ((deadline > SECONDS + 20)); then
+    deadline=$((SECONDS + 20))
+  fi
+  if ((SECONDS > deadline)); then
+    timed_out=1
+    stop_drive
+    break
+  fi
+  sleep 1
 done
-wait "$drive"
+status=0
+wait "$drive" || status=$?
+
+if [[ -f $no_frames ]]; then
+  echo "perf-check: stopped, $(cat "$no_frames")." >&2
+  echo "perf-check: the Koe profile window was not on screen (opened behind another app, covered, hidden, or the screen locked), so this is not a performance result. Keep it visible and rerun, or rerun with KOE_PERF_FOREGROUND=1." >&2
+  exit 3
+fi
+if ((timed_out)); then
+  echo "perf-check: no result after ${KOE_PERF_TIMEOUT:-480} s, and the app reported no frame stall; stopped flutter drive and everything it started. Not a performance result." >&2
+  exit 4
+fi
+if ((status != 0)); then
+  echo "perf-check: flutter drive failed (exit $status); see its output above. Not a performance result." >&2
+  exit 2
+fi
 
 python3 - "$report_only" <<'PY'
 import json, sys

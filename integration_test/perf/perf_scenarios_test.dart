@@ -56,12 +56,14 @@ void main() {
 
   late Directory documents;
   final results = <String, Object?>{};
+  final frameWatch = _stopWhenNoFrames(binding);
 
   setUpAll(() async {
     documents = await Directory.systemTemp.createTemp('koe-perf-');
     PathProviderPlatform.instance = _TempPathProvider(documents.path);
   });
   tearDownAll(() async {
+    frameWatch.cancel();
     binding.reportData = {...?binding.reportData, 'perf': results};
     if (await documents.exists()) await documents.delete(recursive: true);
   });
@@ -389,6 +391,45 @@ void main() {
     await File(paths.single).delete();
     await recorder.close();
     controller.dispose();
+  });
+}
+
+/// How long a frame may be due without one being drawn before the run stops.
+const _noFrameLimit = Duration(seconds: 30);
+
+/// macOS draws nothing for a window that is not on screen (opened behind
+/// another app's window, covered, hidden or minimised, or the screen is
+/// locked), and every pump then waits forever. When a frame has been due for
+/// [_noFrameLimit] without one being drawn, end the run through the driver
+/// with the reason, so scripts/perf-check stops early and does not report it
+/// as a performance failure.
+Timer _stopWhenNoFrames(IntegrationTestWidgetsFlutterBinding binding) {
+  var frames = 0;
+  binding.addPersistentFrameCallback((_) => frames++);
+  var seen = 0;
+  final stalled = Stopwatch()..start();
+  return Timer.periodic(const Duration(seconds: 1), (timer) {
+    // A hidden window turns frames off; otherwise a pump leaves a frame
+    // scheduled until one is drawn. Setting up a scenario may go a while
+    // without wanting a frame at all.
+    final due = !binding.framesEnabled || binding.hasScheduledFrame;
+    if (frames != seen || !due) {
+      seen = frames;
+      stalled.reset();
+      return;
+    }
+    if (stalled.elapsed < _noFrameLimit) return;
+    timer.cancel();
+    final reason =
+        'no frame drawn for ${stalled.elapsed.inSeconds} s '
+        '(app lifecycle: ${binding.lifecycleState?.name})';
+    // ignore: avoid_print
+    print('[perf] $reason');
+    binding.reportData = {...?binding.reportData, 'no_frames': reason};
+    // The driver waits on this and then reports the run as failed.
+    if (!binding.allTestsPassed.isCompleted) {
+      binding.allTestsPassed.complete(false);
+    }
   });
 }
 

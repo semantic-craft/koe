@@ -83,8 +83,20 @@ Future<void> handleNewRecordingAction(
 /// Records from the phone microphone until the user saves or discards.
 ///
 /// The sheet cannot be swiped away mid-take, so a running recording always
-/// has visible controls.
-Future<void> showPhoneRecordingSheet(BuildContext context) async {
+/// has visible controls. A take [startedElsewhere], from the Mac menu bar
+/// or ⌃⌥⌘R (#405), shows in the sheet already up, and needs none once it
+/// is over.
+Future<void> showPhoneRecordingSheet(
+  BuildContext context, {
+  bool startedElsewhere = false,
+}) async {
+  final controller = context.read<RecorderController>();
+  if (startedElsewhere &&
+      (_PhoneRecordingPanelState._up ||
+          (!controller.phoneRecordingActive &&
+              controller.phoneRecordingError == null))) {
+    return;
+  }
   final messenger = ScaffoldMessenger.of(context);
   final saved = await showModalBottomSheet<String>(
     context: context,
@@ -92,7 +104,7 @@ Future<void> showPhoneRecordingSheet(BuildContext context) async {
     isDismissible: false,
     enableDrag: false,
     isScrollControlled: true,
-    builder: (_) => const PhoneRecordingPanel(),
+    builder: (_) => PhoneRecordingPanel(startsTake: !startedElsewhere),
   );
   if (saved != null) {
     messenger.showSnackBar(
@@ -102,16 +114,32 @@ Future<void> showPhoneRecordingSheet(BuildContext context) async {
 }
 
 class PhoneRecordingPanel extends StatefulWidget {
-  const PhoneRecordingPanel({super.key});
+  const PhoneRecordingPanel({super.key, this.startsTake = true});
+
+  /// Starts the take once shown; false for one started elsewhere.
+  final bool startsTake;
 
   @override
   State<PhoneRecordingPanel> createState() => _PhoneRecordingPanelState();
 }
 
 class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
+  static final _panels = <_PhoneRecordingPanelState>{};
+
+  /// Whether a panel is up and not closing, which a take started elsewhere
+  /// shows in rather than in a second one.
+  static bool get _up =>
+      _panels.any((panel) => panel._route?.isActive ?? false);
+
+  late final RecorderController _controller;
+  ModalRoute<Object?>? _route;
+
   /// The take is being saved or thrown away and the panel closes after; the
   /// controls wait, so nothing opened on top is what the close pops.
   bool _stopping = false;
+
+  /// Whether the take shown has run, so its end is noticed.
+  bool _hadTake = false;
   final _notes = TextEditingController();
 
   /// The notes as last kept, without text an input method is composing.
@@ -120,22 +148,61 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
   @override
   void initState() {
     super.initState();
-    _keptNotes = context.read<RecorderController>().phoneRecordingNotes;
+    _panels.add(this);
+    _controller = context.read<RecorderController>()
+      ..addListener(_onTakeChanged);
+    _hadTake =
+        _controller.phoneRecordingActive || _controller.phoneRecordingSaving;
+    _keptNotes = _controller.phoneRecordingNotes;
     _notes.text = _keptNotes;
     _notes.addListener(_onNotesEdited);
+    if (!widget.startsTake) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final controller = context.read<RecorderController>();
-      if (!controller.phoneRecordingActive) {
-        unawaited(controller.startPhoneRecording());
+      if (!_controller.phoneRecordingActive) {
+        unawaited(_controller.startPhoneRecording());
       }
     });
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+  }
+
+  @override
   void dispose() {
+    _panels.remove(this);
+    _controller.removeListener(_onTakeChanged);
     _notes.dispose();
     super.dispose();
+  }
+
+  /// A take ended by other means than this panel, from the Mac menu bar or
+  /// ⌃⌥⌘R (#405), closes it. The close waits until the end settles: a take
+  /// the system cut off says why only once it is saved, and the panel stays
+  /// to show that, as it does under a dialog.
+  void _onTakeChanged() {
+    if (_controller.phoneRecordingActive || _controller.phoneRecordingSaving) {
+      _hadTake = true;
+    } else if (_hadTake) {
+      _hadTake = false;
+      if (!_stopping) Timer.run(_closeIfEnded);
+    }
+  }
+
+  void _closeIfEnded() {
+    final c = _controller;
+    if (!mounted ||
+        _stopping ||
+        c.phoneRecordingActive ||
+        c.phoneRecordingSaving ||
+        c.phoneRecordingError != null ||
+        !(_route?.isCurrent ?? false)) {
+      return;
+    }
+    Navigator.of(context).pop();
   }
 
   /// Puts the recording time in front of each line the user begins (#400),

@@ -47,6 +47,7 @@ class _AppShellState extends State<AppShell> {
   int _handledShortcutFailureRevision = 0;
   bool _residentOffered = false;
   MacMenuBar? _macMenuBar;
+  bool _startedTakeDue = false;
 
   @override
   void initState() {
@@ -54,11 +55,33 @@ class _AppShellState extends State<AppShell> {
     if (MacApp.shared.enabled) {
       _macMenuBar = MacMenuBar(
         context.read<RecorderController>(),
-        onStart: () => unawaited(
-          handleNewRecordingAction(context, NewRecordingAction.phone),
-        ),
+        onStart: _showStartedTake,
       );
     }
+  }
+
+  /// Shows the controls of a take started from the Mac menu bar or ⌃⌥⌘R
+  /// (#405) once the window draws: a closed one draws nothing, and the take
+  /// may be over by the time it opens.
+  void _showStartedTake() {
+    if (_startedTakeDue) return;
+    _startedTakeDue = true;
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        _startedTakeDue = false;
+        if (!mounted) return;
+        final c = context.read<RecorderController>();
+        unawaited(
+          c.textCaptureActive || (!c.phoneRecordingActive && c.allDayListening)
+              ? showTextCaptureSheet(
+                  context,
+                  allDay: true,
+                  startedElsewhere: true,
+                )
+              : showPhoneRecordingSheet(context, startedElsewhere: true),
+        );
+      })
+      ..scheduleFrame();
   }
 
   @override
