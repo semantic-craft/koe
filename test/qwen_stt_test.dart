@@ -292,12 +292,22 @@ void main() {
         ],
       });
 
+      var marked = false;
       var checkpointed = false;
       client.beforeSend = (request) {
+        if (request.url.path.endsWith('/transcription')) {
+          expect(marked, isTrue);
+        }
         if (request.url.path.contains('/tasks/')) expect(checkpointed, isTrue);
       };
       final service =
           QwenSttService(client: client, pollInterval: Duration.zero)
+            ..onSending = () async {
+              // Policy and upload are out; the paid task is not (#426).
+              expect(client.requests, hasLength(2));
+              await Future<void>.delayed(Duration.zero);
+              marked = true;
+            }
             ..recovery = QwenTaskRecovery(
               onSubmitted: (id) async {
                 expect(id, 'task-1');

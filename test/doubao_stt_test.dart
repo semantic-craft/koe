@@ -263,6 +263,38 @@ void main() {
     },
   );
 
+  test(
+    'flash marks the request sent after the audio and before it is complete',
+    () async {
+      final file = await _tinyOgg();
+      final client = _ScriptedClient();
+      client.enqueue(
+        200,
+        {
+          'result': {'text': '你好'},
+        },
+        headers: {'x-api-status-code': '20000000', 'x-api-message': 'OK'},
+      );
+
+      String? atMark;
+      final service = DoubaoSttService(client: client)
+        ..onSending = () async {
+          await Future<void>.delayed(Duration.zero);
+          atMark = utf8.decode(client.receiving);
+        };
+      addTearDown(service.dispose);
+      await service.transcribePath(file.path, apiKey: 'test-key');
+
+      // Cut off before the mark, the run goes again on the next launch; the
+      // service could not have acted on a request still missing its end
+      // (#426).
+      final body = client.bodies.single;
+      expect(atMark, contains(base64Encode(await file.readAsBytes())));
+      expect(body.startsWith(atMark!), isTrue);
+      expect(atMark!.length, lessThan(body.length));
+    },
+  );
+
   test('flash error status becomes a readable message', () async {
     final directory = await Directory.systemTemp.createTemp('doubao-http-');
     addTearDown(() => directory.delete(recursive: true));
@@ -425,6 +457,9 @@ Future<File> _tinyOgg() async {
 class _ScriptedClient extends http.BaseClient {
   final requests = <http.BaseRequest>[];
   final bodies = <String>[];
+
+  /// The bytes of the request being sent that have arrived so far.
+  final receiving = <int>[];
   final _responses = <http.StreamedResponse>[];
 
   void enqueue(
@@ -445,7 +480,9 @@ class _ScriptedClient extends http.BaseClient {
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     requests.add(request);
-    bodies.add(await request.finalize().bytesToString());
+    receiving.clear();
+    await request.finalize().forEach(receiving.addAll);
+    bodies.add(utf8.decode(receiving));
     if (_responses.isEmpty) {
       throw StateError('unexpected ${request.method} ${request.url}');
     }

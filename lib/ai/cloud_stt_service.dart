@@ -53,6 +53,11 @@ abstract class CloudFileSttService {
   /// The engine's readable failure carrying [message].
   CloudSttException fail(String message);
 
+  /// Awaited just before the request that can be charged for goes out, so a
+  /// file job can note that a run cut off from then on may have been paid
+  /// for. Scoped to the single file execution owned by RecorderController.
+  Future<void> Function()? onSending;
+
   /// Saved-or-environment API key.
   String? get apiKey {
     final override = apiKeyOverride?.trim();

@@ -91,10 +91,7 @@ class MacMenuBar {
     if (transcribing) {
       lines.add(_transcription());
       keepAwake ??= 'Koe is transcribing';
-      quitInfo.add(
-        '进行中的转写会中断。已交给云端的和排队中的，下次打开 Koe 时接着做；'
-        '本机转写和还在上传的要重新转写。',
-      );
+      quitInfo.add('进行中的转写会中断，下次打开 Koe 时接着做或从头重跑。');
     }
     if (retrieving) {
       lines.add('正在从录音豆取回录音');

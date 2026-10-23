@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/doubao_stt.dart';
 import 'package:koe/ai/engine_config.dart';
 import 'package:koe/ai/qwen_stt.dart';
@@ -40,6 +41,7 @@ void main() {
     FileJobJournal journal, {
     QwenSttService? qwen,
     DoubaoSttService? doubao,
+    AppleSpeechService? apple,
     SttProvider provider = SttProvider.qwen,
     bool disposeOnTearDown = true,
   }) async {
@@ -50,6 +52,7 @@ void main() {
       meetingLocalOnly: false,
       qwenSpeech: qwen,
       doubaoSpeech: doubao,
+      appleSpeech: apple,
       fileJobJournal: journal,
       // Stage recovery is not about the #13 completeness window.
       retrievedAudioSettleTime: Duration.zero,
@@ -59,6 +62,7 @@ void main() {
     if (doubao != null) {
       await c.setDoubaoConfig(const EngineConfig(apiKey: 'key'));
     }
+    if (apple != null) await c.refreshAppleCapabilities();
     c.setSpeechProvider(provider);
     c.setAutoTranscribe(true);
     return c;
@@ -311,8 +315,8 @@ void main() {
   });
 
   group('synchronous service (Doubao)', () {
-    test('process exit mid-request keeps a readable retry entry and never '
-        'auto-resubmits', () async {
+    test('process exit while the answer is outstanding keeps a readable retry '
+        'entry and never auto-resubmits', () async {
       final hanging = _HangingDoubao();
       final journal = FileJobJournal(file: journalFile);
       final c = await open(
@@ -323,6 +327,7 @@ void main() {
       );
       await c.processRetrievedRecording(audio.path);
       await settleUntil(() => hanging.calls == 1);
+      await onDisk('running');
       c.dispose(); // the process "dies" while the response is outstanding
 
       await onDisk('running');
@@ -344,12 +349,88 @@ void main() {
       await onDisk('complete');
     });
   });
+
+  // #426: Koe quits or crashes in the middle of a job that nothing has been
+  // charged for yet; the next launch puts it back in the queue and runs it.
+  group('cut off before anything was charged', () {
+    test('an upload under way runs again on the next launch', () async {
+      final uploading = _StagedQwen()..gate = Completer();
+      final first = FileJobJournal(file: journalFile);
+      final c = await open(first, qwen: uploading, disposeOnTearDown: false);
+      await c.processRetrievedRecording(audio.path);
+      await settleUntil(() => uploading.calls == 1);
+      await onDisk('running');
+      c.dispose();
+
+      final qwen = _StagedQwen();
+      final reopened = FileJobJournal(file: journalFile);
+      final r = await open(reopened, qwen: qwen);
+      await settleUntil(
+        () => stageOf(reopened) == 'complete' && !r.fileProcessingBusy,
+      );
+      expect(qwen.uploads, 1);
+      expect(r.transcriptForPath(audio.path), '通义文本 task-1');
+    });
+
+    test('a Doubao upload under way runs again on the next launch', () async {
+      final uploading = _HangingDoubao()..midUpload = true;
+      final first = FileJobJournal(file: journalFile);
+      final c = await open(
+        first,
+        doubao: uploading,
+        provider: SttProvider.doubao,
+        disposeOnTearDown: false,
+      );
+      await c.processRetrievedRecording(audio.path);
+      await settleUntil(() => uploading.calls == 1);
+      await onDisk('running');
+      c.dispose();
+
+      final doubao = _HangingDoubao()..complete = true;
+      final reopened = FileJobJournal(file: journalFile);
+      final r = await open(
+        reopened,
+        doubao: doubao,
+        provider: SttProvider.doubao,
+      );
+      await settleUntil(
+        () => stageOf(reopened) == 'complete' && !r.fileProcessingBusy,
+      );
+      expect(doubao.calls, 1);
+      expect(r.transcriptForPath(audio.path), '豆包文本');
+    });
+
+    test('on-device transcription runs again on the next launch', () async {
+      final busy = _HangingApple();
+      final first = FileJobJournal(file: journalFile);
+      final c = await open(
+        first,
+        apple: busy,
+        provider: SttProvider.apple,
+        disposeOnTearDown: false,
+      );
+      unawaited(c.transcribeLocalFile(audio.path));
+      await settleUntil(() => busy.calls == 1);
+      await onDisk('running');
+      c.dispose();
+
+      final apple = _HangingApple()..complete = true;
+      final reopened = FileJobJournal(file: journalFile);
+      final r = await open(reopened, apple: apple, provider: SttProvider.apple);
+      await settleUntil(
+        () => stageOf(reopened) == 'complete' && !r.fileProcessingBusy,
+      );
+      expect(apple.calls, 1);
+      expect(r.transcriptForPath(audio.path), '本机文本');
+    });
+  });
 }
 
 enum _Fail { none, upload, submit, poll, remote }
 
-/// Mirrors QwenSttService's stage order: upload → submit → onSubmitted
-/// checkpoint → poll → fetch. A saved task ID skips upload and submit.
+/// Mirrors QwenSttService's stage order: upload → onSending checkpoint →
+/// submit → onSubmitted checkpoint → poll → fetch. A saved task ID skips
+/// upload and submit.
 class _StagedQwen extends QwenSttService {
   _Fail failAt = _Fail.none;
   Completer<void>? gate;
@@ -378,6 +459,7 @@ class _StagedQwen extends QwenSttService {
       if (failAt == _Fail.upload) {
         throw const SocketException('connection reset during upload');
       }
+      await onSending?.call();
       if (failAt == _Fail.submit) {
         throw TimeoutException('submit response lost');
       }
@@ -392,8 +474,11 @@ class _StagedQwen extends QwenSttService {
   }
 }
 
+/// Waits on Doubao forever unless [complete]: after the whole request went
+/// out, or with [midUpload] while the audio is still going up.
 class _HangingDoubao extends DoubaoSttService {
   bool complete = false;
+  bool midUpload = false;
   int calls = 0;
 
   @override
@@ -408,8 +493,41 @@ class _HangingDoubao extends DoubaoSttService {
     bool Function()? isCurrent,
   }) async {
     calls++;
+    if (!midUpload) await onSending?.call();
     if (!complete) await Completer<void>().future;
     return SttResult(text: '豆包文本', sourcePath: path, language: 'zh');
+  }
+}
+
+/// On-device recognition that never finishes unless [complete].
+class _HangingApple extends AppleSpeechService {
+  bool complete = false;
+  int calls = 0;
+
+  @override
+  bool get offered => true;
+
+  @override
+  Future<AppleSpeechCapabilities> capabilities({
+    String? sourceLanguage,
+    String? targetLanguage,
+  }) async => const AppleSpeechCapabilities(
+    supported: true,
+    speechStatus: SpeechResourceStatus.ready,
+    translationStatus: SpeechResourceStatus.ready,
+    suggestedSourceLanguage: 'zh-CN',
+    speechLanguages: [SpeechLanguage(code: 'zh-CN', name: '简体中文')],
+  );
+
+  @override
+  Future<SttResult> transcribePath(
+    String path, {
+    required String sourceLanguage,
+    SttFileProgressCallback? onProgress,
+  }) async {
+    calls++;
+    if (!complete) await Completer<void>().future;
+    return SttResult(text: '本机文本', sourcePath: path, language: sourceLanguage);
   }
 }
 

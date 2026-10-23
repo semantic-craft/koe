@@ -115,6 +115,7 @@ class DoubaoSttService extends CloudFileSttService {
     }
 
     if (_activeAbort != null) throw const DoubaoSttException('已有豆包任务正在处理');
+    final sending = onSending;
     final abort = Completer<void>();
     _activeAbort = abort;
     var submitted = false;
@@ -163,6 +164,7 @@ class DoubaoSttService extends CloudFileSttService {
               onUploaded: () => onProgress?.call(
                 const SttFileProgress(SttFileStage.processing),
               ),
+              onSending: sending,
             )
             ..headers.addAll({
               'X-Api-Key': key,

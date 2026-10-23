@@ -121,6 +121,7 @@ class QwenSttService extends CloudFileSttService {
     }
 
     final checkpoint = recovery;
+    final sending = onSending;
     var taskId = checkpoint?.taskId;
     if (taskId == null) {
       onProgress?.call(const SttFileProgress(SttFileStage.preparing));
@@ -157,6 +158,8 @@ class QwenSttService extends CloudFileSttService {
       );
       _ensureCurrent(isCurrent);
       onProgress?.call(const SttFileProgress(SttFileStage.queued));
+      // The upload is free; the task it starts is what is paid for.
+      await sending?.call();
       taskId = await _submit(
         origin: origin,
         apiKey: key,
