@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -71,6 +72,9 @@ class _QwenServer extends http.BaseClient {
   /// The body of each task submitted to the transcription endpoint.
   final submitted = <Map<String, dynamic>>[];
 
+  /// When set, the task is not reported done until it completes.
+  Completer<void>? hold;
+
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     requests.add(request);
@@ -99,6 +103,7 @@ class _QwenServer extends http.BaseClient {
         'output': {'task_id': 't', 'task_status': 'PENDING'},
       };
     } else if (path == '/api/v1/tasks/t') {
+      await hold?.future;
       body = {
         'output': {
           'task_id': 't',
@@ -322,5 +327,35 @@ void main() {
     // Its speakers were labelled with 3; a new number would not redo them.
     await c.importLocalAudio(source.path, expectedSpeakers: 5);
     expect(c.expectedSpeakersForPath(path), 3);
+  });
+
+  test('importing a recording again while it is transcribed keeps its number '
+      'of people (#408)', () async {
+    final server = _QwenServer()..hold = Completer<void>();
+    final c = RecorderController(
+      loadPersistedState: false,
+      meetingLocalOnly: false,
+      qwenSpeech: QwenSttService(client: server, pollInterval: Duration.zero)
+        ..apiKeyOverride = 'k',
+      transcriptPersister: ({bool strict = false}) async {},
+      libraryDirectory: Directory('${dir.path}/imports'),
+    )..speechProvider = SttProvider.qwen;
+    addTearDown(c.dispose);
+    final source = File('${dir.path}/meeting.m4a');
+    await source.writeAsBytes(m4aBytes());
+    final path = (await c.importLocalAudio(source.path)).path;
+    final transcription = c.transcribeLocalFile(path);
+    for (var i = 0; i < 400 && server.submitted.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(server.submitted, hasLength(1));
+
+    // The task went out without a number; a new one would not redo it.
+    await c.importLocalAudio(source.path, expectedSpeakers: 3);
+    expect(c.expectedSpeakersForPath(path), isNull);
+
+    server.hold!.complete();
+    await transcription;
+    expect(c.transcriptForPath(path), isNotNull);
   });
 }

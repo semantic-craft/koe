@@ -32,7 +32,7 @@ Future<void> pickAndImportLocalAudio(BuildContext context) async {
       expectedSpeakers: choice.expectedSpeakers,
     );
     if (!context.mounted) return;
-    // A recording already transcribed keeps its own number of people.
+    // A recording transcribed, or being transcribed, keeps its own number.
     final countKept =
         choice.expectedSpeakers != null &&
         controller.expectedSpeakersForPath(result.path) !=
@@ -43,7 +43,7 @@ Future<void> pickAndImportLocalAudio(BuildContext context) async {
         content: Text(switch ((result.duplicate, countKept)) {
           (false, _) => '原件已保存到资料库',
           (true, false) => '已复用资料库中的同一音频',
-          (true, true) => '已复用资料库中的同一音频；它已转写过，人数没改，可在详情里重新区分发言人',
+          (true, true) => '已复用资料库中的同一音频；它已转写过或正在转写，人数没改，可在详情里重新区分发言人',
         }),
       ),
     );

@@ -68,6 +68,7 @@ class ExpectedSpeakersMenu extends StatelessWidget {
     // PopupMenuButton with a custom child has no button role.
     return Semantics(
       button: true,
+      enabled: enabled,
       child: PopupMenuButton<int>(
         tooltip: '大约几个人',
         enabled: enabled,
