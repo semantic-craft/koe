@@ -120,10 +120,10 @@ void main() {
           scheduleMicrotask(() => packets.add(packet));
         }
       },
+      startupDelay: Duration.zero,
     );
 
     final endpoint = await service.openSoftAp(
-      startupDelay: Duration.zero,
       onConfigured: () async => disconnectedBle = true,
     );
 

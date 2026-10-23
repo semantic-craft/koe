@@ -16,6 +16,9 @@
 //                   every 100 ms, notes kept as they are typed, highlights
 // - take_save       stopping an hour-long microphone take, which hashes the
 //                   115 MB file before it joins the library
+// - wifi_save       a Wi‑Fi export of a million slice units (about three
+//                   hours of audio) from a recorder on this Mac; save_ms runs
+//                   from the recorder's last unit to the file being saved
 //
 // Nothing touches personal data: path_provider points at a temporary folder,
 // stores are in memory, BLE never scans and no credential is read.
@@ -35,13 +38,16 @@ import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
 import 'package:koe/protocol/commands.dart';
 import 'package:koe/protocol/frame.dart';
+import 'package:koe/protocol/models.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/transcript_store.dart';
 import 'package:koe/ui/screens/new_recording_sheet.dart';
 import 'package:koe/ui/widgets/inline_player.dart';
+import 'package:koe/wifi/wifi_export_service.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:provider/provider.dart';
 
+import '../../test/support/fake_wifi_recorder.dart';
 import 'rank.dart';
 
 void main() {
@@ -67,6 +73,7 @@ void main() {
     required Future<void> Function() workload,
     bool inlinePlayer = false,
     bool recordingPanel = false,
+    Map<String, Object?> Function()? measured,
   }) async {
     final scroll = ScrollController();
     await tester.pumpWidget(
@@ -109,6 +116,7 @@ void main() {
       ...memory.summary(),
       'workload_ms': watch.elapsedMilliseconds,
       'controller_notifications': notifications,
+      ...?measured?.call(),
     };
     // ignore: avoid_print
     print('[perf] $name ${results[name]}');
@@ -337,12 +345,58 @@ void main() {
     await File(saved!).delete();
     controller.dispose();
   });
+
+  testWidgets('wifi_save', (tester) async {
+    const units = 1000000;
+    final clock = Stopwatch()..start();
+    late Duration lastUnitSent;
+    late Duration saved;
+    final recorder = await FakeWifiRecorder.start((socket, fileId) async {
+      socket.add(FakeWifiRecorder.head(fileId, units: units));
+      await socket.addStream(_recorderSlices(units));
+      lastUnitSent = clock.elapsed;
+      socket.add(FakeWifiRecorder.done());
+    });
+    final wifi = WifiExportService(
+      blePackets: const Stream<DecodedPacket>.empty(),
+      bleWrite: (_) async {},
+      link: FakeSoftApLink(recorderPort: recorder.port),
+      useSsl: false,
+    );
+    final controller = _controller(wifiExport: wifi);
+    var paths = const <String>[];
+    await scenario(
+      tester,
+      'wifi_save',
+      controller: controller,
+      workload: () async {
+        paths = await wifi.transferFiles(
+          endpoint: WifiEndpoint(
+            ssid: 'WiFi-1761100000000',
+            password: '1761100000000',
+            ip: '192.0.2.1',
+            port: 443,
+          ),
+          files: [OfflineFileEntry(fileId: 1761100001, sizeBytes: 21600)],
+        );
+        saved = clock.elapsed;
+      },
+      measured: () => {'save_ms': (saved - lastUnitSent).inMilliseconds},
+    );
+    // A transfer that stopped early would save fast too.
+    expect(await File(paths.single).length(), units * 160);
+    expect(wifi.incompletePaths, isEmpty);
+    await File(paths.single).delete();
+    await recorder.close();
+    controller.dispose();
+  });
 }
 
 RecorderController _controller({
   BleService? ble,
   AudioPlayer? player,
   PhoneRecorder? phoneRecorder,
+  WifiExportService? wifiExport,
 }) => RecorderController(
   ble: ble ?? _QuietBle(),
   player: player ?? _PerfPlayer(),
@@ -358,7 +412,25 @@ RecorderController _controller({
   phoneRecorder: phoneRecorder,
   phoneRecordingEnabled: phoneRecorder != null,
   placeCapture: _NoPlace(),
+  wifiExport: wifiExport,
 );
+
+/// [units] slice units as the recorder streams them, one full frame at a
+/// time, without holding the whole recording.
+Stream<List<int>> _recorderSlices(int units) async* {
+  const unitsPerFrame = 390;
+  final audio = recorderAudio(0, units: unitsPerFrame);
+  for (var first = 0; first < units; first += unitsPerFrame) {
+    final count = math.min(unitsPerFrame, units - first);
+    yield FakeWifiRecorder.slices(
+      count == unitsPerFrame ? audio : audio.sublist(0, count * 160),
+      sequence: first,
+    );
+    // The recorder runs in this isolate: let Koe receive and draw between
+    // frames, as it does when they come over the air.
+    await Future<void>.delayed(Duration.zero);
+  }
+}
 
 Future<void> _keepScrolling(ScrollController scroll) async {
   var down = true;

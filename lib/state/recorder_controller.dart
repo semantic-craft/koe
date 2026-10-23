@@ -291,6 +291,7 @@ class RecorderController extends ChangeNotifier
     DiarizationModelStore? diarizationModelStore,
     SpeakerDiarizer? speakerDiarizer,
     bool meetingLocalOnly = true,
+    WifiExportService? wifiExport,
   }) : _analysisOverride = analysisController,
        _topicRecommendationOverride = topicRecommendationService,
        topicsEnabled = topicsEnabled ?? runsOnPhone,
@@ -488,11 +489,13 @@ class RecorderController extends ChangeNotifier
       }),
     );
 
-    _wifi = WifiExportService(
-      blePackets: _ble.packets,
-      bleWrite: _ble.writeCommand,
-      crypto: _crypto,
-    );
+    _wifi =
+        wifiExport ??
+        WifiExportService(
+          blePackets: _ble.packets,
+          bleWrite: _ble.writeCommand,
+          crypto: _crypto,
+        );
     _realtime = RealtimeBleStream(
       packets: _ble.packets,
       write: _ble.writeCommand,

@@ -1127,6 +1127,10 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   List<OfflineFileEntry> _pendingExportTargets = [];
   int _wifiExportRun = 0;
 
+  /// A transfer has used the hotspot in [exportProgress]: it tears the link
+  /// down when it ends, and the recorder turns the hotspot off.
+  bool _wifiEndpointUsed = false;
+
   /// Open device SoftAP and wait for IP:port. UI should then prompt join.
   Future<WifiEndpoint?> beginWifiExport() async {
     if (_liveProcessing) {
@@ -1163,6 +1167,19 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     statusMessage = '正在准备下载…';
     notifyListeners();
 
+    final ep = await _openWifiForExport();
+    if (ep == null) return null;
+    statusMessage = joinsWifiItself
+        ? '正在加入录音豆的 Wi‑Fi「${ep.ssid}」…'
+        : '请连接 Wi‑Fi「${ep.ssid}」，然后点「继续导出」';
+    // Stay "busy" while awaiting join so other ops don't collide.
+    notifyListeners();
+    return ep;
+  }
+
+  /// Opens the recorder's hotspot over Bluetooth; null, with
+  /// [errorMessage] set, when it does not come up.
+  Future<WifiEndpoint?> _openWifiForExport() async {
     // Ensure ECDH session before SoftAP so file keys can be unwrapped.
     if (!encryptReady) {
       final ok = await establishEncryptSession();
@@ -1184,11 +1201,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
           await _ble.disconnect();
         },
       );
-      statusMessage = joinsWifiItself
-          ? '正在加入录音豆的 Wi‑Fi「${ep.ssid}」…'
-          : '请连接 Wi‑Fi「${ep.ssid}」，然后点「继续导出」';
-      // Stay "busy" while awaiting join so other ops don't collide.
-      notifyListeners();
+      _wifiEndpointUsed = false;
       return ep;
     } catch (e) {
       errorMessage = e.toString();
@@ -1202,7 +1215,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   /// After user joined SoftAP, run WebSocket transfer for selection (or all).
   Future<List<String>> continueWifiExport() async {
     final run = _wifiExportRun;
-    final ep = exportProgress.endpoint;
+    var ep = exportProgress.endpoint;
     if (ep == null) {
       const msg = '设备 Wi‑Fi 未就绪，请重新开始导出';
       errorMessage = msg;
@@ -1226,11 +1239,35 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       notifyListeners();
       return const [];
     }
+    // Android joins the hotspot itself and leaves it when a transfer ends;
+    // the recorder then turns it off, so a retry asks for a new one.
+    if (_wifiEndpointUsed && joinsWifiItself) {
+      final linked = connected && _ble.isConnected;
+      if (!linked || (phase != AppPhase.ready && phase != AppPhase.idle)) {
+        final msg = linked
+            ? '录音豆正忙，稍后再点「开始导出」'
+            : '录音豆的热点已关闭，蓝牙连上录音豆后再点「开始导出」';
+        errorMessage = msg;
+        exportProgress = exportProgress.copyWith(
+          phase: ExportPhase.error,
+          error: msg,
+        );
+        notifyListeners();
+        _reconnectBleAfterWifiExport();
+        return const [];
+      }
+      errorMessage = null;
+      phase = AppPhase.busy;
+      notifyListeners();
+      ep = await _openWifiForExport();
+      if (run != _wifiExportRun || ep == null) return const [];
+    }
 
     phase = AppPhase.busy;
     statusMessage = encryptReady ? '正在通过 Wi‑Fi 传输并解密…' : '正在通过 Wi‑Fi 传输（原始密文）…';
     notifyListeners();
 
+    _wifiEndpointUsed = true;
     try {
       final rawPaths = await _wifi.transferFiles(endpoint: ep, files: targets);
       if (run != _wifiExportRun) return const [];
@@ -1259,7 +1296,27 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
       return paths;
     } catch (e) {
       if (run != _wifiExportRun) return const [];
-      errorMessage = e.toString();
+      // Recordings saved before the failure go to the library now, and a
+      // retry only asks for the rest.
+      final saved = _wifi.current.savedPaths;
+      if (saved.isNotEmpty) {
+        final incomplete = _wifi.incompletePaths;
+        await completeWifiTransfer(
+          saved,
+          decrypted: encryptReady,
+          incompleteRawPaths: incomplete,
+        );
+        if (run != _wifiExportRun) return const [];
+        final retrieved = {
+          for (final path in saved)
+            if (!incomplete.contains(path)) ExportCatalog.fileIdFromPath(path),
+        };
+        _pendingExportTargets = [
+          for (final file in _pendingExportTargets)
+            if (!retrieved.contains(file.fileId)) file,
+        ];
+      }
+      errorMessage = _wifi.current.error ?? e.toString();
       phase = connected ? AppPhase.ready : AppPhase.idle;
       statusMessage = '导出失败';
       notifyListeners();
