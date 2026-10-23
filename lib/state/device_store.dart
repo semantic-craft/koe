@@ -37,6 +37,10 @@ class DeviceStore {
 
   static Future<void> _writes = Future<void>.value();
 
+  /// Completes once the saves queued so far are on disk.
+  @visibleForTesting
+  static Future<void> waitForWrites() => _writes;
+
   static Future<void> save({
     required bool bound,
     bool manuallyDisconnected = false,

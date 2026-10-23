@@ -346,9 +346,19 @@ class RecordingAnalysis extends ChangeNotifier {
     AnalysisService? service,
     this.file,
     this.inMemory = false,
+    Future<String> Function(Future<String> Function() request)?
+    whileRequesting,
   }) : _service = service ?? QwenAnalysisService(),
+       _whileRequesting = whileRequesting ?? _requestNow,
        _doc = ContextFile('analysis.json', file: file, inMemory: inMemory);
   final AnalysisService _service;
+
+  /// Wraps each model request; the controller keeps Koe running on Android
+  /// until it returns.
+  final Future<String> Function(Future<String> Function() request)
+  _whileRequesting;
+  static Future<String> _requestNow(Future<String> Function() request) =>
+      request();
   final ContextFile _doc;
   final File? file;
   final bool inMemory;
@@ -975,12 +985,14 @@ class RecordingAnalysis extends ChangeNotifier {
           qwen.asTopicSummary(),
         final AnalysisService service => service,
       };
-      final value = await service.generate(
-        model: selected,
-        apiKey: apiKey,
-        source: input,
-        instruction: request,
-        abort: abort.future,
+      final value = await _whileRequesting(
+        () => service.generate(
+          model: selected,
+          apiKey: apiKey,
+          source: input,
+          instruction: request,
+          abort: abort.future,
+        ),
       );
       if (!avoidDuplicateCharges) check();
       checkpoint[id] = value;

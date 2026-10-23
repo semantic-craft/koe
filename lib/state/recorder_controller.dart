@@ -126,6 +126,7 @@ part 'recorder/live_transcription.dart';
 part 'recorder/settings.dart';
 part 'recorder/device.dart';
 part 'recorder/device_files.dart';
+part 'recorder/ai_keep_alive.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
@@ -174,12 +175,14 @@ class RecorderController extends ChangeNotifier
         _RecorderLiveTranscription,
         _RecorderSettings,
         _RecorderDevice,
-        _RecorderDeviceFiles {
+        _RecorderDeviceFiles,
+        _RecorderAiKeepAlive {
   @override
   late final RecordingAnalysis analysis =
       _analysisOverride ??
       RecordingAnalysis(
         service: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
+        whileRequesting: _whileAiWorks,
       );
   final RecordingAnalysis? _analysisOverride;
   @override
@@ -252,6 +255,7 @@ class RecorderController extends ChangeNotifier
     Future<Duration?> Function(String path)? localDurationReader,
     Future<Duration?> Function(String path)? audioDurationProbe,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
+    this.aiKeepAliveGrace = const Duration(seconds: 10),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
     PlaceCapture? placeCapture,
@@ -651,6 +655,11 @@ class RecorderController extends ChangeNotifier
   @override
   final Duration blePullInactivityTimeout;
 
+  /// How long Koe stays kept running after its last model request, so the
+  /// next step of the same work starts under the same foreground service.
+  @override
+  final Duration aiKeepAliveGrace;
+
   @override
   String _recordingKey({int? fileId, String? path}) {
     final id = fileId ?? (path == null ? null : fileIdFromPath(path));
@@ -1006,6 +1015,7 @@ class RecorderController extends ChangeNotifier
     if (_ownsAsks) asks.dispose();
     _todoLifecycle?.dispose();
     _disposeContextServices();
+    _disposeAiKeepAlive();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();

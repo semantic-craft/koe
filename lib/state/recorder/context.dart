@@ -21,6 +21,7 @@ mixin _RecorderContext on ChangeNotifier {
   List<TranscriptSegment> quotableSegmentsForPath(String path);
   String? transcriptForPath(String path);
   abstract final MinutesDocumentStore minutes;
+  AnalysisService _keptAlive(AnalysisService service);
   // END DEPS
 
   late final ContextStore contextItems;
@@ -32,17 +33,18 @@ mixin _RecorderContext on ChangeNotifier {
   /// The existing Qwen chat path, with the system prompt of one feature.
   /// Used by other parts through their abstract declarations.
   // ignore: unused_element
-  AnalysisService _contextService(String systemPrompt) =>
-      _contextServiceOverride ??
-      _contextServices.putIfAbsent(
-        systemPrompt,
-        () => QwenAnalysisService(
-          origin: () => _qwenStt.baseUrl,
-          systemPrompt: systemPrompt,
-          instructionLabel: '要求',
-          sourceLabel: '资料',
+  AnalysisService _contextService(String systemPrompt) => _keptAlive(
+    _contextServiceOverride ??
+        _contextServices.putIfAbsent(
+          systemPrompt,
+          () => QwenAnalysisService(
+            origin: () => _qwenStt.baseUrl,
+            systemPrompt: systemPrompt,
+            instructionLabel: '要求',
+            sourceLabel: '资料',
+          ),
         ),
-      );
+  );
 
   void _disposeContextServices() {
     for (final service in _contextServices.values) {

@@ -18,6 +18,7 @@ mixin _RecorderTopics on ChangeNotifier {
   RecordingReference _referenceFromKey(String key, {String? pathHint});
   String _referenceKey(RecordingReference ref);
   abstract final Future<void> _settingsLoaded;
+  AnalysisService _keptAlive(AnalysisService service);
   abstract final AnalysisService? _topicRecommendationOverride;
   abstract Future<void> _transcriptsLoaded;
   abstract final RecordingAnalysis analysis;
@@ -38,13 +39,14 @@ mixin _RecorderTopics on ChangeNotifier {
   Map<String, TopicPlacement> _observedPlacements = const {};
   bool _topicsObserved = false;
 
-  late final AnalysisService _topicRecommender =
-      switch (_topicRecommendationOverride) {
-        final QwenAnalysisService qwen when !qwen.isTopicAssist =>
-          qwen.asTopicAssist(),
-        final AnalysisService service => service,
-        null => QwenAnalysisService.topicAssist(origin: () => _qwenStt.baseUrl),
-      };
+  late final AnalysisService _topicRecommender = _keptAlive(
+    switch (_topicRecommendationOverride) {
+      final QwenAnalysisService qwen when !qwen.isTopicAssist =>
+        qwen.asTopicAssist(),
+      final AnalysisService service => service,
+      null => QwenAnalysisService.topicAssist(origin: () => _qwenStt.baseUrl),
+    },
+  );
 
   final Map<String, Future<void>> _topicAssistTasks = {};
   final Map<String, _TopicAssistLatest> _topicAssistLatest = {};
