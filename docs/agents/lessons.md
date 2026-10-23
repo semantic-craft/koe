@@ -119,3 +119,13 @@
 - 修复：文件恢复成 HEAD，只把新加的块按格式手写进去。
 - 验证点：格式化前跑 `dart format -o none --set-exit-if-changed <文件>`，HEAD 上退出码为 0 才整文件格式化，否则只格式化自己加的部分；提交前用 `git diff --stat` 看改动行数和实际改动相符。
 - Seen 1x (2026-10-23)
+
+### 认录音豆用经典地址，不用会轮换的 BLE 地址
+
+**全天常驻、绑定与在场判断按厂商数据里的经典蓝牙地址认录音豆；连接才用扫描到的当前 BLE 地址。不要用可解析私有地址当身份，也不要靠系统伴侣在场监听去匹配关联时的 BLE 地址。**
+
+- 哪个 commit/issue 出的事，后果：#422（f065809，2026-10-23 09:05 Asia/Shanghai）合并「全天常驻」：按绑定录音豆的蓝牙地址做 CDM 关联与 `_syncResident`，系统在场监听也按关联时的地址匹配。② 写明「未在真实环境验证 #393 的功能本身」。同日 #345 真机验收发现 D3200 至少每次 Wi‑Fi 导出后换一个可解析私有地址、经典地址不变：全天常驻被悄悄撤销、系统不再唤起 Koe、重连先对旧地址空等约 100 秒（`scanResults` 还回放上次扫描）。
+- 修复的 commit：#451（28b1070）按经典地址认设备，用 PendingIntent 厂商数据扫描替换系统在场监听，连接记最新 BLE 地址；回退测试在 main（b6b0ae5）上 `expect(controller.resident, isTrue)` 失败、改后通过。#452 进度页记 #345 第二部分真机：换地址后直接连新地址、常驻与关联仍在。
+- Done right: 涉及「是不是同一台录音豆」的逻辑只比经典地址；写回退测试时让录音豆换 BLE 地址再回来，断言常驻仍开、连的是新地址。合并前至少在真机上做一次 Wi‑Fi 导出后再看常驻是否还在（#345 已暴露）。
+- Seen 1x (2026-10-23)
+- 验证点：`rg -n '经典地址|classicAddress|RecorderScan' android/app/src/main/kotlin lib/ test/android_bound_reconnect_test.dart` 有结果；`rg -n 'a recorder back at another Bluetooth address is the same recorder' test/android_bound_reconnect_test.dart` 有结果；`flutter test test/android_bound_reconnect_test.dart test/ble_scan_test.dart` 通过。
