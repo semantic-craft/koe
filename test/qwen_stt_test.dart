@@ -250,17 +250,7 @@ void main() {
       await file.writeAsBytes(audio);
 
       final client = _ScriptedClient();
-      client.enqueue(200, {
-        'data': {
-          'policy': 'policy-token',
-          'signature': 'sig',
-          'upload_dir': 'dashscope-instant/x/',
-          'upload_host': 'https://oss.example.com/bucket',
-          'oss_access_key_id': 'access',
-          'x_oss_object_acl': 'private',
-          'x_oss_forbid_overwrite': 'true',
-        },
-      });
+      client.enqueue(200, _policy);
       client.enqueue(200, '');
       client.enqueue(200, {
         'output': {'task_id': 'task-1', 'task_status': 'PENDING'},
@@ -292,12 +282,22 @@ void main() {
         ],
       });
 
+      var marked = false;
       var checkpointed = false;
       client.beforeSend = (request) {
+        if (request.url.path.endsWith('/transcription')) {
+          expect(marked, isTrue);
+        }
         if (request.url.path.contains('/tasks/')) expect(checkpointed, isTrue);
       };
       final service =
           QwenSttService(client: client, pollInterval: Duration.zero)
+            ..onSending = () async {
+              // Policy and upload are out; the paid task is not (#426).
+              expect(client.requests, hasLength(2));
+              await Future<void>.delayed(Duration.zero);
+              marked = true;
+            }
             ..recovery = QwenTaskRecovery(
               onSubmitted: (id) async {
                 expect(id, 'task-1');
@@ -363,6 +363,93 @@ void main() {
       );
     },
   );
+
+  test('a cancel while the run is marked sent stops the paid task', () async {
+    final directory = await Directory.systemTemp.createTemp('qwen-http-');
+    addTearDown(() => directory.delete(recursive: true));
+    final clip = await _clip(directory, 'clip.ogg');
+    final client = _ScriptedClient()
+      ..enqueue(200, _policy)
+      ..enqueue(200, '');
+    var current = true;
+    final service = QwenSttService(client: client, pollInterval: Duration.zero)
+      ..onSending = () async {
+        // The user cancels, or Koe quits, while the job is being saved.
+        await Future<void>.delayed(Duration.zero);
+        current = false;
+      };
+    addTearDown(service.dispose);
+
+    await expectLater(
+      service.transcribePath(
+        clip.path,
+        apiKey: 'test-key',
+        isCurrent: () => current,
+      ),
+      throwsA(isA<QwenSttException>()),
+    );
+    expect(client.requests, hasLength(2));
+  });
+
+  test('a request started while a job resumes keeps to its own task', () async {
+    // A text capture's missing tail can be recognized while a recording's
+    // job resumes its saved task.
+    final directory = await Directory.systemTemp.createTemp('qwen-http-');
+    addTearDown(() => directory.delete(recursive: true));
+    final tail = await _clip(directory, 'tail.ogg');
+    Map<String, Object> succeeded(String task) => {
+      'output': {
+        'task_status': 'SUCCEEDED',
+        'results': [
+          {
+            'subtask_status': 'SUCCEEDED',
+            'transcription_url': 'https://result.example/$task.json',
+          },
+        ],
+      },
+    };
+    final service =
+        QwenSttService(
+            pollInterval: Duration.zero,
+            client: MockClient((request) async {
+              final path = request.url.path;
+              final Object body = switch (path) {
+                '/api/v1/uploads' => _policy,
+                '/bucket' => '',
+                '/api/v1/services/audio/asr/transcription' => {
+                  'output': {'task_id': 'tail-task', 'task_status': 'PENDING'},
+                },
+                '/api/v1/tasks/job-task' => succeeded('job-task'),
+                '/api/v1/tasks/tail-task' => succeeded('tail-task'),
+                '/job-task.json' => {
+                  'transcripts': [
+                    {'text': 'Recording text'},
+                  ],
+                },
+                '/tail-task.json' => {
+                  'transcripts': [
+                    {'text': 'Tail text'},
+                  ],
+                },
+                _ => throw StateError('Unexpected request $path'),
+              };
+              return http.Response(
+                body is String ? body : jsonEncode(body),
+                200,
+              );
+            }),
+          )
+          ..recovery = QwenTaskRecovery(
+            taskId: 'job-task',
+            onSubmitted: (_) async => fail('the job already has its task'),
+          );
+    addTearDown(service.dispose);
+
+    final job = service.transcribePath('/resumed.wav', apiKey: 'test-key');
+    final other = service.transcribePath(tail.path, apiKey: 'test-key');
+    expect((await job).text, 'Recording text');
+    expect((await other).text, 'Tail text');
+  });
 
   test('Qwen is the configured cloud default', () {
     expect(
@@ -437,6 +524,24 @@ void main() {
     );
   });
 }
+
+/// A temporary upload policy for a test bucket.
+const _policy = {
+  'data': {
+    'policy': 'policy-token',
+    'signature': 'sig',
+    'upload_dir': 'dashscope-instant/x/',
+    'upload_host': 'https://oss.example.com/bucket',
+    'oss_access_key_id': 'access',
+    'x_oss_object_acl': 'private',
+    'x_oss_forbid_overwrite': 'true',
+  },
+};
+
+/// A short file that starts like an Ogg stream.
+Future<File> _clip(Directory directory, String name) => File(
+  '${directory.path}/$name',
+).writeAsBytes(Uint8List(80)..setRange(0, 4, const [0x4F, 0x67, 0x67, 0x53]));
 
 class _ScriptedClient extends http.BaseClient {
   void Function(http.BaseRequest)? beforeSend;

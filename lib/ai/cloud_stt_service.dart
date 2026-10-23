@@ -53,6 +53,12 @@ abstract class CloudFileSttService {
   /// The engine's readable failure carrying [message].
   CloudSttException fail(String message);
 
+  /// Awaited just before the request that can be charged for goes out, so a
+  /// file job can note that a run cut off from then on may have been paid
+  /// for. Set just before the job's run, which takes it: a request started
+  /// while the job runs does not mark the job.
+  Future<void> Function()? onSending;
+
   /// Saved-or-environment API key.
   String? get apiKey {
     final override = apiKeyOverride?.trim();

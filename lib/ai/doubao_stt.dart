@@ -101,6 +101,9 @@ class DoubaoSttService extends CloudFileSttService {
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
+    // Taken before anything can fail; see [onSending].
+    final sending = onSending;
+    onSending = null;
     final key = (apiKey ?? this.apiKey)?.trim();
     if (key == null || key.isEmpty) {
       throw const DoubaoSttException('请在设置中配置豆包');
@@ -163,6 +166,7 @@ class DoubaoSttService extends CloudFileSttService {
               onUploaded: () => onProgress?.call(
                 const SttFileProgress(SttFileStage.processing),
               ),
+              onSending: sending,
             )
             ..headers.addAll({
               'X-Api-Key': key,

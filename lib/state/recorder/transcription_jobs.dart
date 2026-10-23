@@ -449,6 +449,17 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         await _fileJobs.save();
         return true;
       }
+      // A run cut off before this mark is rerun on the next launch; after it
+      // only the user retries, since the request may have been paid for.
+      final cloud = switch (config.provider) {
+        SttProvider.qwen => _qwenStt,
+        SttProvider.doubao => _doubaoStt,
+        _ => null,
+      };
+      cloud?.onSending = () async {
+        job.sent = true;
+        await _fileJobs.save();
+      };
       if (config.provider == SttProvider.qwen) {
         _qwenStt.recovery = QwenTaskRecovery(
           taskId: job.taskId,
@@ -602,6 +613,8 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       }
     } finally {
       _qwenStt.recovery = null;
+      _qwenStt.onSending = null;
+      _doubaoStt.onSending = null;
       finishJobCompleter();
       if (!_disposed && revision == _fileJobRevision) {
         _fileJobKey = null;

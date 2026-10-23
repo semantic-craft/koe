@@ -48,7 +48,9 @@ class QwenSttService extends CloudFileSttService {
     this.taskTimeout = const Duration(minutes: 15),
   }) : _client = client ?? http.Client();
 
-  /// Scoped to the single file execution owned by RecorderController.
+  /// The file job's task, set just before its run. That run takes it, so a
+  /// request started while the job runs, such as a text capture's tail,
+  /// neither polls the job's task nor saves its own task as the job's.
   QwenTaskRecovery? recovery;
   final http.Client _client;
   final Duration pollInterval;
@@ -102,6 +104,11 @@ class QwenSttService extends CloudFileSttService {
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
+    // Taken before anything can fail; see [recovery].
+    final checkpoint = recovery;
+    final sending = onSending;
+    recovery = null;
+    onSending = null;
     _cancelled = false;
     _abort = Completer<void>();
     final ownerIsCurrent = isCurrent;
@@ -120,7 +127,6 @@ class QwenSttService extends CloudFileSttService {
       );
     }
 
-    final checkpoint = recovery;
     var taskId = checkpoint?.taskId;
     if (taskId == null) {
       onProgress?.call(const SttFileProgress(SttFileStage.preparing));
@@ -157,6 +163,9 @@ class QwenSttService extends CloudFileSttService {
       );
       _ensureCurrent(isCurrent);
       onProgress?.call(const SttFileProgress(SttFileStage.queued));
+      // The upload is free; the task it starts is what is paid for.
+      await sending?.call();
+      _ensureCurrent(isCurrent);
       taskId = await _submit(
         origin: origin,
         apiKey: key,

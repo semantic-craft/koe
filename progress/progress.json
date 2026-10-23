@@ -244,9 +244,9 @@
       },
       {
         "number": 408,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-10-23T08:11:00Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-10-23T09:26:40Z"
       },
       {
         "number": 426,
@@ -271,13 +271,19 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-10-23T08:59:34Z"
+      },
+      {
+        "number": 441,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-23T09:42:30Z"
       }
     ],
-    "main": "d1e2a1585a8ad29e2bb7922d2d71c687d26f6ae1",
+    "main": "c2dec1e9ee251fc011278d2d6444e250ef097013",
     "open_pulls": [
       {
-        "head": "ff5661dc9d5d5a91b0f9f9fff7cd938f5ef3ec40",
-        "number": 439
+        "head": "6d63c97346f5521334f35cb3a05dfaaabf516368",
+        "number": 442
       }
     ],
     "pulls": [
@@ -435,17 +441,25 @@
       },
       {
         "base": "d1e2a1585a8ad29e2bb7922d2d71c687d26f6ae1",
-        "head": "ff5661dc9d5d5a91b0f9f9fff7cd938f5ef3ec40",
-        "merge_commit": "b2dc0436ee014de14ca2200066168eb925a45ea7",
-        "merged": false,
+        "head": "891e86fef3741114fbecb388b23bf8df45cf0785",
+        "merge_commit": "c2dec1e9ee251fc011278d2d6444e250ef097013",
+        "merged": true,
         "number": 439,
+        "state": "closed"
+      },
+      {
+        "base": "c2dec1e9ee251fc011278d2d6444e250ef097013",
+        "head": "6d63c97346f5521334f35cb3a05dfaaabf516368",
+        "merge_commit": "9ec691dc9355b6b30738df2043673933305059a3",
+        "merged": false,
+        "number": 442,
         "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-23T09:01:25.817416Z",
+  "observed_at": "2026-10-23T09:44:02.590480Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -694,7 +708,7 @@
           "evidence": [
             {
               "kind": "pull",
-              "note": "4I 的实现与评审修正；三项验收写在正文。",
+              "note": "4I 的实现与评审修正，已合并；三项验收写在正文。",
               "ref": 439
             },
             {
@@ -708,8 +722,18 @@
               "ref": 440
             },
             {
+              "kind": "pull",
+              "note": "#426 的实现：被打断的转写下次打开重跑，续做的任务号只给发起它的转写；三项验收写在正文。",
+              "ref": 442
+            },
+            {
               "kind": "issue",
-              "note": "被打断的本机转写和上传中的转写下次打开重跑（R18.12 的另一半）。",
+              "note": "#426 的真机确认：转写中退出再打开，本机转写和千问上传中的都自动重跑。",
+              "ref": 441
+            },
+            {
+              "kind": "issue",
+              "note": "被打断的本机转写和上传中的转写下次打开重跑（R18.12 的后半）。",
               "ref": 426
             },
             {
@@ -719,19 +743,24 @@
             },
             {
               "kind": "file",
-              "note": "拾音补漏表：第 4 期 9 处已做，还剩 8 处排在 4E–4H。",
+              "note": "拾音补漏表：第 4 期 10 处已做，还剩 8 处排在 4E–4H。",
               "ref": "handoffs/meeting-notes-shiyin-4-delta.md"
             },
             {
               "kind": "file",
               "note": "「the panel still closes when the number of people is tapped while the take saves」：改前面板关不掉。",
               "ref": "test/phone_recording_test.dart"
+            },
+            {
+              "kind": "file",
+              "note": "千问上传中、豆包上传中、本机转写中被打断三条：改前不恢复。",
+              "ref": "test/file_job_stage_recovery_test.dart"
             }
           ],
           "id": "meeting-phase4",
-          "next": "#439 CI 通过后合并；#440 真机确认；接着做 #426，再做 4F（#405）、4G（#406）、4H（#407）、4E（#404）。",
+          "next": "#442 CI 通过后合并；#440、#441 真机确认；接着做 4F（#405）、4G（#406）、4H（#407）、4E（#404）。",
           "status": "in_progress",
-          "summary": "4I（#408）在 #439：录音中和导入时都能选「大约几个人」，本机区分发言人和千问转写按这个人数分。评审（max）确认的问题已修：保存录音时人数菜单挡住面板关闭、重复导入改掉已转写录音的人数、导入的人数晚于自动整理写入、找回时删掉的录音留下人数。ff5661d 上 scripts/check 无分析问题、927 个测试全过；没在真机上录音或导入，没调用真实千问接口。R18.12 做了一半（被打断的转写下次打开重跑在 #426），4E–4H（#404–#407）还没开始。",
+          "summary": "4I（#408）已在 #439 合并：录音中和导入时都能选「大约几个人」，本机区分发言人和千问转写按这个人数分。R18.12 的后半（#426）在 #442：转写中退出或 Koe 被结束后，被打断的本机转写和还在上传的云端转写下次打开从头重跑；计费请求可能已发出、还没拿到任务号的不自动重跑，留给用户手动重试。评审时顺带修了千问续做的任务号会被同时开跑的纯文字记录补识别拿走的问题。6d63c97 上 scripts/check 无分析问题、936 个测试全过；没在真机上转写中退出再打开，没调用真实千问、豆包接口。4E–4H（#404–#407）还没开始。",
           "title": "会议纪要第 4 期：对标拾音的 Mac 录音体验"
         }
       ],
@@ -1124,7 +1153,8 @@
       426,
       433,
       434,
-      440
+      440,
+      441
     ],
     "pulls": [
       62,
@@ -1146,7 +1176,8 @@
       366,
       380,
       432,
-      439
+      439,
+      442
     ]
   }
 }

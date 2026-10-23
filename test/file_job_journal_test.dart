@@ -100,7 +100,9 @@ void main() {
     () async {
       final journal = FileJobJournal(file: file);
       final job = await journal.enqueue('a', '/a.wav', config());
-      job.stage = 'running';
+      job
+        ..stage = 'running'
+        ..sent = true;
       await journal.save();
       final unknown = FileJobJournal(file: file);
       await unknown.load();
@@ -119,6 +121,28 @@ void main() {
       );
       expect(retry.taskId, 'remote-task');
       expect(retry.config['model'], 'saved-model');
+    },
+  );
+  test(
+    'a journal from before #426 reruns cut-off on-device work, not cloud runs',
+    () async {
+      Map<String, dynamic> running(String key, String provider) {
+        final job = FileJob(
+          key: key,
+          path: '/$key.wav',
+          config: {...FileJob.snapshot(config()), 'provider': provider},
+        )..stage = 'running';
+        return job.toJson()..remove('sent');
+      }
+
+      await file.writeAsString(
+        jsonEncode([running('cloud', 'qwen'), running('device', 'apple')]),
+      );
+      final journal = FileJobJournal(file: file);
+      await journal.load();
+      expect(journal.jobs['cloud']!.recoverable, isFalse);
+      expect(journal.jobs['cloud']!.error, contains('重复计费'));
+      expect(journal.jobs['device']!.recoverable, isTrue);
     },
   );
   test(

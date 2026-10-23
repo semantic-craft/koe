@@ -40,22 +40,31 @@ class FileJob {
   final Map<String, dynamic> config;
   String stage = 'queued';
   String? taskId;
+
+  /// The request that can be charged for may have gone out. A run cut off
+  /// after it, with no task id to ask about, could pay twice if rerun.
+  bool sent = false;
   String? audioHash;
   bool audioChanged = false;
   String? text;
   String? language;
   String? error;
   List<SttSegment> segments = const [];
+
+  /// Goes on next launch: queued work, a saved result, a cloud task to keep
+  /// asking about, and a run cut off before anything could be charged, such
+  /// as on-device work or an upload when Koe quit or crashed (#426).
   bool get recoverable =>
       stage == 'queued' ||
       stage == 'result' ||
-      (stage == 'running' && taskId != null);
+      (stage == 'running' && (taskId != null || !sent));
   Map<String, dynamic> toJson() => {
     'key': key,
     'path': path,
     'config': config,
     'stage': stage,
     'taskId': taskId,
+    'sent': sent,
     'audioHash': audioHash,
     'audioChanged': audioChanged,
     'text': text,
@@ -80,8 +89,9 @@ class FileJob {
       path: json['path'] as String,
       config: Map<String, dynamic>.from(json['config'] as Map),
     );
+    final provider = SttProvider.parse(job.config['provider']);
     if (job.config['version'] != 1 ||
-        SttProvider.parse(job.config['provider']) == null ||
+        provider == null ||
         job.config['sourceLanguage'] is! String ||
         job.config['targetLanguage'] is! String ||
         job.config['ownerLanguage'] is! String ||
@@ -100,6 +110,10 @@ class FileJob {
       throw const FormatException('Unknown task stage');
     }
     job.taskId = json['taskId'] as String?;
+    // Journals from before #426 did not say; a cloud run cut off then may
+    // already have been charged.
+    job.sent =
+        json['sent'] as bool? ?? (job.stage == 'running' && !provider.onDevice);
     job.audioHash = json['audioHash'] as String?;
     job.audioChanged = json['audioChanged'] == true;
     job.text = json['text'] as String?;
@@ -115,12 +129,10 @@ class FileJob {
     if (job.stage == 'result' && job.text == null) {
       throw const FormatException('Missing task result');
     }
-    if (job.stage == 'running' && job.taskId == null) {
+    if (job.stage == 'running' && job.taskId == null && job.sent) {
       job.error = '上次请求结果未确认；重试可能重复计费';
     }
-    if (SttProvider.parse(job.config['provider'])?.retired == true &&
-        job.stage != 'complete' &&
-        job.stage != 'result') {
+    if (provider.retired && job.stage != 'complete' && job.stage != 'result') {
       job.stage = 'failed';
       job.error = '原语音服务已停用，录音已保留；请选择千问或豆包后手动重试';
     }

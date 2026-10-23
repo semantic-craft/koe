@@ -14,6 +14,7 @@ class StreamingAudioJsonRequest extends http.BaseRequest with http.Abortable {
     required this.isCurrent,
     required this.onProgress,
     required this.onUploaded,
+    this.onSending,
   }) : abortTrigger = abort,
        super('POST', url) {
     final json = jsonEncode(body);
@@ -31,6 +32,10 @@ class StreamingAudioJsonRequest extends http.BaseRequest with http.Abortable {
   final bool Function() isCurrent;
   final void Function(int, int) onProgress;
   final void Function() onUploaded;
+
+  /// Awaited before the closing bytes: until they go out the service holds
+  /// no complete request it could act on, or charge for.
+  final Future<void> Function()? onSending;
   late final List<int> prefix, suffix;
   @override
   http.ByteStream finalize() {
@@ -58,6 +63,8 @@ class StreamingAudioJsonRequest extends http.BaseRequest with http.Abortable {
     }
 
     yield* audio().transform(base64.encoder).transform(utf8.encoder);
+    check();
+    await onSending?.call();
     check();
     yield suffix;
     onUploaded();
