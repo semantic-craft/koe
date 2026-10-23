@@ -19,6 +19,7 @@ class MainFlutterWindow: NSWindow {
     AppleSpeechBridge.shared.configure(
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
+    SystemTasksBridge.configure(binaryMessenger: flutterViewController.engine.binaryMessenger)
 
     // Unattended acceptance drives Koe through the accessibility API
     // (scripts/mac-ax), which only sees Flutter's widgets once the engine

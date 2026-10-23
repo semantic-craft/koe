@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/state/recorder_controller.dart';
@@ -351,4 +352,59 @@ void main() {
     expect(system.items, hasLength(1));
     expect(find.text('提醒事项 · 已关联'), findsOneWidget);
   });
+
+  testWidgets('on the Mac a todo goes to Reminders through EventKit', (
+    tester,
+  ) async {
+    // Stands in for EventKit behind darwin/SystemTasksBridge.swift.
+    final saved = <Map<Object?, Object?>>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const channel = MethodChannel('com.semanticcraft.koe/system_tasks');
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      final args = call.arguments as Map;
+      switch (call.method) {
+        case 'access':
+          return true;
+        case 'save':
+          saved.add(args);
+          return 'reminder-1';
+        case 'fetch':
+          return {'title': saved.last['title'], 'done': false};
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    late RecorderController c;
+    late Todo milk;
+    await tester.runAsync(() async {
+      // No system tasks passed: the app's own EventKit bridge is used.
+      c = controller(store: TodoStore(inMemory: true));
+      final path = await recording(c, 1760850000, _firstTalk);
+      await c.extractTodos(RecordingReference(path: path));
+      milk = c.todos.openMine.single;
+    });
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: MaterialApp(home: TodoDetailScreen(todoId: milk.id)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('export-reminder')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-export')));
+    final linked = find.text('提醒事项 · 已关联');
+    for (var i = 0; i < 50 && linked.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(linked, findsOneWidget);
+    expect(saved.single, containsPair('target', 'reminder'));
+    expect(saved.single, containsPair('title', '买牛奶'));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }

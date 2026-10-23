@@ -77,7 +77,7 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10C71012F40000100A71001 /* RecordingShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingShortcut.swift; sourceTree = "<group>"; };
 		A11271012F40000100A71001 /* AppleSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleSpeechBridge.swift; path = ../../darwin/AppleSpeechBridge.swift; sourceTree = "<group>"; };
-		B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemTasksBridge.swift; sourceTree = "<group>"; };
+		B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemTasksBridge.swift; path = ../../darwin/SystemTasksBridge.swift; sourceTree = "<group>"; };
 		A11371012F40000100A71001 /* AppleSpeechNativeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechNativeTests.swift; sourceTree = "<group>"; };
 		A90C71012F40000000A71001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KeychainStore.swift; path = ../../darwin/KeychainStore.swift; sourceTree = "<group>"; };
 		A90C71012F40000100A71001 /* CredentialBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CredentialBridge.swift; path = ../../darwin/CredentialBridge.swift; sourceTree = "<group>"; };

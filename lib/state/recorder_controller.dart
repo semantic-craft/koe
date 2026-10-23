@@ -41,6 +41,7 @@ import '../ble/realtime_stream.dart';
 import '../crypto/device_crypto.dart';
 import '../platform/answer_speaker.dart';
 import '../platform/background_sync_service.dart';
+import '../platform/calendar_meetings.dart';
 import '../platform/phone_mic_stream.dart';
 import '../platform/phone_recorder.dart';
 import '../platform/place_capture.dart';
@@ -266,6 +267,7 @@ class RecorderController extends ChangeNotifier
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
     PlaceCapture? placeCapture,
+    CalendarMeetings? calendarMeetings,
     OrganizeStore? organizeStore,
     PhoneRecorder? phoneRecorder,
     PhoneMicStream? micStream,
@@ -305,6 +307,7 @@ class RecorderController extends ChangeNotifier
        _persistedDeviceLoader = persistedDeviceLoader ?? DeviceStore.load,
        _libraryDirectoryOverride = libraryDirectory,
        _placeCapture = placeCapture ?? const DevicePlaceCapture(),
+       _calendarMeetings = calendarMeetings ?? const ChannelCalendarMeetings(),
        _phoneRecorderOverride = phoneRecorder,
        _micStreamOverride = micStream,
        _speechStreamOverride = speechStream,
@@ -625,6 +628,8 @@ class RecorderController extends ChangeNotifier
   final Directory? _libraryDirectoryOverride;
   @override
   final PlaceCapture _placeCapture;
+  @override
+  final CalendarMeetings _calendarMeetings;
   final PhoneRecorder? _phoneRecorderOverride;
   PhoneRecorder? _devicePhoneRecorder;
   @override

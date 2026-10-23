@@ -138,6 +138,7 @@ class AppSettings {
     this.highlightHotKey = true,
     this.meetingAppPrompts = true,
     this.meetingAppPromptsMuted = const [],
+    this.meetingFromCalendar = true,
     this.transcriptLanguage = 'auto',
     this.sttMode = SttDisplayMode.transcription,
     this.translationTargetLanguage = 'zh',
@@ -178,6 +179,10 @@ class AppSettings {
 
   /// The meeting apps, by bundle ID, the user chose 不再提醒 for.
   final List<String> meetingAppPromptsMuted;
+
+  /// On the Mac, names a microphone take after the calendar meeting it was
+  /// recorded in and gives its invitees to the minutes (#407).
+  final bool meetingFromCalendar;
   final String transcriptLanguage;
   final SttDisplayMode sttMode;
   final String translationTargetLanguage;
@@ -201,6 +206,7 @@ class AppSettings {
     bool? highlightHotKey,
     bool? meetingAppPrompts,
     List<String>? meetingAppPromptsMuted,
+    bool? meetingFromCalendar,
     String? transcriptLanguage,
     SttDisplayMode? sttMode,
     String? translationTargetLanguage,
@@ -221,6 +227,7 @@ class AppSettings {
       meetingAppPrompts: meetingAppPrompts ?? this.meetingAppPrompts,
       meetingAppPromptsMuted:
           meetingAppPromptsMuted ?? this.meetingAppPromptsMuted,
+      meetingFromCalendar: meetingFromCalendar ?? this.meetingFromCalendar,
       transcriptLanguage: transcriptLanguage ?? this.transcriptLanguage,
       sttMode: sttMode ?? this.sttMode,
       translationTargetLanguage:
@@ -242,6 +249,7 @@ class AppSettings {
     'highlightHotKey': highlightHotKey,
     'meetingAppPrompts': meetingAppPrompts,
     'meetingAppPromptsMuted': meetingAppPromptsMuted,
+    'meetingFromCalendar': meetingFromCalendar,
     'transcriptLanguage': transcriptLanguage,
     'sttMode': sttMode.name,
     'translationTargetLanguage': translationTargetLanguage,
@@ -289,6 +297,7 @@ class AppSettings {
           for (final app in apps)
             if (app is String) app,
       ],
+      meetingFromCalendar: map['meetingFromCalendar'] != false,
       transcriptLanguage: _str(map['transcriptLanguage']) ?? 'auto',
       sttMode: sttMode,
       translationTargetLanguage: _str(map['translationTargetLanguage']) ?? 'zh',

@@ -16,7 +16,7 @@
   - 第 5 期 15 处，主要是纪要细节。
   - 第 6 期 17 处，主要是导入导出和管理。
   - 跟进项：第 1 期 1 处，第 2 期 6 处，第 3 期 7 处。
-  - 2026-10-23：第 1 期跟进 1 处、第 2 期跟进 1 处、第 4 期 12 处已做，R1.6 还差用真麦克风连续录一次长会议（#428；拾音这条也还差这一步）。第 4 期还剩 6 处排在 4E、4H（#404、#407），R10.7 要真机。
+  - 2026-10-23：第 1 期跟进 1 处、第 2 期跟进 1 处、第 4 期 14 处已做，R1.6 还差用真麦克风连续录一次长会议（#428；拾音这条也还差这一步）。第 4 期还剩 4 处排在 4E（#404），R10.7 要真机。
 - **Mac 沙盒里能用 Core Audio process tap**（§2 实测）。方案 §5.4 和 §8 写的「未验证」可以去掉，第 4 期不用再开技术验证工单。
 - 拾音自己的分发机制和 Windows 版不纳入（§4）。英文界面、多人协作、云同步建议不做，等用户确认（§5）。
 
@@ -101,8 +101,8 @@ callbacks=127 floats=130048      # 1.5 秒
 | R24.2 | 录音页、导入时都能选「大约几个人」 | **已做**（#439）：录音中在录音面板选（`lib/ui/screens/new_recording_sheet.dart:388`），导入时在确认框选（`lib/ui/import_audio.dart:21`）；本机区分发言人和千问转写都按这个人数分（`lib/state/recorder/transcription_jobs.dart:504`、`lib/ai/qwen_stt.dart:601`），豆包文件接口没有人数参数。真机确认在 #440 |
 | R25 | 录音中只重绘变化的部分；71 分钟的会议不卡 | **已做**：`scripts/perf-check` 的 `recording` 场景（#416），录音面板开着时 516 帧 0 帧卡顿（#429 实测）。音量提示只看最近 30 秒（`lib/audio/input_level_watch.dart:37`），计时和音量条各自重绘（`lib/ui/screens/new_recording_sheet.dart:473`、`:521`）。71 分钟真实会议的真机复查在 #428 |
 | R10.7 | 升级后，麦克风和系统声音权限不用重新允许 | 要真机：用 `scripts/install-macos.sh` 升级一次确认 |
-| 设想：日历 | 录音时从日历带入会议名和参会人（拾音排在 3.1 以后） | Mac 没有，排在 4H（#407）。方案只有手机按日历提醒开录 |
-| 设想：提醒事项 | 待办写进「提醒事项」（拾音排在之后） | iOS 有（#137，`ios/Runner/SystemTasksBridge.swift`）；Mac 没有：`supports` 只认 iOS 和 Android（`lib/platform/system_tasks.dart:58`）。排在 4H（#407），像 #377 一样把桥接挪到 `darwin/` |
+| 设想：日历 | 录音时从日历带入会议名和参会人（拾音排在 3.1 以后） | **已做**（#407）：Mac 麦克风录音按开录时间查日历，取正在开或 5 分钟内开始、开始时间最近的会议，跳过全天、已取消和自己拒绝了的（`lib/platform/calendar_meetings.dart:62`、`darwin/SystemTasksBridge.swift:140`）；录音用会议名命名，崩溃后找回的录音也按开录时间命名（`lib/state/recorder/phone_recording.dart:659`）。受邀的人去掉会议室、设备、通讯组和拒绝了的，没有名字时取邮箱 @ 前面的部分，照 omi `calendar_event_sheets.dart:17`（`lib/platform/calendar_meetings.dart:93`）；会议名和这些人作为分析材料交给纪要、分析和自动整理，写明受邀不等于到场（`lib/state/recording_library.dart:63`、`lib/state/recorder/playback.dart:755`）。第一次录音时请求日历权限，设置「日历」里可关（`lib/ui/screens/settings_screen.dart:215`）。拾音只有设想，没有实现；iPhone 录音不查日历。真机确认在 #453 |
+| 设想：提醒事项 | 待办写进「提醒事项」（拾音排在之后） | **已做**（#407）：EventKit 桥接像 #377 一样挪到 `darwin/SystemTasksBridge.swift`，Mac 也注册（`macos/Runner/MainFlutterWindow.swift`），加了日历权限和用途说明；`supports` 认 iOS 和 macOS（`lib/platform/system_tasks.dart:60`），Mac 上的待办也能导出到提醒事项和日历并保持同步。真机确认在 #453 |
 
 ### 第 5 期 补充（#374：纪要质量）
 
