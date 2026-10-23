@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -138,6 +139,8 @@ class WifiExportService {
     required this.bleWrite,
     DeviceCrypto? crypto,
     SoftApLink? link,
+    this.useSsl = true,
+    this.startupDelay = softApStartupDelay,
   }) : crypto = crypto ?? DeviceCrypto(),
        link = link ?? SoftApLink.forPlatform();
 
@@ -145,6 +148,12 @@ class WifiExportService {
   final Future<void> Function(List<int> frame) bleWrite;
   final DeviceCrypto crypto;
   final SoftApLink link;
+
+  /// The recorder listens with TLS; tests talk to a plain WebSocket.
+  final bool useSsl;
+
+  /// Wait after the recorder confirms its hotspot, before anyone joins it.
+  final Duration startupDelay;
 
   /// Soundcore SDK default `wifiConnectionDelayMS` for D3200 SoftAP startup.
   static const softApStartupDelay = Duration(seconds: 10);
@@ -281,11 +290,40 @@ class WifiExportService {
   HttpClient? _wsClient;
   StreamSubscription? _wsSub;
   final _rxBuffer = <int>[];
-  Completer<void>? _fileDone;
   Completer<FileHeadInfo>? _fileHead;
   IOSink? _fileSink;
-  int _sliceBytes = 0;
+
+  /// Audio not yet handed to [_fileSink]. One write per 160-byte slice took
+  /// 91 s to save a 179 MB file after its last slice (#437).
+  final _pending = BytesBuilder();
+  static const _writeBlockBytes = 64 * 1024;
+
+  /// Bytes of the current file as the recorder counts them: one slice record
+  /// is sequence, flags, 160 audio bytes and a separator (PROTOCOL.md §6.5).
+  static const _sliceRecordBytes = 166;
+  int _received = 0;
+
+  /// Progress goes out at most this often while slices arrive: every report
+  /// rebuilds the screens watching the controller.
+  static const _progressInterval = Duration(milliseconds: 250);
+  final _sinceProgress = Stopwatch();
+
+  /// Size from the current file's head, in the same bytes as [_received];
+  /// 0 until the head comes. Only this completes a file by count.
+  int _headSize = 0;
+
+  /// Size shown and used for the wait deadline: the head's, else the file
+  /// list's.
   int _expectedSize = 0;
+
+  /// A done marker came for the current file. It carries no file id and the
+  /// recorder repeats it seconds later, while the next file may be arriving,
+  /// so it only completes a file whose head gave no size.
+  bool _doneSeen = false;
+
+  /// Completes when the recorder closes the WebSocket, as it does when it
+  /// turns its hotspot off.
+  Completer<void> _linkLost = Completer<void>();
   bool _cancelled = false;
   Completer<void> _cancelSignal = Completer<void>();
   String? _activeFileId;
@@ -340,7 +378,6 @@ class WifiExportService {
     String? ssid,
     String? password,
     Duration timeout = const Duration(seconds: 45),
-    Duration startupDelay = softApStartupDelay,
     Future<void> Function()? onConfigured,
   }) async {
     _cancelled = false;
@@ -418,7 +455,6 @@ class WifiExportService {
   Future<List<String>> transferFiles({
     required WifiEndpoint endpoint,
     required List<OfflineFileEntry> files,
-    bool useSsl = true,
   }) async {
     _incompletePaths.clear();
     if (files.isEmpty) return const [];
@@ -435,10 +471,12 @@ class WifiExportService {
         endpoint: endpoint,
         totalFiles: files.length,
         currentFileIndex: 0,
+        savedPaths: const [],
         clearError: true,
       ),
     );
 
+    var current = 0;
     try {
       if (joining) {
         await Future.any<void>([
@@ -447,7 +485,7 @@ class WifiExportService {
         ]);
         if (_cancelled) throw StateError('已取消 Wi-Fi 导出');
       }
-      await _connectWs(endpoint, useSsl: useSsl);
+      await _connectWs(endpoint);
       try {
         await link.startKeepalive(endpoint.ip);
       } catch (e) {
@@ -459,6 +497,7 @@ class WifiExportService {
 
       for (var i = 0; i < files.length; i++) {
         if (_cancelled) break;
+        current = i;
         final f = files[i];
         _emit(
           _progress.copyWith(
@@ -479,7 +518,6 @@ class WifiExportService {
               savedPaths: List.unmodifiable(saved),
               message: '已保存 ${p.basename(path)}',
               currentFileIndex: i + 1,
-              bytesReceived: f.sizeBytes,
             ),
           );
         }
@@ -520,7 +558,9 @@ class WifiExportService {
         _progress.copyWith(
           phase: ExportPhase.error,
           message: '导出失败',
-          error: '$e',
+          error: saved.isEmpty
+              ? '$e'
+              : '已保存 ${saved.length} 个，第 ${current + 1} 个失败：$e',
           savedPaths: List.unmodifiable(saved),
         ),
       );
@@ -535,9 +575,6 @@ class WifiExportService {
     if (!_cancelSignal.isCompleted) _cancelSignal.complete();
     if (!(_wifiConfigCompleter?.isCompleted ?? true)) {
       _wifiConfigCompleter!.completeError(StateError('cancelled'));
-    }
-    if (!(_fileDone?.isCompleted ?? true)) {
-      _fileDone!.complete();
     }
     _emit(_progress.copyWith(phase: ExportPhase.idle, message: '已取消导出'));
     // UI cancellation must not wait for a pending TLS handshake, WebSocket
@@ -571,7 +608,7 @@ class WifiExportService {
     return dir;
   }
 
-  Future<void> _connectWs(WifiEndpoint ep, {required bool useSsl}) async {
+  Future<void> _connectWs(WifiEndpoint ep) async {
     // Match the Soundcore SDK: retry the configured protocol three times, two
     // seconds apart. Port 443 is WSS; falling back to plain WS only adds long
     // waits and predictable connection resets.
@@ -610,10 +647,17 @@ class WifiExportService {
           ]);
           if (_cancelled) throw StateError('cancelled');
           _rxBuffer.clear();
+          final lost = _linkLost = Completer<void>();
           _wsSub = candidate.stream.listen(
             _onWsData,
-            onError: (e) => _log('WS error: $e'),
-            onDone: () => _log('WS closed'),
+            onError: (e) {
+              _log('WS error: $e');
+              if (!lost.isCompleted) lost.complete();
+            },
+            onDone: () {
+              _log('WS closed');
+              if (!lost.isCompleted) lost.complete();
+            },
             cancelOnError: false,
           );
           _log('WS connected via $url');
@@ -638,7 +682,7 @@ class WifiExportService {
         }
       }
     }
-    throw StateError('WebSocket connect failed: $lastErr');
+    throw WifiTransferException('连不上录音豆的 Wi‑Fi：$lastErr');
   }
 
   /// The device's TCP connection through [dial], wrapped in TLS for wss.
@@ -705,7 +749,7 @@ class WifiExportService {
         _fileHead!.complete(head);
       }
       if (head.fileSize > 0) {
-        _expectedSize = head.fileSize;
+        _headSize = _expectedSize = head.fileSize;
         _emit(_progress.copyWith(bytesExpected: head.fileSize));
       }
       return;
@@ -719,9 +763,7 @@ class WifiExportService {
 
     if (pkt.cmdId == RxCmd.fileDoneId) {
       _log('File done signal');
-      if (!(_fileDone?.isCompleted ?? true)) {
-        _fileDone!.complete();
-      }
+      _doneSeen = true;
     }
   }
 
@@ -749,6 +791,8 @@ class WifiExportService {
   }
 
   void _writeSlices(Uint8List frame) {
+    // Slices with no file open are left over from a file already saved.
+    if (_fileSink == null) return;
     // Layout after offset 9: repeated [seq u32 LE][flags u8][160 data][pad u8?]
     // Feishu processes 166-byte units while length allows.
     var i = 9;
@@ -782,20 +826,31 @@ class WifiExportService {
         }
       }
 
-      _fileSink?.add(out);
-      _sliceBytes += out.length;
-      _emit(
-        _progress.copyWith(
-          bytesReceived: _sliceBytes,
-          bytesExpected: _expectedSize > 0
-              ? _expectedSize
-              : _progress.bytesExpected,
-        ),
-      );
+      _pending.add(out);
+      _received += _sliceRecordBytes;
     }
+    if (_pending.length >= _writeBlockBytes) {
+      _fileSink?.add(_pending.takeBytes());
+    }
+    if (_sinceProgress.elapsed >= _progressInterval) _reportProgress();
+  }
+
+  void _reportProgress() {
+    _sinceProgress
+      ..reset()
+      ..start();
+    _emit(
+      _progress.copyWith(
+        bytesReceived: _received,
+        bytesExpected: _expectedSize > 0
+            ? _expectedSize
+            : _progress.bytesExpected,
+      ),
+    );
   }
 
   Future<String?> _transferOne(OfflineFileEntry file, Directory outDir) async {
+    if (_linkLost.isCompleted) throw const WifiTransferException(_linkLostText);
     // Prefer .opus when decrypting; keep .bin suffix if forced raw.
     final baseName = '${file.fileId}';
     final pathOpus = p.join(outDir.path, '$baseName.opus');
@@ -805,10 +860,15 @@ class WifiExportService {
     var partial = false;
     final ioFile = File(path);
     _fileSink = ioFile.openWrite();
-    _sliceBytes = 0;
+    _pending.clear();
+    _received = 0;
+    _sinceProgress
+      ..reset()
+      ..start();
+    _headSize = 0;
     _expectedSize = file.sizeBytes;
+    _doneSeen = false;
     _fileHead = Completer<FileHeadInfo>();
-    _fileDone = Completer<void>();
     _activeFileId = '${file.fileId}';
     _decryptEnabled = crypto.hasFileDecryptor(_activeFileId!);
     _decryptedChunks = 0;
@@ -826,57 +886,64 @@ class WifiExportService {
 
       // Wait for header (optional — some firmwares stream immediately)
       try {
-        final head = await _fileHead!.future.timeout(
-          const Duration(seconds: 20),
-        );
-        if (head.errorCode != 0 && head.errorCode != 0xFF) {
+        final head = await Future.any<FileHeadInfo?>([
+          _fileHead!.future,
+          _linkLost.future.then((_) => null),
+          _cancelSignal.future.then((_) => null),
+        ]).timeout(const Duration(seconds: 20));
+        if (head != null && head.errorCode != 0 && head.errorCode != 0xFF) {
           // Feishu treats code 1 = not exists, 2 = local error, 3 = already complete
           if (head.errorCode == 1) {
-            throw StateError('设备上找不到文件 ${file.fileId}');
+            throw WifiTransferException('录音豆上找不到「${file.title}」');
           }
           if (head.errorCode == 3) {
             _log('File already complete on device side');
           }
         }
-        if (head.fileSize > 0) _expectedSize = head.fileSize;
       } on TimeoutException {
         _log('No file header in 20s — still waiting for slices/done');
       }
 
-      // Wait for completion: either 1A0A or enough bytes
+      // Wait for completion: every announced byte, or 1A0A without a head
       final deadline = DateTime.now().add(
         Duration(seconds: 30 + (_expectedSize ~/ 8000).clamp(10, 600)),
       );
-      while (!_cancelled && DateTime.now().isBefore(deadline)) {
-        if (_fileDone?.isCompleted == true) break;
-        if (_expectedSize > 0 && _sliceBytes >= _expectedSize) break;
+      while (!_cancelled &&
+          !_linkLost.isCompleted &&
+          DateTime.now().isBefore(deadline)) {
+        if (_headSize > 0 ? _received >= _headSize : _doneSeen) break;
         await Future<void>.delayed(const Duration(milliseconds: 120));
       }
+      if (_cancelled) throw StateError('已取消 Wi-Fi 导出');
 
-      final doneSignal = _fileDone?.isCompleted == true;
-      if (!doneSignal &&
-          !(_expectedSize > 0 && _sliceBytes >= _expectedSize * 0.95)) {
-        if (_sliceBytes == 0) {
-          throw StateError(
-            '未收到文件 ${file.fileId} 的数据。'
-            '请确认已加入 SoftAP ${_progress.ssid ?? ""}。',
-          );
-        }
-        _log('Partial receive $_sliceBytes/$_expectedSize — saving anyway');
-      }
       // Same rule as the BLE pull: kept for playback, but without the done
       // marker or every announced byte it is not a complete recording.
       partial = !retrievedTransferComplete(
-        doneSignal: doneSignal,
-        received: _sliceBytes,
-        expected: _expectedSize,
+        doneSignal: _headSize == 0 && _doneSeen,
+        received: _received,
+        expected: _headSize,
       );
+      if (partial) {
+        // Like the BLE pull, a broken-off file is kept only when nearly all
+        // of it came.
+        if (_linkLost.isCompleted &&
+            !(_headSize > 0 && _received >= _headSize * 0.95)) {
+          throw const WifiTransferException(_linkLostText);
+        }
+        if (_received == 0) {
+          throw WifiTransferException('没有收到「${file.title}」的数据');
+        }
+        _log('Partial receive $_received/$_headSize — saving anyway');
+      }
+      _reportProgress();
 
-      await _fileSink?.flush();
-      await _fileSink?.close();
+      // Slices that still come while the file closes are not this file's.
+      final sink = _fileSink!;
       _fileSink = null;
+      if (_pending.isNotEmpty) sink.add(_pending.takeBytes());
+      await sink.close();
 
-      if (_sliceBytes == 0) {
+      if (_received == 0) {
         try {
           await ioFile.delete();
         } catch (_) {}
@@ -905,14 +972,22 @@ class WifiExportService {
       if (_activeFileId != null) crypto.clearFile(_activeFileId!);
       return path;
     } catch (e) {
-      try {
-        await _fileSink?.close();
-      } catch (_) {}
+      final sink = _fileSink;
       _fileSink = null;
+      _pending.clear();
+      try {
+        await sink?.close();
+      } catch (_) {}
+      // A failed file leaves nothing behind, not even an empty one.
+      try {
+        await File(path).delete();
+      } catch (_) {}
       if (_activeFileId != null) crypto.clearFile(_activeFileId!);
       rethrow;
     }
   }
+
+  static const _linkLostText = '录音豆的 Wi‑Fi 断开了';
 
   /// Feishu hex text for file header request (18 bytes, no separate checksum).
   static String _buildFileHeaderRequestHex({
@@ -1008,6 +1083,16 @@ class WifiExportService {
     await cancel();
     await _progressController.close();
   }
+}
+
+/// A Wi‑Fi export that stopped, with a reason the user can read.
+class WifiTransferException implements Exception {
+  const WifiTransferException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 class FileHeadInfo {
