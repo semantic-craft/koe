@@ -4,20 +4,28 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// Android foreground-service types Koe's one service can run as. Each needs
-/// its runtime permission granted before it starts: Bluetooth connect for
-/// [connectedDevice], microphone for [microphone].
-enum ForegroundServiceType { connectedDevice, microphone }
+/// Android foreground-service types Koe's one service can run as.
+/// [connectedDevice] and [microphone] need their runtime permission granted
+/// before they start (Bluetooth connect, microphone). [dataSync] needs none,
+/// but Android 15+ runs it for six hours a day while Koe is off screen and
+/// then takes it away; the time starts over once Koe is back on screen.
+enum ForegroundServiceType { connectedDevice, microphone, dataSync }
 
 /// One piece of work that must keep running after Koe leaves the screen.
 ///
 /// Works share a single Android foreground service and notification: the
 /// service runs as the union of the active works' types and shows the text
-/// of the work begun last. New kinds of work (phone recording, all-day
-/// listening) add a `static const` here.
+/// of the work begun last, passing over [secondary] work while other work
+/// runs. New kinds of work (phone recording, all-day listening) add a
+/// `static const` here.
 @immutable
 class BackgroundWork {
-  const BackgroundWork(this.id, {required this.type, required this.text});
+  const BackgroundWork(
+    this.id, {
+    required this.type,
+    required this.text,
+    this.secondary = false,
+  });
 
   /// Pulling recordings from the recorder over Bluetooth.
   static const recorderSync = BackgroundWork(
@@ -40,6 +48,16 @@ class BackgroundWork {
     text: 'Koe 正在监听（只留文字）',
   );
 
+  /// Transcribing, translating and analysing recordings with the chosen
+  /// models, on the phone or in the cloud. It often runs beside a sync or a
+  /// recording, whose text (and 停止) stays on the notification.
+  static const aiProcessing = BackgroundWork(
+    'aiProcessing',
+    type: ForegroundServiceType.dataSync,
+    text: 'Koe 正在处理录音',
+    secondary: true,
+  );
+
   final String id;
   final ForegroundServiceType type;
 
@@ -49,6 +67,10 @@ class BackgroundWork {
 
   /// Notification text while this is the latest work.
   final String text;
+
+  /// Keeps the service running without taking the notification's text
+  /// from other work.
+  final bool secondary;
 
   @override
   bool operator ==(Object other) => other is BackgroundWork && other.id == id;
@@ -62,7 +84,9 @@ class BackgroundWork {
 /// use Core Bluetooth's background mode and state restoration instead.
 ///
 /// Start work while Koe is on screen: Android refuses to start most
-/// foreground services from the background.
+/// foreground services from the background. While the service already runs,
+/// connectedDevice and dataSync work can still join it off screen;
+/// microphone work cannot.
 class BackgroundSyncService {
   BackgroundSyncService({
     this._channel = const MethodChannel(_channelName),
@@ -79,7 +103,12 @@ class BackgroundSyncService {
   final MethodChannel _channel;
   final bool _enabled;
 
-  // Insertion order: the last entry's text is on the notification.
+  /// Whether the service runs here (Android); elsewhere every call does
+  /// nothing.
+  bool get enabled => _enabled;
+
+  // Insertion order: the last entry's text is on the notification, unless
+  // it is secondary work and other work runs.
   final _works = <String, BackgroundWork>{};
   final _texts = <String, String>{};
   final _onStops = <String, VoidCallback>{};
@@ -137,8 +166,9 @@ class BackgroundSyncService {
       case 'stopRequested':
         await _stopRequested();
       case 'refused':
-        // The service has stopped: Android refused the types it was
-        // starting as after `update` had answered.
+        // Android took these types away after `update` had answered:
+        // refused them at start (the service has stopped), or dataSync at
+        // its daily time limit (the service runs as the rest).
         _applied = null;
         await _refuse({...(call.arguments as List).cast<String>()});
       default:
@@ -218,7 +248,12 @@ class BackgroundSyncService {
         ? null
         : _Request(
             types: {for (final work in _works.values) work.type.name},
-            text: _texts[_works.keys.last]!,
+            text: _texts[_works.values
+                .lastWhere(
+                  (work) => !work.secondary,
+                  orElse: () => _works.values.last,
+                )
+                .id]!,
             stoppable: _works.values.any((work) => work.stoppable),
           );
     if (request == _applied) return;

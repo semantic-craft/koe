@@ -11,10 +11,11 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <!-- Foreground services: recorder sync, phone recording / all-day
-         listening, playback. -->
+         listening, transcription and analysis, playback. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
 
     <!-- Phone recording, plain-text capture and all-day listening. -->
@@ -74,13 +75,14 @@
             </intent-filter>
         </activity>
         <!-- Koe's one foreground service: connectedDevice for recorder sync,
-             microphone for phone recording and listening, as the active work
-             needs. shortService is only the fallback that satisfies Android's
-             start contract when a type is refused. -->
+             microphone for phone recording and listening, dataSync for
+             transcribing and analysing recordings, as the active work needs.
+             shortService is only the fallback that satisfies Android's start
+             contract when a type is refused. -->
         <service
             android:name=".RecordingSyncService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|microphone|shortService"
+            android:foregroundServiceType="connectedDevice|microphone|dataSync|shortService"
             android:stopWithTask="true" />
         <service
             android:name="com.ryanheise.audioservice.AudioService"
