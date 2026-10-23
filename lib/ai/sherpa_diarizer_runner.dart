@@ -409,13 +409,20 @@ DiarizationQuality? _computeQualityFromWaveAndTurns({
   required int numThreads,
 }) {
   if (turns.isEmpty) return null;
-  final extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
-    config: sherpa_onnx.SpeakerEmbeddingExtractorConfig(
-      model: embeddingModelPath,
-      numThreads: numThreads,
-      debug: false,
-    ),
-  );
+  // The quality hint is optional: when it cannot be measured, the speakers
+  // already found still stand.
+  final sherpa_onnx.SpeakerEmbeddingExtractor extractor;
+  try {
+    extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
+      config: sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+        model: embeddingModelPath,
+        numThreads: numThreads,
+        debug: false,
+      ),
+    );
+  } catch (_) {
+    return null;
+  }
   try {
     final sr = wave.sampleRate;
     final totalSamples = wave.samples.length;

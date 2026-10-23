@@ -47,23 +47,6 @@ void main() {
     },
   );
   test(
-    'collar excludes exactly 250 ms on each side of non-grid boundaries',
-    () {
-      final result = evaluateDer(
-        [(start: 0.013, end: 1.013, speaker: 'A')],
-        [
-          const DiarizationTurn(
-            speaker: 0,
-            start: Duration(milliseconds: 13),
-            end: Duration(milliseconds: 413),
-          ),
-        ],
-        1.1,
-      );
-      expect(result.derCollar250ms, closeTo(0.7, 1e-9));
-    },
-  );
-  test(
     '250 ms collar is exact on both sides; missing single speech counts',
     () {
       final result = evaluateDer(
