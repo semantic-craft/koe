@@ -6,6 +6,7 @@ import '../../ai/engine_config.dart';
 import '../../ai/cloud_stt_service.dart';
 import '../../ai/stt_types.dart';
 import '../../ai/apple_speech.dart';
+import '../../state/meeting_apps.dart';
 import '../../state/recorder_controller.dart';
 import '../../platform/credential_store.dart';
 import '../../platform/mac_app.dart';
@@ -204,6 +205,9 @@ class SettingsScreen extends StatelessWidget {
                     const SizedBox(height: 18),
                     const SectionLabel('快捷键'),
                     _SettingsGroup(child: _HotKeySettings(controller: c)),
+                    const SizedBox(height: 18),
+                    const SectionLabel('会议提醒'),
+                    _SettingsGroup(child: _MeetingAppSettings(controller: c)),
                   ],
                   const SizedBox(height: 18),
                   const SectionLabel('设备'),
@@ -910,6 +914,51 @@ class _HotKeySettings extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Asking to record when a meeting app takes the microphone (#406), and
+/// the apps the user chose 不再提醒 for, each of which can ask again.
+class _MeetingAppSettings extends StatelessWidget {
+  const _MeetingAppSettings({required this.controller});
+
+  final RecorderController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SettingsSwitch(
+          key: const ValueKey('settings-meeting-app-prompts'),
+          title: '会议应用用麦克风时提醒录音',
+          subtitle:
+              'Zoom、腾讯会议、飞书等开始用麦克风时问要不要录，会议结束时问要不要停；'
+              '只提醒，不会自动开始或停止。需要 macOS 14.2 或更新',
+          value: c.meetingAppPrompts,
+          onChanged: c.setMeetingAppPrompts,
+        ),
+        if (c.meetingAppPromptsMuted.isNotEmpty) ...[
+          const Divider(height: 20),
+          const Text(
+            '不再提醒的应用',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+          ),
+          for (final app in c.meetingAppPromptsMuted)
+            Row(
+              children: [
+                Expanded(child: Text(meetingAppName(app))),
+                TextButton(
+                  key: ValueKey('settings-unmute-$app'),
+                  onPressed: () => c.unmuteMeetingApp(app),
+                  child: const Text('恢复提醒'),
+                ),
+              ],
+            ),
+        ],
+      ],
     );
   }
 }

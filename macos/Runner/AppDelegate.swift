@@ -51,7 +51,8 @@ class AppDelegate: FlutterAppDelegate {
 /// Koe's app-level Mac controls, driven from Dart (`lib/platform/mac_app.dart`)
 /// over `com.semanticcraft.koe/mac_app`: the menu bar item, keeping the Mac
 /// awake while Koe records or transcribes, the question before quitting then,
-/// the space left for takes and the global hot keys.
+/// the space left for takes, the global hot keys, and the apps using the
+/// microphone with prompts about them (#406).
 final class MacAppChannel: NSObject, NSMenuDelegate {
   private let channel: FlutterMethodChannel
   private weak var window: NSWindow?
@@ -64,6 +65,8 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
   private var clock: Timer?
   private var quitting = false
   private let hotKeys = GlobalHotKeys()
+  private let microphoneUsers = MicrophoneUsers()
+  private let prompts = PromptPanel()
 
   /// Shows for a moment that ⌃⌥⌘B marked the take, in place of the state.
   private var flash: Timer?
@@ -93,6 +96,10 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     statusItem.menu = menu
     showState()
     hotKeys.onPress = { [weak self] name in self?.pressed(name) }
+    microphoneUsers.onChange = { [weak self] users in
+      self?.channel.invokeMethod("microphoneUsers", arguments: users)
+    }
+    prompts.onChoose = { [weak self] id in self?.chose(id) }
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call, result: result)
     }
@@ -111,6 +118,13 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
         return
       }
       result(availableSpace(at: path))
+    case "prompt":
+      guard let message = args["message"] as? String else {
+        result(FlutterError(code: "invalid_argument", message: "参数无效", details: nil))
+        return
+      }
+      prompts.show(message: message, actions: Self.actions(args["actions"]))
+      result(nil)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -124,10 +138,7 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     next.elapsed = ((args["elapsedMs"] as? NSNumber)?.doubleValue ?? 0) / 1000
     next.running = args["running"] as? Bool ?? false
     next.lines = args["lines"] as? [String] ?? []
-    next.actions = (args["actions"] as? [[String: String]] ?? []).compactMap { action in
-      guard let id = action["id"], let title = action["title"] else { return nil }
-      return (id, title)
-    }
+    next.actions = Self.actions(args["actions"])
     next.keepAwake = args["keepAwake"] as? String
     next.quitMessage = args["quitMessage"] as? String
     next.quitInfo = args["quitInfo"] as? String ?? ""
@@ -136,7 +147,15 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     showState()
     holdAwake(next.keepAwake)
     if clock != nil { rebuildMenu() }
+    microphoneUsers.watch(args["watchMicrophone"] as? Bool ?? false)
     return hotKeys.hold(Set(args["hotKeys"] as? [String] ?? []))
+  }
+
+  private static func actions(_ value: Any?) -> [(id: String, title: String)] {
+    (value as? [[String: String]] ?? []).compactMap { action in
+      guard let id = action["id"], let title = action["title"] else { return nil }
+      return (id, title)
+    }
   }
 
   /// Runs a hot key pressed in any app. Starting and stopping show in the
@@ -156,6 +175,16 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
       default:
         NSSound.beep()
       }
+    }
+  }
+
+  /// Runs a button pressed on a prompt. Koe comes forward to say why a take
+  /// did not start or save; anything else shows by itself.
+  private func chose(_ id: String) {
+    channel.invokeMethod("promptAction", arguments: id) { [weak self] result in
+      guard result as? String == "failed" else { return }
+      NSSound.beep()
+      self?.showWindow()
     }
   }
 

@@ -7,13 +7,15 @@ import 'device_kind.dart';
 /// work (transcription, analysis, pulling recordings) under way.
 enum MacAppState { idle, recording, paused, working }
 
-/// One command in the menu bar item's menu.
+/// One command in the menu bar item's menu, or a button on a
+/// [MacApp.prompt].
 @immutable
 class MacMenuAction {
   const MacMenuAction(this.id, this.title);
 
-  /// `start`, `pause`, `resume` or `stop`, as [MacApp.onAction] receives
-  /// it. `stop` ends the take, or text capture when no take runs.
+  /// In the menu `start`, `pause`, `resume` or `stop`, as [MacApp.onAction]
+  /// receives it. `stop` ends the take, or text capture when no take runs.
+  /// On a prompt, as [MacApp.onPromptAction] receives it.
   final String id;
   final String title;
 
@@ -26,8 +28,9 @@ class MacMenuAction {
 }
 
 /// Everything the Mac shows for Koe at one moment: the menu bar item and
-/// its menu, whether the Mac stays awake, what to ask before quitting, and
-/// the global hot keys Koe holds.
+/// its menu, whether the Mac stays awake, what to ask before quitting, the
+/// global hot keys Koe holds and whether it watches the microphone for
+/// meeting apps.
 @immutable
 class MacAppStatus {
   const MacAppStatus({
@@ -42,6 +45,7 @@ class MacAppStatus {
     this.quitInfo = '',
     this.saving = false,
     this.hotKeys = const [],
+    this.watchMicrophone = false,
   });
 
   final MacAppState state;
@@ -76,6 +80,10 @@ class MacAppStatus {
   /// receives them. Those left out are let go for other apps.
   final List<String> hotKeys;
 
+  /// Whether the Mac reports the apps using the microphone, as
+  /// [MacApp.onMicrophoneUsers] receives them (#406).
+  final bool watchMicrophone;
+
   Map<String, Object?> toMap() => {
     'state': state.name,
     'take': take,
@@ -90,6 +98,7 @@ class MacAppStatus {
     'quitInfo': quitInfo,
     'saving': saving,
     'hotKeys': hotKeys,
+    'watchMicrophone': watchMicrophone,
   };
 
   @override
@@ -104,7 +113,8 @@ class MacAppStatus {
       other.quitMessage == quitMessage &&
       other.quitInfo == quitInfo &&
       other.saving == saving &&
-      listEquals(other.hotKeys, hotKeys);
+      listEquals(other.hotKeys, hotKeys) &&
+      other.watchMicrophone == watchMicrophone;
 
   @override
   int get hashCode => Object.hash(
@@ -118,13 +128,14 @@ class MacAppStatus {
     quitInfo,
     saving,
     Object.hashAll(hotKeys),
+    watchMicrophone,
   );
 }
 
 /// Koe's app-level Mac controls, run by `macos/Runner/AppDelegate.swift`:
 /// the menu bar item, keeping the Mac awake, asking before quitting, the
-/// space left for takes and the global hot keys. Elsewhere every call does
-/// nothing.
+/// space left for takes, the global hot keys, and the apps using the
+/// microphone with prompts about them. Elsewhere every call does nothing.
 class MacApp {
   MacApp({this._channel = const MethodChannel(_channelName), bool? enabled})
     : _enabled = enabled ?? runsOnMac {
@@ -159,6 +170,15 @@ class MacApp {
   /// again whenever [show] sends a change.
   ValueListenable<List<String>> get hotKeysTaken => _hotKeysTaken;
   final _hotKeysTaken = ValueNotifier<List<String>>(const []);
+
+  /// Takes the bundle IDs of the processes using the microphone, sent
+  /// whenever they change while [MacAppStatus.watchMicrophone] is set, and
+  /// once when it is set.
+  void Function(List<String> bundleIds)? onMicrophoneUsers;
+
+  /// Runs the button pressed on a [prompt]. Answers as [onHotKey] does, of
+  /// which only `failed` shows: the window comes up to say why.
+  Future<String?> Function(String action)? onPromptAction;
 
   MacAppStatus _status = const MacAppStatus();
   MacAppStatus? _sent;
@@ -203,6 +223,27 @@ class MacApp {
     }
   }
 
+  /// Asks [message] in a small panel at the top right of the screen with
+  /// [actions] as its buttons, the last one the answer expected. It leaves
+  /// the app in front where it is, replaces the panel shown, and closes by
+  /// itself after 30 seconds.
+  Future<void> prompt(String message, List<MacMenuAction> actions) async {
+    if (!_enabled) return;
+    try {
+      await _channel.invokeMethod<void>('prompt', {
+        'message': message,
+        'actions': [
+          for (final action in actions)
+            {'id': action.id, 'title': action.title},
+        ],
+      });
+    } on MissingPluginException {
+      // Not listening yet; the question has passed by the time it is.
+    } on PlatformException catch (error) {
+      debugPrint('[MacApp] Could not ask: $error');
+    }
+  }
+
   Future<Object?> _onNativeCall(MethodCall call) async {
     switch (call.method) {
       case 'ready':
@@ -214,6 +255,10 @@ class MacApp {
         await onQuit?.call();
       case 'hotKey':
         return onHotKey?.call(call.arguments as String);
+      case 'microphoneUsers':
+        onMicrophoneUsers?.call((call.arguments as List).cast<String>());
+      case 'promptAction':
+        return onPromptAction?.call(call.arguments as String);
       default:
         throw MissingPluginException(call.method);
     }

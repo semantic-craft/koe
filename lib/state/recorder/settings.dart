@@ -65,6 +65,8 @@ mixin _RecorderSettings on ChangeNotifier {
     meetingLocalOnly = s.meetingLocalOnly;
     recordHotKey = s.recordHotKey;
     highlightHotKey = s.highlightHotKey;
+    meetingAppPrompts = s.meetingAppPrompts;
+    meetingAppPromptsMuted = s.meetingAppPromptsMuted;
     transcriptLanguage = s.transcriptLanguage;
     appleSourceLanguage = s.appleSourceLanguage;
     translationTargetLanguage = s.translationTargetLanguage;
@@ -119,6 +121,8 @@ mixin _RecorderSettings on ChangeNotifier {
             meetingLocalOnly: meetingLocalOnly,
             recordHotKey: recordHotKey,
             highlightHotKey: highlightHotKey,
+            meetingAppPrompts: meetingAppPrompts,
+            meetingAppPromptsMuted: meetingAppPromptsMuted,
             transcriptLanguage: transcriptLanguage,
             sttMode: sttMode,
             translationTargetLanguage: translationTargetLanguage,
@@ -381,6 +385,29 @@ mixin _RecorderSettings on ChangeNotifier {
     unawaited(_persistSettings());
   }
 
+  void setMeetingAppPrompts(bool v) {
+    meetingAppPrompts = v;
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
+  /// 不再提醒 for the meeting app [app], by bundle ID (#406).
+  void muteMeetingApp(String app) {
+    if (meetingAppPromptsMuted.contains(app)) return;
+    meetingAppPromptsMuted = [...meetingAppPromptsMuted, app];
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
+  void unmuteMeetingApp(String app) {
+    meetingAppPromptsMuted = [
+      for (final muted in meetingAppPromptsMuted)
+        if (muted != app) muted,
+    ];
+    notifyListeners();
+    unawaited(_persistSettings());
+  }
+
   void setMeetingLocalOnly(bool v) {
     if (meetingLocalOnly == v) return;
     meetingLocalOnly = v;
@@ -543,6 +570,13 @@ mixin _RecorderSettings on ChangeNotifier {
   /// On the Mac, ⌃⌥⌘B marks a highlight from any app while a take or text
   /// capture runs (#405).
   bool highlightHotKey = true;
+
+  /// On the Mac, asks to record when a meeting app takes the microphone,
+  /// and to stop when the meeting is over (#406).
+  bool meetingAppPrompts = true;
+
+  /// The meeting apps, by bundle ID, the user chose 不再提醒 for.
+  List<String> meetingAppPromptsMuted = const [];
 
   /// Near-realtime AI transcription (PCM WS stream + Ogg batch fallback).
   bool autoTranscribe = true;
