@@ -14,6 +14,11 @@ part of '../recorder_controller.dart';
 /// silent, quiet or noisy microphone (#401); a take the system ends, such as
 /// on an unplugged microphone or a full disk, is saved like 结束并保存.
 ///
+/// On the Mac the microphone to record from can be chosen (#402); the choice
+/// is kept on the Mac and applies to every take, hold-to-talk and text
+/// capture started after it. A chosen microphone that is not connected at
+/// the start gives way to the system default, and the take says so.
+///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderPhoneRecording on ChangeNotifier {
@@ -66,6 +71,22 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   /// What the microphone's level suggests checking, or null.
   InputLevelHint? get phoneRecordingLevelHint => _phoneLevelWatch?.hint;
 
+  /// The microphones to choose from, as last listed; Mac only.
+  List<MicInput> phoneMicInputs = const [];
+
+  /// The microphone chosen to record from; null is the system default.
+  MicInput? get phoneMicChoice => _phoneMicChoice;
+  MicInput? _phoneMicChoice;
+  Future<void>? _phoneMicChoiceRead;
+  Future<void> _phoneMicChoiceWrites = Future<void>.value();
+
+  /// The microphone the current take records from on the Mac; null is the
+  /// system default.
+  MicInput? phoneRecordingMic;
+
+  /// Why the current take does not record from the chosen microphone.
+  String? phoneRecordingMicNotice;
+
   /// The notes typed during the current take; each line begins with the
   /// recording time it was started at.
   String get phoneRecordingNotes => _phoneTakeNotes;
@@ -112,6 +133,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         dir.path,
         '$_takePrefix${startedAt.microsecondsSinceEpoch}.wav',
       );
+      final mic = await _useChosenMic(_phoneRecorder);
       try {
         await _phoneRecorder.start(path);
       } catch (_) {
@@ -120,6 +142,11 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         return;
       }
       phoneRecordingError = null;
+      phoneRecordingMic = mic.used;
+      phoneRecordingMicNotice = switch (mic.missing) {
+        final missing? => '选的麦克风「${missing.label}」没有连接，这次用系统默认麦克风录',
+        null => null,
+      };
       _phoneTakeNotes = '';
       _phoneTakeHighlights = const [];
       _phoneTakePath = path;
@@ -181,6 +208,71 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         if (watch.add(db)) notifyListeners();
       });
     }
+  }
+
+  Future<File> _phoneMicChoiceFile() async =>
+      File(p.join((await _importDirectory()).parent.path, 'microphone.json'));
+
+  Future<void> _readPhoneMicChoice() => _phoneMicChoiceRead ??= () async {
+    _phoneMicChoice = await MicInput.read(await _phoneMicChoiceFile());
+  }();
+
+  /// Lists the microphones to choose from. Mac only: elsewhere Koe records
+  /// from the system default.
+  Future<void> refreshPhoneMicInputs() async {
+    if (!runsOnMac) return;
+    await _readPhoneMicChoice();
+    if (_phoneRecorder case final PhoneMicInputs mic) {
+      try {
+        phoneMicInputs = await mic.inputs();
+      } catch (error) {
+        debugPrint('[PhoneRecording] microphones not listed: $error');
+      }
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Records what is started from now on from [input]; null is the system
+  /// default. The choice is kept across launches.
+  Future<void> choosePhoneMic(MicInput? input) async {
+    await _readPhoneMicChoice();
+    _phoneMicChoice = input;
+    notifyListeners();
+    // Each write keeps the choice current when it runs, so quick changes
+    // never leave an older one on disk.
+    await (_phoneMicChoiceWrites = _phoneMicChoiceWrites.then((_) async {
+      try {
+        await MicInput.write(await _phoneMicChoiceFile(), _phoneMicChoice);
+      } catch (error) {
+        debugPrint('[PhoneRecording] microphone choice not kept: $error');
+      }
+    }));
+  }
+
+  /// Points [mic] at the chosen microphone for the start that follows, or at
+  /// the system default when the chosen one is not connected. Returns the
+  /// microphone used and the chosen one that was missing. Mac only.
+  Future<({MicInput? used, MicInput? missing})> _useChosenMic(
+    Object mic,
+  ) async {
+    if (!runsOnMac || mic is! PhoneMicInputs) {
+      return (used: null, missing: null);
+    }
+    await _readPhoneMicChoice();
+    final chosen = _phoneMicChoice;
+    MicInput? used;
+    if (chosen != null) {
+      try {
+        phoneMicInputs = await mic.inputs();
+        used = phoneMicInputs
+            .where((input) => input.id == chosen.id)
+            .firstOrNull;
+      } catch (error) {
+        debugPrint('[PhoneRecording] microphones not listed: $error');
+      }
+    }
+    mic.useInput(used);
+    return (used: used, missing: used == null ? chosen : null);
   }
 
   /// Hides the level hint shown now for the rest of the take.
@@ -409,6 +501,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneMicLevels = null;
     _phoneLevelWatch = null;
     phoneRecordingLevel.value = 0;
+    phoneRecordingMic = null;
+    phoneRecordingMicNotice = null;
     unawaited(BackgroundSyncService.shared.end(BackgroundWork.phoneRecording));
   }
 

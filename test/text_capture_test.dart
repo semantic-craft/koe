@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/main.dart';
@@ -381,6 +383,21 @@ void main() {
     expect(controller.minutesDocuments, isEmpty);
     expect(noSpools(), isTrue);
   });
+  test('on the Mac it listens through the microphone chosen for recording '
+      '(#402)', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const usb = MicInput(id: 'usb', label: 'USB 会议麦克风');
+    await MicInput.write(File('${directory.path}/microphone.json'), usb);
+    final choosable = mic = _ChoosableMic([usb]);
+    final controller = build();
+
+    expect(await controller.startTextCapture(), isTrue);
+
+    expect(choosable.startedFrom, [usb.id]);
+    await controller.stopTextCapture();
+  });
+
   test('a marked sentence stays marked in the saved text', () async {
     final controller = build();
     expect(controller.markTextCaptureHighlight(), isFalse);
@@ -614,6 +631,29 @@ class _Mic implements PhoneMicStream {
 
   @override
   Future<void> dispose() async {}
+}
+
+/// A Mac microphone with inputs to choose from.
+class _ChoosableMic extends _Mic implements PhoneMicInputs {
+  _ChoosableMic(this.connected);
+
+  final List<MicInput> connected;
+  MicInput? _input;
+
+  /// The input each capture started from; null is the system default.
+  final startedFrom = <String?>[];
+
+  @override
+  Future<List<MicInput>> inputs() async => connected;
+
+  @override
+  void useInput(MicInput? input) => _input = input;
+
+  @override
+  Future<Stream<Uint8List>> start() {
+    startedFrom.add(_input?.id);
+    return super.start();
+  }
 }
 
 class _Stream implements SttStreamSession {
