@@ -1,5 +1,5 @@
 {
-  "_comment": "Upper bounds checked by scripts/perf-check. Measured on the M-series Mac CI runner in profile mode; the 'before' values (main before #216) and 'after' values are in the PR that added this file. Bounds sit between the two with margin for noise. 'recording' (#401) is a new scenario with no 'before': its bounds are the measured values with margin, and 80 level readings that each notified the controller would break them. 'take_save' (#409): stopping an hour-long take took about 3.3 s while the save hashed the file in Dart; the bound is for the system digest.",
+  "_comment": "Upper bounds checked by scripts/perf-check. Measured on the M-series Mac CI runner in profile mode; the 'before' values (main before #216) and 'after' values are in the PR that added this file. Bounds sit between the two with margin for noise. 'recording' (#401) is a new scenario with no 'before': its bounds are the measured values with margin, and 80 level readings that each notified the controller would break them. 'take_save' (#409): stopping an hour-long take took about 3.3 s while the save hashed the file in Dart; the bound is for the system digest. 'wifi_save' (#437): main took 25 s after the recorder's last unit to save a million units and notified the controller a million times. The fake recorder works in the same isolate and sends about 30 times faster than the real one (about 1 MB/s), so the scenario's frame numbers are not bounded.",
   "ble_slices": {
     "controller_notifications": 20,
     "janky_frames": 10
@@ -25,5 +25,9 @@
   },
   "take_save": {
     "workload_ms": 1000
+  },
+  "wifi_save": {
+    "save_ms": 3000,
+    "controller_notifications": 200
   }
 }
