@@ -22,6 +22,7 @@ import 'support/wav_fixture.dart';
 /// Koe on the Mac menu bar (#403): the take and the work under way, the Mac
 /// kept awake meanwhile, a question and a saved take before quitting, and a
 /// notice when the disk fills up. The global hot keys ⌃⌥⌘R and ⌃⌥⌘B (#405).
+/// Questions over other apps when a meeting app takes the microphone (#406).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('test/mac_app');
@@ -33,11 +34,18 @@ void main() {
   /// The hot keys other apps hold, which the Mac cannot give Koe.
   late Set<String> othersHold;
 
+  /// The questions put over other apps.
+  late List<Map<Object?, Object?>> prompts;
+
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('koe-mac-menu-bar-');
     updates = [];
     othersHold = {};
+    prompts = [];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'prompt') {
+        prompts.add(call.arguments as Map<Object?, Object?>);
+      }
       if (call.method == 'update') {
         final update = call.arguments as Map<Object?, Object?>;
         updates.add(update);
@@ -63,6 +71,12 @@ void main() {
       (action! as Map<Object?, Object?>)['title'],
   ];
 
+  String asked() => prompts.last['message']! as String;
+  List<Object?> buttons() => [
+    for (final action in prompts.last['actions']! as List<Object?>)
+      (action! as Map<Object?, Object?>)['title'],
+  ];
+
   /// Sends [method] as the Mac side does; completes with Koe's answer.
   Future<Object?> fromMac(String method, [Object? arguments]) {
     final answered = Completer<Object?>();
@@ -76,6 +90,17 @@ void main() {
       ),
     );
     return answered.future;
+  }
+
+  /// Reports [apps] using the microphone, as the Mac does when they change,
+  /// and lets [elapsed] go by.
+  Future<void> microphone(
+    WidgetTester tester,
+    List<String> apps,
+    Duration elapsed,
+  ) async {
+    unawaited(fromMac('microphoneUsers', apps));
+    await tester.pump(elapsed);
   }
 
   /// Pumps real async work (file reads and writes) until [done] holds.
@@ -299,6 +324,155 @@ void main() {
     variant: TargetPlatformVariant.only(TargetPlatform.macOS),
   );
 
+  testWidgets(
+    'a meeting app using the microphone for 5 seconds asks over other apps '
+    'to start a take, and once the meeting is over for 10 seconds asks to '
+    'stop it, which saves the take',
+    (tester) async {
+      final controller = await openKoe(tester, _Mic());
+      expect(shown()['watchMicrophone'], isTrue);
+
+      await microphone(tester, ['com.tencent.meeting'], seconds(4));
+      expect(prompts, isEmpty);
+      await tester.pump(seconds(1));
+      expect(asked(), '腾讯会议 正在用麦克风，要开始录音吗？');
+      expect(buttons(), ['不再提醒', '不用', '开始录音']);
+      // No frame between the button and the answer, as with ⌃⌥⌘R.
+      expect(
+        await tester.runAsync(() => fromMac('promptAction', 'start')),
+        'started',
+      );
+      expect(controller.phoneRecordingActive, isTrue);
+      await settle(tester, () => sheet.evaluate().isNotEmpty);
+
+      await microphone(tester, [], seconds(9));
+      expect(prompts, hasLength(1));
+      await tester.pump(seconds(1));
+      expect(asked(), '会议好像结束了，要停止录音吗？');
+      expect(buttons(), ['继续', '停止并保存']);
+      expect(
+        await tester.runAsync(() => fromMac('promptAction', 'stop')),
+        'stopped',
+      );
+      expect(controller.library.assets, hasLength(1));
+      await settle(tester, () => sheet.evaluate().isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  testWidgets(
+    'asking to stop a take that is then stopped with ⌃⌥⌘R does not stop the '
+    'take started next from the question still shown',
+    (tester) async {
+      final controller = await openKoe(tester, _Mic());
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'started',
+      );
+      await settle(tester, () => sheet.evaluate().isNotEmpty);
+      await microphone(tester, ['us.zoom.xos'], seconds(1));
+      await microphone(tester, [], seconds(10));
+      expect(asked(), '会议好像结束了，要停止录音吗？');
+
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'stopped',
+      );
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'started',
+      );
+      expect(
+        await tester.runAsync(() => fromMac('promptAction', 'stop')),
+        isNull,
+      );
+      expect(controller.phoneRecordingActive, isTrue);
+      expect(controller.library.assets, hasLength(1));
+
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'stopped',
+      );
+      await settle(tester, () => sheet.evaluate().isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  testWidgets('不再提醒 keeps a meeting app from asking until 恢复提醒 in settings, '
+      'and with the prompts off the Mac stops watching the microphone', (
+    tester,
+  ) async {
+    final controller = (await tester.runAsync(
+      () async => RecorderController(
+        loadPersistedState: false,
+        libraryDirectory: Directory('${directory.path}/imports'),
+        phoneRecorder: _Mic(),
+        phoneRecordingEnabled: true,
+        placeCapture: _NoPlace(),
+      ),
+    ))!;
+    addTearDown(controller.dispose);
+    final bar = MacMenuBar(controller, onStart: () {});
+    addTearDown(bar.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+
+    await microphone(tester, ['com.electron.lark'], seconds(5));
+    expect(asked(), '飞书 正在用麦克风，要开始录音吗？');
+    await tester.runAsync(
+      () => fromMac('promptAction', 'mute:com.electron.lark'),
+    );
+    await waitForSettings(tester, controller);
+    expect(
+      (await tester.runAsync(AppSettingsStore.load))!.meetingAppPromptsMuted,
+      ['com.electron.lark'],
+    );
+    // The next call asks nothing.
+    await microphone(tester, [], seconds(10));
+    await microphone(tester, ['com.electron.lark'], seconds(5));
+    expect(prompts, hasLength(1));
+
+    final unmute = find.byKey(
+      const ValueKey('settings-unmute-com.electron.lark'),
+    );
+    await tester.scrollUntilVisible(
+      unmute,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('飞书'), findsOne);
+    await tester.ensureVisible(unmute);
+    await tester.pump();
+    await tester.tap(unmute);
+    await tester.pump();
+    expect(unmute, findsNothing);
+    await microphone(tester, [], seconds(10));
+    await microphone(tester, ['com.electron.lark'], seconds(5));
+    expect(prompts, hasLength(2));
+
+    final toggle = find.descendant(
+      of: find.byKey(const ValueKey('settings-meeting-app-prompts')),
+      matching: find.byType(Switch),
+    );
+    await tester.scrollUntilVisible(
+      toggle,
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(shown()['watchMicrophone'], isFalse);
+    await waitForSettings(tester, controller);
+    final saved = (await tester.runAsync(AppSettingsStore.load))!;
+    expect(saved.meetingAppPrompts, isFalse);
+    expect(saved.meetingAppPromptsMuted, isEmpty);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
   testWidgets('quitting while recording saves the take before Koe quits', (
     tester,
   ) async {
@@ -460,6 +634,8 @@ void main() {
     expect(shown()['quitMessage'], isNull);
   });
 }
+
+Duration seconds(int seconds) => Duration(seconds: seconds);
 
 class _NoPlace implements PlaceCapture {
   @override

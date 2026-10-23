@@ -743,6 +743,85 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.macOS),
   );
+
+  testWidgets(
+    'on the Mac a meeting app asks once to start all-day listening: not to '
+    'stop it when the call ends, nor again when listening is stopped during '
+    'the next call (#406)',
+    (tester) async {
+      const channel = MethodChannel('test/mac_app');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final prompts = <Object?>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'prompt') {
+          prompts.add((call.arguments as Map<Object?, Object?>)['message']);
+        }
+        return null;
+      });
+      final shared = MacApp.shared;
+      MacApp.shared = MacApp(channel: channel, enabled: true);
+      addTearDown(() {
+        MacApp.shared = shared;
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+      final controller = (await tester.runAsync(() async => build()))!
+        ..allDayListening = true;
+      await tester.pumpWidget(KoeApp(controller: controller));
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 100),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 5),
+      );
+      Future<void> settle(bool Function() done) async {
+        for (var i = 0; i < 100 && !done(); i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(done(), isTrue);
+      }
+
+      Future<Object?> fromMac(String method, [Object? arguments]) {
+        final answered = Completer<Object?>();
+        unawaited(
+          messenger.handlePlatformMessage(
+            channel.name,
+            channel.codec.encodeMethodCall(MethodCall(method, arguments)),
+            (reply) => answered.complete(
+              reply == null ? null : channel.codec.decodeEnvelope(reply),
+            ),
+          ),
+        );
+        return answered.future;
+      }
+
+      /// The apps using the microphone, as the Mac reports them, for
+      /// [seconds].
+      Future<void> microphone(List<String> apps, int seconds) async {
+        unawaited(fromMac('microphoneUsers', apps));
+        await tester.pump(Duration(seconds: seconds));
+      }
+
+      await microphone(['com.tencent.meeting'], 5);
+      expect(prompts, ['腾讯会议 正在用麦克风，要开始全天监听吗？']);
+      expect(
+        await tester.runAsync(() => fromMac('promptAction', 'start')),
+        'started',
+      );
+      expect(controller.textCaptureAllDay, isTrue);
+
+      await microphone([], 10);
+      await microphone(['com.tencent.meeting'], 5);
+      await tester.runAsync(() => fromMac('menu', 'stop'));
+      await settle(() => !controller.textCaptureActive);
+      // Reported again, as the Mac does whenever it starts watching.
+      await microphone(['com.tencent.meeting'], 5);
+      expect(prompts, hasLength(1));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
 }
 
 class _Ble extends BleService {

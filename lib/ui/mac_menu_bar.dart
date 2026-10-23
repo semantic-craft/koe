@@ -4,22 +4,28 @@ import 'package:flutter/widgets.dart';
 
 import '../ai/stt_types.dart';
 import '../platform/mac_app.dart';
+import '../state/meeting_apps.dart';
 import '../state/recorder_controller.dart';
 
 /// Shows on Koe's Mac menu bar item what [RecorderController] is doing,
 /// keeps the Mac awake meanwhile and asks before quitting then (#403). The
 /// take and the text captured so far are saved before Koe quits. ⌃⌥⌘R and
-/// ⌃⌥⌘B work from any app (#405).
+/// ⌃⌥⌘B work from any app (#405). A meeting app taking the microphone asks
+/// to start a take, and the meeting being over asks to stop it (#406).
 class MacMenuBar {
   MacMenuBar(this._controller, {required this.onStart, MacApp? app})
     : _app = app ?? MacApp.shared {
     _app
       ..onAction = _run
       ..onQuit = _beforeQuit
-      ..onHotKey = _hotKey;
+      ..onHotKey = _hotKey
+      ..onMicrophoneUsers = _microphoneUsers
+      ..onPromptAction = _promptAction;
     _controller.addListener(_show);
+    _controller.addListener(_followTake);
     _controller.modelWorking.addListener(_show);
     _app.hotKeysTaken.addListener(_show);
+    _followTake();
     _show();
   }
 
@@ -37,6 +43,17 @@ class MacMenuBar {
   String? _titlePath;
   String _title = '';
   bool _starting = false;
+
+  late final _meetingCalls = MeetingAppWatch(
+    ask: _askAboutMeeting,
+    muted: (app) => _controller.meetingAppPromptsMuted.contains(app),
+  );
+
+  /// Whether Koe watches for meeting apps. It watches during all-day
+  /// listening too, without asking, so a call under way when listening is
+  /// stopped is not asked about again.
+  bool get _watching =>
+      _controller.meetingAppPrompts && _controller.phoneRecordingEnabled;
 
   void _show() => unawaited(_app.show(_status()));
 
@@ -138,6 +155,7 @@ class MacMenuBar {
       quitInfo: quitInfo.join('\n'),
       saving: saving,
       hotKeys: hotKeys,
+      watchMicrophone: _watching,
     );
   }
 
@@ -205,8 +223,20 @@ class MacMenuBar {
     return c.phoneRecordingActive || c.textCaptureActive;
   }
 
-  /// A global hot key pressed in any app; see [MacApp.onHotKey]. ⌃⌥⌘R
-  /// answers once the take is saved, so a save that failed is told too.
+  /// Stops the take, or text capture, and answers as [MacApp.onHotKey]
+  /// does once it is saved, so a save that failed is told too.
+  Future<String?> _stop() async {
+    final c = _controller;
+    if (c.phoneRecordingActive) {
+      return await c.stopPhoneRecording() != null ? 'stopped' : 'failed';
+    }
+    if (c.textCaptureActive) {
+      return await c.stopTextCapture() != null ? 'stopped' : 'failed';
+    }
+    return null;
+  }
+
+  /// A global hot key pressed in any app; see [MacApp.onHotKey].
   Future<String?> _hotKey(String key) async {
     final c = _controller;
     if (_starting || c.phoneRecordingSaving || c.textCaptureSaving) {
@@ -214,12 +244,7 @@ class MacMenuBar {
     }
     switch (key) {
       case 'record':
-        if (c.phoneRecordingActive) {
-          return await c.stopPhoneRecording() != null ? 'stopped' : 'failed';
-        }
-        if (c.textCaptureActive) {
-          return await c.stopTextCapture() != null ? 'stopped' : 'failed';
-        }
+        if (c.phoneRecordingActive || c.textCaptureActive) return _stop();
         if (!c.phoneRecordingEnabled) return null;
         return await _start() ? 'started' : 'failed';
       case 'highlight':
@@ -227,6 +252,74 @@ class MacMenuBar {
             c.markPhoneRecordingHighlight() != null ||
             c.markTextCaptureHighlight();
         return marked ? 'marked' : null;
+    }
+    return null;
+  }
+
+  /// Tells the meeting-app calls what Koe records, or forgets them while
+  /// Koe does not watch.
+  void _followTake() {
+    final c = _controller;
+    if (!_watching) {
+      _meetingCalls.reset();
+      return;
+    }
+    _meetingCalls.recording = c.phoneRecordingActive || c.textCaptureActive;
+  }
+
+  void _microphoneUsers(List<String> bundleIds) {
+    if (_watching) _meetingCalls.microphoneUsers(bundleIds);
+  }
+
+  void _askAboutMeeting(MeetingAppAsk ask, String app) {
+    final c = _controller;
+    // All-day listening goes on through meetings and after them.
+    if (c.textCaptureActive && c.textCaptureAllDay) return;
+    switch (ask) {
+      case MeetingAppAsk.start:
+        final take = c.allDayListening ? '全天监听' : '录音';
+        final name = meetingAppName(app);
+        unawaited(
+          _app.prompt(
+            meetingBrowsers.containsKey(app)
+                ? '$name 正在用麦克风，可能在开 Google Meet。要开始$take吗？'
+                : '$name 正在用麦克风，要开始$take吗？',
+            [
+              MacMenuAction('mute:$app', '不再提醒'),
+              const MacMenuAction('dismiss', '不用'),
+              MacMenuAction('start', '开始$take'),
+            ],
+          ),
+        );
+      case MeetingAppAsk.stop:
+        final take = c.phoneRecordingActive;
+        unawaited(
+          _app.prompt(take ? '会议好像结束了，要停止录音吗？' : '会议好像结束了，要停止纯文字记录吗？', [
+            const MacMenuAction('dismiss', '继续'),
+            MacMenuAction('stop', take ? '停止并保存' : '停止并保存文字'),
+          ]),
+        );
+    }
+  }
+
+  /// A button pressed on a meeting prompt; see [MacApp.onPromptAction].
+  Future<String?> _promptAction(String action) async {
+    final c = _controller;
+    if (action.startsWith('mute:')) {
+      c.muteMeetingApp(action.substring('mute:'.length));
+      return null;
+    }
+    if (_starting || c.phoneRecordingSaving || c.textCaptureSaving) {
+      return null;
+    }
+    switch (action) {
+      case 'start':
+        if (c.phoneRecordingActive || c.textCaptureActive) return null;
+        return await _start() ? 'started' : 'failed';
+      case 'stop':
+        // Asked about a take that has since been stopped another way.
+        if (!_meetingCalls.stopAsked) return null;
+        return _stop();
     }
     return null;
   }
@@ -244,11 +337,15 @@ class MacMenuBar {
 
   void dispose() {
     _controller.removeListener(_show);
+    _controller.removeListener(_followTake);
     _controller.modelWorking.removeListener(_show);
     _app.hotKeysTaken.removeListener(_show);
+    _meetingCalls.reset();
     _app
       ..onAction = null
       ..onQuit = null
-      ..onHotKey = null;
+      ..onHotKey = null
+      ..onMicrophoneUsers = null
+      ..onPromptAction = null;
   }
 }

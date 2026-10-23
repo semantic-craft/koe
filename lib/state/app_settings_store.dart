@@ -136,6 +136,8 @@ class AppSettings {
     this.meetingLocalOnly = true,
     this.recordHotKey = true,
     this.highlightHotKey = true,
+    this.meetingAppPrompts = true,
+    this.meetingAppPromptsMuted = const [],
     this.transcriptLanguage = 'auto',
     this.sttMode = SttDisplayMode.transcription,
     this.translationTargetLanguage = 'zh',
@@ -169,6 +171,13 @@ class AppSettings {
   /// On the Mac, ⌃⌥⌘B marks a highlight from any app while a take or text
   /// capture runs (#405).
   final bool highlightHotKey;
+
+  /// On the Mac, asks to record when a meeting app takes the microphone,
+  /// and to stop when the meeting is over (#406).
+  final bool meetingAppPrompts;
+
+  /// The meeting apps, by bundle ID, the user chose 不再提醒 for.
+  final List<String> meetingAppPromptsMuted;
   final String transcriptLanguage;
   final SttDisplayMode sttMode;
   final String translationTargetLanguage;
@@ -190,6 +199,8 @@ class AppSettings {
     bool? meetingLocalOnly,
     bool? recordHotKey,
     bool? highlightHotKey,
+    bool? meetingAppPrompts,
+    List<String>? meetingAppPromptsMuted,
     String? transcriptLanguage,
     SttDisplayMode? sttMode,
     String? translationTargetLanguage,
@@ -207,6 +218,9 @@ class AppSettings {
       meetingLocalOnly: meetingLocalOnly ?? this.meetingLocalOnly,
       recordHotKey: recordHotKey ?? this.recordHotKey,
       highlightHotKey: highlightHotKey ?? this.highlightHotKey,
+      meetingAppPrompts: meetingAppPrompts ?? this.meetingAppPrompts,
+      meetingAppPromptsMuted:
+          meetingAppPromptsMuted ?? this.meetingAppPromptsMuted,
       transcriptLanguage: transcriptLanguage ?? this.transcriptLanguage,
       sttMode: sttMode ?? this.sttMode,
       translationTargetLanguage:
@@ -226,6 +240,8 @@ class AppSettings {
     'meetingLocalOnly': meetingLocalOnly,
     'recordHotKey': recordHotKey,
     'highlightHotKey': highlightHotKey,
+    'meetingAppPrompts': meetingAppPrompts,
+    'meetingAppPromptsMuted': meetingAppPromptsMuted,
     'transcriptLanguage': transcriptLanguage,
     'sttMode': sttMode.name,
     'translationTargetLanguage': translationTargetLanguage,
@@ -267,6 +283,12 @@ class AppSettings {
       meetingLocalOnly: map['meetingLocalOnly'] != false,
       recordHotKey: map['recordHotKey'] != false,
       highlightHotKey: map['highlightHotKey'] != false,
+      meetingAppPrompts: map['meetingAppPrompts'] != false,
+      meetingAppPromptsMuted: [
+        if (map['meetingAppPromptsMuted'] case final List<Object?> apps)
+          for (final app in apps)
+            if (app is String) app,
+      ],
       transcriptLanguage: _str(map['transcriptLanguage']) ?? 'auto',
       sttMode: sttMode,
       translationTargetLanguage: _str(map['translationTargetLanguage']) ?? 'zh',
