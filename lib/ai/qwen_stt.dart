@@ -104,6 +104,11 @@ class QwenSttService extends CloudFileSttService {
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
+    // Taken before anything can fail; see [recovery].
+    final checkpoint = recovery;
+    final sending = onSending;
+    recovery = null;
+    onSending = null;
     _cancelled = false;
     _abort = Completer<void>();
     final ownerIsCurrent = isCurrent;
@@ -122,10 +127,6 @@ class QwenSttService extends CloudFileSttService {
       );
     }
 
-    final checkpoint = recovery;
-    final sending = onSending;
-    recovery = null;
-    onSending = null;
     var taskId = checkpoint?.taskId;
     if (taskId == null) {
       onProgress?.call(const SttFileProgress(SttFileStage.preparing));

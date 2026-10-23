@@ -101,6 +101,9 @@ class DoubaoSttService extends CloudFileSttService {
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
+    // Taken before anything can fail; see [onSending].
+    final sending = onSending;
+    onSending = null;
     final key = (apiKey ?? this.apiKey)?.trim();
     if (key == null || key.isEmpty) {
       throw const DoubaoSttException('请在设置中配置豆包');
@@ -115,8 +118,6 @@ class DoubaoSttService extends CloudFileSttService {
     }
 
     if (_activeAbort != null) throw const DoubaoSttException('已有豆包任务正在处理');
-    final sending = onSending;
-    onSending = null;
     final abort = Completer<void>();
     _activeAbort = abort;
     var submitted = false;
