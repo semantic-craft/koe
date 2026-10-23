@@ -13,13 +13,22 @@ import '../widgets/status_indicators.dart';
 /// swiped away while listening, so the controls stay in reach; capture keeps
 /// going with the screen locked.
 /// With [allDay] it starts all-day listening (#319), which keeps running
-/// after the sheet is put away.
+/// after the sheet is put away. Capture [startedElsewhere], from the Mac
+/// menu bar or ⌃⌥⌘R (#405), shows in the sheet already up, and needs none
+/// once it is over.
 Future<void> showTextCaptureSheet(
   BuildContext context, {
   bool allDay = false,
+  bool startedElsewhere = false,
 }) async {
-  final messenger = ScaffoldMessenger.of(context);
   final controller = context.read<RecorderController>();
+  if (startedElsewhere &&
+      (_TextCapturePanelState._up ||
+          (!controller.textCaptureActive &&
+              controller.textCaptureError == null))) {
+    return;
+  }
+  final messenger = ScaffoldMessenger.of(context);
   final dismissible = allDay || controller.textCaptureAllDay;
   final outcome = await showModalBottomSheet<TextCaptureOutcome>(
     context: context,
@@ -27,7 +36,8 @@ Future<void> showTextCaptureSheet(
     isDismissible: dismissible,
     enableDrag: dismissible,
     isScrollControlled: true,
-    builder: (_) => TextCapturePanel(allDay: allDay),
+    builder: (_) =>
+        TextCapturePanel(allDay: allDay, startsCapture: !startedElsewhere),
   );
   if (outcome != null) {
     messenger.showSnackBar(SnackBar(content: Text(outcome.message)));
@@ -35,42 +45,102 @@ Future<void> showTextCaptureSheet(
 }
 
 class TextCapturePanel extends StatefulWidget {
-  const TextCapturePanel({super.key, this.allDay = false});
+  const TextCapturePanel({
+    super.key,
+    this.allDay = false,
+    this.startsCapture = true,
+  });
 
   final bool allDay;
+
+  /// Starts capture once shown; false for capture started elsewhere.
+  final bool startsCapture;
 
   @override
   State<TextCapturePanel> createState() => _TextCapturePanelState();
 }
 
 class _TextCapturePanelState extends State<TextCapturePanel> {
+  static final _panels = <_TextCapturePanelState>{};
+
+  /// Whether a panel is up and not closing, which capture started elsewhere
+  /// shows in rather than in a second one.
+  static bool get _up =>
+      _panels.any((panel) => panel._route?.isActive ?? false);
+
+  late final RecorderController _controller;
+  ModalRoute<Object?>? _route;
   Timer? _ticker;
+
+  /// The text is being saved or thrown away and the panel closes after.
+  bool _stopping = false;
+
+  /// Whether the capture shown has run, so its end is noticed.
+  bool _hadCapture = false;
 
   @override
   void initState() {
     super.initState();
+    _panels.add(this);
+    _controller = context.read<RecorderController>()
+      ..addListener(_onCaptureChanged);
+    _hadCapture =
+        _controller.textCaptureActive || _controller.textCaptureSaving;
     _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (mounted) setState(() {});
     });
+    if (!widget.startsCapture) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final controller = context.read<RecorderController>();
-      if (!controller.textCaptureActive) {
-        unawaited(controller.startTextCapture(allDay: widget.allDay));
+      if (!_controller.textCaptureActive) {
+        unawaited(_controller.startTextCapture(allDay: widget.allDay));
       }
     });
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+  }
+
+  @override
   void dispose() {
+    _panels.remove(this);
+    _controller.removeListener(_onCaptureChanged);
     _ticker?.cancel();
     super.dispose();
   }
 
+  /// Capture ended by other means than this panel, from the Mac menu bar or
+  /// ⌃⌥⌘R (#405), closes it, unless it ended with a reason to show or a
+  /// dialog is open on top.
+  void _onCaptureChanged() {
+    if (_controller.textCaptureActive || _controller.textCaptureSaving) {
+      _hadCapture = true;
+    } else if (_hadCapture) {
+      _hadCapture = false;
+      if (!_stopping) Timer.run(_closeIfEnded);
+    }
+  }
+
+  void _closeIfEnded() {
+    final c = _controller;
+    if (!mounted ||
+        _stopping ||
+        c.textCaptureActive ||
+        c.textCaptureSaving ||
+        c.textCaptureError != null ||
+        !(_route?.isCurrent ?? false)) {
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
   Future<void> _stop({required bool keepAudio}) async {
-    final outcome = await context.read<RecorderController>().stopTextCapture(
-      keepAudio: keepAudio,
-    );
+    _stopping = true;
+    final outcome = await _controller.stopTextCapture(keepAudio: keepAudio);
+    _stopping = false;
     if (!mounted || outcome == null) return;
     Navigator.of(context).pop(outcome);
   }
@@ -95,7 +165,9 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    await context.read<RecorderController>().discardTextCapture();
+    _stopping = true;
+    await _controller.discardTextCapture();
+    _stopping = false;
     if (mounted) Navigator.of(context).pop();
   }
 
