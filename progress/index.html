@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-23T10:45:03.769603Z</p>
-<p>Main: <code>main: b6b0ae552bcbef6af5498f43ad50f1a6aa1f5455</code></p>
+<p>Observed: 2026-10-23T11:31:02.104112Z</p>
+<p>Main: <code>main: 5a40476b3f24c82b4f7b4e7a1020437da3ac39e8</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -61,11 +61,15 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/local_speaker_diarization_test.dart">file test/local_speaker_diarization_test.dart: 「本机会议先存下转写文字，发言人在转写任务之外标上」：改前文字要等区分完才存。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/tool/diarization_eval.dart">file tool/diarization_eval.dart: #389 的评测：独立时间区间、双侧 collar 与重叠计分。</a></li>
 </ul><p>Next: #433 做三端真机验收，并用真实中文会议定自动阈值（并成少于实际人数就改回 0.75）；#434 处理评审时没修的项；只插网线时是否允许下载模型待用户定；#371 还差 scripts/android-check 的区分场景。</p></article>
-<article id="meeting-phase4"><h3>会议纪要第 4 期：对标拾音的 Mac 录音体验</h3><span class="badge">in_progress</span><p>4I（#408）已在 #439 合并：录音中和导入时都能选「大约几个人」。R18.12 的后半（#426）已在 #442 合并：被打断的本机转写和还在上传的云端转写下次打开从头重跑。4F（#405）在 #447：别的应用在前台时按 ⌃⌥⌘R 开始或停止录音（开着全天监听时开始或停止全天监听），录音或纯文字记录时按 ⌃⌥⌘B 标重点；设置「快捷键」里两个开关分别关，被别的应用占用时说明；从菜单或快捷键结束后，录音面板自己关上。6c1c2de 上 scripts/check 无分析问题、949 个测试全过；真实按键和菜单栏反馈没在真机上跑（#446）。4E、4G、4H（#404、#406、#407）还没开始。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/447">pull 447: 4F 的实现：全局快捷键、设置开关、面板自动关闭；三项验收写在正文。</a></li>
+<article id="meeting-phase4"><h3>会议纪要第 4 期：对标拾音的 Mac 录音体验</h3><span class="badge">in_progress</span><p>4I（#408）已在 #439 合并：录音中和导入时都能选「大约几个人」。R18.12 的后半（#426）已在 #442 合并：被打断的本机转写和还在上传的云端转写下次打开从头重跑。4F（#405）已在 #447 合并（70db2a1）：别的应用在前台时按 ⌃⌥⌘R 开始或停止录音，录音中按 ⌃⌥⌘B 标重点；真实按键没在真机上跑（#446）。4G（#406）在 #449：会议应用连续用麦克风 5 秒时，右上角不抢前台的小面板问要不要开录，录着的会议结束 10 秒后问要不要停；可对应用选「不再提醒」，设置「会议提醒」里恢复或整个关掉；每场会议只在第 5 秒判断一次，和拾音不同。77f1000 上 scripts/check 无分析问题、953 个测试全过，macOS debug 构建成功；沙盒里的 Koe 能否读到进程列表、真实入会离会没在真机上跑（#450）。4E、4H（#404、#407）还没开始。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/447">pull 447: 4F 的实现：全局快捷键、设置开关、面板自动关闭，已合并（70db2a1）；三项验收写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/405">issue 405: 4F 工单：全局快捷键 ⌃⌥⌘R、⌃⌥⌘B（拾音 R11.3、R19.5）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/446">issue 446: 4F 的真机确认：别的应用在前台时真实按键、菜单栏反馈、被占用说明，由自动化发按键。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/test/mac_menu_bar_test.dart">file test/mac_menu_bar_test.dart: 快捷键开始、标重点、停止；菜单停下关面板、系统切断时留着、再开始不叠面板；占用说明与开关存盘：改前都失败。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/449">pull 449: 4G 的实现：会议应用用麦克风时提醒开录、会议结束时提醒停录，不再提醒与设置；三项验收写在正文。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/406">issue 406: 4G 工单：会议应用提醒（拾音 R19.4）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/450">issue 450: 4G 的真机确认：沙盒里读进程列表、真实入会离会时的面板与按钮，Safari、FaceTime、钉钉、企业微信摸底。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/meeting_apps_test.dart">file test/meeting_apps_test.dart: 何时问开始、何时问停止的判断：漏认子进程、一场问两次、录完再问、会没开完就问停等 8 个变异都让它失败。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/mac_menu_bar_test.dart">file test/mac_menu_bar_test.dart: 快捷键开始、标重点、停止；菜单停下关面板、系统切断时留着、再开始不叠面板；占用说明与开关存盘；会议应用提醒的开始、停止、不再提醒与设置：改前都失败。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/439">pull 439: 4I 的实现与评审修正，已合并；三项验收写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/408">issue 408: 4I 工单：录音页、导入时选人数（拾音 R24.2）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/440">issue 440: 4I 的真机确认，含第一次用真实千问接口带 speaker_count。</a></li>
@@ -73,10 +77,10 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/441">issue 441: #426 的真机确认：转写中退出再打开，本机转写和千问上传中的都自动重跑。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/426">issue 426: 被打断的本机转写和上传中的转写下次打开重跑（R18.12 的后半）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/373">issue 373: 第 4 期总工单。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/handoffs/meeting-notes-shiyin-4-delta.md">file handoffs/meeting-notes-shiyin-4-delta.md: 拾音补漏表：第 4 期 11 处已做，还剩 7 处排在 4E、4G、4H。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/handoffs/meeting-notes-shiyin-4-delta.md">file handoffs/meeting-notes-shiyin-4-delta.md: 拾音补漏表：第 4 期 12 处已做，还剩 6 处排在 4E、4H。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/phone_recording_test.dart">file test/phone_recording_test.dart: 「the panel still closes when the number of people is tapped while the take saves」：改前面板关不掉。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/file_job_stage_recovery_test.dart">file test/file_job_stage_recovery_test.dart: 千问上传中、豆包上传中、本机转写中被打断三条：改前不恢复。</a></li>
-</ul><p>Next: #447 CI 通过后合并；#440、#441、#446 真机确认；接着做 4G（#406）、4H（#407）、4E（#404）。</p></article>
+</ul><p>Next: #449 CI 通过后合并；#440、#441、#446、#450 真机确认；接着做 4H（#407）、4E（#404）。</p></article>
 <article id="android-device-issues"><h3>#345 真机验收发现的问题（#436–#438）</h3><span class="badge">in_progress</span><p>#345 第一部分（2026-10-23，Pixel 11 Pro、D3200、main f065809 的 debug 包）发现 3 个问题。#437 已在 #443 合并（543c318）：Wi‑Fi 一次导出多个文件时，分片攒到 64 KB 再写盘、进度每 250 ms 最多一次，断开即报错，已存好的照常进资料库，Android 上热点用过后经蓝牙重开；本机 perf 场景 wifi_save（100 万个分片）从最后一个分片后 25 秒才存好降到约 0.3 秒，没在真机上验证。#438 在 PR #445：连着录音豆没活时前台服务照旧在跑，但不再持有 wake lock，通知写「Koe 已连接录音豆」；经蓝牙取回、Wi‑Fi 导出和录音豆实时转写期间才持有，通知写「Koe 正在同步录音」，做完即放开；录音豆每 15 秒回报的设备信息没变时不再写盘；没在真机上验证。#436：录音豆进出 Wi‑Fi 模式后换 BLE 地址，全天常驻被悄悄撤销，重连先对旧地址空等约 100 秒，修法待定。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/437">issue 437: Wi‑Fi 导出 4 个问题与验收标准。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/443">pull 443: #437 的修复，已合并；回退测试、perf 前后数字和没跑到的项目写在正文。</a></li>
@@ -161,6 +165,6 @@
 </ul><p>Next: 有网络时 refresh 核对事实，再 render 与 check；新增范围先明确 tracked，设备验收独立补证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/447">#447</a> <code>d8a7ff58828ddab8e29ee39496e73ca723780c8a</code></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/449">#449</a> <code>77f1000b21b56daeb04e1ea754af2c7c15ce6656</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
