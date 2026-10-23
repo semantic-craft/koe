@@ -360,6 +360,44 @@ void main() {
     variant: TargetPlatformVariant.only(TargetPlatform.macOS),
   );
 
+  testWidgets(
+    'asking to stop a take that is then stopped with ⌃⌥⌘R does not stop the '
+    'take started next from the question still shown',
+    (tester) async {
+      final controller = await openKoe(tester, _Mic());
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'started',
+      );
+      await settle(tester, () => sheet.evaluate().isNotEmpty);
+      await microphone(tester, ['us.zoom.xos'], seconds(1));
+      await microphone(tester, [], seconds(10));
+      expect(asked(), '会议好像结束了，要停止录音吗？');
+
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'stopped',
+      );
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'started',
+      );
+      expect(
+        await tester.runAsync(() => fromMac('promptAction', 'stop')),
+        isNull,
+      );
+      expect(controller.phoneRecordingActive, isTrue);
+      expect(controller.library.assets, hasLength(1));
+
+      expect(
+        await tester.runAsync(() => fromMac('hotKey', 'record')),
+        'stopped',
+      );
+      await settle(tester, () => sheet.evaluate().isEmpty);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
   testWidgets('不再提醒 keeps a meeting app from asking until 恢复提醒 in settings, '
       'and with the prompts off the Mac stops watching the microphone', (
     tester,

@@ -93,8 +93,8 @@ class MeetingAppWatch {
     }
   }
 
-  /// Whether Koe records: a take, or text capture other than all-day
-  /// listening.
+  /// Whether Koe records: a take or text capture, all-day listening
+  /// included.
   set recording(bool value) {
     if (value == _recording) return;
     _recording = value;
@@ -102,6 +102,10 @@ class MeetingAppWatch {
     _usedDuringTake.clear();
     if (value) _usedDuringTake.addAll(_using);
   }
+
+  /// Whether Koe has asked to stop the take under way; a take started
+  /// after the question was put does not answer it.
+  bool get stopAsked => _stopAsked;
 
   void _due(String app) {
     final call = _calls[app]!..starting = null;

@@ -49,14 +49,11 @@ class MacMenuBar {
     muted: (app) => _controller.meetingAppPromptsMuted.contains(app),
   );
 
-  /// Whether Koe watches for meeting apps: not during all-day listening,
-  /// which keeps everything said anyway.
-  bool get _watching {
-    final c = _controller;
-    return c.meetingAppPrompts &&
-        c.phoneRecordingEnabled &&
-        !(c.textCaptureActive && c.textCaptureAllDay);
-  }
+  /// Whether Koe watches for meeting apps. It watches during all-day
+  /// listening too, without asking, so a call under way when listening is
+  /// stopped is not asked about again.
+  bool get _watching =>
+      _controller.meetingAppPrompts && _controller.phoneRecordingEnabled;
 
   void _show() => unawaited(_app.show(_status()));
 
@@ -276,6 +273,8 @@ class MacMenuBar {
 
   void _askAboutMeeting(MeetingAppAsk ask, String app) {
     final c = _controller;
+    // All-day listening goes on through meetings and after them.
+    if (c.textCaptureActive && c.textCaptureAllDay) return;
     switch (ask) {
       case MeetingAppAsk.start:
         final take = c.allDayListening ? '全天监听' : '录音';
@@ -318,6 +317,8 @@ class MacMenuBar {
         if (c.phoneRecordingActive || c.textCaptureActive) return null;
         return await _start() ? 'started' : 'failed';
       case 'stop':
+        // Asked about a take that has since been stopped another way.
+        if (!_meetingCalls.stopAsked) return null;
         return _stop();
     }
     return null;
