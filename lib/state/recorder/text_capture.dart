@@ -962,8 +962,13 @@ mixin _RecorderTextCapture on ChangeNotifier {
   /// Ends capture and saves the text. With [keepAudio] the audio is kept as
   /// an original too and the text becomes its transcript. Speech the
   /// service never received is recognized from the phone, now or once the
-  /// network is back. Ends all-day listening too.
-  Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio = false}) async {
+  /// network is back. Ends all-day listening too, unless [keepAllDay]: Koe
+  /// is quitting, and listening continues when it opens again, as after it
+  /// was closed.
+  Future<TextCaptureOutcome?> stopTextCapture({
+    bool keepAudio = false,
+    bool keepAllDay = false,
+  }) async {
     final config = _textConfig;
     if (_textId == null ||
         _textSpool == null ||
@@ -987,7 +992,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
         config: config,
       );
       if (outcome == null) return null;
-      await _clearAllDayMarker();
+      if (!keepAllDay || !_textAllDay) await _clearAllDayMarker();
       _clearTextCapture();
       return outcome;
     } finally {

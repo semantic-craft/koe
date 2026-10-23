@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/main.dart';
 import 'package:koe/ai/engine_config.dart';
@@ -13,6 +14,7 @@ import 'package:koe/ai/stt_types.dart';
 import 'package:koe/ble/ble_service.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
+import 'package:koe/platform/mac_app.dart';
 import 'package:koe/platform/phone_mic_stream.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
@@ -20,6 +22,7 @@ import 'package:koe/state/app_settings_store.dart';
 import 'package:koe/state/minutes_document.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
+import 'package:koe/ui/mac_menu_bar.dart';
 
 import 'support/fake_foreground_service.dart';
 
@@ -363,6 +366,41 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 100));
       // Stopped by the user: not resumed.
       expect(third.textCaptureActive, isFalse);
+    });
+
+    test('quitting Koe on the Mac saves the text, and listening goes on '
+        'when it opens again', () async {
+      const channel = MethodChannel('test/mac_app');
+      final first = build(disposeAtEnd: false)..allDayListening = true;
+      final bar = MacMenuBar(
+        first,
+        onStart: () {},
+        app: MacApp(channel: channel, enabled: true),
+      );
+      expect(await first.startTextCapture(allDay: true), isTrue);
+      mic.say(_second);
+      await until(() => streams.length == 1 && streams.first.received > 0);
+      streams.first.emit('退出前说的。', speechFinal: true);
+      streams.first.finalText = '退出前说的。';
+
+      // 退出 in the question the Mac asks.
+      final answered = Completer<void>();
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            channel.name,
+            channel.codec.encodeMethodCall(const MethodCall('quit')),
+            (_) => answered.complete(),
+          );
+      await answered.future;
+      expect(first.textCaptureActive, isFalse);
+      expect(first.minutesDocuments.single.bodyText, '退出前说的。');
+      bar.dispose();
+      first.dispose();
+
+      mic = _Mic();
+      final second = build()..allDayListening = true;
+      await until(() => second.textCaptureActive);
+      expect(second.textCaptureAllDay, isTrue);
     });
   });
 

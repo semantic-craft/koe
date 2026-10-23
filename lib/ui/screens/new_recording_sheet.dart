@@ -232,6 +232,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
       levelHint,
       mic,
       micNotice,
+      spaceNotice,
     ) = context.select(
       (RecorderController c) => (
         c.phoneRecordingActive,
@@ -242,6 +243,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
         c.phoneRecordingLevelHint,
         c.phoneRecordingMic,
         c.phoneRecordingMicNotice,
+        c.phoneRecordingSpaceNotice,
       ),
     );
     final controller = context.read<RecorderController>();
@@ -326,6 +328,18 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                     Text(
                       micNotice,
                       key: const ValueKey('phone-recording-mic-notice'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.amber,
+                      ),
+                    ),
+                  ],
+                  if (active && spaceNotice != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      spaceNotice,
+                      key: const ValueKey('phone-recording-space-notice'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 13,
