@@ -7,9 +7,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '../protocol/models.dart';
 
+/// [residentOffered]: Koe has asked once whether to stay resident for this
+/// recorder (全天常驻, Android).
 typedef PersistedDeviceState = ({
   bool bound,
   bool manuallyDisconnected,
+  bool residentOffered,
   ScannedDevice? device,
   DeviceInfoModel? info,
 });
@@ -37,9 +40,14 @@ class DeviceStore {
 
   static Future<void> _writes = Future<void>.value();
 
+  /// Completes once the saves queued so far are on disk.
+  @visibleForTesting
+  static Future<void> waitForWrites() => _writes;
+
   static Future<void> save({
     required bool bound,
     bool manuallyDisconnected = false,
+    bool residentOffered = false,
     ScannedDevice? device,
     DeviceInfoModel? info,
   }) {
@@ -47,6 +55,7 @@ class DeviceStore {
       (_) => _save(
         bound: bound,
         manuallyDisconnected: manuallyDisconnected,
+        residentOffered: residentOffered,
         device: device,
         info: info,
       ),
@@ -58,6 +67,7 @@ class DeviceStore {
   static Future<void> _save({
     required bool bound,
     required bool manuallyDisconnected,
+    required bool residentOffered,
     ScannedDevice? device,
     DeviceInfoModel? info,
   }) async {
@@ -66,6 +76,7 @@ class DeviceStore {
       final map = <String, dynamic>{
         'bound': bound,
         'manuallyDisconnected': manuallyDisconnected,
+        'residentOffered': residentOffered,
         'savedAt': DateTime.now().toIso8601String(),
       };
       if (device != null) {
@@ -112,6 +123,7 @@ class DeviceStore {
         return (
           bound: false,
           manuallyDisconnected: false,
+          residentOffered: false,
           device: null,
           info: null,
         );
@@ -154,6 +166,7 @@ class DeviceStore {
       return (
         bound: bound,
         manuallyDisconnected: map['manuallyDisconnected'] == true,
+        residentOffered: map['residentOffered'] == true,
         device: device,
         info: info,
       );
@@ -162,6 +175,7 @@ class DeviceStore {
       return (
         bound: false,
         manuallyDisconnected: false,
+        residentOffered: false,
         device: null,
         info: null,
       );

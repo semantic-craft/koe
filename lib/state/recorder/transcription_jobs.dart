@@ -18,6 +18,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   abstract bool _disposed;
   abstract final DoubaoSttService _doubaoStt;
   abstract final Map<SttProvider, _SttEngine> _sttEngines;
+  Future<T> _whileAiWorks<T>(Future<T> Function() request);
   bool _isConfigured(SpeechConfiguration config);
   bool _isRecordingAudioLocked(int? id, String? path);
   bool _isTrashedPath(String path);
@@ -762,11 +763,13 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
     bool Function()? isCurrent,
   }) async {
     final config = configuration ?? _activeConfiguration;
-    return _sttEngines[config.provider]!.transcribe(
-      path,
-      config,
-      onProgress: onProgress,
-      isCurrent: isCurrent,
+    return _whileAiWorks(
+      () => _sttEngines[config.provider]!.transcribe(
+        path,
+        config,
+        onProgress: onProgress,
+        isCurrent: isCurrent,
+      ),
     );
   }
 

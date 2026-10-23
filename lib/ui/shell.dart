@@ -1,16 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_identity.dart';
 import '../ai/stt_types.dart';
+import '../platform/mac_app.dart';
 import '../state/recorder_controller.dart';
 import '../theme/app_theme.dart';
+import 'mac_menu_bar.dart';
 import 'recording_navigation.dart';
 import 'screens/ask_koe_screen.dart';
 import 'screens/device_screen.dart';
 import 'screens/communication_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
+import 'screens/new_recording_sheet.dart';
 import 'screens/projects_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
@@ -40,6 +45,27 @@ class _AppShellState extends State<AppShell> {
   int _handledLiveRevision = 0;
   int _handledShortcutRevision = 0;
   int _handledShortcutFailureRevision = 0;
+  bool _residentOffered = false;
+  MacMenuBar? _macMenuBar;
+
+  @override
+  void initState() {
+    super.initState();
+    if (MacApp.shared.enabled) {
+      _macMenuBar = MacMenuBar(
+        context.read<RecorderController>(),
+        onStart: () => unawaited(
+          handleNewRecordingAction(context, NewRecordingAction.phone),
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _macMenuBar?.dispose();
+    super.dispose();
+  }
 
   void _routeChanged() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -146,6 +172,35 @@ class _AppShellState extends State<AppShell> {
     if (index == 2) c.refreshFilesOnTabEnter();
   }
 
+  /// Asks once, after the recorder is bound, whether Koe should stay
+  /// resident for it (Android).
+  Future<void> _offerResident(RecorderController c) async {
+    c.markResidentOffered();
+    final on = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('全天常驻'),
+        content: const Text(
+          '录音豆回到身边时，Koe 自动连上并取回新录音，不用先打开 Koe；'
+          '划掉 Koe 或重启手机后也一样。录音豆不在身边时 Koe 不在后台运行。\n\n'
+          '接下来 Android 会请你允许 Koe 关联这个录音豆。可随时在设置里关闭。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('以后再说'),
+          ),
+          FilledButton(
+            key: const ValueKey('resident-offer-accept'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('开启'),
+          ),
+        ],
+      ),
+    );
+    if (on == true) await c.setResident(true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -224,6 +279,12 @@ class _AppShellState extends State<AppShell> {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(SnackBar(content: Text('快捷录音未开始：$failure')));
+      });
+    }
+    if (c.offersResident && !_residentOffered) {
+      _residentOffered = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _offerResident(c);
       });
     }
     final covered = _wide && _sectionVisible;

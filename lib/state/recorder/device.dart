@@ -49,13 +49,21 @@ mixin _RecorderDevice on ChangeNotifier {
   abstract String? textCaptureError;
   bool get textCaptureFromDevice;
   Future<bool> startTextCapture({bool allDay, bool fromDevice});
-  Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio});
+  Future<TextCaptureOutcome?> stopTextCapture({
+    bool keepAudio,
+    bool keepAllDay,
+  });
   abstract int? playingFileId;
   abstract String? playingPath;
   abstract RealtimeStreamState realtimeState;
   abstract final Duration recordingShortcutScanTimeout;
   abstract String? statusMessage;
   Future<void> stopPlayback();
+  bool get _recorderAway;
+  void _residentRecorderConnected();
+  abstract bool residentOffered;
+  Future<void> _startResident();
+  Future<void> _syncResident();
   // END DEPS
 
   static const _bleScanTimeout = Duration(seconds: 30);
@@ -68,14 +76,19 @@ mixin _RecorderDevice on ChangeNotifier {
 
   Future<void> _loadPersistedDevice() async {
     final saved = await _persistedDeviceLoader();
-    if (saved.device == null && !saved.bound) return;
-    _explicitDisconnect = saved.manuallyDisconnected;
-    lastKnownDevice = saved.device;
-    lastKnownInfo = saved.info;
-    if (saved.bound) bound = true;
-    // Surface on Device tab even before this session connects.
-    activeDevice ??= lastKnownDevice;
-    notifyListeners();
+    if (saved.device != null || saved.bound) {
+      _explicitDisconnect = saved.manuallyDisconnected;
+      residentOffered = saved.residentOffered;
+      lastKnownDevice = saved.device;
+      lastKnownInfo = saved.info;
+      if (saved.bound) bound = true;
+      // Surface on Device tab even before this session connects.
+      activeDevice ??= lastKnownDevice;
+      notifyListeners();
+    }
+    // Before reconnecting, which waits for a resident recorder only while it
+    // is near.
+    await _startResident();
     if (!_explicitDisconnect && saved.bound && saved.device != null) {
       unawaited(_startBoundDeviceReconnect());
     }
@@ -292,6 +305,7 @@ mixin _RecorderDevice on ChangeNotifier {
     await DeviceStore.save(
       bound: bound,
       manuallyDisconnected: _explicitDisconnect,
+      residentOffered: residentOffered,
       device: d,
       info: info ?? lastKnownInfo,
     );
@@ -374,6 +388,11 @@ mixin _RecorderDevice on ChangeNotifier {
       await _ble.startScan(timeout: _bleScanTimeout);
       statusMessage = '正在扫描安克录音豆（D3200）…';
       notifyListeners();
+      // Android pauses this scan while the screen is off; the system
+      // connects the bound recorder once it is back either way. Asked after
+      // the scan has settled permissions and Bluetooth, so neither prompts
+      // twice.
+      if (_awaitsBoundDevice) unawaited(_awaitBoundDevice());
       if (!connected && phase == AppPhase.scanning) {
         // FlutterBluePlus stops its native scan when the timeout elapses, but
         // startScan() returns as soon as scanning begins. Mirror that timeout
@@ -426,6 +445,19 @@ mixin _RecorderDevice on ChangeNotifier {
 
   void _scheduleBoundReconnect() {
     if (!_canRetryBoundConnection || _boundReconnectTimer != null) return;
+    if (_recorderAway) {
+      // Android says when it is near again (全天常驻).
+      statusMessage = '录音豆不在身边，回来后会自动连上';
+      notifyListeners();
+      return;
+    }
+    if (_awaitsBoundDevice && !_systemWaitFailed) {
+      // The system connects it once it is back; no more scans.
+      statusMessage = '录音豆回到身边后会自动连上';
+      notifyListeners();
+      unawaited(_awaitBoundDevice());
+      return;
+    }
     final index = _boundReconnectAttempt < _boundReconnectDelays.length
         ? _boundReconnectAttempt
         : _boundReconnectDelays.length - 1;
@@ -445,6 +477,58 @@ mixin _RecorderDevice on ChangeNotifier {
     _boundReconnectTimer?.cancel();
     _boundReconnectTimer = null;
     _boundReconnectAttempt = 0;
+  }
+
+  /// Android: the bound recorder comes back through a system connection
+  /// request ([BleService.waitForDevice]) rather than through scans, which
+  /// Android pauses while the screen is off.
+  bool get _awaitsBoundDevice =>
+      _ble.canAwaitDevice &&
+      bound &&
+      !_explicitDisconnect &&
+      !_recorderAway &&
+      lastKnownDevice != null &&
+      !connected &&
+      !isWifiExportSession &&
+      !isExporting &&
+      !needsWifiJoin;
+
+  bool _awaitingBoundDevice = false;
+
+  /// Set when the system request could not be made; reconnecting falls back
+  /// to timed scans until the next connection.
+  bool _systemWaitFailed = false;
+
+  /// Waits for the system to connect the bound recorder, then connects it
+  /// as a scan-found reconnect does (handshake, file list). The foreground
+  /// service keeps Koe running meanwhile, so the link is taken while Koe is
+  /// off screen; it ends with an explicit disconnect or unbind.
+  Future<void> _awaitBoundDevice() async {
+    if (_awaitingBoundDevice || !_awaitsBoundDevice) return;
+    _awaitingBoundDevice = true;
+    final saved = lastKnownDevice!;
+    var up = false;
+    try {
+      await BackgroundSyncService.shared.begin(
+        BackgroundWork.recorderSync,
+        text: 'Koe 正在等录音豆回来',
+      );
+      if (!_awaitsBoundDevice) return;
+      up = await _ble.waitForDevice(saved.id);
+    } catch (e) {
+      logs = ['Waiting for ${saved.id} failed: $e', ...logs].take(80).toList();
+      _systemWaitFailed = true;
+      _scheduleBoundReconnect();
+    } finally {
+      _awaitingBoundDevice = false;
+    }
+    if (!up ||
+        !_awaitsBoundDevice ||
+        phase == AppPhase.connecting ||
+        _ble.isConnecting) {
+      return;
+    }
+    await connect(saved);
   }
 
   Future<void> connect(ScannedDevice d) async {
@@ -482,6 +566,7 @@ mixin _RecorderDevice on ChangeNotifier {
       // connected-device service before Bluetooth permission settled.
       await BackgroundSyncService.shared.begin(BackgroundWork.recorderSync);
       connected = true;
+      _systemWaitFailed = false;
       phase = AppPhase.ready;
       statusMessage = '已连接';
       lastKnownDevice = d;
@@ -491,6 +576,7 @@ mixin _RecorderDevice on ChangeNotifier {
       // so only this exact recorder is eligible for automatic reconnection.
       bound = true;
       unawaited(_persistDevice());
+      _residentRecorderConnected();
       notifyListeners();
       await Future<void>.delayed(const Duration(milliseconds: 300));
       await refreshInfo();
@@ -530,10 +616,11 @@ mixin _RecorderDevice on ChangeNotifier {
       // Keep lastKnownDevice if we had one from a prior session.
       activeDevice = lastKnownDevice;
       connected = false;
-      if (!_ble.isConnected) {
+      _scheduleBoundReconnect();
+      // Waiting for the bound recorder keeps the service.
+      if (!_ble.isConnected && !_awaitingBoundDevice) {
         await BackgroundSyncService.shared.end(BackgroundWork.recorderSync);
       }
-      _scheduleBoundReconnect();
       if (_recordingShortcutPending) {
         _failRecordingShortcut(connectionError);
       } else {
@@ -556,6 +643,7 @@ mixin _RecorderDevice on ChangeNotifier {
     _explicitDisconnect = false;
     _resetBoundReconnectBackoff();
     unawaited(_persistDevice());
+    unawaited(_syncResident());
     await startScan();
   }
 
@@ -565,6 +653,8 @@ mixin _RecorderDevice on ChangeNotifier {
     await _persistedDeviceLoaded;
     _explicitDisconnect = true;
     await _persistDevice();
+    // Android need not start Koe for it now.
+    unawaited(_syncResident());
     _resetBoundReconnectBackoff();
     _scanTimeoutTimer?.cancel();
     _postBindFileRefreshTimer?.cancel();
@@ -1086,8 +1176,11 @@ mixin _RecorderDevice on ChangeNotifier {
           // Unbind ACK
           if (ok) {
             bound = false;
+            // Binding it again asks afresh.
+            residentOffered = false;
             statusMessage = '已解绑（可重新扫描连接）';
             unawaited(_persistDevice());
+            unawaited(_syncResident());
             // Match Feishu: drop link after successful unbind.
             unawaited(
               Future<void>.delayed(

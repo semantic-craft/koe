@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform;
+    show TargetPlatform, debugPrint, defaultTargetPlatform;
 import 'package:record/record.dart';
+
+import '../state/atomic_file.dart';
+import 'mac_app.dart';
+
+export '../audio/input_level_watch.dart' show InputLevelHint, InputLevelWatch;
 
 /// What the microphone is doing, as reported by the platform.
 enum PhoneMicState { recording, paused, stopped }
@@ -27,10 +33,87 @@ abstract class PhoneRecorder {
   Future<void> dispose();
 }
 
-class DevicePhoneRecorder implements PhoneRecorder {
+/// A microphone that reports its input level while it records (#401); the
+/// levels are judged by [InputLevelWatch].
+abstract interface class PhoneMicLevels {
+  /// The input level of each [interval] of the take in dBFS, where 0 is full
+  /// scale and digital silence -160.
+  Stream<double> levels(Duration interval);
+}
+
+/// A microphone the system offers to record from (#402).
+class MicInput {
+  const MicInput({required this.id, required this.label});
+
+  /// What the system knows the input by; on macOS its Core Audio UID, which
+  /// stays the same when it is unplugged and plugged back in.
+  final String id;
+  final String label;
+
+  /// This input as the record plugin selects it.
+  InputDevice get device => InputDevice(id: id, label: label);
+
+  /// The input kept in [file], or null when there is none or it cannot be
+  /// read.
+  static Future<MicInput?> read(File file) async {
+    try {
+      if (!await file.exists()) return null;
+      final json = jsonDecode(await file.readAsString());
+      if (json case {'id': final String id, 'label': final String label}) {
+        return MicInput(id: id, label: label);
+      }
+    } catch (error) {
+      debugPrint('[MicInput] read failed: $error');
+    }
+    return null;
+  }
+
+  /// Keeps [input] in [file]; null removes it.
+  static Future<void> write(File file, MicInput? input) async {
+    if (input == null) {
+      if (await file.exists()) await file.delete();
+      return;
+    }
+    await file.parent.create(recursive: true);
+    await writeFileAtomically(
+      file,
+      jsonEncode({'id': input.id, 'label': input.label}),
+    );
+  }
+}
+
+/// A microphone that can record from an input other than the system default
+/// (#402).
+abstract interface class PhoneMicInputs {
+  /// The inputs connected now.
+  Future<List<MicInput>> inputs();
+
+  /// Starts the takes that follow from [input]; null is the system default.
+  void useInput(MicInput? input);
+}
+
+/// A microphone that can tell how much room is left for its takes (#403).
+abstract interface class PhoneDiskSpace {
+  /// Bytes free for a take written at [path]; null when it cannot tell.
+  Future<int?> availableSpace(String path);
+}
+
+/// The inputs [recorder] can record from, each once.
+Future<List<MicInput>> micInputsOf(AudioRecorder recorder) async {
+  final seen = <String>{};
+  return [
+    for (final device in await recorder.listInputDevices())
+      if (device.id.isNotEmpty && seen.add(device.id))
+        MicInput(id: device.id, label: device.label),
+  ];
+}
+
+class DevicePhoneRecorder
+    implements PhoneRecorder, PhoneMicLevels, PhoneMicInputs, PhoneDiskSpace {
   DevicePhoneRecorder();
 
   final AudioRecorder _recorder = AudioRecorder();
+  InputDevice? _input;
 
   /// WAV keeps every sample written before a crash readable; speech-rate mono
   /// keeps an hour near 115 MB.
@@ -61,7 +144,28 @@ class DevicePhoneRecorder implements PhoneRecorder {
   );
 
   @override
-  Future<void> start(String path) => _recorder.start(config, path: path);
+  Future<void> start(String path) =>
+      _recorder.start(config.copyWith(device: (value: _input)), path: path);
+
+  @override
+  Future<List<MicInput>> inputs() => micInputsOf(_recorder);
+
+  @override
+  void useInput(MicInput? input) => _input = input?.device;
+
+  /// Only the Mac tells; elsewhere this is null.
+  @override
+  Future<int?> availableSpace(String path) =>
+      MacApp.shared.availableSpace(path);
+
+  /// Apple platforms report the average power of each interval, Android its
+  /// peak.
+  @override
+  Stream<double> levels(Duration interval) => _recorder
+      .onAmplitudeChanged(interval)
+      .map(
+        (amplitude) => amplitude.current.isFinite ? amplitude.current : -160,
+      );
 
   @override
   Future<void> pause() => _recorder.pause();

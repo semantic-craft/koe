@@ -19,8 +19,9 @@ abstract class PhoneMicStream {
   Future<void> dispose();
 }
 
-class DevicePhoneMicStream implements PhoneMicStream {
+class DevicePhoneMicStream implements PhoneMicStream, PhoneMicInputs {
   final AudioRecorder _recorder = AudioRecorder();
+  InputDevice? _input;
 
   /// Matches what the streaming speech services expect, so samples go out
   /// unchanged. An interruption pauses capture and resumes it afterwards.
@@ -44,7 +45,14 @@ class DevicePhoneMicStream implements PhoneMicStream {
   );
 
   @override
-  Future<Stream<Uint8List>> start() => _recorder.startStream(config);
+  Future<Stream<Uint8List>> start() =>
+      _recorder.startStream(config.copyWith(device: (value: _input)));
+
+  @override
+  Future<List<MicInput>> inputs() => micInputsOf(_recorder);
+
+  @override
+  void useInput(MicInput? input) => _input = input?.device;
 
   @override
   Future<void> stop() async {

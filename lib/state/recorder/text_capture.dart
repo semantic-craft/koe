@@ -70,6 +70,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
   VoiceTarget? get voiceHoldTarget;
   bool _isConfigured(SpeechConfiguration config);
   Future<Directory> _importDirectory();
+  Future<({MicInput? used, MicInput? missing})> _useChosenMic(Object mic);
   Future<String?> _adoptPhoneTake(
     String path,
     DateTime recordedAt, {
@@ -149,6 +150,9 @@ mixin _RecorderTextCapture on ChangeNotifier {
   bool _textBusy = false;
   bool _textStopping = false;
 
+  /// The stop under way; a second stop, or quitting, waits for it.
+  Future<TextCaptureOutcome?>? _textStop;
+
   /// A connection is being finished on purpose (quiet or a new record);
   /// its closing events are not a lost connection.
   bool _textEnding = false;
@@ -189,6 +193,10 @@ mixin _RecorderTextCapture on ChangeNotifier {
 
   bool get textCaptureActive => _textId != null;
   bool get textCaptureStopping => _textStopping;
+
+  /// Stop was pressed and the text is being saved.
+  bool get textCaptureSaving => _textStop != null;
+
   bool get textCaptureConnected => _textSession?.isServerReady ?? false;
   bool get textCaptureAllDay => _textAllDay;
   bool _textFromDevice = false;
@@ -301,6 +309,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
         await _textCaptureDirectory(),
         id,
       );
+      if (!fromDevice) await _useChosenMic(_micStream);
       Stream<Uint8List>? samples;
       try {
         if (!fromDevice) samples = await _micStream.start();
@@ -960,18 +969,38 @@ mixin _RecorderTextCapture on ChangeNotifier {
   /// Ends capture and saves the text. With [keepAudio] the audio is kept as
   /// an original too and the text becomes its transcript. Speech the
   /// service never received is recognized from the phone, now or once the
-  /// network is back. Ends all-day listening too.
-  Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio = false}) async {
+  /// network is back. Ends all-day listening too, unless [keepAllDay]: Koe
+  /// is quitting, and listening continues when it opens again, as after it
+  /// was closed. A stop while one is under way waits for that one, which
+  /// keeps its own options.
+  Future<TextCaptureOutcome?> stopTextCapture({
+    bool keepAudio = false,
+    bool keepAllDay = false,
+  }) {
+    if (_textStop case final stopping?) return stopping;
     final config = _textConfig;
     if (_textId == null ||
         _textSpool == null ||
         _textStartedAt == null ||
         config == null ||
         _textStopping) {
-      return null;
+      return Future.value();
     }
-    _textStopping = true;
+    final stopping = _textStop = _stopTextCapture(
+      config,
+      keepAudio: keepAudio,
+      keepAllDay: keepAllDay,
+    );
     notifyListeners();
+    return stopping;
+  }
+
+  Future<TextCaptureOutcome?> _stopTextCapture(
+    SpeechConfiguration config, {
+    required bool keepAudio,
+    required bool keepAllDay,
+  }) async {
+    _textStopping = true;
     try {
       await _stopTextMicrophone();
       while (_textRolling) {
@@ -985,11 +1014,12 @@ mixin _RecorderTextCapture on ChangeNotifier {
         config: config,
       );
       if (outcome == null) return null;
-      await _clearAllDayMarker();
+      if (!keepAllDay || !_textAllDay) await _clearAllDayMarker();
       _clearTextCapture();
       return outcome;
     } finally {
       _textStopping = false;
+      _textStop = null;
       if (!_disposed) notifyListeners();
     }
   }

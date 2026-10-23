@@ -11,10 +11,11 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <!-- Foreground services: recorder sync, phone recording / all-day
-         listening, playback. -->
+         listening, transcription and analysis, playback. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
 
     <!-- Phone recording, plain-text capture and all-day listening. -->
@@ -30,6 +31,13 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK"/>
 
+    <!-- 全天常驻: associated with the recorder, Koe may start its
+         foreground service from the background, and Android starts Koe
+         when the recorder comes near (KoeCompanionService). -->
+    <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE"/>
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND"/>
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND"/>
+
     <!-- Place tagging on recordings. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
@@ -39,6 +47,7 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>
+    <uses-feature android:name="android.software.companion_device_setup" android:required="false"/>
 
     <application
         android:label="Koe"
@@ -74,14 +83,25 @@
             </intent-filter>
         </activity>
         <!-- Koe's one foreground service: connectedDevice for recorder sync,
-             microphone for phone recording and listening, as the active work
-             needs. shortService is only the fallback that satisfies Android's
-             start contract when a type is refused. -->
+             microphone for phone recording and listening, dataSync for
+             transcribing and analysing recordings, as the active work needs.
+             shortService is only the fallback that satisfies Android's start
+             contract when a type is refused. It decides itself whether
+             swiping Koe away stops it (onTaskRemoved). -->
         <service
             android:name=".RecordingSyncService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|microphone|shortService"
-            android:stopWithTask="true" />
+            android:foregroundServiceType="connectedDevice|microphone|dataSync|shortService"
+            android:stopWithTask="false" />
+        <!-- Bound by Android while the associated recorder is near. -->
+        <service
+            android:name=".KoeCompanionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+            <intent-filter>
+                <action android:name="android.companion.CompanionDeviceService"/>
+            </intent-filter>
+        </service>
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:exported="true"

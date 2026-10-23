@@ -80,7 +80,13 @@ void main() {
       ble: ble,
       loadPersistedState: false,
       persistedDeviceLoader: () async =>
-          (bound: false, manuallyDisconnected: false, device: null, info: null),
+          (
+            bound: false,
+            manuallyDisconnected: false,
+            residentOffered: false,
+            device: null,
+            info: null,
+          ),
     );
     addTearDown(() async {
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -106,7 +112,13 @@ void main() {
       ble: ble,
       loadPersistedState: false,
       persistedDeviceLoader: () async =>
-          (bound: false, manuallyDisconnected: false, device: null, info: null),
+          (
+            bound: false,
+            manuallyDisconnected: false,
+            residentOffered: false,
+            device: null,
+            info: null,
+          ),
     );
     addTearDown(() async {
       await Future<void>.delayed(const Duration(milliseconds: 20));

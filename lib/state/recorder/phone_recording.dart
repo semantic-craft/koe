@@ -1,5 +1,31 @@
 part of '../recorder_controller.dart';
 
+/// When a take says the disk is filling up (#403): under 1 GB as it starts
+/// and under 300 MB while it records, as Shiyin warns
+/// (Capture/Recorder.swift:404-420). Unlike Shiyin's one-off warning, the
+/// notice stays on screen, so it keeps the room left current until there is
+/// 1 GB again. Tests shorten [checkEvery].
+abstract final class TakeSpaceCheck {
+  static const startingBelow = 1000000000;
+  static const recordingBelow = 300000000;
+  static Duration checkEvery = const Duration(seconds: 30);
+
+  /// 16 kHz mono 16-bit PCM.
+  static const _bytesPerMinute = 16000 * 2 * 60;
+
+  /// What to tell the user with [available] bytes left.
+  static String notice(int available) {
+    final minutes = available ~/ _bytesPerMinute;
+    final time = minutes < 60
+        ? '$minutes 分钟'
+        : minutes % 60 == 0
+        ? '${minutes ~/ 60} 小时'
+        : '${minutes ~/ 60} 小时 ${minutes % 60} 分钟';
+    return '磁盘只剩 ${available ~/ 1000000} MB，大约还能录 $time。'
+        '空间用完时录音会停下，已录的部分会保存。';
+  }
+}
+
 /// Phone microphone takes: start, pause, resume, stop and save as an original
 /// in the library, plus recovery of a take cut off by a crash or kill.
 ///
@@ -7,13 +33,30 @@ part of '../recorder_controller.dart';
 /// it keeps recording behind the lock screen; its notification says whether
 /// it records or is paused, and 停止 there saves the take like the sheet does.
 ///
+/// Notes typed and highlights marked during a take (#400) are kept in a file
+/// beside it while it records and become its bookmarks when it is saved.
+///
+/// While a take records, its input level drives a meter and hints about a
+/// silent, quiet or noisy microphone (#401); a take the system ends, such as
+/// on an unplugged microphone or a full disk, is saved like 结束并保存.
+///
+/// On the Mac the microphone to record from can be chosen (#402); the choice
+/// is kept on the Mac and applies to every take, hold-to-talk and text
+/// capture started after it. A chosen microphone that is not connected at
+/// the start gives way to the system default, and the take says so.
+///
+/// On the Mac a take also says when the disk is filling up (#403), as
+/// [TakeSpaceCheck] sets out.
+///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderPhoneRecording on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
   abstract bool _disposed;
   abstract final Future<void> _libraryLoaded;
+  abstract final Future<void> _bookmarksLoaded;
   abstract final MacArchiveController archive;
+  abstract final RecordingBookmarkStore bookmarks;
   abstract String? errorMessage;
   abstract List<String> exportedPaths;
   abstract final RecordingLibraryStore library;
@@ -23,6 +66,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   Future<void> attachAutomaticPlace(String path);
   Future<Directory> _importDirectory();
   void _invalidateLocalDuration(String path);
+  // ignore: unused_element_parameter
+  String _recordingKey({int? fileId, String? path});
   void _registerExportedPaths(Iterable<String> paths);
   Future<void> stopPlayback();
   // END DEPS
@@ -36,9 +81,55 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   Duration _phoneTakeElapsed = Duration.zero;
   bool _phoneTakeBusy = false;
 
+  /// The stop under way; a second stop, or quitting, waits for it.
+  Future<String?>? _phoneTakeStop;
+
   /// Paused by the user rather than by the system (a call).
   bool _phoneTakeHeld = false;
   StreamSubscription<PhoneMicState>? _phoneMicStates;
+
+  String _phoneTakeNotes = '';
+  List<Duration> _phoneTakeHighlights = const [];
+  Future<void> _phoneNotesWrites = Future<void>.value();
+  bool _phoneNotesQueued = false;
+
+  /// The input level of the running take, from 0 (-60 dBFS and below) to 1
+  /// (full scale), every 100 ms. Only the level meter listens, so a reading
+  /// redraws nothing else.
+  final phoneRecordingLevel = ValueNotifier<double>(0);
+  InputLevelWatch? _phoneLevelWatch;
+  StreamSubscription<double>? _phoneMicLevels;
+
+  /// What the microphone's level suggests checking, or null.
+  InputLevelHint? get phoneRecordingLevelHint => _phoneLevelWatch?.hint;
+
+  /// The microphones to choose from, as last listed; Mac only.
+  List<MicInput> phoneMicInputs = const [];
+
+  /// The microphone chosen to record from; null is the system default.
+  MicInput? get phoneMicChoice => _phoneMicChoice;
+  MicInput? _phoneMicChoice;
+  Future<void>? _phoneMicChoiceRead;
+  Future<void> _phoneMicChoiceWrites = Future<void>.value();
+
+  /// The microphone the current take records from on the Mac; null is the
+  /// system default.
+  MicInput? phoneRecordingMic;
+
+  /// Why the current take does not record from the chosen microphone.
+  String? phoneRecordingMicNotice;
+
+  /// How little room the disk has left for the current take, when that is
+  /// worth saying.
+  String? phoneRecordingSpaceNotice;
+  Timer? _phoneSpaceChecks;
+
+  /// The notes typed during the current take; each line begins with the
+  /// recording time it was started at.
+  String get phoneRecordingNotes => _phoneTakeNotes;
+
+  /// Recording times marked with 标重点 during the current take.
+  List<Duration> get phoneRecordingHighlights => _phoneTakeHighlights;
 
   /// Why the last start or save did not complete; null when it did.
   String? phoneRecordingError;
@@ -47,6 +138,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   bool phoneRecordingPermissionDenied = false;
 
   bool get phoneRecordingActive => _phoneTakePath != null;
+
+  /// Stop was pressed and the take is being saved.
+  bool get phoneRecordingSaving => _phoneTakeStop != null;
+
   bool get phoneRecordingPaused =>
       phoneRecordingActive && _phoneTakeRunningSince == null;
 
@@ -79,6 +174,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         dir.path,
         '$_takePrefix${startedAt.microsecondsSinceEpoch}.wav',
       );
+      final mic = await _useChosenMic(_phoneRecorder);
       try {
         await _phoneRecorder.start(path);
       } catch (_) {
@@ -87,6 +183,13 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         return;
       }
       phoneRecordingError = null;
+      phoneRecordingMic = mic.used;
+      phoneRecordingMicNotice = switch (mic.missing) {
+        final missing? => '选的麦克风「${missing.label}」没有连接，这次用系统默认麦克风录',
+        null => null,
+      };
+      _phoneTakeNotes = '';
+      _phoneTakeHighlights = const [];
       _phoneTakePath = path;
       _phoneTakeStartedAt = startedAt;
       _phoneTakeRunningSince = startedAt;
@@ -94,6 +197,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _phoneTakeHeld = false;
       await _phoneMicStates?.cancel();
       _phoneMicStates = _phoneRecorder.states.listen(_onPhoneMicState);
+      _watchPhoneMicLevels();
+      _watchPhoneSpace(path);
       notifyListeners();
     } finally {
       _phoneTakeBusy = false;
@@ -117,6 +222,141 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     notifyListeners();
   }
 
+  /// The system ended the take: save what was recorded, as 结束并保存 does,
+  /// and say why.
+  Future<void> _onPhoneTakeCutOff() async {
+    final saved = await stopPhoneRecording();
+    if (_disposed || phoneRecordingActive) return;
+    const why = '录音被系统停下了，可能是麦克风断开或磁盘已满';
+    phoneRecordingError = saved != null
+        ? '$why。已录的部分已保存'
+        : '$why。${phoneRecordingError ?? ''}';
+    notifyListeners();
+  }
+
+  /// Follows the take's input level for the meter and the hints, where the
+  /// platform reports it.
+  void _watchPhoneMicLevels() {
+    if (_phoneRecorder case final PhoneMicLevels mic) {
+      // Apple platforms report average power, the measure the hints were set
+      // for; Android reports peaks.
+      final watch = _phoneLevelWatch = InputLevelWatch(loudness: runsOnApple);
+      _phoneMicLevels = mic.levels(InputLevelWatch.interval).listen((db) {
+        if (_disposed || _phoneLevelWatch != watch || phoneRecordingPaused) {
+          return;
+        }
+        // Shiyin's meter scale (Capture/RecordingWriter.swift:96-100).
+        phoneRecordingLevel.value = ((db + 60) / 60).clamp(0.0, 1.0);
+        if (watch.add(db)) notifyListeners();
+      });
+    }
+  }
+
+  /// Checks the room left for the take at [path] as it starts and then every
+  /// [TakeSpaceCheck.checkEvery], where the platform can tell. A disk that
+  /// fills up anyway ends the take, which is saved like any take the system
+  /// ends.
+  void _watchPhoneSpace(String path) {
+    if (_phoneRecorder case final PhoneDiskSpace disk) {
+      Future<void> check({required bool starting}) async {
+        final available = await disk.availableSpace(path);
+        if (_disposed || _phoneTakePath != path) return;
+        if (available == null) {
+          _phoneSpaceChecks?.cancel();
+          return;
+        }
+        final below = starting || phoneRecordingSpaceNotice != null
+            ? TakeSpaceCheck.startingBelow
+            : TakeSpaceCheck.recordingBelow;
+        final notice = available < below
+            ? TakeSpaceCheck.notice(available)
+            : null;
+        if (notice == phoneRecordingSpaceNotice) return;
+        phoneRecordingSpaceNotice = notice;
+        notifyListeners();
+      }
+
+      unawaited(check(starting: true));
+      _phoneSpaceChecks = Timer.periodic(
+        TakeSpaceCheck.checkEvery,
+        (_) => unawaited(check(starting: false)),
+      );
+    }
+  }
+
+  Future<File> _phoneMicChoiceFile() async =>
+      File(p.join((await _importDirectory()).parent.path, 'microphone.json'));
+
+  Future<void> _readPhoneMicChoice() => _phoneMicChoiceRead ??= () async {
+    _phoneMicChoice = await MicInput.read(await _phoneMicChoiceFile());
+  }();
+
+  /// Lists the microphones to choose from. Mac only: elsewhere Koe records
+  /// from the system default.
+  Future<void> refreshPhoneMicInputs() async {
+    if (!runsOnMac) return;
+    await _readPhoneMicChoice();
+    if (_phoneRecorder case final PhoneMicInputs mic) {
+      try {
+        phoneMicInputs = await mic.inputs();
+      } catch (error) {
+        debugPrint('[PhoneRecording] microphones not listed: $error');
+      }
+    }
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Records what is started from now on from [input]; null is the system
+  /// default. The choice is kept across launches.
+  Future<void> choosePhoneMic(MicInput? input) async {
+    await _readPhoneMicChoice();
+    _phoneMicChoice = input;
+    notifyListeners();
+    // Each write keeps the choice current when it runs, so quick changes
+    // never leave an older one on disk.
+    await (_phoneMicChoiceWrites = _phoneMicChoiceWrites.then((_) async {
+      try {
+        await MicInput.write(await _phoneMicChoiceFile(), _phoneMicChoice);
+      } catch (error) {
+        debugPrint('[PhoneRecording] microphone choice not kept: $error');
+      }
+    }));
+  }
+
+  /// Points [mic] at the chosen microphone for the start that follows, or at
+  /// the system default when the chosen one is not connected. Returns the
+  /// microphone used and the chosen one that was missing. Mac only.
+  Future<({MicInput? used, MicInput? missing})> _useChosenMic(
+    Object mic,
+  ) async {
+    if (!runsOnMac || mic is! PhoneMicInputs) {
+      return (used: null, missing: null);
+    }
+    await _readPhoneMicChoice();
+    final chosen = _phoneMicChoice;
+    MicInput? used;
+    if (chosen != null) {
+      try {
+        phoneMicInputs = await mic.inputs();
+        used = phoneMicInputs
+            .where((input) => input.id == chosen.id)
+            .firstOrNull;
+      } catch (error) {
+        debugPrint('[PhoneRecording] microphones not listed: $error');
+      }
+    }
+    mic.useInput(used);
+    return (used: used, missing: used == null ? chosen : null);
+  }
+
+  /// Hides the level hint shown now for the rest of the take.
+  void dismissPhoneRecordingLevelHint() {
+    final watch = _phoneLevelWatch;
+    if (watch == null || watch.hint == null) return;
+    watch.dismiss();
+    notifyListeners();
+  }
+
   void _onPhoneMicState(PhoneMicState state) {
     if (!phoneRecordingActive || _disposed) return;
     switch (state) {
@@ -131,7 +371,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         }
         _markPhoneTakeRunning();
       case PhoneMicState.stopped:
-        break;
+        // Stop and discard hold the take busy, so this is the system ending
+        // it: an unplugged microphone, a full disk.
+        if (!_phoneTakeBusy) unawaited(_onPhoneTakeCutOff());
+        return;
     }
     _showPhoneTakeState();
     notifyListeners();
@@ -151,6 +394,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     if (since == null) return;
     _phoneTakeElapsed += DateTime.now().difference(since);
     _phoneTakeRunningSince = null;
+    // The level is judged afresh after a pause, as Shiyin does.
+    _phoneLevelWatch?.restart();
+    phoneRecordingLevel.value = 0;
   }
 
   void _markPhoneTakeRunning() {
@@ -175,13 +421,102 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     notifyListeners();
   }
 
+  /// Keeps the notes typed so far and writes them beside the take.
+  void setPhoneRecordingNotes(String text) {
+    if (!phoneRecordingActive || text == _phoneTakeNotes) return;
+    _phoneTakeNotes = text;
+    unawaited(_writePhoneTakeNotes());
+  }
+
+  /// Marks the current recording time as a highlight and returns it; null
+  /// when no take records.
+  Duration? markPhoneRecordingHighlight() {
+    if (!phoneRecordingActive) return null;
+    final at = phoneRecordingElapsed;
+    _phoneTakeHighlights = [..._phoneTakeHighlights, at];
+    unawaited(_writePhoneTakeNotes());
+    notifyListeners();
+    return at;
+  }
+
+  /// Writes the current notes beside the take. At most one write waits
+  /// behind the one running, and it writes what is current when it starts,
+  /// so fast typing never piles up writes.
+  Future<void> _writePhoneTakeNotes() {
+    final path = _phoneTakePath;
+    if (path == null || _phoneNotesQueued) return _phoneNotesWrites;
+    _phoneNotesQueued = true;
+    return _phoneNotesWrites = _phoneNotesWrites.then((_) async {
+      _phoneNotesQueued = false;
+      if (_phoneTakePath != path) return;
+      final draft = TakeNotes(
+        text: _phoneTakeNotes,
+        highlights: _phoneTakeHighlights,
+      );
+      try {
+        await draft.writeTo(TakeNotes.fileFor(path));
+      } catch (error) {
+        debugPrint('[PhoneRecording] notes draft not written: $error');
+      }
+    });
+  }
+
+  /// Saves the notes of the take at [path] as its bookmarks: [draft] for a
+  /// take just stopped, else the file a killed take left beside it. On
+  /// failure the notes stay in that file and the next launch tries again.
+  Future<void> _saveTakeNotes(String path, {TakeNotes? draft}) async {
+    final file = TakeNotes.fileFor(path);
+    try {
+      final notes = draft ?? await TakeNotes.read(file);
+      if (notes != null && !notes.isEmpty) {
+        await _bookmarksLoaded;
+        final marks = notes.bookmarks(
+          recordingKey: _recordingKey(path: path),
+          takeName: p.basenameWithoutExtension(path),
+          audioVersion: library.assetForPath(path)?.contentHash,
+          now: DateTime.now(),
+        );
+        await bookmarks.addNew(marks);
+        if (!_disposed) notifyListeners();
+      }
+      if (await file.exists()) await file.delete();
+    } catch (error) {
+      debugPrint('[PhoneRecording] notes not saved as bookmarks: $error');
+      if (draft != null) {
+        try {
+          await draft.writeTo(file);
+        } catch (_) {}
+      }
+      if (_disposed) return;
+      statusMessage = '录音已保存，但笔记没能存成书签；重新打开 Koe 时会再试';
+      notifyListeners();
+    }
+  }
+
+  Future<void> _deleteTakeNotes(String path) async {
+    try {
+      final file = TakeNotes.fileFor(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   /// Stops the take and saves it as an original. Returns the saved path, or
   /// null when nothing usable was recorded or the save failed; a failed save
-  /// keeps the audio file and is retried on the next launch.
-  Future<String?> stopPhoneRecording() async {
+  /// keeps the audio file and is retried on the next launch. A stop while
+  /// one is under way waits for it.
+  Future<String?> stopPhoneRecording() {
+    if (_phoneTakeStop case final stopping?) return stopping;
     final path = _phoneTakePath;
     final startedAt = _phoneTakeStartedAt;
-    if (path == null || startedAt == null || _phoneTakeBusy) return null;
+    if (path == null || startedAt == null || _phoneTakeBusy) {
+      return Future.value();
+    }
+    final stopping = _phoneTakeStop = _stopPhoneTake(path, startedAt);
+    notifyListeners();
+    return stopping;
+  }
+
+  Future<String?> _stopPhoneTake(String path, DateTime startedAt) async {
     _phoneTakeBusy = true;
     try {
       try {
@@ -189,11 +524,29 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       } catch (_) {
         // The file written so far is still adopted below.
       }
+      // Every change schedules a write, so once these finish the notes are
+      // on disk before the take is, and a kill from here on loses nothing.
+      await _phoneNotesWrites;
+      final notes = TakeNotes(
+        text: _phoneTakeNotes,
+        highlights: _phoneTakeHighlights,
+      );
       _clearPhoneTake();
       notifyListeners();
-      return await _adoptPhoneTake(path, startedAt);
+      final saved = await _adoptPhoneTake(path, startedAt);
+      if (notes.isEmpty) {
+        // Nothing to keep; a draft is left only if clearing it failed.
+        unawaited(_deleteTakeNotes(path));
+      } else if (saved != null) {
+        await _saveTakeNotes(saved, draft: notes);
+      } else if (!await File(path).exists()) {
+        await _deleteTakeNotes(path);
+      }
+      return saved;
     } finally {
       _phoneTakeBusy = false;
+      _phoneTakeStop = null;
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -211,6 +564,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         final file = File(path);
         if (await file.exists()) await file.delete();
       } catch (_) {}
+      await _phoneNotesWrites;
+      await _deleteTakeNotes(path);
       statusMessage = '已放弃这段录音';
       notifyListeners();
     } finally {
@@ -226,6 +581,17 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeRunningSince = null;
     _phoneTakeElapsed = Duration.zero;
     _phoneTakeHeld = false;
+    _phoneTakeNotes = '';
+    _phoneTakeHighlights = const [];
+    unawaited(_phoneMicLevels?.cancel());
+    _phoneMicLevels = null;
+    _phoneLevelWatch = null;
+    phoneRecordingLevel.value = 0;
+    phoneRecordingMic = null;
+    phoneRecordingMicNotice = null;
+    _phoneSpaceChecks?.cancel();
+    _phoneSpaceChecks = null;
+    phoneRecordingSpaceNotice = null;
     unawaited(BackgroundSyncService.shared.end(BackgroundWork.phoneRecording));
   }
 
@@ -290,15 +656,24 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   /// Adopts takes that never reached the library because the app was killed
   /// mid-recording or the save failed. The start time comes from the name.
+  /// Notes left beside a take become its bookmarks once it is in the library.
   Future<void> _recoverInterruptedPhoneTakes() async {
     if (!phoneRecordingEnabled) return;
     await _libraryLoaded;
     final dir = await _importDirectory();
     if (!await dir.exists()) return;
     var recovered = 0;
+    final drafts = <String>[];
     await for (final entity in dir.list()) {
       if (_disposed) return;
       if (entity is! File) continue;
+      final base = p.basename(entity.path);
+      if (base.startsWith(_takePrefix) &&
+          (base.endsWith(TakeNotes.draftExtension) ||
+              base.endsWith('${TakeNotes.draftExtension}.part'))) {
+        drafts.add(entity.path);
+        continue;
+      }
       final name = p.basenameWithoutExtension(entity.path);
       if (!name.startsWith(_takePrefix) || p.extension(entity.path) != '.wav') {
         continue;
@@ -310,12 +685,42 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       final started = DateTime.fromMicrosecondsSinceEpoch(micros);
       if (await _adoptPhoneTake(entity.path, started) != null) recovered++;
     }
+    for (final draft in drafts) {
+      if (_disposed) return;
+      final partial = draft.endsWith('.part');
+      final stem = draft.substring(
+        0,
+        draft.length -
+            TakeNotes.draftExtension.length -
+            (partial ? '.part'.length : 0),
+      );
+      final take = '$stem.wav';
+      if (take == _phoneTakePath) continue;
+      if (partial) {
+        // A write cut off by the kill; the file it was replacing is kept.
+        try {
+          await File(draft).delete();
+        } catch (_) {}
+      } else if (library.assetForPath(take) != null) {
+        await _saveTakeNotes(take);
+      } else if (!await File(take).exists()) {
+        await _deleteTakeNotes(take);
+      }
+    }
     if (recovered > 0 && !_disposed) {
       statusMessage = runsOnMac
           ? '找回了 $recovered 段中断的麦克风录音'
           : '找回了 $recovered 段中断的手机录音';
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_phoneMicLevels?.cancel());
+    _phoneSpaceChecks?.cancel();
+    phoneRecordingLevel.dispose();
+    super.dispose();
   }
 
   String _takeLabel(DateTime at) {

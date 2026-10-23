@@ -44,6 +44,7 @@ import '../platform/background_sync_service.dart';
 import '../platform/phone_mic_stream.dart';
 import '../platform/phone_recorder.dart';
 import '../platform/place_capture.dart';
+import '../platform/recorder_presence.dart';
 import '../platform/system_tasks.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
@@ -130,6 +131,8 @@ part 'recorder/live_transcription.dart';
 part 'recorder/settings.dart';
 part 'recorder/device.dart';
 part 'recorder/device_files.dart';
+part 'recorder/ai_keep_alive.dart';
+part 'recorder/resident.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
@@ -178,12 +181,15 @@ class RecorderController extends ChangeNotifier
         _RecorderLiveTranscription,
         _RecorderSettings,
         _RecorderDevice,
-        _RecorderDeviceFiles {
+        _RecorderDeviceFiles,
+        _RecorderAiKeepAlive,
+        _RecorderResident {
   @override
   late final RecordingAnalysis analysis =
       _analysisOverride ??
       RecordingAnalysis(
         service: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
+        whileRequesting: _whileAiWorks,
       );
   final RecordingAnalysis? _analysisOverride;
   @override
@@ -256,6 +262,7 @@ class RecorderController extends ChangeNotifier
     Future<Duration?> Function(String path)? localDurationReader,
     Future<Duration?> Function(String path)? audioDurationProbe,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
+    this.aiKeepAliveGrace = const Duration(seconds: 10),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
     PlaceCapture? placeCapture,
@@ -671,6 +678,11 @@ class RecorderController extends ChangeNotifier
   @override
   final Duration blePullInactivityTimeout;
 
+  /// How long Koe stays kept running after its last model request, so the
+  /// next step of the same work starts under the same foreground service.
+  @override
+  final Duration aiKeepAliveGrace;
+
   @override
   String _recordingKey({int? fileId, String? path}) {
     final id = fileId ?? (path == null ? null : fileIdFromPath(path));
@@ -773,9 +785,7 @@ class RecorderController extends ChangeNotifier
           session?.configuration.provider ??
           defaultConfig.provider,
       transcriptionEnabled: session?.configuration.enabled ?? autoTranscribe,
-      speechReady: _isConfigured(
-        session?.configuration ?? defaultConfig,
-      ),
+      speechReady: _isConfigured(session?.configuration ?? defaultConfig),
       live: current && recording,
       paused: current && _recordWireStatus == 2 && session.paused,
       audioLocked:
@@ -1086,6 +1096,8 @@ class RecorderController extends ChangeNotifier
     if (_ownsAsks) asks.dispose();
     _todoLifecycle?.dispose();
     _disposeContextServices();
+    _disposeAiKeepAlive();
+    _disposeResident();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();

@@ -23,15 +23,20 @@ import android.util.Log
  *
  * Dart sends the full state on every change: the service types of all active
  * works (connectedDevice for recorder sync, microphone for phone recording
- * and listening), the notification text, and whether the notification offers
- * 停止. The service runs as their union. 停止 only asks Dart to finish the
- * microphone work (save the take, keep the text); Dart then ends it as usual.
+ * and listening, dataSync for transcribing and analysing recordings), the
+ * notification text, and whether the notification offers 停止. The service
+ * runs as their union. 停止 only asks Dart to finish the microphone work
+ * (save the take, keep the text); Dart then ends it as usual.
  *
  * Android 14+ crashes the process when a startForegroundService() start is
  * not followed by a successful startForeground(), so a rejected type falls
  * back to shortService (no permission needed) before stopping, and stop is
  * queued behind pending starts instead of calling stopService() directly.
  * Pattern from omi's SyncTransferForegroundService and ForegroundStartContract.
+ *
+ * While it runs it holds the engine (KoeEngine), so the work goes on when
+ * the activity is gone. Swiping Koe away from recents stops it, unless the
+ * recorder is associated for 全天常驻.
  */
 class RecordingSyncService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
@@ -41,6 +46,9 @@ class RecordingSyncService : Service() {
         super.onCreate()
         createNotificationChannel()
         instance = this
+        // Dart starts this service, so the engine runs. A stray start, such
+        // as 停止 tapped just as the service went, must not start Dart anew.
+        if (KoeEngine.running()) KoeEngine.hold(this, HOLDER)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -66,8 +74,9 @@ class RecordingSyncService : Service() {
             return START_NOT_STICKY
         }
         if (!apply()) {
-            // Typically microphone while Koe is behind the lock screen: the
-            // start was allowed but not the type. Dart drops that work.
+            // Typically microphone while Koe is behind the lock screen, or
+            // dataSync once its daily time is used up: the start was allowed
+            // but not the type. Dart drops that work.
             refusedListener?.invoke(namesOf(requestedTypes))
             requestedTypes = 0
             shutDown()
@@ -117,6 +126,14 @@ class RecordingSyncService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // The manifest keeps the service when Koe is swiped away from recents,
+    // so 全天常驻 carries on; otherwise it ends as it always did.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (RecorderCompanion.associated(this)) return
+        requestedTypes = 0
+        shutDown()
+    }
+
     // shortService only runs during the brief fallback above; never past
     // its time limit. connectedDevice and microphone have no time limit.
     @Deprecated("Android 14 only; Android 15+ calls the two-argument form")
@@ -124,13 +141,30 @@ class RecordingSyncService : Service() {
         shutDown()
     }
 
+    // Android 15+ runs dataSync for six hours a day while Koe is off screen,
+    // then calls this and ends the process if the service still runs as
+    // dataSync a few seconds later. Dropping just that type keeps recorder
+    // sync and recording going; Dart is told, so the AI work asks again once
+    // Koe is back on screen.
     override fun onTimeout(startId: Int, fgsType: Int) {
+        val dataSync = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        val running = appliedTypes
+        if (fgsType and dataSync != 0 && running and dataSync != 0) {
+            requestedTypes = running and dataSync.inv()
+            if (requestedTypes != 0 && apply()) {
+                refusedListener?.invoke(listOf("dataSync"))
+                return
+            }
+        }
+        requestedTypes = 0
         shutDown()
+        if (running != 0) refusedListener?.invoke(namesOf(running))
     }
 
     override fun onDestroy() {
         releaseWakeLock()
         if (instance === this) instance = null
+        KoeEngine.release(this, HOLDER)
         super.onDestroy()
     }
 
@@ -204,6 +238,7 @@ class RecordingSyncService : Service() {
 
     companion object {
         private const val TAG = "KoeForeground"
+        private const val HOLDER = "recordingSync"
         private const val CHANNEL_ID = "recording_sync"
         private const val NOTIFICATION_ID = 3200
         private const val ACTION_STOP = "com.semanticcraft.soundcore.STOP_FOREGROUND"
@@ -214,9 +249,11 @@ class RecordingSyncService : Service() {
         private val typeFlags = mapOf(
             "connectedDevice" to ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
             "microphone" to ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+            "dataSync" to ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
         )
 
-        // Each type needs this runtime permission at startForeground time.
+        // The runtime permission a type needs at startForeground time;
+        // dataSync needs none.
         private val typePermissions = mapOf(
             "connectedDevice" to Manifest.permission.BLUETOOTH_CONNECT,
             "microphone" to Manifest.permission.RECORD_AUDIO,
@@ -231,9 +268,10 @@ class RecordingSyncService : Service() {
         @Volatile var stopListener: (() -> Unit)? = null
 
         /**
-         * Tells Dart the service stopped because Android refused the types
-         * it was starting as, after [update] had answered; set while Flutter
-         * runs.
+         * Tells Dart which types Android took away after [update] had
+         * answered: refused at start, which stops the service, or dataSync
+         * at its daily time limit, which the service drops while keeping the
+         * others. Set while Flutter runs.
          */
         @Volatile var refusedListener: ((List<String>) -> Unit)? = null
 
@@ -249,7 +287,8 @@ class RecordingSyncService : Service() {
             stoppable: Boolean,
         ): List<String> {
             val usable = types.filter { name ->
-                val permission = typePermissions[name] ?: return@filter false
+                if (name !in typeFlags) return@filter false
+                val permission = typePermissions[name] ?: return@filter true
                 context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
             }
             if (usable.isEmpty()) {

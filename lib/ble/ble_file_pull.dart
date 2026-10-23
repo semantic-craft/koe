@@ -93,13 +93,19 @@ class BleFilePull {
     final head = Completer<void>();
     final done = Completer<void>();
     final inactivity = Stopwatch()..start();
+    var filePackets = 0;
+    void onFilePacket() {
+      inactivity.reset();
+      filePackets++;
+    }
+
     final sub = packets.listen((pkt) {
       if (pkt.cmdType != RxCmd.transportType &&
           pkt.cmdType != RxCmd.transportTypeAlt) {
         return;
       }
       if (pkt.cmdId == RxCmd.fileHeadId) {
-        inactivity.reset();
+        onFilePacket();
         final secret = AudioFileSecretKey.parseFrame(pkt.raw);
         if (secret != null && secret.fileSize == unfinishedFileSize) {
           _log('head id=${secret.fileId} unfinished on the recorder');
@@ -122,7 +128,7 @@ class BleFilePull {
       }
       if (pkt.cmdId == RxCmd.fileSliceId ||
           pkt.cmdId == RxCmd.fileSliceMarkId) {
-        inactivity.reset();
+        onFilePacket();
         received += _writeSlices(
           pkt.raw,
           sink,
@@ -134,7 +140,7 @@ class BleFilePull {
         return;
       }
       if (pkt.cmdId == RxCmd.fileDoneId) {
-        inactivity.reset();
+        onFilePacket();
         if (!done.isCompleted) done.complete();
       }
     });
@@ -160,11 +166,22 @@ class BleFilePull {
       if (_cancelled) throw const BleFilePullCancelled();
       if (unfinished) throw BleFileUnfinished(file.fileId);
 
-      while (!_cancelled && inactivity.elapsed < timeout) {
+      while (!_cancelled) {
         if (done.isCompleted) break;
         if (expected > 0 && received >= expected - skipped) break;
+        if (inactivity.elapsed >= timeout) {
+          // After the app was busy, packets that came in meanwhile can still
+          // be queued behind this check. Let them in before giving up.
+          final seen = filePackets;
+          await Future<void>.delayed(Duration.zero);
+          if (filePackets == seen) break;
+          continue;
+        }
         await Future<void>.delayed(const Duration(milliseconds: 80));
       }
+      // The recorder keeps sending after a cancel or a timeout. Stop taking
+      // packets before the file closes, or a late slice hits a closed sink.
+      await sub.cancel();
 
       if (_cancelled) throw const BleFilePullCancelled();
 
@@ -203,6 +220,7 @@ class BleFilePull {
       );
       return path;
     } catch (e) {
+      await sub.cancel();
       try {
         await sink.close();
       } catch (_) {}
@@ -212,7 +230,6 @@ class BleFilePull {
       crypto.clearFile(fileIdStr);
       rethrow;
     } finally {
-      await sub.cancel();
       _cancelCompleter = null;
     }
   }

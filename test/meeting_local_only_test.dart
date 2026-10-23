@@ -1138,6 +1138,8 @@ void main() {
             ..apiKeyOverride = 'qwen-test-key',
           transcriptPersister: ({bool strict = false}) async {},
           libraryDirectory: Directory('${dir.path}/imports-confirm'),
+          // 转写一结束就结束前台服务保活，测试结束时不留计时器
+          aiKeepAliveGrace: Duration.zero,
         )..exportedPaths = [audio.path];
         await controller.refreshAppleCapabilities();
       });
@@ -1647,6 +1649,8 @@ void main() {
             ..apiKeyOverride = 'doubao-test-key',
           transcriptPersister: ({bool strict = false}) async {},
           libraryDirectory: Directory('${dir.path}/imports-menu'),
+          // 转写一结束就结束前台服务保活，测试结束时不留计时器
+          aiKeepAliveGrace: Duration.zero,
         )..exportedPaths = [audio.path];
         await controller.refreshAppleCapabilities();
         controller.setMeetingLocalOnly(false);

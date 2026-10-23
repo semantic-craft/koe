@@ -72,13 +72,32 @@ class SettingsScreen extends StatelessWidget {
                   const SectionLabel('传输'),
                   _SettingsGroup(
                     key: const ValueKey('settings-transfer-group'),
-                    child: _SettingsSwitch(
-                      title: '自动传输',
-                      subtitle: c.autoTransferActive
-                          ? '正在传输设备端未导出录音…'
-                          : '自动下载设备上的历史录音',
-                      value: c.autoRealtime,
-                      onChanged: c.setAutoRealtime,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _SettingsSwitch(
+                          title: '自动传输',
+                          subtitle: c.autoTransferActive
+                              ? '正在传输设备端未导出录音…'
+                              : '自动下载设备上的历史录音',
+                          value: c.autoRealtime,
+                          onChanged: c.setAutoRealtime,
+                        ),
+                        if (c.residentSupported) ...[
+                          const Divider(height: 20),
+                          _SettingsSwitch(
+                            key: const ValueKey('settings-resident'),
+                            title: '全天常驻',
+                            subtitle: c.bound
+                                ? '录音豆回到身边时自动连上并取回新录音，不用先打开 Koe'
+                                : '绑定录音豆后可开启',
+                            value: c.resident,
+                            onChanged: c.bound || c.resident
+                                ? (on) => c.setResident(on)
+                                : null,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   const SizedBox(height: 18),

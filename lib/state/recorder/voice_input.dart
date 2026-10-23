@@ -37,6 +37,7 @@ mixin _RecorderVoiceInput on ChangeNotifier {
   bool get phoneRecordingEnabled;
   bool _isConfigured(SpeechConfiguration config);
   Future<Directory> _importDirectory();
+  Future<({MicInput? used, MicInput? missing})> _useChosenMic(Object mic);
   // ignore: unused_element_parameter
   String _recordingKey({int? fileId, String? path});
   Future<String?> _adoptPhoneTake(
@@ -128,6 +129,7 @@ mixin _RecorderVoiceInput on ChangeNotifier {
         dir.path,
         '$prefix${startedAt.microsecondsSinceEpoch}.wav',
       );
+      await _useChosenMic(_phoneRecorder);
       try {
         await _phoneRecorder.start(path);
       } catch (_) {
