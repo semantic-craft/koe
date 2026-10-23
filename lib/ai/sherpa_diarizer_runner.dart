@@ -1,4 +1,12 @@
 import 'dart:convert';
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
+// sherpa_onnx 1.13.8's public process() copies the entire input. Use its
+// generated C bindings with our owned buffer; dependency upgrades must run
+// tool/diarization_regression.dart and the hour-long memory probe.
+// ignore: implementation_imports
+import 'package:sherpa_onnx/src/sherpa_onnx_bindings.dart';
+import 'diarization_pcm.dart';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -269,11 +277,57 @@ Future<DiarizationResult> _runSherpaDiarization({
 }) async {
   await ensureSherpaBindingsInitialized();
 
-  final wave = sherpa_onnx.readWave(audioPath);
-  if (wave.samples.isEmpty || wave.sampleRate <= 0) {
-    throw StateError('无法读取音频样本进行本机发言人区分');
+  final pcm = DiarizationPcm.open(audioPath);
+  Pointer<Float> owned = nullptr;
+  try {
+    const rate = DiarizationPcm.sampleRate;
+    final count = (pcm.sampleCount * rate / pcm.rate).round();
+    if (pcm.rate != rate && pcm.sampleCount > pcm.rate * 300) {
+      throw StateError('长录音需要先转为 16 kHz 单声道 WAV；原文已保留');
+    }
+    owned = calloc<Float>(count);
+    final samples = owned.asTypedList(count);
+    if (pcm.rate == rate) {
+      for (var start = 0; start < count; start += rate) {
+        final end = math.min(count, start + rate);
+        samples.setRange(start, end, pcm.read(start, end));
+      }
+    } else {
+      samples.setAll(
+        0,
+        resampleDiarizationMono(pcm.read(0, pcm.sampleCount), pcm.rate, rate),
+      );
+    }
+    return _processDiarizationSamples(
+      owned,
+      count,
+      segmentationModelPath: segmentationModelPath,
+      embeddingModelPath: embeddingModelPath,
+      expectedSpeakers: expectedSpeakers,
+      defaultClusteringThreshold: defaultClusteringThreshold,
+      numThreads: numThreads,
+      onProgress: onProgress,
+    );
+  } finally {
+    if (owned != nullptr) calloc.free(owned);
+    pcm.close();
   }
+}
 
+DiarizationResult _processDiarizationSamples(
+  Pointer<Float> owned,
+  int count, {
+  required String segmentationModelPath,
+  required String embeddingModelPath,
+  required int? expectedSpeakers,
+  required double defaultClusteringThreshold,
+  required int numThreads,
+  required void Function(double)? onProgress,
+}) {
+  final wave = sherpa_onnx.WaveData(
+    samples: owned.asTypedList(count),
+    sampleRate: DiarizationPcm.sampleRate,
+  );
   final numClusters = expectedSpeakers != null && expectedSpeakers > 0
       ? expectedSpeakers
       : -1;
@@ -305,27 +359,9 @@ Future<DiarizationResult> _runSherpaDiarization({
   List<sherpa_onnx.OfflineSpeakerDiarizationSegment> rawSegments;
   late sherpa_onnx.WaveData modelWave;
   try {
-    modelWave = sherpa_onnx.WaveData(
-      samples: resampleDiarizationMono(
-        wave.samples,
-        wave.sampleRate,
-        sd.sampleRate,
-      ),
-      sampleRate: sd.sampleRate,
-    );
-    if (onProgress != null) {
-      rawSegments = sd.processWithCallback(
-        samples: modelWave.samples,
-        callback: (processed, total) {
-          if (total > 0) {
-            onProgress((processed / total).clamp(0.0, 1.0));
-          }
-          return 0;
-        },
-      );
-    } else {
-      rawSegments = sd.process(samples: modelWave.samples);
-    }
+    if (sd.sampleRate != wave.sampleRate) throw StateError('发言人模型采样率不匹配');
+    modelWave = wave;
+    rawSegments = _processOwnedBuffer(sd, owned, count, onProgress);
   } finally {
     sd.free();
   }
@@ -470,5 +506,68 @@ DiarizationQuality? _computeQualityFromWaveAndTurns({
     return null;
   } finally {
     extractor.free();
+  }
+}
+
+// Mirrors the ownership contract in sherpa_onnx 1.13.8
+// lib/src/offline_speaker_diarization.dart:115–205, without its input copy.
+List<sherpa_onnx.OfflineSpeakerDiarizationSegment> _processOwnedBuffer(
+  sherpa_onnx.OfflineSpeakerDiarization sd,
+  Pointer<Float> samples,
+  int count,
+  void Function(double)? onProgress,
+) {
+  final process = SherpaOnnxBindings
+      .sherpaOnnxOfflineSpeakerDiarizationProcessWithCallbackNoArg;
+  final destroy =
+      SherpaOnnxBindings.sherpaOnnxOfflineSpeakerDiarizationDestroyResult;
+  final length = SherpaOnnxBindings
+      .sherpaOnnxOfflineSpeakerDiarizationResultGetNumSegments;
+  final sorted = SherpaOnnxBindings
+      .sherpaOnnxOfflineSpeakerDiarizationResultSortByStartTime;
+  final freeSegments =
+      SherpaOnnxBindings.sherpaOnnxOfflineSpeakerDiarizationDestroySegment;
+  if (process == null ||
+      destroy == null ||
+      length == null ||
+      sorted == null ||
+      freeSegments == null) {
+    throw StateError('发言人模型运行库不完整');
+  }
+  final callback =
+      NativeCallable<
+        SherpaOnnxOfflineSpeakerDiarizationProgressCallbackNoArgNative
+      >.isolateLocal((int done, int total) {
+        if (total > 0) {
+          onProgress?.call((done / total).clamp(0.0, 1.0));
+        }
+        return 0;
+      }, exceptionalReturn: 0);
+  try {
+    final result = process(sd.ptr, samples, count, callback.nativeFunction);
+    if (result == nullptr) throw StateError('发言人区分未返回结果；原文已保留');
+    try {
+      final n = length(result);
+      if (n == 0) return [];
+      final segments = sorted(result);
+      if (segments == nullptr) throw StateError('发言人区分结果无法读取');
+      try {
+        return [
+          for (var i = 0; i < n; i++)
+            sherpa_onnx.OfflineSpeakerDiarizationSegment(
+              start: segments[i].start,
+              end: segments[i].end,
+              speaker: segments[i].speaker,
+              confidence: segments[i].confidence,
+            ),
+        ];
+      } finally {
+        freeSegments(segments);
+      }
+    } finally {
+      destroy(result);
+    }
+  } finally {
+    callback.close();
   }
 }

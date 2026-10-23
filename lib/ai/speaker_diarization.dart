@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 
 import '../audio/audio_transcoder.dart';
+import '../audio/audio_duration.dart';
 import '../state/recording.dart';
 import 'diarization_model_store.dart';
 import 'sherpa_diarizer_runner.dart';
@@ -224,11 +225,19 @@ class SherpaSpeakerDiarizer implements SpeakerDiarizer {
     try {
       // Converting first means audio that cannot be read fails before any
       // model download.
-      var wavPath = audioPath;
-      if (await AudioContainer.read(audioPath) != AudioContainer.wav) {
-        scratch = await Directory.systemTemp.createTemp('koe-diarize-');
-        wavPath = p.join(scratch.path, 'speech.wav');
-        await transcoder.toWav(audioPath, wavPath);
+      final duration = await AudioDuration.read(audioPath);
+      if (duration != null && duration > const Duration(hours: 1)) {
+        throw StateError('本机发言人区分单次最多 1 小时，请先分段；原文已保留');
+      }
+      // Device WAVs are 48 kHz. The native streaming converter downsamples
+      // before Dart/native inference allocate whole-recording sample arrays.
+      scratch = await Directory.systemTemp.createTemp('koe-diarize-');
+      final wavPath = p.join(scratch.path, 'speech.wav');
+      await transcoder.toWav(audioPath, wavPath);
+      final normalizedDuration = await AudioDuration.read(wavPath);
+      if (normalizedDuration == null ||
+          normalizedDuration > const Duration(hours: 1)) {
+        throw StateError('本机发言人区分需要可读取且不超过 1 小时的音频；原文已保留');
       }
       final paths = await modelStore.ensureReady();
       return await runSherpaDiarization(

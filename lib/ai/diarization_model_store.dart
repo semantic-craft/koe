@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -100,9 +101,9 @@ class DiarizationModelStore extends ChangeNotifier {
     expectedBytes: 5992913,
     sha256: '220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079',
     modelScopeUrl:
-        'https://modelscope.cn/models/pengzhendong/sherpa-onnx-pyannote-segmentation-3-0/resolve/master/model.onnx',
+        'https://modelscope.cn/models/pengzhendong/sherpa-onnx-pyannote-segmentation-3-0/resolve/103d397e9706dbb03f458fad62430ee8e9ae2bb4/model.onnx',
     huggingFaceUrl:
-        'https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx',
+        'https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/9403a6902bb58e3d5ae8c7e77c3422de279db2e0/model.onnx',
   );
 
   static const embeddingSpec = DiarizationModelFileSpec(
@@ -111,9 +112,9 @@ class DiarizationModelStore extends ChangeNotifier {
     expectedBytes: 28281164,
     sha256: 'aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2',
     modelScopeUrl:
-        'https://modelscope.cn/models/lijiu09/speaker-embedding-models/resolve/master/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
+        'https://modelscope.cn/models/lijiu09/speaker-embedding-models/resolve/19542621cad6ae47f179ae2eee292840e4709eec/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
     huggingFaceUrl:
-        'https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/main/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
+        'https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/0743f301363dec56491a490f6d6cbc9d67f9a3bf/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx',
   );
 
   static const List<DiarizationModelFileSpec> specs = [
@@ -147,17 +148,49 @@ class DiarizationModelStore extends ChangeNotifier {
   _CancelReason _cancelReason = _CancelReason.none;
   bool _disposed = false;
   int _requestGeneration = 0;
+  int _stateGeneration = 0;
   Future<void>? _stopping;
 
   bool get isReady => status == DiarizationModelStatus.ready;
   bool get isDownloading => status == DiarizationModelStatus.downloading;
   bool get isPaused => status == DiarizationModelStatus.paused;
 
-  Future<Directory> _resolveDirectory() async {
+  Future<Directory>? _directoryReady;
+
+  Future<Directory> _resolveDirectory() {
+    final current = _directoryReady;
+    if (current != null) return current;
+    // Refresh, inference and deletion must share the same migration. Clear a
+    // failed initialization so a temporary storage failure can be retried.
+    late final Future<Directory> pending;
+    pending = _initializeDirectory().catchError((Object error, StackTrace stack) {
+      if (identical(_directoryReady, pending)) _directoryReady = null;
+      Error.throwWithStackTrace(error, stack);
+    });
+    return _directoryReady = pending;
+  }
+
+  Future<Directory> _initializeDirectory() async {
     final override = _directoryOverride;
     if (override != null) {
       if (!await override.exists()) await override.create(recursive: true);
       return override;
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      final base = await getApplicationSupportDirectory();
+      final dir = Directory(p.join(base.path, 'AnkerRecorder', 'diarization_models'));
+      await dir.create(recursive: true);
+      await const MethodChannel('com.semanticcraft.koe/model_storage')
+          .invokeMethod<void>('excludeBackup', {'path': dir.path});
+      final legacy = Directory(p.join((await getApplicationDocumentsDirectory()).path,
+          'AnkerRecorder', 'diarization_models'));
+      // Move only the model store's known files; keep originals if a move fails.
+      for (final name in [_pausedMarker, for (final spec in _specs) ...[spec.fileName, '${spec.fileName}.part']]) {
+        final old = File(p.join(legacy.path, name));
+        final target = File(p.join(dir.path, name));
+        if (await old.exists() && !await target.exists()) await old.rename(target.path);
+      }
+      return dir;
     }
     Directory base;
     try {
@@ -199,35 +232,47 @@ class DiarizationModelStore extends ChangeNotifier {
   }
 
   Future<void> refreshStatus() async {
-    if (_activeDownload != null) return;
-    final dir = await _resolveDirectory();
-    var installedCount = 0;
-    var hasPart = false;
-    for (final spec in _specs) {
-      if (await _isSpecInstalled(dir, spec)) {
-        installedCount++;
-      } else if (await File(
-        p.join(dir.path, '${spec.fileName}.part'),
-      ).exists()) {
-        hasPart = true;
+    if (_activeDownload != null || _stopping != null || _disposed) return;
+    final generation = _stateGeneration;
+    try {
+      final dir = await _resolveDirectory();
+      var installedCount = 0;
+      var hasPart = false;
+      for (final spec in _specs) {
+        if (await _isSpecInstalled(dir, spec)) {
+          installedCount++;
+        } else if (await File(
+          p.join(dir.path, '${spec.fileName}.part'),
+        ).exists()) {
+          hasPart = true;
+        }
       }
-    }
-    if (installedCount == _specs.length) {
-      status = DiarizationModelStatus.ready;
-      progress = 1.0;
-      errorMessage = null;
-    } else if (hasPart ||
-        status == DiarizationModelStatus.paused ||
-        await _pausedFile(dir).exists()) {
-      status = DiarizationModelStatus.paused;
-    } else {
-      status = DiarizationModelStatus.notInstalled;
+      final paused = hasPart || await _pausedFile(dir).exists();
+      if (generation != _stateGeneration || _disposed) return;
+      if (installedCount == _specs.length) {
+        status = DiarizationModelStatus.ready;
+        progress = 1.0;
+        errorMessage = null;
+      } else if (paused) {
+        status = DiarizationModelStatus.paused;
+      } else {
+        status = DiarizationModelStatus.notInstalled;
+        progress = 0.0;
+      }
+    } catch (error) {
+      // Deletion can remove a model between exists() and length/openRead().
+      // An obsolete refresh must not leak that expected I/O failure.
+      if (generation != _stateGeneration || _disposed) return;
+      if (error is! FileSystemException && error is! PlatformException) rethrow;
+      status = DiarizationModelStatus.failed;
       progress = 0.0;
+      errorMessage = '模型无法读取，请检查可用空间和存储权限后重试';
     }
     _notify();
   }
 
   Future<DiarizationModelPaths> ensureReady() async {
+    final generation = _stateGeneration;
     final dir = await _resolveDirectory();
     var allInstalled = true;
     for (final spec in _specs) {
@@ -235,6 +280,9 @@ class DiarizationModelStore extends ChangeNotifier {
         allInstalled = false;
         break;
       }
+    }
+    if (generation != _stateGeneration || _disposed || _stopping != null) {
+      throw StateError('模型操作已取消，请重试');
     }
     if (allInstalled) {
       status = DiarizationModelStatus.ready;
@@ -250,6 +298,9 @@ class DiarizationModelStore extends ChangeNotifier {
       throw const DiarizationModelPausedException();
     }
 
+    if (generation != _stateGeneration || _disposed) {
+      throw StateError('模型操作已取消，请重试');
+    }
     final ok = await download();
     if (!ok) {
       if (status == DiarizationModelStatus.wifiRequired) {
@@ -269,6 +320,7 @@ class DiarizationModelStore extends ChangeNotifier {
     if (stopping != null) return stopping.then((_) => download());
     final running = _activeDownload;
     if (running != null) return running;
+    _stateGeneration++;
     final task = _runDownload();
     _activeDownload = task;
     return task.whenComplete(() {
@@ -559,6 +611,7 @@ class DiarizationModelStore extends ChangeNotifier {
       if (verifyChecksum) {
         final sha = await _fileSha256(partFile);
         if (sha != spec.sha256.toLowerCase()) {
+          errorMessage = '模型校验失败，文件可能损坏，请重新下载';
           if (await partFile.exists()) await partFile.delete();
           return false;
         }
@@ -566,7 +619,10 @@ class DiarizationModelStore extends ChangeNotifier {
       if (_cancelReason != _CancelReason.none || _disposed) return false;
       await partFile.rename(targetFile.path);
       return true;
-    } catch (_) {
+    } catch (error) {
+      if (error is FileSystemException) {
+        errorMessage = '模型无法保存，请检查可用空间和存储权限';
+      }
       if (isCurrent()) _requestGeneration++;
       await requestSubscription?.cancel();
       try {
@@ -626,6 +682,8 @@ class DiarizationModelStore extends ChangeNotifier {
   Future<void> pause() => _stop(_pause);
 
   Future<void> _pause() async {
+    if (_activeDownload == null) return;
+    _stateGeneration++;
     _requestGeneration++;
     _cancelReason = _CancelReason.pause;
     _abortRequest();
@@ -652,6 +710,7 @@ class DiarizationModelStore extends ChangeNotifier {
   Future<void> delete() => _stop(_delete);
 
   Future<void> _delete() async {
+    _stateGeneration++;
     _requestGeneration++;
     _cancelReason = _CancelReason.delete;
     _abortRequest();
@@ -712,6 +771,7 @@ class DiarizationModelStore extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _stateGeneration++;
     _requestGeneration++;
     _cancelReason = _CancelReason.pause;
     _abortRequest();

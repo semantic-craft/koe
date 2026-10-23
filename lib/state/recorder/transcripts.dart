@@ -482,6 +482,8 @@ mixin _RecorderTranscripts on ChangeNotifier {
     if (segments == null || index < 0 || index >= segments.length) {
       throw ArgumentError('片段不存在');
     }
+    final snapshot = _speakerSnapshot(path, label: '手改发言人');
+    final shown = transcriptSegmentsForPath(path);
     final previousOverrides = _segmentSpeakers[key] == null
         ? null
         : Map<int, String>.of(_segmentSpeakers[key]!);
@@ -498,10 +500,12 @@ mixin _RecorderTranscripts on ChangeNotifier {
       overrides[index] = speaker;
     }
     if (overrides.isEmpty) _segmentSpeakers.remove(key);
+    _relabelSpeakerText(path, segments, shown);
     notifyListeners();
     try {
       await _persistTranscripts(strict: true);
     } catch (_) {
+      _restoreSpeakerSnapshot(path, snapshot);
       if (previousOverrides == null) {
         _segmentSpeakers.remove(key);
       } else {
@@ -815,8 +819,9 @@ mixin _RecorderTranscripts on ChangeNotifier {
   ) {
     final labelled = {
       for (final segments in [base, shown])
-        if (segments.any((segment) => segment.speaker != null))
-          _speakerText(segments),
+        // Clearing the last speaker leaves plain text. It must still match
+        // when a later correction assigns that passage a speaker again.
+        _speakerText(segments),
     };
     if (labelled.isEmpty) return;
     final relabelled = _speakerText(transcriptSegmentsForPath(path));
