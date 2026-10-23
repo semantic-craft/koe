@@ -181,6 +181,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeBusy = true;
     try {
       await _libraryLoaded;
+      // A take started right after launch must respect the saved calendar
+      // choice even when loading settings is still waiting on the Keychain.
+      if (runsOnMac) await _settingsLoaded;
       if (!await _phoneRecorder.requestPermission()) {
         phoneRecordingPermissionDenied = true;
         phoneRecordingError = '没有麦克风权限。可在系统设置里允许 Koe 使用麦克风，或先导入音频';

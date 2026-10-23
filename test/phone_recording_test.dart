@@ -827,6 +827,58 @@ void main() {
     );
 
     test(
+      'a Mac take started while settings load respects the saved calendar opt-out',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final calls = <String>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const channel = MethodChannel('com.semanticcraft.koe/system_tasks');
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          if (call.method == 'access') return true;
+          final at = (call.arguments as Map)['start'] as int;
+          return [
+            {'title': '产品周会', 'start': at, 'end': at + 3600000},
+          ];
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        await AppSettingsStore.save(
+          const AppSettings(meetingFromCalendar: false),
+          strict: true,
+        );
+        final keychain = Completer<void>();
+        final keychainRead = Completer<void>();
+        messenger.setMockMethodCallHandler(CredentialStore.channel, (
+          call,
+        ) async {
+          if (!keychainRead.isCompleted) keychainRead.complete();
+          await keychain.future;
+          return call.method == 'mode' ? 'system' : null;
+        });
+        controller = buildOnMac(loadPersistedState: true);
+        addTearDown(controller.dispose);
+        await keychainRead.future;
+        await controller.waitForRecordingLibrary();
+        // The user starts immediately, before their saved opt-out is known.
+        // Release the blocked settings read later, then await actual recording
+        // and library completion rather than asserting on an intermediate frame.
+        final opens = Timer(const Duration(milliseconds: 500), keychain.complete);
+        addTearDown(opens.cancel);
+        await controller.startPhoneRecording();
+        final path = await controller.stopPhoneRecording();
+        await controller.waitForPhoneTakeRecovery();
+
+        expect(calls, isEmpty);
+        expect(
+          controller.library.assetForPath(path!)?.displayName,
+          startsWith('麦克风录音 '),
+        );
+      },
+    );
+
+    test(
       '(7) macOS 目标平台下关掉「日历」后，崩溃找回的录音也不按会议命名',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
