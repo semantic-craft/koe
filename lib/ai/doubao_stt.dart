@@ -88,6 +88,8 @@ class DoubaoSttService extends CloudFileSttService {
   @override
   CloudSttException fail(String message) => DoubaoSttException(message);
 
+  /// The file API has no hint for how many people speak, so
+  /// [expectedSpeakers] is not sent.
   @override
   Future<SttResult> run(
     String path, {
@@ -95,6 +97,7 @@ class DoubaoSttService extends CloudFileSttService {
     String? baseUrl,
     String? model,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {

@@ -68,10 +68,17 @@ class _FakeTranscoder implements AudioTranscoder {
 class _QwenServer extends http.BaseClient {
   final requests = <http.BaseRequest>[];
 
+  /// The body of each task submitted to the transcription endpoint.
+  final submitted = <Map<String, dynamic>>[];
+
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     requests.add(request);
     final path = request.url.path;
+    if (path.endsWith('/transcription')) {
+      final sent = await request.finalize().toBytes();
+      submitted.add(jsonDecode(utf8.decode(sent)) as Map<String, dynamic>);
+    }
     Object body;
     if (path == '/api/v1/uploads') {
       body = {
@@ -260,5 +267,30 @@ void main() {
     expect(c.recordingView(ref).error, isNull);
     expect(c.recordingView(ref).text, contains('导入的音频'));
     expect(qwen.requests, isNotEmpty);
+  });
+
+  test('the number of people chosen for a recording goes to Qwen as its '
+      'speaker count (#408)', () async {
+    final qwen = _QwenServer();
+    final c = RecorderController(
+      loadPersistedState: false,
+      meetingLocalOnly: false,
+      qwenSpeech: QwenSttService(client: qwen, pollInterval: Duration.zero)
+        ..apiKeyOverride = 'k',
+      transcriptPersister: ({bool strict = false}) async {},
+      libraryDirectory: Directory('${dir.path}/imports'),
+    )..speechProvider = SttProvider.qwen;
+    addTearDown(c.dispose);
+    final source = File('${dir.path}/meeting.m4a');
+    await source.writeAsBytes(m4aBytes());
+    final path = (await c.importLocalAudio(source.path)).path;
+    await c.setExpectedSpeakers(path, 3);
+
+    await c.transcribeLocalFile(path);
+
+    expect(c.recordingView(RecordingReference(path: path)).error, isNull);
+    final parameters = qwen.submitted.single['parameters'] as Map;
+    expect(parameters['diarization_enabled'], isTrue);
+    expect(parameters['speaker_count'], 3);
   });
 }

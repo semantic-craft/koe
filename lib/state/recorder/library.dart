@@ -43,6 +43,7 @@ mixin _RecorderLibrary on ChangeNotifier {
   abstract String? expandedLocalPath;
   int? fileIdFromPath(String path);
   bool labellingSpeakers(String path);
+  Future<void> setExpectedSpeakers(String path, int? count);
   abstract final PlaybackHistoryStore playbackHistory;
   abstract int? playingFileId;
   abstract String? playingPath;
@@ -271,11 +272,32 @@ mixin _RecorderLibrary on ChangeNotifier {
   /// The returned path is stable across restarts. Equal content is reused
   /// rather than imported twice. Metadata persistence is part of the commit:
   /// if it fails, the newly copied file is removed and the caller sees failure.
+  ///
+  /// [expectedSpeakers], about how many people speak (R24.2), is stored for
+  /// the recording once it is in the library; null keeps what it had.
   Future<({String path, bool duplicate, RecordingAsset asset})>
   importLocalAudio(
     String sourcePath, {
     DateTime? recordedAt,
     bool recordSourcePath = true,
+    int? expectedSpeakers,
+  }) async {
+    final imported = await _importLocalAudio(
+      sourcePath,
+      recordedAt: recordedAt,
+      recordSourcePath: recordSourcePath,
+    );
+    if (expectedSpeakers != null) {
+      await setExpectedSpeakers(imported.path, expectedSpeakers);
+    }
+    return imported;
+  }
+
+  Future<({String path, bool duplicate, RecordingAsset asset})>
+  _importLocalAudio(
+    String sourcePath, {
+    DateTime? recordedAt,
+    required bool recordSourcePath,
   }) async {
     await _libraryLoaded;
     const extensions = {

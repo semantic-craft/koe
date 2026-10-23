@@ -64,6 +64,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   PhoneRecorder get _phoneRecorder;
   bool get phoneRecordingEnabled;
   Future<void> attachAutomaticPlace(String path);
+  int? expectedSpeakersForPath(String path);
+  Future<void> setExpectedSpeakers(String path, int? count);
   Future<Directory> _importDirectory();
   void _invalidateLocalDuration(String path);
   // ignore: unused_element_parameter
@@ -130,6 +132,29 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   /// Recording times marked with 标重点 during the current take.
   List<Duration> get phoneRecordingHighlights => _phoneTakeHighlights;
+
+  /// About how many people speak in the current take; null is 自动判断.
+  int? get phoneRecordingExpectedSpeakers => switch (_phoneTakePath) {
+    final path? => expectedSpeakersForPath(path),
+    null => null,
+  };
+
+  /// Sets about how many people speak in the current take (R24.2). The take
+  /// keeps its path once saved, so the number is stored for that path right
+  /// away: a take recovered after a kill keeps it too.
+  Future<void> setPhoneRecordingExpectedSpeakers(int? count) async {
+    final path = _phoneTakePath;
+    if (path == null) return;
+    await setExpectedSpeakers(path, count);
+  }
+
+  /// Drops the number of people stored for a take that was not kept.
+  Future<void> _forgetTakeSpeakers(String path) async {
+    if (expectedSpeakersForPath(path) == null) return;
+    try {
+      await setExpectedSpeakers(path, null);
+    } catch (_) {}
+  }
 
   /// Why the last start or save did not complete; null when it did.
   String? phoneRecordingError;
@@ -534,13 +559,16 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _clearPhoneTake();
       notifyListeners();
       final saved = await _adoptPhoneTake(path, startedAt);
-      if (notes.isEmpty) {
+      if (saved == null && !await File(path).exists()) {
+        // Nothing of the take is kept, so neither are its notes and the
+        // number of people chosen for it.
+        await _deleteTakeNotes(path);
+        await _forgetTakeSpeakers(path);
+      } else if (notes.isEmpty) {
         // Nothing to keep; a draft is left only if clearing it failed.
         unawaited(_deleteTakeNotes(path));
       } else if (saved != null) {
         await _saveTakeNotes(saved, draft: notes);
-      } else if (!await File(path).exists()) {
-        await _deleteTakeNotes(path);
       }
       return saved;
     } finally {
@@ -566,6 +594,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       } catch (_) {}
       await _phoneNotesWrites;
       await _deleteTakeNotes(path);
+      await _forgetTakeSpeakers(path);
       statusMessage = '已放弃这段录音';
       notifyListeners();
     } finally {

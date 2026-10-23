@@ -16,6 +16,7 @@ import '../../theme/app_theme.dart';
 import '../import_audio.dart';
 import '../import_pack.dart';
 import '../recording_navigation.dart';
+import '../widgets/expected_speakers.dart';
 import '../widgets/hold_to_talk.dart';
 import '../widgets/scan_sheet.dart';
 import '../widgets/status_indicators.dart';
@@ -233,6 +234,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
       mic,
       micNotice,
       spaceNotice,
+      expectedSpeakers,
     ) = context.select(
       (RecorderController c) => (
         c.phoneRecordingActive,
@@ -244,6 +246,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
         c.phoneRecordingMic,
         c.phoneRecordingMicNotice,
         c.phoneRecordingSpaceNotice,
+        c.phoneRecordingExpectedSpeakers,
       ),
     );
     final controller = context.read<RecorderController>();
@@ -375,6 +378,17 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                   ],
                   if (active) ...[
                     const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ExpectedSpeakersMenu(
+                        key: const ValueKey('phone-recording-speakers'),
+                        selected: expectedSpeakers,
+                        onSelected: (count) => unawaited(
+                          controller.setPhoneRecordingExpectedSpeakers(count),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     TextField(
                       key: const ValueKey('phone-recording-notes'),
                       controller: _notes,

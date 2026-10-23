@@ -1800,6 +1800,7 @@ class _Qwen extends QwenSttService {
     String? baseUrl,
     String? model,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
@@ -1836,6 +1837,7 @@ class _Doubao extends DoubaoSttService {
     String? baseUrl,
     String? model,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
@@ -1896,6 +1898,7 @@ class _Cloud extends DoubaoSttService {
     String? model,
     bool Function()? isCurrent,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
   }) async {
     fileCalls++;

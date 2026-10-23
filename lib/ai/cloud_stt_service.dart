@@ -100,12 +100,15 @@ abstract class CloudFileSttService {
   );
 
   /// The engine-specific request flow, with credentials already resolved.
+  /// [expectedSpeakers] is about how many people speak, when the user said
+  /// so; an engine without such a hint ignores it.
   Future<SttResult> run(
     String path, {
     String? apiKey,
     String? baseUrl,
     String? model,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   });
@@ -118,6 +121,7 @@ abstract class CloudFileSttService {
     String? baseUrl,
     String? model,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
@@ -128,6 +132,7 @@ abstract class CloudFileSttService {
         baseUrl: baseUrl,
         model: model,
         language: language,
+        expectedSpeakers: expectedSpeakers,
         onProgress: onProgress,
         isCurrent: isCurrent,
       );
