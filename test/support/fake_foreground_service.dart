@@ -21,11 +21,14 @@ class FakeForegroundService {
           types = (args['types'] as List).cast<String>().toSet();
           text = args['text'] as String?;
           stoppable = args['stoppable'] == true;
+          // As on the native side, a request that does not say holds it.
+          wakeLock = args['wakeLock'] as bool? ?? true;
           return types.toList();
         case 'stop':
           types = {};
           text = null;
           stoppable = false;
+          wakeLock = false;
           stops++;
           return null;
       }
@@ -56,6 +59,9 @@ class FakeForegroundService {
 
   /// Whether the notification offers 停止.
   bool stoppable = false;
+
+  /// Whether the service keeps the phone awake.
+  bool wakeLock = false;
   int stops = 0;
 
   bool get running => types.isNotEmpty;
@@ -81,6 +87,7 @@ class FakeForegroundService {
     if (types.isEmpty) {
       text = null;
       stoppable = false;
+      wakeLock = false;
     }
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;

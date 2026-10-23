@@ -36,7 +36,9 @@ mixin _RecorderDevice on ChangeNotifier {
   abstract SttStreamSession? _sttStream;
   abstract final WifiExportService _wifi;
   Future<void> _yieldAutoTransfer();
+  bool get autoTransferActive;
   bool get blocksRecordingControl;
+  abstract int? downloadingFileId;
   abstract String? errorMessage;
   bool get isExporting;
   bool get isWifiExportSession;
@@ -509,10 +511,7 @@ mixin _RecorderDevice on ChangeNotifier {
     final saved = lastKnownDevice!;
     var up = false;
     try {
-      await BackgroundSyncService.shared.begin(
-        BackgroundWork.recorderSync,
-        text: 'Koe 正在等录音豆回来',
-      );
+      await _beginRecorderLink();
       if (!_awaitsBoundDevice) return;
       up = await _ble.waitForDevice(saved.id);
     } catch (e) {
@@ -556,7 +555,7 @@ mixin _RecorderDevice on ChangeNotifier {
     notifyListeners();
     // Start while the activity is visible. Android 12+ restricts launching a
     // foreground service after the app has already entered the background.
-    await BackgroundSyncService.shared.begin(BackgroundWork.recorderSync);
+    await _beginRecorderLink();
     bool? shortcutResult;
     String? shortcutFailure;
     try {
@@ -564,7 +563,7 @@ mixin _RecorderDevice on ChangeNotifier {
       await _ble.connect(d.id, serviceUuidHint: d.serviceUuid);
       // Retry after GATT is ready in case Android initially rejected the
       // connected-device service before Bluetooth permission settled.
-      await BackgroundSyncService.shared.begin(BackgroundWork.recorderSync);
+      await _beginRecorderLink();
       connected = true;
       _systemWaitFailed = false;
       phase = AppPhase.ready;
@@ -619,7 +618,7 @@ mixin _RecorderDevice on ChangeNotifier {
       _scheduleBoundReconnect();
       // Waiting for the bound recorder keeps the service.
       if (!_ble.isConnected && !_awaitingBoundDevice) {
-        await BackgroundSyncService.shared.end(BackgroundWork.recorderSync);
+        await BackgroundSyncService.shared.end(BackgroundWork.recorderLink);
       }
       if (_recordingShortcutPending) {
         _failRecordingShortcut(connectionError);
@@ -681,9 +680,64 @@ mixin _RecorderDevice on ChangeNotifier {
     phase = AppPhase.idle;
     statusMessage = null;
     connected = false;
-    await BackgroundSyncService.shared.end(BackgroundWork.recorderSync);
+    await BackgroundSyncService.shared.end(BackgroundWork.recorderLink);
     unawaited(_persistDevice());
     notifyListeners();
+  }
+
+  /// The notification's line while Koe holds the link with nothing to move.
+  String get _recorderLinkText => connected
+      ? 'Koe 已连接录音豆'
+      : phase == AppPhase.connecting
+      ? 'Koe 正在连接录音豆'
+      : 'Koe 正在等录音豆回来';
+
+  /// Whether recordings are moving off the recorder: retrieved over
+  /// Bluetooth, automatically or on request, exported over Wi‑Fi, or a take
+  /// streamed live.
+  bool get _movingRecordings =>
+      autoTransferActive ||
+      downloadingFileId != null ||
+      isWifiExportSession ||
+      isExporting ||
+      realtimeState.active;
+
+  bool _recorderSyncBegun = false;
+  String? _recorderLinkTextShown;
+
+  /// Holds the link to the recorder in the foreground service, without
+  /// keeping the phone awake.
+  Future<void> _beginRecorderLink() {
+    final text = _recorderLinkTextShown = _recorderLinkText;
+    return BackgroundSyncService.shared.begin(
+      BackgroundWork.recorderLink,
+      text: text,
+    );
+  }
+
+  /// Keeps the foreground service in step with the recorder after every
+  /// change the controller announces: the phone is kept awake only while
+  /// recordings move (#438), and the link's line follows the recorder
+  /// (connecting, connected, awaited). Derived from the state rather than
+  /// begun and ended at each transfer, so a download that takes over from
+  /// the automatic retrieval keeps the phone awake. Only changes are passed
+  /// on: while Android withholds a type, every call would ask it again.
+  void _syncRecorderWork() {
+    final service = BackgroundSyncService.shared;
+    final moving = _movingRecordings;
+    if (moving != _recorderSyncBegun) {
+      _recorderSyncBegun = moving;
+      unawaited(
+        moving
+            ? service.begin(BackgroundWork.recorderSync)
+            : service.end(BackgroundWork.recorderSync),
+      );
+    }
+    final text = _recorderLinkText;
+    if (text != _recorderLinkTextShown) {
+      _recorderLinkTextShown = text;
+      unawaited(service.updateText(BackgroundWork.recorderLink, text));
+    }
   }
 
   /// Display name for Device tab (live or last known).
