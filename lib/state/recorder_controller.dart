@@ -42,6 +42,7 @@ import '../platform/background_sync_service.dart';
 import '../platform/phone_mic_stream.dart';
 import '../platform/phone_recorder.dart';
 import '../platform/place_capture.dart';
+import '../platform/recorder_presence.dart';
 import '../platform/system_tasks.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
@@ -127,6 +128,7 @@ part 'recorder/settings.dart';
 part 'recorder/device.dart';
 part 'recorder/device_files.dart';
 part 'recorder/ai_keep_alive.dart';
+part 'recorder/resident.dart';
 
 enum AppPhase { idle, scanning, connecting, ready, busy }
 
@@ -176,7 +178,8 @@ class RecorderController extends ChangeNotifier
         _RecorderSettings,
         _RecorderDevice,
         _RecorderDeviceFiles,
-        _RecorderAiKeepAlive {
+        _RecorderAiKeepAlive,
+        _RecorderResident {
   @override
   late final RecordingAnalysis analysis =
       _analysisOverride ??
@@ -762,9 +765,7 @@ class RecorderController extends ChangeNotifier
           session?.configuration.provider ??
           defaultConfig.provider,
       transcriptionEnabled: session?.configuration.enabled ?? autoTranscribe,
-      speechReady: _isConfigured(
-        session?.configuration ?? defaultConfig,
-      ),
+      speechReady: _isConfigured(session?.configuration ?? defaultConfig),
       live: current && recording,
       paused: current && _recordWireStatus == 2 && session.paused,
       audioLocked:
@@ -1016,6 +1017,7 @@ class RecorderController extends ChangeNotifier
     _todoLifecycle?.dispose();
     _disposeContextServices();
     _disposeAiKeepAlive();
+    _disposeResident();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);
     if (_ownsTopics) topics.dispose();

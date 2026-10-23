@@ -33,6 +33,10 @@ import android.util.Log
  * back to shortService (no permission needed) before stopping, and stop is
  * queued behind pending starts instead of calling stopService() directly.
  * Pattern from omi's SyncTransferForegroundService and ForegroundStartContract.
+ *
+ * While it runs it holds the engine (KoeEngine), so the work goes on when
+ * the activity is gone. Swiping Koe away from recents stops it, unless the
+ * recorder is associated for 全天常驻.
  */
 class RecordingSyncService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
@@ -42,6 +46,9 @@ class RecordingSyncService : Service() {
         super.onCreate()
         createNotificationChannel()
         instance = this
+        // Dart starts this service, so the engine runs. A stray start, such
+        // as 停止 tapped just as the service went, must not start Dart anew.
+        if (KoeEngine.running()) KoeEngine.hold(this, HOLDER)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -119,6 +126,14 @@ class RecordingSyncService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // The manifest keeps the service when Koe is swiped away from recents,
+    // so 全天常驻 carries on; otherwise it ends as it always did.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (RecorderCompanion.associated(this)) return
+        requestedTypes = 0
+        shutDown()
+    }
+
     // shortService only runs during the brief fallback above; never past
     // its time limit. connectedDevice and microphone have no time limit.
     @Deprecated("Android 14 only; Android 15+ calls the two-argument form")
@@ -149,6 +164,7 @@ class RecordingSyncService : Service() {
     override fun onDestroy() {
         releaseWakeLock()
         if (instance === this) instance = null
+        KoeEngine.release(this, HOLDER)
         super.onDestroy()
     }
 
@@ -222,6 +238,7 @@ class RecordingSyncService : Service() {
 
     companion object {
         private const val TAG = "KoeForeground"
+        private const val HOLDER = "recordingSync"
         private const val CHANNEL_ID = "recording_sync"
         private const val NOTIFICATION_ID = 3200
         private const val ACTION_STOP = "com.semanticcraft.soundcore.STOP_FOREGROUND"

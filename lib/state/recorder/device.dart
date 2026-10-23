@@ -56,6 +56,11 @@ mixin _RecorderDevice on ChangeNotifier {
   abstract final Duration recordingShortcutScanTimeout;
   abstract String? statusMessage;
   Future<void> stopPlayback();
+  bool get _recorderAway;
+  void _residentRecorderConnected();
+  abstract bool residentOffered;
+  Future<void> _startResident();
+  Future<void> _syncResident();
   // END DEPS
 
   static const _bleScanTimeout = Duration(seconds: 30);
@@ -68,14 +73,19 @@ mixin _RecorderDevice on ChangeNotifier {
 
   Future<void> _loadPersistedDevice() async {
     final saved = await _persistedDeviceLoader();
-    if (saved.device == null && !saved.bound) return;
-    _explicitDisconnect = saved.manuallyDisconnected;
-    lastKnownDevice = saved.device;
-    lastKnownInfo = saved.info;
-    if (saved.bound) bound = true;
-    // Surface on Device tab even before this session connects.
-    activeDevice ??= lastKnownDevice;
-    notifyListeners();
+    if (saved.device != null || saved.bound) {
+      _explicitDisconnect = saved.manuallyDisconnected;
+      residentOffered = saved.residentOffered;
+      lastKnownDevice = saved.device;
+      lastKnownInfo = saved.info;
+      if (saved.bound) bound = true;
+      // Surface on Device tab even before this session connects.
+      activeDevice ??= lastKnownDevice;
+      notifyListeners();
+    }
+    // Before reconnecting, which waits for a resident recorder only while it
+    // is near.
+    await _startResident();
     if (!_explicitDisconnect && saved.bound && saved.device != null) {
       unawaited(_startBoundDeviceReconnect());
     }
@@ -292,6 +302,7 @@ mixin _RecorderDevice on ChangeNotifier {
     await DeviceStore.save(
       bound: bound,
       manuallyDisconnected: _explicitDisconnect,
+      residentOffered: residentOffered,
       device: d,
       info: info ?? lastKnownInfo,
     );
@@ -431,6 +442,12 @@ mixin _RecorderDevice on ChangeNotifier {
 
   void _scheduleBoundReconnect() {
     if (!_canRetryBoundConnection || _boundReconnectTimer != null) return;
+    if (_recorderAway) {
+      // Android says when it is near again (全天常驻).
+      statusMessage = '录音豆不在身边，回来后会自动连上';
+      notifyListeners();
+      return;
+    }
     if (_awaitsBoundDevice && !_systemWaitFailed) {
       // The system connects it once it is back; no more scans.
       statusMessage = '录音豆回到身边后会自动连上';
@@ -466,6 +483,7 @@ mixin _RecorderDevice on ChangeNotifier {
       _ble.canAwaitDevice &&
       bound &&
       !_explicitDisconnect &&
+      !_recorderAway &&
       lastKnownDevice != null &&
       !connected &&
       !isWifiExportSession &&
@@ -555,6 +573,7 @@ mixin _RecorderDevice on ChangeNotifier {
       // so only this exact recorder is eligible for automatic reconnection.
       bound = true;
       unawaited(_persistDevice());
+      _residentRecorderConnected();
       notifyListeners();
       await Future<void>.delayed(const Duration(milliseconds: 300));
       await refreshInfo();
@@ -621,6 +640,7 @@ mixin _RecorderDevice on ChangeNotifier {
     _explicitDisconnect = false;
     _resetBoundReconnectBackoff();
     unawaited(_persistDevice());
+    unawaited(_syncResident());
     await startScan();
   }
 
@@ -630,6 +650,8 @@ mixin _RecorderDevice on ChangeNotifier {
     await _persistedDeviceLoaded;
     _explicitDisconnect = true;
     await _persistDevice();
+    // Android need not start Koe for it now.
+    unawaited(_syncResident());
     _resetBoundReconnectBackoff();
     _scanTimeoutTimer?.cancel();
     _postBindFileRefreshTimer?.cancel();
@@ -1151,8 +1173,11 @@ mixin _RecorderDevice on ChangeNotifier {
           // Unbind ACK
           if (ok) {
             bound = false;
+            // Binding it again asks afresh.
+            residentOffered = false;
             statusMessage = '已解绑（可重新扫描连接）';
             unawaited(_persistDevice());
+            unawaited(_syncResident());
             // Match Feishu: drop link after successful unbind.
             unawaited(
               Future<void>.delayed(

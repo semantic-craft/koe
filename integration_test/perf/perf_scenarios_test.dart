@@ -326,8 +326,13 @@ RecorderController _controller({
   player: player ?? _PerfPlayer(),
   loadPersistedState: false,
   playbackHistoryStore: PlaybackHistoryStore(inMemory: true),
-  persistedDeviceLoader: () async =>
-      (bound: false, manuallyDisconnected: false, device: null, info: null),
+  persistedDeviceLoader: () async => (
+    bound: false,
+    manuallyDisconnected: false,
+    residentOffered: false,
+    device: null,
+    info: null,
+  ),
   phoneRecorder: phoneRecorder,
   phoneRecordingEnabled: phoneRecorder != null,
   placeCapture: _NoPlace(),
