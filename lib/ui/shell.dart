@@ -1,16 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_identity.dart';
 import '../ai/stt_types.dart';
+import '../platform/mac_app.dart';
 import '../state/recorder_controller.dart';
 import '../theme/app_theme.dart';
+import 'mac_menu_bar.dart';
 import 'recording_navigation.dart';
 import 'screens/ask_koe_screen.dart';
 import 'screens/device_screen.dart';
 import 'screens/communication_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
+import 'screens/new_recording_sheet.dart';
 import 'screens/projects_screen.dart';
 import 'screens/recording_detail_screen.dart';
 import 'screens/settings_screen.dart';
@@ -41,6 +46,26 @@ class _AppShellState extends State<AppShell> {
   int _handledShortcutRevision = 0;
   int _handledShortcutFailureRevision = 0;
   bool _residentOffered = false;
+  MacMenuBar? _macMenuBar;
+
+  @override
+  void initState() {
+    super.initState();
+    if (MacApp.shared.enabled) {
+      _macMenuBar = MacMenuBar(
+        context.read<RecorderController>(),
+        onStart: () => unawaited(
+          handleNewRecordingAction(context, NewRecordingAction.phone),
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _macMenuBar?.dispose();
+    super.dispose();
+  }
 
   void _routeChanged() {
     WidgetsBinding.instance.addPostFrameCallback((_) {

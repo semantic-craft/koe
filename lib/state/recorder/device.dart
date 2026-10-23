@@ -49,7 +49,10 @@ mixin _RecorderDevice on ChangeNotifier {
   abstract String? textCaptureError;
   bool get textCaptureFromDevice;
   Future<bool> startTextCapture({bool allDay, bool fromDevice});
-  Future<TextCaptureOutcome?> stopTextCapture({bool keepAudio});
+  Future<TextCaptureOutcome?> stopTextCapture({
+    bool keepAudio,
+    bool keepAllDay,
+  });
   abstract int? playingFileId;
   abstract String? playingPath;
   abstract RealtimeStreamState realtimeState;

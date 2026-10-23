@@ -25,6 +25,11 @@ mixin _RecorderAiKeepAlive on ChangeNotifier {
 
   int _aiRequests = 0;
   bool _aiKeptAlive = false;
+
+  /// Whether a speech or language model request is running, for the Mac
+  /// menu bar item and sleep assertion. A notifier of its own: requests
+  /// start and end too often to notify the whole controller.
+  final modelWorking = ValueNotifier<bool>(false);
   Timer? _aiKeepAliveEnd;
   AppLifecycleListener? _aiKeepAliveResume;
 
@@ -32,14 +37,18 @@ mixin _RecorderAiKeepAlive on ChangeNotifier {
   /// running until it returns.
   Future<T> _whileAiWorks<T>(Future<T> Function() request) async {
     _aiRequests++;
+    if (!_disposed) modelWorking.value = true;
     _aiKeepAliveEnd?.cancel();
     _aiKeepAliveEnd = null;
     _keepAiAlive();
     try {
       return await request();
     } finally {
-      if (--_aiRequests == 0 && _aiKeptAlive) {
-        _aiKeepAliveEnd = Timer(aiKeepAliveGrace, _endAiKeepAlive);
+      if (--_aiRequests == 0) {
+        if (!_disposed) modelWorking.value = false;
+        if (_aiKeptAlive) {
+          _aiKeepAliveEnd = Timer(aiKeepAliveGrace, _endAiKeepAlive);
+        }
       }
     }
   }
@@ -82,6 +91,7 @@ mixin _RecorderAiKeepAlive on ChangeNotifier {
     _aiKeepAliveEnd?.cancel();
     _aiKeepAliveResume?.dispose();
     _endAiKeepAlive();
+    modelWorking.dispose();
   }
 }
 

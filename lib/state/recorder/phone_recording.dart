@@ -1,5 +1,31 @@
 part of '../recorder_controller.dart';
 
+/// When a take says the disk is filling up (#403): under 1 GB as it starts
+/// and under 300 MB while it records, as Shiyin warns
+/// (Capture/Recorder.swift:404-420). Unlike Shiyin's one-off warning, the
+/// notice stays on screen, so it keeps the room left current until there is
+/// 1 GB again. Tests shorten [checkEvery].
+abstract final class TakeSpaceCheck {
+  static const startingBelow = 1000000000;
+  static const recordingBelow = 300000000;
+  static Duration checkEvery = const Duration(seconds: 30);
+
+  /// 16 kHz mono 16-bit PCM.
+  static const _bytesPerMinute = 16000 * 2 * 60;
+
+  /// What to tell the user with [available] bytes left.
+  static String notice(int available) {
+    final minutes = available ~/ _bytesPerMinute;
+    final time = minutes < 60
+        ? '$minutes 分钟'
+        : minutes % 60 == 0
+        ? '${minutes ~/ 60} 小时'
+        : '${minutes ~/ 60} 小时 ${minutes % 60} 分钟';
+    return '磁盘只剩 ${available ~/ 1000000} MB，大约还能录 $time。'
+        '空间用完时录音会停下，已录的部分会保存。';
+  }
+}
+
 /// Phone microphone takes: start, pause, resume, stop and save as an original
 /// in the library, plus recovery of a take cut off by a crash or kill.
 ///
@@ -18,6 +44,9 @@ part of '../recorder_controller.dart';
 /// is kept on the Mac and applies to every take, hold-to-talk and text
 /// capture started after it. A chosen microphone that is not connected at
 /// the start gives way to the system default, and the take says so.
+///
+/// On the Mac a take also says when the disk is filling up (#403), as
+/// [TakeSpaceCheck] sets out.
 ///
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
@@ -51,6 +80,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   DateTime? _phoneTakeRunningSince;
   Duration _phoneTakeElapsed = Duration.zero;
   bool _phoneTakeBusy = false;
+
+  /// The stop under way; a second stop, or quitting, waits for it.
+  Future<String?>? _phoneTakeStop;
 
   /// Paused by the user rather than by the system (a call).
   bool _phoneTakeHeld = false;
@@ -87,6 +119,11 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   /// Why the current take does not record from the chosen microphone.
   String? phoneRecordingMicNotice;
 
+  /// How little room the disk has left for the current take, when that is
+  /// worth saying.
+  String? phoneRecordingSpaceNotice;
+  Timer? _phoneSpaceChecks;
+
   /// The notes typed during the current take; each line begins with the
   /// recording time it was started at.
   String get phoneRecordingNotes => _phoneTakeNotes;
@@ -101,6 +138,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   bool phoneRecordingPermissionDenied = false;
 
   bool get phoneRecordingActive => _phoneTakePath != null;
+
+  /// Stop was pressed and the take is being saved.
+  bool get phoneRecordingSaving => _phoneTakeStop != null;
+
   bool get phoneRecordingPaused =>
       phoneRecordingActive && _phoneTakeRunningSince == null;
 
@@ -157,6 +198,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       await _phoneMicStates?.cancel();
       _phoneMicStates = _phoneRecorder.states.listen(_onPhoneMicState);
       _watchPhoneMicLevels();
+      _watchPhoneSpace(path);
       notifyListeners();
     } finally {
       _phoneTakeBusy = false;
@@ -207,6 +249,38 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         phoneRecordingLevel.value = ((db + 60) / 60).clamp(0.0, 1.0);
         if (watch.add(db)) notifyListeners();
       });
+    }
+  }
+
+  /// Checks the room left for the take at [path] as it starts and then every
+  /// [TakeSpaceCheck.checkEvery], where the platform can tell. A disk that
+  /// fills up anyway ends the take, which is saved like any take the system
+  /// ends.
+  void _watchPhoneSpace(String path) {
+    if (_phoneRecorder case final PhoneDiskSpace disk) {
+      Future<void> check({required bool starting}) async {
+        final available = await disk.availableSpace(path);
+        if (_disposed || _phoneTakePath != path) return;
+        if (available == null) {
+          _phoneSpaceChecks?.cancel();
+          return;
+        }
+        final below = starting || phoneRecordingSpaceNotice != null
+            ? TakeSpaceCheck.startingBelow
+            : TakeSpaceCheck.recordingBelow;
+        final notice = available < below
+            ? TakeSpaceCheck.notice(available)
+            : null;
+        if (notice == phoneRecordingSpaceNotice) return;
+        phoneRecordingSpaceNotice = notice;
+        notifyListeners();
+      }
+
+      unawaited(check(starting: true));
+      _phoneSpaceChecks = Timer.periodic(
+        TakeSpaceCheck.checkEvery,
+        (_) => unawaited(check(starting: false)),
+      );
     }
   }
 
@@ -428,11 +502,21 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   /// Stops the take and saves it as an original. Returns the saved path, or
   /// null when nothing usable was recorded or the save failed; a failed save
-  /// keeps the audio file and is retried on the next launch.
-  Future<String?> stopPhoneRecording() async {
+  /// keeps the audio file and is retried on the next launch. A stop while
+  /// one is under way waits for it.
+  Future<String?> stopPhoneRecording() {
+    if (_phoneTakeStop case final stopping?) return stopping;
     final path = _phoneTakePath;
     final startedAt = _phoneTakeStartedAt;
-    if (path == null || startedAt == null || _phoneTakeBusy) return null;
+    if (path == null || startedAt == null || _phoneTakeBusy) {
+      return Future.value();
+    }
+    final stopping = _phoneTakeStop = _stopPhoneTake(path, startedAt);
+    notifyListeners();
+    return stopping;
+  }
+
+  Future<String?> _stopPhoneTake(String path, DateTime startedAt) async {
     _phoneTakeBusy = true;
     try {
       try {
@@ -461,6 +545,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       return saved;
     } finally {
       _phoneTakeBusy = false;
+      _phoneTakeStop = null;
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -503,6 +589,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     phoneRecordingLevel.value = 0;
     phoneRecordingMic = null;
     phoneRecordingMicNotice = null;
+    _phoneSpaceChecks?.cancel();
+    _phoneSpaceChecks = null;
+    phoneRecordingSpaceNotice = null;
     unawaited(BackgroundSyncService.shared.end(BackgroundWork.phoneRecording));
   }
 
@@ -629,6 +718,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   @override
   void dispose() {
     unawaited(_phoneMicLevels?.cancel());
+    _phoneSpaceChecks?.cancel();
     phoneRecordingLevel.dispose();
     super.dispose();
   }

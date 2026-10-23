@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart'
 import 'package:record/record.dart';
 
 import '../state/atomic_file.dart';
+import 'mac_app.dart';
 
 export '../audio/input_level_watch.dart' show InputLevelHint, InputLevelWatch;
 
@@ -91,6 +92,12 @@ abstract interface class PhoneMicInputs {
   void useInput(MicInput? input);
 }
 
+/// A microphone that can tell how much room is left for its takes (#403).
+abstract interface class PhoneDiskSpace {
+  /// Bytes free for a take written at [path]; null when it cannot tell.
+  Future<int?> availableSpace(String path);
+}
+
 /// The inputs [recorder] can record from, each once.
 Future<List<MicInput>> micInputsOf(AudioRecorder recorder) async {
   final seen = <String>{};
@@ -102,7 +109,7 @@ Future<List<MicInput>> micInputsOf(AudioRecorder recorder) async {
 }
 
 class DevicePhoneRecorder
-    implements PhoneRecorder, PhoneMicLevels, PhoneMicInputs {
+    implements PhoneRecorder, PhoneMicLevels, PhoneMicInputs, PhoneDiskSpace {
   DevicePhoneRecorder();
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -145,6 +152,11 @@ class DevicePhoneRecorder
 
   @override
   void useInput(MicInput? input) => _input = input?.device;
+
+  /// Only the Mac tells; elsewhere this is null.
+  @override
+  Future<int?> availableSpace(String path) =>
+      MacApp.shared.availableSpace(path);
 
   /// Apple platforms report the average power of each interval, Android its
   /// peak.
