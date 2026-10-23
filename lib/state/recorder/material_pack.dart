@@ -99,6 +99,7 @@ mixin _RecorderMaterialPack on ChangeNotifier {
     String sourcePath, {
     DateTime? recordedAt,
     bool recordSourcePath = true,
+    int? expectedSpeakers,
   });
   Future<void> _persistTranscripts({bool strict = false});
   // ignore: unused_element_parameter

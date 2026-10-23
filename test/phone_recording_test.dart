@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -217,6 +218,95 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('close-phone-recording')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('phone-recording-title')), findsNothing);
+  });
+
+  testWidgets('the number of people chosen while recording stays with the '
+      'take (#408)', (tester) async {
+    controller = (await tester.runAsync(() async => build()))!;
+    addTearDown(controller.dispose);
+    await pump(tester);
+    await openPhoneRecording(tester);
+    await settle(tester, () => controller.phoneRecordingActive);
+    expect(find.text('人数：自动判断'), findsOneWidget);
+
+    // The take keeps animating, so step through the menu's own transition
+    // instead of waiting for the screen to settle.
+    await tester.tap(find.byKey(const ValueKey('phone-recording-speakers')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('expected-speakers-3')));
+    await settle(tester, () => controller.phoneRecordingExpectedSpeakers == 3);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('大约 3 人'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('stop-phone-recording')));
+    await settle(
+      tester,
+      () =>
+          controller.library.assets.isNotEmpty &&
+          !controller.phoneRecordingSaving,
+    );
+    expect(
+      controller.expectedSpeakersForPath(controller.library.assets.single.path),
+      3,
+    );
+  });
+
+  testWidgets('the panel still closes when the number of people is tapped '
+      'while the take saves (#408)', (tester) async {
+    controller = (await tester.runAsync(() async => build()))!;
+    addTearDown(controller.dispose);
+    await pump(tester);
+    await openPhoneRecording(tester);
+    await settle(tester, () => controller.phoneRecordingActive);
+
+    final gate = mic.stopGate = Completer<void>();
+    await tester.tap(find.byKey(const ValueKey('stop-phone-recording')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('phone-recording-speakers')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    gate.complete();
+    await settle(
+      tester,
+      () =>
+          controller.library.assets.isNotEmpty &&
+          !controller.phoneRecordingSaving,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('phone-recording-title')), findsNothing);
+    expect(find.text('手机录音已保存为原件'), findsOneWidget);
+  });
+
+  testWidgets('the number of people chosen when importing stays with the '
+      'recording (#408)', (tester) async {
+    final source = File('${directory.path}/meeting.wav');
+    await tester.runAsync(() => source.writeAsBytes(_wav(dataBytes: 32000)));
+    final original = FileSelectorPlatform.instance;
+    FileSelectorPlatform.instance = _OpenPanel(source.path);
+    addTearDown(() => FileSelectorPlatform.instance = original);
+    controller = (await tester.runAsync(() async => build()))!;
+    addTearDown(controller.dispose);
+    await pump(tester);
+
+    await tester.tap(find.byKey(const ValueKey('new-recording')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('new-record-import')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('meeting.wav'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('expected-speakers-3')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('confirm-import-audio')));
+    await settle(
+      tester,
+      () =>
+          controller.library.assets.isNotEmpty &&
+          controller.expectedSpeakersForPath(
+                controller.library.assets.single.path,
+              ) ==
+              3,
+    );
   });
 
   Future<void> until(bool Function() done) async {
@@ -834,6 +924,20 @@ class _FixedPlace implements PlaceCapture {
   );
 }
 
+/// Stands in for the system's open panel, choosing [path].
+class _OpenPanel extends FileSelectorPlatform {
+  _OpenPanel(this.path);
+
+  final String path;
+
+  @override
+  Future<XFile?> openFile({
+    List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,
+    String? confirmButtonText,
+  }) async => XFile(path);
+}
+
 /// Writes a real WAV on stop so the save path runs on actual bytes.
 class _FakePhoneRecorder implements PhoneRecorder {
   _FakePhoneRecorder({required this.permission});
@@ -844,6 +948,9 @@ class _FakePhoneRecorder implements PhoneRecorder {
   int starts = 0;
   int pauses = 0;
   int resumes = 0;
+
+  /// When set, stop waits for it, so a test can act while the take saves.
+  Completer<void>? stopGate;
 
   @override
   Future<bool> requestPermission() async => permission;
@@ -866,6 +973,7 @@ class _FakePhoneRecorder implements PhoneRecorder {
 
   @override
   Future<void> stop() async {
+    await stopGate?.future;
     await File(path!).writeAsBytes(_wav(dataBytes: 64000));
   }
 

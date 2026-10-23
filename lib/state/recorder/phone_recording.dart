@@ -55,6 +55,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   abstract bool _disposed;
   abstract final Future<void> _libraryLoaded;
   abstract final Future<void> _bookmarksLoaded;
+  abstract Future<void> _transcriptsLoaded;
   abstract final MacArchiveController archive;
   abstract final RecordingBookmarkStore bookmarks;
   abstract String? errorMessage;
@@ -64,6 +65,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   PhoneRecorder get _phoneRecorder;
   bool get phoneRecordingEnabled;
   Future<void> attachAutomaticPlace(String path);
+  int? expectedSpeakersForPath(String path);
+  Future<void> setExpectedSpeakers(String path, int? count);
   Future<Directory> _importDirectory();
   void _invalidateLocalDuration(String path);
   // ignore: unused_element_parameter
@@ -130,6 +133,21 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   /// Recording times marked with 标重点 during the current take.
   List<Duration> get phoneRecordingHighlights => _phoneTakeHighlights;
+
+  /// About how many people speak in the current take; null is 自动判断.
+  int? get phoneRecordingExpectedSpeakers => switch (_phoneTakePath) {
+    final path? => expectedSpeakersForPath(path),
+    null => null,
+  };
+
+  /// Sets about how many people speak in the current take (R24.2). The take
+  /// keeps its path once saved, so the number is stored for that path right
+  /// away: a take recovered after a kill keeps it too.
+  Future<void> setPhoneRecordingExpectedSpeakers(int? count) async {
+    final path = _phoneTakePath;
+    if (path == null) return;
+    await setExpectedSpeakers(path, count);
+  }
 
   /// Why the last start or save did not complete; null when it did.
   String? phoneRecordingError;
@@ -534,13 +552,16 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _clearPhoneTake();
       notifyListeners();
       final saved = await _adoptPhoneTake(path, startedAt);
-      if (notes.isEmpty) {
+      if (saved == null && !await File(path).exists()) {
+        // Nothing of the take is kept, so neither are its notes and the
+        // number of people chosen for it.
+        await _deleteTakeNotes(path);
+        await setExpectedSpeakers(path, null);
+      } else if (notes.isEmpty) {
         // Nothing to keep; a draft is left only if clearing it failed.
         unawaited(_deleteTakeNotes(path));
       } else if (saved != null) {
         await _saveTakeNotes(saved, draft: notes);
-      } else if (!await File(path).exists()) {
-        await _deleteTakeNotes(path);
       }
       return saved;
     } finally {
@@ -566,6 +587,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       } catch (_) {}
       await _phoneNotesWrites;
       await _deleteTakeNotes(path);
+      await setExpectedSpeakers(path, null);
       statusMessage = '已放弃这段录音';
       notifyListeners();
     } finally {
@@ -683,7 +705,12 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       final micros = int.tryParse(name.substring(_takePrefix.length));
       if (micros == null) continue;
       final started = DateTime.fromMicrosecondsSinceEpoch(micros);
-      if (await _adoptPhoneTake(entity.path, started) != null) recovered++;
+      if (await _adoptPhoneTake(entity.path, started) != null) {
+        recovered++;
+      } else if (!await entity.exists()) {
+        // Too short to keep, and so is the number of people chosen for it.
+        await _forgetTakeSpeakers(entity.path);
+      }
     }
     for (final draft in drafts) {
       if (_disposed) return;
@@ -705,6 +732,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         await _saveTakeNotes(take);
       } else if (!await File(take).exists()) {
         await _deleteTakeNotes(take);
+        await _forgetTakeSpeakers(take);
       }
     }
     if (recovered > 0 && !_disposed) {
@@ -713,6 +741,13 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
           : '找回了 $recovered 段中断的手机录音';
       notifyListeners();
     }
+  }
+
+  /// Drops the number of people stored for a take found gone after a kill.
+  /// The stored ones are loaded first, or loading would bring it back.
+  Future<void> _forgetTakeSpeakers(String take) async {
+    await _transcriptsLoaded;
+    await setExpectedSpeakers(take, null);
   }
 
   @override

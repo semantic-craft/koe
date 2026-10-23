@@ -44,6 +44,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   abstract final Map<String, TranscriptMetadata> _transcriptMetadata;
   abstract Future<void> _transcriptsLoaded;
   abstract String appleSourceLanguage;
+  int? expectedSpeakersForPath(String path);
   int? fileIdFromPath(String path);
   abstract SttFileProgress? fileTranscriptionProgress;
   RecordingViewData recordingView(RecordingReference ref);
@@ -500,6 +501,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
           : await _transcribePath(
               path,
               configuration: config,
+              expectedSpeakers: expectedSpeakersForPath(path),
               isCurrent: () =>
                   !_disposed &&
                   revision == _fileJobRevision &&
@@ -751,6 +753,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   Future<SttResult> _transcribePath(
     String path, {
     SpeechConfiguration? configuration,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
@@ -759,6 +762,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
       () => _sttEngines[config.provider]!.transcribe(
         path,
         config,
+        expectedSpeakers: expectedSpeakers,
         onProgress: onProgress,
         isCurrent: isCurrent,
       ),

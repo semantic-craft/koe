@@ -98,6 +98,7 @@ class QwenSttService extends CloudFileSttService {
     String? baseUrl,
     String? model,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {
@@ -162,6 +163,7 @@ class QwenSttService extends CloudFileSttService {
         model: resolvedModel,
         ossUrl: ossUrl,
         language: language,
+        expectedSpeakers: expectedSpeakers,
       );
       await checkpoint?.onSubmitted(taskId);
     }
@@ -318,6 +320,7 @@ class QwenSttService extends CloudFileSttService {
     required String model,
     required String ossUrl,
     String? language,
+    int? expectedSpeakers,
   }) async {
     final response = await _client
         .post(
@@ -333,6 +336,7 @@ class QwenSttService extends CloudFileSttService {
               model: model,
               fileUrl: ossUrl,
               language: language,
+              expectedSpeakers: expectedSpeakers,
             ),
           ),
         )
@@ -576,16 +580,26 @@ List<String>? qwenLanguageHints({required String model, String? language}) {
 /// `parameters` is always present. Qwen-Audio-3.1/3.0 filetrans fails when
 /// that object is omitted. `qwen3-asr-flash-filetrans` uses singular
 /// `input.file_url` and is rejected before this body is sent.
+///
+/// [expectedSpeakers], about how many people speak, goes out as
+/// `speaker_count`, a hint the service takes only with diarization on and
+/// only from 2 to 100.
 Map<String, dynamic> qwenTranscriptionBody({
   required String model,
   required String fileUrl,
   String? language,
+  int? expectedSpeakers,
 }) {
   final parameters = <String, dynamic>{
     'channel_id': [0],
   };
   if (qwenDiarizationEnabled(model)) {
     parameters['diarization_enabled'] = true;
+    if (expectedSpeakers != null &&
+        expectedSpeakers >= 2 &&
+        expectedSpeakers <= 100) {
+      parameters['speaker_count'] = expectedSpeakers;
+    }
   }
   final hints = qwenLanguageHints(model: model, language: language);
   if (hints != null) parameters['language_hints'] = hints;

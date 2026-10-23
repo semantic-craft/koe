@@ -43,6 +43,7 @@ mixin _RecorderLibrary on ChangeNotifier {
   abstract String? expandedLocalPath;
   int? fileIdFromPath(String path);
   bool labellingSpeakers(String path);
+  Future<void> setExpectedSpeakers(String path, int? count);
   abstract final PlaybackHistoryStore playbackHistory;
   abstract int? playingFileId;
   abstract String? playingPath;
@@ -271,13 +272,21 @@ mixin _RecorderLibrary on ChangeNotifier {
   /// The returned path is stable across restarts. Equal content is reused
   /// rather than imported twice. Metadata persistence is part of the commit:
   /// if it fails, the newly copied file is removed and the caller sees failure.
+  ///
+  /// [expectedSpeakers], about how many people speak (R24.2), is stored
+  /// before the recording is announced, so automatic organizing already
+  /// transcribes with it. A recording already here that is transcribed, or
+  /// being transcribed, keeps its own: the new number would not redo its
+  /// speakers. Null keeps what it had.
   Future<({String path, bool duplicate, RecordingAsset asset})>
   importLocalAudio(
     String sourcePath, {
     DateTime? recordedAt,
     bool recordSourcePath = true,
+    int? expectedSpeakers,
   }) async {
-    await _libraryLoaded;
+    // Whether a recording already here is transcribed is read below.
+    await Future.wait([_libraryLoaded, _transcriptsLoaded]);
     const extensions = {
       '.wav',
       '.m4a',
@@ -313,6 +322,11 @@ mixin _RecorderLibrary on ChangeNotifier {
         analysis.resumeRecording(_recordingKey(path: existing.path));
       }
       _registerExportedPaths([...exportedPaths, existing.path]);
+      if (expectedSpeakers != null &&
+          transcriptForPath(existing.path) == null &&
+          _fileJobKey != _recordingKey(path: existing.path)) {
+        await setExpectedSpeakers(existing.path, expectedSpeakers);
+      }
       statusMessage = restored ? '这条音频在回收站中，已恢复' : '这条音频已在资料库中';
       errorMessage = null;
       notifyListeners();
@@ -365,6 +379,9 @@ mixin _RecorderLibrary on ChangeNotifier {
       await library.upsert(asset);
       _registerExportedPaths([...exportedPaths, target.path]);
       _invalidateLocalDuration(target.path);
+      if (expectedSpeakers != null) {
+        await setExpectedSpeakers(target.path, expectedSpeakers);
+      }
       statusMessage = '原件已保存';
       errorMessage = null;
       notifyListeners();

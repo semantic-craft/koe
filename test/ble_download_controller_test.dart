@@ -461,6 +461,7 @@ class _Qwen extends QwenSttService {
     String? baseUrl,
     String? model,
     String? language,
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   }) async {

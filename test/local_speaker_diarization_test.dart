@@ -254,6 +254,35 @@ void main() {
     ]);
   });
 
+  test('录音时选 3 人，保存后这条录音的发言人区分用 3 人（#408）', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-local-diar-');
+    addTearDown(() => dir.delete(recursive: true));
+    final diarizer = ScriptedSpeakerDiarizer([
+      _turns([(0, 0, 3), (1, 3, 6)]),
+    ]);
+    final controller = RecorderController(
+      loadPersistedState: false,
+      topicsEnabled: false,
+      appleSpeech: _FakeAppleSpeech(),
+      speakerDiarizer: diarizer,
+      phoneRecorder: _PatternedPhoneRecorder(),
+      phoneRecordingEnabled: true,
+      placeCapture: const _NoPlace(),
+      transcriptPersister: ({bool strict = false}) async {},
+      libraryDirectory: Directory('${dir.path}/imports'),
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshAppleCapabilities();
+
+    await controller.startPhoneRecording();
+    await controller.setPhoneRecordingExpectedSpeakers(3);
+    final path = (await controller.stopPhoneRecording())!;
+    await controller.transcribeLocalFile(path, provider: SttProvider.apple);
+    await until(() => diarizer.calls == 1);
+
+    expect(diarizer.lastExpectedSpeakers, 3);
+  });
+
   test('重新转写换了文字后，旧的并错人提示不再出现', () async {
     final dir = await Directory.systemTemp.createTemp('koe-local-diar-');
     addTearDown(() => dir.delete(recursive: true));

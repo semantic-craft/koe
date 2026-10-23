@@ -1169,9 +1169,12 @@ class _EngineAdapter {
 class _SttEngine {
   const _SttEngine({required this.transcribe, required this.openStream});
 
+  /// Transcribes a file; [expectedSpeakers] is about how many people speak,
+  /// for an engine that takes such a hint.
   final Future<SttResult> Function(
     String path,
     SpeechConfiguration config, {
+    int? expectedSpeakers,
     SttFileProgressCallback? onProgress,
     bool Function()? isCurrent,
   })

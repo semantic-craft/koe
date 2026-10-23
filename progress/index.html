@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-23T08:06:54.856832Z</p>
-<p>Main: <code>main: 964291e5283a3ae6423255adb6073a3e8ac5c341</code></p>
+<p>Observed: 2026-10-23T09:01:25.817416Z</p>
+<p>Main: <code>main: d1e2a1585a8ad29e2bb7922d2d71c687d26f6ae1</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -46,7 +46,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: 取代它的应用名称与图标实现。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/351">pull 351: 取代它的后台同步通知实现。</a></li>
 </ul><p>Next: 无后续实现；Android 设备验收按 #345。</p></article>
-<article id="meeting-diarization-p2"><h3>会议纪要第 2 期：本机发言人区分</h3><span class="badge">in_progress</span><p>#432 接手 #389：合入 main，修了 R22.2（重新区分后取过的名字跟着人走），#398 之后 Apple 转写按段分配发言人。代码评审（high）15 条修了 14 条：转写文字先存好，发言人随后在后台区分、一次只区分一条，重新转写也沿用编号，合并和重新区分连正文一起改、能复原，暂停的模型下载不会自己重开，手机热点和低数据模式不算 Wi-Fi；长录音内存等没修的项记在 #434。4530da2 上 scripts/check 无分析问题、920 个测试全过，三端 debug 构建成功，963bbe1 上 CI 通过、perf-check 在 Mac 空闲时各项都在上限内。自动阈值保留 1.0：AMI 0–420 秒留出 DER 14.43%（6 人），中文四人样例并成 2 人；本轮没有模型缓存，没有重跑真实模型。</p><ul>
+<article id="meeting-diarization-p2"><h3>会议纪要第 2 期：本机发言人区分</h3><span class="badge">in_progress</span><p>#432 已合并（575f069）。#432 接手 #389：合入 main，修了 R22.2（重新区分后取过的名字跟着人走），#398 之后 Apple 转写按段分配发言人。代码评审（high）15 条修了 14 条：转写文字先存好，发言人随后在后台区分、一次只区分一条，重新转写也沿用编号，合并和重新区分连正文一起改、能复原，暂停的模型下载不会自己重开，手机热点和低数据模式不算 Wi-Fi；长录音内存等没修的项记在 #434。4530da2 上 scripts/check 无分析问题、920 个测试全过，三端 debug 构建成功，963bbe1 上 CI 通过、perf-check 在 Mac 空闲时各项都在上限内。自动阈值保留 1.0：AMI 0–420 秒留出 DER 14.43%（6 人），中文四人样例并成 2 人；本轮没有模型缓存，没有重跑真实模型。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/432">pull 432: 接手 #389 的 PR：合入 main、R22.2、评审后的修复；三项验收、perf-check 数字和待定阈值写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/433">issue 433: 三端真机验收和自动阈值的真实会议核对。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/434">issue 434: 评审确认、没在 #432 修的项：长录音内存、模型地址钉版本、下载效率与代码清理，以及有线网络待定。</a></li>
@@ -54,7 +54,16 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/speaker_edits_test.dart">file test/speaker_edits_test.dart: (2b) 改前张总的名字落到新来的人身上，改后跟着人走；(2) 期望 1、9、2。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/local_speaker_diarization_test.dart">file test/local_speaker_diarization_test.dart: 「本机会议先存下转写文字，发言人在转写任务之外标上」：改前文字要等区分完才存。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/tool/diarization_eval.dart">file tool/diarization_eval.dart: #389 的评测：独立时间区间、双侧 collar 与重叠计分。</a></li>
-</ul><p>Next: 合并 #432；#433 做三端真机验收，并用真实中文会议定自动阈值（并成少于实际人数就改回 0.75）；#434 处理评审时没修的项；只插网线时是否允许下载模型待用户定；#371 还差 scripts/android-check 的区分场景。</p></article>
+</ul><p>Next: #433 做三端真机验收，并用真实中文会议定自动阈值（并成少于实际人数就改回 0.75）；#434 处理评审时没修的项；只插网线时是否允许下载模型待用户定；#371 还差 scripts/android-check 的区分场景。</p></article>
+<article id="meeting-phase4"><h3>会议纪要第 4 期：对标拾音的 Mac 录音体验</h3><span class="badge">in_progress</span><p>4I（#408）在 #439：录音中和导入时都能选「大约几个人」，本机区分发言人和千问转写按这个人数分。评审（max）确认的问题已修：保存录音时人数菜单挡住面板关闭、重复导入改掉已转写录音的人数、导入的人数晚于自动整理写入、找回时删掉的录音留下人数。ff5661d 上 scripts/check 无分析问题、927 个测试全过；没在真机上录音或导入，没调用真实千问接口。R18.12 做了一半（被打断的转写下次打开重跑在 #426），4E–4H（#404–#407）还没开始。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/439">pull 439: 4I 的实现与评审修正；三项验收写在正文。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/408">issue 408: 4I 工单：录音页、导入时选人数（拾音 R24.2）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/440">issue 440: 4I 的真机确认，含第一次用真实千问接口带 speaker_count。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/426">issue 426: 被打断的本机转写和上传中的转写下次打开重跑（R18.12 的另一半）。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/373">issue 373: 第 4 期总工单。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/handoffs/meeting-notes-shiyin-4-delta.md">file handoffs/meeting-notes-shiyin-4-delta.md: 拾音补漏表：第 4 期 9 处已做，还剩 8 处排在 4E–4H。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/phone_recording_test.dart">file test/phone_recording_test.dart: 「the panel still closes when the number of people is tapped while the take saves」：改前面板关不掉。</a></li>
+</ul><p>Next: #439 CI 通过后合并；#440 真机确认；接着做 #426，再做 4F（#405）、4G（#406）、4H（#407）、4E（#404）。</p></article>
 </section>
 <section id="pending"><h2>问题与功能范围</h2>
 <article id="reconnect-flake"><h3>一键重连测试偶发失败</h3><span class="badge">planned</span><p>工单记录手动断开后一键重连测试偶发失败；需依据复现时序和行为测试判断根因与修复效果。</p><ul>
@@ -130,6 +139,6 @@
 </ul><p>Next: 有网络时 refresh 核对事实，再 render 与 check；新增范围先明确 tracked，设备验收独立补证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/432">#432</a> <code>963bbe14db7837fb408523bf538de61787063439</code></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/439">#439</a> <code>ff5661dc9d5d5a91b0f9f9fff7cd938f5ef3ec40</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

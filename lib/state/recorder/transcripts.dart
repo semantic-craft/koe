@@ -644,11 +644,13 @@ mixin _RecorderTranscripts on ChangeNotifier {
 
   Future<void> setExpectedSpeakers(String path, int? count) async {
     final key = _recordingKey(path: path);
+    final next = count == null || count <= 0 ? null : count;
+    if (_expectedSpeakers[key] == next) return;
     _speakerUndo.remove(key);
-    if (count == null || count <= 0) {
+    if (next == null) {
       _expectedSpeakers.remove(key);
     } else {
-      _expectedSpeakers[key] = count;
+      _expectedSpeakers[key] = next;
     }
     notifyListeners();
     await _persistTranscripts();
@@ -683,8 +685,9 @@ mixin _RecorderTranscripts on ChangeNotifier {
   /// for [path] (S24).
   ///
   /// Shown when [DiarizationQuality.shouldSuggestRediarize] is true, the user
-  /// has not dismissed the hint, and the user has not already pinned an
-  /// explicit [expectedSpeakersForPath].
+  /// has not dismissed the hint, and the user has not given
+  /// [expectedSpeakersForPath]: whether chosen on recording or importing
+  /// (R24.2) or on redoing the speakers, the hint would only ask for it again.
   bool shouldShowSpeakerMergeHint(String path) {
     final key = _recordingKey(path: path);
     if (_speakerHintDismissed.contains(key)) return false;
