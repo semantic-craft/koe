@@ -49,6 +49,47 @@ class RecordingPlace {
   }
 }
 
+/// The calendar meeting a recording was made in (#407): its title and the
+/// names of the people invited. Addresses are not kept.
+class RecordingMeeting {
+  const RecordingMeeting({required this.title, this.participants = const []});
+
+  final String title;
+  final List<String> participants;
+
+  /// The meeting written out for the model that summarizes the take or
+  /// turns it into minutes: invitees help it spell names and fill owners,
+  /// but being invited is not having spoken.
+  String get analysisNotes => [
+    '这段录音是在日历里的一场会议中录的。以下会议名和受邀参会人来自日历，不是原文，也不是用户笔记。'
+        '受邀不代表到场或发言，不要据此判断谁说了哪句话；原文提到其中的人时按这里的写法写名字，'
+        '原文明确某件事由其中某人负责时，负责人写这个名字。',
+    '会议名：$title',
+    if (participants.isNotEmpty) '受邀参会人：${participants.join('、')}',
+  ].join('\n');
+
+  Map<String, Object?> toJson() => {
+    'title': title,
+    if (participants.isNotEmpty) 'participants': participants,
+  };
+
+  static RecordingMeeting? decode(Object? value) {
+    if (value is! Map) return null;
+    final title = value['title'];
+    if (title is! String || title.trim().isEmpty) return null;
+    final people = value['participants'];
+    return RecordingMeeting(
+      title: title.trim(),
+      participants: people is List
+          ? [
+              for (final name in people)
+                if (name is String && name.trim().isNotEmpty) name.trim(),
+            ]
+          : const [],
+    );
+  }
+}
+
 /// One original audio asset in the local library.
 ///
 /// The audio file is the source of truth. This record only remembers where it
@@ -69,6 +110,7 @@ class RecordingAsset {
     this.deletedAt,
     this.permanentlyDeleted = false,
     this.voiceNote = false,
+    this.meeting,
   });
 
   final String path;
@@ -95,6 +137,9 @@ class RecordingAsset {
   /// treated as meeting recordings.
   final bool voiceNote;
 
+  /// The calendar meeting the take was recorded in, on the Mac (#407).
+  final RecordingMeeting? meeting;
+
   bool get trashed => deletedAt != null || archived;
 
   RecordingAsset copyWith({
@@ -113,6 +158,7 @@ class RecordingAsset {
     bool clearDeletedAt = false,
     bool? permanentlyDeleted,
     bool? voiceNote,
+    RecordingMeeting? meeting,
   }) => RecordingAsset(
     path: path ?? this.path,
     displayName: displayName ?? this.displayName,
@@ -127,6 +173,7 @@ class RecordingAsset {
     deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
     permanentlyDeleted: permanentlyDeleted ?? this.permanentlyDeleted,
     voiceNote: voiceNote ?? this.voiceNote,
+    meeting: meeting ?? this.meeting,
   );
 
   Map<String, Object?> toJson() => {
@@ -143,6 +190,7 @@ class RecordingAsset {
     if (deletedAt != null) 'deletedAt': deletedAt!.toIso8601String(),
     if (permanentlyDeleted) 'permanentlyDeleted': true,
     if (voiceNote) 'voiceNote': true,
+    if (meeting != null) 'meeting': meeting!.toJson(),
   };
 
   static RecordingAsset? decode(Object? value) {
@@ -185,6 +233,7 @@ class RecordingAsset {
       deletedAt: deletedAt,
       permanentlyDeleted: value['permanentlyDeleted'] == true,
       voiceNote: value['voiceNote'] == true,
+      meeting: RecordingMeeting.decode(value['meeting']),
     );
   }
 }

@@ -38,6 +38,7 @@
 		A90C71012F40000200A71002 /* AudioTranscodeBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000200A71001 /* AudioTranscodeBridge.swift */; };
 		A90C71012F40000300A71002 /* WifiConnectivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90C71012F40000300A71001 /* WifiConnectivityBridge.swift */; };
 		A11271002F40000100A71001 /* AppleSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11271012F40000100A71001 /* AppleSpeechBridge.swift */; };
+		B5C7A1002F40000100B71001 /* SystemTasksBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -106,6 +107,7 @@
 		A90C71012F40000200A71001 /* AudioTranscodeBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AudioTranscodeBridge.swift; path = ../../darwin/AudioTranscodeBridge.swift; sourceTree = "<group>"; };
 		A90C71012F40000300A71001 /* WifiConnectivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WifiConnectivityBridge.swift; path = ../../darwin/WifiConnectivityBridge.swift; sourceTree = "<group>"; };
 		A11271012F40000100A71001 /* AppleSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleSpeechBridge.swift; path = ../../darwin/AppleSpeechBridge.swift; sourceTree = "<group>"; };
+		B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SystemTasksBridge.swift; path = ../../darwin/SystemTasksBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -204,6 +206,7 @@
 				A90C71012F40000300A71001 /* WifiConnectivityBridge.swift */,
 				A90C71012F40000000A71001 /* KeychainStore.swift */,
 				A11271012F40000100A71001 /* AppleSpeechBridge.swift */,
+				B5C7A1012F40000100B71001 /* SystemTasksBridge.swift */,
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
@@ -479,6 +482,7 @@
 				A90C71012F40000300A71002 /* WifiConnectivityBridge.swift in Sources */,
 				A90C71012F40000000A71002 /* KeychainStore.swift in Sources */,
 				A11271002F40000100A71001 /* AppleSpeechBridge.swift in Sources */,
+				B5C7A1002F40000100B71001 /* SystemTasksBridge.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

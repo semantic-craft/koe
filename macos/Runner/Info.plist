@@ -38,6 +38,14 @@
 	<string>Koe 使用蓝牙查找并连接已适配的安克录音豆（soundcore Work / D3200），管理录音。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Koe 需要直连安克录音豆的 Wi-Fi 热点来导出录音，并在你配对后直连同一局域网内的 Mac 归档原件。</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Koe 开始麦克风录音时读取日历里正在进行的会议，用会议名给录音命名，把参会人交给会议纪要；你确认「导出到日历」后，把选定的事项写入日历，并读回标题和时间保持一致。</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Koe 开始麦克风录音时读取日历里正在进行的会议，用会议名给录音命名，把参会人交给会议纪要；你确认「导出到日历」后，把选定的事项写入日历，并读回标题和时间保持一致。</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Koe 只在你确认「导出到提醒事项」后，把选定的待办写入提醒事项，并读回标题、期限和完成状态保持一致。</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Koe 只在你确认「导出到提醒事项」后，把选定的待办写入提醒事项，并读回标题、期限和完成状态保持一致。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Koe 只在你点「麦克风录音」或使用语音记录后使用麦克风，把录音作为原件保存在 Mac 上，之后可转写和回听。</string>
 	<key>CFBundleDisplayName</key>
