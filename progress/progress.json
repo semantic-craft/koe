@@ -228,13 +228,31 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-23T01:09:41Z"
+        "updated_at": "2026-10-23T08:32:17Z"
       },
       {
         "number": 371,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T13:27:54Z"
+        "updated_at": "2026-10-23T08:10:25Z"
+      },
+      {
+        "number": 373,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-22T13:48:58Z"
+      },
+      {
+        "number": 408,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-23T08:11:00Z"
+      },
+      {
+        "number": 426,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-23T08:11:14Z"
       },
       {
         "number": 433,
@@ -247,13 +265,19 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-10-23T07:53:15Z"
+      },
+      {
+        "number": 440,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-23T08:59:34Z"
       }
     ],
-    "main": "964291e5283a3ae6423255adb6073a3e8ac5c341",
+    "main": "d1e2a1585a8ad29e2bb7922d2d71c687d26f6ae1",
     "open_pulls": [
       {
-        "head": "963bbe14db7837fb408523bf538de61787063439",
-        "number": 432
+        "head": "ff5661dc9d5d5a91b0f9f9fff7cd938f5ef3ec40",
+        "number": 439
       }
     ],
     "pulls": [
@@ -403,17 +427,25 @@
       },
       {
         "base": "964291e5283a3ae6423255adb6073a3e8ac5c341",
-        "head": "963bbe14db7837fb408523bf538de61787063439",
-        "merge_commit": "8a41e8a8bf15be37a5a78833e2cd62cb5cf8d2b0",
-        "merged": false,
+        "head": "b0c440641d24722caf8ad38205b5bd86cb7ac0f1",
+        "merge_commit": "575f06905e6d500becebd565bb26356777e7a5e9",
+        "merged": true,
         "number": 432,
+        "state": "closed"
+      },
+      {
+        "base": "d1e2a1585a8ad29e2bb7922d2d71c687d26f6ae1",
+        "head": "ff5661dc9d5d5a91b0f9f9fff7cd938f5ef3ec40",
+        "merge_commit": "b2dc0436ee014de14ca2200066168eb925a45ea7",
+        "merged": false,
+        "number": 439,
         "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-23T08:06:54.856832Z",
+  "observed_at": "2026-10-23T09:01:25.817416Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -653,10 +685,54 @@
             }
           ],
           "id": "meeting-diarization-p2",
-          "next": "合并 #432；#433 做三端真机验收，并用真实中文会议定自动阈值（并成少于实际人数就改回 0.75）；#434 处理评审时没修的项；只插网线时是否允许下载模型待用户定；#371 还差 scripts/android-check 的区分场景。",
+          "next": "#433 做三端真机验收，并用真实中文会议定自动阈值（并成少于实际人数就改回 0.75）；#434 处理评审时没修的项；只插网线时是否允许下载模型待用户定；#371 还差 scripts/android-check 的区分场景。",
           "status": "in_progress",
-          "summary": "#432 接手 #389：合入 main，修了 R22.2（重新区分后取过的名字跟着人走），#398 之后 Apple 转写按段分配发言人。代码评审（high）15 条修了 14 条：转写文字先存好，发言人随后在后台区分、一次只区分一条，重新转写也沿用编号，合并和重新区分连正文一起改、能复原，暂停的模型下载不会自己重开，手机热点和低数据模式不算 Wi-Fi；长录音内存等没修的项记在 #434。4530da2 上 scripts/check 无分析问题、920 个测试全过，三端 debug 构建成功，963bbe1 上 CI 通过、perf-check 在 Mac 空闲时各项都在上限内。自动阈值保留 1.0：AMI 0–420 秒留出 DER 14.43%（6 人），中文四人样例并成 2 人；本轮没有模型缓存，没有重跑真实模型。",
+          "summary": "#432 已合并（575f069）。#432 接手 #389：合入 main，修了 R22.2（重新区分后取过的名字跟着人走），#398 之后 Apple 转写按段分配发言人。代码评审（high）15 条修了 14 条：转写文字先存好，发言人随后在后台区分、一次只区分一条，重新转写也沿用编号，合并和重新区分连正文一起改、能复原，暂停的模型下载不会自己重开，手机热点和低数据模式不算 Wi-Fi；长录音内存等没修的项记在 #434。4530da2 上 scripts/check 无分析问题、920 个测试全过，三端 debug 构建成功，963bbe1 上 CI 通过、perf-check 在 Mac 空闲时各项都在上限内。自动阈值保留 1.0：AMI 0–420 秒留出 DER 14.43%（6 人），中文四人样例并成 2 人；本轮没有模型缓存，没有重跑真实模型。",
           "title": "会议纪要第 2 期：本机发言人区分"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "4I 的实现与评审修正；三项验收写在正文。",
+              "ref": 439
+            },
+            {
+              "kind": "issue",
+              "note": "4I 工单：录音页、导入时选人数（拾音 R24.2）。",
+              "ref": 408
+            },
+            {
+              "kind": "issue",
+              "note": "4I 的真机确认，含第一次用真实千问接口带 speaker_count。",
+              "ref": 440
+            },
+            {
+              "kind": "issue",
+              "note": "被打断的本机转写和上传中的转写下次打开重跑（R18.12 的另一半）。",
+              "ref": 426
+            },
+            {
+              "kind": "issue",
+              "note": "第 4 期总工单。",
+              "ref": 373
+            },
+            {
+              "kind": "file",
+              "note": "拾音补漏表：第 4 期 9 处已做，还剩 8 处排在 4E–4H。",
+              "ref": "handoffs/meeting-notes-shiyin-4-delta.md"
+            },
+            {
+              "kind": "file",
+              "note": "「the panel still closes when the number of people is tapped while the take saves」：改前面板关不掉。",
+              "ref": "test/phone_recording_test.dart"
+            }
+          ],
+          "id": "meeting-phase4",
+          "next": "#439 CI 通过后合并；#440 真机确认；接着做 #426，再做 4F（#405）、4G（#406）、4H（#407）、4E（#404）。",
+          "status": "in_progress",
+          "summary": "4I（#408）在 #439：录音中和导入时都能选「大约几个人」，本机区分发言人和千问转写按这个人数分。评审（max）确认的问题已修：保存录音时人数菜单挡住面板关闭、重复导入改掉已转写录音的人数、导入的人数晚于自动整理写入、找回时删掉的录音留下人数。ff5661d 上 scripts/check 无分析问题、927 个测试全过；没在真机上录音或导入，没调用真实千问接口。R18.12 做了一半（被打断的转写下次打开重跑在 #426），4E–4H（#404–#407）还没开始。",
+          "title": "会议纪要第 4 期：对标拾音的 Mac 录音体验"
         }
       ],
       "title": "实现差异与范围核对"
@@ -1043,8 +1119,12 @@
       344,
       345,
       371,
+      373,
+      408,
+      426,
       433,
-      434
+      434,
+      440
     ],
     "pulls": [
       62,
@@ -1065,7 +1145,8 @@
       364,
       366,
       380,
-      432
+      432,
+      439
     ]
   }
 }

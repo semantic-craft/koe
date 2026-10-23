@@ -709,9 +709,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         recovered++;
       } else if (!await entity.exists()) {
         // Too short to keep, and so is the number of people chosen for it.
-        // The stored one is loaded first, or loading would bring it back.
-        await _transcriptsLoaded;
-        await setExpectedSpeakers(entity.path, null);
+        await _forgetTakeSpeakers(entity.path);
       }
     }
     for (final draft in drafts) {
@@ -734,6 +732,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         await _saveTakeNotes(take);
       } else if (!await File(take).exists()) {
         await _deleteTakeNotes(take);
+        await _forgetTakeSpeakers(take);
       }
     }
     if (recovered > 0 && !_disposed) {
@@ -742,6 +741,13 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
           : '找回了 $recovered 段中断的手机录音';
       notifyListeners();
     }
+  }
+
+  /// Drops the number of people stored for a take found gone after a kill.
+  /// The stored ones are loaded first, or loading would bring it back.
+  Future<void> _forgetTakeSpeakers(String take) async {
+    await _transcriptsLoaded;
+    await setExpectedSpeakers(take, null);
   }
 
   @override
