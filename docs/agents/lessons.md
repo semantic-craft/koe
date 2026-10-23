@@ -129,7 +129,6 @@
 - Done right: 涉及「是不是同一台录音豆」的逻辑只比经典地址；写回退测试时让录音豆换 BLE 地址再回来，断言常驻仍开、连的是新地址。合并前至少在真机上做一次 Wi‑Fi 导出后再看常驻是否还在（#345 已暴露）。
 - Seen 1x (2026-10-23)
 - 验证点：`rg -n '经典地址|classicAddress|RecorderScan' android/app/src/main/kotlin lib/ test/android_bound_reconnect_test.dart` 有结果；`rg -n 'a recorder back at another Bluetooth address is the same recorder' test/android_bound_reconnect_test.dart` 有结果；`flutter test test/android_bound_reconnect_test.dart test/ble_scan_test.dart` 通过。
-# 项目教训
 
 ## 删除开发产物前先检查运行引用与应用注册
 
