@@ -116,6 +116,7 @@ class DoubaoSttService extends CloudFileSttService {
 
     if (_activeAbort != null) throw const DoubaoSttException('已有豆包任务正在处理');
     final sending = onSending;
+    onSending = null;
     final abort = Completer<void>();
     _activeAbort = abort;
     var submitted = false;

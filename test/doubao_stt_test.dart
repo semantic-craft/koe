@@ -295,6 +295,40 @@ void main() {
     },
   );
 
+  test('a run cut off as the audio ends is not marked sent', () async {
+    final file = await _tinyOgg();
+    final client = _ScriptedClient();
+    client.enqueue(
+      200,
+      {
+        'result': {'text': '你好'},
+      },
+      headers: {'x-api-status-code': '20000000', 'x-api-message': 'OK'},
+    );
+    var current = true;
+    var marked = false;
+    final service = DoubaoSttService(client: client)
+      ..onSending = () async => marked = true;
+    addTearDown(service.dispose);
+
+    await expectLater(
+      service.transcribePath(
+        file.path,
+        apiKey: 'test-key',
+        isCurrent: () => current,
+        onProgress: (progress) {
+          // Koe quits just as the last audio bytes go out.
+          final sent = progress.uploadedBytes;
+          if (sent != null && sent == progress.totalBytes) current = false;
+        },
+      ),
+      throwsA(isA<DoubaoSttException>()),
+    );
+    // Nothing complete reached the service, so the run goes again on the
+    // next launch.
+    expect(marked, isFalse);
+  });
+
   test('flash error status becomes a readable message', () async {
     final directory = await Directory.systemTemp.createTemp('doubao-http-');
     addTearDown(() => directory.delete(recursive: true));

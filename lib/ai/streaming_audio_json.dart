@@ -63,6 +63,7 @@ class StreamingAudioJsonRequest extends http.BaseRequest with http.Abortable {
     }
 
     yield* audio().transform(base64.encoder).transform(utf8.encoder);
+    check();
     await onSending?.call();
     check();
     yield suffix;

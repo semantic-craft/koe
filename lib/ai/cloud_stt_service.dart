@@ -55,7 +55,8 @@ abstract class CloudFileSttService {
 
   /// Awaited just before the request that can be charged for goes out, so a
   /// file job can note that a run cut off from then on may have been paid
-  /// for. Scoped to the single file execution owned by RecorderController.
+  /// for. Set just before the job's run, which takes it: a request started
+  /// while the job runs does not mark the job.
   Future<void> Function()? onSending;
 
   /// Saved-or-environment API key.

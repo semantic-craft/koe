@@ -138,6 +138,8 @@ void main() async {
           ),
         );
         job.stage = stage == 'submitted' ? 'running' : stage;
+        // The paid request may have gone out (#426).
+        job.sent = stage == 'running' || stage == 'submitted';
         if (stage == 'submitted') job.taskId = 'saved-task-id';
         if (stage == 'result') {
           job.text = 'Recovered result';
