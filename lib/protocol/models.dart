@@ -445,6 +445,22 @@ class ScannedDevice {
   String get displayName =>
       name.isNotEmpty ? name : (advName?.isNotEmpty == true ? advName! : id);
 
+  /// The same device advertising from the Bluetooth address [id].
+  ScannedDevice withId(String id) => ScannedDevice(
+    id: id,
+    name: name,
+    rssi: rssi,
+    advName: advName,
+    productCode: productCode,
+    serviceUuid: serviceUuid,
+    macAddress: macAddress,
+    deviceColor: deviceColor,
+    channelId: channelId,
+    isBoundAdvertised: isBoundAdvertised,
+    isD3200: isD3200,
+    manufacturerMark: manufacturerMark,
+  );
+
   String get subtitle {
     final parts = <String>[];
     if (productCode != null) parts.add(productCode!);

@@ -3,12 +3,19 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// 全天常驻 on Android, through the companion device manager: with the
-/// recorder associated, Koe may start its foreground service from the
-/// background, and while Koe observes the recorder, Android starts Koe when
-/// it comes near and says when it is near or gone. Apple platforms bring the
-/// recorder back through Core Bluetooth state restoration instead; there,
-/// and wherever Android lacks the feature, every call does nothing.
+/// 全天常驻 on Android. Koe associates the recorder through the companion
+/// device manager, which lets Koe start its foreground service from the
+/// background, and watches for it with a Bluetooth scan Android runs for
+/// Koe: Android starts Koe when the scan sees the recorder, even after the
+/// user swiped Koe away, and says when it sees it or loses it.
+///
+/// The recorder's Bluetooth address changes, at least with every Wi‑Fi
+/// export. The scan matches its classic address instead, which its
+/// advertisement carries and which stays.
+///
+/// Apple platforms bring the recorder back through Core Bluetooth state
+/// restoration instead; there, and wherever Android lacks the feature, every
+/// call does nothing.
 class RecorderPresence {
   RecorderPresence({
     this._channel = const MethodChannel(_channelName),
@@ -27,13 +34,31 @@ class RecorderPresence {
 
   bool get enabled => _enabled;
 
-  /// Told whether the observed recorder is near, each time that changes.
-  ValueChanged<bool>? onPresence;
+  /// Told when the scan sees the recorder, at which Bluetooth address, or
+  /// loses it.
+  void Function(bool near, String? address)? onPresence;
 
-  /// Whether this phone can associate devices, the address of the recorder
-  /// Koe is associated with (null when none), and whether it is near now.
-  Future<({bool supported, String? address, bool present})> state() async {
-    const none = (supported: false, address: null, present: false);
+  /// Whether this phone can associate devices; whether Koe is associated
+  /// with a recorder; the classic address Koe watches for (null when it
+  /// watches none yet); and whether the scan sees the recorder now, at which
+  /// Bluetooth address.
+  Future<
+    ({
+      bool supported,
+      bool associated,
+      String? mac,
+      bool present,
+      String? address,
+    })
+  >
+  state() async {
+    const none = (
+      supported: false,
+      associated: false,
+      mac: null,
+      present: false,
+      address: null,
+    );
     if (!_enabled) return none;
     final state = await _call(
       () => _channel.invokeMapMethod<String, Object?>('state'),
@@ -41,13 +66,16 @@ class RecorderPresence {
     if (state == null) return none;
     return (
       supported: state['supported'] == true,
-      address: state['address'] as String?,
+      associated: state['associated'] == true,
+      mac: state['mac'] as String?,
       present: state['present'] == true,
+      address: state['address'] as String?,
     );
   }
 
-  /// Associates the recorder at [address]. Android asks the user in its own
-  /// dialog, which needs Koe on screen; returns whether they allowed it.
+  /// Associates the recorder at the Bluetooth [address]. Android asks the
+  /// user in its own dialog, which needs Koe on screen; returns whether they
+  /// allowed it.
   Future<bool> associate(String address) async {
     if (!_enabled) return false;
     return await _call(
@@ -56,13 +84,16 @@ class RecorderPresence {
         false;
   }
 
-  /// Starts or stops observing the associated recorder.
-  Future<void> observe(bool on) async {
+  /// Starts or stops watching for the recorder with the classic address
+  /// [mac].
+  Future<void> observe(bool on, String? mac) async {
     if (!_enabled) return;
-    await _call(() => _channel.invokeMethod<void>('observe', {'on': on}));
+    await _call(
+      () => _channel.invokeMethod<void>('observe', {'on': on, 'mac': mac}),
+    );
   }
 
-  /// Stops observing and drops the association.
+  /// Stops watching and drops the association.
   Future<void> disassociate() async {
     if (!_enabled) return;
     await _call(() => _channel.invokeMethod<void>('disassociate'));
@@ -82,7 +113,8 @@ class RecorderPresence {
   Future<Object?> _onNativeCall(MethodCall call) async {
     switch (call.method) {
       case 'presence':
-        onPresence?.call(call.arguments == true);
+        final event = (call.arguments as Map).cast<String, Object?>();
+        onPresence?.call(event['near'] == true, event['address'] as String?);
       default:
         throw MissingPluginException(call.method);
     }

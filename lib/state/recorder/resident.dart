@@ -1,12 +1,20 @@
 part of '../recorder_controller.dart';
 
 /// 全天常驻 on Android: Koe associates the bound recorder through the
-/// companion device manager ([RecorderPresence]). Android then starts Koe
-/// when the recorder comes near, even after the user swiped Koe away or the
-/// phone restarted, and lets Koe start its foreground service from behind
-/// the lock screen. Koe reconnects as it does on screen, takes the new
-/// recordings and transcribes them. While the recorder is away, Koe lets go:
-/// no connection request, no foreground service, no notification.
+/// companion device manager and watches for it with a Bluetooth scan
+/// Android runs for Koe ([RecorderPresence]). Android starts Koe when the
+/// scan sees the recorder, even after the user swiped Koe away or the phone
+/// restarted, and the association lets Koe start its foreground service from
+/// behind the lock screen. Koe reconnects as it does on screen, takes the
+/// new recordings and transcribes them. While the recorder is away, Koe lets
+/// go: no connection request, no foreground service, no notification.
+///
+/// The recorder's Bluetooth address changes, at least with every Wi‑Fi
+/// export, so Koe knows it by its classic address, which its advertisement
+/// carries; the scan says where it advertises now. The recorder also stops
+/// advertising while connected, so the scan loses it then: a link that drops
+/// while the scan has not seen the recorder since is away, and the scan sees
+/// it again within seconds if it is near.
 ///
 /// Without it, Koe holds a connection request and the foreground service for
 /// the recorder all along ([_RecorderDevice._awaitBoundDevice]), and all of
@@ -23,6 +31,7 @@ mixin _RecorderResident on ChangeNotifier {
   abstract bool _disposed;
   abstract bool _explicitDisconnect;
   abstract bool _systemWaitFailed;
+  abstract ScannedDevice? activeDevice;
   abstract bool bound;
   abstract bool connected;
   abstract ScannedDevice? lastKnownDevice;
@@ -46,15 +55,17 @@ mixin _RecorderResident on ChangeNotifier {
   /// persisted with it.
   bool residentOffered = false;
 
-  /// The address of the recorder Koe is associated with.
-  String? _residentAddress;
+  /// Koe is associated with the bound recorder.
+  bool _associated = false;
 
-  /// Whether Android last said the recorder is near. A connection counts as
-  /// near until Android says otherwise.
+  /// The classic address of the recorder Koe watches for.
+  String? _residentMac;
+
+  /// Whether Android's scan sees the recorder now.
   bool _recorderPresent = false;
 
   /// Koe stays resident for the bound recorder.
-  bool get resident => _residentAddress != null;
+  bool get resident => _associated;
 
   /// The recorder is bound and connected, and Koe has not asked yet whether
   /// to stay resident for it. AppShell asks, then calls
@@ -62,8 +73,8 @@ mixin _RecorderResident on ChangeNotifier {
   bool get offersResident =>
       residentSupported && !resident && !residentOffered && bound && connected;
 
-  /// Koe is resident and Android says the recorder is away, so nothing waits
-  /// for it until Android says it is near again.
+  /// Koe is resident and the scan does not see the recorder, so nothing
+  /// waits for it until the scan sees it again.
   bool get _recorderAway => resident && !_recorderPresent;
 
   /// Reads whether Koe can stay resident and whether it does. Runs once the
@@ -77,21 +88,27 @@ mixin _RecorderResident on ChangeNotifier {
     final state = await presence.state();
     if (_disposed) return;
     residentSupported = state.supported;
-    _residentAddress = state.address;
+    _associated = state.associated;
+    _residentMac = state.mac;
     _recorderPresent = state.present;
+    _recorderSeenAt(state.address);
     await _syncResident();
   }
 
-  /// Keeps the association in step with the bound recorder: observed while
-  /// Koe reconnects to it, not after an explicit disconnect, and dropped
-  /// once it is unbound or another recorder is bound.
+  /// Keeps the association in step with the bound recorder: watched for
+  /// while Koe reconnects to it, not after an explicit disconnect, and
+  /// dropped once it is unbound or a recorder with another classic address
+  /// is bound.
   Future<void> _syncResident() async {
-    final address = _residentAddress;
-    if (address == null || _disposed) return;
+    if (!_associated || _disposed) return;
     final presence = RecorderPresence.shared;
     final device = lastKnownDevice;
-    if (!bound || device == null || device.id.toUpperCase() != address) {
-      _residentAddress = null;
+    final mac = device?.macAddress;
+    if (!bound ||
+        device == null ||
+        (_residentMac != null && mac != null && mac != _residentMac)) {
+      _associated = false;
+      _residentMac = null;
       // A recorder bound in its place is asked about afresh.
       residentOffered = false;
       unawaited(_persistDevice());
@@ -99,14 +116,10 @@ mixin _RecorderResident on ChangeNotifier {
       await presence.disassociate();
       return;
     }
-    await presence.observe(!_explicitDisconnect);
-  }
-
-  /// The recorder is connected, so it is near whatever Android said last.
-  // ignore: unused_element
-  void _residentRecorderConnected() {
-    _recorderPresent = true;
-    unawaited(_syncResident());
+    // Associations from before Koe watched by the classic address go on
+    // with the bound recorder's.
+    _residentMac ??= mac;
+    await presence.observe(!_explicitDisconnect, _residentMac);
   }
 
   void markResidentOffered() {
@@ -129,14 +142,14 @@ mixin _RecorderResident on ChangeNotifier {
       unawaited(_persistDevice());
       // Android's Bluetooth address, which the association matches.
       if (await presence.associate(device.id)) {
-        final state = await presence.state();
         if (_disposed) return false;
-        _residentAddress = state.address;
-        _recorderPresent = connected || state.present;
+        _associated = true;
+        _residentMac = device.macAddress;
         await _syncResident();
       }
     } else {
-      _residentAddress = null;
+      _associated = false;
+      _residentMac = null;
       await presence.disassociate();
       if (_disposed) return false;
       // Koe's own connection request waits for the recorder again.
@@ -147,8 +160,10 @@ mixin _RecorderResident on ChangeNotifier {
     return resident;
   }
 
-  void _onRecorderPresence(bool near) {
-    if (_disposed || near == _recorderPresent) return;
+  void _onRecorderPresence(bool near, String? address) {
+    if (_disposed) return;
+    if (near) _recorderSeenAt(address);
+    if (near == _recorderPresent) return;
     _recorderPresent = near;
     if (!resident ||
         !bound ||
@@ -173,8 +188,18 @@ mixin _RecorderResident on ChangeNotifier {
     unawaited(_letRecorderGo());
   }
 
+  /// The scan sees the bound recorder at the Bluetooth [address]: Koe
+  /// connects it there from now on.
+  void _recorderSeenAt(String? address) {
+    final device = lastKnownDevice;
+    if (address == null || device == null || device.id == address) return;
+    lastKnownDevice = device.withId(address);
+    if (!connected) activeDevice = lastKnownDevice;
+    unawaited(_persistDevice());
+  }
+
   /// The recorder is away: Koe stops waiting for it and lets its foreground
-  /// service go, until Android says it is near again.
+  /// service go, until the scan sees it again.
   Future<void> _letRecorderGo() async {
     if (phase == AppPhase.scanning) await stopScan();
     // Back already: the new wait must stay.

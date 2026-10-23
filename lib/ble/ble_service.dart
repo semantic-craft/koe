@@ -205,7 +205,9 @@ class BleService {
     _scanController.add([]);
     await _stopScanAndWait();
 
-    _scanSub = FlutterBluePlus.scanResults.listen((results) {
+    // onScanResults, not scanResults: the latter first replays what the last
+    // scan saw, and the recorder may advertise from another address since.
+    _scanSub = FlutterBluePlus.onScanResults.listen((results) {
       for (final r in results) {
         adsSeen++;
         final id = r.device.remoteId.str;

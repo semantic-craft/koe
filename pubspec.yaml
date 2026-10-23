@@ -79,6 +79,8 @@ dev_dependencies:
   file_selector_ios: ^0.5.3
   # Tests stand in for the system open/save panels (mac_material_pack_test).
   file_selector_platform_interface: ^2.7.0
+  # Tests stand in for the Bluetooth radio (ble_scan_test).
+  flutter_blue_plus_platform_interface: ^9.0.3
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

@@ -13,8 +13,8 @@ import io.flutter.embedding.engine.FlutterEngineCache
 
 /**
  * The one Flutter engine Koe runs in, kept running without the activity by
- * whoever needs Dart: the foreground service while it works, and the
- * companion service while the recorder is near (全天常驻).
+ * whoever needs Dart: the foreground service while it works, and the scan
+ * for the recorder while it is near (全天常驻, RecorderScan).
  *
  * audio_service owns the engine. It starts one headless for a service just
  * as for the activity, running Dart's main (AudioServicePlugin.java:70-114),
