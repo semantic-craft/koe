@@ -135,6 +135,7 @@ class KoePlatformPlugin :
                         call.argument<List<String>>("types") ?: emptyList(),
                         call.argument<String>("text"),
                         call.argument<Boolean>("stoppable") ?: false,
+                        call.argument<Boolean>("wakeLock") ?: true,
                     ),
                 )
                 "stop" -> {

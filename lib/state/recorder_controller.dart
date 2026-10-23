@@ -1031,6 +1031,7 @@ class RecorderController extends ChangeNotifier
     if (!_disposed) {
       super.notifyListeners();
       unawaited(_deferredJobs.pump());
+      _syncRecorderWork();
     }
   }
 
