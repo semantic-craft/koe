@@ -376,7 +376,12 @@
       }
     ],
     "main": "db8679e66b2cb5c63869d0c55b67464783184c6a",
-    "open_pulls": [],
+    "open_pulls": [
+      {
+        "head": "cdb748ba0d2f8fdcd6bbac5d0efbec8bc5087b3b",
+        "number": 463
+      }
+    ],
     "pulls": [
       {
         "base": "75749acdf6c097eda495a29b9c6f31d48f16e067",
@@ -633,12 +638,20 @@
         "merged": true,
         "number": 459,
         "state": "closed"
+      },
+      {
+        "base": "db8679e66b2cb5c63869d0c55b67464783184c6a",
+        "head": "cdb748ba0d2f8fdcd6bbac5d0efbec8bc5087b3b",
+        "merge_commit": "da2f82c6ce911817bbb257d6e78b8cc06d20e44c",
+        "merged": false,
+        "number": 463,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-23T15:43:57.536190Z",
+  "observed_at": "2026-10-23T15:47:38.634588Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1455,12 +1468,17 @@
               "kind": "file",
               "note": "限定临时目录，包含嵌套 App、大小写别名及延迟注册复核",
               "ref": "scripts/cleanup_app_registrations.py"
+            },
+            {
+              "kind": "pull",
+              "note": "清理脚本改动、复审与验证记录；不代表安装或用户体验验收。",
+              "ref": 463
             }
           ],
           "id": "build-registration-cleanup",
-          "next": "完成最终本地检查和 PR 合并；不涉及安装、发版或整库重置。",
-          "status": "in_progress",
-          "summary": "打包与安装暂存目录先注销再删除；保留运行中的开发副本。7 项隔离回归与真实 macOS 测试通过，合并及最终检查待完成。",
+          "next": "后续打包和验收沿用清理入口；运行副本或注销失败时保留目录并报告。",
+          "status": "done",
+          "summary": "构建清理入口已实现；7 项保护回归、真实 macOS 隔离样例与项目 scripts/check 通过。代码合并状态见关联 PR；未发布安装。",
           "title": "临时 App 注册清理"
         }
       ],
@@ -1565,7 +1583,8 @@
       449,
       451,
       457,
-      459
+      459,
+      463
     ]
   }
 }

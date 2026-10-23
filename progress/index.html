@@ -3,7 +3,7 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-23T15:43:57.536190Z</p>
+<p>Observed: 2026-10-23T15:47:38.634588Z</p>
 <p>Main: <code>main: db8679e66b2cb5c63869d0c55b67464783184c6a</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
@@ -175,10 +175,12 @@
 </ul><p>Next: 有网络时 refresh 核对事实，再 render 与 check；新增范围先明确 tracked，设备验收独立补证。</p></article>
 </section>
 <section id="build-cleanup"><h2>构建清理</h2>
-<article id="build-registration-cleanup"><h3>临时 App 注册清理</h3><span class="badge">in_progress</span><p>打包与安装暂存目录先注销再删除；保留运行中的开发副本。7 项隔离回归与真实 macOS 测试通过，合并及最终检查待完成。</p><ul>
+<article id="build-registration-cleanup"><h3>临时 App 注册清理</h3><span class="badge">done</span><p>构建清理入口已实现；7 项保护回归、真实 macOS 隔离样例与项目 scripts/check 通过。代码合并状态见关联 PR；未发布安装。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/cleanup_app_registrations.py">file scripts/cleanup_app_registrations.py: 限定临时目录，包含嵌套 App、大小写别名及延迟注册复核</a></li>
-</ul><p>Next: 完成最终本地检查和 PR 合并；不涉及安装、发版或整库重置。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/463">pull 463: 清理脚本改动、复审与验证记录；不代表安装或用户体验验收。</a></li>
+</ul><p>Next: 后续打包和验收沿用清理入口；运行副本或注销失败时保留目录并报告。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/463">#463</a> <code>cdb748ba0d2f8fdcd6bbac5d0efbec8bc5087b3b</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
