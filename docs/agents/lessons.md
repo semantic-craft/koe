@@ -84,3 +84,38 @@
 - Done right: 修布局缺陷前先 `rg -n 'GradientScaffold\(' lib/ui` 列出同写法的页面逐个确认（有 AppBar 的、页头固定不随列表滚动的不受影响），回退测试一次覆盖所有同写法的页面。冒烟或探索式测试的 PASS 不看画面，截图要自己逐张看。
 - 验证点：`flutter test test/status_bar_scroll_test.dart test/library_screen_scroll_test.dart` 通过（顶部安全区 62pt，上滑后列表顶边 ≥ 62；设置页列表顶边 ≥ 返回键底边）。
 - Seen 2x (2026-10-19, 2026-10-22)
+
+### Mac 验收用 System Events 点菜单可能没送达，退出改发给进程的退出事件
+
+- 出事：2026-10-23 #427 评审修复的验收里，用 System Events 点菜单栏「退出 Koe」和主菜单「Quit Koe」，AppKit 日志里都没有 `terminate:`，退出没有发生。
+- 修复：给这个进程发退出事件：`NSRunningApplication(processIdentifier:)` 的 `terminate`，和 ⌘Q、菜单「退出 Koe」走同一个 `terminate:`，进到 `macos/Runner/AppDelegate.swift` 的 `applicationShouldTerminate`。不按 bundle id 发，因为用户装的 Koe 和开发版是同一个 bundle id。
+- 验证点：验收记录里退出那一步，引用 `/usr/bin/log show --predicate "processID == <pid>"` 里的 `applicationShouldTerminate` 行；`rg -n "func applicationShouldTerminate\(" macos/Runner/AppDelegate.swift` 有结果。
+- Seen 1x (2026-10-23)
+
+### `pmset -g assertions` 不显示中文的防睡眠原因
+
+- 出事：#403 验收时，Koe 的防睡眠声明在 `pmset -g assertions` 里原因是空的，原因当时写的是中文。
+- 修复：#427 改用英文原因（`lib/ui/mac_menu_bar.dart` 里的 `keepAwake = 'Koe is recording'` 等）。
+- 验证点：`rg -n "keepAwake = 'Koe is" lib/ui/mac_menu_bar.dart` 有结果（2026-10-23 核对在第 86 行）；录音时 `pmset -g assertions | grep Koe` 能看到原因。
+- Seen 1x (2026-10-23)
+
+### 临时 profile 入口用编译期常量提前结束 main，AOT 构建会崩
+
+- 出事：2026-10-23 #427、#409 的临时验收入口用 `String.fromEnvironment` 选模式。某个模式在 `main` 里 `exit(0)` 或 `return` 后，后面的应用代码在 AOT 看来都是死代码，`flutter run --profile -d macos` 构建时报 `AOT snapshotter exited with code -6`。
+- 修复：提前结束的条件里加一个运行时判断（如 `DateTime.now().year > 2000`），AOT 就会保留后面的代码。
+- 验证点：临时入口的每个模式都用 `--profile` 构建一次再用。
+- Seen 1x (2026-10-23)，同一天出现两次
+
+### `scripts/perf-check` 要在 Mac 空闲、不和 CI 重叠时跑
+
+- 出事：同一份代码，Mac 有人在用时跑出卡顿：#403 第一次 `recording` 291 帧里 41 帧卡顿，重跑 0 帧；#409 第一次改前那轮 `recording` 87 帧里 84 帧卡顿，`playback` 53 帧卡顿。帧数少说明窗口没在前台，帧被节流了。CI 也在这台 Mac 上跑。窗口完全不出帧时，#448 起 perf-check 会以退出码 3 停下（见「已知会卡住的外部条件要直接检测、尽快失败」），但窗口出帧却被节流时，数字照样会出来。
+- 修复：先等 Mac 空闲（`ioreg -c IOHIDSystem` 的 `HIDIdleTime` 超过 2 分钟）再跑；跑的时候每 5 秒记一次空闲时间，有人碰过就作废重跑；用 `gh run list` 核对没和 CI 重叠。
+- 验证点：PR 里写明 perf-check 那几轮没人碰 Mac、也没和 CI 重叠。
+- Seen 1x (2026-10-23)
+
+### 格式化改过的文件前，先看它在 HEAD 上是不是已经格式化好的
+
+- 出事：2026-10-23 #407 给 `test/phone_recording_test.dart` 加测试后跑 `dart format`，整个文件被重排，新测试淹在几百行无关的格式改动里。这个文件在 main 上本来就没格式化好（main bb19383 上单独格式化它，增 282 行、删 309 行）：本机和 CI 同为 Flutter 3.47.7，main bb19383 上 `lib`、`test`、`integration_test` 的 354 个 Dart 文件里有 31 个 `dart format` 后会变；CI 和 `scripts/check` 不查格式。
+- 修复：文件恢复成 HEAD，只把新加的块按格式手写进去。
+- 验证点：格式化前跑 `dart format -o none --set-exit-if-changed <文件>`，HEAD 上退出码为 0 才整文件格式化，否则只格式化自己加的部分；提交前用 `git diff --stat` 看改动行数和实际改动相符。
+- Seen 1x (2026-10-23)
