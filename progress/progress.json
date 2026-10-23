@@ -228,7 +228,7 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-23T12:06:28Z"
+        "updated_at": "2026-10-23T15:38:12Z"
       },
       {
         "number": 371,
@@ -375,7 +375,7 @@
         "updated_at": "2026-10-23T15:25:46Z"
       }
     ],
-    "main": "89b9db8c7acae0cae16fd70df4d2165b4666a0b8",
+    "main": "db8679e66b2cb5c63869d0c55b67464783184c6a",
     "open_pulls": [],
     "pulls": [
       {
@@ -638,7 +638,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-23T15:33:02.688856Z",
+  "observed_at": "2026-10-23T15:43:57.536190Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1445,6 +1445,26 @@
         }
       ],
       "title": "下一步与覆盖范围"
+    },
+    {
+      "id": "build-cleanup",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "限定临时目录，包含嵌套 App、大小写别名及延迟注册复核",
+              "ref": "scripts/cleanup_app_registrations.py"
+            }
+          ],
+          "id": "build-registration-cleanup",
+          "next": "完成最终本地检查和 PR 合并；不涉及安装、发版或整库重置。",
+          "status": "in_progress",
+          "summary": "打包与安装暂存目录先注销再删除；保留运行中的开发副本。7 项隔离回归与真实 macOS 测试通过，合并及最终检查待完成。",
+          "title": "临时 App 注册清理"
+        }
+      ],
+      "title": "构建清理"
     }
   ],
   "title": "Koe 开发进度",
