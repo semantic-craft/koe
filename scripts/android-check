@@ -17,7 +17,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 serial="${KOE_ANDROID_SERIAL:-67241FDKX003EH}"
-package=com.semanticcraft.soundcore
+export KOE_ANDROID_VERIFICATION=1
+package=com.semanticcraft.soundcore.verification
+activity=com.semanticcraft.soundcore.MainActivity
 skipped=77
 
 online() {
@@ -31,10 +33,22 @@ if [[ "$state" != device ]]; then
 fi
 echo "android-check: $serial $(adb -s "$serial" shell getprop ro.product.model | tr -d '\r') / Android $(adb -s "$serial" shell getprop ro.build.version.release | tr -d '\r')"
 
+lock_dir="${KOE_ANDROID_LOCK_DIR:-$HOME/.cache/koe-pixel.lock}"
+if ! mkdir "$lock_dir" 2>/dev/null; then
+  echo "android-check: 跳过（设备已有执行者）: $lock_dir"
+  exit "$skipped"
+fi
 skips="$(mktemp)"
 dark="$skips.dark"
 awake=
-trap 'kill ${awake:+"$awake"} 2>/dev/null || true; free_screen; rm -f "$skips" "$dark"' EXIT
+cleanup() {
+  kill ${awake:+"$awake"} 2>/dev/null || true
+  free_screen
+  adb -s "$serial" uninstall "$package" </dev/null >/dev/null 2>&1 || true
+  rm -f "$skips" "$dark"
+  rmdir "$lock_dir"
+}
+trap cleanup EXIT
 
 wake_screen() {
   rm -f "$dark"
@@ -92,7 +106,7 @@ launch_shortcut() {
     return
   fi
   echo "android-check: launcher shortcut: $listed"
-  adb -s "$serial" shell "am start -a android.intent.action.RUN -c android.intent.category.LAUNCHER -f 0x30000000 -n $package/.MainActivity --es 'some unique action key' $id"
+  adb -s "$serial" shell "am start -a android.intent.action.RUN -c android.intent.category.LAUNCHER -f 0x30000000 -n $package/$activity --es 'some unique action key' $id"
 }
 
 # Scenarios ask for what only adb can do by printing a marker line:
@@ -125,7 +139,7 @@ answer_scenarios() {
       *"KOE_ADB: open-koe"*)
         wake_screen
         adb -s "$serial" shell am start -a android.intent.action.MAIN \
-          -c android.intent.category.LAUNCHER -f 0x10200000 -n "$package/.MainActivity"
+          -c android.intent.category.LAUNCHER -f 0x10200000 -n "$package/$activity"
         ;;
       *"KOE_ADB: skip "*) printf '%s\n' "${line##*KOE_ADB: skip }" >>"$skips" ;;
     esac </dev/null
@@ -191,6 +205,17 @@ for scenario in "${scenarios[@]}"; do
       skips_seen=1
     fi
     continue
+  fi
+  if [[ "$scenario" == *diarization_test.dart ]]; then
+    if [[ -z "${KOE_DIARIZATION_FIXTURES:-}" ]]; then
+      summary+=("$name: 跳过（请设置 KOE_DIARIZATION_FIXTURES：模型和中文四人样例目录）")
+      skips_seen=1
+      continue
+    fi
+    adb -s "$serial" shell run-as "$package" mkdir -p files/diarization-fixtures
+    for fixture in segmentation-model.onnx 3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx 0-four-speakers-zh.wav; do
+      adb -s "$serial" shell -T run-as "$package" sh -c "'cat > files/diarization-fixtures/$fixture'" <"$KOE_DIARIZATION_FIXTURES/$fixture"
+    done
   fi
   wake_screen
   set +e

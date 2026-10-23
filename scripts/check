@@ -5,5 +5,6 @@ unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_API_KEY DOUBAO_TTS_API_KEY
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 # Static analysis and unit tests. Device, install and signing acceptance stay manual (see AGENTS.md).
 python3 scripts/test_cleanup_app_registrations.py
+python3 scripts/test_android_check.py
 flutter analyze
 flutter test
