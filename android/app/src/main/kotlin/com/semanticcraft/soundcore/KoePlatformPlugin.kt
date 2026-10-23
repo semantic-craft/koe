@@ -74,8 +74,8 @@ class KoePlatformPlugin :
         mainThread.post { backgroundSync.invokeMethod("refused", types) }
     }
 
-    private val presenceListener: (Boolean) -> Unit = { present ->
-        mainThread.post { presence.invokeMethod("presence", present) }
+    private val presenceListener: (Boolean, String?) -> Unit = { near, address ->
+        mainThread.post { presence.invokeMethod("presence", mapOf("near" to near, "address" to address)) }
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -91,7 +91,7 @@ class KoePlatformPlugin :
         wifi.setMethodCallHandler(::onWifi)
         RecordingSyncService.stopListener = stopListener
         RecordingSyncService.refusedListener = refusedListener
-        RecorderCompanion.presenceListener = presenceListener
+        RecorderScan.listener = presenceListener
     }
 
     // The engine is going: nothing is left to record or to answer 停止.
@@ -102,7 +102,7 @@ class KoePlatformPlugin :
         wifi.setMethodCallHandler(null)
         if (RecordingSyncService.stopListener === stopListener) RecordingSyncService.stopListener = null
         if (RecordingSyncService.refusedListener === refusedListener) RecordingSyncService.refusedListener = null
-        if (RecorderCompanion.presenceListener === presenceListener) RecorderCompanion.presenceListener = null
+        if (RecorderScan.listener === presenceListener) RecorderScan.listener = null
         RecordingSyncService.stop(appContext)
         SoftApNetwork.shared(appContext).release()
     }
@@ -195,14 +195,16 @@ class KoePlatformPlugin :
         }
     }
 
-    // 全天常驻 (RecorderCompanion).
+    // 全天常驻 (RecorderCompanion, RecorderScan).
     private fun onPresence(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "state" -> result.success(
                 mapOf(
                     "supported" to RecorderCompanion.supported(appContext),
-                    "address" to RecorderCompanion.address(appContext),
-                    "present" to RecorderCompanion.present,
+                    "associated" to RecorderCompanion.associated(appContext),
+                    "mac" to RecorderScan.mac(appContext),
+                    "present" to RecorderScan.present,
+                    "address" to RecorderScan.address,
                 ),
             )
             "associate" -> {
@@ -216,10 +218,11 @@ class KoePlatformPlugin :
                 }
             }
             "observe" -> {
-                RecorderCompanion.observe(appContext, call.argument<Boolean>("on") ?: false)
+                RecorderScan.observe(appContext, call.argument<Boolean>("on") ?: false, call.argument<String>("mac"))
                 result.success(null)
             }
             "disassociate" -> {
+                RecorderScan.forget(appContext)
                 RecorderCompanion.disassociate(appContext)
                 result.success(null)
             }
