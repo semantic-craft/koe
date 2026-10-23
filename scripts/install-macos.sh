@@ -36,7 +36,16 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then flutter build macos --release; fi
 SOURCE="$ROOT/build/macos/Build/Products/Release/${APP_NAME}.app"
 [[ -d "$SOURCE" ]] || { echo 'Release build missing.' >&2; exit 1; }
 STAGING="$(mktemp -d "${TMPDIR:-/tmp}/koe-install.XXXXXX")"
-trap 'rm -rf "$STAGING"' EXIT
+cleanup_stage() {
+  local status=$?
+  trap - EXIT
+  if ! python3 "$ROOT/scripts/cleanup_app_registrations.py" --remove "$STAGING"; then
+    echo "cleanup: retained $STAGING; unregister failed or the build is running" >&2
+    [[ "$status" != 0 ]] || status=1
+  fi
+  exit "$status"
+}
+trap cleanup_stage EXIT
 APP="$STAGING/${APP_NAME}.app"
 ditto "$SOURCE" "$APP"
 if [[ -n "$IDENTITY" ]]; then
