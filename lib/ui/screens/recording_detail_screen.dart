@@ -733,6 +733,36 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   trailing: const Icon(Icons.edit_outlined),
                   onTap: () => Navigator.pop(context, speaker),
                 ),
+              const Divider(height: 16),
+              if (controller.transcriptSpeakersForPath(path).length >= 2)
+                ListTile(
+                  key: const ValueKey('sheet-merge-speakers'),
+                  leading: const Icon(Icons.merge_type_rounded),
+                  title: const Text('合并发言人…'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _mergeSpeakers(recording);
+                  },
+                ),
+              ListTile(
+                key: const ValueKey('sheet-rediarize-speakers'),
+                leading: const Icon(Icons.people_outline_rounded),
+                title: const Text('重新区分发言人…'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _rediarizeSpeakers(recording);
+                },
+              ),
+              if (controller.canUndoSpeakerEdit(path))
+                ListTile(
+                  key: const ValueKey('sheet-undo-speaker-edit'),
+                  leading: const Icon(Icons.undo_rounded),
+                  title: Text(controller.speakerUndoLabel(path) ?? '复原发言人调整'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _undoSpeakerEdit(recording);
+                  },
+                ),
             ],
           ),
         ),
@@ -762,6 +792,73 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       await controller.renameTranscriptSpeaker(path, speaker.id, name);
     } catch (error) {
       _notice('无法保存姓名，请重试');
+    }
+  }
+
+  Future<void> _rediarizeSpeakers(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final controller = context.read<RecorderController>();
+    final choice = await showDialog<({bool confirmed, int? expectedSpeakers})>(
+      context: context,
+      builder: (_) => _RediarizeSpeakersDialog(
+        initialExpectedSpeakers: controller.expectedSpeakersForPath(path),
+      ),
+    );
+    if (choice == null || !choice.confirmed || !mounted) return;
+    try {
+      await controller.rediarizeSpeakers(
+        path,
+        expectedSpeakers: choice.expectedSpeakers,
+      );
+      if (!mounted) return;
+      // Names stay with the person only where the new grouping clearly
+      // matches the old one (Shiyin R22.2), so ask for a second look.
+      _notice(
+        controller.speakerAliasesForPath(path).isEmpty
+            ? '已重新区分发言人'
+            : '已重新区分发言人。取过的名字尽量留在原来的人身上，请再确认一下',
+      );
+    } catch (e) {
+      if (mounted) _notice(e is StateError ? e.message : '重新区分发言人失败：$e');
+    }
+  }
+
+  Future<void> _mergeSpeakers(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final controller = context.read<RecorderController>();
+    final speakers = controller.transcriptSpeakersForPath(path);
+    if (speakers.length < 2) {
+      _notice('至少需要两位发言人才能合并');
+      return;
+    }
+    final pair = await showDialog<({String from, String into})>(
+      context: context,
+      builder: (_) => _MergeSpeakersDialog(speakers: speakers),
+    );
+    if (pair == null || !mounted) return;
+    try {
+      await controller.mergeTranscriptSpeakers(
+        path,
+        fromSpeakerId: pair.from,
+        intoSpeakerId: pair.into,
+      );
+      if (mounted) _notice('已合并发言人');
+    } catch (e) {
+      if (mounted) _notice('合并发言人失败：$e');
+    }
+  }
+
+  Future<void> _undoSpeakerEdit(RecordingViewData recording) async {
+    final path = recording.path;
+    if (path == null || recording.audioLocked) return;
+    final controller = context.read<RecorderController>();
+    try {
+      final ok = await controller.undoSpeakerEdit(path);
+      if (mounted) _notice(ok ? '已复原发言人调整' : '没有可复原的发言人调整');
+    } catch (_) {
+      if (mounted) _notice('复原失败，请检查存储空间后重试');
     }
   }
 
@@ -1388,6 +1485,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final hasSpeakers =
         recording.path != null &&
         c.transcriptSpeakersForPath(recording.path!).isNotEmpty;
+    // Timed passages nobody was put on yet, such as a meeting transcribed
+    // before the speaker models were on this device.
+    final canLabelSpeakers =
+        recording.path != null &&
+        !hasSpeakers &&
+        c.transcriptSegmentsForPath(recording.path!).isNotEmpty;
+    final labellingSpeakers =
+        recording.path != null && c.labellingSpeakers(recording.path!);
     final topicPlacement = c.topicsEnabled
         ? c.topics.topicOf(c.recordingKeyFor(widget.reference))
         : null;
@@ -1500,6 +1605,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         _editTranscript(recording);
                       case 'speakers':
                         _speakers(recording);
+                      case 'label-speakers':
+                        _rediarizeSpeakers(recording);
                       case 'chapters':
                         _openChapters(segmentText);
                       case 'speaker-distribution':
@@ -1564,6 +1671,16 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         value: 'speakers',
                         enabled: fileReady && !recording.processing,
                         child: const Text('说话人姓名'),
+                      ),
+                    if (canLabelSpeakers)
+                      PopupMenuItem(
+                        value: 'label-speakers',
+                        enabled:
+                            fileReady &&
+                            !recording.processing &&
+                            !recording.audioLocked &&
+                            !labellingSpeakers,
+                        child: Text(labellingSpeakers ? '正在区分发言人…' : '区分发言人…'),
                       ),
                     if (source.isNotEmpty &&
                         !recording.live &&
@@ -1783,6 +1900,15 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   playable: translationPlayable,
                   canRealign: segmentText.isNotEmpty,
                   canTranslate: canOfferTranslation && canProcess,
+                ),
+              if (!_showTranslation &&
+                  path != null &&
+                  source.isNotEmpty &&
+                  !recording.processing &&
+                  c.shouldShowSpeakerMergeHint(path))
+                _SpeakerMergeRiskBanner(
+                  onDismiss: () => c.dismissSpeakerMergeHint(path),
+                  onRediarize: () => _rediarizeSpeakers(recording),
                 ),
               if (!_showTranslation &&
                   recording.hasPendingTranscript &&
@@ -3466,6 +3592,212 @@ class _PendingTranscriptBanner extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SpeakerMergeRiskBanner extends StatelessWidget {
+  const _SpeakerMergeRiskBanner({
+    required this.onDismiss,
+    required this.onRediarize,
+  });
+
+  final VoidCallback onDismiss;
+  final VoidCallback onRediarize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      child: Container(
+        key: const ValueKey('speaker-merge-risk-banner'),
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        decoration: BoxDecoration(
+          color: AppColors.bgSubtle,
+          borderRadius: BorderRadius.circular(AppRadii.panel),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '发言人可能分得不够细：不同的人可能被并成同一位。人多、嘈杂或远距收音时常发生，指定「大约几个人」重新区分会更准。',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 4,
+              children: [
+                TextButton(
+                  key: const ValueKey('speaker-merge-risk-dismiss'),
+                  onPressed: onDismiss,
+                  child: const Text('不用了'),
+                ),
+                TextButton(
+                  key: const ValueKey('speaker-merge-risk-rediarize'),
+                  onPressed: onRediarize,
+                  child: const Text('重新区分发言人…'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RediarizeSpeakersDialog extends StatefulWidget {
+  const _RediarizeSpeakersDialog({required this.initialExpectedSpeakers});
+
+  final int? initialExpectedSpeakers;
+
+  @override
+  State<_RediarizeSpeakersDialog> createState() =>
+      _RediarizeSpeakersDialogState();
+}
+
+class _RediarizeSpeakersDialogState extends State<_RediarizeSpeakersDialog> {
+  late int? _selected = widget.initialExpectedSpeakers;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重新区分发言人'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '只重新分辨谁在说话，逐字稿的文字不会变，手动改过归属的段落也会保留。',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '大约几个人',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                ChoiceChip(
+                  key: const ValueKey('expected-speakers-auto'),
+                  label: const Text('自动判断'),
+                  selected: _selected == null,
+                  onSelected: (_) => setState(() => _selected = null),
+                ),
+                for (var n = 2; n <= 8; n++)
+                  ChoiceChip(
+                    key: ValueKey('expected-speakers-$n'),
+                    label: Text('$n 人'),
+                    selected: _selected == n,
+                    onSelected: (_) => setState(() => _selected = n),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const ValueKey('confirm-rediarize-speakers'),
+          onPressed: () => Navigator.pop(context, (
+            confirmed: true,
+            expectedSpeakers: _selected,
+          )),
+          child: const Text('开始区分'),
+        ),
+      ],
+    );
+  }
+}
+
+class _MergeSpeakersDialog extends StatefulWidget {
+  const _MergeSpeakersDialog({required this.speakers});
+
+  final List<TranscriptSpeaker> speakers;
+
+  @override
+  State<_MergeSpeakersDialog> createState() => _MergeSpeakersDialogState();
+}
+
+class _MergeSpeakersDialogState extends State<_MergeSpeakersDialog> {
+  late String _from = widget.speakers.last.id;
+  late String _into = widget.speakers.first.id;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('合并发言人'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '将被合并发言人的所有段落归入目标发言人。若目标尚未自定义姓名，会保留被合并者的自定义姓名。',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            const Text('把哪位发言人：', style: TextStyle(fontSize: 13)),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final s in widget.speakers)
+                  ChoiceChip(
+                    key: ValueKey('merge-from-${s.id}'),
+                    label: Text(s.displayLabel),
+                    selected: _from == s.id,
+                    onSelected: (_) => setState(() {
+                      _from = s.id;
+                      if (_into == _from) {
+                        _into = widget.speakers
+                            .firstWhere((other) => other.id != _from)
+                            .id;
+                      }
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Text('合并到：', style: TextStyle(fontSize: 13)),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final s in widget.speakers)
+                  if (s.id != _from)
+                    ChoiceChip(
+                      key: ValueKey('merge-into-${s.id}'),
+                      label: Text(s.displayLabel),
+                      selected: _into == s.id,
+                      onSelected: (_) => setState(() => _into = s.id),
+                    ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const ValueKey('confirm-merge-speakers'),
+          onPressed: _from == _into
+              ? null
+              : () => Navigator.pop(context, (from: _from, into: _into)),
+          child: const Text('合并'),
+        ),
+      ],
     );
   }
 }

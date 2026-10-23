@@ -17,6 +17,7 @@ import 'package:koe/state/context/commitments.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 
+import 'support/audio_payload_detector.dart';
 import 'support/fake_foreground_service.dart';
 
 void main() {
@@ -540,18 +541,64 @@ void main() {
         );
 
         expect(wire.requests, isNotEmpty, reason: '整理请求正常发出');
-        final base64SampleFragment = base64Encode(_pcmPattern).substring(0, 24);
+        bool carriesAudio(_RecordedWireRequest req) =>
+            requestCarriesAudioBytes(req.bodyBytes, pcmPattern: _pcmPattern);
+
+        // 负对照：构造假请求嵌入真实录下 WAV 文件的不同对齐/短片段/URL-safe/76列换行 Base64，检测器必须全部判为带音频
+        String wrap76(String input) {
+          final out = StringBuffer();
+          for (var i = 0; i < input.length; i += 76) {
+            if (i > 0) out.write('\r\n');
+            out.write(
+              input.substring(
+                i,
+                i + 76 > input.length ? input.length : i + 76,
+              ),
+            );
+          }
+          return out.toString();
+        }
+
+        _RecordedWireRequest fakeJsonRequest(String encodedAudio) =>
+            _RecordedWireRequest(
+              method: 'POST',
+              url: Uri.parse('https://example.invalid/v1/audio'),
+              bodyBytes: Uint8List.fromList(
+                utf8.encode(jsonEncode({'payload': encodedAudio})),
+              ),
+            );
+
+        // 1) 从文件开头起只取 WAV 头 (44B) + 36B (<60B) 样本数据的短片段
+        final shortFromStart = fakeJsonRequest(
+          base64Encode(recordedBytes.sublist(0, 44 + 36)),
+        );
+        // 2) 非 3 倍数字节偏移起的分片（偏移 46，46 mod 3 = 1；相对样本起点 44 偏移 2）
+        final unalignedSlice = fakeJsonRequest(
+          base64Encode(recordedBytes.sublist(46, 46 + 60)),
+        );
+        // 3) URL-safe Base64（从偏移 50 起取 24B 完整样本周期，含 0xDE,0xAD,0xBE,0xEF,0xCA,0xFE 对应 + → -）
+        final urlSafeSlice = fakeJsonRequest(
+          base64UrlEncode(recordedBytes.sublist(50, 50 + 24)),
+        );
+        // 4) 76 列换行 Base64
+        final wrapped76Slice = fakeJsonRequest(
+          wrap76(base64Encode(recordedBytes.sublist(30, 30 + 96))),
+        );
+        expect(
+          [
+            carriesAudio(shortFromStart),
+            carriesAudio(unalignedSlice),
+            carriesAudio(urlSafeSlice),
+            carriesAudio(wrapped76Slice),
+          ],
+          [isTrue, isTrue, isTrue, isTrue],
+          reason:
+              'WAV 头+短片段、非 3 倍数字节偏移分片、URL-safe Base64、76 列换行 Base64 都必须被判为带音频',
+        );
+
         final audioCarryingRequests = [
           for (final req in wire.requests)
-            if (_containsSublist(req.bodyBytes, ascii.encode('RIFF')) ||
-                _containsSublist(req.bodyBytes, ascii.encode('WAVE')) ||
-                _containsSublist(req.bodyBytes, ascii.encode('ftyp')) ||
-                _containsSublist(req.bodyBytes, ascii.encode('M4A ')) ||
-                _containsSublist(req.bodyBytes, ascii.encode('OggS')) ||
-                _containsSublist(req.bodyBytes, ascii.encode('OpusHead')) ||
-                _containsSublist(req.bodyBytes, _pcmPattern) ||
-                req.bodyText.contains(base64SampleFragment))
-              '${req.method} ${req.url}',
+            if (carriesAudio(req)) '${req.method} ${req.url}',
         ];
         expect(audioCarryingRequests, isEmpty);
 

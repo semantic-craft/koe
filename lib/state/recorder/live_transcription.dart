@@ -214,6 +214,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
             : '此设备不支持设备端处理，请在设置中选择云端语音服务',
       'language_unsupported' => '不支持此语言，请更换语言',
       'resources_missing' => '请在设置中下载所需语言',
+      'microphone_permission_denied' => '没有麦克风权限，请在系统设置中允许 Koe 使用麦克风',
       'cancelled' => '处理已取消，可重试',
       'busy' => '请等待当前处理完成后重试',
       'audio_invalid' => '无法读取录音，请重新下载',

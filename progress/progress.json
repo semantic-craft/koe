@@ -210,13 +210,13 @@
         "number": 331,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T05:10:10Z"
+        "updated_at": "2026-10-22T06:04:11Z"
       },
       {
         "number": 335,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-10-22T02:11:29Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-10-22T15:56:28Z"
       },
       {
         "number": 344,
@@ -228,14 +228,32 @@
         "number": 345,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-22T05:10:08Z"
+        "updated_at": "2026-10-23T01:09:41Z"
+      },
+      {
+        "number": 371,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-22T13:27:54Z"
+      },
+      {
+        "number": 433,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-23T07:51:48Z"
+      },
+      {
+        "number": 434,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-10-23T07:53:15Z"
       }
     ],
-    "main": "e6c0595585683d6a86345144d657d9236dd8cb13",
+    "main": "964291e5283a3ae6423255adb6073a3e8ac5c341",
     "open_pulls": [
       {
-        "head": "f547cc961be2c6a072a8efd1b9e7063c90b1bc5d",
-        "number": 379
+        "head": "963bbe14db7837fb408523bf538de61787063439",
+        "number": 432
       }
     ],
     "pulls": [
@@ -382,12 +400,20 @@
         "merged": true,
         "number": 380,
         "state": "closed"
+      },
+      {
+        "base": "964291e5283a3ae6423255adb6073a3e8ac5c341",
+        "head": "963bbe14db7837fb408523bf538de61787063439",
+        "merge_commit": "8a41e8a8bf15be37a5a78833e2cd62cb5cf8d2b0",
+        "merged": false,
+        "number": 432,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-22T05:11:05.762682Z",
+  "observed_at": "2026-10-23T08:06:54.856832Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -587,6 +613,50 @@
           "status": "done",
           "summary": "PR #62 与工单 #38 已被 #331 的范围取代：Koe 名称与图标由 #336（PR #347）完成，后台同步通知由 #339（PR #351）、录音与监听通知由 #340（PR #354）完成。2026-10-22 关闭 PR #62 与 #38，不再合并。",
           "title": "旧 Android 应用身份 PR（已关闭）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "接手 #389 的 PR：合入 main、R22.2、评审后的修复；三项验收、perf-check 数字和待定阈值写在正文。",
+              "ref": 432
+            },
+            {
+              "kind": "issue",
+              "note": "三端真机验收和自动阈值的真实会议核对。",
+              "ref": 433
+            },
+            {
+              "kind": "issue",
+              "note": "评审确认、没在 #432 修的项：长录音内存、模型地址钉版本、下载效率与代码清理，以及有线网络待定。",
+              "ref": 434
+            },
+            {
+              "kind": "file",
+              "note": "keepSpeakerIds：60% 时长规则沿用原编号，其余取最小空闲编号。",
+              "ref": "lib/ai/speaker_diarization.dart"
+            },
+            {
+              "kind": "file",
+              "note": "(2b) 改前张总的名字落到新来的人身上，改后跟着人走；(2) 期望 1、9、2。",
+              "ref": "test/speaker_edits_test.dart"
+            },
+            {
+              "kind": "file",
+              "note": "「本机会议先存下转写文字，发言人在转写任务之外标上」：改前文字要等区分完才存。",
+              "ref": "test/local_speaker_diarization_test.dart"
+            },
+            {
+              "kind": "file",
+              "note": "#389 的评测：独立时间区间、双侧 collar 与重叠计分。",
+              "ref": "tool/diarization_eval.dart"
+            }
+          ],
+          "id": "meeting-diarization-p2",
+          "next": "合并 #432；#433 做三端真机验收，并用真实中文会议定自动阈值（并成少于实际人数就改回 0.75）；#434 处理评审时没修的项；只插网线时是否允许下载模型待用户定；#371 还差 scripts/android-check 的区分场景。",
+          "status": "in_progress",
+          "summary": "#432 接手 #389：合入 main，修了 R22.2（重新区分后取过的名字跟着人走），#398 之后 Apple 转写按段分配发言人。代码评审（high）15 条修了 14 条：转写文字先存好，发言人随后在后台区分、一次只区分一条，重新转写也沿用编号，合并和重新区分连正文一起改、能复原，暂停的模型下载不会自己重开，手机热点和低数据模式不算 Wi-Fi；长录音内存等没修的项记在 #434。4530da2 上 scripts/check 无分析问题、920 个测试全过，三端 debug 构建成功，963bbe1 上 CI 通过、perf-check 在 Mac 空闲时各项都在上限内。自动阈值保留 1.0：AMI 0–420 秒留出 DER 14.43%（6 人），中文四人样例并成 2 人；本轮没有模型缓存，没有重跑真实模型。",
+          "title": "会议纪要第 2 期：本机发言人区分"
         }
       ],
       "title": "实现差异与范围核对"
@@ -971,7 +1041,10 @@
       331,
       335,
       344,
-      345
+      345,
+      371,
+      433,
+      434
     ],
     "pulls": [
       62,
@@ -991,7 +1064,8 @@
       362,
       364,
       366,
-      380
+      380,
+      432
     ]
   }
 }

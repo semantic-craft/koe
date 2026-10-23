@@ -12,6 +12,7 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    WifiConnectivityBridge.configure(binaryMessenger: engineBridge.applicationRegistrar.messenger())
     CredentialBridge.configure(binaryMessenger: engineBridge.applicationRegistrar.messenger())
     SystemTasksBridge.configure(binaryMessenger: engineBridge.applicationRegistrar.messenger())
     AudioTranscodeBridge.configure(binaryMessenger: engineBridge.applicationRegistrar.messenger())

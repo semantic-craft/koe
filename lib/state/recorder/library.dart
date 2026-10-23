@@ -16,11 +16,11 @@ mixin _RecorderLibrary on ChangeNotifier {
   abstract String? _fileJobKey;
   abstract final FileJobJournal _fileJobs;
   abstract final Future<void> _fileJobsLoaded;
-  abstract final Map<String, String> _incomingTranscripts;
+  void _forgetTranscriptState(String key);
   abstract final Directory? _libraryDirectoryOverride;
   abstract final Future<Duration?> Function(String path) _localDurationReader;
   DateTime? _localFileTimestamp(String? path);
-  abstract final Map<String, String> _manualTranscripts;
+  void _moveTranscriptState(String from, String to);
   set _observedPlacements(Map<String, TopicPlacement> value);
   // ignore: unused_element_parameter
   Future<void> _persistTranscripts({bool strict = false});
@@ -32,20 +32,17 @@ mixin _RecorderLibrary on ChangeNotifier {
   // ignore: unused_element_parameter
   String _recordingKey({int? fileId, String? path});
   abstract final Map<String, _RecordingSession> _recordingSessions;
-  abstract final Map<String, RecordingTranslation> _recordingTranslations;
   void _requireFinishedRecording(String path);
-  abstract final Map<String, Map<int, String>> _segmentSpeakers;
   abstract final Map<String, _TopicAssistLatest> _topicAssistLatest;
   abstract final Future<void> _topicsLoaded;
-  abstract final Map<String, TranscriptMetadata> _transcriptMetadata;
   abstract final Map<String, String> _transcriptPathsByKey;
-  abstract final Map<String, List<TranscriptSegment>> _transcriptSegments;
   abstract Future<void> _transcriptsLoaded;
   abstract final MacArchiveController archive;
   abstract final RecordingBookmarkStore bookmarks;
   abstract String? errorMessage;
   abstract String? expandedLocalPath;
   int? fileIdFromPath(String path);
+  bool labellingSpeakers(String path);
   abstract final PlaybackHistoryStore playbackHistory;
   abstract int? playingFileId;
   abstract String? playingPath;
@@ -629,12 +626,7 @@ mixin _RecorderLibrary on ChangeNotifier {
           topics.placements,
         );
         _deferredJobs.discard(key);
-        _transcriptMetadata.remove(key);
-        _recordingTranslations.remove(key);
-        _transcriptSegments.remove(key);
-        _manualTranscripts.remove(key);
-        _incomingTranscripts.remove(key);
-        _segmentSpeakers.remove(key);
+        _forgetTranscriptState(key);
         _recordingErrors.remove(key);
         _recordingSessions.removeWhere(
           (_, session) =>
@@ -959,6 +951,7 @@ mixin _RecorderLibrary on ChangeNotifier {
     archive.invalidateRestore(path);
     _requireFinishedRecording(path);
     if (_fileJobKey == _recordingKey(path: path)) throw StateError('处理完成后再重命名');
+    if (labellingSpeakers(path)) throw StateError('区分发言人完成后再重命名');
     final source = File(path);
     if (!await source.exists()) throw StateError('文件不存在');
 
@@ -1004,10 +997,7 @@ mixin _RecorderLibrary on ChangeNotifier {
       if (_transcriptPathsByKey.remove(oldKey) != null) {
         _transcriptPathsByKey[newKey] = targetPath;
       }
-      if (oldKey != newKey) {
-        final segments = _transcriptSegments.remove(oldKey);
-        if (segments != null) _transcriptSegments[newKey] = segments;
-      }
+      _moveTranscriptState(oldKey, newKey);
       _observedPlacements = Map<String, TopicPlacement>.from(topics.placements);
       final transcript = transcriptsByPath.remove(path);
       if (transcript != null) transcriptsByPath[targetPath] = transcript;

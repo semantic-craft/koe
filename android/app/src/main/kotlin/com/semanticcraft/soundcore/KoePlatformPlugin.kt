@@ -6,6 +6,8 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -19,11 +21,12 @@ import io.flutter.plugin.common.PluginRegistry
 
 /**
  * Koe's own platform channels: the foreground service, the recorder's
- * Wi-Fi hotspot and 全天常驻. A plugin rather than code in MainActivity, so
- * they are there whenever the engine runs, with the activity or headless
- * after a service started Dart (KoeEngine). What needs the activity (a
- * permission prompt, a dialog, the association dialog) goes through it
- * while one is attached and gives up quietly without one.
+ * Wi-Fi hotspot, 全天常驻 and whether the phone is on Wi-Fi. A plugin
+ * rather than code in MainActivity, so they are there whenever the engine
+ * runs, with the activity or headless after a service started Dart
+ * (KoeEngine). What needs the activity (a permission prompt, a dialog, the
+ * association dialog) goes through it while one is attached and gives up
+ * quietly without one.
  */
 class KoePlatformPlugin :
     FlutterPlugin,
@@ -34,6 +37,7 @@ class KoePlatformPlugin :
     private lateinit var backgroundSync: MethodChannel
     private lateinit var softAp: MethodChannel
     private lateinit var presence: MethodChannel
+    private lateinit var wifi: MethodChannel
     private val mainThread = Handler(Looper.getMainLooper())
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingLocalNetwork: MethodChannel.Result? = null
@@ -83,6 +87,8 @@ class KoePlatformPlugin :
         softAp.setMethodCallHandler(::onSoftAp)
         presence = MethodChannel(messenger, "com.semanticcraft.koe/recorder_presence")
         presence.setMethodCallHandler(::onPresence)
+        wifi = MethodChannel(messenger, "com.semanticcraft.koe/wifi_connectivity")
+        wifi.setMethodCallHandler(::onWifi)
         RecordingSyncService.stopListener = stopListener
         RecordingSyncService.refusedListener = refusedListener
         RecorderCompanion.presenceListener = presenceListener
@@ -93,6 +99,7 @@ class KoePlatformPlugin :
         backgroundSync.setMethodCallHandler(null)
         softAp.setMethodCallHandler(null)
         presence.setMethodCallHandler(null)
+        wifi.setMethodCallHandler(null)
         if (RecordingSyncService.stopListener === stopListener) RecordingSyncService.stopListener = null
         if (RecordingSyncService.refusedListener === refusedListener) RecordingSyncService.refusedListener = null
         if (RecorderCompanion.presenceListener === presenceListener) RecorderCompanion.presenceListener = null
@@ -217,6 +224,23 @@ class KoePlatformPlugin :
             }
             else -> result.notImplemented()
         }
+    }
+
+    // Whether the default network is unmetered Wi-Fi alone, for downloads
+    // Koe keeps off mobile data and phone hotspots
+    // (lib/platform/wifi_connectivity.dart).
+    private fun onWifi(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method != "isWifiConnected") return result.notImplemented()
+        val manager = appContext.getSystemService(ConnectivityManager::class.java)
+        val caps = manager.getNetworkCapabilities(manager.activeNetwork)
+        result.success(
+            caps != null &&
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+        )
     }
 
     /**

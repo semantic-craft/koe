@@ -6,9 +6,116 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../ai/sherpa_diarizer_runner.dart';
 import '../util/off_ui.dart';
 import 'atomic_file.dart';
 import 'recording.dart';
+
+/// Pre-edit speaker state for a single recording so the most recent merge or
+/// re-diarization can be undone (S23).
+class SpeakerEditSnapshot {
+  const SpeakerEditSnapshot({
+    required this.label,
+    required this.segments,
+    this.segmentSpeakers = const {},
+    this.aliases = const {},
+    this.rawTranscript,
+    this.manualTranscript,
+    this.incomingTranscript,
+    this.expectedSpeakers,
+    this.quality,
+    this.hintDismissed = false,
+  });
+
+  final String label;
+  final List<TranscriptSegment> segments;
+  final Map<int, String> segmentSpeakers;
+  final Map<String, String> aliases;
+  final String? rawTranscript;
+
+  /// The user's edit of the text and a newer provider text waiting under it,
+  /// both of which label their lines by speaker.
+  final String? manualTranscript;
+  final String? incomingTranscript;
+  final int? expectedSpeakers;
+  final DiarizationQuality? quality;
+  final bool hintDismissed;
+
+  Map<String, Object?> toJson() => {
+    'label': label,
+    'segments': segments.map((s) => s.toJson()).toList(),
+    if (segmentSpeakers.isNotEmpty)
+      'segmentSpeakers': segmentSpeakers.map(
+        (index, speaker) => MapEntry('$index', speaker),
+      ),
+    if (aliases.isNotEmpty) 'aliases': aliases,
+    if (rawTranscript != null) 'rawTranscript': rawTranscript,
+    'manualTranscript': manualTranscript,
+    'incomingTranscript': incomingTranscript,
+    if (expectedSpeakers != null) 'expectedSpeakers': expectedSpeakers,
+    if (quality != null) 'quality': quality!.toJson(),
+    if (hintDismissed) 'hintDismissed': true,
+  };
+
+  static SpeakerEditSnapshot? decode(Object? value) {
+    if (value is! Map) return null;
+    final label = value['label'];
+    final rawSegments = value['segments'];
+    if (label is! String || rawSegments is! List) return null;
+    // Snapshots saved before the edited texts were kept could not put them
+    // back.
+    if (!value.containsKey('manualTranscript') ||
+        !value.containsKey('incomingTranscript')) {
+      return null;
+    }
+    final segments = rawSegments
+        .map(TranscriptSegment.decode)
+        .whereType<TranscriptSegment>()
+        .toList(growable: false);
+    if (segments.length != rawSegments.length) return null;
+
+    final segmentSpeakers = <int, String>{};
+    final rawOverrides = value['segmentSpeakers'];
+    if (rawOverrides is Map) {
+      for (final entry in rawOverrides.entries) {
+        final idx = int.tryParse('${entry.key}');
+        final spk = entry.value;
+        if (idx != null && idx >= 0 && spk is String) {
+          segmentSpeakers[idx] = spk.trim();
+        }
+      }
+    }
+
+    final aliases = <String, String>{};
+    final rawAliases = value['aliases'];
+    if (rawAliases is Map) {
+      for (final entry in rawAliases.entries) {
+        final id = '${entry.key}'.trim();
+        final alias = entry.value;
+        if (id.isNotEmpty && alias is String && alias.trim().isNotEmpty) {
+          aliases[id] = alias.trim();
+        }
+      }
+    }
+
+    final rawTranscript = value['rawTranscript'];
+    final manual = value['manualTranscript'];
+    final incoming = value['incomingTranscript'];
+    final expected = value['expectedSpeakers'];
+    return SpeakerEditSnapshot(
+      label: label,
+      segments: segments,
+      segmentSpeakers: Map<int, String>.unmodifiable(segmentSpeakers),
+      aliases: Map<String, String>.unmodifiable(aliases),
+      rawTranscript: rawTranscript is String ? rawTranscript : null,
+      manualTranscript: manual is String ? manual : null,
+      incomingTranscript: incoming is String ? incoming : null,
+      expectedSpeakers: expected is int && expected > 0 ? expected : null,
+      quality: DiarizationQuality.decode(value['quality']),
+      hintDismissed: value['hintDismissed'] == true,
+    );
+  }
+}
 
 typedef TranscriptStoreData = ({
   Map<String, String> byPath,
@@ -21,6 +128,10 @@ typedef TranscriptStoreData = ({
   Map<String, String> manualByKey,
   Map<String, String> incomingByKey,
   Map<String, Map<int, String>> segmentSpeakersByKey,
+  Map<String, int> expectedSpeakersByKey,
+  Map<String, DiarizationQuality> diarizationQualityByKey,
+  Set<String> speakerHintDismissedKeys,
+  Map<String, SpeakerEditSnapshot> speakerUndoByKey,
 });
 
 /// Persists completed per-recording transcripts on the app device.
@@ -64,6 +175,10 @@ class TranscriptStore {
     manualByKey: <String, String>{},
     incomingByKey: <String, String>{},
     segmentSpeakersByKey: <String, Map<int, String>>{},
+    expectedSpeakersByKey: <String, int>{},
+    diarizationQualityByKey: <String, DiarizationQuality>{},
+    speakerHintDismissedKeys: <String>{},
+    speakerUndoByKey: <String, SpeakerEditSnapshot>{},
   );
 
   static Future<TranscriptStoreData> load() async {
@@ -128,7 +243,62 @@ class TranscriptStore {
       segmentSpeakersByKey: _decodeSegmentSpeakers(
         json['segmentSpeakersByKey'],
       ),
+      expectedSpeakersByKey: _decodeExpectedSpeakers(
+        json['expectedSpeakersByKey'],
+      ),
+      diarizationQualityByKey: _decodeDiarizationQuality(
+        json['diarizationQualityByKey'],
+      ),
+      speakerHintDismissedKeys: _decodeDismissedKeys(
+        json['speakerHintDismissedKeys'],
+      ),
+      speakerUndoByKey: _decodeSpeakerUndo(json['speakerUndoByKey']),
     );
+  }
+
+  static Map<String, int> _decodeExpectedSpeakers(Object? value) {
+    if (value is! Map) return {};
+    return {
+      for (final entry in value.entries)
+        if (entry.key is String &&
+            entry.value is int &&
+            (entry.value as int) > 0)
+          entry.key as String: entry.value as int,
+    };
+  }
+
+  static Map<String, DiarizationQuality> _decodeDiarizationQuality(
+    Object? value,
+  ) {
+    if (value is! Map) return {};
+    final out = <String, DiarizationQuality>{};
+    for (final entry in value.entries) {
+      final quality = DiarizationQuality.decode(entry.value);
+      if (entry.key is String && quality != null) {
+        out[entry.key as String] = quality;
+      }
+    }
+    return out;
+  }
+
+  static Set<String> _decodeDismissedKeys(Object? value) {
+    if (value is! List) return {};
+    return {
+      for (final item in value)
+        if (item is String && item.trim().isNotEmpty) item.trim(),
+    };
+  }
+
+  static Map<String, SpeakerEditSnapshot> _decodeSpeakerUndo(Object? value) {
+    if (value is! Map) return {};
+    final out = <String, SpeakerEditSnapshot>{};
+    for (final entry in value.entries) {
+      final snap = SpeakerEditSnapshot.decode(entry.value);
+      if (entry.key is String && snap != null) {
+        out[entry.key as String] = snap;
+      }
+    }
+    return out;
   }
 
   static Map<String, String> _decodeTextByKey(Object? value) {
@@ -233,6 +403,10 @@ class TranscriptStore {
     Map<String, String> manualByKey = const {},
     Map<String, String> incomingByKey = const {},
     Map<String, Map<int, String>> segmentSpeakersByKey = const {},
+    Map<String, int> expectedSpeakersByKey = const {},
+    Map<String, DiarizationQuality> diarizationQualityByKey = const {},
+    Set<String> speakerHintDismissedKeys = const {},
+    Map<String, SpeakerEditSnapshot> speakerUndoByKey = const {},
     bool strict = false,
   }) {
     final paths = Map<String, String>.from(byPath);
@@ -253,6 +427,12 @@ class TranscriptStore {
         if (entry.value.isNotEmpty)
           entry.key: Map<int, String>.from(entry.value),
     };
+    final expectedSpeakers = Map<String, int>.from(expectedSpeakersByKey);
+    final quality = Map<String, DiarizationQuality>.from(
+      diarizationQualityByKey,
+    );
+    final dismissed = Set<String>.from(speakerHintDismissedKeys);
+    final undo = Map<String, SpeakerEditSnapshot>.from(speakerUndoByKey);
     final snapshot = _Snapshot(
       paths,
       ids,
@@ -264,6 +444,10 @@ class TranscriptStore {
       manual,
       incoming,
       speakers,
+      expectedSpeakers,
+      quality,
+      dismissed,
+      undo,
     );
     var queued = _queued;
     if (queued != null) {
@@ -303,6 +487,10 @@ class TranscriptStore {
     Map<String, String> manualByKey = const {},
     Map<String, String> incomingByKey = const {},
     Map<String, Map<int, String>> segmentSpeakersByKey = const {},
+    Map<String, int> expectedSpeakersByKey = const {},
+    Map<String, DiarizationQuality> diarizationQualityByKey = const {},
+    Set<String> speakerHintDismissedKeys = const {},
+    Map<String, SpeakerEditSnapshot> speakerUndoByKey = const {},
   }) => <String, dynamic>{
     'version': 4,
     'byPath': byPath,
@@ -326,6 +514,18 @@ class TranscriptStore {
         value.map((index, speaker) => MapEntry('$index', speaker)),
       ),
     ),
+    if (expectedSpeakersByKey.isNotEmpty)
+      'expectedSpeakersByKey': expectedSpeakersByKey,
+    if (diarizationQualityByKey.isNotEmpty)
+      'diarizationQualityByKey': diarizationQualityByKey.map(
+        (key, value) => MapEntry(key, value.toJson()),
+      ),
+    if (speakerHintDismissedKeys.isNotEmpty)
+      'speakerHintDismissedKeys': speakerHintDismissedKeys.toList(),
+    if (speakerUndoByKey.isNotEmpty)
+      'speakerUndoByKey': speakerUndoByKey.map(
+        (key, value) => MapEntry(key, value.toJson()),
+      ),
   };
 
   static Future<void> _write(_Snapshot snapshot) async {
@@ -343,6 +543,10 @@ class TranscriptStore {
           manualByKey: snapshot.manualByKey,
           incomingByKey: snapshot.incomingByKey,
           segmentSpeakersByKey: snapshot.segmentSpeakersByKey,
+          expectedSpeakersByKey: snapshot.expectedSpeakersByKey,
+          diarizationQualityByKey: snapshot.diarizationQualityByKey,
+          speakerHintDismissedKeys: snapshot.speakerHintDismissedKeys,
+          speakerUndoByKey: snapshot.speakerUndoByKey,
         ),
       );
       final contents = await runOffUi(
@@ -372,6 +576,10 @@ class _Snapshot {
     this.manualByKey,
     this.incomingByKey,
     this.segmentSpeakersByKey,
+    this.expectedSpeakersByKey,
+    this.diarizationQualityByKey,
+    this.speakerHintDismissedKeys,
+    this.speakerUndoByKey,
   );
 
   final Map<String, String> byPath;
@@ -384,6 +592,10 @@ class _Snapshot {
   final Map<String, String> manualByKey;
   final Map<String, String> incomingByKey;
   final Map<String, Map<int, String>> segmentSpeakersByKey;
+  final Map<String, int> expectedSpeakersByKey;
+  final Map<String, DiarizationQuality> diarizationQualityByKey;
+  final Set<String> speakerHintDismissedKeys;
+  final Map<String, SpeakerEditSnapshot> speakerUndoByKey;
 }
 
 class _QueuedSave {

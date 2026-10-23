@@ -32,6 +32,7 @@ import 'package:koe/ui/screens/recording_detail_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:provider/provider.dart';
 
+import 'support/audio_payload_detector.dart';
 import 'support/fake_foreground_service.dart';
 import 'support/wav_fixture.dart';
 
@@ -871,23 +872,63 @@ void main() {
       // 4. 检查所有出网请求与序列化后的真实请求字节
       expect(wire.requests, isNotEmpty, reason: '整理与纪要请求应正常发出');
 
-      final base64SampleFragment = base64Encode(_pcmPattern).substring(0, 24);
+      bool carriesAudio(_RecordedWireRequest req) =>
+          requestCarriesAudioBytes(req.bodyBytes, pcmPattern: _pcmPattern);
+
+      String wrap76(String input) {
+        final out = StringBuffer();
+        for (var i = 0; i < input.length; i += 76) {
+          if (i > 0) out.write('\r\n');
+          out.write(
+            input.substring(
+              i,
+              i + 76 > input.length ? input.length : i + 76,
+            ),
+          );
+        }
+        return out.toString();
+      }
+
+      _RecordedWireRequest fakeJsonRequest(String encodedAudio) =>
+          _RecordedWireRequest(
+            method: 'POST',
+            url: Uri.parse('https://example.invalid/v1/audio'),
+            headers: const {},
+          ).._body.add(utf8.encode(jsonEncode({'payload': encodedAudio})));
+
+      expect(
+        [
+          carriesAudio(
+            fakeJsonRequest(base64Encode(recordedBytes.sublist(0, 44 + 36))),
+          ),
+          carriesAudio(
+            fakeJsonRequest(base64Encode(recordedBytes.sublist(46, 46 + 60))),
+          ),
+          carriesAudio(
+            fakeJsonRequest(
+              base64UrlEncode(recordedBytes.sublist(45, 45 + 36)),
+            ),
+          ),
+          carriesAudio(
+            fakeJsonRequest(
+              wrap76(base64Encode(recordedBytes.sublist(30, 30 + 96))),
+            ),
+          ),
+        ],
+        [isTrue, isTrue, isTrue, isTrue],
+        reason:
+            '负对照：WAV 头+短片段、非 3 倍数字节偏移分片、URL-safe Base64、76 列换行 Base64 均须被判为带音频',
+      );
+
       final audioCarryingRequests = [
         for (final req in wire.requests)
-          if (_containsSublist(req.bodyBytes, ascii.encode('RIFF')) ||
-              _containsSublist(req.bodyBytes, ascii.encode('WAVE')) ||
-              _containsSublist(req.bodyBytes, ascii.encode('ftyp')) ||
-              _containsSublist(req.bodyBytes, ascii.encode('M4A ')) ||
-              _containsSublist(req.bodyBytes, ascii.encode('OggS')) ||
-              _containsSublist(req.bodyBytes, ascii.encode('OpusHead')) ||
-              _containsSublist(req.bodyBytes, _pcmPattern) ||
-              req.bodyText.contains(base64SampleFragment))
+          if (carriesAudio(req))
             '${req.method} ${req.url} (${req.bodyBytes.length} bytes)',
       ];
       expect(
         audioCarryingRequests,
         isEmpty,
-        reason: '任何出网请求的序列化真实字节都不得含音频头（WAV/RIFF、M4A/ftyp、Ogg/Opus）或原始 PCM 样本',
+        reason: '任何出网请求的序列化真实字节都不得含音频头（WAV/RIFF、M4A/ftyp、Ogg/Opus）或原始/Base64 PCM 样本',
       );
 
       final uploadEndpoints = [
