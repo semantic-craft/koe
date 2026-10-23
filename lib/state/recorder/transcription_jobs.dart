@@ -8,12 +8,6 @@ part of '../recorder_controller.dart';
 mixin _RecorderTranscriptionJobs on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
   SpeechConfiguration get _activeConfiguration;
-  Future<SttResult> _applyLocalDiarizationIfNeeded(
-    String path,
-    SttResult result, {
-    required bool isMeeting,
-    required SpeechConfiguration config,
-  });
   abstract final AppleSpeechService _appleSpeech;
   abstract bool _disposed;
   abstract final DoubaoSttService _doubaoStt;
@@ -22,6 +16,10 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   bool _isConfigured(SpeechConfiguration config);
   bool _isRecordingAudioLocked(int? id, String? path);
   bool _isTrashedPath(String path);
+  Future<void> _labelSpeakersLater(
+    String path,
+    List<TranscriptSegment> previous,
+  );
   abstract final Future<void> _libraryLoaded;
   bool get _liveProcessing;
   Future<void> _persistTranscripts({bool strict = false});
@@ -31,6 +29,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   String _recordingKey({int? fileId, String? path});
   abstract final Map<String, RecordingTranslation> _recordingTranslations;
   String _referenceKey(RecordingReference ref);
+  bool _sameSegments(String path, List<TranscriptSegment> fresh);
   Future<void> _scheduleTopicAssist(String recordingKey, String transcript);
   _RecordingSession? _sessionForReference(RecordingReference ref);
   SpeechConfiguration _configurationForProvider(
@@ -201,8 +200,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         !_takenAsVoiceNote(view.path) &&
         !targetProvider.onDevice &&
         !confirmCloudUpload) {
-      _recordingErrors[_referenceKey(ref)] =
-          '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
+      _recordingErrors[_referenceKey(ref)] = '已开启「录音只留本机」，云端转写会上传音频，请确认后再试';
       notifyListeners();
       return;
     }
@@ -492,7 +490,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         await _fileJobs.save();
         return true;
       }
-      var result = job.stage == 'result'
+      final result = job.stage == 'result'
           ? SttResult(
               text: job.text!,
               sourcePath: path,
@@ -524,15 +522,6 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         job.error = _recordingErrors[key];
         await _fileJobs.save();
       } else {
-        if (job.stage != 'result') {
-          result = await _applyLocalDiarizationIfNeeded(
-            path,
-            result,
-            isMeeting: isMeeting,
-            config: config,
-          );
-          if (_disposed || revision != _fileJobRevision) return true;
-        }
         job.stage = 'result';
         job.text = result.text;
         job.language = result.language;
@@ -543,14 +532,12 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         final rememberedSegments = RecorderController._rememberedSegments(
           result.segments,
         );
+        final shownSegments = transcriptSegmentsForPath(currentPath);
         final remembered =
             transcriptForPath(currentPath) != result.text ||
             _transcriptMetadata[key]?.provider != config.provider ||
             _transcriptMetadata[key]?.sourceLanguage != config.sourceLanguage ||
-            !listEquals(
-              transcriptSegmentsForPath(currentPath),
-              rememberedSegments,
-            );
+            !_sameSegments(currentPath, rememberedSegments);
         if (remembered) {
           rememberTranscript(
             currentPath,
@@ -572,6 +559,11 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         job.error = null;
         job.audioChanged = false;
         await _fileJobs.save();
+        // Meetings kept on this device get their speakers labelled here too,
+        // after the words are saved: one pass reads the whole recording.
+        if (isMeeting && meetingLocalOnly && config.provider.onDevice) {
+          unawaited(_labelSpeakersLater(currentPath, shownSegments));
+        }
         if (topicsEnabled && !remembered) {
           unawaited(_scheduleTopicAssist(key, result.text));
         }

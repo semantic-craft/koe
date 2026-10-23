@@ -972,55 +972,12 @@ class RecorderController extends ChangeNotifier
   SpeakerDiarizer get _effectiveSpeakerDiarizer =>
       _speakerDiarizerOverride ?? _defaultSpeakerDiarizer;
 
+  /// Meetings kept on this device get their speakers labelled once the
+  /// models are on it. Tests that inject neither a diarizer nor a model store
+  /// never reach the network.
   @override
-  Future<SttResult> _applyLocalDiarizationIfNeeded(
-    String path,
-    SttResult result, {
-    required bool isMeeting,
-    required SpeechConfiguration config,
-  }) async {
-    if (!isMeeting || !meetingLocalOnly || !config.provider.onDevice) {
-      return result;
-    }
-    // Speakers go only to recognized passages with their own times. A result
-    // without them keeps its text, with no invented timings or speakers.
-    if (result.segments.isEmpty) return result;
-    if (!_autoDiarizeLocalMeetings && !diarizationModels.isReady) {
-      return result;
-    }
-    try {
-      final wavPath = await _convertExportToWav(path);
-      final diarized = await _effectiveSpeakerDiarizer.diarize(
-        wavPath,
-        expectedSpeakers: expectedSpeakersForPath(path),
-      );
-      if (diarized.turns.isEmpty) return result;
-      final rawSegments = result.segments;
-      if (rawSegments.isEmpty) return result;
-      final baseSegments = _rememberedSegments(rawSegments);
-      final assigned = assignSpeakersToSegments(diarized.turns, baseSegments);
-      _recordDiarizationQuality(path, diarized.quality);
-      return SttResult(
-        text: result.text,
-        durationSec: result.durationSec,
-        language: result.language,
-        sourcePath: result.sourcePath,
-        segments: [
-          for (final seg in assigned.segments)
-            SttSegment(
-              text: seg.text,
-              startMs: seg.start.inMilliseconds,
-              endMs: seg.end?.inMilliseconds,
-              speaker: seg.speaker,
-              speakerChanged: seg.speakerChanged,
-            ),
-        ],
-      );
-    } catch (e) {
-      debugPrint('[Diarization] local diarization skipped: $e');
-      return result;
-    }
-  }
+  bool get _labelsSpeakersAutomatically =>
+      _autoDiarizeLocalMeetings || diarizationModels.isReady;
 
   /// Available playback rates for the speed dropdown.
   static const List<double> playbackSpeeds = [

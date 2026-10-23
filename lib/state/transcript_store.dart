@@ -20,6 +20,8 @@ class SpeakerEditSnapshot {
     this.segmentSpeakers = const {},
     this.aliases = const {},
     this.rawTranscript,
+    this.manualTranscript,
+    this.incomingTranscript,
     this.expectedSpeakers,
     this.quality,
     this.hintDismissed = false,
@@ -30,6 +32,11 @@ class SpeakerEditSnapshot {
   final Map<int, String> segmentSpeakers;
   final Map<String, String> aliases;
   final String? rawTranscript;
+
+  /// The user's edit of the text and a newer provider text waiting under it,
+  /// both of which label their lines by speaker.
+  final String? manualTranscript;
+  final String? incomingTranscript;
   final int? expectedSpeakers;
   final DiarizationQuality? quality;
   final bool hintDismissed;
@@ -43,6 +50,8 @@ class SpeakerEditSnapshot {
       ),
     if (aliases.isNotEmpty) 'aliases': aliases,
     if (rawTranscript != null) 'rawTranscript': rawTranscript,
+    'manualTranscript': manualTranscript,
+    'incomingTranscript': incomingTranscript,
     if (expectedSpeakers != null) 'expectedSpeakers': expectedSpeakers,
     if (quality != null) 'quality': quality!.toJson(),
     if (hintDismissed) 'hintDismissed': true,
@@ -53,6 +62,12 @@ class SpeakerEditSnapshot {
     final label = value['label'];
     final rawSegments = value['segments'];
     if (label is! String || rawSegments is! List) return null;
+    // Snapshots saved before the edited texts were kept could not put them
+    // back.
+    if (!value.containsKey('manualTranscript') ||
+        !value.containsKey('incomingTranscript')) {
+      return null;
+    }
     final segments = rawSegments
         .map(TranscriptSegment.decode)
         .whereType<TranscriptSegment>()
@@ -84,6 +99,8 @@ class SpeakerEditSnapshot {
     }
 
     final rawTranscript = value['rawTranscript'];
+    final manual = value['manualTranscript'];
+    final incoming = value['incomingTranscript'];
     final expected = value['expectedSpeakers'];
     return SpeakerEditSnapshot(
       label: label,
@@ -91,6 +108,8 @@ class SpeakerEditSnapshot {
       segmentSpeakers: Map<int, String>.unmodifiable(segmentSpeakers),
       aliases: Map<String, String>.unmodifiable(aliases),
       rawTranscript: rawTranscript is String ? rawTranscript : null,
+      manualTranscript: manual is String ? manual : null,
+      incomingTranscript: incoming is String ? incoming : null,
       expectedSpeakers: expected is int && expected > 0 ? expected : null,
       quality: DiarizationQuality.decode(value['quality']),
       hintDismissed: value['hintDismissed'] == true,
@@ -241,7 +260,9 @@ class TranscriptStore {
     if (value is! Map) return {};
     return {
       for (final entry in value.entries)
-        if (entry.key is String && entry.value is int && (entry.value as int) > 0)
+        if (entry.key is String &&
+            entry.value is int &&
+            (entry.value as int) > 0)
           entry.key as String: entry.value as int,
     };
   }

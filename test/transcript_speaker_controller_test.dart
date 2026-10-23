@@ -64,4 +64,75 @@ void main() {
       expect(controller.incomingTranscriptForPath(renamed), isNull);
     },
   );
+
+  group('本机录音（按路径记）', () {
+    TranscriptSegment seg(String text, int start, int end, String speaker) =>
+        TranscriptSegment(
+          text: text,
+          start: Duration(seconds: start),
+          end: Duration(seconds: end),
+          speaker: speaker,
+          speakerChanged: true,
+        );
+
+    Future<(RecorderController, String)> mergedTake() async {
+      final directory = await Directory.systemTemp.createTemp(
+        'koe-speaker-take-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final source = File('${directory.path}/phone_1783917051.wav');
+      await source.writeAsBytes([1, 2, 3]);
+      final controller = RecorderController(
+        loadPersistedState: false,
+        transcriptPersister: ({bool strict = false}) async {},
+      )..exportedPaths = [source.path];
+      addTearDown(controller.dispose);
+      controller.rememberTranscript(
+        source.path,
+        '甲。\n乙。\n丙。',
+        provider: SttProvider.apple,
+        segments: [
+          seg('甲。', 0, 10, '1'),
+          seg('乙。', 10, 20, '2'),
+          seg('丙。', 20, 30, '3'),
+        ],
+      );
+      await controller.saveManualTranscript(source.path, '甲。\n乙改过。\n丙。');
+      await controller.mergeTranscriptSpeakers(
+        source.path,
+        fromSpeakerId: '3',
+        intoSpeakerId: '1',
+      );
+      return (controller, source.path);
+    }
+
+    test('改名后，人工校订、段落归属和合并复原都跟到新名字下', () async {
+      final (controller, path) = await mergedTake();
+
+      final renamed = await controller.renameLocalExport(path, '周会');
+
+      expect(renamed, isNot(path));
+      expect(controller.transcriptForPath(renamed), '甲。\n乙改过。\n丙。');
+      expect(
+        controller.transcriptSegmentsForPath(renamed).map((s) => s.speaker),
+        ['1', '2', '1'],
+      );
+      expect(controller.canUndoSpeakerEdit(renamed), isTrue);
+      expect(await controller.undoSpeakerEdit(renamed), isTrue);
+      expect(
+        controller.transcriptSegmentsForPath(renamed).map((s) => s.speaker),
+        ['1', '2', '3'],
+      );
+    });
+
+    test('删除后，不再留着它的合并复原', () async {
+      final (controller, path) = await mergedTake();
+      expect(controller.canUndoSpeakerEdit(path), isTrue);
+
+      final result = await controller.deleteLocalExports([path]);
+
+      expect(result.deleted, 1);
+      expect(controller.canUndoSpeakerEdit(path), isFalse);
+    });
+  });
 }

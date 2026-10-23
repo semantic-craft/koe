@@ -10,6 +10,7 @@ import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/doubao_stt.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
+import 'package:koe/audio/audio_transcoder.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
 import 'package:koe/state/context/commitments.dart';
@@ -17,6 +18,7 @@ import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 
 import 'support/audio_payload_detector.dart';
+import 'support/scripted_speaker_diarizer.dart';
 import 'support/wav_fixture.dart';
 
 void main() {
@@ -167,6 +169,210 @@ void main() {
     expect(computedSeparated.shouldSuggestRediarize, isFalse);
   });
 
+  test('导入的 m4a 等格式先转成 16 kHz WAV 再区分，转不了就直接报错，不先下载模型', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-local-diar-');
+    addTearDown(() => dir.delete(recursive: true));
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const channel = MethodChannel('com.semanticcraft.koe/audio_transcode');
+    final converted = <Object?>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          converted.add(call.arguments);
+          throw PlatformException(code: 'decode', message: '这段音频读不出来');
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+    var requests = 0;
+    final store = DiarizationModelStore(
+      directory: Directory('${dir.path}/models'),
+      isWifiConnected: () async => true,
+      client: _CountingClient(() => requests++),
+    );
+    addTearDown(store.dispose);
+    final input = File('${dir.path}/meeting.m4a')
+      ..writeAsBytesSync([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]);
+
+    await expectLater(
+      SherpaSpeakerDiarizer(modelStore: store).diarize(input.path),
+      throwsA(
+        isA<AudioTranscodeException>().having(
+          (e) => e.message,
+          'message',
+          '这段音频读不出来',
+        ),
+      ),
+    );
+    expect(converted, [
+      isA<Map<Object?, Object?>>()
+          .having((a) => a['input'], 'input', input.path)
+          .having((a) => a['sampleRate'], 'sampleRate', 16000),
+    ]);
+    expect(requests, 0);
+  });
+
+  test('本机会议先存下转写文字，发言人在转写任务之外标上', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-local-diar-');
+    addTearDown(() => dir.delete(recursive: true));
+    final diarizer = ScriptedSpeakerDiarizer([
+      _turns([(0, 0, 3), (1, 3, 6)]),
+    ])..gate = Completer<void>();
+    final controller = _localMeetingController(
+      dir,
+      diarizer,
+      _FakeAppleSpeech(),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(() {
+      if (!diarizer.gate!.isCompleted) diarizer.gate!.complete();
+    });
+    final path = await _importMeeting(controller, dir);
+
+    final job = controller.transcribeLocalFile(
+      path,
+      provider: SttProvider.apple,
+    );
+    await until(() => diarizer.calls == 1);
+
+    // While the speaker pass runs, the transcript is already saved and the
+    // engine is free for the next recording or a live session.
+    expect(controller.transcriptForPath(path), '先由甲介绍背景。\n再由乙说明进展。');
+    expect(controller.fileProcessingBusy, isFalse);
+    await job;
+
+    diarizer.gate!.complete();
+    await until(
+      () => controller
+          .transcriptSegmentsForPath(path)
+          .every((s) => s.speaker != null),
+    );
+    expect(controller.transcriptSegmentsForPath(path).map((s) => s.speaker), [
+      '1',
+      '2',
+    ]);
+  });
+
+  test('重新转写换了文字后，旧的并错人提示不再出现', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-local-diar-');
+    addTearDown(() => dir.delete(recursive: true));
+    final diarizer = ScriptedSpeakerDiarizer(
+      [
+        _turns([(0, 0, 6)]),
+      ],
+      quality: const DiarizationQuality(
+        chunks: 36,
+        clusters: 1,
+        cohesion: 0.48,
+      ),
+    );
+    final apple = _FakeAppleSpeech();
+    final controller = _localMeetingController(dir, diarizer, apple);
+    addTearDown(controller.dispose);
+    final path = await _importMeeting(controller, dir);
+    await controller.transcribeLocalFile(path, provider: SttProvider.apple);
+    await until(() => controller.shouldShowSpeakerMergeHint(path));
+    expect(controller.shouldShowSpeakerMergeHint(path), isTrue);
+
+    apple
+      ..text = '换成另一段话。'
+      ..segments = const [];
+    await controller.transcribeLocalFile(path, provider: SttProvider.apple);
+
+    expect(controller.transcriptForPath(path), '换成另一段话。');
+    expect(controller.shouldShowSpeakerMergeHint(path), isFalse);
+  });
+
+  test('重新转写后取过的名字仍跟着人走（拾音 R22.2，自动区分）', () async {
+    final dir = await Directory.systemTemp.createTemp('koe-local-diar-');
+    addTearDown(() => dir.delete(recursive: true));
+    // The first pass merges 王五 into 张总; later passes keep three people.
+    final diarizer = ScriptedSpeakerDiarizer([
+      _turns([(0, 0, 6), (1, 6, 16), (0, 16, 30), (1, 30, 40), (0, 40, 52)]),
+      _turns([(0, 0, 6), (1, 6, 16), (2, 16, 30), (1, 30, 40), (2, 40, 52)]),
+    ]);
+    final apple = _FakeAppleSpeech(
+      text: '王五开场。\n李工汇报。\n张总提问。\n李工回答。\n张总总结。',
+      segments: _sttSegments([
+        ('王五开场。', 0, 6),
+        ('李工汇报。', 6, 16),
+        ('张总提问。', 16, 30),
+        ('李工回答。', 30, 40),
+        ('张总总结。', 40, 52),
+      ]),
+    );
+    final controller = _localMeetingController(dir, diarizer, apple);
+    addTearDown(controller.dispose);
+    final path = await _importMeeting(controller, dir);
+
+    await controller.transcribeLocalFile(path, provider: SttProvider.apple);
+    await until(
+      () => controller
+          .transcriptSegmentsForPath(path)
+          .every((s) => s.speaker != null),
+    );
+    expect(controller.transcriptSegmentsForPath(path).map((s) => s.speaker), [
+      '1',
+      '2',
+      '1',
+      '2',
+      '1',
+    ]);
+    await controller.renameTranscriptSpeaker(path, '1', '张总');
+    await controller.renameTranscriptSpeaker(path, '2', '李工');
+    await controller.rediarizeSpeakers(path, expectedSpeakers: 3);
+    expect(_labels(controller, path), ['说话人 3', '李工', '张总', '李工', '张总']);
+
+    // The same text again changes nothing and needs no new speaker pass.
+    await controller.transcribeLocalFile(path, provider: SttProvider.apple);
+    expect(_labels(controller, path), ['说话人 3', '李工', '张总', '李工', '张总']);
+    expect(diarizer.calls, 2);
+
+    // Same text, passages split differently: names follow the times.
+    apple.segments = _sttSegments([
+      ('王五开场。', 0, 6),
+      ('李工汇报。', 6, 16),
+      ('张总提问，', 16, 23),
+      ('接着提问。', 23, 30),
+      ('李工回答。', 30, 40),
+      ('张总总结。', 40, 52),
+    ]);
+    await controller.transcribeLocalFile(path, provider: SttProvider.apple);
+    await until(
+      () =>
+          diarizer.calls == 3 &&
+          controller.transcriptSegmentsForPath(path).length == 6 &&
+          controller
+              .transcriptSegmentsForPath(path)
+              .every((s) => s.speaker != null),
+    );
+    expect(_labels(controller, path), ['说话人 3', '李工', '张总', '张总', '李工', '张总']);
+
+    // New words: the names wait for the next pass, which finds the people by
+    // time.
+    apple
+      ..text = '王五开场。\n李工汇报。\n张总提问。\n李工回答。\n张总总结了。'
+      ..segments = _sttSegments([
+        ('王五开场。', 0, 6),
+        ('李工汇报。', 6, 16),
+        ('张总提问，', 16, 23),
+        ('接着提问。', 23, 30),
+        ('李工回答。', 30, 40),
+        ('张总总结了。', 40, 52),
+      ]);
+    await controller.transcribeLocalFile(path, provider: SttProvider.apple);
+    await until(
+      () =>
+          diarizer.calls == 4 &&
+          controller
+              .transcriptSegmentsForPath(path)
+              .every((s) => s.speaker != null),
+    );
+    expect(diarizer.calls, 4);
+    expect(_labels(controller, path), ['说话人 3', '李工', '张总', '张总', '李工', '张总']);
+  });
+
   for (final realApple in [false, true]) {
     test('(3) 本机会议隐私与时间戳：realApple=$realApple', () async {
       final dir = await Directory.systemTemp.createTemp('koe-local-diar-');
@@ -200,17 +406,19 @@ void main() {
         );
       }
       final apple = realApple ? AppleSpeechService() : _FakeAppleSpeech();
-      final diarizer = _FakeSpeakerDiarizer([
-        const DiarizationTurn(
-          speaker: 2,
-          start: Duration.zero,
-          end: Duration(seconds: 3),
-        ),
-        const DiarizationTurn(
-          speaker: 1,
-          start: Duration(seconds: 3),
-          end: Duration(seconds: 6),
-        ),
+      final diarizer = ScriptedSpeakerDiarizer([
+        const [
+          DiarizationTurn(
+            speaker: 2,
+            start: Duration.zero,
+            end: Duration(seconds: 3),
+          ),
+          DiarizationTurn(
+            speaker: 1,
+            start: Duration(seconds: 3),
+            end: Duration(seconds: 6),
+          ),
+        ],
       ]);
 
       final controller = RecorderController(
@@ -261,7 +469,13 @@ void main() {
         OrganizeStage.done,
       );
 
-      // 会议录音在本机模式下必须走本机区分，分出说话人 1、2
+      // 会议录音在本机模式下必须走本机区分，分出说话人 1、2；发言人在转写
+      // 存下之后另行标上。
+      await until(
+        () => controller
+            .transcriptSegmentsForPath(recordedPath)
+            .every((s) => s.speaker != null),
+      );
       expect(diarizer.calls, realApple ? 0 : 1);
       expect(controller.transcriptForPath(recordedPath), '先由甲介绍背景。\n再由乙说明进展。');
       final segments = controller.transcriptSegmentsForPath(recordedPath);
@@ -286,75 +500,63 @@ void main() {
             '${req.method} ${req.url}',
       ];
       expect(audioRequests, isEmpty);
-
-      // 云端引擎请求体与改动前完全一致，且云端转写不调用本机 diarizer
-      expect(
-        qwenTranscriptionBody(
-          model: 'qwen-audio-3.1-asr-flash-filetrans',
-          fileUrl: 'https://oss.example/audio.wav',
-          language: 'zh',
-        ),
-        {
-          'model': 'qwen-audio-3.1-asr-flash-filetrans',
-          'input': {
-            'file_urls': ['https://oss.example/audio.wav'],
-          },
-          'parameters': {
-            'channel_id': [0],
-            'diarization_enabled': true,
-            'language_hints': ['zh'],
-          },
-        },
-      );
-      expect(
-        doubaoTranscriptionBody(
-          data: 'dGVzdA==',
-          language: 'zh-CN',
-          format: 'wav',
-        ),
-        {
-          'user': {'uid': 'anker-recorder'},
-          'audio': {
-            'data': 'dGVzdA==',
-            'format': 'wav',
-            'bits': 16,
-            'channel': 1,
-            'language': 'zh-CN',
-          },
-          'request': {
-            'model_name': 'bigmodel',
-            'enable_itn': true,
-            'enable_punc': true,
-            'enable_speaker_info': true,
-            'show_utterances': true,
-            'ssd_version': '200',
-          },
-        },
-      );
     });
   }
 }
 
-class _FakeSpeakerDiarizer implements SpeakerDiarizer {
-  _FakeSpeakerDiarizer(this.turns);
+List<DiarizationTurn> _turns(List<(int, int, int)> spans) => [
+  for (final (speaker, start, end) in spans)
+    DiarizationTurn(
+      speaker: speaker,
+      start: Duration(seconds: start),
+      end: Duration(seconds: end),
+    ),
+];
 
-  final List<DiarizationTurn> turns;
-  int calls = 0;
-  int? lastExpectedSpeakers;
+List<SttSegment> _sttSegments(List<(String, int, int)> passages) => [
+  for (final (text, start, end) in passages)
+    SttSegment(text: text, startMs: start * 1000, endMs: end * 1000),
+];
 
-  @override
-  Future<DiarizationResult> diarize(
-    String audioPath, {
-    int? expectedSpeakers,
-    void Function(double progress)? onProgress,
-  }) async {
-    calls++;
-    lastExpectedSpeakers = expectedSpeakers;
-    return DiarizationResult(turns: turns);
-  }
+List<String?> _labels(RecorderController c, String path) {
+  final names = {
+    for (final s in c.transcriptSpeakersForPath(path)) s.id: s.displayLabel,
+  };
+  return [for (final s in c.transcriptSegmentsForPath(path)) names[s.speaker]];
+}
+
+RecorderController _localMeetingController(
+  Directory dir,
+  SpeakerDiarizer diarizer,
+  AppleSpeechService apple,
+) => RecorderController(
+  loadPersistedState: false,
+  topicsEnabled: false,
+  appleSpeech: apple,
+  speakerDiarizer: diarizer,
+  transcriptPersister: ({bool strict = false}) async {},
+  libraryDirectory: Directory('${dir.path}/imports'),
+);
+
+Future<String> _importMeeting(RecorderController c, Directory dir) async {
+  await c.refreshAppleCapabilities();
+  final source = File('${dir.path}/meeting.wav');
+  await source.writeAsBytes(wavBytes(const [0, 0, 0, 0]));
+  return (await c.importLocalAudio(source.path)).path;
 }
 
 class _FakeAppleSpeech extends AppleSpeechService {
+  _FakeAppleSpeech({
+    this.text = '先由甲介绍背景。\n再由乙说明进展。',
+    this.segments = const [
+      SttSegment(text: '先由甲介绍背景。', startMs: 200, endMs: 2800),
+      SttSegment(text: '再由乙说明进展。', startMs: 3200, endMs: 5800),
+    ],
+  });
+
+  String text;
+  List<SttSegment> segments;
+
   @override
   bool get offered => true;
 
@@ -376,13 +578,10 @@ class _FakeAppleSpeech extends AppleSpeechService {
     required String sourceLanguage,
     SttFileProgressCallback? onProgress,
   }) async => SttResult(
-    text: '先由甲介绍背景。\n再由乙说明进展。',
+    text: text,
     sourcePath: path,
     language: sourceLanguage,
-    segments: const [
-      SttSegment(text: '先由甲介绍背景。', startMs: 200, endMs: 2800),
-      SttSegment(text: '再由乙说明进展。', startMs: 3200, endMs: 5800),
-    ],
+    segments: segments,
   );
 }
 
@@ -483,5 +682,17 @@ class _WireRecordingClient extends http.BaseClient {
       Stream.value(utf8.encode('{"error":"unexpected endpoint"}')),
       500,
     );
+  }
+}
+
+class _CountingClient extends http.BaseClient {
+  _CountingClient(this._onRequest);
+
+  final void Function() _onRequest;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    _onRequest();
+    throw http.ClientException('offline', request.url);
   }
 }

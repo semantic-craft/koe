@@ -820,7 +820,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
             : '已重新区分发言人。取过的名字尽量留在原来的人身上，请再确认一下',
       );
     } catch (e) {
-      if (mounted) _notice('重新区分发言人失败：$e');
+      if (mounted) _notice(e is StateError ? e.message : '重新区分发言人失败：$e');
     }
   }
 
@@ -854,9 +854,11 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final path = recording.path;
     if (path == null || recording.audioLocked) return;
     final controller = context.read<RecorderController>();
-    final ok = await controller.undoSpeakerEdit(path);
-    if (mounted) {
-      _notice(ok ? '已复原发言人调整' : '没有可复原的发言人调整');
+    try {
+      final ok = await controller.undoSpeakerEdit(path);
+      if (mounted) _notice(ok ? '已复原发言人调整' : '没有可复原的发言人调整');
+    } catch (_) {
+      if (mounted) _notice('复原失败，请检查存储空间后重试');
     }
   }
 
@@ -1483,6 +1485,14 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final hasSpeakers =
         recording.path != null &&
         c.transcriptSpeakersForPath(recording.path!).isNotEmpty;
+    // Timed passages nobody was put on yet, such as a meeting transcribed
+    // before the speaker models were on this device.
+    final canLabelSpeakers =
+        recording.path != null &&
+        !hasSpeakers &&
+        c.transcriptSegmentsForPath(recording.path!).isNotEmpty;
+    final labellingSpeakers =
+        recording.path != null && c.labellingSpeakers(recording.path!);
     final topicPlacement = c.topicsEnabled
         ? c.topics.topicOf(c.recordingKeyFor(widget.reference))
         : null;
@@ -1595,6 +1605,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         _editTranscript(recording);
                       case 'speakers':
                         _speakers(recording);
+                      case 'label-speakers':
+                        _rediarizeSpeakers(recording);
                       case 'chapters':
                         _openChapters(segmentText);
                       case 'speaker-distribution':
@@ -1659,6 +1671,16 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         value: 'speakers',
                         enabled: fileReady && !recording.processing,
                         child: const Text('说话人姓名'),
+                      ),
+                    if (canLabelSpeakers)
+                      PopupMenuItem(
+                        value: 'label-speakers',
+                        enabled:
+                            fileReady &&
+                            !recording.processing &&
+                            !recording.audioLocked &&
+                            !labellingSpeakers,
+                        child: Text(labellingSpeakers ? '正在区分发言人…' : '区分发言人…'),
                       ),
                     if (source.isNotEmpty &&
                         !recording.live &&
