@@ -32,11 +32,12 @@
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK"/>
 
     <!-- 全天常驻: associated with the recorder, Koe may start its
-         foreground service from the background, and Android starts Koe
-         when the recorder comes near (KoeCompanionService). -->
-    <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE"/>
+         foreground service from the background. Its own scan starts Koe
+         when the recorder comes near, and starts again after a restart
+         (RecorderScan). -->
     <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND"/>
     <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <!-- Place tagging on recordings. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
@@ -93,15 +94,16 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice|microphone|dataSync|shortService"
             android:stopWithTask="false" />
-        <!-- Bound by Android while the associated recorder is near. -->
-        <service
-            android:name=".KoeCompanionService"
-            android:exported="true"
-            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+        <!-- What Koe's scan for the recorder reports, and starting the scan
+             again after a restart or an update. -->
+        <receiver
+            android:name=".RecorderScanReceiver"
+            android:exported="false">
             <intent-filter>
-                <action android:name="android.companion.CompanionDeviceService"/>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
-        </service>
+        </receiver>
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:exported="true"

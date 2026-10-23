@@ -62,7 +62,6 @@ mixin _RecorderDevice on ChangeNotifier {
   abstract String? statusMessage;
   Future<void> stopPlayback();
   bool get _recorderAway;
-  void _residentRecorderConnected();
   abstract bool residentOffered;
   Future<void> _startResident();
   Future<void> _syncResident();
@@ -575,7 +574,7 @@ mixin _RecorderDevice on ChangeNotifier {
       // so only this exact recorder is eligible for automatic reconnection.
       bound = true;
       unawaited(_persistDevice());
-      _residentRecorderConnected();
+      unawaited(_syncResident());
       notifyListeners();
       await Future<void>.delayed(const Duration(milliseconds: 300));
       await refreshInfo();

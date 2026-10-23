@@ -22,7 +22,7 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 - `flutter pub get`、`flutter analyze`、`flutter test`；CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在每个 PR 和 main 推送上跑这三步，Flutter 3.47.7，运行在用户自己的 Mac（自托管运行机，见 [ci-runner](docs/agents/ci-runner.md)）。
 - 要逐文件确认跑过哪些测试，用 `flutter test --reporter expanded`；终端默认 compact 输出会覆盖进度行（见 [CONTRIBUTING](CONTRIBUTING.md) 规则 8）。
 - 验证：`check`（运行 `scripts/check`：`flutter analyze` 与 `flutter test`；依赖先按上条 `flutter pub get` 装好，真机、签名与安装验收不在其中）。
-- 性能：`scripts/perf-check`（约 2 分钟，不在 `check` 里）在本机以 profile 模式跑 [integration_test/perf](integration_test/perf/) 的场景，按 `thresholds.json` 判定；屏幕需解锁，窗口进不了前台时超时退出。改动 BLE、播放、音频转换、JSON 存储或问答检索时跑一次，把数字写进 PR。
+- 性能：`scripts/perf-check`（约 2 分钟，不在 `check` 里）在本机以 profile 模式跑 [integration_test/perf](integration_test/perf/) 的场景，按 `thresholds.json` 判定（超标退出码 1）；Koe 窗口要在屏幕上，否则 macOS 不出帧，场景 30 秒没帧就以退出码 3 停下，不算超标；`KOE_PERF_FOREGROUND=1` 在 Koe 启动后把窗口拉到前台（会抢走正在用的 app 的焦点）。改动 BLE、播放、音频转换、JSON 存储或问答检索时跑一次，把数字写进 PR。
 - Android：`scripts/android-check`（不在 `check` 里）在 adb 连着的 Pixel 上构建、安装（预授予运行时权限）并无人值守跑 [integration_test/android](integration_test/android/) 的场景：每个文件单独跑，调 `leaveAndLockScreen` 锁屏的场景排最后。新场景加 `*_test.dart` 即可，要 Koe 在屏幕上的场景开头调 `skipIfLocked`，手机有 PIN 锁着就跳过。设备离线或有场景跳过时以 77 退出，不算通过。SDK 与 JDK 21 用 Homebrew 装，release 签名读仓库外的 `~/.config/koe/android-signing.properties`（或 `KOE_ANDROID_SIGNING`），缺失时回落 debug 签名。
 - 构建、真机运行与安装脚本按 [README](README.md)；[scripts](scripts/) 运行前核对目标设备和副作用。
 - 实现、评审或验收前先读 [CONTRIBUTING](CONTRIBUTING.md) 的十条规则。

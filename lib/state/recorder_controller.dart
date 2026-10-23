@@ -465,7 +465,9 @@ class RecorderController extends ChangeNotifier
           // BLE→Wi-Fi handoff; that reconnect starts after transfer cleanup.
           if (bound && !_explicitDisconnect && !wifiHandoff) {
             _resetBoundReconnectBackoff();
-            unawaited(startScan());
+            // 全天常驻: Android's scan lost the recorder while it was linked
+            // and has not seen it since, so it is away until the scan does.
+            unawaited(_recorderAway ? _letRecorderGo() : startScan());
           }
         } else {
           _resetBoundReconnectBackoff();

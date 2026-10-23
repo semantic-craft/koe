@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-23T11:31:02.104112Z</p>
-<p>Main: <code>main: 5a40476b3f24c82b4f7b4e7a1020437da3ac39e8</code></p>
+<p>Observed: 2026-10-23T11:46:13.320799Z</p>
+<p>Main: <code>main: 28b107003b472dda728f62b38cea5d53c0b6465a</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -42,7 +42,7 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/395">pull 395: #390 的实现；Pixel 上 Wi‑Fi 导出前 3 个文件存好，第 4 个起失败，记在 #437。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/399">pull 399: #391 的实现；熄屏重连的真机项还没跑。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/421">pull 421: #392 的实现；真机项要千问 key，还没跑。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/pull/422">pull 422: #393 的实现；真机第 1 项通过，换 BLE 地址后关联被撤销，记在 #436。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/422">pull 422: #393 的实现；真机第 1 项通过，换 BLE 地址后关联被撤销，记在 #436，修复在 PR #451。</a></li>
 </ul><p>Next: 真机项并入 #345，等 #436–#438 合并后统一跑。</p></article>
 </section>
 <section id="ongoing"><h2>实现差异与范围核对</h2>
@@ -81,14 +81,15 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/phone_recording_test.dart">file test/phone_recording_test.dart: 「the panel still closes when the number of people is tapped while the take saves」：改前面板关不掉。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/file_job_stage_recovery_test.dart">file test/file_job_stage_recovery_test.dart: 千问上传中、豆包上传中、本机转写中被打断三条：改前不恢复。</a></li>
 </ul><p>Next: #449 CI 通过后合并；#440、#441、#446、#450 真机确认；接着做 4H（#407）、4E（#404）。</p></article>
-<article id="android-device-issues"><h3>#345 真机验收发现的问题（#436–#438）</h3><span class="badge">in_progress</span><p>#345 第一部分（2026-10-23，Pixel 11 Pro、D3200、main f065809 的 debug 包）发现 3 个问题。#437 已在 #443 合并（543c318）：Wi‑Fi 一次导出多个文件时，分片攒到 64 KB 再写盘、进度每 250 ms 最多一次，断开即报错，已存好的照常进资料库，Android 上热点用过后经蓝牙重开；本机 perf 场景 wifi_save（100 万个分片）从最后一个分片后 25 秒才存好降到约 0.3 秒，没在真机上验证。#438 在 PR #445：连着录音豆没活时前台服务照旧在跑，但不再持有 wake lock，通知写「Koe 已连接录音豆」；经蓝牙取回、Wi‑Fi 导出和录音豆实时转写期间才持有，通知写「Koe 正在同步录音」，做完即放开；录音豆每 15 秒回报的设备信息没变时不再写盘；没在真机上验证。#436：录音豆进出 Wi‑Fi 模式后换 BLE 地址，全天常驻被悄悄撤销，重连先对旧地址空等约 100 秒，修法待定。</p><ul>
+<article id="android-device-issues"><h3>#345 真机验收发现的问题（#436–#438）</h3><span class="badge">in_progress</span><p>#345 第一部分（2026-10-23，Pixel 11 Pro、D3200、main f065809 的 debug 包）发现 3 个问题。#437 已在 #443 合并（543c318）：Wi‑Fi 一次导出多个文件时，分片攒到 64 KB 再写盘、进度每 250 ms 最多一次，断开即报错，已存好的照常进资料库，Android 上热点用过后经蓝牙重开；本机 perf 场景 wifi_save（100 万个分片）从最后一个分片后 25 秒才存好降到约 0.3 秒，没在真机上验证。#438 已在 #445 合并（b6b0ae5）：连着录音豆没活时前台服务照旧在跑，但不再持有 wake lock，通知写「Koe 已连接录音豆」；经蓝牙取回、Wi‑Fi 导出和录音豆实时转写期间才持有，通知写「Koe 正在同步录音」，做完即放开；录音豆每 15 秒回报的设备信息没变时不再写盘；没在真机上验证。#436 在 PR #451：录音豆进出 Wi‑Fi 模式后换 BLE 地址，改为按广播里的经典地址认它；全天常驻改由 Koe 向 Android 登记的后台扫描（按经典地址过滤）报告录音豆在不在、在哪个地址，伴侣设备关联只用来从后台启动前台服务；新扫描不再先报上一次扫描的旧地址。手机重启、Koe 更新和 Koe 运行时开关蓝牙后重新登记扫描；Koe 进程不在时开关蓝牙要等下次打开 Koe。没在真机上验证。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/437">issue 437: Wi‑Fi 导出 4 个问题与验收标准。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/443">pull 443: #437 的修复，已合并；回退测试、perf 前后数字和没跑到的项目写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/438">issue 438: 空闲时的 wake lock、通知文字和设备信息写盘。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/pull/445">pull 445: #438 的修复；回退测试、perf 数字和没跑到的项目写在正文。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/issues/436">issue 436: BLE 地址变化：关联被撤销、重连等旧地址；修法待定。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/445">pull 445: #438 的修复，已合并；回退测试、perf 数字和没跑到的项目写在正文。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/436">issue 436: BLE 地址变化：关联被撤销、重连等旧地址。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/451">pull 451: #436 的修复；回退测试、没处理的情况和真机项写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/integration_test/perf/thresholds.json">file integration_test/perf/thresholds.json: wifi_save 的门限：save_ms 3,000、通知 200。</a></li>
-</ul><p>Next: PR #445 CI 通过后合并；#436 定修法后修；三个都合并后在 Pixel 上统一跑一次真机验收（#345）。</p></article>
+</ul><p>Next: PR #451 CI 通过后合并；三个都合并后在 Pixel 上统一跑一次真机验收（#345）。</p></article>
 </section>
 <section id="pending"><h2>问题与功能范围</h2>
 <article id="reconnect-flake"><h3>一键重连测试偶发失败</h3><span class="badge">planned</span><p>工单记录手动断开后一键重连测试偶发失败；需依据复现时序和行为测试判断根因与修复效果。</p><ul>
@@ -165,6 +166,6 @@
 </ul><p>Next: 有网络时 refresh 核对事实，再 render 与 check；新增范围先明确 tracked，设备验收独立补证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/449">#449</a> <code>77f1000b21b56daeb04e1ea754af2c7c15ce6656</code></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/449">#449</a> <code>b4dec063ca5734b9970482feb67bb754b4456f33</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
