@@ -4,7 +4,8 @@ import 'package:flutter/services.dart';
 
 typedef WifiCheck = Future<bool> Function();
 
-/// Requires an addressed interface and an OS-confirmed Wi-Fi default path.
+/// Requires an addressed interface and an OS-confirmed Wi-Fi default path
+/// that is not metered: Wi-Fi to a phone's hotspot does not count.
 /// Interface names cannot distinguish Ethernet, Wi-Fi and AP mode. Darwin uses
 /// NWPathMonitor; Android uses the active network's NetworkCapabilities.
 /// Unknown/missing platform support fails closed. This is a path snapshot, not

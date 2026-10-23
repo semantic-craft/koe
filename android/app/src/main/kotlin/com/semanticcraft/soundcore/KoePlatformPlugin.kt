@@ -226,8 +226,9 @@ class KoePlatformPlugin :
         }
     }
 
-    // Whether the default network is Wi-Fi alone, for downloads Koe keeps
-    // off mobile data (lib/platform/wifi_connectivity.dart).
+    // Whether the default network is unmetered Wi-Fi alone, for downloads
+    // Koe keeps off mobile data and phone hotspots
+    // (lib/platform/wifi_connectivity.dart).
     private fun onWifi(call: MethodCall, result: MethodChannel.Result) {
         if (call.method != "isWifiConnected") return result.notImplemented()
         val manager = appContext.getSystemService(ConnectivityManager::class.java)
@@ -237,7 +238,8 @@ class KoePlatformPlugin :
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
                 !caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
                 !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
         )
     }
 

@@ -50,7 +50,19 @@ class DiarizationModelPaths {
 
 class DiarizationWifiRequiredException implements Exception {
   const DiarizationWifiRequiredException([
-    this.message = '仅在 Wi-Fi 下下载本机发言人模型，请连接 Wi-Fi 后重试',
+    this.message = '仅在 Wi-Fi 下下载本机发言人模型（不用手机流量和个人热点），请连接 Wi-Fi 后重试',
+  ]);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// The user paused the model download; nothing downloads it again until
+/// they resume it.
+class DiarizationModelPausedException implements Exception {
+  const DiarizationModelPausedException([
+    this.message = '本机发言人模型下载已暂停，请在设置里继续下载',
   ]);
   final String message;
 
@@ -75,6 +87,7 @@ class DiarizationModelStore extends ChangeNotifier {
     WifiCheck? isWifiConnected,
     this.verifyChecksum = true,
     List<DiarizationModelFileSpec>? customSpecs,
+    this.stallTimeout = const Duration(seconds: 30),
   }) : _directoryOverride = directory,
        _client = client ?? http.Client(),
        _ownsClient = client == null,
@@ -114,6 +127,13 @@ class DiarizationModelStore extends ChangeNotifier {
   final WifiCheck _isWifiConnected;
   final bool verifyChecksum;
   final List<DiarizationModelFileSpec> _specs;
+
+  /// How long a source may send nothing, before or during its reply, before
+  /// it counts as failed.
+  final Duration stallTimeout;
+
+  /// Kept in the model directory while the user has the download paused.
+  static const _pausedMarker = 'download.paused';
 
   DiarizationModelStatus status = DiarizationModelStatus.notInstalled;
   double progress = 0.0;
@@ -196,7 +216,9 @@ class DiarizationModelStore extends ChangeNotifier {
       status = DiarizationModelStatus.ready;
       progress = 1.0;
       errorMessage = null;
-    } else if (hasPart || status == DiarizationModelStatus.paused) {
+    } else if (hasPart ||
+        status == DiarizationModelStatus.paused ||
+        await _pausedFile(dir).exists()) {
       status = DiarizationModelStatus.paused;
     } else {
       status = DiarizationModelStatus.notInstalled;
@@ -223,6 +245,9 @@ class DiarizationModelStore extends ChangeNotifier {
         segmentationModelPath: p.join(dir.path, _specs.first.fileName),
         embeddingModelPath: p.join(dir.path, _specs.last.fileName),
       );
+    }
+    if (await _pausedFile(dir).exists()) {
+      throw const DiarizationModelPausedException();
     }
 
     final ok = await download();
@@ -256,6 +281,7 @@ class DiarizationModelStore extends ChangeNotifier {
   Future<bool> _runDownload() async {
     _cancelReason = _CancelReason.none;
     final dir = await _resolveDirectory();
+    await _setPaused(dir, false);
     var allInstalled = true;
     for (final spec in _specs) {
       if (!await _isSpecInstalled(dir, spec)) {
@@ -432,7 +458,15 @@ class DiarizationModelStore extends ChangeNotifier {
           uri,
           abortTrigger: abort.future,
         )..followRedirects = false;
-        response = await _client.send(request);
+        response = await _client
+            .send(request)
+            .timeout(
+              stallTimeout,
+              onTimeout: () {
+                if (!abort.isCompleted) abort.complete();
+                throw TimeoutException('模型下载源没有回应', stallTimeout);
+              },
+            );
         if (!isCurrent() || _cancelReason != _CancelReason.none) {
           await response.stream.listen(null).cancel();
           return false;
@@ -459,42 +493,45 @@ class DiarizationModelStore extends ChangeNotifier {
       final completer = Completer<bool>();
       _activeStreamCompleter = completer;
       late StreamSubscription<List<int>> sub;
-      sub = response.stream.listen(
-        (chunk) async {
-          sub.pause();
-          try {
-            final wifi = await _checkWifi(generation);
-            // listen does not await this callback. Cancellation can close the
-            // sink while the platform Wi-Fi check is still outstanding.
-            if (!isCurrent()) return;
-            if (!wifi || _cancelReason != _CancelReason.none) {
+      // A reply that stops sending fails, so another source can be tried.
+      sub = response.stream
+          .timeout(stallTimeout)
+          .listen(
+            (chunk) async {
+              sub.pause();
+              try {
+                final wifi = await _checkWifi(generation);
+                // listen does not await this callback. Cancellation can close the
+                // sink while the platform Wi-Fi check is still outstanding.
+                if (!isCurrent()) return;
+                if (!wifi || _cancelReason != _CancelReason.none) {
+                  if (!completer.isCompleted) completer.complete(false);
+                  return;
+                }
+                sink!.add(chunk);
+                received += chunk.length;
+                onSpecProgress(
+                  total > 0 ? (received / total).clamp(0.0, 1.0) : 0.5,
+                );
+                sub.resume();
+              } catch (_) {
+                if (isCurrent() && !completer.isCompleted) {
+                  completer.complete(false);
+                }
+              }
+            },
+            onDone: () {
+              if (!completer.isCompleted) {
+                completer.complete(
+                  _cancelReason == _CancelReason.none && !_disposed,
+                );
+              }
+            },
+            onError: (Object _) {
               if (!completer.isCompleted) completer.complete(false);
-              return;
-            }
-            sink!.add(chunk);
-            received += chunk.length;
-            onSpecProgress(
-              total > 0 ? (received / total).clamp(0.0, 1.0) : 0.5,
-            );
-            sub.resume();
-          } catch (_) {
-            if (isCurrent() && !completer.isCompleted) {
-              completer.complete(false);
-            }
-          }
-        },
-        onDone: () {
-          if (!completer.isCompleted) {
-            completer.complete(
-              _cancelReason == _CancelReason.none && !_disposed,
-            );
-          }
-        },
-        onError: (Object _) {
-          if (!completer.isCompleted) completer.complete(false);
-        },
-        cancelOnError: true,
-      );
+            },
+            cancelOnError: true,
+          );
       requestSubscription = sub;
       _activeSubscription = sub;
       final finished = await completer.future;
@@ -609,6 +646,7 @@ class DiarizationModelStore extends ChangeNotifier {
     status = DiarizationModelStatus.paused;
     activeSource = null;
     _notify();
+    await _setPaused(await _resolveDirectory(), true);
   }
 
   Future<void> delete() => _stop(_delete);
@@ -632,6 +670,7 @@ class DiarizationModelStore extends ChangeNotifier {
       } catch (_) {}
     }
     final dir = await _resolveDirectory();
+    await _setPaused(dir, false);
     for (final spec in _specs) {
       final f = File(p.join(dir.path, spec.fileName));
       final part = File(p.join(dir.path, '${spec.fileName}.part'));
@@ -643,6 +682,22 @@ class DiarizationModelStore extends ChangeNotifier {
     errorMessage = null;
     activeSource = null;
     _notify();
+  }
+
+  File _pausedFile(Directory dir) => File(p.join(dir.path, _pausedMarker));
+
+  /// Remembers across launches that the user paused the download.
+  Future<void> _setPaused(Directory dir, bool paused) async {
+    final marker = _pausedFile(dir);
+    try {
+      if (paused) {
+        await marker.writeAsString('');
+      } else if (await marker.exists()) {
+        await marker.delete();
+      }
+    } on FileSystemException catch (error) {
+      debugPrint('[Diarization] pause not remembered: $error');
+    }
   }
 
   void _notify() {

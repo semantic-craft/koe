@@ -21,12 +21,16 @@ enum WifiConnectivityBridge {
       func finish(_ wifi: Bool) {
         guard !completed else { return }
         completed = true
+        // The handler holds finish, which holds the monitor.
+        monitor.pathUpdateHandler = nil
         monitor.cancel()
         result(wifi)
       }
       monitor.pathUpdateHandler = { path in
+        // Wi-Fi to a phone's hotspot is expensive; Low Data Mode is constrained.
         finish(path.status == .satisfied && path.usesInterfaceType(.wifi)
-          && !path.usesInterfaceType(.cellular) && !path.usesInterfaceType(.wiredEthernet))
+          && !path.usesInterfaceType(.cellular) && !path.usesInterfaceType(.wiredEthernet)
+          && !path.isExpensive && !path.isConstrained)
       }
       monitor.start(queue: .main)
       DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish(false) }

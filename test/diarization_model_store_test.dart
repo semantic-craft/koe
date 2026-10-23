@@ -343,310 +343,339 @@ void main() {
     },
   );
 
-  test(
-    '(2) 非 Wi-Fi 时不发起任何下载请求；已安装模型在非 Wi-Fi 下仍可直接就绪使用',
-    () async {
-      final requestedUrls = <Uri>[];
-      final segBytes = utf8.encode('seg-bytes');
-      final embBytes = utf8.encode('emb-bytes');
-      var wifiOn = false;
+  test('(2) 非 Wi-Fi 时不发起任何下载请求；已安装模型在非 Wi-Fi 下仍可直接就绪使用', () async {
+    final requestedUrls = <Uri>[];
+    final segBytes = utf8.encode('seg-bytes');
+    final embBytes = utf8.encode('emb-bytes');
+    var wifiOn = false;
 
-      final client = _FakeStreamingClient((request) async {
-        requestedUrls.add(request.url);
-        final url = request.url.toString();
-        final payload = url.contains('segmentation') ? segBytes : embBytes;
-        return http.StreamedResponse(
-          Stream.value(payload),
-          200,
-          contentLength: payload.length,
-        );
-      });
-
-      final store = DiarizationModelStore(
-        directory: tempDir,
-        client: client,
-        isWifiConnected: () async => wifiOn,
-        verifyChecksum: false,
+    final client = _FakeStreamingClient((request) async {
+      requestedUrls.add(request.url);
+      final url = request.url.toString();
+      final payload = url.contains('segmentation') ? segBytes : embBytes;
+      return http.StreamedResponse(
+        Stream.value(payload),
+        200,
+        contentLength: payload.length,
       );
-      addTearDown(store.dispose);
+    });
 
-      final ok = await store.download();
-      expect(ok, isFalse);
-      expect(store.status, DiarizationModelStatus.wifiRequired);
-      expect(store.errorMessage, contains('Wi-Fi'));
-      expect(requestedUrls, isEmpty, reason: '非 Wi-Fi 下不得发出任何 HTTP 请求');
+    final store = DiarizationModelStore(
+      directory: tempDir,
+      client: client,
+      isWifiConnected: () async => wifiOn,
+      verifyChecksum: false,
+    );
+    addTearDown(store.dispose);
 
-      await expectLater(
-        store.ensureReady(),
-        throwsA(isA<DiarizationWifiRequiredException>()),
-      );
-      expect(requestedUrls, isEmpty);
+    final ok = await store.download();
+    expect(ok, isFalse);
+    expect(store.status, DiarizationModelStatus.wifiRequired);
+    expect(store.errorMessage, contains('Wi-Fi'));
+    expect(requestedUrls, isEmpty, reason: '非 Wi-Fi 下不得发出任何 HTTP 请求');
 
-      // 连上 Wi-Fi 后下载完成
-      wifiOn = true;
-      expect(await store.download(), isTrue);
-      expect(store.status, DiarizationModelStatus.ready);
-      expect(requestedUrls, hasLength(2));
+    await expectLater(
+      store.ensureReady(),
+      throwsA(isA<DiarizationWifiRequiredException>()),
+    );
+    expect(requestedUrls, isEmpty);
 
-      // 断开 Wi-Fi 后，已落盘模型可直接离线使用，不发任何请求
-      requestedUrls.clear();
-      wifiOn = false;
-      final paths = await store.ensureReady();
-      expect(File(paths.segmentationModelPath).existsSync(), isTrue);
-      expect(File(paths.embeddingModelPath).existsSync(), isTrue);
-      expect(requestedUrls, isEmpty);
-    },
-  );
+    // 连上 Wi-Fi 后下载完成
+    wifiOn = true;
+    expect(await store.download(), isTrue);
+    expect(store.status, DiarizationModelStatus.ready);
+    expect(requestedUrls, hasLength(2));
 
-  test(
-    '(3) 下载中途可暂停、继续与删除，且哈希校验不匹配时拒绝落盘并回退第二源',
-    () async {
-      final chunk1 = utf8.encode('part-one-');
-      final chunk2 = utf8.encode('part-two');
-      final fullSeg = Uint8List.fromList([...chunk1, ...chunk2]);
-      final fullEmb = Uint8List.fromList(utf8.encode('embedding-full-bytes'));
-      final segController = StreamController<List<int>>();
-      final firstChunkReceived = Completer<void>();
-      var segRequestCount = 0;
+    // 断开 Wi-Fi 后，已落盘模型可直接离线使用，不发任何请求
+    requestedUrls.clear();
+    wifiOn = false;
+    final paths = await store.ensureReady();
+    expect(File(paths.segmentationModelPath).existsSync(), isTrue);
+    expect(File(paths.embeddingModelPath).existsSync(), isTrue);
+    expect(requestedUrls, isEmpty);
+  });
 
-      final client = _FakeStreamingClient((request) async {
-        final url = request.url.toString();
-        if (url == DiarizationModelStore.segmentationSpec.modelScopeUrl) {
-          segRequestCount++;
-          if (segRequestCount == 1) {
-            return http.StreamedResponse(
-              segController.stream,
-              200,
-              contentLength: fullSeg.length,
-            );
-          }
+  test('(3) 下载中途可暂停、继续与删除', () async {
+    final chunk1 = utf8.encode('part-one-');
+    final chunk2 = utf8.encode('part-two');
+    final fullSeg = Uint8List.fromList([...chunk1, ...chunk2]);
+    final fullEmb = Uint8List.fromList(utf8.encode('embedding-full-bytes'));
+    final segController = StreamController<List<int>>();
+    final firstChunkReceived = Completer<void>();
+    var segRequestCount = 0;
+
+    final client = _FakeStreamingClient((request) async {
+      final url = request.url.toString();
+      if (url == DiarizationModelStore.segmentationSpec.modelScopeUrl) {
+        segRequestCount++;
+        if (segRequestCount == 1) {
           return http.StreamedResponse(
-            Stream.value(fullSeg),
+            segController.stream,
             200,
             contentLength: fullSeg.length,
           );
         }
         return http.StreamedResponse(
-          Stream.value(fullEmb),
+          Stream.value(fullSeg),
           200,
-          contentLength: fullEmb.length,
+          contentLength: fullSeg.length,
+        );
+      }
+      return http.StreamedResponse(
+        Stream.value(fullEmb),
+        200,
+        contentLength: fullEmb.length,
+      );
+    });
+
+    final store = DiarizationModelStore(
+      directory: tempDir,
+      client: client,
+      isWifiConnected: () async => true,
+      verifyChecksum: false,
+    );
+    addTearDown(store.dispose);
+
+    store.addListener(() {
+      if (store.status == DiarizationModelStatus.downloading &&
+          store.progress > 0 &&
+          !firstChunkReceived.isCompleted) {
+        firstChunkReceived.complete();
+      }
+    });
+
+    final downloadFuture = store.download();
+    segController.add(chunk1);
+    await firstChunkReceived.future;
+    expect(store.status, DiarizationModelStatus.downloading);
+    expect(store.progress, greaterThan(0));
+
+    // 暂停下载
+    await store.pause();
+    expect(await downloadFuture, isFalse);
+    expect(store.status, DiarizationModelStatus.paused);
+    await segController.close();
+
+    // 继续下载完成
+    expect(await store.download(), isTrue);
+    expect(store.status, DiarizationModelStatus.ready);
+    expect(store.progress, 1.0);
+
+    // 删除后状态回到未安装，文件清空
+    await store.delete();
+    expect(store.status, DiarizationModelStatus.notInstalled);
+    expect(store.progress, 0.0);
+    expect(
+      File(
+        '${tempDir.path}/${DiarizationModelStore.segmentationSpec.fileName}',
+      ).existsSync(),
+      isFalse,
+    );
+    expect(
+      File(
+        '${tempDir.path}/${DiarizationModelStore.embeddingSpec.fileName}',
+      ).existsSync(),
+      isFalse,
+    );
+  });
+
+  group('下载控制', () {
+    final model = utf8.encode('12345678');
+    final spec = DiarizationModelFileSpec(
+      id: 'seg',
+      fileName: 'model.onnx',
+      expectedBytes: model.length,
+      sha256: _sha256Hex(model),
+      modelScopeUrl: 'https://modelscope.cn/model',
+      huggingFaceUrl: 'https://huggingface.co/model',
+    );
+
+    test('用户暂停后，区分发言人不会自己重新开始下载，重开应用也一样', () async {
+      final firstBody = StreamController<List<int>>();
+      var requests = 0;
+      DiarizationModelStore open() => DiarizationModelStore(
+        directory: tempDir,
+        customSpecs: [spec],
+        isWifiConnected: () async => true,
+        client: _FakeStreamingClient((_) async {
+          requests++;
+          return http.StreamedResponse(
+            requests == 1 ? firstBody.stream : Stream.value(model),
+            200,
+            contentLength: model.length,
+          );
+        }),
+      );
+      final store = open();
+      addTearDown(store.dispose);
+      final download = store.download();
+      firstBody.add(model.sublist(0, 4));
+      for (var i = 0; i < 300 && store.progress == 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await store.pause();
+      expect(await download, isFalse);
+      await firstBody.close();
+      final pausedError = throwsA(
+        isA<Exception>().having((e) => '$e', 'message', contains('暂停')),
+      );
+
+      await expectLater(store.ensureReady(), pausedError);
+      expect(requests, 1);
+      expect(store.status, DiarizationModelStatus.paused);
+
+      final reopened = open();
+      addTearDown(reopened.dispose);
+      await reopened.refreshStatus();
+      expect(reopened.status, DiarizationModelStatus.paused);
+      await expectLater(reopened.ensureReady(), pausedError);
+      expect(requests, 1);
+
+      expect(await reopened.download(), isTrue);
+      expect(requests, 2);
+      expect(
+        (await reopened.ensureReady()).segmentationModelPath,
+        endsWith('model.onnx'),
+      );
+    });
+
+    test('连不上或数据停住时，过一会儿就算下载失败，不会一直停在下载中', () async {
+      final stalled = StreamController<List<int>>();
+      addTearDown(stalled.close);
+      final store = DiarizationModelStore(
+        directory: tempDir,
+        customSpecs: [spec],
+        isWifiConnected: () async => true,
+        stallTimeout: const Duration(milliseconds: 200),
+        client: _FakeStreamingClient((request) {
+          if (request.url.host == 'modelscope.cn') {
+            return Future.value(
+              http.StreamedResponse(stalled.stream, 200, contentLength: 8),
+            );
+          }
+          return Completer<http.StreamedResponse>().future;
+        }),
+      );
+      addTearDown(store.dispose);
+
+      expect(await store.download(), isFalse);
+      expect(store.status, DiarizationModelStatus.failed);
+      expect(store.errorMessage, isNotNull);
+    });
+  });
+
+  testWidgets('(4) 设置页模型管理入口：支持点击下载、暂停、继续下载与删除模型', (tester) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.runAsync(() async {
+      final segController = StreamController<List<int>>();
+      final firstChunkReady = Completer<void>();
+      var requestCount = 0;
+
+      final client = _FakeStreamingClient((request) async {
+        requestCount++;
+        if (requestCount == 1) {
+          return http.StreamedResponse(
+            segController.stream,
+            200,
+            contentLength: 100,
+          );
+        }
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('model-bytes')),
+          200,
+          contentLength: 11,
         );
       });
 
-      final store = DiarizationModelStore(
-        directory: tempDir,
+      final modelStore = DiarizationModelStore(
+        directory: Directory('${tempDir.path}/ui-models'),
         client: client,
         isWifiConnected: () async => true,
         verifyChecksum: false,
       );
-      addTearDown(store.dispose);
-
-      store.addListener(() {
-        if (store.status == DiarizationModelStatus.downloading &&
-            store.progress > 0 &&
-            !firstChunkReceived.isCompleted) {
-          firstChunkReceived.complete();
+      modelStore.addListener(() {
+        if (modelStore.isDownloading &&
+            modelStore.progress > 0 &&
+            !firstChunkReady.isCompleted) {
+          firstChunkReady.complete();
         }
       });
 
-      final downloadFuture = store.download();
-      segController.add(chunk1);
-      await firstChunkReceived.future;
-      expect(store.status, DiarizationModelStatus.downloading);
-      expect(store.progress, greaterThan(0));
+      final controller = RecorderController(
+        loadPersistedState: false,
+        diarizationModelStore: modelStore,
+        transcriptPersister: ({bool strict = false}) async {},
+      );
+      addTearDown(controller.dispose);
 
-      // 暂停下载
-      await store.pause();
-      expect(await downloadFuture, isFalse);
-      expect(store.status, DiarizationModelStatus.paused);
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: controller,
+          child: const MaterialApp(home: SettingsScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('settings-diarization-model')),
+        findsOneWidget,
+      );
+      final downloadBtn = find.byKey(
+        const ValueKey('diarization-model-download'),
+      );
+      await tester.ensureVisible(downloadBtn);
+      await tester.pump();
+      await tester.tap(downloadBtn);
+      segController.add(utf8.encode('half-chunk'));
+      await firstChunkReady.future;
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('diarization-model-pause')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('diarization-model-pause')));
+      for (var i = 0; i < 50 && !modelStore.isPaused; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
       await segController.close();
+      await tester.pump();
 
-      // 继续下载完成
-      expect(await store.download(), isTrue);
-      expect(store.status, DiarizationModelStatus.ready);
-      expect(store.progress, 1.0);
-
-      // 删除后状态回到未安装，文件清空
-      await store.delete();
-      expect(store.status, DiarizationModelStatus.notInstalled);
-      expect(store.progress, 0.0);
+      expect(modelStore.status, DiarizationModelStatus.paused);
       expect(
-        File('${tempDir.path}/${DiarizationModelStore.segmentationSpec.fileName}')
-            .existsSync(),
-        isFalse,
+        find.byKey(const ValueKey('diarization-model-resume')),
+        findsOneWidget,
       );
+
+      await tester.tap(find.byKey(const ValueKey('diarization-model-resume')));
+      for (var i = 0; i < 50 && !modelStore.isReady; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await tester.pump();
+      expect(modelStore.status, DiarizationModelStatus.ready);
+      expect(find.text('删除模型'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('diarization-model-delete')));
+      for (
+        var i = 0;
+        i < 50 && modelStore.status != DiarizationModelStatus.notInstalled;
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await tester.pump();
+      expect(modelStore.status, DiarizationModelStatus.notInstalled);
       expect(
-        File('${tempDir.path}/${DiarizationModelStore.embeddingSpec.fileName}')
-            .existsSync(),
-        isFalse,
+        find.byKey(const ValueKey('diarization-model-download')),
+        findsOneWidget,
       );
-
-      // 开启哈希校验时：第一源返回损坏字节（SHA-256 不匹配），自动回退第二源通过校验
-      final validSeg = utf8.encode('valid-seg-content');
-      final validEmb = utf8.encode('valid-emb-content');
-      final customSpecs = [
-        DiarizationModelFileSpec(
-          id: 'segmentation',
-          fileName: 'segmentation-model.onnx',
-          expectedBytes: validSeg.length,
-          sha256: _sha256Hex(validSeg),
-          modelScopeUrl: 'https://modelscope.cn/seg.onnx',
-          huggingFaceUrl: 'https://huggingface.co/seg.onnx',
-        ),
-        DiarizationModelFileSpec(
-          id: 'embedding',
-          fileName: 'embedding-model.onnx',
-          expectedBytes: validEmb.length,
-          sha256: _sha256Hex(validEmb),
-          modelScopeUrl: 'https://modelscope.cn/emb.onnx',
-          huggingFaceUrl: 'https://huggingface.co/emb.onnx',
-        ),
-      ];
-      final verifyClient = _FakeStreamingClient((request) async {
-        final url = request.url.toString();
-        if (url == 'https://modelscope.cn/seg.onnx') {
-          return http.StreamedResponse(
-            Stream.value(utf8.encode('corrupted-bytes!!')),
-            200,
-          );
-        }
-        if (url == 'https://huggingface.co/seg.onnx') {
-          return http.StreamedResponse(Stream.value(validSeg), 200);
-        }
-        return http.StreamedResponse(Stream.value(validEmb), 200);
-      });
-      final verifiedStore = DiarizationModelStore(
-        directory: Directory('${tempDir.path}/verified'),
-        client: verifyClient,
-        isWifiConnected: () async => true,
-        verifyChecksum: true,
-        customSpecs: customSpecs,
-      );
-      addTearDown(verifiedStore.dispose);
-      expect(await verifiedStore.download(), isTrue);
-      expect(verifiedStore.status, DiarizationModelStatus.ready);
-    },
-  );
-
-  testWidgets(
-    '(4) 设置页模型管理入口：支持点击下载、暂停、继续下载与删除模型',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 1200);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.runAsync(() async {
-        final segController = StreamController<List<int>>();
-        final firstChunkReady = Completer<void>();
-        var requestCount = 0;
-
-        final client = _FakeStreamingClient((request) async {
-          requestCount++;
-          if (requestCount == 1) {
-            return http.StreamedResponse(
-              segController.stream,
-              200,
-              contentLength: 100,
-            );
-          }
-          return http.StreamedResponse(
-            Stream.value(utf8.encode('model-bytes')),
-            200,
-            contentLength: 11,
-          );
-        });
-
-        final modelStore = DiarizationModelStore(
-          directory: Directory('${tempDir.path}/ui-models'),
-          client: client,
-          isWifiConnected: () async => true,
-          verifyChecksum: false,
-        );
-        modelStore.addListener(() {
-          if (modelStore.isDownloading &&
-              modelStore.progress > 0 &&
-              !firstChunkReady.isCompleted) {
-            firstChunkReady.complete();
-          }
-        });
-
-        final controller = RecorderController(
-          loadPersistedState: false,
-          diarizationModelStore: modelStore,
-          transcriptPersister: ({bool strict = false}) async {},
-        );
-        addTearDown(controller.dispose);
-
-        await tester.pumpWidget(
-          ChangeNotifierProvider.value(
-            value: controller,
-            child: const MaterialApp(home: SettingsScreen()),
-          ),
-        );
-        await tester.pump();
-        await tester.drag(find.byType(ListView), const Offset(0, -400));
-        await tester.pump();
-
-        expect(
-          find.byKey(const ValueKey('settings-diarization-model')),
-          findsOneWidget,
-        );
-        final downloadBtn = find.byKey(
-          const ValueKey('diarization-model-download'),
-        );
-        await tester.ensureVisible(downloadBtn);
-        await tester.pump();
-        await tester.tap(downloadBtn);
-        segController.add(utf8.encode('half-chunk'));
-        await firstChunkReady.future;
-        await tester.pump();
-
-        expect(
-          find.byKey(const ValueKey('diarization-model-pause')),
-          findsOneWidget,
-        );
-        await tester.tap(find.byKey(const ValueKey('diarization-model-pause')));
-        for (var i = 0; i < 50 && !modelStore.isPaused; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-        await segController.close();
-        await tester.pump();
-
-        expect(modelStore.status, DiarizationModelStatus.paused);
-        expect(
-          find.byKey(const ValueKey('diarization-model-resume')),
-          findsOneWidget,
-        );
-
-        await tester.tap(
-          find.byKey(const ValueKey('diarization-model-resume')),
-        );
-        for (var i = 0; i < 50 && !modelStore.isReady; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-        await tester.pump();
-        expect(modelStore.status, DiarizationModelStatus.ready);
-        expect(find.text('删除模型'), findsOneWidget);
-
-        await tester.tap(
-          find.byKey(const ValueKey('diarization-model-delete')),
-        );
-        for (
-          var i = 0;
-          i < 50 && modelStore.status != DiarizationModelStatus.notInstalled;
-          i++
-        ) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-        await tester.pump();
-        expect(modelStore.status, DiarizationModelStatus.notInstalled);
-        expect(
-          find.byKey(const ValueKey('diarization-model-download')),
-          findsOneWidget,
-        );
-      });
-    },
-  );
+    });
+  });
 }
 
 class _FakeStreamingClient extends http.BaseClient {
