@@ -109,6 +109,8 @@ class PhoneRecordingPanel extends StatefulWidget {
 }
 
 class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
+  /// The take is being saved or thrown away and the panel closes after; the
+  /// controls wait, so nothing opened on top is what the close pops.
   bool _stopping = false;
   final _notes = TextEditingController();
 
@@ -191,8 +193,11 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    setState(() => _stopping = true);
     await context.read<RecorderController>().discardPhoneRecording();
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    setState(() => _stopping = false);
+    Navigator.of(context).pop();
   }
 
   /// System back mid-take: leaving ends the take, so confirm first and
@@ -383,6 +388,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                       child: ExpectedSpeakersMenu(
                         key: const ValueKey('phone-recording-speakers'),
                         selected: expectedSpeakers,
+                        enabled: !_stopping,
                         onSelected: (count) => unawaited(
                           controller.setPhoneRecordingExpectedSpeakers(count),
                         ),

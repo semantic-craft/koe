@@ -25,15 +25,27 @@ Future<void> pickAndImportLocalAudio(BuildContext context) async {
   if (choice == null || !context.mounted) return;
   final messenger = ScaffoldMessenger.of(context);
   messenger.showSnackBar(const SnackBar(content: Text('正在保存原件…')));
+  final controller = context.read<RecorderController>();
   try {
-    final result = await context.read<RecorderController>().importLocalAudio(
+    final result = await controller.importLocalAudio(
       selected.path,
       expectedSpeakers: choice.expectedSpeakers,
     );
     if (!context.mounted) return;
+    // A recording already transcribed keeps its own number of people.
+    final countKept =
+        choice.expectedSpeakers != null &&
+        controller.expectedSpeakersForPath(result.path) !=
+            choice.expectedSpeakers;
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
-      SnackBar(content: Text(result.duplicate ? '已复用资料库中的同一音频' : '原件已保存到资料库')),
+      SnackBar(
+        content: Text(switch ((result.duplicate, countKept)) {
+          (false, _) => '原件已保存到资料库',
+          (true, false) => '已复用资料库中的同一音频',
+          (true, true) => '已复用资料库中的同一音频；它已转写过，人数没改，可在详情里重新区分发言人',
+        }),
+      ),
     );
   } catch (error) {
     if (!context.mounted) return;

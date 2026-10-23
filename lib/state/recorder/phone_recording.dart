@@ -55,6 +55,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   abstract bool _disposed;
   abstract final Future<void> _libraryLoaded;
   abstract final Future<void> _bookmarksLoaded;
+  abstract Future<void> _transcriptsLoaded;
   abstract final MacArchiveController archive;
   abstract final RecordingBookmarkStore bookmarks;
   abstract String? errorMessage;
@@ -146,14 +147,6 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     final path = _phoneTakePath;
     if (path == null) return;
     await setExpectedSpeakers(path, count);
-  }
-
-  /// Drops the number of people stored for a take that was not kept.
-  Future<void> _forgetTakeSpeakers(String path) async {
-    if (expectedSpeakersForPath(path) == null) return;
-    try {
-      await setExpectedSpeakers(path, null);
-    } catch (_) {}
   }
 
   /// Why the last start or save did not complete; null when it did.
@@ -563,7 +556,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         // Nothing of the take is kept, so neither are its notes and the
         // number of people chosen for it.
         await _deleteTakeNotes(path);
-        await _forgetTakeSpeakers(path);
+        await setExpectedSpeakers(path, null);
       } else if (notes.isEmpty) {
         // Nothing to keep; a draft is left only if clearing it failed.
         unawaited(_deleteTakeNotes(path));
@@ -594,7 +587,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       } catch (_) {}
       await _phoneNotesWrites;
       await _deleteTakeNotes(path);
-      await _forgetTakeSpeakers(path);
+      await setExpectedSpeakers(path, null);
       statusMessage = '已放弃这段录音';
       notifyListeners();
     } finally {
@@ -712,7 +705,14 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       final micros = int.tryParse(name.substring(_takePrefix.length));
       if (micros == null) continue;
       final started = DateTime.fromMicrosecondsSinceEpoch(micros);
-      if (await _adoptPhoneTake(entity.path, started) != null) recovered++;
+      if (await _adoptPhoneTake(entity.path, started) != null) {
+        recovered++;
+      } else if (!await entity.exists()) {
+        // Too short to keep, and so is the number of people chosen for it.
+        // The stored one is loaded first, or loading would bring it back.
+        await _transcriptsLoaded;
+        await setExpectedSpeakers(entity.path, null);
+      }
     }
     for (final draft in drafts) {
       if (_disposed) return;

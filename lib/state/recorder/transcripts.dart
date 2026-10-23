@@ -644,11 +644,13 @@ mixin _RecorderTranscripts on ChangeNotifier {
 
   Future<void> setExpectedSpeakers(String path, int? count) async {
     final key = _recordingKey(path: path);
+    final next = count == null || count <= 0 ? null : count;
+    if (_expectedSpeakers[key] == next) return;
     _speakerUndo.remove(key);
-    if (count == null || count <= 0) {
+    if (next == null) {
       _expectedSpeakers.remove(key);
     } else {
-      _expectedSpeakers[key] = count;
+      _expectedSpeakers[key] = next;
     }
     notifyListeners();
     await _persistTranscripts();

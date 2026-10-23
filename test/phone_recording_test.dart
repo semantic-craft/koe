@@ -240,11 +240,43 @@ void main() {
     expect(find.text('大约 3 人'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('stop-phone-recording')));
-    await settle(tester, () => controller.library.assets.isNotEmpty);
+    await settle(
+      tester,
+      () =>
+          controller.library.assets.isNotEmpty &&
+          !controller.phoneRecordingSaving,
+    );
     expect(
       controller.expectedSpeakersForPath(controller.library.assets.single.path),
       3,
     );
+  });
+
+  testWidgets('the panel still closes when the number of people is tapped '
+      'while the take saves (#408)', (tester) async {
+    controller = (await tester.runAsync(() async => build()))!;
+    addTearDown(controller.dispose);
+    await pump(tester);
+    await openPhoneRecording(tester);
+    await settle(tester, () => controller.phoneRecordingActive);
+
+    final gate = mic.stopGate = Completer<void>();
+    await tester.tap(find.byKey(const ValueKey('stop-phone-recording')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('phone-recording-speakers')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    gate.complete();
+    await settle(
+      tester,
+      () =>
+          controller.library.assets.isNotEmpty &&
+          !controller.phoneRecordingSaving,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('phone-recording-title')), findsNothing);
+    expect(find.text('手机录音已保存为原件'), findsOneWidget);
   });
 
   testWidgets('the number of people chosen when importing stays with the '
@@ -917,6 +949,9 @@ class _FakePhoneRecorder implements PhoneRecorder {
   int pauses = 0;
   int resumes = 0;
 
+  /// When set, stop waits for it, so a test can act while the take saves.
+  Completer<void>? stopGate;
+
   @override
   Future<bool> requestPermission() async => permission;
 
@@ -938,6 +973,7 @@ class _FakePhoneRecorder implements PhoneRecorder {
 
   @override
   Future<void> stop() async {
+    await stopGate?.future;
     await File(path!).writeAsBytes(_wav(dataBytes: 64000));
   }
 

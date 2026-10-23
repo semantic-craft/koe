@@ -273,31 +273,16 @@ mixin _RecorderLibrary on ChangeNotifier {
   /// rather than imported twice. Metadata persistence is part of the commit:
   /// if it fails, the newly copied file is removed and the caller sees failure.
   ///
-  /// [expectedSpeakers], about how many people speak (R24.2), is stored for
-  /// the recording once it is in the library; null keeps what it had.
+  /// [expectedSpeakers], about how many people speak (R24.2), is stored
+  /// before the recording is announced, so automatic organizing already
+  /// transcribes with it. A recording already here and transcribed keeps its
+  /// own: the new number would not redo its speakers. Null keeps what it had.
   Future<({String path, bool duplicate, RecordingAsset asset})>
   importLocalAudio(
     String sourcePath, {
     DateTime? recordedAt,
     bool recordSourcePath = true,
     int? expectedSpeakers,
-  }) async {
-    final imported = await _importLocalAudio(
-      sourcePath,
-      recordedAt: recordedAt,
-      recordSourcePath: recordSourcePath,
-    );
-    if (expectedSpeakers != null) {
-      await setExpectedSpeakers(imported.path, expectedSpeakers);
-    }
-    return imported;
-  }
-
-  Future<({String path, bool duplicate, RecordingAsset asset})>
-  _importLocalAudio(
-    String sourcePath, {
-    DateTime? recordedAt,
-    required bool recordSourcePath,
   }) async {
     await _libraryLoaded;
     const extensions = {
@@ -335,6 +320,10 @@ mixin _RecorderLibrary on ChangeNotifier {
         analysis.resumeRecording(_recordingKey(path: existing.path));
       }
       _registerExportedPaths([...exportedPaths, existing.path]);
+      if (expectedSpeakers != null &&
+          transcriptForPath(existing.path) == null) {
+        await setExpectedSpeakers(existing.path, expectedSpeakers);
+      }
       statusMessage = restored ? '这条音频在回收站中，已恢复' : '这条音频已在资料库中';
       errorMessage = null;
       notifyListeners();
@@ -387,6 +376,9 @@ mixin _RecorderLibrary on ChangeNotifier {
       await library.upsert(asset);
       _registerExportedPaths([...exportedPaths, target.path]);
       _invalidateLocalDuration(target.path);
+      if (expectedSpeakers != null) {
+        await setExpectedSpeakers(target.path, expectedSpeakers);
+      }
       statusMessage = '原件已保存';
       errorMessage = null;
       notifyListeners();

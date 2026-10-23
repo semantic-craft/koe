@@ -293,4 +293,34 @@ void main() {
     expect(parameters['diarization_enabled'], isTrue);
     expect(parameters['speaker_count'], 3);
   });
+
+  test('importing a transcribed recording again keeps its number of people '
+      '(#408)', () async {
+    final c = RecorderController(
+      loadPersistedState: false,
+      meetingLocalOnly: false,
+      qwenSpeech: QwenSttService(
+        client: _QwenServer(),
+        pollInterval: Duration.zero,
+      )..apiKeyOverride = 'k',
+      transcriptPersister: ({bool strict = false}) async {},
+      libraryDirectory: Directory('${dir.path}/imports'),
+    )..speechProvider = SttProvider.qwen;
+    addTearDown(c.dispose);
+    final source = File('${dir.path}/meeting.m4a');
+    await source.writeAsBytes(m4aBytes());
+    final path = (await c.importLocalAudio(source.path)).path;
+
+    // Not transcribed yet, so the number chosen on importing it again counts.
+    final again = await c.importLocalAudio(source.path, expectedSpeakers: 3);
+    expect(again.duplicate, isTrue);
+    expect(c.expectedSpeakersForPath(path), 3);
+
+    await c.transcribeLocalFile(path);
+    expect(c.transcriptForPath(path), isNotNull);
+
+    // Its speakers were labelled with 3; a new number would not redo them.
+    await c.importLocalAudio(source.path, expectedSpeakers: 5);
+    expect(c.expectedSpeakersForPath(path), 3);
+  });
 }

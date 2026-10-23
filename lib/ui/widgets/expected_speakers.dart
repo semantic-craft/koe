@@ -51,6 +51,7 @@ class ExpectedSpeakersMenu extends StatelessWidget {
     super.key,
     required this.selected,
     required this.onSelected,
+    this.enabled = true,
   });
 
   /// A menu item can't carry null, so 自动判断 travels as this.
@@ -59,6 +60,9 @@ class ExpectedSpeakersMenu extends StatelessWidget {
   final int? selected;
   final ValueChanged<int?> onSelected;
 
+  /// False while the screen is about to close, so no menu is left open on it.
+  final bool enabled;
+
   @override
   Widget build(BuildContext context) {
     // PopupMenuButton with a custom child has no button role.
@@ -66,6 +70,7 @@ class ExpectedSpeakersMenu extends StatelessWidget {
       button: true,
       child: PopupMenuButton<int>(
         tooltip: '大约几个人',
+        enabled: enabled,
         initialValue: selected ?? _auto,
         onSelected: (value) => onSelected(value == _auto ? null : value),
         itemBuilder: (_) => [
