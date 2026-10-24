@@ -21,11 +21,13 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
     private var lastData: [String: Double] = [:]
     private var lastSound: [String: Double] = [:]
     private var lastRestart: [String: Double] = [:]
+    private var restartScheduled: Set<String> = []
     private var notices: [String: String] = [:]
     private var speechNotices: [String: String] = [:]
     private var timer: Timer?
     private var speech: [String: DualLiveSpeech] = [:]
     private var drainingSpeech: [DualLiveSpeech] = []
+    private var arbiter = DualSpeechTurnArbiter()
 
     func configure(_ messenger: FlutterBinaryMessenger) {
         FlutterEventChannel(name: "com.semanticcraft.koe/dual_recording/events", binaryMessenger: messenger).setStreamHandler(self)
@@ -66,7 +68,8 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         active = true; generation += 1
         started = ProcessInfo.processInfo.systemUptime
         pausedSeconds = 0; pauseStarted = nil
-        lastData = [:]; lastSound = [:]; lastRestart = [:]; notices = [:]; speechNotices = [:]
+        lastData = [:]; lastSound = [:]; lastRestart = [:]; restartScheduled = []; notices = [:]; speechNotices = [:]
+        arbiter.reset()
         let mic = MicrophoneSource(deviceUID: input), system = SystemAudioSource()
         self.mic = mic; self.system = system
         configureSource(mic, lane: "microphone")
@@ -82,12 +85,17 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
                 guard status == .authorized else {
                     self.emit(["speechNotice": "未允许语音识别；双路原件仍会保存"]); return
                 }
+                let probe = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+                guard let probe, probe.supportsOnDeviceRecognition, probe.isAvailable else {
+                    self.emit(["speechNotice": "此设备暂不支持本机实时识别；双路原件仍会保存"]); return
+                }
                 for lane in ["microphone", "system"] {
-                    let live = DualLiveSpeech(onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }) { [weak self] text, offset, final, current in
+                    self.speech[lane] = DualLiveSpeech(
+                        onEnded: { [weak self] in self?.arbiter.requestEnded(lane: lane) },
+                        onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }
+                    ) { [weak self] text, offset, final, current in
                         self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane)
                     }
-                    if live.start(at: self.elapsed) { self.speech[lane] = live }
-                    else { self.emit(["speechNotice": "此设备暂不支持本机实时识别；双路原件仍会保存"]) }
                 }
             }
         }
@@ -104,6 +112,7 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         let failure = error as NSError
         let source = lane == "system" ? "系统声音" : "麦克风"
         let noSpeech = failure.domain == "kAFAssistantErrorDomain" && failure.code == 1110
+        arbiter.failed(lane: lane, noSpeech: noSpeech, at: elapsed)
         speechNotices[lane] = noSpeech
             ? "\(source)暂未检测到语音，有声音后自动继续识别；原件仍在保存。"
             : "\(source)的实时文字暂不可用；双路原件仍在保存。暂停后继续可重试。"
@@ -133,7 +142,7 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
                     do { try self.writers[lane]?.append(samples, endingAt: ending) }
                     catch { DispatchQueue.main.async { self.failWrite(error, token: token) } }
                 }
-                self.speech[lane]?.append(samples, at: ending)
+                self.routeSpeech(lane: lane, samples: samples, at: ending)
             }
         }
         source.onInterruption = { [weak self] in
@@ -141,10 +150,51 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         }
     }
 
+    private func routeSpeech(lane: String, samples: [Float], at time: Double) {
+        guard let live = speech[lane] else { return }
+        switch arbiter.route(lane: lane, samples: samples, at: time) {
+        case .ignore:
+            return
+        case .start:
+            if live.start(at: time) {
+                live.appendBuffer(samples)
+            } else {
+                arbiter.failed(lane: lane, noSpeech: false, at: time)
+                emit(["speechNotice": "此设备暂不支持本机实时识别；双路原件仍会保存"])
+            }
+        case .append:
+            if live.hasActiveRequest {
+                live.appendBuffer(samples)
+            } else if live.start(at: time) {
+                live.appendBuffer(samples)
+            } else {
+                arbiter.failed(lane: lane, noSpeech: false, at: time)
+            }
+        case .switchLane(let previousLane):
+            speech[previousLane]?.closeCurrentRequest()
+            if live.start(at: time) {
+                live.appendBuffer(samples)
+            } else {
+                arbiter.failed(lane: lane, noSpeech: false, at: time)
+            }
+        }
+    }
+
     private func restart(_ lane: String, token: Int) {
         guard active, generation == token, pauseStarted == nil else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        guard now - (lastRestart[lane] ?? 0) >= 3 else { return }
+        let elapsedSinceRestart = now - (lastRestart[lane] ?? 0)
+        if elapsedSinceRestart < 3 {
+            guard !restartScheduled.contains(lane) else { return }
+            restartScheduled.insert(lane)
+            let delay = max(0.1, 3 - elapsedSinceRestart)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.restartScheduled.remove(lane)
+                self.restart(lane, token: token)
+            }
+            return
+        }
         lastRestart[lane] = now
         do {
             if lane == "microphone" { try mic?.restart() } else { try system?.restart() }
@@ -174,6 +224,7 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         pauseStarted = ProcessInfo.processInfo.systemUptime
         generation += 1
         mic?.stop(); system?.stop()
+        arbiter.reset()
         for live in speech.values {
             drainingSpeech.append(live)
             live.finish { [weak self, weak live] in self?.drainingSpeech.removeAll { $0 === live } }
@@ -184,14 +235,19 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         guard active, let paused = pauseStarted else { return }
         pausedSeconds += ProcessInfo.processInfo.systemUptime - paused; pauseStarted = nil
         lastData = ["microphone": ProcessInfo.processInfo.systemUptime, "system": ProcessInfo.processInfo.systemUptime]
+        arbiter.reset()
         if let mic { configureSource(mic, lane: "microphone") }
         if let system { configureSource(system, lane: "system") }
         lastRestart = [:]
         restart("microphone", token: generation); restart("system", token: generation)
         if transcribe && SFSpeechRecognizer.authorizationStatus() == .authorized {
             for lane in ["microphone", "system"] {
-                let live = DualLiveSpeech(onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }) { [weak self] text, offset, final, current in self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane) }
-                if live.start(at: elapsed) { speech[lane] = live }
+                speech[lane] = DualLiveSpeech(
+                    onEnded: { [weak self] in self?.arbiter.requestEnded(lane: lane) },
+                    onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }
+                ) { [weak self] text, offset, final, current in
+                    self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane)
+                }
             }
         }
     }
@@ -228,46 +284,50 @@ private final class DualLiveSpeech {
     private var current: DualSpeechRequest?
     private var finishing: [DualSpeechRequest] = []
     private let update: (String, Double, Bool, Bool) -> Void
+    private let onEnded: () -> Void
     private let onFailure: (Error) -> Void
-    private var retry = DualSpeechRetryGate()
-    private var latestTime = 0.0
     private var requestGeneration = 0
-    init(onFailure: @escaping (Error) -> Void, update: @escaping (String, Double, Bool, Bool) -> Void) {
-        self.onFailure = onFailure; self.update = update
+    var hasActiveRequest: Bool {
+        if let current, !current.ended { return true }
+        return false
+    }
+    init(
+        onEnded: @escaping () -> Void,
+        onFailure: @escaping (Error) -> Void,
+        update: @escaping (String, Double, Bool, Bool) -> Void
+    ) {
+        self.onEnded = onEnded; self.onFailure = onFailure; self.update = update
     }
     func start(at time: Double) -> Bool {
-        guard retry.mayStart(at: time, hasVoice: true) else { return false }
         requestGeneration += 1
         let token = requestGeneration
+        closeCurrentRequest()
+        guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else { return false }
+        current = DualSpeechRequest(recognizer: recognizer, offset: time, update: { [weak self] text, offset, final in
+            guard let self else { return }
+            self.update(text, offset, final, self.requestGeneration == token)
+            if final && self.requestGeneration == token {
+                self.onEnded()
+            }
+        }) { [weak self] error in
+            guard let self else { return }
+            self.onFailure(error)
+        }
+        return true
+    }
+    func closeCurrentRequest() {
         if let current {
             finishing.append(current)
             current.finish { [self, weak current] in finishing.removeAll { $0 === current } }
         }
         current = nil
-        guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else { return false }
-        current = DualSpeechRequest(recognizer: recognizer, offset: time, update: { [weak self] text, offset, final in
-            guard let self else { return }
-            self.update(text, offset, final, self.requestGeneration == token)
-        }) { [weak self] error in
-            guard let self else { return }
-            let failure = error as NSError
-            self.retry.failed(noSpeech: failure.domain == "kAFAssistantErrorDomain" && failure.code == 1110, at: self.latestTime)
-            self.onFailure(error)
-        }
-        retry = DualSpeechRetryGate()
-        return true
     }
-    func append(_ samples: [Float], at time: Double) {
-        latestTime = time
-        let hasVoice = samples.contains { abs($0) > 0.005 }
-        guard retry.mayStart(at: time, hasVoice: hasVoice) else { return }
-        if current == nil || current!.ended || time - current!.offset > 50 {
-            guard start(at: time) else { return }
-        }
+    func appendBuffer(_ samples: [Float]) {
+        guard let current, !current.ended else { return }
         guard let buffer = AVAudioPCMBuffer(pcmFormat: CaptureFormat.mono, frameCapacity: AVAudioFrameCount(samples.count)), let data = buffer.floatChannelData else { return }
         buffer.frameLength = AVAudioFrameCount(samples.count)
         samples.withUnsafeBufferPointer { if let base = $0.baseAddress { data[0].update(from: base, count: samples.count) } }
-        current?.request.append(buffer)
+        current.request.append(buffer)
     }
     func finish(_ completion: @escaping () -> Void) {
         requestGeneration += 1
