@@ -1,6 +1,6 @@
 # Koe 路线图
 
-更新：2026-10-22（会议纪要功能按 [ADR 0002](docs/adr/0002-meeting-notes-decisions.md) 分六期开工，第 1 期进行中；Android 开发工单 #336–#344 已全部合并，只剩真机验收 #345；P2 代码已合并，真机验收另列）。本文是 [#6 总工单](https://github.com/semantic-craft/koe/issues/6)、[#106 产品路线](https://github.com/semantic-craft/koe/issues/106) 与 [#124 手机优先规格](https://github.com/semantic-craft/koe/issues/124) 的一页摘要；需求细节和验收条件以工单为准，本文只回答「做完了什么、下一步做什么、什么先不做」。
+更新：2026-10-24（Android 收口计划 #494 的代码项已全部合并：#444 测试竞态与文案清理 PR #496、#461 Wi‑Fi 导出热点断开自动经蓝牙续导 PR #497、#373 手机按日历会议事件到点提醒开录与命名 PR #498/#500；Android 本机离线识别按产品决定排除，统一用云端服务；真机只剩 #345 的 3 条 D3200 在场链路）。本文是 [#6 总工单](https://github.com/semantic-craft/koe/issues/6)、[#106 产品路线](https://github.com/semantic-craft/koe/issues/106) 与 [#124 手机优先规格](https://github.com/semantic-craft/koe/issues/124) 的一页摘要；需求细节和验收条件以工单为准，本文只回答「做完了什么、下一步做什么、什么先不做」。
 
 **方向：** 手机优先的个人记录与持续事项工具。原音频永久保留、文字可点回原声；在此之上整理今日事件、项目、待办、地点和日记，最后再开放给外部 AI。主导航为「今日 / 项目 / 资料」。Mac 是完整的会议纪要端（本机录音、本机识别、系统声音、纪要），同时承担手机原件归档；Mac 的工作不阻塞手机。三端都要具备会议纪要功能（见下一个里程碑第 5 项）。
 
@@ -20,7 +20,7 @@
 - **P2 已解冻**：资料包导出与重新导入（#145）——资料详情「更多 → 导出…」选阅读稿（Markdown）或可恢复资料包（`.koepack`），原音频由用户明确选择是否带上；「新记录 → 导入资料包」（Mac 在录音库栏，导出可存成文件）在另一台设备或重装后恢复校订、时码、发言人、书签、地点和主题，同一资料重复导入不产生第二份，手改不同的正文并列保留不覆盖；不带音频的包先作为文字资料，补配同一原音频后完整恢复。格式见 [material-pack](docs/material-pack.md)；待真机验收（#280）。
 - **P2 已完成**：按住说话记录与提问（#142）——按 #112 的决定按入口区分意图：「新记录」里按住说话保存为原件并照常转写，「问 Koe」里按住说话识别后进连续问答；上滑或拖离按钮取消、不保存不发送；两处都保留文字输入。权限被拒、识别失败、断网时说明原因，语音问题保留到发出为止（重启后仍可重新识别或丢弃）。外部交办只回「暂未开放」、不执行；回答朗读可选、默认关闭、标明合成语音。待真机验收（#283）。
 - **Mac 归档**：手机到 Mac 自动原件归档（#148）。
-- **Android 版**（[#331](https://github.com/semantic-craft/koe/issues/331)，用户 2026-10-20 解冻，只适配 Pixel 11 Pro / Android 17）：工具链、应用身份与图标（#336），界面按「手机」判断（#337），密钥进 Keystore 并关闭备份（#338），录音豆后台同步与常驻通知（#339），手机录音、纯文字记录、全天监听后台继续并可从通知停止（#340），导入音频转码（#341），回答朗读（#342），待办导出到系统日历（#343），长按图标「开始录音」（#344）。待真机验收（#345）。
+- **Android 版**（[#331](https://github.com/semantic-craft/koe/issues/331)，用户 2026-10-20 解冻，只适配 Pixel 11 Pro / Android 17）：工具链、应用身份与图标（#336），界面按「手机」判断（#337），密钥进 Keystore 并关闭备份（#338），录音豆后台同步与常驻通知（#339、#393、#438），手机录音、纯文字记录、全天监听后台继续并可从通知停止（#340、#390、#436、#444），导入音频转码（#341），回答朗读（#342），待办导出到系统日历（#343），日历会议到点提醒开录与命名（#373 / PR #498、#500），长按图标「开始录音」（#344），Wi‑Fi 导出保活与热点断开自动经蓝牙续导（#437、#456、#461）。`scripts/android-check` 无人值守场景已在 Pixel 11 Pro 真机全部通过；剩 D3200 在场的 3 条核心链路真机核对（#345）。
 - **工程**：iOS 模拟器在 Apple Silicon 上可构建（#88）。
 - **产品决策已全部定稿**（#107–#110、#113、#116–#119、#121、#122；会议纪要见 [ADR 0002](docs/adr/0002-meeting-notes-decisions.md)）。
 
@@ -50,14 +50,14 @@
 
 **4. Android：代码已全部合并，待真机验收（用户 2026-10-20 解冻）。** 以 [#331](https://github.com/semantic-craft/koe/issues/331) 为唯一现行规格，只适配 Pixel 11 Pro / Android 17。开发工单 #336–#344 已合并（内容见「已交付」）；剩 [#345](https://github.com/semantic-craft/koe/issues/345)：`scripts/android-check` 的无人值守场景先在 Pixel 上跑，再由人带 D3200 统一走一遍它覆盖不到的项目（连接与取回、断开/接回、实体键与双击标记、真实录音与全天监听）。设备离线记为跳过，不算通过。
 
-旧 #38 与 PR #62 已被新范围取代并关闭。Android 范围不包含其他 Android 机型、Play 上架、Mac 双端同步或 P4；Android 本机识别在会议纪要第 3 期（下一项）。
+旧 #38 与 PR #62 已被新范围取代并关闭。Android 范围不包含其他 Android 机型、Play 上架、Mac 双端同步、P4 或本机离线语音识别（转写与整理统一走云端服务）。
 
 **5. 会议纪要（对齐拾音，三端；用户 2026-10-22 开工）。** 方案见 [handoffs/meeting-notes-brief.md](handoffs/meeting-notes-brief.md)，决定见 [ADR 0002](docs/adr/0002-meeting-notes-decisions.md)。会议是录音的一种使用方式，不另起数据模型。会议场景默认「录音只留本机」，音频不出设备；纪要默认用千问，只发文字。按系统版本降级，不提高最低版本。
 
 - [#370](https://github.com/semantic-craft/koe/issues/370) 第 1 期：「录音只留本机」底座、Mac 麦克风录音、Apple 设备端识别在 macOS 26 可用（子工单 #376、#377、#378）——进行中
 - [#371](https://github.com/semantic-craft/koe/issues/371) 第 2 期：本机发言人区分（三端，sherpa-onnx）与发言人编辑补齐
-- [#372](https://github.com/semantic-craft/koe/issues/372) 第 3 期：Android 本机识别与 Apple 低版本的本地引擎（模型优先 ModelScope、只在 Wi-Fi 下载）
-- [#373](https://github.com/semantic-craft/koe/issues/373) 第 4 期：Mac 系统声音、会议录音体验、手机按日历事件提醒开录
+- [#372](https://github.com/semantic-craft/koe/issues/372) 第 3 期：Apple 低版本的本地引擎（模型优先 ModelScope、只在 Wi-Fi 下载；Android 按产品决定不做本机离线识别）
+- [#373](https://github.com/semantic-craft/koe/issues/373) 第 4 期：Mac 系统声音、会议录音体验、手机按日历事件提醒开录（代码已全部合并，含 PR #498/#500）
 - [#374](https://github.com/semantic-craft/koe/issues/374) 第 5 期：纪要质量（词汇表、草稿、待确认、模板、OpenAI 兼容接口与本机 Ollama）
 - [#375](https://github.com/semantic-craft/koe/issues/375) 第 6 期：导出 PDF、Word、Markdown 和字幕，全文搜索，声纹（只存本机）
 
