@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
+
+import 'minutes_export.dart';
 import 'recording_analysis.dart';
 
 // Template adapted from Meetily and Ownscribe; see THIRD_PARTY_NOTICES.md.
@@ -398,6 +401,17 @@ class MeetingMinutes {
     for (final source in result.sources.indexed)
       '[S${source.$1 + 1}] ${source.$2}',
   ].join('\n\n');
+
+  /// Semantic Rich Text HTML representation (#492 / S32).
+  String exportHtml(AnalysisResult result) => buildMinutesHtml(this, result);
+
+  /// Office Open XML Word (`.docx`) archive bytes (#492 / S32).
+  Uint8List exportDocxBytes(AnalysisResult result) =>
+      buildMinutesDocxBytes(this, result);
+
+  /// Multi-page PDF 1.4 (`.pdf`) document bytes (#492 / S32).
+  Uint8List exportPdfBytes(AnalysisResult result, {int linesPerPage = 36}) =>
+      buildMinutesPdfBytes(this, result, linesPerPage: linesPerPage);
 
   /// Replaces all whole-label occurrences of [oldName] (e.g. "说话人 1") with
   /// [newName] across text and action owners when a speaker suggestion is applied.

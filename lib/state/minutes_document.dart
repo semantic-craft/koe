@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'context/context_file.dart';
+import 'minutes_export.dart';
 
 /// One imported transcript segment. Timings are optional because a text-only
 /// import must stay readable without pretending that it can be replayed.
@@ -250,6 +251,24 @@ MinutesParseResult parseMinutesDocument(String fileName, String raw) {
     }
     if (decoded is Map) return _parseMinutesJson(fileName, decoded, raw);
   }
+  if (looksLikeSubtitleContent(fileName, raw)) {
+    final segments = parseSubtitleMinutesSegments(raw);
+    if (segments.isEmpty) {
+      throw const FormatException('没有找到可导入的字幕段落');
+    }
+    final reliable = _timingsReliable(segments) || segments.length == 1;
+    return MinutesParseResult(
+      MinutesDocument(
+        id: _contentId(raw),
+        title: _fileStem(fileName),
+        sourceName: p.basename(fileName),
+        importedAt: DateTime.now(),
+        segments: List.unmodifiable(segments),
+        timingReliable: reliable,
+        warning: reliable ? null : '部分字幕时码顺序不可靠，只能整段阅读。',
+      ),
+    );
+  }
   return _parseMinutesText(fileName, raw);
 }
 
@@ -390,11 +409,31 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
   var untimed = 0;
   Duration? pendingStart;
   String? pendingSpeaker;
+  String? markdownTitle;
+  final isMarkdown =
+      fileName.toLowerCase().endsWith('.md') ||
+      raw.trimLeft().startsWith('# ');
   for (final line in const LineSplitter().convert(raw)) {
     if (line.trim().isEmpty) continue;
+    final trimmedLine = line.trim();
+    if (isMarkdown) {
+      if (RegExp(r'^#{1,6}\s+').hasMatch(trimmedLine)) {
+        if (markdownTitle == null && trimmedLine.startsWith('# ')) {
+          final heading = trimmedLine.substring(2).trim();
+          if (heading.isNotEmpty) markdownTitle = heading;
+        }
+        continue;
+      }
+      if (RegExp(r'^(-{3,}|\*{3,}|_{3,})$').hasMatch(trimmedLine)) {
+        continue;
+      }
+    }
+    final normalizedLine = isMarkdown
+        ? line.replaceFirst(RegExp(r'^\s*[-*+]\s+'), '')
+        : line;
     final match = RegExp(
       r'^\s*\[?(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\]?\s*(.*)$',
-    ).firstMatch(line);
+    ).firstMatch(normalizedLine);
     if (match != null) {
       final start = _clock(match.group(1)!);
       if (start != null) {
@@ -420,7 +459,7 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
       }
     }
     if (segments.isNotEmpty) {
-      final body = _splitSpeaker(line.trim());
+      final body = _splitSpeaker(normalizedLine.trim());
       if (pendingStart != null) {
         segments.add(
           MinutesSegment(
@@ -454,7 +493,7 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
       );
     } else {
       if (pendingStart == null) untimed++;
-      final body = _splitSpeaker(line.trim());
+      final body = _splitSpeaker(normalizedLine.trim());
       segments.add(
         MinutesSegment(
           text: body.text,
@@ -471,7 +510,7 @@ MinutesParseResult _parseMinutesText(String fileName, String raw) {
   return MinutesParseResult(
     MinutesDocument(
       id: _contentId(raw),
-      title: _fileStem(fileName),
+      title: markdownTitle ?? _fileStem(fileName),
       sourceName: p.basename(fileName),
       importedAt: DateTime.now(),
       segments: List.unmodifiable(segments),
