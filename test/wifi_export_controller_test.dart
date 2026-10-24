@@ -47,6 +47,7 @@ void main() {
     FakeWifiRecorder recorder,
     List<int> fileIds, {
     SoftApJoinException? joinError,
+    Duration wifiExportReconnectTimeout = const Duration(milliseconds: 200),
   }) {
     final ble = _Ble()..ready = true;
     final link = FakeSoftApLink(
@@ -59,6 +60,7 @@ void main() {
             loadPersistedState: false,
             phoneRecordingEnabled: false,
             topicsEnabled: false,
+            wifiExportReconnectTimeout: wifiExportReconnectTimeout,
             rawExportConverter: (raw) async => raw,
             wifiExport: WifiExportService(
               blePackets: ble.packets,
@@ -126,6 +128,55 @@ void main() {
     );
 
     expect(saved, hasLength(1));
+    expect(ble.hotspots, hasLength(2));
+    expect(link.joins, ble.hotspots);
+  });
+
+  test('when the hotspot drops mid-batch on Android, Bluetooth reconnects '
+      'and opens a new hotspot to finish the remaining files (#461)', () async {
+    final audioById = {
+      1761100001: recorderAudio(1761100001, units: 2),
+      1761100002: recorderAudio(1761100002, units: 2),
+      1761100003: recorderAudio(1761100003, units: 2),
+    };
+    var droppedOnce = false;
+    late _Ble ble;
+    final recorder = await FakeWifiRecorder.start((socket, fileId) async {
+      if (fileId == 1761100002 && !droppedOnce) {
+        droppedOnce = true;
+        // Simulate the recorder's hotspot dropping mid-transfer on file 2,
+        // then coming back on Bluetooth moments later.
+        await socket.close();
+        Future<void>.delayed(
+          const Duration(milliseconds: 50),
+          () => ble.linkUp(),
+        );
+        return;
+      }
+      final audio = audioById[fileId]!;
+      socket.add([
+        ...FakeWifiRecorder.head(fileId, units: 2),
+        ...FakeWifiRecorder.slices(audio),
+        ...FakeWifiRecorder.done(),
+      ]);
+    });
+    final (controller, connectedBle, link) = connected(
+      recorder,
+      [1761100001, 1761100002, 1761100003],
+      wifiExportReconnectTimeout: const Duration(seconds: 2),
+    );
+    ble = connectedBle;
+
+    expect(await controller.beginWifiExport(), isNotNull);
+    final saved = await controller.continueWifiExport().timeout(
+      const Duration(seconds: 5),
+    );
+
+    expect(saved, hasLength(3));
+    expect(controller.localPathFor(1761100001), isNotNull);
+    expect(controller.localPathFor(1761100002), isNotNull);
+    expect(controller.localPathFor(1761100003), isNotNull);
+    expect(controller.errorMessage, isNull);
     expect(ble.hotspots, hasLength(2));
     expect(link.joins, ble.hotspots);
   });
