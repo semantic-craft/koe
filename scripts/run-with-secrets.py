@@ -4,6 +4,7 @@ Run with `direnv exec . python3 scripts/run-with-secrets.py macos`.
 No secrets are printed, embedded in builds, or written to app preferences.
 """
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -14,9 +15,13 @@ if len(sys.argv) == 2 and sys.argv[1] == 'macos':
     environment = {k: v for k, v in os.environ.items() if not any(x in k for x in ('KEY', 'TOKEN', 'SECRET'))}
     environment.update(speech)
     environment["KOE_CREDENTIAL_SOURCE"] = "environment"
-    process = subprocess.Popen(['/Applications/Koe.app/Contents/MacOS/Koe'], env=environment,
-                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    print(f'Launched installed macOS app, PID {process.pid}; {len(speech)} provider credentials injected.')
+    # LaunchServices gives Koe its own privacy-permission identity. Executing
+    # Contents/MacOS/Koe directly can inherit the agent's denied EventKit access.
+    # The native helper passes credentials in memory, never as command arguments.
+    helper = Path(__file__).with_name('launch-macos.swift')
+    completed = subprocess.run(['/usr/bin/swift', str(helper)], env=environment,
+                               stdin=subprocess.DEVNULL, check=False)
+    raise SystemExit(completed.returncode)
 
 else:
     raise SystemExit('Usage: run-with-secrets.py macos')
