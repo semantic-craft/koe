@@ -437,7 +437,10 @@ class RecorderController extends ChangeNotifier
     unawaited(asks.load());
     if (loadPersistedState) {
       _todoLifecycle = AppLifecycleListener(
-        onResume: () => unawaited(syncSystemLinks()),
+        onResume: () {
+          unawaited(syncSystemLinks());
+          unawaited(refreshPhoneCalendarReminders());
+        },
       );
     }
     minutes =
@@ -606,6 +609,9 @@ class RecorderController extends ChangeNotifier
     }
     _fileJobsLoaded = _restoreFileJobs();
     if (this.phoneRecordingEnabled) {
+      if (loadPersistedState || calendarMeetings != null) {
+        _initPhoneCalendarReminders();
+      }
       // Text-only captures cut off by a crash, or stopped without network,
       // still have speech to recognize.
       unawaited(

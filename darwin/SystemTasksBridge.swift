@@ -1,6 +1,7 @@
 import EventKit
 #if os(iOS)
 import Flutter
+import UserNotifications
 #else
 import FlutterMacOS
 #endif
@@ -11,10 +12,23 @@ import FlutterMacOS
 /// names the take after (#407).
 enum SystemTasksBridge {
   private static let store = EKEventStore()
+  #if os(iOS)
+  private static let reminderPrefix = "koe.calendar.meeting."
+  private static let pendingReminderKey = "calendarMeeting.pendingTitle"
+  private static var channel: FlutterMethodChannel?
+  private static let notificationDelegate = CalendarReminderNotificationDelegate()
+  #endif
 
   static func configure(binaryMessenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(
       name: "com.semanticcraft.koe/system_tasks", binaryMessenger: binaryMessenger)
+    #if os(iOS)
+    self.channel = channel
+    let center = UNUserNotificationCenter.current()
+    if center.delegate == nil {
+      center.delegate = notificationDelegate
+    }
+    #endif
     channel.setMethodCallHandler { call, result in
       guard let args = call.arguments as? [String: Any],
         let target = args["target"] as? String
@@ -48,11 +62,75 @@ enum SystemTasksBridge {
           return
         }
         result(events(from: date(args["start"]), to: date(args["end"])))
+      #if os(iOS)
+      case "scheduleMeetingReminders":
+        scheduleMeetingReminders(args, result: result)
+      case "consumePendingMeetingReminder":
+        let title = UserDefaults.standard.string(forKey: pendingReminderKey)
+        if title != nil {
+          UserDefaults.standard.removeObject(forKey: pendingReminderKey)
+        }
+        result(title)
+      #endif
       default:
         result(FlutterMethodNotImplemented)
       }
     }
   }
+
+  #if os(iOS)
+  fileprivate static func enqueueReminderTap(_ title: String) {
+    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    UserDefaults.standard.set(trimmed, forKey: pendingReminderKey)
+    DispatchQueue.main.async {
+      channel?.invokeMethod("onMeetingReminderTapped", arguments: trimmed)
+    }
+  }
+
+  private static func scheduleMeetingReminders(
+    _ args: [String: Any], result: @escaping FlutterResult
+  ) {
+    let meetings = args["meetings"] as? [[String: Any]] ?? []
+    let nowMs = (args["now"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
+    let center = UNUserNotificationCenter.current()
+    center.getPendingNotificationRequests { existing in
+      let previous = existing.map(\.identifier).filter { $0.hasPrefix(reminderPrefix) }
+      if !previous.isEmpty {
+        center.removePendingNotificationRequests(withIdentifiers: previous)
+      }
+      guard !meetings.isEmpty else {
+        DispatchQueue.main.async { result(nil) }
+        return
+      }
+      center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+        guard granted else {
+          DispatchQueue.main.async { result(nil) }
+          return
+        }
+        for item in meetings.prefix(24) {
+          guard let id = item["id"] as? String,
+            let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !title.isEmpty,
+            let startMs = (item["start"] as? NSNumber)?.doubleValue
+          else { continue }
+          let delaySeconds = max(1.0, (startMs - nowMs) / 1000.0)
+          let content = UNMutableNotificationContent()
+          content.title = "「\(title)」开始了"
+          content.body = "点开进入 Koe 准备会议录音"
+          content.sound = .default
+          content.userInfo = ["koeMeetingTitle": title]
+          let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: delaySeconds, repeats: false)
+          let request = UNNotificationRequest(
+            identifier: "\(reminderPrefix)\(id)", content: content, trigger: trigger)
+          center.add(request, withCompletionHandler: nil)
+        }
+        DispatchQueue.main.async { result(nil) }
+      }
+    }
+  }
+  #endif
 
   private static func authorized(_ type: EKEntityType) -> Bool {
     let status = EKEventStore.authorizationStatus(for: type)
@@ -151,6 +229,7 @@ enum SystemTasksBridge {
         people.insert(person(organizer), at: 0)
       }
       return [
+        "id": event.calendarItemIdentifier,
         "title": event.title ?? "",
         "start": ms(event.startDate),
         "end": ms(event.endDate),
@@ -197,3 +276,37 @@ enum SystemTasksBridge {
     return nil
   }
 }
+
+#if os(iOS)
+private final class CalendarReminderNotificationDelegate: NSObject,
+  UNUserNotificationCenterDelegate
+{
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler:
+      @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    if notification.request.identifier.hasPrefix("koe.calendar.meeting.") {
+      if #available(iOS 14.0, *) {
+        completionHandler([.banner, .list, .sound])
+      } else {
+        completionHandler([.alert, .sound])
+      }
+    } else {
+      completionHandler([])
+    }
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    if let title = response.notification.request.content.userInfo["koeMeetingTitle"] as? String {
+      SystemTasksBridge.enqueueReminderTap(title)
+    }
+    completionHandler()
+  }
+}
+#endif

@@ -45,6 +45,8 @@ class _AppShellState extends State<AppShell> {
   int _handledLiveRevision = 0;
   int _handledShortcutRevision = 0;
   int _handledShortcutFailureRevision = 0;
+  int _handledCalendarMeetingRevision = 0;
+  bool _calendarMeetingPromptOpen = false;
   bool _residentOffered = false;
   MacMenuBar? _macMenuBar;
   bool _startedTakeDue = false;
@@ -224,6 +226,56 @@ class _AppShellState extends State<AppShell> {
     if (on == true) await c.setResident(true);
   }
 
+  /// Shows a start-of-meeting prompt on the phone (#373): asks whether to
+  /// record the meeting without auto-starting the microphone.
+  Future<void> _promptCalendarMeeting(
+    RecorderController c,
+    String title,
+  ) async {
+    if (!mounted ||
+        _calendarMeetingPromptOpen ||
+        c.phoneRecordingActive ||
+        c.textCaptureActive) {
+      c.clearCalendarMeetingPrompt();
+      return;
+    }
+    _calendarMeetingPromptOpen = true;
+    c.clearCalendarMeetingPrompt();
+    final bool? start;
+    try {
+      start = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          key: const ValueKey('calendar-meeting-reminder-dialog'),
+          title: Text('「$title」开始了'),
+          content: Text(
+            c.allDayListening
+                ? '日历里的这场会议已到开始时间，要开始全天监听吗？'
+                : '日历里的这场会议已到开始时间，要用手机录音吗？',
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey('calendar-meeting-reminder-dismiss'),
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('暂不'),
+            ),
+            FilledButton(
+              key: const ValueKey('calendar-meeting-reminder-start'),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(c.allDayListening ? '开始全天监听' : '开始录音'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _calendarMeetingPromptOpen = false;
+    }
+    final innerContext = _navigator.currentContext ?? context;
+    if (start == true && innerContext.mounted) {
+      await handleNewRecordingAction(innerContext, NewRecordingAction.phone);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -309,6 +361,15 @@ class _AppShellState extends State<AppShell> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _offerResident(c);
       });
+    }
+    final meetingTitle = c.pendingCalendarMeetingPrompt;
+    if (c.calendarMeetingPromptRevision != _handledCalendarMeetingRevision) {
+      _handledCalendarMeetingRevision = c.calendarMeetingPromptRevision;
+      if (meetingTitle != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_promptCalendarMeeting(c, meetingTitle));
+        });
+      }
     }
     final covered = _wide && _sectionVisible;
     final visible = covered ? null : _routes.visibleReference;

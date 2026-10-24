@@ -104,6 +104,17 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
+        <!-- Calendar meeting start reminders (#373): OS alarms fire here even
+             after Koe's UI or process leaves memory, and BOOT_COMPLETED /
+             MY_PACKAGE_REPLACED restores pending meeting alarms. -->
+        <receiver
+            android:name=".MeetingReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:exported="true"
