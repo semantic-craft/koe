@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-24T04:54:41.978830Z</p>
-<p>Main: <code>main: 8f549308497119121564f42d3298d13dccaffcd1</code></p>
+<p>Observed: 2026-10-24T04:59:30.086841Z</p>
+<p>Main: <code>main: 1d528ec6f64bbb5dc2f7e96bd506eedd8c02dd82</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -46,6 +46,7 @@
 </ul><p>Next: 继续 #345：新录音取回、仅靠后台升级广播唤起、完整成功导出后的锁释放仍未验证；带走再带回等需人动手的项目保留。</p></article>
 <article id="mac-calendar-453-acceptance"><h3>Mac日历命名与待办导出验收</h3><span class="badge">in_progress</span><p>修正验收启动入口为LaunchServices，并提交Calendar编辑后，最终签名安装版会议命名及重启保留通过；合成待办导出日历时间正确。提醒事项授权待用户处理，完成回读未验。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/453">issue 453: 2026-10-24评论6380070721：原生authorized=0/1、matches=0/1对照；最终12:45命名成功，Calendar导出15:00–16:00正确；提醒事项未宣称通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/477">pull 477: 启动器修复已squash合并1d528ec，CI通过；提醒事项授权与完成回读继续留#453。</a></li>
 </ul><p>Next: 用户允许Koe提醒事项权限后，核对一次已发起的导出，再从系统提醒事项勾选完成并回到Koe回读。其余首次日历授权、参与人、全天事件、拒绝权限、iPhone和跨版本升级仍待验。</p></article>
 </section>
 <section id="ongoing"><h2>实现差异与范围核对</h2>

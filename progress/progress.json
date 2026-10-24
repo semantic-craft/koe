@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "8f549308497119121564f42d3298d13dccaffcd1",
+    "main": "1d528ec6f64bbb5dc2f7e96bd506eedd8c02dd82",
     "open_pulls": [],
     "pulls": [
       {
@@ -691,12 +691,20 @@
         "merged": true,
         "number": 471,
         "state": "closed"
+      },
+      {
+        "base": "8f549308497119121564f42d3298d13dccaffcd1",
+        "head": "e98893f659e3fd0f1437406fefe27b75da62388e",
+        "merge_commit": "1d528ec6f64bbb5dc2f7e96bd506eedd8c02dd82",
+        "merged": true,
+        "number": 477,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-24T04:54:41.978830Z",
+  "observed_at": "2026-10-24T04:59:30.086841Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -897,6 +905,11 @@
               "kind": "issue",
               "note": "2026-10-24评论6380070721：原生authorized=0/1、matches=0/1对照；最终12:45命名成功，Calendar导出15:00–16:00正确；提醒事项未宣称通过。",
               "ref": 453
+            },
+            {
+              "kind": "pull",
+              "note": "启动器修复已squash合并1d528ec，CI通过；提醒事项授权与完成回读继续留#453。",
+              "ref": 477
             }
           ],
           "id": "mac-calendar-453-acceptance",
@@ -1764,7 +1777,8 @@
       466,
       467,
       469,
-      471
+      471,
+      477
     ]
   }
 }
