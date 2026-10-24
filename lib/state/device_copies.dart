@@ -218,7 +218,17 @@ class DeviceCopies {
   Future<bool> reconcile(Iterable<OfflineFileEntry> files) async {
     await load();
     var changed = false;
-    for (final file in files) {
+    final candidates = <OfflineFileEntry>[...files];
+    final listedIds = {for (final file in candidates) file.fileId};
+    for (final entry in _retrievedSizes.entries.toList()) {
+      if (!listedIds.contains(entry.key) &&
+          _verifiedDurations[entry.key] != entry.value) {
+        candidates.add(
+          OfflineFileEntry(fileId: entry.key, durationMs: entry.value),
+        );
+      }
+    }
+    for (final file in candidates) {
       final id = file.fileId;
       if (!_hasSize(file.durationMs)) continue;
       if (_partial.contains(id)) continue;

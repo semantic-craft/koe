@@ -149,6 +149,32 @@ void main() {
     });
   }
 
+  test('saved legacy baselines are rechecked on upgrade launch even before '
+      'the recorder connects (#458)', () async {
+    final short = File('${dir.path}/31.wav')
+      ..writeAsBytesSync(wavBytes(List.filled(834 * 32, 0)));
+    final full = File('${dir.path}/32.wav')
+      ..writeAsBytesSync(wavBytes(List.filled(1000 * 32, 0)));
+    context.paths[31] = short.path;
+    context.paths[32] = full.path;
+    await File('${dir.path}/retrieved_sizes.json').writeAsString(
+      jsonEncode({'31': 1000, '32': 1000}),
+    );
+
+    final copies = open();
+    expect(await copies.reconcile(const []), isTrue);
+    expect(copies.isPartial(31), isTrue);
+    expect(copies.usableForProcessing(fileId: 31), isFalse);
+    expect(copies.isPartial(32), isFalse);
+    expect(copies.usableForProcessing(fileId: 32), isTrue);
+    await copies.flush();
+
+    final verified = jsonDecode(
+      await File('${dir.path}/verified_retrieved_durations.json').readAsString(),
+    ) as Map<String, dynamic>;
+    expect(verified, {'32': 1000});
+  });
+
   test('a trashed copy is dismissed, not retrieved again', () {
     context.dismissed.add(13);
     expect(open().statusOf(listed(13, 100)), DeviceCopyStatus.dismissed);
