@@ -39,7 +39,7 @@ elif sys.argv[1:2]==['test']: print('KOE_ADB: open-koe')
             for name in ['segmentation-model.onnx', '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx', '0-four-speakers-zh.wav']:
                 (fixtures / name).write_bytes(b'fixture')
             (root / 'diarization_test.dart').touch()
-            result = subprocess.run(['bash', str(root / 'scripts/android-check'), 'diarization_test.dart'], env={**os.environ, 'PATH': f'{bins}:{os.environ["PATH"]}', 'CALL_LOG': str(log), 'KOE_ANDROID_SERIAL': 'test-device', 'KOE_ANDROID_LOCK_DIR': str(root / 'device.lock'), 'KOE_DIARIZATION_FIXTURES': str(fixtures)}, capture_output=True, text=True, timeout=20)
+            result = subprocess.run(['bash', str(root / 'scripts/android-check'), 'diarization_test.dart'], env={**os.environ, 'PATH': f'{bins}:{os.environ["PATH"]}', 'CALL_LOG': str(log), 'KOE_ANDROID_SERIAL': 'test-device', 'KOE_ANDROID_LOCK_DIR': str(root / 'missing-cache' / 'device.lock'), 'KOE_DIARIZATION_FIXTURES': str(fixtures)}, capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             import json
             calls = [json.loads(line) for line in log.read_text().splitlines()]

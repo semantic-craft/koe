@@ -36,9 +36,17 @@ fi
 echo "android-check: $serial $(adb -s "$serial" shell getprop ro.product.model | tr -d '\r') / Android $(adb -s "$serial" shell getprop ro.build.version.release | tr -d '\r')"
 
 lock_dir="${KOE_ANDROID_LOCK_DIR:-$HOME/.cache/koe-pixel.lock}"
+if ! mkdir -p "$(dirname "$lock_dir")"; then
+  echo "android-check: 无法创建设备锁父目录: $lock_dir" >&2
+  exit 1
+fi
 if ! mkdir "$lock_dir" 2>/dev/null; then
-  echo "android-check: 跳过（设备已有执行者）: $lock_dir"
-  exit "$skipped"
+  if [[ -d "$lock_dir" ]]; then
+    echo "android-check: 跳过（设备已有执行者）: $lock_dir"
+    exit "$skipped"
+  fi
+  echo "android-check: 无法创建设备锁: $lock_dir" >&2
+  exit 1
 fi
 skips="$(mktemp)"
 dark="$skips.dark"
