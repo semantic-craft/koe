@@ -66,13 +66,13 @@ Future<void> main(List<String> args) async {
       (maxDer != null && (!maxDer.isFinite || maxDer < 0)) ||
       startSeconds < 0 ||
       clipSeconds <= 0 ||
-      !['auto', '4', 'both'].contains(mode) ||
+      !(['auto', 'both'].contains(mode) || (int.tryParse(mode) != null && int.parse(mode) >= 1 && int.parse(mode) <= 20)) ||
       !RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(outputPrefix)) {
     throw ArgumentError('Invalid evaluation interval, mode or output prefix');
   }
   final modes = mode == 'both'
       ? <int?>[4, null]
-      : <int?>[mode == '4' ? 4 : null];
+      : <int?>[mode == 'auto' ? null : int.parse(mode)];
   stdout.writeln(
     'start=$startSeconds duration=$clipSeconds threshold=${threshold ?? "default"} mode=$mode',
   );

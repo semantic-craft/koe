@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 // ignore: implementation_imports
 import 'package:sherpa_onnx/src/sherpa_onnx_bindings.dart';
 import 'diarization_pcm.dart';
+import 'diarization_refinement.dart';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -328,62 +329,145 @@ DiarizationResult _processDiarizationSamples(
     samples: owned.asTypedList(count),
     sampleRate: DiarizationPcm.sampleRate,
   );
-  final numClusters = expectedSpeakers != null && expectedSpeakers > 0
-      ? expectedSpeakers
-      : -1;
-  final config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
-    segmentation: sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
-      pyannote: sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
-        model: segmentationModelPath,
-        windowShiftRatio: 0.1,
+  List<DiarizationTurn> recognize(int numClusters) {
+    final config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+      segmentation: sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+        pyannote: sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+          model: segmentationModelPath,
+          windowShiftRatio: 0.1,
+        ),
+        numThreads: numThreads,
+        debug: false,
       ),
-      numThreads: numThreads,
-      debug: false,
-    ),
-    embedding: sherpa_onnx.SpeakerEmbeddingExtractorConfig(
-      model: embeddingModelPath,
-      numThreads: numThreads,
-      debug: false,
-    ),
-    clustering: sherpa_onnx.FastClusteringConfig(
-      numClusters: numClusters,
-      // Keep the explicit-count configuration independent of auto tuning.
-      threshold: numClusters > 0 ? 0.75 : defaultClusteringThreshold,
-      computeConfidence: true,
-    ),
-    minDurationOn: 0.2,
-    minDurationOff: 0.5,
-  );
+      embedding: sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+        model: embeddingModelPath,
+        numThreads: numThreads,
+        debug: false,
+      ),
+      clustering: sherpa_onnx.FastClusteringConfig(
+        numClusters: numClusters,
+        // Keep the explicit-count configuration independent of auto tuning.
+        threshold: numClusters > 0 ? 0.75 : defaultClusteringThreshold,
+        computeConfidence: true,
+      ),
+      minDurationOn: 0.2,
+      minDurationOff: 0.5,
+    );
 
-  final sd = sherpa_onnx.OfflineSpeakerDiarization(config);
-  List<sherpa_onnx.OfflineSpeakerDiarizationSegment> rawSegments;
-  late sherpa_onnx.WaveData modelWave;
-  try {
-    if (sd.sampleRate != wave.sampleRate) throw StateError('发言人模型采样率不匹配');
-    modelWave = wave;
-    rawSegments = _processOwnedBuffer(sd, owned, count, onProgress);
-  } finally {
-    sd.free();
+    final sd = sherpa_onnx.OfflineSpeakerDiarization(config);
+    List<sherpa_onnx.OfflineSpeakerDiarizationSegment> rawSegments;
+    try {
+      if (sd.sampleRate != wave.sampleRate) throw StateError('发言人模型采样率不匹配');
+      rawSegments = _processOwnedBuffer(sd, owned, count, onProgress);
+    } finally {
+      sd.free();
+    }
+
+    final turns = <DiarizationTurn>[
+      for (final seg in rawSegments)
+        DiarizationTurn(
+          speaker: seg.speaker,
+          start: Duration(microseconds: (seg.start * 1e6).round()),
+          end: Duration(microseconds: (seg.end * 1e6).round()),
+          confidence: seg.confidence,
+        ),
+    ];
+
+    return turns;
   }
 
-  final turns = <DiarizationTurn>[
-    for (final seg in rawSegments)
-      DiarizationTurn(
-        speaker: seg.speaker,
-        start: Duration(microseconds: (seg.start * 1e6).round()),
-        end: Duration(microseconds: (seg.end * 1e6).round()),
-        confidence: seg.confidence,
-      ),
-  ];
-
-  final quality = _computeQualityFromWaveAndTurns(
-    wave: modelWave,
+  // Count constraints on all native embeddings let tiny mixed clusters occupy
+  // slots while real speakers merge. First obtain unconstrained segmentation,
+  // then constrain clean representative profiles and reassign mixed fragments.
+  final turns = recognize(-1);
+  if (turns.isEmpty) return const DiarizationResult(turns: []);
+  final evidence = _extractSpeakerEvidence(
+    wave: wave,
     turns: turns,
     embeddingModelPath: embeddingModelPath,
     numThreads: numThreads,
   );
+  if (evidence.isEmpty && expectedSpeakers == null) {
+    return DiarizationResult(turns: turns);
+  }
+  final labels = refineSpeakerLabels(
+    turns.map((t) => t.speaker).toList(),
+    evidence,
+    expectedSpeakers: expectedSpeakers,
+  );
+  if (labels == null) {
+    // A user can request MORE speakers than the automatic segmentation found.
+    // Preserve the native splitting path rather than silently ignoring that.
+    final constrained = recognize(expectedSpeakers!);
+    final samples = _extractSpeakerEvidence(
+      wave: wave,
+      turns: constrained,
+      embeddingModelPath: embeddingModelPath,
+      numThreads: numThreads,
+    );
+    return DiarizationResult(
+      turns: constrained,
+      quality: _qualityFromEvidence(
+        constrained.map((t) => t.speaker).toList(),
+        samples,
+      ),
+    );
+  }
+  return DiarizationResult(
+    turns: _relabelAndCoalesce(turns, labels),
+    quality: _qualityFromEvidence(labels, evidence),
+  );
+}
 
-  return DiarizationResult(turns: turns, quality: quality);
+DiarizationQuality? _qualityFromEvidence(
+  List<int> labels,
+  List<SpeakerEvidence> evidence,
+) {
+  if (evidence.isEmpty) return null;
+  return DiarizationQuality.fromTurnEmbeddings([
+    for (final item in evidence)
+      (clusterSpeaker: labels[item.turn], embedding: item.embedding),
+  ]);
+}
+
+List<DiarizationTurn> _relabelAndCoalesce(
+  List<DiarizationTurn> turns,
+  List<int> labels,
+) {
+  final grouped = <int, List<DiarizationTurn>>{};
+  for (var i = 0; i < turns.length; i++) {
+    final t = turns[i];
+    grouped
+        .putIfAbsent(labels[i], () => [])
+        .add(
+          DiarizationTurn(
+            speaker: labels[i],
+            start: t.start,
+            end: t.end,
+            // Native silhouette describes the original clustering, not this result.
+          ),
+        );
+  }
+  final result = <DiarizationTurn>[];
+  for (final entries in grouped.values) {
+    entries.sort((a, b) => a.start.compareTo(b.start));
+    var current = entries.first;
+    for (final next in entries.skip(1)) {
+      if (next.start <= current.end) {
+        current = DiarizationTurn(
+          speaker: current.speaker,
+          start: current.start,
+          end: next.end > current.end ? next.end : current.end,
+        );
+      } else {
+        result.add(current);
+        current = next;
+      }
+    }
+    result.add(current);
+  }
+  result.sort((a, b) => a.start.compareTo(b.start));
+  return result;
 }
 
 /// Windowed-sinc conversion of mono PCM to the model rate. The low-pass cutoff
@@ -438,15 +522,13 @@ double _resamplingWeight(double offset, double cutoff, int radius) {
   return cutoff * sinc * (0.5 + 0.5 * math.cos(math.pi * offset / radius));
 }
 
-DiarizationQuality? _computeQualityFromWaveAndTurns({
+List<SpeakerEvidence> _extractSpeakerEvidence({
   required sherpa_onnx.WaveData wave,
   required List<DiarizationTurn> turns,
   required String embeddingModelPath,
   required int numThreads,
 }) {
-  if (turns.isEmpty) return null;
-  // The quality hint is optional: when it cannot be measured, the speakers
-  // already found still stand.
+  if (turns.isEmpty) return [];
   final sherpa_onnx.SpeakerEmbeddingExtractor extractor;
   try {
     extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
@@ -457,53 +539,95 @@ DiarizationQuality? _computeQualityFromWaveAndTurns({
       ),
     );
   } catch (_) {
-    return null;
+    return [];
   }
+  final observations = <SpeakerEvidence>[];
   try {
     final sr = wave.sampleRate;
-    final totalSamples = wave.samples.length;
-    const windowSec = 2.0;
-    final windowSamples = (windowSec * sr).round();
-    final observations = <({int clusterSpeaker, List<double> embedding})>[];
-
-    for (final turn in turns) {
-      final startSample = (turn.start.inMicroseconds * sr ~/ 1000000).clamp(
-        0,
-        totalSamples,
-      );
-      final endSample = (turn.end.inMicroseconds * sr ~/ 1000000).clamp(
-        startSample,
-        totalSamples,
-      );
-      if (endSample - startSample < sr ~/ 5) continue;
-
-      for (var pos = startSample; pos < endSample; pos += windowSamples) {
-        final sliceEnd = math.min(endSample, pos + windowSamples);
-        if (sliceEnd - pos < sr ~/ 5) continue;
-        final stream = extractor.createStream();
-        try {
-          final slice = Float32List.sublistView(wave.samples, pos, sliceEnd);
-          stream.acceptWaveform(samples: slice, sampleRate: sr);
-          stream.inputFinished();
-          if (extractor.isReady(stream)) {
-            final emb = extractor.compute(stream);
-            if (emb.isNotEmpty) {
-              observations.add((
-                clusterSpeaker: turn.speaker,
-                embedding: emb.toList(growable: false),
-              ));
-            }
-          }
-        } finally {
-          stream.free();
-        }
+    List<double>? extract(int start, int end) {
+      final stream = extractor.createStream();
+      try {
+        stream.acceptWaveform(
+          samples: Float32List.sublistView(wave.samples, start, end),
+          sampleRate: sr,
+        );
+        stream.inputFinished();
+        if (!extractor.isReady(stream)) return null;
+        final vector = extractor.compute(stream).toList(growable: false);
+        return vector.isEmpty || vector.any((x) => !x.isFinite) ? null : vector;
+      } finally {
+        stream.free();
       }
     }
 
-    if (observations.isEmpty) return null;
-    return DiarizationQuality.fromTurnEmbeddings(observations);
+    for (var index = 0; index < turns.length; index++) {
+      final turn = turns[index];
+      final start = (turn.start.inMicroseconds * sr ~/ 1000000).clamp(
+        0,
+        wave.samples.length,
+      );
+      final end = (turn.end.inMicroseconds * sr ~/ 1000000).clamp(
+        start,
+        wave.samples.length,
+      );
+      var spans = <(int, int)>[(start, end)];
+      // Native output is time ordered. Exclude other speakers before profile
+      // extraction: a mixed waveform must never train a single-speaker center.
+      for (final other in turns) {
+        if (other.start >= turn.end) break;
+        if (other.speaker == turn.speaker || other.end <= turn.start) continue;
+        final a = other.start.inMicroseconds * sr ~/ 1000000;
+        final b = other.end.inMicroseconds * sr ~/ 1000000;
+        final next = <(int, int)>[];
+        for (final span in spans) {
+          if (b <= span.$1 || a >= span.$2) {
+            next.add(span);
+            continue;
+          }
+          if (a > span.$1) next.add((span.$1, a));
+          if (b < span.$2) next.add((b, span.$2));
+        }
+        spans = next;
+      }
+      var hasClean = false;
+      for (final span in spans) {
+        for (var pos = span.$1; pos < span.$2; pos += sr * 3) {
+          final stop = math.min(span.$2, pos + sr * 3);
+          if (stop - pos < sr * 0.8) continue;
+          final embedding = extract(pos, stop);
+          if (embedding == null) continue;
+          observations.add(
+            SpeakerEvidence(
+              turn: index,
+              embedding: embedding,
+              seconds: (stop - pos) / sr,
+              clean: true,
+            ),
+          );
+          hasClean = true;
+        }
+      }
+      if (!hasClean && end - start >= sr ~/ 5) {
+        // Mixed/short fragments can match existing profiles, never create one.
+        // Bound this input too: a long all-overlap turn need not be copied whole.
+        final stop = math.min(end, start + sr * 3);
+        final embedding = extract(start, stop);
+        if (embedding != null) {
+          observations.add(
+            SpeakerEvidence(
+              turn: index,
+              embedding: embedding,
+              seconds: (stop - start) / sr,
+              clean: false,
+            ),
+          );
+        }
+      }
+    }
+    return observations;
   } catch (_) {
-    return null;
+    // Refinement is optional; preserve native turns if extra extraction fails.
+    return [];
   } finally {
     extractor.free();
   }
