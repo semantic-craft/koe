@@ -77,6 +77,12 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   String _recordingKey({int? fileId, String? path});
   void _registerExportedPaths(Iterable<String> paths);
   Future<void> stopPlayback();
+  Future<void> generateDraftMinutes(
+    RecordingReference ref, {
+    required String liveText,
+    String templateId,
+    String language,
+  });
   // END DEPS
 
   ValueListenable<DualRecordingView>? get dualRecordingView =>
@@ -503,9 +509,11 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     try {
       var notes = draft ?? await TakeNotes.read(file);
       final liveFile = File(MacDualRecorder.textPath(path));
+      String? capturedLiveText;
       if (await liveFile.exists()) {
         final liveText = await liveFile.readAsString();
         if (liveText.trim().isNotEmpty) {
+          capturedLiveText = liveText.trim();
           notes = TakeNotes(text: [if (notes != null && notes.text.isNotEmpty) notes.text,
               '本机实时识别（未校对）\n$liveText'].join('\n\n'),
               highlights: notes?.highlights ?? const []);
@@ -524,6 +532,14 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       }
       if (await file.exists()) await file.delete();
       if (await liveFile.exists()) await liveFile.delete();
+      if (capturedLiveText != null) {
+        unawaited(
+          generateDraftMinutes(
+            RecordingReference(path: path),
+            liveText: capturedLiveText,
+          ),
+        );
+      }
     } catch (error) {
       debugPrint('[PhoneRecording] notes not saved as bookmarks: $error');
       if (draft != null) {

@@ -68,6 +68,7 @@ import 'export_catalog.dart';
 import 'organize_store.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
+import 'meeting_minutes.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
 import 'listening_queue.dart';
@@ -1083,6 +1084,373 @@ class RecorderController extends ChangeNotifier
 
   @override
   int? fileIdFromPath(String path) => _fileIdFromPath(path);
+
+  // ── Meeting Minutes 5B (#491): Glossary, Draft->Formal, Review, Speaker Naming, Correction ──
+
+  final Map<String, List<SpeakerNameSuggestion>> _speakerNameSuggestionsByKey =
+      {};
+  final Map<String, List<TranscriptCorrectionSuggestion>>
+  _transcriptCorrectionsByKey = {};
+  final Map<String, String> _transcriptCorrectionUndoByKey = {};
+
+  /// Candidate vocabulary terms suggested from calendar invitees, speaker
+  /// aliases, manual transcript edits, and meeting title (#491 / S14).
+  List<String> suggestVocabularyFor(RecordingReference ref) {
+    final view = recordingView(ref);
+    final path = view.path ?? ref.path;
+    final meeting = path == null ? null : library.assetForPath(path)?.meeting;
+    final aliases = path == null
+        ? const <String>[]
+        : speakerAliasesForPath(path).values;
+    final raw = path == null ? null : _rawTranscriptForPath(path);
+    final manual = path == null ? null : manualTranscriptForPath(path);
+    return extractVocabularySuggestions(
+      existingVocabulary: vocabulary,
+      attendees: meeting?.participants ?? const [],
+      speakerAliases: aliases,
+      meetingTitle: meeting?.title ?? view.title,
+      rawTranscript: raw,
+      manualTranscript: manual,
+    );
+  }
+
+  /// Generates draft meeting minutes (`isDraft: true`) from live recognition
+  /// text right after a recording stops, before formal file transcription
+  /// completes (#491 / S28).
+  @override
+  Future<void> generateDraftMinutes(
+    RecordingReference ref, {
+    required String liveText,
+    String templateId = minutesTemplateId,
+    String language = 'zh',
+  }) async {
+    final trimmed = liveText.trim();
+    if (trimmed.isEmpty ||
+        analysisBackend == AnalysisBackendKind.none ||
+        analysisApiKey.isEmpty) {
+      return;
+    }
+    final key = analysisKey(ref);
+    final slotKey = '$key/minutes';
+    if (analysis.results[slotKey] != null) return;
+    final prompt = buildMeetingMinutesPrompt(
+      templateId: templateId,
+      language: language,
+    );
+    await analysis.run(
+      recording: key,
+      source: trimmed,
+      apiKey: analysisApiKey,
+      custom: true,
+      templateId: templateId,
+      resultSlot: 'minutes',
+      instruction: prompt,
+      validateResult: validateMinutes,
+      isDraft: true,
+      userNotes: analysisNotesFor(ref),
+      currentSource: () => trimmed,
+    );
+  }
+
+  /// Replaces a draft minutes result (`isDraft: true`) with formal minutes
+  /// once formal transcription finishes. If the user manually edited the draft,
+  /// the user's edited result remains active and the formal version is saved
+  /// in `analysis.versionHistory` (#491 / S28 + S30).
+  @override
+  Future<void> upgradeDraftMinutesIfNeeded(
+    RecordingReference ref, {
+    String? templateId,
+    String language = 'zh',
+  }) async {
+    final key = analysisKey(ref);
+    final slotKey = '$key/minutes';
+    final existing = analysis.results[slotKey];
+    if (existing == null || (!existing.isDraft && existing.editedAt == null)) {
+      return;
+    }
+    // Only auto-upgrade when the active slot started as a draft (or its last
+    // history entry was a draft that the user edited before formal STT arrived).
+    final wasDraft =
+        existing.isDraft ||
+        (analysis.versionHistory[slotKey]?.any((v) => v.isDraft) ?? false);
+    if (!wasDraft) return;
+    final view = recordingView(ref);
+    final source = view.text.trim();
+    if (source.isEmpty ||
+        analysisBackend == AnalysisBackendKind.none ||
+        analysisApiKey.isEmpty) {
+      return;
+    }
+    final effectiveTemplateId =
+        templateId ?? existing.templateId ?? minutesTemplateId;
+    final prompt = buildMeetingMinutesPrompt(
+      templateId: effectiveTemplateId,
+      language: language,
+    );
+    await analysis.run(
+      recording: key,
+      source: source,
+      apiKey: analysisApiKey,
+      custom: true,
+      templateId: effectiveTemplateId,
+      resultSlot: 'minutes',
+      instruction: prompt,
+      validateResult: validateMinutes,
+      isDraft: false,
+      preserveUserEdit: true,
+      userNotes: analysisNotesFor(ref),
+      currentSource: () =>
+          recordingAudioChanged(ref) ? '' : recordingView(ref).text,
+    );
+  }
+
+  /// Revises current meeting minutes using the user's answers to [reviewItems],
+  /// removing answered questions while preserving `[S#]` citation validation (#491 / S29).
+  Future<void> reviseMinutesWithReviewAnswers(
+    RecordingReference ref,
+    Map<String, String> answers, {
+    String language = 'zh',
+  }) async {
+    final key = analysisKey(ref);
+    final slotKey = '$key/minutes';
+    await analysis.load();
+    final currentResult = analysis.results[slotKey];
+    if (currentResult == null) {
+      throw StateError('请先生成会议纪要');
+    }
+    final currentMinutes = MeetingMinutes.parse(
+      currentResult.text,
+      currentResult.sources.length,
+    );
+    final view = recordingView(ref);
+    final source = view.text.trim().isNotEmpty
+        ? view.text
+        : currentResult.sources.join('\n');
+    final prompt = buildReviseMinutesWithAnswersPrompt(
+      currentMinutes: currentMinutes,
+      answeredItems: answers,
+      language: language,
+    );
+    await analysis.run(
+      recording: key,
+      source: source,
+      apiKey: analysisApiKey,
+      custom: true,
+      templateId: currentResult.templateId ?? minutesTemplateId,
+      resultSlot: 'minutes',
+      instruction: prompt,
+      validateResult: validateMinutes,
+      confirmedRestart: true,
+      userNotes: analysisNotesFor(ref),
+      currentSource: () => source,
+    );
+  }
+
+  List<SpeakerNameSuggestion> speakerNameSuggestionsFor(
+    RecordingReference ref,
+  ) => List<SpeakerNameSuggestion>.unmodifiable(
+    _speakerNameSuggestionsByKey[analysisKey(ref)] ?? const [],
+  );
+
+  /// Uses the configured text analysis backend to infer names for unnamed
+  /// speakers (`说话人 N`) from dialogue context, invitees, and glossary (#491 / S21).
+  Future<List<SpeakerNameSuggestion>> suggestSpeakerNames(
+    RecordingReference ref,
+  ) async {
+    if (analysisBackend == AnalysisBackendKind.none) {
+      throw StateError('已设为“不整理”，不会调用分析模型');
+    }
+    final apiKey = analysisApiKey;
+    final selectedModel = analysis.model;
+    if (apiKey.isEmpty || selectedModel == null || selectedModel.isEmpty) {
+      throw StateError('请先配置整理模型与 API Key');
+    }
+    final view = recordingView(ref);
+    final path = view.path ?? ref.path;
+    if (path == null || view.text.trim().isEmpty) {
+      return const [];
+    }
+    final speakers = transcriptSpeakersForPath(path);
+    final unnamedIds = [
+      for (final s in speakers)
+        if (s.displayLabel == s.defaultLabel) s.id,
+    ];
+    if (unnamedIds.isEmpty) {
+      _speakerNameSuggestionsByKey.remove(analysisKey(ref));
+      notifyListeners();
+      return const [];
+    }
+    final meeting = library.assetForPath(path)?.meeting;
+    final prompt = buildSpeakerNamingPrompt(
+      unnamedSpeakerIds: unnamedIds,
+      attendees: meeting?.participants ?? const [],
+      vocabulary: vocabulary,
+      meetingTitle: meeting?.title ?? view.title,
+    );
+    final completer = Completer<void>();
+    final raw = await _whileAiWorks(
+      () => _contextService(defaultAnalysisSystemPrompt).generate(
+        model: selectedModel,
+        apiKey: apiKey,
+        source: view.text,
+        instruction: prompt,
+        abort: completer.future,
+      ),
+    );
+    final suggestions = parseSpeakerNameSuggestions(
+      raw,
+      eligibleSpeakerIds: unnamedIds.toSet(),
+    );
+    _speakerNameSuggestionsByKey[analysisKey(ref)] = suggestions;
+    notifyListeners();
+    return suggestions;
+  }
+
+  /// Applies an AI speaker name suggestion to both the transcript speaker
+  /// aliases and the active structured minutes (#491 / S21).
+  Future<void> applySpeakerNameSuggestion(
+    RecordingReference ref,
+    SpeakerNameSuggestion suggestion,
+  ) async {
+    final path = recordingView(ref).path ?? ref.path;
+    if (path == null) return;
+    final oldLabel = '说话人 ${suggestion.speakerId}';
+    await renameTranscriptSpeaker(
+      path,
+      suggestion.speakerId,
+      suggestion.suggestedName,
+    );
+    final key = analysisKey(ref);
+    final slotKey = '$key/minutes';
+    await analysis.load();
+    final existing = analysis.results[slotKey];
+    if (existing != null) {
+      try {
+        final parsed = MeetingMinutes.parse(
+          existing.text,
+          existing.sources.length,
+        );
+        final updated = parsed
+            .replaceSpeakerName(oldLabel, suggestion.suggestedName)
+            .replaceSpeakerName(
+              'Speaker ${suggestion.speakerId}',
+              suggestion.suggestedName,
+            );
+        final encoded = validateMinutes(updated.encode(), existing.sources);
+        if (encoded != existing.text) {
+          await analysis.editResult(slotKey, existing, encoded);
+        }
+      } catch (_) {}
+    }
+    final currentList = _speakerNameSuggestionsByKey[key];
+    if (currentList != null) {
+      _speakerNameSuggestionsByKey[key] = [
+        for (final item in currentList)
+          if (item.speakerId != suggestion.speakerId) item,
+      ];
+    }
+    notifyListeners();
+  }
+
+  List<TranscriptCorrectionSuggestion> transcriptCorrectionsFor(
+    RecordingReference ref,
+  ) => List<TranscriptCorrectionSuggestion>.unmodifiable(
+    _transcriptCorrectionsByKey[analysisKey(ref)] ?? const [],
+  );
+
+  bool canRevertTranscriptCorrection(RecordingReference ref) =>
+      _transcriptCorrectionUndoByKey.containsKey(analysisKey(ref));
+
+  /// Uses the configured text analysis backend to spot likely homophone or
+  /// proper-noun recognition errors in the transcript (#491 / S16).
+  Future<List<TranscriptCorrectionSuggestion>> suggestTranscriptCorrections(
+    RecordingReference ref,
+  ) async {
+    if (analysisBackend == AnalysisBackendKind.none) {
+      throw StateError('已设为“不整理”，不会调用分析模型');
+    }
+    final apiKey = analysisApiKey;
+    final selectedModel = analysis.model;
+    if (apiKey.isEmpty || selectedModel == null || selectedModel.isEmpty) {
+      throw StateError('请先配置整理模型与 API Key');
+    }
+    final view = recordingView(ref);
+    final path = view.path ?? ref.path;
+    final canonical = path == null
+        ? view.text
+        : (canonicalTranscriptForPath(path) ?? view.text);
+    if (canonical.trim().isEmpty) return const [];
+    final meeting = path == null ? null : library.assetForPath(path)?.meeting;
+    final prompt = buildTranscriptCorrectionPrompt(
+      vocabulary: vocabulary,
+      attendees: meeting?.participants ?? const [],
+      meetingTitle: meeting?.title ?? view.title,
+    );
+    final completer = Completer<void>();
+    final raw = await _whileAiWorks(
+      () => _contextService(defaultAnalysisSystemPrompt).generate(
+        model: selectedModel,
+        apiKey: apiKey,
+        source: canonical,
+        instruction: prompt,
+        abort: completer.future,
+      ),
+    );
+    final suggestions = parseTranscriptCorrectionSuggestions(
+      raw,
+      transcript: canonical,
+    );
+    _transcriptCorrectionsByKey[analysisKey(ref)] = suggestions;
+    notifyListeners();
+    return suggestions;
+  }
+
+  /// Applies one transcript correction suggestion, records an undo snapshot,
+  /// and optionally adds the corrected term to the personal glossary (#491 / S16).
+  Future<void> acceptTranscriptCorrection(
+    RecordingReference ref,
+    TranscriptCorrectionSuggestion suggestion, {
+    bool addToVocabulary = false,
+  }) async {
+    final path = recordingView(ref).path ?? ref.path;
+    if (path == null) return;
+    final current = canonicalTranscriptForPath(path);
+    if (current == null || !current.contains(suggestion.wrong)) return;
+    final key = analysisKey(ref);
+    _transcriptCorrectionUndoByKey.putIfAbsent(key, () => current);
+    final updated = current.replaceAll(suggestion.wrong, suggestion.right);
+    await saveManualTranscript(path, updated);
+    if (addToVocabulary) {
+      await addVocabularyTerm(suggestion.right);
+    }
+    final list = _transcriptCorrectionsByKey[key];
+    if (list != null) {
+      _transcriptCorrectionsByKey[key] = [
+        for (final item in list)
+          if (!(item.wrong == suggestion.wrong &&
+              item.right == suggestion.right))
+            item,
+      ];
+    }
+    notifyListeners();
+  }
+
+  /// Reverts the transcript to the snapshot before AI correction suggestions
+  /// were accepted (#491 / S16).
+  Future<void> revertTranscriptCorrection(RecordingReference ref) async {
+    final path = recordingView(ref).path ?? ref.path;
+    if (path == null) return;
+    final key = analysisKey(ref);
+    final previous = _transcriptCorrectionUndoByKey.remove(key);
+    if (previous == null) return;
+    final providerRaw = _rawTranscriptForPath(path);
+    if (providerRaw != null && normalizeSttText(providerRaw) == previous) {
+      await discardManualTranscript(path);
+    } else {
+      await saveManualTranscript(path, previous);
+    }
+    notifyListeners();
+  }
 
   @override
   void notifyListeners() {

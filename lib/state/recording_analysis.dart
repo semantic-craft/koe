@@ -302,6 +302,7 @@ class AnalysisResult {
     this.editedAt,
     this.templateId,
     this.templateVersion = 1,
+    this.isDraft = false,
     String? templateFingerprint,
     String? fingerprint,
   }) : templateFingerprint =
@@ -328,6 +329,7 @@ class AnalysisResult {
   final DateTime? editedAt;
   final String? templateId;
   final int templateVersion;
+  final bool isDraft;
   final String? templateFingerprint;
   final String fingerprint;
 
@@ -359,6 +361,7 @@ class AnalysisResult {
     'promptVersion': templateVersion,
     if (templateId != null) 'templateId': templateId,
     'templateVersion': templateVersion,
+    if (isDraft) 'isDraft': true,
     if (templateFingerprint != null) 'templateFingerprint': templateFingerprint,
     'fingerprint': fingerprint,
   };
@@ -375,6 +378,7 @@ class AnalysisResult {
     templateVersion:
         (j['templateVersion'] as num? ?? j['promptVersion'] as num?)?.toInt() ??
         1,
+    isDraft: j['isDraft'] == true,
     templateFingerprint: j['templateFingerprint'] as String?,
     fingerprint: j['fingerprint'] as String?,
   );
@@ -682,6 +686,10 @@ class RecordingAnalysis extends ChangeNotifier {
 
   /// Last replaced version per slot, kept so regenerated minutes can compare.
   final Map<String, AnalysisResult> previousResults = {};
+
+  /// Full version history per slot (`notes_versions`, up to 30 snapshots).
+  final Map<String, List<AnalysisResult>> versionHistory = {};
+  static const int maxVersionHistory = 30;
   final Map<String, String> errors = {};
   final Map<String, String> customInstructions = {};
   final List<PromptTemplate> _customTemplates = [];
@@ -913,6 +921,26 @@ class RecordingAnalysis extends ChangeNotifier {
         Map<String, dynamic>.from(e.value as Map),
       );
     }
+    versionHistory.clear();
+    for (final e in (j['versionHistory'] as Map? ?? {}).entries) {
+      final rawList = e.value;
+      if (rawList is! List) continue;
+      final list = <AnalysisResult>[];
+      for (final item in rawList) {
+        if (item is Map) {
+          try {
+            list.add(AnalysisResult.fromJson(Map<String, dynamic>.from(item)));
+          } catch (_) {}
+        }
+      }
+      if (list.isNotEmpty) {
+        versionHistory[e.key as String] = list;
+      }
+    }
+    for (final e in previousResults.entries) {
+      final list = versionHistory.putIfAbsent(e.key, () => <AnalysisResult>[]);
+      if (list.isEmpty) list.add(e.value);
+    }
     for (final e in (j['customInstructions'] as Map? ?? {}).entries) {
       final value = e.value;
       if (value is String && value.trim().isNotEmpty) {
@@ -967,6 +995,9 @@ class RecordingAnalysis extends ChangeNotifier {
       'model': model,
       'results': results.map((k, v) => MapEntry(k, v.toJson())),
       'previousResults': previousResults.map((k, v) => MapEntry(k, v.toJson())),
+      'versionHistory': versionHistory.map(
+        (k, list) => MapEntry(k, list.map((v) => v.toJson()).toList()),
+      ),
       'customInstructions': customInstructions,
       'customTemplates': _customTemplates.map((t) => t.toJson()).toList(),
       'checkpoints': _checkpoints,
@@ -1010,6 +1041,65 @@ class RecordingAnalysis extends ChangeNotifier {
     return removed;
   }
 
+  List<AnalysisResult> versionsFor(String k) =>
+      List<AnalysisResult>.unmodifiable(versionHistory[k] ?? const []);
+
+  void _recordVersion(String k, AnalysisResult snapshot) {
+    final list = versionHistory.putIfAbsent(k, () => <AnalysisResult>[]);
+    list.add(snapshot);
+    if (list.length > maxVersionHistory) {
+      list.removeRange(0, list.length - maxVersionHistory);
+    }
+    previousResults[k] = list.last;
+  }
+
+  Future<void> restoreVersion(String k, int index) async {
+    await load();
+    if (busy(k)) {
+      throw StateError('正在生成中，请稍后再复原版本');
+    }
+    final list = versionHistory[k];
+    if (list == null || index < 0 || index >= list.length) {
+      throw RangeError('历史版本不存在');
+    }
+    final target = list[index];
+    final current = results[k];
+    final oldList = List<AnalysisResult>.from(list);
+    final oldPrevious = previousResults[k];
+    list.removeAt(index);
+    if (current != null) {
+      list.add(current);
+      if (list.length > maxVersionHistory) {
+        list.removeRange(0, list.length - maxVersionHistory);
+      }
+    }
+    if (list.isEmpty) {
+      versionHistory.remove(k);
+      previousResults.remove(k);
+    } else {
+      previousResults[k] = list.last;
+    }
+    results[k] = target;
+    try {
+      await save();
+    } catch (_) {
+      versionHistory[k] = oldList;
+      if (oldPrevious == null) {
+        previousResults.remove(k);
+      } else {
+        previousResults[k] = oldPrevious;
+      }
+      if (current == null) {
+        results.remove(k);
+      } else {
+        results[k] = current;
+      }
+      rethrow;
+    } finally {
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   Future<void> editResult(
     String k,
     AnalysisResult expected,
@@ -1028,14 +1118,30 @@ class RecordingAnalysis extends ChangeNotifier {
       editedAt: DateTime.now(),
       templateId: expected.templateId,
       templateVersion: expected.templateVersion,
+      isDraft: false,
       templateFingerprint: expected.templateFingerprint,
       fingerprint: expected.fingerprint,
     );
+    final oldHistory = versionHistory[k] == null
+        ? null
+        : List<AnalysisResult>.from(versionHistory[k]!);
+    final oldPrevious = previousResults[k];
+    _recordVersion(k, expected);
     results[k] = replacement;
     try {
       await save();
     } catch (_) {
       if (identical(results[k], replacement)) results[k] = expected;
+      if (oldHistory == null) {
+        versionHistory.remove(k);
+      } else {
+        versionHistory[k] = oldHistory;
+      }
+      if (oldPrevious == null) {
+        previousResults.remove(k);
+      } else {
+        previousResults[k] = oldPrevious;
+      }
       rethrow;
     } finally {
       if (!_disposed) notifyListeners();
@@ -1093,6 +1199,7 @@ class RecordingAnalysis extends ChangeNotifier {
     }
     results.removeWhere((k, _) => matches(k));
     previousResults.removeWhere((k, _) => matches(k));
+    versionHistory.removeWhere((k, _) => matches(k));
     errors.removeWhere((k, _) => matches(k));
     progress.removeWhere((k, _) => matches(k));
     _checkpoints.removeWhere((k, _) => matches(k));
@@ -1118,6 +1225,7 @@ class RecordingAnalysis extends ChangeNotifier {
 
     moveMap(results);
     moveMap(previousResults);
+    moveMap(versionHistory);
     moveMap(errors);
     moveMap(progress);
     moveMap(_checkpoints);
@@ -1150,6 +1258,8 @@ class RecordingAnalysis extends ChangeNotifier {
     bool preserveInputCitations = false,
     bool confirmedRestart = false,
     bool slotClaimed = false,
+    bool isDraft = false,
+    bool preserveUserEdit = false,
     String userNotes = '',
     required String Function() currentSource,
   }) async {
@@ -1409,12 +1519,22 @@ class RecordingAnalysis extends ChangeNotifier {
         createdAt: DateTime.now(),
         templateId: template?.id,
         templateVersion: templateVersion,
+        isDraft: isDraft,
         templateFingerprint: template?.fingerprint,
       );
       final previous = results[k];
       final previousVersion = previousResults[k];
-      if (previous != null) previousResults[k] = previous;
-      results[k] = result;
+      final previousHistory = versionHistory[k] == null
+          ? null
+          : List<AnalysisResult>.from(versionHistory[k]!);
+      if (preserveUserEdit && previous != null && previous.editedAt != null) {
+        // Keep the user-edited result active and store the newly generated
+        // formal version in version history so the user never loses edits.
+        _recordVersion(k, result);
+      } else {
+        if (previous != null) _recordVersion(k, previous);
+        results[k] = result;
+      }
       try {
         await save();
       } catch (_) {
@@ -1428,6 +1548,11 @@ class RecordingAnalysis extends ChangeNotifier {
             previousResults.remove(k);
           } else {
             previousResults[k] = previousVersion;
+          }
+          if (previousHistory == null) {
+            versionHistory.remove(k);
+          } else {
+            versionHistory[k] = previousHistory;
           }
         }
         rethrow;

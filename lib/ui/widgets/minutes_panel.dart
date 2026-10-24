@@ -32,6 +32,8 @@ class _MinutesPanelState extends State<MinutesPanel> {
   String? loadError;
   String selectedTemplateId = minutesTemplateId;
   String selectedLanguage = 'zh';
+  bool speakerNamingBusy = false;
+  bool correctionBusy = false;
   RecordingAnalysis get manager => widget.controller.analysis;
   String get key =>
       '${widget.controller.analysisKey(widget.reference)}/minutes';
@@ -126,6 +128,172 @@ class _MinutesPanelState extends State<MinutesPanel> {
 
   void message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+  Future<void> _showVersionHistory() async {
+    final versions = manager.versionsFor(key);
+    if (versions.isEmpty) return;
+    String readable(AnalysisResult r) {
+      try {
+        return MeetingMinutes.parse(r.text, r.sources.length).export(r);
+      } catch (_) {
+        return r.text;
+      }
+    }
+
+    String versionLabel(AnalysisResult r, int index) {
+      final tag = r.isDraft
+          ? '草稿版'
+          : r.editedAt != null
+          ? '手动编辑'
+          : '正式生成';
+      return '版本 ${index + 1} · $tag · ${r.createdAt.toIso8601String()}';
+    }
+
+    final selectedIndex = await showDialog<int>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('纪要版本历史'),
+        content: SizedBox(
+          width: 640,
+          height: 420,
+          child: ListView.separated(
+            itemCount: versions.length,
+            separatorBuilder: (_, _) => const Divider(),
+            itemBuilder: (context, index) {
+              final v = versions[index];
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          versionLabel(v, index),
+                          style: Theme.of(c).textTheme.titleSmall,
+                        ),
+                      ),
+                      FilledButton.tonal(
+                        key: ValueKey('minutes-restore-version-$index'),
+                        onPressed: () => Navigator.pop(c, index),
+                        child: const Text('复原此版本'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    readable(v),
+                    maxLines: 6,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+    if (selectedIndex != null && mounted) {
+      try {
+        await manager.restoreVersion(key, selectedIndex);
+      } catch (_) {
+        if (mounted) message('复原版本失败，请重试');
+      }
+    }
+  }
+
+  Future<void> _answerReviewItems(MeetingMinutes minutes) async {
+    final controllers = <String, TextEditingController>{
+      for (final q in minutes.reviewItems) q: TextEditingController(),
+    };
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('回答待确认问题并修订纪要'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final (i, q) in minutes.reviewItems.indexed) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text('${i + 1}. $q'),
+                  ),
+                  TextField(
+                    key: ValueKey('minutes-review-answer-$i'),
+                    controller: controllers[q],
+                    decoration: const InputDecoration(
+                      hintText: '输入确认结果（留空则暂不回答）',
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const ValueKey('minutes-review-submit'),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('据此修订纪要'),
+          ),
+        ],
+      ),
+    );
+    final answers = <String, String>{
+      for (final e in controllers.entries)
+        if (e.value.text.trim().isNotEmpty) e.key: e.value.text.trim(),
+    };
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final ctrl in controllers.values) {
+        ctrl.dispose();
+      }
+    });
+    if (submitted == true && answers.isNotEmpty && mounted) {
+      try {
+        await widget.controller.reviseMinutesWithReviewAnswers(
+          widget.reference,
+          answers,
+          language: selectedLanguage,
+        );
+      } catch (e) {
+        if (mounted) message('$e');
+      }
+    }
+  }
+
+  Future<void> _runSpeakerNaming() async {
+    setState(() => speakerNamingBusy = true);
+    try {
+      await widget.controller.suggestSpeakerNames(widget.reference);
+    } catch (e) {
+      if (mounted) message('$e');
+    } finally {
+      if (mounted) setState(() => speakerNamingBusy = false);
+    }
+  }
+
+  Future<void> _runTranscriptCorrections() async {
+    setState(() => correctionBusy = true);
+    try {
+      await widget.controller.suggestTranscriptCorrections(widget.reference);
+    } catch (e) {
+      if (mounted) message('$e');
+    } finally {
+      if (mounted) setState(() => correctionBusy = false);
+    }
+  }
 
   void _openSource(
     int sourceIndex,
@@ -351,6 +519,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
             for (final sec in minutes.custom)
               MinuteCustomSection(title: sec.title, items: edited(sec.items)),
           ],
+          reviewItems: minutes.reviewItems,
         );
         await manager.editResult(
           key,
@@ -379,6 +548,18 @@ class _MinutesPanelState extends State<MinutesPanel> {
       final view = widget.controller.recordingView(widget.reference);
       final result = manager.results[key];
       final previous = manager.previousResults[key];
+      final versions = manager.versionsFor(key);
+      final vocabSuggestions = widget.controller.suggestVocabularyFor(
+        widget.reference,
+      );
+      final speakerSuggestions = widget.controller.speakerNameSuggestionsFor(
+        widget.reference,
+      );
+      final correctionSuggestions = widget.controller.transcriptCorrectionsFor(
+        widget.reference,
+      );
+      final canRevertCorrection = widget.controller
+          .canRevertTranscriptCorrection(widget.reference);
       MeetingMinutes? minutes;
       if (result != null) {
         try {
@@ -539,7 +720,8 @@ class _MinutesPanelState extends State<MinutesPanel> {
                 ),
                 SelectableText(minutes.overview),
                 Text(
-                  '${result.model} · ${result.editedAt == null ? '已生成' : '已手动编辑'}',
+                  '${result.model} · '
+                  '${result.isDraft ? '草稿纪要（实时识别生成）' : (result.editedAt == null ? '已生成' : '已手动编辑')}',
                 ),
                 Wrap(
                   spacing: 12,
@@ -563,8 +745,52 @@ class _MinutesPanelState extends State<MinutesPanel> {
                         onPressed: () => _compare(result, previous),
                         child: const Text('对比上一版'),
                       ),
+                    if (versions.isNotEmpty)
+                      TextButton(
+                        key: const ValueKey('minutes-version-history-button'),
+                        onPressed: _showVersionHistory,
+                        child: Text('版本历史 (${versions.length})'),
+                      ),
                   ],
                 ),
+                if (minutes.reviewItems.isNotEmpty)
+                  Card(
+                    key: const ValueKey('minutes-review-items-card'),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '待确认问题（${minutes.reviewItems.length}）',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                ),
+                              ),
+                              FilledButton.tonal(
+                                key: const ValueKey(
+                                  'minutes-review-items-button',
+                                ),
+                                onPressed: busy
+                                    ? null
+                                    : () => _answerReviewItems(minutes!),
+                                child: const Text('回答并修订纪要'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          for (final q in minutes.reviewItems)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text('• $q'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
                 for (final section in minutes.sections) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 16),
@@ -619,6 +845,118 @@ class _MinutesPanelState extends State<MinutesPanel> {
                     ),
                 ],
               ],
+              if (vocabSuggestions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '建议加入个人词汇表：',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final term in vocabSuggestions.take(8))
+                      ActionChip(
+                        key: ValueKey('vocab-suggest-$term'),
+                        label: Text('+ $term'),
+                        onPressed: () =>
+                            widget.controller.addVocabularyTerm(term),
+                      ),
+                  ],
+                ),
+              ],
+              if (view.text.trim().isNotEmpty &&
+                  widget.controller.analysisApiKey.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton(
+                      key: const ValueKey('minutes-suggest-speakers'),
+                      onPressed: speakerNamingBusy ? null : _runSpeakerNaming,
+                      child: Text(
+                        speakerNamingBusy ? '正在推测发言人…' : 'AI 猜发言人名字',
+                      ),
+                    ),
+                    OutlinedButton(
+                      key: const ValueKey('minutes-suggest-corrections'),
+                      onPressed:
+                          correctionBusy ? null : _runTranscriptCorrections,
+                      child: Text(correctionBusy ? '正在检查错词…' : 'AI 校正建议'),
+                    ),
+                    if (canRevertCorrection)
+                      TextButton(
+                        key: const ValueKey('revert-transcript-correction'),
+                        onPressed: () => widget.controller
+                            .revertTranscriptCorrection(widget.reference),
+                        child: const Text('还原校正'),
+                      ),
+                  ],
+                ),
+              ],
+              for (final s in speakerSuggestions)
+                Card(
+                  child: ListTile(
+                    title: Text('说话人 ${s.speakerId} → ${s.suggestedName}'),
+                    subtitle: Text(
+                      [
+                        s.reason,
+                        if (s.evidenceQuote != null) '「${s.evidenceQuote}」',
+                      ].join('\n'),
+                    ),
+                    trailing: FilledButton.tonal(
+                      key: ValueKey('apply-speaker-suggestion-${s.speakerId}'),
+                      onPressed: () => widget.controller
+                          .applySpeakerNameSuggestion(widget.reference, s),
+                      child: const Text('套用'),
+                    ),
+                  ),
+                ),
+              for (final c in correctionSuggestions)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${c.wrong} → ${c.right}',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        Text(c.reason),
+                        if (c.contextQuote != null) Text('「${c.contextQuote}」'),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            TextButton(
+                              key: ValueKey('accept-correction-${c.wrong}'),
+                              onPressed: () => widget.controller
+                                  .acceptTranscriptCorrection(
+                                    widget.reference,
+                                    c,
+                                  ),
+                              child: const Text('接受'),
+                            ),
+                            TextButton(
+                              key: ValueKey(
+                                'accept-correction-vocab-${c.wrong}',
+                              ),
+                              onPressed: () => widget.controller
+                                  .acceptTranscriptCorrection(
+                                    widget.reference,
+                                    c,
+                                    addToVocabulary: true,
+                                  ),
+                              child: const Text('接受并加词汇表'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
