@@ -24,6 +24,7 @@ Future<void> main(List<String> args) async {
   var amiOnly = false;
   var mode = 'both';
   var outputPrefix = 'ES2004a';
+  var explicitOutputPrefix = false;
   for (var i = 0; i < args.length; i++) {
     if (args[i] == '--cache-dir' && i + 1 < args.length) {
       cacheDirPath = args[++i];
@@ -45,11 +46,17 @@ Future<void> main(List<String> args) async {
       mode = args[++i];
     } else if (args[i] == '--output-prefix' && i + 1 < args.length) {
       outputPrefix = args[++i];
+      explicitOutputPrefix = true;
     } else {
       throw ArgumentError('Unknown or incomplete option: ${args[i]}');
     }
   }
 
+  if (audioPath != null && !explicitOutputPrefix) {
+    throw ArgumentError(
+      'Custom audio requires --output-prefix to keep corpus results separate',
+    );
+  }
   if ((audioPath == null) != (referencePath == null)) {
     throw ArgumentError('--audio and --reference must be supplied together');
   }

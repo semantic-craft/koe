@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 import subprocess
+import signal
+import time
 import tempfile
 import unittest
 
@@ -50,6 +52,46 @@ elif sys.argv[1:2]==['test']: print('KOE_ADB: open-koe')
             launches = [call for call in calls if 'start' in call[1]]
             self.assertTrue(launches)
             self.assertTrue(all('com.semanticcraft.soundcore.verification/com.semanticcraft.soundcore.MainActivity' in call[1] for call in launches))
+
+
+    def test_interrupt_stops_build_before_releasing_device(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'scripts').mkdir()
+            source = Path(os.environ.get('ANDROID_CHECK_UNDER_TEST', ROOT / 'scripts/android-check'))
+            (root / 'scripts/android-check').write_text(source.read_text())
+            bins = root / 'bin'
+            bins.mkdir()
+            adb = bins / 'adb'
+            adb.write_text('#!/bin/sh\ncase "$*" in *get-state*) echo device;; esac\n')
+            adb.chmod(0o755)
+            flutter = bins / 'flutter'
+            flutter.write_text("#!/usr/bin/env python3\nimport os,pathlib,time\npathlib.Path(os.environ['PID_FILE']).write_text(str(os.getpid()))\nwhile True: time.sleep(1)\n")
+            flutter.chmod(0o755)
+            pid_file = root / 'build.pid'
+            lock = root / 'device.lock'
+            process = subprocess.Popen(['bash', str(root / 'scripts/android-check')], env={**os.environ, 'PATH': f'{bins}:{os.environ["PATH"]}', 'PID_FILE': str(pid_file), 'KOE_ANDROID_SERIAL': 'test-device', 'KOE_ANDROID_LOCK_DIR': str(lock)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            build_pid = None
+            try:
+                deadline = time.monotonic() + 5
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(pid_file.exists(), 'build must start')
+                build_pid = int(pid_file.read_text())
+                process.send_signal(signal.SIGTERM)
+                process.wait(timeout=5)
+                self.assertFalse(lock.exists(), 'terminated owner must release lock')
+                with self.assertRaises(ProcessLookupError, msg='build must be gone before lock is released'):
+                    os.kill(build_pid, 0)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                if build_pid is not None:
+                    try:
+                        os.kill(build_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 if __name__ == '__main__':

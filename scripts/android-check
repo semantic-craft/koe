@@ -14,6 +14,8 @@
 # Exit codes: 0 passed, 1 failed, 77 skipped: the device is offline, or a
 # scenario could not run on it (the summary at the end says which and why).
 set -euo pipefail
+# Each asynchronous build/test pipeline owns a process group for cancellation.
+set -m
 cd "$(dirname "$0")/.."
 
 serial="${KOE_ANDROID_SERIAL:-67241FDKX003EH}"
@@ -42,13 +44,19 @@ skips="$(mktemp)"
 dark="$skips.dark"
 awake=
 cleanup() {
-  kill ${awake:+"$awake"} 2>/dev/null || true
+  local job
+  for job in $(jobs -pr); do
+    kill -TERM -- "-$job" 2>/dev/null || true
+    wait "$job" 2>/dev/null || true
+  done
   free_screen
   adb -s "$serial" uninstall "$package" </dev/null >/dev/null 2>&1 || true
   rm -f "$skips" "$dark"
   rmdir "$lock_dir"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 wake_screen() {
   rm -f "$dark"
@@ -158,7 +166,8 @@ awake=$!
 # Install with every runtime permission granted, so no system dialog waits
 # for a tap. `flutter test` reinstalls over it and keeps the grants, but
 # uninstalls Koe when its file ends, so this runs before every scenario.
-flutter build apk --debug
+flutter build apk --debug &
+wait "$!"
 install_granted() {
   adb -s "$serial" install -r -g build/app/outputs/flutter-apk/app-debug.apk </dev/null
 }
@@ -219,8 +228,9 @@ for scenario in "${scenarios[@]}"; do
   fi
   wake_screen
   set +e
-  flutter test "$scenario" -d "$serial" --reporter expanded 2>&1 | answer_scenarios
-  status=${PIPESTATUS[0]}
+  flutter test "$scenario" -d "$serial" --reporter expanded 2>&1 | answer_scenarios &
+  wait "$!"
+  status=$?
   set -e
   if [[ $status -ne 0 ]] && ! online; then
     summary+=("$name: 跳过（运行中设备离线）")
