@@ -8,6 +8,7 @@ import '../../ai/stt_types.dart';
 import '../../ai/apple_speech.dart';
 import '../../state/meeting_apps.dart';
 import '../../state/recorder_controller.dart';
+import '../../state/recording_analysis.dart';
 import '../../platform/credential_store.dart';
 import '../../platform/mac_app.dart';
 import '../../theme/app_theme.dart';
@@ -283,6 +284,12 @@ class SettingsScreen extends StatelessWidget {
                       trailing: const Icon(Icons.chevron_right_rounded),
                       onTap: () => showKoeAboutDialog(context),
                     ),
+                  ),
+                  const SizedBox(height: 18),
+                  const SectionLabel('纪要与整理后端'),
+                  _SettingsGroup(
+                    key: const ValueKey('settings-analysis-backend-group'),
+                    child: _AnalysisBackendSettings(controller: c),
                   ),
                 ],
               ),
@@ -1278,6 +1285,223 @@ Future<void> showOrganizeHistorySheet(BuildContext context) async {
   messenger.showSnackBar(
     SnackBar(content: Text(added == 0 ? '这些录音已在整理中' : '已加入整理：$added 条')),
   );
+}
+
+class _AnalysisBackendSettings extends StatefulWidget {
+  const _AnalysisBackendSettings({required this.controller});
+  final RecorderController controller;
+
+  @override
+  State<_AnalysisBackendSettings> createState() =>
+      _AnalysisBackendSettingsState();
+}
+
+class _AnalysisBackendSettingsState extends State<_AnalysisBackendSettings> {
+  late final TextEditingController _baseUrl = TextEditingController(
+    text: widget.controller.analysisOpenAiConfig.baseUrl ?? '',
+  );
+  late final TextEditingController _model = TextEditingController(
+    text: widget.controller.analysisOpenAiConfig.model ?? '',
+  );
+  late final TextEditingController _apiKey = TextEditingController(
+    text: widget.controller.analysisOpenAiConfig.apiKey ?? '',
+  );
+  EngineConfig? _lastConfig;
+  String? _error;
+  bool _saved = false;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastConfig = widget.controller.analysisOpenAiConfig;
+  }
+
+  @override
+  void didUpdateWidget(covariant _AnalysisBackendSettings oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final current = widget.controller.analysisOpenAiConfig;
+    if (current != _lastConfig) {
+      _lastConfig = current;
+      _baseUrl.text = current.baseUrl ?? '';
+      _model.text = current.model ?? '';
+      _apiKey.text = current.apiKey ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _baseUrl.dispose();
+    _model.dispose();
+    _apiKey.dispose();
+    super.dispose();
+  }
+
+  void _applyPreset(OpenAiCompatiblePreset preset) {
+    setState(() {
+      _baseUrl.text = preset.baseUrl;
+      if (_model.text.trim().isEmpty) {
+        _model.text = preset.defaultModel;
+      }
+      _saved = false;
+      _error = null;
+    });
+  }
+
+  Future<void> _saveOpenAi() async {
+    if (_saving) return;
+    final rawUrl = _baseUrl.text.trim();
+    final model = _model.text.trim();
+    final key = _apiKey.text.trim();
+    if (rawUrl.isEmpty || model.isEmpty) {
+      setState(() => _error = '请填写服务地址与模型名称');
+      return;
+    }
+    try {
+      final normalizedUrl = normalizeOpenAiCompatibleBaseUrl(rawUrl);
+      if (!isLocalAnalysisEndpoint(normalizedUrl) && key.isEmpty) {
+        setState(() => _error = '远程 OpenAI 兼容服务需要填写 API Key');
+        return;
+      }
+      setState(() {
+        _saving = true;
+        _error = null;
+      });
+      await widget.controller.setAnalysisOpenAiConfig(
+        EngineConfig(
+          baseUrl: normalizedUrl,
+          model: model,
+          apiKey: key.isEmpty ? null : key,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _saved = true;
+        _error = null;
+      });
+    } on FormatException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } on CredentialStorageException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.controller;
+    final backend = c.analysisBackend;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '纪要、摘要与待办提取只发送转写文字，不上传音频。可选择千问、本机 Ollama / OpenAI 兼容端点或关闭整理。',
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 12,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final kind in AnalysisBackendKind.values)
+              ChoiceChip(
+                key: ValueKey('analysis-backend-${kind.name}'),
+                label: Text(kind.label),
+                selected: backend == kind,
+                onSelected: (_) => c.setAnalysisBackend(kind),
+              ),
+          ],
+        ),
+        if (backend == AnalysisBackendKind.qwen) ...[
+          const SizedBox(height: 8),
+          Text(
+            c.analysisConfigured
+                ? '已复用通义千问 API Key（模型：${c.analysis.model ?? 'qwen3.8-flash'}）'
+                : '请先在上方“语音与翻译 › 通义千问”配置 API Key',
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
+        ] else if (backend == AnalysisBackendKind.none) ...[
+          const SizedBox(height: 8),
+          const Text(
+            '已关闭 AI 整理：不会自动或手动调用大模型生成摘要、纪要或待办。',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+          ),
+        ] else ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final preset in openAiCompatiblePresets)
+                ActionChip(
+                  key: ValueKey('analysis-preset-${preset.id}'),
+                  label: Text(preset.label),
+                  onPressed: () => _applyPreset(preset),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const ValueKey('analysis-openai-base-url'),
+            controller: _baseUrl,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(
+              labelText: 'OpenAI 兼容服务地址',
+              hintText: 'http://localhost:11434/v1',
+            ),
+            onChanged: (_) => setState(() => _saved = false),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const ValueKey('analysis-openai-model'),
+            controller: _model,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(
+              labelText: '模型名称',
+              hintText: 'qwen2.5:7b',
+            ),
+            onChanged: (_) => setState(() => _saved = false),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const ValueKey('analysis-openai-apikey'),
+            controller: _apiKey,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(
+              labelText: 'API Key（本机 Ollama / LM Studio 可留空）',
+            ),
+            onChanged: (_) => setState(() => _saved = false),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              key: const ValueKey('analysis-openai-save'),
+              onPressed: _saving ? null : _saveOpenAi,
+              child: Text(_saving ? '正在保存…' : '保存整理后端'),
+            ),
+          ),
+          if (_saved) const Text('已保存整理后端配置'),
+          if (_error != null) ...[
+            const SizedBox(height: 6),
+            Text(_error!, style: const TextStyle(color: AppColors.coral)),
+          ],
+        ],
+      ],
+    );
+  }
 }
 
 class _DiarizationModelSettings extends StatelessWidget {

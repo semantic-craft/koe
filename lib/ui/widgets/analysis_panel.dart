@@ -175,7 +175,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
-              const Text('千问 Qwen3.8-Flash · 使用已配置的千问 Key'),
+              Text(widget.controller.analysisBackendSummary),
               const SizedBox(height: 16),
               SegmentedButton<bool>(
                 segments: const [
@@ -220,15 +220,16 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                 runSpacing: 8,
                 children: [
                   for (final tpl in manager.templates)
-                    ChoiceChip(
-                      key: ValueKey('template-chip-${tpl.id}'),
-                      label: Text(tpl.name),
-                      selected: !custom && activeTemplate.id == tpl.id,
-                      onSelected: (_) => setState(() {
-                        custom = false;
-                        selectedTemplateId = tpl.id;
-                      }),
-                    ),
+                    if (!tpl.id.startsWith('minutes-'))
+                      ChoiceChip(
+                        key: ValueKey('template-chip-${tpl.id}'),
+                        label: Text(tpl.name),
+                        selected: !custom && activeTemplate.id == tpl.id,
+                        onSelected: (_) => setState(() {
+                          custom = false;
+                          selectedTemplateId = tpl.id;
+                        }),
+                      ),
                 ],
               ),
               if (!custom) ...[
@@ -320,7 +321,14 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
               if (audioChanged) const Text('音频内容已变化，请先重新转写；已有分析仅对应旧音频。'),
               if (recording.text.trim().isEmpty) const Text('请先完成这段录音的转写。'),
               if (widget.controller.analysisApiKey.isEmpty)
-                const Text('请先在设置中配置千问 API Key。'),
+                Text(
+                  widget.controller.analysisBackend == AnalysisBackendKind.none
+                      ? '当前整理后端设为“不整理”，请在设置中选择千问或 OpenAI 兼容后端。'
+                      : widget.controller.analysisBackend ==
+                            AnalysisBackendKind.openaiCompatible
+                      ? '请先在设置中配置 OpenAI 兼容服务地址与模型名称。'
+                      : '请先在设置中配置千问 API Key。',
+                ),
               if (busy) ...[
                 const LinearProgressIndicator(),
                 Text(manager.progress[key] ?? '正在准备分析'),

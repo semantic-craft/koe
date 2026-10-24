@@ -191,7 +191,14 @@ class RecorderController extends ChangeNotifier
   late final RecordingAnalysis analysis =
       _analysisOverride ??
       RecordingAnalysis(
-        service: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
+        service: RoutingAnalysisService(
+          backend: () => analysisBackend,
+          qwen: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
+          openAiCompatible: OpenAiCompatibleAnalysisService(
+            baseUrl: () =>
+                analysisOpenAiConfig.baseUrl ?? 'http://localhost:11434/v1',
+          ),
+        ),
         whileRequesting: _whileAiWorks,
       );
   final RecordingAnalysis? _analysisOverride;
@@ -244,7 +251,48 @@ class RecorderController extends ChangeNotifier
   bool isMeetingRecording(String? path) => !_takenAsVoiceNote(path);
 
   @override
-  String get analysisApiKey => _qwenStt.apiKey ?? '';
+  String get analysisApiKey => switch (analysisBackend) {
+    AnalysisBackendKind.qwen => _qwenStt.apiKey ?? '',
+    AnalysisBackendKind.openaiCompatible => () {
+      final key = analysisOpenAiConfig.apiKey?.trim() ?? '';
+      if (key.isNotEmpty) return key;
+      final model = analysisOpenAiConfig.model?.trim() ?? '';
+      if (model.isNotEmpty &&
+          isLocalAnalysisEndpoint(analysisOpenAiConfig.baseUrl)) {
+        return 'local-keyless-endpoint';
+      }
+      return '';
+    }(),
+    AnalysisBackendKind.none => '',
+  };
+
+  bool get analysisConfigured => switch (analysisBackend) {
+    AnalysisBackendKind.qwen => (_qwenStt.apiKey ?? '').trim().isNotEmpty,
+    AnalysisBackendKind.openaiCompatible => () {
+      final baseUrl = analysisOpenAiConfig.baseUrl?.trim() ?? '';
+      final model = analysisOpenAiConfig.model?.trim() ?? '';
+      if (baseUrl.isEmpty || model.isEmpty) return false;
+      if (isLocalAnalysisEndpoint(baseUrl)) return true;
+      return (analysisOpenAiConfig.apiKey ?? '').trim().isNotEmpty;
+    }(),
+    AnalysisBackendKind.none => false,
+  };
+
+  String get analysisBackendSummary => switch (analysisBackend) {
+    AnalysisBackendKind.qwen =>
+      '千问 ${_formatQwenModelLabel(analysis.model)} · 使用已配置的千问 Key',
+    AnalysisBackendKind.openaiCompatible =>
+      'OpenAI 兼容 · ${analysisOpenAiConfig.model ?? '未设置模型'}（${analysisOpenAiConfig.baseUrl ?? '未设置地址'}）',
+    AnalysisBackendKind.none => '已设为“不整理” · 不调用分析模型',
+  };
+
+  static String _formatQwenModelLabel(String? model) {
+    final raw = (model ?? '').trim();
+    if (raw.isEmpty || raw.toLowerCase() == 'qwen3.8-flash') {
+      return 'Qwen3.8-Flash';
+    }
+    return raw;
+  }
 
   RecorderController({
     BleService? ble,

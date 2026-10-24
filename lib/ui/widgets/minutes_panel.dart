@@ -30,6 +30,8 @@ class MinutesPanel extends StatefulWidget {
 class _MinutesPanelState extends State<MinutesPanel> {
   bool ready = false;
   String? loadError;
+  String selectedTemplateId = minutesTemplateId;
+  String selectedLanguage = 'zh';
   RecordingAnalysis get manager => widget.controller.analysis;
   String get key =>
       '${widget.controller.analysisKey(widget.reference)}/minutes';
@@ -38,7 +40,16 @@ class _MinutesPanelState extends State<MinutesPanel> {
     super.initState();
     manager.load().then(
       (_) {
-        if (mounted) setState(() => ready = true);
+        if (mounted) {
+          final existing = manager.results[key]?.templateId;
+          setState(() {
+            if (existing != null &&
+                builtInMeetingTemplates.any((t) => t.id == existing)) {
+              selectedTemplateId = existing;
+            }
+            ready = true;
+          });
+        }
       },
       onError: (Object _) {
         if (mounted) setState(() => loadError = '无法读取纪要，请重试');
@@ -68,7 +79,11 @@ class _MinutesPanelState extends State<MinutesPanel> {
       if (confirmed != true || !mounted) return;
     }
     final source = widget.controller.recordingView(widget.reference).text;
-    final template = manager.requireTemplate(minutesTemplateId);
+    final template = manager.requireTemplate(selectedTemplateId);
+    final prompt = buildMeetingMinutesPrompt(
+      templateId: selectedTemplateId,
+      language: selectedLanguage,
+    );
     await manager.run(
       recording: widget.controller.analysisKey(widget.reference),
       source: source,
@@ -76,7 +91,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
       custom: true,
       templateId: template.id,
       resultSlot: 'minutes',
-      instruction: template.prompt,
+      instruction: prompt,
       validateResult: validateMinutes,
       userNotes: widget.controller.analysisNotesFor(widget.reference),
       currentSource: () =>
@@ -332,6 +347,10 @@ class _MinutesPanelState extends State<MinutesPanel> {
           decisions: edited(minutes.decisions),
           actions: edited(minutes.actions),
           questions: edited(minutes.questions),
+          custom: [
+            for (final sec in minutes.custom)
+              MinuteCustomSection(title: sec.title, items: edited(sec.items)),
+          ],
         );
         await manager.editResult(
           key,
@@ -421,11 +440,58 @@ class _MinutesPanelState extends State<MinutesPanel> {
             padding: const EdgeInsets.all(20),
             children: [
               Text(view.title, style: Theme.of(context).textTheme.titleLarge),
-              const Text('千问 Qwen3.8-Flash · 通用会议纪要'),
+              Text(
+                '${widget.controller.analysisBackendSummary} · '
+                '${meetingTemplateById(selectedTemplateId).labelForLanguage(selectedLanguage)}',
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final tpl in builtInMeetingTemplates)
+                    ChoiceChip(
+                      key: ValueKey('minutes-template-${tpl.id}'),
+                      label: Text(tpl.nameZh),
+                      selected: selectedTemplateId == tpl.id,
+                      onSelected: busy
+                          ? null
+                          : (_) => setState(() => selectedTemplateId = tpl.id),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final lang in const [
+                    ('zh', '中文'),
+                    ('en', 'English'),
+                    ('ja', '日本語'),
+                  ])
+                    ChoiceChip(
+                      key: ValueKey('minutes-language-${lang.$1}'),
+                      label: Text(lang.$2),
+                      selected: selectedLanguage == lang.$1,
+                      onSelected: busy
+                          ? null
+                          : (_) => setState(() => selectedLanguage = lang.$1),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
               if (loadError != null) Text(loadError!),
               if (view.text.trim().isEmpty) const Text('请先完成转写'),
               if (widget.controller.analysisApiKey.isEmpty)
-                const Text('请先在设置中配置千问 API Key'),
+                Text(
+                  widget.controller.analysisBackend == AnalysisBackendKind.none
+                      ? '当前整理后端设为“不整理”，请在设置中选择千问或 OpenAI 兼容后端'
+                      : widget.controller.analysisBackend ==
+                            AnalysisBackendKind.openaiCompatible
+                      ? '请先在设置中配置 OpenAI 兼容服务地址、模型名称（远程服务还需 API Key）'
+                      : '请先在设置中配置千问 API Key',
+                ),
               const SizedBox(height: 12),
               if (busy) ...[
                 const LinearProgressIndicator(),

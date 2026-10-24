@@ -10,6 +10,7 @@ import '../platform/credential_store.dart';
 import '../ai/speech_provider.dart';
 import '../ai/engine_config.dart';
 import 'atomic_file.dart';
+import 'recording_analysis.dart' show AnalysisBackendKind;
 
 /// Settings metadata on disk; user credentials live only in system Keychain.
 class AppSettingsStore {
@@ -19,6 +20,7 @@ class AppSettingsStore {
   static bool _loadFailed = false;
   static final _credentials = CredentialStore();
   static const _providers = ['qwen', 'doubao'];
+  static const _analysisOpenAiKey = 'analysisOpenAiCompatible';
 
   @visibleForTesting
   static void resetForTesting() {
@@ -63,6 +65,11 @@ class AppSettingsStore {
           migrated[provider] = legacy;
         }
       }
+      final legacyAnalysisKey = settings.analysisOpenAiConfig.apiKey;
+      if (!migrated.containsKey(_analysisOpenAiKey) &&
+          legacyAnalysisKey != null) {
+        migrated[_analysisOpenAiKey] = legacyAnalysisKey;
+      }
       if (!mapEquals(stored, migrated)) await _credentials.write(migrated);
       settings = settings.copyWith(
         engines: {
@@ -75,6 +82,11 @@ class AppSettingsStore {
                 model: settings.engines[provider]?.model,
               ),
         },
+        analysisOpenAiConfig: EngineConfig(
+          apiKey: migrated[_analysisOpenAiKey],
+          baseUrl: settings.analysisOpenAiConfig.baseUrl,
+          model: settings.analysisOpenAiConfig.model,
+        ),
       );
       // Strip both nested and old flat keys only after successful Keychain
       // read/write verification. A failed migration leaves the original intact.
@@ -103,6 +115,9 @@ class AppSettingsStore {
           final desired = {
             for (final provider in _providers)
               provider: settings.engines[provider]?.apiKey,
+            if (settings.analysisOpenAiConfig.apiKey != null ||
+                previous.containsKey(_analysisOpenAiKey))
+              _analysisOpenAiKey: settings.analysisOpenAiConfig.apiKey,
           };
           final changed = !mapEquals(previous, desired);
           try {
@@ -130,6 +145,8 @@ class AppSettings {
     this.speechProvider,
     this.appleSourceLanguage = '',
     this.engines = const {},
+    this.analysisBackend = AnalysisBackendKind.qwen,
+    this.analysisOpenAiConfig = const EngineConfig(),
     this.autoTranscribe = true,
     this.autoRealtime = true,
     this.allDayListening = false,
@@ -150,6 +167,12 @@ class AppSettings {
 
   /// Grouped cloud-engine credentials keyed by [SttProvider.name].
   final Map<String, EngineConfig> engines;
+
+  /// Which text-only LLM backend handles minutes, summaries, and context tasks (#490).
+  final AnalysisBackendKind analysisBackend;
+
+  /// OpenAI-compatible / Ollama endpoint configuration (`baseUrl`, `model`, and Keychain-backed `apiKey`).
+  final EngineConfig analysisOpenAiConfig;
 
   /// Null means an existing install has not selected a provider yet.
   final SttProvider? speechProvider;
@@ -198,6 +221,8 @@ class AppSettings {
     SttProvider? speechProvider,
     String? appleSourceLanguage,
     Map<String, EngineConfig>? engines,
+    AnalysisBackendKind? analysisBackend,
+    EngineConfig? analysisOpenAiConfig,
     bool? autoTranscribe,
     bool? autoRealtime,
     bool? allDayListening,
@@ -218,6 +243,8 @@ class AppSettings {
       speechProvider: speechProvider ?? this.speechProvider,
       appleSourceLanguage: appleSourceLanguage ?? this.appleSourceLanguage,
       engines: engines ?? this.engines,
+      analysisBackend: analysisBackend ?? this.analysisBackend,
+      analysisOpenAiConfig: analysisOpenAiConfig ?? this.analysisOpenAiConfig,
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
       allDayListening: allDayListening ?? this.allDayListening,
@@ -241,6 +268,13 @@ class AppSettings {
     if (speechProvider != null) 'speechProvider': speechProvider!.name,
     'appleSourceLanguage': appleSourceLanguage,
     if (_engineJson.isNotEmpty) 'engines': _engineJson,
+    'analysisBackend': analysisBackend.name,
+    if (!analysisOpenAiConfig.isEmpty)
+      'analysisOpenAiConfig': {
+        ...analysisOpenAiConfig.toJson(),
+        if (analysisOpenAiConfig.isConfigured)
+          'credentialRef': AppSettingsStore._analysisOpenAiKey,
+      },
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
     'allDayListening': allDayListening,
@@ -281,10 +315,16 @@ class AppSettings {
       guestLanguage = 'en';
     }
     final engines = _enginesFrom(map);
+    final rawAnalysisOpenAi = map['analysisOpenAiConfig'];
+    final analysisOpenAiConfig = rawAnalysisOpenAi is Map
+        ? EngineConfig.fromJson(Map<String, dynamic>.from(rawAnalysisOpenAi))
+        : const EngineConfig();
     return AppSettings(
       speechProvider: SttProvider.parse(map['speechProvider']),
       appleSourceLanguage: _str(map['appleSourceLanguage']) ?? '',
       engines: engines,
+      analysisBackend: AnalysisBackendKind.parse(map['analysisBackend']),
+      analysisOpenAiConfig: analysisOpenAiConfig,
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,
       allDayListening: map['allDayListening'] == true,

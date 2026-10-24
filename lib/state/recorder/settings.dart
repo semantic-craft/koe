@@ -10,6 +10,7 @@ mixin _RecorderSettings on ChangeNotifier {
   // --- Provided by RecorderController and its other parts. ---
   SpeechConfiguration get _activeConfiguration;
   abstract final AppleSpeechService _appleSpeech;
+  abstract final RecordingAnalysis analysis;
   abstract bool _autoTransferRunning;
   abstract final BleFilePull _blePull;
   abstract final CalendarMeetings _calendarMeetings;
@@ -60,6 +61,9 @@ mixin _RecorderSettings on ChangeNotifier {
     for (final entry in _engineAdapters.entries) {
       entry.value.applySaved(entry.value.load(s));
     }
+    analysisBackend = s.analysisBackend;
+    analysisOpenAiConfig = s.analysisOpenAiConfig;
+    _syncAnalysisModel();
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
     allDayListening = s.allDayListening;
@@ -106,9 +110,13 @@ mixin _RecorderSettings on ChangeNotifier {
     bool strict = false,
     SttProvider? provider,
     EngineConfig? config,
+    AnalysisBackendKind? backend,
+    EngineConfig? openAiConfig,
   }) {
     final operation = _settingsWriting.then((_) async {
       try {
+        final nextBackend = backend ?? analysisBackend;
+        final nextOpenAi = openAiConfig ?? analysisOpenAiConfig;
         await AppSettingsStore.save(
           AppSettings(
             speechProvider: speechProvider,
@@ -117,6 +125,8 @@ mixin _RecorderSettings on ChangeNotifier {
               ..._persistedEngines(),
               if (provider != null) provider.name: config!,
             },
+            analysisBackend: nextBackend,
+            analysisOpenAiConfig: nextOpenAi,
             autoTranscribe: autoTranscribe,
             autoRealtime: autoRealtime,
             allDayListening: allDayListening,
@@ -135,6 +145,9 @@ mixin _RecorderSettings on ChangeNotifier {
           strict: true,
         );
         if (provider != null) _engineAdapters[provider]!.applySaved(config!);
+        if (backend != null) analysisBackend = backend;
+        if (openAiConfig != null) analysisOpenAiConfig = openAiConfig;
+        _syncAnalysisModel();
         settingsStorageError = null;
         if (!_disposed) notifyListeners();
       } catch (_) {
@@ -495,6 +508,47 @@ mixin _RecorderSettings on ChangeNotifier {
   /// leaves the current configuration untouched.
   Future<void> setDoubaoConfig(EngineConfig config) =>
       setEngineConfig(SttProvider.doubao, config);
+
+  AnalysisBackendKind analysisBackend = AnalysisBackendKind.qwen;
+  EngineConfig analysisOpenAiConfig = const EngineConfig();
+
+  void _syncAnalysisModel() {
+    if (analysisBackend == AnalysisBackendKind.openaiCompatible) {
+      final m = _blankToNull(analysisOpenAiConfig.model);
+      if (m != null) analysis.model = m;
+    } else if (analysisBackend == AnalysisBackendKind.qwen) {
+      if (analysis.model == null ||
+          analysis.model == analysisOpenAiConfig.model) {
+        analysis.model = 'qwen3.8-flash';
+      }
+    }
+  }
+
+  Future<void> setAnalysisBackend(AnalysisBackendKind backend) {
+    if (analysisBackend == backend) return SynchronousFuture<void>(null);
+    analysisBackend = backend;
+    _syncAnalysisModel();
+    notifyListeners();
+    return _persistSettings( backend: backend);
+  }
+
+  Future<void> setAnalysisOpenAiConfig(EngineConfig config) {
+    final apiKey = _blankToNull(config.apiKey);
+    final model = _blankToNull(config.model);
+    final rawBaseUrl = _blankToNull(config.baseUrl);
+    final baseUrl = rawBaseUrl == null
+        ? null
+        : normalizeOpenAiCompatibleBaseUrl(rawBaseUrl);
+    final normalized = EngineConfig(
+      apiKey: apiKey,
+      baseUrl: baseUrl,
+      model: model,
+    );
+    analysisOpenAiConfig = normalized;
+    _syncAnalysisModel();
+    notifyListeners();
+    return _persistSettings(strict: true, openAiConfig: normalized);
+  }
 
   bool get sttConfigured =>
       _settingsReady && _isConfigured(_settingsConfiguration);
