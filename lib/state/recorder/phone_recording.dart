@@ -68,6 +68,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   PhoneRecorder get _phoneRecorder;
   bool get phoneRecordingEnabled;
   bool get meetingFromCalendar;
+  bool get textCaptureActive;
   Future<void> attachAutomaticPlace(String path);
   int? expectedSpeakersForPath(String path);
   Future<void> setExpectedSpeakers(String path, int? count);
@@ -162,6 +163,98 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   /// Whether the last start failed because microphone permission was denied.
   bool phoneRecordingPermissionDenied = false;
 
+  /// The meeting title of a calendar reminder tapped or fired on a phone
+  /// (#373). Tapping the reminder opens Koe's recording preparation without
+  /// auto-starting the microphone.
+  String? pendingCalendarMeetingPrompt;
+  int calendarMeetingPromptRevision = 0;
+  final Set<String> _remindedCalendarMeetingIds = <String>{};
+  final List<Timer> _calendarReminderTimers = <Timer>[];
+  Future<void>? _calendarReminderSyncing;
+
+  void _initPhoneCalendarReminders() {
+    if (!runsOnPhone || !phoneRecordingEnabled) return;
+    _calendarMeetings.setOnReminderTapped((title) async {
+      _triggerCalendarMeetingPrompt(title);
+    });
+    unawaited(
+      _settingsLoaded.then((_) async {
+        if (_disposed) return;
+        final tapped = await _calendarMeetings.consumePendingReminderTap();
+        if (tapped != null && !_disposed) {
+          _triggerCalendarMeetingPrompt(tapped);
+        }
+        await refreshPhoneCalendarReminders();
+      }),
+    );
+  }
+
+  /// Refreshes start-of-meeting reminders from the phone's calendar (#373)
+  /// when [meetingFromCalendar] is on.
+  Future<void> refreshPhoneCalendarReminders({DateTime? now}) {
+    if (!runsOnPhone || !phoneRecordingEnabled) {
+      return Future<void>.value();
+    }
+    return _calendarReminderSyncing ??= () async {
+      try {
+        await _settingsLoaded;
+        if (_disposed) return;
+        _clearCalendarReminderTimers();
+        final current = now ?? DateTime.now();
+        if (!meetingFromCalendar) {
+          await _calendarMeetings.syncPhoneReminders(const [], now: current);
+          return;
+        }
+        final upcoming = await _calendarMeetings.upcomingMeetings(
+          current,
+          current.add(ChannelCalendarMeetings.lookahead),
+        );
+        if (_disposed || !meetingFromCalendar) return;
+        final pending = [
+          for (final m in upcoming)
+            if (!_remindedCalendarMeetingIds.contains(m.id)) m,
+        ];
+        await _calendarMeetings.syncPhoneReminders(pending, now: current);
+        if (_disposed || !meetingFromCalendar) return;
+        for (final meeting in pending) {
+          final delay = meeting.delayFrom(current);
+          _calendarReminderTimers.add(
+            Timer(delay, () {
+              if (_disposed || !meetingFromCalendar) return;
+              if (!_remindedCalendarMeetingIds.add(meeting.id)) return;
+              _triggerCalendarMeetingPrompt(meeting.title);
+            }),
+          );
+        }
+      } finally {
+        _calendarReminderSyncing = null;
+      }
+    }();
+  }
+
+  void _triggerCalendarMeetingPrompt(String title) {
+    final trimmed = title.trim();
+    if (trimmed.isEmpty || _disposed) return;
+    if (phoneRecordingActive || textCaptureActive) return;
+    pendingCalendarMeetingPrompt = trimmed;
+    calendarMeetingPromptRevision++;
+    notifyListeners();
+  }
+
+  /// Clears the shown calendar meeting prompt once handled or dismissed.
+  void clearCalendarMeetingPrompt() {
+    if (pendingCalendarMeetingPrompt == null) return;
+    pendingCalendarMeetingPrompt = null;
+    notifyListeners();
+  }
+
+  void _clearCalendarReminderTimers() {
+    for (final timer in _calendarReminderTimers) {
+      timer.cancel();
+    }
+    _calendarReminderTimers.clear();
+  }
+
   bool get phoneRecordingActive => _phoneTakePath != null;
 
   /// Stop was pressed and the take is being saved.
@@ -187,7 +280,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       await _libraryLoaded;
       // A take started right after launch must respect the saved calendar
       // choice even when loading settings is still waiting on the Keychain.
-      if (runsOnMac) await _settingsLoaded;
+      if (runsOnMac || runsOnPhone) await _settingsLoaded;
       if (!await _phoneRecorder.requestPermission()) {
         phoneRecordingPermissionDenied = true;
         phoneRecordingError = '没有麦克风权限。可在系统设置里允许 Koe 使用麦克风，或先导入音频';
@@ -230,8 +323,14 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _watchPhoneSpace(path);
       // The first take asks for the calendar here rather than when it is
       // saved; the meeting is looked up then.
-      if (runsOnMac && meetingFromCalendar) {
-        unawaited(_calendarMeetings.requestAccess());
+      if ((runsOnMac || runsOnPhone) && meetingFromCalendar) {
+        unawaited(
+          _calendarMeetings.requestAccess().then((granted) {
+            if (granted && runsOnPhone && !_disposed) {
+              unawaited(refreshPhoneCalendarReminders());
+            }
+          }),
+        );
       }
       notifyListeners();
     } finally {
@@ -679,7 +778,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     // Looked up by the start time, so a take found after a crash is named
     // the same way.
     final meeting =
-        label == null && !voiceNote && runsOnMac && meetingFromCalendar
+        label == null &&
+            !voiceNote &&
+            (runsOnMac || runsOnPhone) &&
+            meetingFromCalendar
         ? await _calendarMeetings.meetingAt(recordedAt)
         : null;
     try {
@@ -811,6 +913,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   void dispose() {
     unawaited(_phoneMicLevels?.cancel());
     _phoneSpaceChecks?.cancel();
+    _clearCalendarReminderTimers();
+    _calendarMeetings.setOnReminderTapped(null);
     phoneRecordingLevel.dispose();
     super.dispose();
   }

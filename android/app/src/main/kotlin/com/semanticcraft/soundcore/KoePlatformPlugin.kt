@@ -3,6 +3,10 @@ package com.semanticcraft.soundcore
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -38,7 +42,9 @@ class KoePlatformPlugin :
     private lateinit var softAp: MethodChannel
     private lateinit var presence: MethodChannel
     private lateinit var wifi: MethodChannel
+    private lateinit var systemTasks: MethodChannel
     private val mainThread = Handler(Looper.getMainLooper())
+    private val scheduledMeetingNotifications = mutableListOf<Runnable>()
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingLocalNetwork: MethodChannel.Result? = null
 
@@ -89,6 +95,9 @@ class KoePlatformPlugin :
         presence.setMethodCallHandler(::onPresence)
         wifi = MethodChannel(messenger, "com.semanticcraft.koe/wifi_connectivity")
         wifi.setMethodCallHandler(::onWifi)
+        systemTasks = MethodChannel(messenger, "com.semanticcraft.koe/system_tasks")
+        systemTasks.setMethodCallHandler(::onSystemTasks)
+        activeSystemTasksChannel = systemTasks
         RecordingSyncService.stopListener = stopListener
         RecordingSyncService.refusedListener = refusedListener
         RecorderScan.listener = presenceListener
@@ -96,10 +105,13 @@ class KoePlatformPlugin :
 
     // The engine is going: nothing is left to record or to answer 停止.
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        clearMeetingReminders()
         backgroundSync.setMethodCallHandler(null)
         softAp.setMethodCallHandler(null)
         presence.setMethodCallHandler(null)
         wifi.setMethodCallHandler(null)
+        systemTasks.setMethodCallHandler(null)
+        if (activeSystemTasksChannel === systemTasks) activeSystemTasksChannel = null
         if (RecordingSyncService.stopListener === stopListener) RecordingSyncService.stopListener = null
         if (RecordingSyncService.refusedListener === refusedListener) RecordingSyncService.refusedListener = null
         if (RecorderScan.listener === presenceListener) RecorderScan.listener = null
@@ -247,6 +259,99 @@ class KoePlatformPlugin :
         )
     }
 
+    // Calendar meeting start reminders on Android (#373): schedules system
+    // notifications for upcoming meetings and hands tapped reminders back to
+    // Dart so Koe opens the recording preparation sheet without auto-recording.
+    private fun onSystemTasks(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "scheduleMeetingReminders" -> {
+                val nowMs = call.argument<Number>("now")?.toLong() ?: System.currentTimeMillis()
+                val meetings = call.argument<List<Map<String, Any?>>>("meetings") ?: emptyList()
+                scheduleMeetingReminders(nowMs, meetings)
+                result.success(null)
+            }
+            "consumePendingMeetingReminder" -> {
+                val prefs = appContext.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+                val title = prefs.getString(KEY_PENDING_MEETING_TITLE, null)
+                if (title != null) {
+                    prefs.edit().remove(KEY_PENDING_MEETING_TITLE).apply()
+                }
+                result.success(title)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun clearMeetingReminders() {
+        for (task in scheduledMeetingNotifications) {
+            mainThread.removeCallbacks(task)
+        }
+        scheduledMeetingNotifications.clear()
+    }
+
+    private fun scheduleMeetingReminders(nowMs: Long, meetings: List<Map<String, Any?>>) {
+        clearMeetingReminders()
+        if (meetings.isEmpty()) return
+        ensureMeetingChannel()
+        for (item in meetings.take(24)) {
+            val id = item["id"] as? String ?: continue
+            val title = (item["title"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+            val startMs = (item["start"] as? Number)?.toLong() ?: continue
+            val delayMs = (startMs - nowMs).coerceAtLeast(0L)
+            val task = Runnable {
+                postMeetingNotification(id, title)
+            }
+            scheduledMeetingNotifications.add(task)
+            mainThread.postDelayed(task, delayMs)
+        }
+    }
+
+    private fun ensureMeetingChannel() {
+        val manager = appContext.getSystemService(NotificationManager::class.java) ?: return
+        val channel = NotificationChannel(
+            MEETING_CHANNEL_ID,
+            "会议开录提醒",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "日历里的会议开始时提醒用 Koe 录音（只提醒，不自动开始）"
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun postMeetingNotification(id: String, title: String) {
+        if (appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val prefs = appContext.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+        val notifiedKey = "notified_$id"
+        if (prefs.getBoolean(notifiedKey, false)) return
+        prefs.edit().putBoolean(notifiedKey, true).apply()
+        val openApp = Intent(appContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_MEETING_REMINDER_TITLE, title)
+        }
+        val notificationId = MEETING_NOTIFICATION_BASE + (id.hashCode() and 0x0FFF)
+        val contentIntent = PendingIntent.getActivity(
+            appContext,
+            notificationId,
+            openApp,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = Notification.Builder(appContext, MEETING_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_sync_notification)
+            .setContentTitle("「$title」开始了")
+            .setContentText("点开进入 Koe 准备会议录音")
+            .setCategory(Notification.CATEGORY_REMINDER)
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .build()
+        appContext.getSystemService(NotificationManager::class.java)
+            ?.notify(notificationId, notification)
+    }
+
     /**
      * Android 17 blocks LAN traffic for apps targeting it until they hold
      * ACCESS_LOCAL_NETWORK. It sits in the Nearby devices group that Koe's
@@ -308,5 +413,26 @@ class KoePlatformPlugin :
     companion object {
         // Clear of permission_handler's request code (24).
         private const val LOCAL_NETWORK_REQUEST = 3205
+        private const val MEETING_CHANNEL_ID = "calendar_meeting_reminder"
+        private const val MEETING_NOTIFICATION_BASE = 4200
+        private const val MEETING_PREFS = "koe_calendar_meetings"
+        private const val KEY_PENDING_MEETING_TITLE = "pending_meeting_title"
+        const val EXTRA_MEETING_REMINDER_TITLE = "com.semanticcraft.koe.MEETING_REMINDER_TITLE"
+
+        @Volatile private var activeSystemTasksChannel: MethodChannel? = null
+
+        fun handleMeetingReminderIntent(context: Context, intent: Intent?) {
+            val title = intent?.getStringExtra(EXTRA_MEETING_REMINDER_TITLE)?.trim()
+                ?.takeIf { it.isNotEmpty() } ?: return
+            intent.removeExtra(EXTRA_MEETING_REMINDER_TITLE)
+            context.applicationContext
+                .getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_PENDING_MEETING_TITLE, title)
+                .apply()
+            Handler(Looper.getMainLooper()).post {
+                activeSystemTasksChannel?.invokeMethod("onMeetingReminderTapped", title)
+            }
+        }
     }
 }

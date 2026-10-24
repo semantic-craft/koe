@@ -644,7 +644,7 @@ class _NoPlace implements PlaceCapture {
 
 /// Keeps the takes from asking for the calendar, which would put a system
 /// prompt in front of the unattended run.
-class _NoCalendar implements CalendarMeetings {
+class _NoCalendar extends CalendarMeetings {
   @override
   Future<bool> requestAccess() async => false;
 

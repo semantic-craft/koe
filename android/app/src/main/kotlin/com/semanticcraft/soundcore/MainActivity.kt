@@ -14,8 +14,16 @@ class MainActivity : AudioServiceActivity() {
             (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
         ) {
             intent.removeExtra(QUICK_ACTION_EXTRA)
+            intent.removeExtra(KoePlatformPlugin.EXTRA_MEETING_REMINDER_TITLE)
         }
         super.onCreate(savedInstanceState)
+        KoePlatformPlugin.handleMeetingReminderIntent(this, intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        KoePlatformPlugin.handleMeetingReminderIntent(this, intent)
     }
 
     // Koe's channels live in KoePlatformPlugin, so a service can run Dart
