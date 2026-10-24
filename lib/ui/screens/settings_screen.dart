@@ -1311,6 +1311,7 @@ class _AnalysisBackendSettingsState extends State<_AnalysisBackendSettings> {
   late final TextEditingController _apiKey = TextEditingController(
     text: widget.controller.analysisOpenAiConfig.apiKey ?? '',
   );
+  late final TextEditingController _vocabInput = TextEditingController();
   EngineConfig? _lastConfig;
   String? _error;
   bool _saved = false;
@@ -1339,6 +1340,7 @@ class _AnalysisBackendSettingsState extends State<_AnalysisBackendSettings> {
     _baseUrl.dispose();
     _model.dispose();
     _apiKey.dispose();
+    _vocabInput.dispose();
     super.dispose();
   }
 
@@ -1503,6 +1505,62 @@ class _AnalysisBackendSettingsState extends State<_AnalysisBackendSettings> {
             const SizedBox(height: 6),
             Text(_error!, style: const TextStyle(color: AppColors.coral)),
           ],
+        ],
+        const SizedBox(height: 16),
+        const Text(
+          '个人词汇表（人名、产品名、术语，会在整理纪要与校稿时提供给大模型）',
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 12,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                key: const ValueKey('settings-vocabulary-input'),
+                controller: _vocabInput,
+                decoration: const InputDecoration(
+                  labelText: '添加词汇',
+                  hintText: '例如：Koe、Sherpa、张三',
+                ),
+                onSubmitted: (value) {
+                  final trimmed = value.trim();
+                  if (trimmed.isEmpty) return;
+                  _vocabInput.clear();
+                  c.addVocabularyTerm(trimmed);
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonal(
+              key: const ValueKey('settings-vocabulary-add'),
+              onPressed: () {
+                final trimmed = _vocabInput.text.trim();
+                if (trimmed.isEmpty) return;
+                _vocabInput.clear();
+                c.addVocabularyTerm(trimmed);
+              },
+              child: const Text('添加'),
+            ),
+          ],
+        ),
+        if (c.vocabulary.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final term in c.vocabulary)
+                InputChip(
+                  key: ValueKey('settings-vocabulary-chip-$term'),
+                  label: Text(term),
+                  onDeleted: () => c.removeVocabularyTerm(term),
+                ),
+            ],
+          ),
         ],
       ],
     );

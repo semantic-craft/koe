@@ -22,6 +22,7 @@ mixin _RecorderPlayback on ChangeNotifier {
   RecordingViewData recordingView(RecordingReference ref);
   Map<String, String> speakerAliasesForPath(String path);
   abstract String? statusMessage;
+  String get vocabularyPromptHint;
   // END DEPS
 
   late final PlaybackHistoryStore playbackHistory;
@@ -757,8 +758,10 @@ mixin _RecorderPlayback on ChangeNotifier {
     final path = view.path;
     final meeting = path == null ? null : library.assetForPath(path)?.meeting;
     final bookmarks = _bookmarkNotesFor(ref, view);
+    final vocab = vocabularyPromptHint;
     return [
       ?meeting?.analysisNotes,
+      if (vocab.isNotEmpty) vocab,
       if (bookmarks.isNotEmpty) bookmarks,
     ].join('\n\n');
   }

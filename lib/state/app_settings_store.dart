@@ -147,6 +147,7 @@ class AppSettings {
     this.engines = const {},
     this.analysisBackend = AnalysisBackendKind.qwen,
     this.analysisOpenAiConfig = const EngineConfig(),
+    this.vocabulary = const [],
     this.autoTranscribe = true,
     this.autoRealtime = true,
     this.allDayListening = false,
@@ -173,6 +174,9 @@ class AppSettings {
 
   /// OpenAI-compatible / Ollama endpoint configuration (`baseUrl`, `model`, and Keychain-backed `apiKey`).
   final EngineConfig analysisOpenAiConfig;
+
+  /// User-maintained personal glossary terms injected into prompts (#491).
+  final List<String> vocabulary;
 
   /// Null means an existing install has not selected a provider yet.
   final SttProvider? speechProvider;
@@ -223,6 +227,7 @@ class AppSettings {
     Map<String, EngineConfig>? engines,
     AnalysisBackendKind? analysisBackend,
     EngineConfig? analysisOpenAiConfig,
+    List<String>? vocabulary,
     bool? autoTranscribe,
     bool? autoRealtime,
     bool? allDayListening,
@@ -245,6 +250,7 @@ class AppSettings {
       engines: engines ?? this.engines,
       analysisBackend: analysisBackend ?? this.analysisBackend,
       analysisOpenAiConfig: analysisOpenAiConfig ?? this.analysisOpenAiConfig,
+      vocabulary: vocabulary ?? this.vocabulary,
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
       allDayListening: allDayListening ?? this.allDayListening,
@@ -275,6 +281,7 @@ class AppSettings {
         if (analysisOpenAiConfig.isConfigured)
           'credentialRef': AppSettingsStore._analysisOpenAiKey,
       },
+    if (vocabulary.isNotEmpty) 'vocabulary': vocabulary,
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
     'allDayListening': allDayListening,
@@ -319,12 +326,18 @@ class AppSettings {
     final analysisOpenAiConfig = rawAnalysisOpenAi is Map
         ? EngineConfig.fromJson(Map<String, dynamic>.from(rawAnalysisOpenAi))
         : const EngineConfig();
+    final vocabulary = <String>[
+      if (map['vocabulary'] case final List<Object?> terms)
+        for (final t in terms)
+          if (t is String && t.trim().isNotEmpty) t.trim(),
+    ];
     return AppSettings(
       speechProvider: SttProvider.parse(map['speechProvider']),
       appleSourceLanguage: _str(map['appleSourceLanguage']) ?? '',
       engines: engines,
       analysisBackend: AnalysisBackendKind.parse(map['analysisBackend']),
       analysisOpenAiConfig: analysisOpenAiConfig,
+      vocabulary: vocabulary,
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,
       allDayListening: map['allDayListening'] == true,

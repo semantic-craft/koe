@@ -64,6 +64,7 @@ mixin _RecorderSettings on ChangeNotifier {
     }
     analysisBackend = s.analysisBackend;
     analysisOpenAiConfig = s.analysisOpenAiConfig;
+    vocabulary = List<String>.unmodifiable(s.vocabulary);
     _syncAnalysisModel();
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
@@ -113,11 +114,13 @@ mixin _RecorderSettings on ChangeNotifier {
     EngineConfig? config,
     AnalysisBackendKind? backend,
     EngineConfig? openAiConfig,
+    List<String>? nextVocabulary,
   }) {
     final operation = _settingsWriting.then((_) async {
       try {
         final nextBackend = backend ?? analysisBackend;
         final nextOpenAi = openAiConfig ?? analysisOpenAiConfig;
+        final nextVocab = nextVocabulary ?? vocabulary;
         await AppSettingsStore.save(
           AppSettings(
             speechProvider: speechProvider,
@@ -128,6 +131,7 @@ mixin _RecorderSettings on ChangeNotifier {
             },
             analysisBackend: nextBackend,
             analysisOpenAiConfig: nextOpenAi,
+            vocabulary: nextVocab,
             autoTranscribe: autoTranscribe,
             autoRealtime: autoRealtime,
             allDayListening: allDayListening,
@@ -148,6 +152,9 @@ mixin _RecorderSettings on ChangeNotifier {
         if (provider != null) _engineAdapters[provider]!.applySaved(config!);
         if (backend != null) analysisBackend = backend;
         if (openAiConfig != null) analysisOpenAiConfig = openAiConfig;
+        if (nextVocabulary != null) {
+          vocabulary = List<String>.unmodifiable(nextVocabulary);
+        }
         _syncAnalysisModel();
         settingsStorageError = null;
         if (!_disposed) notifyListeners();
@@ -520,6 +527,49 @@ mixin _RecorderSettings on ChangeNotifier {
 
   AnalysisBackendKind analysisBackend = AnalysisBackendKind.qwen;
   EngineConfig analysisOpenAiConfig = const EngineConfig();
+  List<String> vocabulary = const [];
+
+  String get vocabularyPromptHint => vocabulary.isEmpty
+      ? ''
+      : '个人词汇表（专有名词、人名、术语，优先采用正确写法）：${vocabulary.join('、')}';
+
+  static List<String> _normalizeVocabulary(Iterable<String> raw) {
+    final seen = <String>{};
+    final result = <String>[];
+    for (final item in raw) {
+      final trimmed = item.trim();
+      if (trimmed.isEmpty || trimmed.runes.length > 40) continue;
+      if (seen.add(trimmed.toLowerCase())) {
+        result.add(trimmed);
+      }
+    }
+    return List<String>.unmodifiable(result);
+  }
+
+  Future<void> setVocabulary(Iterable<String> terms) {
+    final normalized = _normalizeVocabulary(terms);
+    if (listEquals(vocabulary, normalized)) {
+      return SynchronousFuture<void>(null);
+    }
+    vocabulary = normalized;
+    notifyListeners();
+    return _persistSettings(nextVocabulary: normalized);
+  }
+
+  Future<void> addVocabularyTerm(String term) {
+    final trimmed = term.trim();
+    if (trimmed.isEmpty) return SynchronousFuture<void>(null);
+    return setVocabulary([...vocabulary, trimmed]);
+  }
+
+  Future<void> removeVocabularyTerm(String term) {
+    final target = term.trim().toLowerCase();
+    if (target.isEmpty) return SynchronousFuture<void>(null);
+    return setVocabulary([
+      for (final item in vocabulary)
+        if (item.toLowerCase() != target) item,
+    ]);
+  }
 
   void _syncAnalysisModel() {
     if (analysisBackend == AnalysisBackendKind.openaiCompatible) {

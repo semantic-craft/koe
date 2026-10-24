@@ -24,6 +24,11 @@ mixin _RecorderTranscripts on ChangeNotifier {
     String key, {
     String? pathHint,
   });
+  Future<void> upgradeDraftMinutesIfNeeded(
+    RecordingReference ref, {
+    String? templateId,
+    String language = 'zh',
+  });
   String _recordingKey({int? fileId, String? path});
   abstract final Map<String, RecordingTranslation> _recordingTranslations;
   Future<void> _scheduleTopicAssist(String recordingKey, String transcript);
@@ -201,6 +206,13 @@ mixin _RecorderTranscripts on ChangeNotifier {
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
     unawaited(_persistTranscripts());
+    if (textChanged && !_isRecordingAudioLocked(id, path)) {
+      unawaited(
+        upgradeDraftMinutesIfNeeded(
+          RecordingReference(fileId: id, path: path),
+        ),
+      );
+    }
     if (visibleChanged && topicsEnabled) {
       unawaited(_maybeAutoGenerateTopicNoteForKey(key, pathHint: path));
     }
