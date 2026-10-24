@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-24T04:59:30.086841Z</p>
-<p>Main: <code>main: 1d528ec6f64bbb5dc2f7e96bd506eedd8c02dd82</code></p>
+<p>Observed: 2026-10-24T08:17:18.635298Z</p>
+<p>Main: <code>main: 09e4d815c416db4bcbdbeb010da74a8761cbc857</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -44,10 +44,12 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/421">pull 421: #392 的实现；真机项要千问 key，还没跑。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/422">pull 422: #393 的实现；真机第 1、5 项通过；第 4 项进程拉起、服务与连接恢复通过，新录音取回未测；换 BLE 地址后关联被撤销（#436）已在 #451 修复，真机通过。</a></li>
 </ul><p>Next: 继续 #345：新录音取回、仅靠后台升级广播唤起、完整成功导出后的锁释放仍未验证；带走再带回等需人动手的项目保留。</p></article>
-<article id="mac-calendar-453-acceptance"><h3>Mac日历命名与待办导出验收</h3><span class="badge">in_progress</span><p>修正验收启动入口为LaunchServices，并提交Calendar编辑后，最终签名安装版会议命名及重启保留通过；合成待办导出日历时间正确。提醒事项授权待用户处理，完成回读未验。</p><ul>
+<article id="mac-calendar-453-acceptance"><h3>Mac日历命名与待办导出验收</h3><span class="badge">blocked</span><p>会议命名/重开保留与日历导出已有通过证据。提醒事项请求到达TCC提示阶段，但用户两次确认弹窗不可见、请求未返回；不是用户未找到开关。已修授权/写入阶段反馈与重复点击，987项检查、Release签名安装启动通过；实际提醒事项导出和完成回读未验。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/453">issue 453: 2026-10-24评论6380070721：原生authorized=0/1、matches=0/1对照；最终12:45命名成功，Calendar导出15:00–16:00正确；提醒事项未宣称通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/477">pull 477: 启动器修复已squash合并1d528ec，CI通过；提醒事项授权与完成回读继续留#453。</a></li>
-</ul><p>Next: 用户允许Koe提醒事项权限后，核对一次已发起的导出，再从系统提醒事项勾选完成并回到Koe回读。其余首次日历授权、参与人、全天事件、拒绝权限、iPhone和跨版本升级仍待验。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/479">pull 479: 等待授权回归先红后绿，check987项、CI通过，已签名安装；不证明系统授权或真实导出通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/453">issue 453: 评论6381876384：TCC AUTHREQ_PROMPTING 与用户不可见反馈；remindctl请求归属Codex，未替代Koe验收。</a></li>
+</ul><p>Next: 定位系统授权提示不可见并取得Koe请求的明确结果；随后复验已安装版待办状态、系统端导出与完成回读。其余#453权限边界、参与人、iPhone和升级待验。本地模型继续暂缓。</p></article>
 </section>
 <section id="ongoing"><h2>实现差异与范围核对</h2>
 <article id="android-identity-pr"><h3>旧 Android 应用身份 PR（已关闭）</h3><span class="badge">done</span><p>PR #62 与工单 #38 已被 #331 的范围取代：Koe 名称与图标由 #336（PR #347）完成，后台同步通知由 #339（PR #351）、录音与监听通知由 #340（PR #354）完成。2026-10-22 关闭 PR #62 与 #38，不再合并。</p><ul>
