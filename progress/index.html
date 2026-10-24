@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-24T03:27:36.046475Z</p>
-<p>Main: <code>main: e17ea7c7b14c503fca1b231f3ea5c1b6c51c3de4</code></p>
+<p>Observed: 2026-10-24T03:49:45.077780Z</p>
+<p>Main: <code>main: a4af62fa446e69fb490895b20fd4b46c0d4453e5</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -74,7 +74,8 @@
 <li>note acceptance-boundary: 此前极速版与Qwen对照：Qwen第一场DER24.36%：漏检21.23、误报0.37、归属混淆2.75个百分点。漏检是时段未覆盖，不等于漏字率。未做CER、人工逐句听验或安装GUI验收；未更改个人引擎与隐私设置。</li>
 <li>note doubao-standard-20261024: 本轮独立HTTP实验适配器真实调用标准版submit/query，SSD300，三次成功、无重发；Qwen复用当日同批保存结果，不重复收费。SHA256核对临时托管文件；Dart和独立Python计分一致。非生产适配器或安装GUI验收。</li>
 <li>note aliyun-temporary-hosting-cleanup: 仅临时托管公开样例，未改服务器配置。三段音频已删除、URL均404、兜底timer停止；TeslaHub未重启、healthy、HTTPS200。系统盘40GiB清理旧日志728.8MiB及少量缓存，可用约18GiB；独立98GiB数据盘可用约86GiB。</li>
-</ul><p>Next: 按用户最新要求不建设自有音频托管服务，继续现有Qwen直接上传链路（仍是云端识别）。豆包300需要audio.url，仅保留评测记录、暂不接入。Mac安装版会议转写/标签/改名持久化及用户真实会议待验；本地#433继续暂缓。</p></article>
+<li>note mac-qwen-gui-20261024: Mac安装版1.2.2+5：GUI导入600秒四人公开会议QA-Qwen-4speakers-10min，单条确认上传Qwen并成功转写，4个标签。0/1改名为A/B保存，正文与列表同步更新；Cmd-Q退出且pgrep确认无进程，重开PID57070后同一录音及姓名面板仍为A/B/2/3，未重新转写。截图与AX存本地_artifacts/koe/mac-qwen-gui-20261024。未验中文输入法完整改名、跨设备同步、私人会议及逐句质量；本地模型未调用。</li>
+</ul><p>Next: 继续Qwen直接上传；Mac安装版公开样例核心流程已验，用户真实会议及人工逐句质量仍待验。本地#433继续暂缓，豆包300不建设自有托管。</p></article>
 <article id="meeting-phase4"><h3>会议纪要第 4 期：对标拾音的 Mac 录音体验</h3><span class="badge">in_progress</span><p>4I（#408）已在 #439 合并：录音中和导入时都能选「大约几个人」。R18.12 的后半（#426）已在 #442 合并：被打断的本机转写和还在上传的云端转写下次打开从头重跑。4F（#405）已在 #447 合并（70db2a1）：别的应用在前台时按 ⌃⌥⌘R 开始或停止录音，录音中按 ⌃⌥⌘B 标重点；真实按键没在真机上跑（#446）。4G（#406）已在 #449 合并（1f31357）：会议应用连续用麦克风 5 秒时，右上角不抢前台的小面板问要不要开录，录着的会议结束 10 秒后问要不要停；可对应用选「不再提醒」，设置「会议提醒」里恢复或整个关掉；每场会议只在第 5 秒判断一次，和拾音不同。77f1000 上 scripts/check 无分析问题、953 个测试全过，macOS debug 构建成功；沙盒里的 Koe 能否读到进程列表、真实入会离会没在真机上跑（#450）。4H（#407）已由 #457 squash 合并（446930a）：接续原作者实现，补冷启动设置读回前立即开录误请求日历的回归。最终 check 961 项通过，CI通过；本轮 iOS debug 无签名构建成功、Mac profile 性能场景阈值通过。真实日历与提醒事项、安装升级仍由 #453 验收。4E（#404）由 #467 交付双路录音、两路 WAV 恢复、分路电平与本机实时文字。接上 #466 后全量 979 项通过，Mac 构建与性能门槛通过；12 秒原生采集两路各 407432 字节，系统峰值 1954。探针关闭 Speech，未证明 GUI 识别；真实会议、蓝牙与安装升级仍待 #464。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/447">pull 447: 4F 的实现：全局快捷键、设置开关、面板自动关闭，已合并（70db2a1）；三项验收写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/405">issue 405: 4F 工单：全局快捷键 ⌃⌥⌘R、⌃⌥⌘B（拾音 R11.3、R19.5）。</a></li>
