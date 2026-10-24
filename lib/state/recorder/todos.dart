@@ -41,6 +41,9 @@ mixin _RecorderTodos on ChangeNotifier {
   bool systemTaskSupported(SystemTaskTarget target) =>
       _todoSync.supports(target);
 
+  SystemExportPhase? todoExportPhase(String id, SystemTaskTarget target) =>
+      _todoSync.exportPhase(id, target);
+
   String get _contextModel => analysis.model ?? 'qwen3.8-flash';
 
   /// Whether a previous extraction for [ref] never reported its result.

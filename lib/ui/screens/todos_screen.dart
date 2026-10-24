@@ -559,7 +559,12 @@ class _LinkCard extends StatelessWidget {
     final name = _reminder ? '提醒事项' : '日历';
     final conflict = link?.conflict;
     final supported = c.systemTaskSupported(target);
-    final status = link == null
+    final phase = c.todoExportPhase(todo.id, target);
+    final status = phase == SystemExportPhase.authorization
+        ? '等待系统授权'
+        : phase == SystemExportPhase.writing
+        ? '正在写入'
+        : link == null
         ? (supported ? '未导出' : '此设备不支持')
         : conflict != null
         ? '有冲突：$name里是「${conflict.title}」'
@@ -583,8 +588,8 @@ class _LinkCard extends StatelessWidget {
               if (link == null && supported)
                 TextButton(
                   key: ValueKey('export-${target.name}'),
-                  onPressed: () => _export(context),
-                  child: const Text('导出'),
+                  onPressed: phase == null ? () => _export(context) : null,
+                  child: Text(phase == null ? '导出' : '处理中'),
                 )
               else if (link != null)
                 TextButton(
