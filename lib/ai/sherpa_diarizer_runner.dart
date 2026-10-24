@@ -396,8 +396,8 @@ DiarizationResult _processDiarizationSamples(
     expectedSpeakers: expectedSpeakers,
   );
   if (labels == null) {
-    // A user can request MORE speakers than the automatic segmentation found.
-    // Preserve the native splitting path rather than silently ignoring that.
+    // Clean evidence may not support a requested split or merge. Preserve
+    // native count constraints instead of forcing unrelated voice profiles.
     final constrained = recognize(expectedSpeakers!);
     final samples = _extractSpeakerEvidence(
       wave: wave,
@@ -593,7 +593,7 @@ List<SpeakerEvidence> _extractSpeakerEvidence({
       for (final span in spans) {
         for (var pos = span.$1; pos < span.$2; pos += sr * 3) {
           final stop = math.min(span.$2, pos + sr * 3);
-          if (stop - pos < sr * 0.8) continue;
+          if (stop - pos < sr ~/ 5) continue;
           final embedding = extract(pos, stop);
           if (embedding == null) continue;
           observations.add(
@@ -608,7 +608,7 @@ List<SpeakerEvidence> _extractSpeakerEvidence({
         }
       }
       if (!hasClean && end - start >= sr ~/ 5) {
-        // Mixed/short fragments can match existing profiles, never create one.
+        // Fully overlapping fragments can match existing profiles, never train one.
         // Bound this input too: a long all-overlap turn need not be copied whole.
         final stop = math.min(end, start + sr * 3);
         final embedding = extract(start, stop);

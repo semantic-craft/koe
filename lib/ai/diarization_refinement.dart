@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 /// Evidence extracted from a single turn. Only non-overlapping speech trains
-/// speaker profiles; mixed/short speech can be assigned but never trains them.
+/// speaker profiles; short speech is kept distinct unless it matches a profile.
 class SpeakerEvidence {
   const SpeakerEvidence({
     required this.turn,
@@ -24,6 +24,7 @@ List<int>? refineSpeakerLabels(
 }) {
   final clean = <int, _Profile>{};
   final byTurn = <int, _Profile>{};
+  final shortSoloTurns = <int>{};
   int? dimension;
   for (final item in evidence) {
     if (item.turn < 0 ||
@@ -39,7 +40,8 @@ List<int>? refineSpeakerLabels(
     byTurn
         .putIfAbsent(item.turn, () => _Profile(dimension!))
         .add(vector, item.seconds);
-    if (item.clean) {
+    if (item.clean && item.seconds < 0.8) shortSoloTurns.add(item.turn);
+    if (item.clean && item.seconds >= 0.8) {
       clean
           .putIfAbsent(speakers[item.turn], () => _Profile(dimension!))
           .add(vector, item.seconds);
@@ -74,19 +76,40 @@ List<int>? refineSpeakerLabels(
       }
     }
     // Conservative same-voice merge; freeze before independent holdouts.
-    if (target == null && best < 0.7) break;
+    if (best < 0.7) {
+      // A requested count is not evidence that two distinct voices match.
+      // Let native constrained clustering handle a genuinely different count.
+      if (target != null) return null;
+      break;
+    }
     clean[a]!.merge(clean.remove(b)!);
     for (final entry in labels.entries.toList()) {
       if (entry.value == b) labels[entry.key] = a;
     }
   }
-  return [
-    for (var i = 0; i < speakers.length; i++)
-      labels[speakers[i]] ??
-          (byTurn[i] == null
-              ? speakers[i]
-              : _nearest(byTurn[i]!.centroid, clean)),
-  ];
+  final result = <int>[];
+  for (var i = 0; i < speakers.length; i++) {
+    final mapped = labels[speakers[i]];
+    if (mapped != null) {
+      result.add(mapped);
+      continue;
+    }
+    final profile = byTurn[i];
+    if (profile == null) {
+      result.add(speakers[i]);
+      continue;
+    }
+    final nearest = _nearest(profile.centroid, clean);
+    // A brief exclusive answer can belong to a new speaker. Unlike fully
+    // overlapping speech, it must not be forced into an existing profile.
+    final preserve =
+        target == null &&
+        shortSoloTurns.contains(i) &&
+        _dot(profile.centroid, clean[nearest]!.centroid) < 0.7;
+    result.add(preserve ? speakers[i] : nearest);
+  }
+  if (target != null && result.toSet().length != target) return null;
+  return result;
 }
 
 int _nearest(List<double> vector, Map<int, _Profile> profiles) {

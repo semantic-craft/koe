@@ -9,6 +9,37 @@ SpeakerEvidence e(
 }) => SpeakerEvidence(turn: turn, embedding: v, seconds: seconds, clean: clean);
 
 void main() {
+  test(
+    'unsupported fixed count falls back instead of merging distinct voices',
+    () {
+      expect(
+        refineSpeakerLabels(
+          [0, 1, 2],
+          [
+            e(0, [1, 0, 0]),
+            e(1, [0, 1, 0]),
+            e(2, [0, 0, 1]),
+          ],
+          expectedSpeakers: 2,
+        ),
+        isNull,
+      );
+    },
+  );
+  test('missing evidence cannot escape the requested count', () {
+    expect(
+      refineSpeakerLabels(
+        [0, 1, 2],
+        [
+          e(0, [1, 0]),
+          e(1, [0, 1]),
+        ],
+        expectedSpeakers: 2,
+      ),
+      isNull,
+    );
+  });
+
   final speakers = [0, 1, 2, 3, 4, 5, 6];
   final evidence = [
     e(0, [1, 0, 0, 0]), e(1, [0, 1, 0, 0]),
@@ -52,7 +83,7 @@ void main() {
       [0, 1],
       [
         e(0, [1, 0], seconds: 100),
-        e(1, [0, 1], seconds: 0.8),
+        e(1, [0, 1], seconds: 0.5),
       ],
     )!;
     expect(labels[0], isNot(labels[1]));
