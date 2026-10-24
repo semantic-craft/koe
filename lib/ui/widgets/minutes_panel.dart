@@ -204,6 +204,101 @@ class _MinutesPanelState extends State<MinutesPanel> {
   void message(String text) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
+  Future<void> _showReplaceTermDialog() async {
+    final fromController = TextEditingController();
+    final toController = TextEditingController();
+    var applyAll = false;
+    var addToVocab = true;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          title: const Text('查找替换'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  key: const ValueKey('minutes-replace-from-input'),
+                  controller: fromController,
+                  decoration: const InputDecoration(
+                    labelText: '原词（查找内容）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  key: const ValueKey('minutes-replace-to-input'),
+                  controller: toController,
+                  decoration: const InputDecoration(
+                    labelText: '替换为（正确用词）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Checkbox(
+                      key: const ValueKey('minutes-replace-scope-all'),
+                      value: applyAll,
+                      onChanged: (v) =>
+                          setModalState(() => applyAll = v ?? false),
+                    ),
+                    const Expanded(child: Text('应用到全部录音与纪要')),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Checkbox(
+                      key: const ValueKey('minutes-replace-add-vocab'),
+                      value: addToVocab,
+                      onChanged: (v) =>
+                          setModalState(() => addToVocab = v ?? true),
+                    ),
+                    const Expanded(child: Text('同时加入个人词汇表')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: const ValueKey('minutes-replace-submit'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('执行替换'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final from = fromController.text.trim();
+    final to = toController.text.trim();
+    if (confirmed != true || from.isEmpty || from == to) return;
+    final report = applyAll
+        ? await widget.controller.replaceTermAcrossLibrary(
+            from,
+            to,
+            addToVocabulary: addToVocab,
+          )
+        : await widget.controller.replaceTermInRecording(
+            widget.reference,
+            from,
+            to,
+            addToVocabulary: addToVocab,
+          );
+    if (!mounted) return;
+    setState(() {});
+    message(
+      '已更新 ${report.recordingsUpdated} 条逐字稿、${report.minutesUpdated} 份纪要'
+      '${report.addedToVocabulary ? '，并已加入词汇表' : ''}',
+    );
+  }
+
   Future<void> _showVersionHistory() async {
     final versions = manager.versionsFor(key);
     if (versions.isEmpty) return;
@@ -809,6 +904,15 @@ class _MinutesPanelState extends State<MinutesPanel> {
                         ),
                         onPressed: busy ? null : () => edit(minutes!, result),
                         child: const Text('编辑纪要'),
+                      ),
+                      TextButton(
+                        key: const ValueKey('minutes-replace-term-button'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: busy ? null : _showReplaceTermDialog,
+                        child: const Text('查找替换'),
                       ),
                       TextButton(
                         style: TextButton.styleFrom(

@@ -23,6 +23,7 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
   abstract final Future<void> _libraryLoaded;
   bool get _liveProcessing;
   Future<void> _persistTranscripts({bool strict = false});
+  void _recordTaskNotice(TaskCompletionNotice notice);
   abstract final QwenSttService _qwenStt;
   abstract final Map<String, String> _recordingErrors;
   // ignore: unused_element_parameter
@@ -534,6 +535,15 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         job.stage = 'failed';
         job.error = _recordingErrors[key];
         await _fileJobs.save();
+        _recordTaskNotice(
+          TaskCompletionNotice(
+            kind: 'transcription',
+            targetKey: key,
+            succeeded: false,
+            message: '转写失败：${_recordingErrors[key]}',
+            timestamp: DateTime.now(),
+          ),
+        );
       } else {
         job.stage = 'result';
         job.text = result.text;
@@ -581,6 +591,16 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
           unawaited(_scheduleTopicAssist(key, result.text));
         }
         statusMessage = '转写已保存';
+        _recordTaskNotice(
+          TaskCompletionNotice(
+            kind: 'transcription',
+            targetKey: key,
+            succeeded: true,
+            message:
+                '转写完成：${recordingView(RecordingReference(path: currentPath)).title}',
+            timestamp: DateTime.now(),
+          ),
+        );
         // Refresh a closed live route without retaining an obsolete error.
         final session = _sessionForReference(
           RecordingReference(path: currentPath),
@@ -605,6 +625,15 @@ mixin _RecorderTranscriptionJobs on ChangeNotifier {
         // Known task IDs and saved results remain resumable; uncertain requests
         // require an explicit retry and never automatically resubmit.
         if (job.stage != 'result' && job.taskId == null) job.stage = 'failed';
+        _recordTaskNotice(
+          TaskCompletionNotice(
+            kind: 'transcription',
+            targetKey: key,
+            succeeded: false,
+            message: '转写失败：${_recordingErrors[key] ?? '请重试'}',
+            timestamp: DateTime.now(),
+          ),
+        );
         try {
           await _fileJobs.save();
         } catch (_) {

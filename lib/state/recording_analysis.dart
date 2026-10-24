@@ -291,6 +291,25 @@ List<String> analysisSourceBlocks(String text, {int maxRunes = 6000}) {
   ];
 }
 
+/// Completion or failure notification for a background transcription or
+/// minutes/analysis job (#493 / S34).
+class TaskCompletionNotice {
+  const TaskCompletionNotice({
+    required this.kind,
+    required this.targetKey,
+    required this.succeeded,
+    required this.message,
+    required this.timestamp,
+  });
+
+  /// `'transcription'` or `'minutes'`.
+  final String kind;
+  final String targetKey;
+  final bool succeeded;
+  final String message;
+  final DateTime timestamp;
+}
+
 class AnalysisResult {
   AnalysisResult({
     required this.text,
@@ -705,6 +724,13 @@ class RecordingAnalysis extends ChangeNotifier {
   int _templateSequence = 0;
   Future<void>? _loading;
   bool _disposed = false;
+  TaskCompletionNotice? lastNotice;
+  ValueChanged<TaskCompletionNotice>? onTaskNotice;
+
+  void _emitNotice(TaskCompletionNotice notice) {
+    lastNotice = notice;
+    onTaskNotice?.call(notice);
+  }
 
   List<PromptTemplate> get templates =>
       List.unmodifiable([...builtInPromptTemplates, ..._customTemplates]);
@@ -1148,6 +1174,58 @@ class RecordingAnalysis extends ChangeNotifier {
     }
   }
 
+  /// Updates an existing analysis result's [text], [sources], and [sourceHash]
+  /// together (e.g. during global term replacement so the minutes stay aligned
+  /// with the updated transcript and keep version history) (#493 / S34).
+  Future<void> replaceResultWithSources(
+    String k,
+    AnalysisResult expected, {
+    required String text,
+    required List<String> sources,
+    required String sourceHash,
+  }) async {
+    if (busy(k) || !identical(results[k], expected)) {
+      throw StateError('结果已更新，请重新打开后编辑');
+    }
+    final replacement = AnalysisResult(
+      text: text,
+      sourceHash: sourceHash,
+      model: expected.model,
+      instruction: expected.instruction,
+      sources: List<String>.unmodifiable(sources),
+      createdAt: expected.createdAt,
+      editedAt: DateTime.now(),
+      templateId: expected.templateId,
+      templateVersion: expected.templateVersion,
+      isDraft: false,
+      templateFingerprint: expected.templateFingerprint,
+    );
+    final oldHistory = versionHistory[k] == null
+        ? null
+        : List<AnalysisResult>.from(versionHistory[k]!);
+    final oldPrevious = previousResults[k];
+    _recordVersion(k, expected);
+    results[k] = replacement;
+    try {
+      await save();
+    } catch (_) {
+      if (identical(results[k], replacement)) results[k] = expected;
+      if (oldHistory == null) {
+        versionHistory.remove(k);
+      } else {
+        versionHistory[k] = oldHistory;
+      }
+      if (oldPrevious == null) {
+        previousResults.remove(k);
+      } else {
+        previousResults[k] = oldPrevious;
+      }
+      rethrow;
+    } finally {
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   void cancel(String k) {
     final abort = _running.remove(k);
     // A pending claim has no abort handle yet; the UI only offers cancel once
@@ -1561,6 +1639,25 @@ class RecordingAnalysis extends ChangeNotifier {
         _checkpoints.remove(k);
         _jobHashes.remove(k);
         _unconfirmedNodes.remove(k);
+        String summaryTitle = '整理已完成';
+        try {
+          final decoded = jsonDecode(output);
+          if (decoded is Map && decoded['title'] is String) {
+            final t = (decoded['title'] as String).trim();
+            if (t.isNotEmpty) summaryTitle = '纪要整理完成：$t';
+          }
+        } catch (_) {}
+        _emitNotice(
+          TaskCompletionNotice(
+            kind: resultSlot == 'minutes' || templateId == minutesTemplateId
+                ? 'minutes'
+                : 'analysis',
+            targetKey: k,
+            succeeded: true,
+            message: summaryTitle,
+            timestamp: DateTime.now(),
+          ),
+        );
       }
     } catch (_) {
       if (identical(_running[k], abort)) {
@@ -1571,6 +1668,17 @@ class RecordingAnalysis extends ChangeNotifier {
             : avoidDuplicateCharges && invalidOutput
             ? '汇总结构校验失败；成功片段已保留，确认后只会重跑汇总节点。'
             : '分析未完成，已有结果与片段已保留；可重试（未确认的请求可能重复计费）';
+        _emitNotice(
+          TaskCompletionNotice(
+            kind: resultSlot == 'minutes' || templateId == minutesTemplateId
+                ? 'minutes'
+                : 'analysis',
+            targetKey: k,
+            succeeded: false,
+            message: errors[k] ?? '纪要整理未完成',
+            timestamp: DateTime.now(),
+          ),
+        );
       }
     } finally {
       if (identical(_running[k], abort)) {

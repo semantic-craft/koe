@@ -97,18 +97,14 @@ class _FilesBodyState extends State<FilesBody>
     final localPaths = <String>[];
     final searchHits = <String, TranscriptSearchHit>{};
     for (final path in availablePaths) {
-      final view = c.recordingView(
-        RecordingReference(fileId: c.fileIdFromPath(path), path: path),
+      final ref = RecordingReference(
+        fileId: c.fileIdFromPath(path),
+        path: path,
       );
+      final view = c.recordingView(ref);
       if (normalizedQuery.isNotEmpty) {
         final titleMatch = view.title.toLowerCase().contains(normalizedQuery);
-        final hit = findTranscriptSearchHit(
-          text: view.text,
-          segments: view.segments,
-          query: widget.query,
-          aliases: c.speakerAliasesForPath(path),
-          duration: c.localDurationForPath(path),
-        );
+        final hit = c.searchRecordingHit(ref, widget.query);
         if (!titleMatch && hit == null) continue;
         if (hit != null) searchHits[path] = hit;
       }
