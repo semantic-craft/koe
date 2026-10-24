@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "cca1c62393cd6e56ab0fad17ba627ec017997b48",
+    "main": "e17ea7c7b14c503fca1b231f3ea5c1b6c51c3de4",
     "open_pulls": [],
     "pulls": [
       {
@@ -696,7 +696,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-24T01:50:43.694509Z",
+  "observed_at": "2026-10-24T03:27:36.046475Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1001,33 +1001,43 @@
           "title": "会议纪要第 2 期：本机发言人区分"
         },
         {
-          "id": "meeting-cloud-diarization",
-          "title": "中文多人区分：云端对照完成，当前选Qwen",
-          "status": "done",
-          "summary": "2026-10-24用生产服务适配器真实调用两家，各3场600秒AliMeeting，共6次全部完成。Qwen-Audio-3.1-ASR-Flash-Filetrans自动人数4/4/2均正确，DER24.36%/11.96%/5.30%；豆包volc.bigasr.auc_turbo、ssd_version=200输出4/5/3人，DER37.08%/32.46%/8.76%。本轮选Qwen作为需复核的会议稿方案；完成的是此轮对照，不代表复杂抢话或三端GUI全面验收。",
-          "next": "使用现有Qwen云端链路；复杂抢话和短插话暂未达到可靠完整分离，用户实际会议需复核。豆包当前配置暂不作多人首选；本地#433暂缓。",
           "evidence": [
             {
               "kind": "note",
-              "ref": "cloud-diarization-20261024",
-              "note": "Mac Flutter测试运行时调用生产QwenSttService/DoubaoSttService；非mock，不调用本地模型。相同远场第一声道600秒，人工RTTM，双侧250ms collar含重叠；独立Python分解与Dart总分一致。6次结果持久化，无重发。"
+              "note": "此前极速版与Qwen对照：Mac Flutter测试运行时调用生产QwenSttService/DoubaoSttService；非mock，不调用本地模型。相同远场第一声道600秒，人工RTTM，双侧250ms collar含重叠；独立Python分解与Dart总分一致。6次结果持久化，无重发。",
+              "ref": "cloud-diarization-20261024"
             },
             {
               "kind": "file",
-              "ref": "lib/ai/qwen_stt.dart",
-              "note": "本轮实际模型为现有默认qwen-audio-3.1-asr-flash-filetrans，自动区分，不指定人数。"
+              "note": "此前极速版与Qwen对照：该轮实际模型为现有默认qwen-audio-3.1-asr-flash-filetrans，自动区分，不指定人数。",
+              "ref": "lib/ai/qwen_stt.dart"
             },
             {
               "kind": "file",
-              "ref": "lib/ai/doubao_stt.dart",
-              "note": "本轮沿用现有极速版和ssd_version=200，不推广结论到未测豆包版本。"
+              "note": "此前极速版与Qwen对照：该轮沿用现有极速版和ssd_version=200，不推广结论到未测豆包版本。",
+              "ref": "lib/ai/doubao_stt.dart"
             },
             {
               "kind": "note",
-              "ref": "acceptance-boundary",
-              "note": "Qwen第一场DER24.36%：漏检21.23、误报0.37、归属混淆2.75个百分点。漏检是时段未覆盖，不等于漏字率。未做CER、人工逐句听验或安装GUI验收；未更改个人引擎与隐私设置。"
+              "note": "此前极速版与Qwen对照：Qwen第一场DER24.36%：漏检21.23、误报0.37、归属混淆2.75个百分点。漏检是时段未覆盖，不等于漏字率。未做CER、人工逐句听验或安装GUI验收；未更改个人引擎与隐私设置。",
+              "ref": "acceptance-boundary"
+            },
+            {
+              "kind": "note",
+              "ref": "doubao-standard-20261024",
+              "note": "本轮独立HTTP实验适配器真实调用标准版submit/query，SSD300，三次成功、无重发；Qwen复用当日同批保存结果，不重复收费。SHA256核对临时托管文件；Dart和独立Python计分一致。非生产适配器或安装GUI验收。"
+            },
+            {
+              "kind": "note",
+              "ref": "aliyun-temporary-hosting-cleanup",
+              "note": "仅临时托管公开样例，未改服务器配置。三段音频已删除、URL均404、兜底timer停止；TeslaHub未重启、healthy、HTTPS200。系统盘40GiB清理旧日志728.8MiB及少量缓存，可用约18GiB；独立98GiB数据盘可用约86GiB。"
             }
-          ]
+          ],
+          "id": "meeting-cloud-diarization",
+          "next": "按用户最新要求不建设自有音频托管服务，继续现有Qwen直接上传链路（仍是云端识别）。豆包300需要audio.url，仅保留评测记录、暂不接入。Mac安装版会议转写/标签/改名持久化及用户真实会议待验；本地#433继续暂缓。",
+          "status": "done",
+          "summary": "2026-10-24补测豆包标准版2.0 volc.seedasr.auc + SSD300，三场600秒公开会议真实API均完成，人数4/4/2正确，DER30.14%/17.53%/4.33%。同批Qwen已存结果重计分为24.36%/11.96%/5.30%。豆包300改善极速版标签过多，两人场略优，四人场Qwen更好；不据此承诺复杂抢话完整或纪要准确率。",
+          "title": "中文多人云端对照：保留Qwen，豆包300暂不接入"
         },
         {
           "evidence": [
