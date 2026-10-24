@@ -313,6 +313,7 @@ class RecorderController extends ChangeNotifier
     Future<Duration?> Function(String path)? localDurationReader,
     Future<Duration?> Function(String path)? audioDurationProbe,
     this.blePullInactivityTimeout = const Duration(seconds: 90),
+    this.wifiExportReconnectTimeout = const Duration(seconds: 25),
     this.aiKeepAliveGrace = const Duration(seconds: 10),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
@@ -739,6 +740,10 @@ class RecorderController extends ChangeNotifier
   @override
   final Duration blePullInactivityTimeout;
 
+  /// How long a Wi‑Fi export waits for Bluetooth to reconnect after the
+  /// recorder's hotspot disappears mid-batch (#461).
+  @override
+  final Duration wifiExportReconnectTimeout;
   /// How long Koe stays kept running after its last model request, so the
   /// next step of the same work starts under the same foreground service.
   @override

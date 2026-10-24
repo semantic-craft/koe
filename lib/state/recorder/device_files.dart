@@ -56,6 +56,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
   bool get onDeviceSpeechSupported;
   Future<void> refreshAppleCapabilities();
   abstract final Duration blePullInactivityTimeout;
+  abstract final Duration wifiExportReconnectTimeout;
   abstract bool bound;
   abstract bool connected;
   abstract bool encryptReady;
@@ -1268,61 +1269,122 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     notifyListeners();
 
     _wifiEndpointUsed = true;
-    try {
-      final rawPaths = await _wifi.transferFiles(endpoint: ep, files: targets);
-      if (run != _wifiExportRun) return const [];
-      final conversionFailures = <String>[];
-      final paths = await completeWifiTransfer(
-        rawPaths,
-        decrypted: encryptReady,
-        incompleteRawPaths: _wifi.incompletePaths,
-        conversionFailures: conversionFailures,
-      );
-      _pendingExportTargets = [];
-      phase = connected ? AppPhase.ready : AppPhase.idle;
-      statusMessage = paths.isEmpty
-          ? '导出完成但无数据'
-          : '已导出 ${paths.length} 个文件'
-                '${encryptReady ? "（已解密）" : "（原始密文 — 无会话）"}';
-      // WAV conversion runs per file after the transfer; surface failures
-      // instead of silently leaving the raw .opus frame stream behind.
-      errorMessage = conversionFailures.isEmpty
-          ? null
-          : 'WAV 转码失败，已保留原始 Opus 帧：${conversionFailures.join("; ")}';
-      selecting = false;
-      selectedFileIds.clear();
-      notifyListeners();
-      _reconnectBleAfterWifiExport();
-      return paths;
-    } catch (e) {
-      if (run != _wifiExportRun) return const [];
-      // Recordings saved before the failure go to the library now, and a
-      // retry only asks for the rest.
-      final saved = _wifi.current.savedPaths;
-      if (saved.isNotEmpty) {
-        final incomplete = _wifi.incompletePaths;
-        await completeWifiTransfer(
-          saved,
-          decrypted: encryptReady,
-          incompleteRawPaths: incomplete,
+    final exportedPaths = <String>[];
+    final conversionFailures = <String>[];
+    var autoRetries = 0;
+    const maxAutoRetries = 2;
+
+    while (true) {
+      try {
+        final rawPaths = await _wifi.transferFiles(
+          endpoint: ep!,
+          files: _pendingExportTargets,
         );
         if (run != _wifiExportRun) return const [];
-        final retrieved = {
-          for (final path in saved)
-            if (!incomplete.contains(path)) ExportCatalog.fileIdFromPath(path),
-        };
-        _pendingExportTargets = [
-          for (final file in _pendingExportTargets)
-            if (!retrieved.contains(file.fileId)) file,
-        ];
+        final paths = await completeWifiTransfer(
+          rawPaths,
+          decrypted: encryptReady,
+          incompleteRawPaths: _wifi.incompletePaths,
+          conversionFailures: conversionFailures,
+        );
+        exportedPaths.addAll(paths);
+        _pendingExportTargets = [];
+        phase = connected ? AppPhase.ready : AppPhase.idle;
+        statusMessage = exportedPaths.isEmpty
+            ? '导出完成但无数据'
+            : '已导出 ${exportedPaths.length} 个文件'
+                  '${encryptReady ? "（已解密）" : "（原始密文 — 无会话）"}';
+        // WAV conversion runs per file after the transfer; surface failures
+        // instead of silently leaving the raw .opus frame stream behind.
+        errorMessage = conversionFailures.isEmpty
+            ? null
+            : 'WAV 转码失败，已保留原始 Opus 帧：${conversionFailures.join("; ")}';
+        selecting = false;
+        selectedFileIds.clear();
+        notifyListeners();
+        _reconnectBleAfterWifiExport();
+        return exportedPaths;
+      } catch (e) {
+        if (run != _wifiExportRun) return const [];
+        // Recordings saved before the failure go to the library now, and a
+        // retry only asks for the rest.
+        final saved = _wifi.current.savedPaths;
+        if (saved.isNotEmpty) {
+          final incomplete = _wifi.incompletePaths;
+          final paths = await completeWifiTransfer(
+            saved,
+            decrypted: encryptReady,
+            incompleteRawPaths: incomplete,
+            conversionFailures: conversionFailures,
+          );
+          if (run != _wifiExportRun) return const [];
+          exportedPaths.addAll(paths);
+          final retrieved = {
+            for (final path in saved)
+              if (!incomplete.contains(path)) ExportCatalog.fileIdFromPath(path),
+          };
+          _pendingExportTargets = [
+            for (final file in _pendingExportTargets)
+              if (!retrieved.contains(file.fileId)) file,
+          ];
+        }
+        final failureError = _wifi.current.error ?? e.toString();
+        if (joinsWifiItself &&
+            e is WifiTransferException &&
+            _pendingExportTargets.isNotEmpty &&
+            autoRetries < maxAutoRetries) {
+          autoRetries++;
+          statusMessage = '录音豆热点已断开，正在经蓝牙重开热点继续导出…';
+          exportProgress = exportProgress.copyWith(
+            phase: ExportPhase.openingSoftAp,
+            message: statusMessage!,
+            clearError: true,
+          );
+          notifyListeners();
+          _reconnectBleAfterWifiExport();
+          final reconnected = await _waitForWifiExportBleReconnect(run);
+          if (run != _wifiExportRun) return const [];
+          if (reconnected) {
+            final nextEp = await _openWifiForExport();
+            if (run != _wifiExportRun) return const [];
+            if (nextEp != null) {
+              ep = nextEp;
+              _wifiEndpointUsed = true;
+              phase = AppPhase.busy;
+              statusMessage = encryptReady
+                  ? '正在通过 Wi‑Fi 传输并解密…'
+                  : '正在通过 Wi‑Fi 传输（原始密文）…';
+              notifyListeners();
+              continue;
+            }
+          }
+        }
+        errorMessage = failureError;
+        exportProgress = exportProgress.copyWith(
+          phase: ExportPhase.error,
+          error: failureError,
+        );
+        phase = connected ? AppPhase.ready : AppPhase.idle;
+        statusMessage = '导出失败';
+        notifyListeners();
+        _reconnectBleAfterWifiExport();
+        return const [];
       }
-      errorMessage = _wifi.current.error ?? e.toString();
-      phase = connected ? AppPhase.ready : AppPhase.idle;
-      statusMessage = '导出失败';
-      notifyListeners();
-      _reconnectBleAfterWifiExport();
-      return const [];
     }
+  }
+
+  Future<bool> _waitForWifiExportBleReconnect(int run) async {
+    final deadline = DateTime.now().add(wifiExportReconnectTimeout);
+    while (!_disposed &&
+        run == _wifiExportRun &&
+        DateTime.now().isBefore(deadline)) {
+      if (connected && _ble.isConnected) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    return !_disposed &&
+        run == _wifiExportRun &&
+        connected &&
+        _ble.isConnected;
   }
 
   Future<void> cancelWifiExport() async {
