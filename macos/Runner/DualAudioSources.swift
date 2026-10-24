@@ -63,6 +63,13 @@ final class MicrophoneSource: AudioSource {
     var onInterruption: (() -> Void)?
     private var engine = AVAudioEngine()
     private var observer: NSObjectProtocol?
+    private var inputListener: AudioObjectPropertyListenerBlock?
+    private let listenerQueue = DispatchQueue(label: "com.semanticcraft.koe.miclistener", qos: .userInitiated)
+    private static var defaultInputAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
     private let deviceUID: String
 
     init(deviceUID: String) {
@@ -76,7 +83,10 @@ final class MicrophoneSource: AudioSource {
         if !deviceUID.isEmpty, let id = AudioDevices.deviceID(forUID: deviceUID) {
             try input.auAudioUnit.setDeviceID(id)
         }
-        let format = input.outputFormat(forBus: 0)
+        let hardwareFormat = input.inputFormat(forBus: 0)
+        let format = (hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0)
+            ? hardwareFormat
+            : input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, let converter = StreamConverter(from: format) else {
             throw CaptureError.noInput
         }
@@ -88,6 +98,17 @@ final class MicrophoneSource: AudioSource {
         observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
             self?.onInterruption?()
         }
+        if deviceUID.isEmpty {
+            let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.onInterruption?() }
+            if AudioObjectAddPropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &Self.defaultInputAddress,
+                listenerQueue,
+                listener
+            ) == noErr {
+                inputListener = listener
+            }
+        }
         engine.prepare()
         do {
             try engine.start()
@@ -98,6 +119,15 @@ final class MicrophoneSource: AudioSource {
     }
 
     func stop() {
+        if let inputListener {
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &Self.defaultInputAddress,
+                listenerQueue,
+                inputListener
+            )
+        }
+        inputListener = nil
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
         engine.inputNode.removeTap(onBus: 0)
