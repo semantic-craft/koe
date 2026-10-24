@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | [Meetily](https://github.com/Zackriya-Solutions/meetily/tree/a2cb62e827da7ef59f65064c97233efb2313878e) | a2cb62e827da7ef59f65064c97233efb2313878e | standard_meeting.json 的摘要、决策、待办及来源字段设计 | assets/licenses/meetily.txt |
 | [Ownscribe](https://github.com/paberr/ownscribe/tree/9d5f82e2b8ec6c093755b43ebe8fead9ec06d7fe) | 9d5f82e2b8ec6c093755b43ebe8fead9ec06d7fe | prompts.py 的通用会议章节、合并去重和保留事实/任务规则 | assets/licenses/ownscribe.txt |
-| [Shiyin（拾音）](https://github.com/juinwei7/Shiyin/tree/7ffd7d4b43b3f3cf06012cf3abfbe8e2b0e257f9) | 7ffd7d4b43b3f3cf06012cf3abfbe8e2b0e257f9 | `Sources/Shiyin/Transcribe/Diarizer.swift:26-47,140-165` 、`Sources/Shiyin/Capture/AudioSources.swift` 的麦克风/系统音频 Core Audio 采集适配（Swift 改写），以及转写段落按时间重叠与最近中点分配发言人、首次出现顺序编号及群内凝聚度并错人风险阈值设计思路（以 Dart 重新实现） | assets/licenses/shiyin.txt |
+| [Shiyin（拾音）](https://github.com/juinwei7/Shiyin/tree/7ffd7d4b43b3f3cf06012cf3abfbe8e2b0e257f9) | 7ffd7d4b43b3f3cf06012cf3abfbe8e2b0e257f9 | `Sources/Shiyin/Transcribe/Diarizer.swift:26-47,140-165`、`Sources/Shiyin/Capture/AudioSources.swift` 的麦克风/系统音频 Core Audio 采集适配（Swift 改写），`Sources/Shiyin/Notes/Templates.swift`、`Sources/Shiyin/Notes/NotesPrompt.swift`、`Sources/Shiyin/Notes/Backends/OpenAICompatibleAPI.swift` 的五种会议纪要模板（中/英/日分节与指令）及 OpenAI 兼容 / Ollama 端点与 JSON 提取思路，以及转写段落按时间重叠与最近中点分配发言人、首次出现顺序编号及群内凝聚度并错人风险阈值设计思路（以 Dart 重新实现） | assets/licenses/shiyin.txt |
 
 思维导图固定依赖 GraphView 1.5.1（MIT），使用其 BuchheimWalkerAlgorithm 进行树形布局。界面交互、来源关联与离屏 PNG 导出由本项目实现；不需要在线渲染服务。依赖许可随 Flutter 包分发。
 

@@ -60,6 +60,7 @@ mixin _RecorderOrganize on ChangeNotifier {
   abstract final Future<void> _settingsLoaded;
   abstract Future<void> _transcriptsLoaded;
   abstract final RecordingAnalysis analysis;
+  abstract AnalysisBackendKind analysisBackend;
   abstract List<String> exportedPaths;
   abstract final TodoStore todos;
   abstract int _capabilityRevision;
@@ -442,6 +443,10 @@ mixin _RecorderOrganize on ChangeNotifier {
       return;
     }
     if (recordingAudioChanged(ref)) return;
+    if (analysisBackend == AnalysisBackendKind.none) {
+      await _dequeueOrganize(path);
+      return;
+    }
     final key = analysisKey(ref);
     final summaryKey = RecordingAnalysis.keyForTemplate(key, summaryTemplateId);
     if (!_summaryCurrent(path, summaryKey, _transcriptOf(path))) {

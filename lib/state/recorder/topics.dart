@@ -13,6 +13,8 @@ mixin _RecorderTopics on ChangeNotifier {
   abstract final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   abstract bool _disposed;
   abstract final QwenSttService _qwenStt;
+  abstract AnalysisBackendKind analysisBackend;
+  abstract EngineConfig analysisOpenAiConfig;
   // ignore: unused_element_parameter
   String _recordingKey({int? fileId, String? path});
   RecordingReference _referenceFromKey(String key, {String? pathHint});
@@ -43,8 +45,17 @@ mixin _RecorderTopics on ChangeNotifier {
     switch (_topicRecommendationOverride) {
       final QwenAnalysisService qwen when !qwen.isTopicAssist =>
         qwen.asTopicAssist(),
+      final OpenAiCompatibleAnalysisService openAi when !openAi.isTopicAssist =>
+        openAi.asTopicAssist(),
       final AnalysisService service => service,
-      null => QwenAnalysisService.topicAssist(origin: () => _qwenStt.baseUrl),
+      null => RoutingAnalysisService(
+        backend: () => analysisBackend,
+        qwen: QwenAnalysisService.topicAssist(origin: () => _qwenStt.baseUrl),
+        openAiCompatible: OpenAiCompatibleAnalysisService.topicAssist(
+          baseUrl: () =>
+              analysisOpenAiConfig.baseUrl ?? 'http://localhost:11434/v1',
+        ),
+      ),
     },
   );
 

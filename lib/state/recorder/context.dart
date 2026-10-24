@@ -18,6 +18,8 @@ mixin _RecorderContext on ChangeNotifier {
   abstract final TopicStore topics;
   abstract final bool topicsEnabled;
   abstract final QwenSttService _qwenStt;
+  abstract AnalysisBackendKind analysisBackend;
+  abstract EngineConfig analysisOpenAiConfig;
   List<TranscriptSegment> quotableSegmentsForPath(String path);
   String? transcriptForPath(String path);
   abstract final MinutesDocumentStore minutes;
@@ -37,11 +39,21 @@ mixin _RecorderContext on ChangeNotifier {
     _contextServiceOverride ??
         _contextServices.putIfAbsent(
           systemPrompt,
-          () => QwenAnalysisService(
-            origin: () => _qwenStt.baseUrl,
-            systemPrompt: systemPrompt,
-            instructionLabel: '要求',
-            sourceLabel: '资料',
+          () => RoutingAnalysisService(
+            backend: () => analysisBackend,
+            qwen: QwenAnalysisService(
+              origin: () => _qwenStt.baseUrl,
+              systemPrompt: systemPrompt,
+              instructionLabel: '要求',
+              sourceLabel: '资料',
+            ),
+            openAiCompatible: OpenAiCompatibleAnalysisService(
+              baseUrl: () =>
+                  analysisOpenAiConfig.baseUrl ?? 'http://localhost:11434/v1',
+              systemPrompt: systemPrompt,
+              instructionLabel: '要求',
+              sourceLabel: '资料',
+            ),
           ),
         ),
   );

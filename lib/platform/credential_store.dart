@@ -64,7 +64,11 @@ class CredentialStore {
       final decoded = jsonDecode(encoded) as Map<String, dynamic>;
       if (decoded.entries.any(
         (e) =>
-            !const ['qwen', 'doubao'].contains(e.key) ||
+            !const [
+              'qwen',
+              'doubao',
+              'analysisOpenAiCompatible',
+            ].contains(e.key) ||
             (e.value != null && e.value is! String),
       )) {
         throw const CredentialStorageException();
