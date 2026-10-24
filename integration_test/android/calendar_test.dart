@@ -3,6 +3,7 @@
 // gone once deleted. Only the event created here is touched. Run with
 // `scripts/android-check`, which grants READ/WRITE_CALENDAR first.
 import 'package:device_calendar_plus/device_calendar_plus.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:koe/platform/calendar_meetings.dart';
@@ -10,6 +11,7 @@ import 'package:koe/platform/system_tasks.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  const systemTasksChannel = MethodChannel('com.semanticcraft.koe/system_tasks');
 
   testWidgets('writes, reads back and loses a test calendar event', (
     tester,
@@ -55,11 +57,34 @@ void main() {
       start.subtract(const Duration(minutes: 2)),
     );
     expect(named?.title, title);
+
+    // 1. Scheduling a future meeting registers a real OS PendingIntent alarm;
+    //    clearing reminders removes the scheduled alarm.
     await meetings.syncPhoneReminders(
       matched,
       now: start.subtract(const Duration(minutes: 2)),
     );
+    final statusWithAlarm = Map<String, Object?>.from(
+      (await systemTasksChannel.invokeMapMethod('meetingReminderStatus'))!,
+    );
+    expect(statusWithAlarm['scheduledIds'], [matched.single.id]);
+
     await meetings.syncPhoneReminders(const [], now: start);
+    final statusCleared = Map<String, Object?>.from(
+      (await systemTasksChannel.invokeMapMethod('meetingReminderStatus'))!,
+    );
+    expect(statusCleared['scheduledIds'], isEmpty);
+
+    // 2. Scheduling a meeting at its start instant posts the system reminder
+    //    notification in NotificationManager.
+    await meetings.syncPhoneReminders(matched, now: start);
+    final statusPosted = Map<String, Object?>.from(
+      (await systemTasksChannel.invokeMapMethod('meetingReminderStatus'))!,
+    );
+    expect(statusPosted['postedTitles'], contains('「$title」开始了'));
+    await systemTasksChannel.invokeMethod<void>(
+      'clearMeetingReminderNotifications',
+    );
 
     final later = start.add(const Duration(hours: 2));
     expect(
