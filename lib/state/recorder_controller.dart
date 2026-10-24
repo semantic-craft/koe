@@ -1650,6 +1650,7 @@ class RecorderController extends ChangeNotifier
       );
     }
     final path = recordingView(ref).path ?? ref.path;
+    final preReplaceSourceHash = analysisFingerprint(recordingView(ref).text);
     var recUpdated = 0;
     if (path != null && await replaceTermInTranscript(path, from, to)) {
       recUpdated = 1;
@@ -1660,11 +1661,16 @@ class RecorderController extends ChangeNotifier
     final slotKey = '$key/minutes';
     final existing = analysis.results[slotKey];
     if (existing != null) {
+      MeetingMinutes? parsed;
       try {
-        final parsed = MeetingMinutes.parse(
+        parsed = MeetingMinutes.parse(
           existing.text,
           existing.sources.length,
         );
+      } on FormatException {
+        parsed = null;
+      }
+      if (parsed != null) {
         final replacedMinutes = parsed.replaceTerm(from, to);
         final updatedSources = [
           for (final s in existing.sources) s.replaceAll(from, to),
@@ -1673,23 +1679,26 @@ class RecorderController extends ChangeNotifier
           replacedMinutes.encode(),
           updatedSources,
         );
-        final freshSourceHash = analysisFingerprint(recordingView(ref).text);
+        final wasUpToDate = existing.sourceHash == preReplaceSourceHash;
+        final nextSourceHash = wasUpToDate
+            ? analysisFingerprint(recordingView(ref).text)
+            : existing.sourceHash;
         final sourcesChanged = !listEquals(existing.sources, updatedSources);
         if (encoded != existing.text ||
             sourcesChanged ||
-            (recUpdated > 0 && existing.sourceHash != freshSourceHash)) {
+            (recUpdated > 0 && existing.sourceHash != nextSourceHash)) {
           await analysis.replaceResultWithSources(
             slotKey,
             existing,
             text: encoded,
             sources: updatedSources,
-            sourceHash: freshSourceHash,
+            sourceHash: nextSourceHash,
           );
           if (encoded != existing.text || sourcesChanged) {
             minUpdated = 1;
           }
         }
-      } catch (_) {}
+      }
     }
 
     var vocabAdded = false;

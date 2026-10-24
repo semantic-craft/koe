@@ -1147,6 +1147,7 @@ mixin _RecorderTranscripts on ChangeNotifier {
     final prevManual = _manualTranscripts[key];
     final prevIncoming = _incomingTranscripts[key];
     final prevSegments = _transcriptSegments[key];
+    final prevSpeakerUndo = _speakerUndo[key];
 
     var changed = false;
     if (prevByPath != null && prevByPath.contains(from)) {
@@ -1176,6 +1177,7 @@ mixin _RecorderTranscripts on ChangeNotifier {
       changed = true;
     }
     if (!changed) return false;
+    _speakerUndo.remove(key);
     notifyListeners();
     try {
       await _persistTranscripts(strict: true);
@@ -1187,6 +1189,7 @@ mixin _RecorderTranscripts on ChangeNotifier {
       _setOrRemove(_manualTranscripts, key, prevManual);
       _setOrRemove(_incomingTranscripts, key, prevIncoming);
       _setOrRemove(_transcriptSegments, key, prevSegments);
+      _setOrRemove(_speakerUndo, key, prevSpeakerUndo);
       notifyListeners();
       rethrow;
     }

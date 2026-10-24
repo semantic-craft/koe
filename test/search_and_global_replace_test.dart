@@ -321,6 +321,55 @@ void main() {
         controller.minutesDocuments.single.segments.single.text,
         'Koe字幕导入测试',
       );
+
+      // Verify that if minutes were already outdated (sourceHash mismatch) before
+      // replacement, replacing a term preserves the outdated sourceHash rather
+      // than falsely marking the minutes up-to-date.
+      await controller.saveManualTranscript(
+        wav1.path,
+        '说话人 1：Koe支持导出文档，并补充了新的段落。',
+      );
+      final staleHashBefore = controller.analysis.results['$key1/minutes']!.sourceHash;
+      expect(
+        staleHashBefore,
+        isNot(analysisFingerprint(controller.recordingView(ref1).text)),
+      );
+      await controller.replaceTermInRecording(ref1, '导出文档', '多格式导出');
+      expect(
+        controller.analysis.results['$key1/minutes']!.sourceHash,
+        staleHashBefore,
+      );
+
+      // Verify that replacing transcript text invalidates any prior speaker-undo
+      // snapshot so undoSpeakerEdit cannot erase the word replacement.
+      controller.rememberTranscript(
+        wav2.path,
+        '说话人 1：第一句测试词。\n说话人 2：第二句测试词。',
+        segments: const [
+          TranscriptSegment(
+            start: Duration.zero,
+            end: Duration(seconds: 2),
+            text: '第一句测试词。',
+            speaker: '1',
+          ),
+          TranscriptSegment(
+            start: Duration(seconds: 2),
+            end: Duration(seconds: 4),
+            text: '第二句测试词。',
+            speaker: '2',
+          ),
+        ],
+      );
+      await controller.mergeTranscriptSpeakers(
+        wav2.path,
+        fromSpeakerId: '2',
+        intoSpeakerId: '1',
+      );
+      expect(controller.speakerUndoLabel(wav2.path), isNotNull);
+      await controller.replaceTermInTranscript(wav2.path, '测试词', '正式词');
+      expect(controller.speakerUndoLabel(wav2.path), isNull);
+      expect(await controller.undoSpeakerEdit(wav2.path), isFalse);
+      expect(controller.transcriptForPath(wav2.path), contains('正式词'));
     },
   );
 
