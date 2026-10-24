@@ -281,6 +281,46 @@ class KoePlatformPlugin :
                 }
                 result.success(title)
             }
+            "meetingReminderStatus" -> {
+                val prefs = appContext.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+                val raw = prefs.getString(KEY_SCHEDULED_MEETINGS, null)
+                val scheduledIds = mutableListOf<String>()
+                if (raw != null) {
+                    try {
+                        val arr = JSONArray(raw)
+                        for (i in 0 until arr.length()) {
+                            val obj = arr.optJSONObject(i) ?: continue
+                            val id = obj.optString("id", "")
+                            val title = obj.optString("title", "")
+                            if (id.isNotEmpty() && title.isNotEmpty() &&
+                                hasMeetingAlarm(appContext, id, title)
+                            ) {
+                                scheduledIds.add(id)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+                val postedTitles = appContext.getSystemService(NotificationManager::class.java)
+                    ?.activeNotifications
+                    ?.filter { it.notification.channelId == MEETING_CHANNEL_ID }
+                    ?.mapNotNull {
+                        it.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+                    }
+                    ?: emptyList()
+                result.success(
+                    mapOf(
+                        "scheduledIds" to scheduledIds,
+                        "postedTitles" to postedTitles,
+                    ),
+                )
+            }
+            "clearMeetingReminderNotifications" -> {
+                val manager = appContext.getSystemService(NotificationManager::class.java)
+                manager?.activeNotifications
+                    ?.filter { it.notification.channelId == MEETING_CHANNEL_ID }
+                    ?.forEach { manager.cancel(it.id) }
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }
@@ -303,7 +343,9 @@ class KoePlatformPlugin :
                 val id = obj.optString("id", "")
                 val title = obj.optString("title", "")
                 if (id.isNotEmpty() && title.isNotEmpty()) {
-                    alarmManager.cancel(meetingAlarmPendingIntent(appContext, id, title))
+                    val pi = meetingAlarmPendingIntent(appContext, id, title)
+                    alarmManager.cancel(pi)
+                    pi.cancel()
                 }
             }
         } catch (_: Exception) {}
@@ -441,6 +483,25 @@ class KoePlatformPlugin :
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
+        }
+
+        fun hasMeetingAlarm(
+            context: Context,
+            id: String,
+            title: String,
+        ): Boolean {
+            val intent = Intent(context, MeetingReminderReceiver::class.java).apply {
+                action = ACTION_MEETING_REMINDER_ALARM
+                putExtra(EXTRA_MEETING_REMINDER_ID, id)
+                putExtra(EXTRA_MEETING_REMINDER_TITLE, title)
+            }
+            val requestCode = MEETING_NOTIFICATION_BASE + (id.hashCode() and 0x0FFF)
+            return PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+            ) != null
         }
 
         fun ensureMeetingChannel(context: Context) {
