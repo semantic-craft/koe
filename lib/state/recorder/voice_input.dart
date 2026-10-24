@@ -84,7 +84,7 @@ mixin _RecorderVoiceInput on ChangeNotifier {
     if (!phoneRecordingEnabled) {
       voiceInputErrors[target] = runsOnMac
           ? '按住说话当前不可用，可以直接输入文字'
-          : '按住说话只在 iPhone 上提供，可以直接输入文字';
+          : '按住说话只在手机上提供，可以直接输入文字';
       notifyListeners();
       return false;
     }

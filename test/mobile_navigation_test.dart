@@ -344,7 +344,7 @@ void main() {
     expect(find.text('手机录音'), findsOneWidget);
     expect(find.text('纯文字记录'), findsOneWidget);
     // Without phone recording both microphone rows stay visible but disabled.
-    expect(find.text('仅 iPhone'), findsNWidgets(2));
+    expect(find.text('仅手机'), findsNWidgets(2));
   });
 
   testWidgets('ask Koe button does not cover an open sheet', (tester) async {
