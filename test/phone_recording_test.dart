@@ -1066,9 +1066,23 @@ void main() {
           ],
         );
         final scheduled = <Map<Object?, Object?>>[];
+        var requestedNotificationPermission = false;
         final messenger =
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         const channel = MethodChannel('com.semanticcraft.koe/system_tasks');
+        const permissions = MethodChannel(
+          'flutter.baseflow.com/permissions/methods',
+        );
+        messenger.setMockMethodCallHandler(permissions, (call) async {
+          switch (call.method) {
+            case 'checkPermissionStatus':
+              return 0; // denied initially
+            case 'requestPermissions':
+              requestedNotificationPermission = true;
+              return {17: 1}; // notification (17) -> granted (1)
+          }
+          return null;
+        });
         messenger.setMockMethodCallHandler(channel, (call) async {
           if (call.method == 'scheduleMeetingReminders') {
             final list =
@@ -1080,7 +1094,10 @@ void main() {
           }
           return null;
         });
-        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        addTearDown(() {
+          messenger.setMockMethodCallHandler(permissions, null);
+          messenger.setMockMethodCallHandler(channel, null);
+        });
 
         mic = _FakePhoneRecorder();
         controller = (await tester.runAsync(
@@ -1131,6 +1148,7 @@ void main() {
         await settle(tester, () => controller.phoneRecordingActive);
         await pumpDialog(tester);
         expect(find.text('手机录音中'), findsOneWidget);
+        expect(requestedNotificationPermission, isTrue);
 
         await tester.tap(find.byKey(const ValueKey('stop-phone-recording')));
         await settle(tester, () => controller.library.assets.isNotEmpty);
@@ -1362,7 +1380,7 @@ class _FakeAndroidDeviceCalendar implements DeviceCalendar {
 
   @override
   Future<List<Calendar>> listCalendars() async => const [
-    Calendar(id: 'cal-1', name: 'Work', readOnly: false, isPrimary: true),
+    Calendar(id: 'cal-1', name: 'Work (Subscribed)', readOnly: true, isPrimary: false),
   ];
 
   @override
@@ -1372,7 +1390,10 @@ class _FakeAndroidDeviceCalendar implements DeviceCalendar {
     List<String>? calendarIds,
   }) async => [
     for (final e in events)
-      if (e.startDate.isBefore(endDate) && e.endDate.isAfter(startDate)) e,
+      if ((calendarIds == null || calendarIds.contains(e.calendarId)) &&
+          e.startDate.isBefore(endDate) &&
+          e.endDate.isAfter(startDate))
+        e,
   ];
 
   @override

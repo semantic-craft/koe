@@ -2,11 +2,13 @@ package com.semanticcraft.soundcore
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlarmManager
 import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -22,6 +24,8 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Koe's own platform channels: the foreground service, the recorder's
@@ -105,7 +109,6 @@ class KoePlatformPlugin :
 
     // The engine is going: nothing is left to record or to answer 停止.
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        clearMeetingReminders()
         backgroundSync.setMethodCallHandler(null)
         softAp.setMethodCallHandler(null)
         presence.setMethodCallHandler(null)
@@ -289,67 +292,64 @@ class KoePlatformPlugin :
         scheduledMeetingNotifications.clear()
     }
 
+    private fun cancelScheduledAlarms() {
+        val prefs = appContext.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_SCHEDULED_MEETINGS, null) ?: return
+        val alarmManager = appContext.getSystemService(AlarmManager::class.java) ?: return
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val id = obj.optString("id", "")
+                val title = obj.optString("title", "")
+                if (id.isNotEmpty() && title.isNotEmpty()) {
+                    alarmManager.cancel(meetingAlarmPendingIntent(appContext, id, title))
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     private fun scheduleMeetingReminders(nowMs: Long, meetings: List<Map<String, Any?>>) {
         clearMeetingReminders()
-        if (meetings.isEmpty()) return
-        ensureMeetingChannel()
+        cancelScheduledAlarms()
+        val prefs = appContext.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+        if (meetings.isEmpty()) {
+            prefs.edit().remove(KEY_SCHEDULED_MEETINGS).apply()
+            return
+        }
+        ensureMeetingChannel(appContext)
+        val alarmManager = appContext.getSystemService(AlarmManager::class.java)
+        val savedArr = JSONArray()
         for (item in meetings.take(24)) {
             val id = item["id"] as? String ?: continue
             val title = (item["title"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: continue
             val startMs = (item["start"] as? Number)?.toLong() ?: continue
+            val endMs = (item["end"] as? Number)?.toLong() ?: (startMs + 3600_000L)
             val delayMs = (startMs - nowMs).coerceAtLeast(0L)
+            val triggerAtMs = System.currentTimeMillis() + delayMs
+            savedArr.put(
+                JSONObject()
+                    .put("id", id)
+                    .put("title", title)
+                    .put("start", startMs)
+                    .put("end", endMs),
+            )
+            if (delayMs == 0L) {
+                postMeetingNotification(appContext, id, title)
+                continue
+            }
+            alarmManager?.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMs,
+                meetingAlarmPendingIntent(appContext, id, title),
+            )
             val task = Runnable {
-                postMeetingNotification(id, title)
+                postMeetingNotification(appContext, id, title)
             }
             scheduledMeetingNotifications.add(task)
             mainThread.postDelayed(task, delayMs)
         }
-    }
-
-    private fun ensureMeetingChannel() {
-        val manager = appContext.getSystemService(NotificationManager::class.java) ?: return
-        val channel = NotificationChannel(
-            MEETING_CHANNEL_ID,
-            "会议开录提醒",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "日历里的会议开始时提醒用 Koe 录音（只提醒，不自动开始）"
-        }
-        manager.createNotificationChannel(channel)
-    }
-
-    private fun postMeetingNotification(id: String, title: String) {
-        if (appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        val prefs = appContext.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
-        val notifiedKey = "notified_$id"
-        if (prefs.getBoolean(notifiedKey, false)) return
-        prefs.edit().putBoolean(notifiedKey, true).apply()
-        val openApp = Intent(appContext, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(EXTRA_MEETING_REMINDER_TITLE, title)
-        }
-        val notificationId = MEETING_NOTIFICATION_BASE + (id.hashCode() and 0x0FFF)
-        val contentIntent = PendingIntent.getActivity(
-            appContext,
-            notificationId,
-            openApp,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification = Notification.Builder(appContext, MEETING_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_sync_notification)
-            .setContentTitle("「$title」开始了")
-            .setContentText("点开进入 Koe 准备会议录音")
-            .setCategory(Notification.CATEGORY_REMINDER)
-            .setContentIntent(contentIntent)
-            .setAutoCancel(true)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .build()
-        appContext.getSystemService(NotificationManager::class.java)
-            ?.notify(notificationId, notification)
+        prefs.edit().putString(KEY_SCHEDULED_MEETINGS, savedArr.toString()).apply()
     }
 
     /**
@@ -417,9 +417,102 @@ class KoePlatformPlugin :
         private const val MEETING_NOTIFICATION_BASE = 4200
         private const val MEETING_PREFS = "koe_calendar_meetings"
         private const val KEY_PENDING_MEETING_TITLE = "pending_meeting_title"
+        private const val KEY_SCHEDULED_MEETINGS = "scheduled_meetings_json"
+        const val ACTION_MEETING_REMINDER_ALARM = "com.semanticcraft.koe.MEETING_REMINDER_ALARM"
+        const val EXTRA_MEETING_REMINDER_ID = "com.semanticcraft.koe.MEETING_REMINDER_ID"
         const val EXTRA_MEETING_REMINDER_TITLE = "com.semanticcraft.koe.MEETING_REMINDER_TITLE"
 
         @Volatile private var activeSystemTasksChannel: MethodChannel? = null
+
+        fun meetingAlarmPendingIntent(
+            context: Context,
+            id: String,
+            title: String,
+        ): PendingIntent {
+            val intent = Intent(context, MeetingReminderReceiver::class.java).apply {
+                action = ACTION_MEETING_REMINDER_ALARM
+                putExtra(EXTRA_MEETING_REMINDER_ID, id)
+                putExtra(EXTRA_MEETING_REMINDER_TITLE, title)
+            }
+            val requestCode = MEETING_NOTIFICATION_BASE + (id.hashCode() and 0x0FFF)
+            return PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
+        fun ensureMeetingChannel(context: Context) {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            val channel = NotificationChannel(
+                MEETING_CHANNEL_ID,
+                "会议开录提醒",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "日历里的会议开始时提醒用 Koe 录音（只提醒，不自动开始）"
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        fun postMeetingNotification(context: Context, id: String, title: String) {
+            if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+            ensureMeetingChannel(context)
+            val prefs = context.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+            val notifiedKey = "notified_$id"
+            if (prefs.getBoolean(notifiedKey, false)) return
+            prefs.edit().putBoolean(notifiedKey, true).apply()
+            val openApp = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_MEETING_REMINDER_TITLE, title)
+            }
+            val notificationId = MEETING_NOTIFICATION_BASE + (id.hashCode() and 0x0FFF)
+            val contentIntent = PendingIntent.getActivity(
+                context,
+                notificationId,
+                openApp,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = Notification.Builder(context, MEETING_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_sync_notification)
+                .setContentTitle("「$title」开始了")
+                .setContentText("点开进入 Koe 准备会议录音")
+                .setCategory(Notification.CATEGORY_REMINDER)
+                .setContentIntent(contentIntent)
+                .setAutoCancel(true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .build()
+            context.getSystemService(NotificationManager::class.java)
+                ?.notify(notificationId, notification)
+        }
+
+        fun restoreScheduledMeetingAlarms(context: Context) {
+            val prefs = context.getSharedPreferences(MEETING_PREFS, Context.MODE_PRIVATE)
+            val raw = prefs.getString(KEY_SCHEDULED_MEETINGS, null) ?: return
+            val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
+            val nowMs = System.currentTimeMillis()
+            try {
+                val arr = JSONArray(raw)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val id = obj.optString("id", "")
+                    val title = obj.optString("title", "")
+                    val startMs = obj.optLong("start", 0L)
+                    val endMs = obj.optLong("end", 0L)
+                    if (id.isEmpty() || title.isEmpty() || endMs <= nowMs) continue
+                    val triggerAtMs = startMs.coerceAtLeast(nowMs)
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAtMs,
+                        meetingAlarmPendingIntent(context, id, title),
+                    )
+                }
+            } catch (_: Exception) {}
+        }
 
         fun handleMeetingReminderIntent(context: Context, intent: Intent?) {
             val title = intent?.getStringExtra(EXTRA_MEETING_REMINDER_TITLE)?.trim()
@@ -432,6 +525,25 @@ class KoePlatformPlugin :
                 .apply()
             Handler(Looper.getMainLooper()).post {
                 activeSystemTasksChannel?.invokeMethod("onMeetingReminderTapped", title)
+            }
+        }
+    }
+}
+
+/** Fires scheduled calendar meeting reminders even when Koe is not in memory, and restores them after boot/update. */
+class MeetingReminderReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val app = context.applicationContext
+        when (intent.action) {
+            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                KoePlatformPlugin.restoreScheduledMeetingAlarms(app)
+            }
+            KoePlatformPlugin.ACTION_MEETING_REMINDER_ALARM -> {
+                val id = intent.getStringExtra(KoePlatformPlugin.EXTRA_MEETING_REMINDER_ID)?.trim()
+                    ?.takeIf { it.isNotEmpty() } ?: return
+                val title = intent.getStringExtra(KoePlatformPlugin.EXTRA_MEETING_REMINDER_TITLE)?.trim()
+                    ?.takeIf { it.isNotEmpty() } ?: return
+                KoePlatformPlugin.postMeetingNotification(app, id, title)
             }
         }
     }

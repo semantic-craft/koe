@@ -1,6 +1,7 @@
 import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../state/recording_library.dart';
 import 'device_kind.dart';
@@ -104,7 +105,16 @@ class ChannelCalendarMeetings extends CalendarMeetings {
     if (_onAndroid) {
       try {
         final status = await _calendar.requestPermissions();
-        return status == CalendarPermissionStatus.granted;
+        if (status != CalendarPermissionStatus.granted) return false;
+        // On Android 13+, start-of-meeting notifications also need
+        // POST_NOTIFICATIONS; ask here when the user enables calendar
+        // reminders or starts the first calendar-backed take.
+        var notif = await Permission.notification.status;
+        if (!notif.isGranted && !notif.isPermanentlyDenied) {
+          notif = await Permission.notification.request();
+        }
+        if (!notif.isGranted) return false;
+        return true;
       } catch (_) {
         return false;
       }
@@ -204,15 +214,15 @@ class ChannelCalendarMeetings extends CalendarMeetings {
       final status = await _calendar.hasPermissions();
       if (status != CalendarPermissionStatus.granted) return const [];
       final calendars = await _calendar.listCalendars();
-      final ownIds = [
+      final visibleIds = [
         for (final cal in calendars)
-          if (!cal.hidden && !cal.readOnly) cal.id,
+          if (!cal.hidden) cal.id,
       ];
-      if (ownIds.isEmpty && calendars.isNotEmpty) return const [];
+      if (visibleIds.isEmpty && calendars.isNotEmpty) return const [];
       final list = await _calendar.listEvents(
         start,
         end,
-        calendarIds: ownIds.isEmpty ? null : ownIds,
+        calendarIds: visibleIds.isEmpty ? null : visibleIds,
       );
       return [for (final event in list) androidEventToMap(event)];
     }
