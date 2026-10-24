@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "05aa4c8dbfc60476f155f9daf0bde991de2ca192",
+    "main": "eebd01afe82814faa3594905407ac359f9f59daf",
     "open_pulls": [],
     "pulls": [
       {
@@ -675,12 +675,20 @@
         "merged": true,
         "number": 467,
         "state": "closed"
+      },
+      {
+        "base": "05aa4c8dbfc60476f155f9daf0bde991de2ca192",
+        "head": "4826ad2faabebc30a9c555e41287c6255fba61b2",
+        "merge_commit": "eebd01afe82814faa3594905407ac359f9f59daf",
+        "merged": true,
+        "number": 469,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-23T23:59:41.310703Z",
+  "observed_at": "2026-10-24T00:11:49.332945Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -961,6 +969,11 @@
               "kind": "issue",
               "note": "第三批：Pixel 隔离包真实解码/原生推理，缓存模型且拒绝模型网络请求，四人中文样例 10 turns / 36.489s，通过。AliMeeting R8001_M8004 第一远场声道 0–600s、4 人、人工 TextGrid：auto DER 14.20% 但输出 12 标签，指定 4 人 DER 31.85%；单说话人错误率分别 7.01% / 30.45%。独立公开会议，不是用户现场录制/三端 GUI 验收。",
               "ref": 433
+            },
+            {
+              "kind": "pull",
+              "note": "Android独立验收包、设备锁和中断清理已合并；Pixel真实native场景通过。AliMeeting600秒auto DER14.20%/12标签、指定4人31.85%，保留质量缺口。",
+              "ref": 469
             }
           ],
           "id": "meeting-diarization-p2",
@@ -1093,8 +1106,13 @@
             },
             {
               "kind": "issue",
-              "ref": 464,
-              "note": "2026-10-24 私有签名 1.2.2+5 覆盖安装，旧19条录音保留；GUI双路保存成功。退出Sonori仍复现无文字，修正1110静音逐帧重试后公开中文样例出现系统实时文字；真实长会议、双路人声与耳机切换仍待验。"
+              "note": "2026-10-24 私有签名 1.2.2+5 覆盖安装，旧19条录音保留；GUI双路保存成功。退出Sonori仍复现无文字，修正1110静音逐帧重试后公开中文样例出现系统实时文字；真实长会议、双路人声与耳机切换仍待验。",
+              "ref": 464
+            },
+            {
+              "kind": "pull",
+              "note": "第三批修复已合并；静音1110按有声/冷却重试、旧请求收尾不清新错误。check980项、CI、Mac Release与11项性能场景通过；私有签名安装及短中文GUI/暂停继续/双路保存通过，#464真实长会议待验。",
+              "ref": 469
             }
           ],
           "id": "meeting-phase4",
@@ -1663,7 +1681,8 @@
       459,
       463,
       466,
-      467
+      467,
+      469
     ]
   }
 }
