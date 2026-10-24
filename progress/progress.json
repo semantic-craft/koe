@@ -360,7 +360,7 @@
         "number": 453,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-24T04:16:46Z"
+        "updated_at": "2026-10-24T04:52:56Z"
       },
       {
         "number": 456,
@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "8ea1e2ffd4ae6f48c40a68ed928b3236f0f7bbc4",
+    "main": "8f549308497119121564f42d3298d13dccaffcd1",
     "open_pulls": [],
     "pulls": [
       {
@@ -696,7 +696,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-24T04:19:10.208728Z",
+  "observed_at": "2026-10-24T04:54:41.978830Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -895,15 +895,15 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "2026-10-24评论6379751508：复现步骤和范围；未确定根因，不关闭工单。",
+              "note": "2026-10-24评论6380070721：原生authorized=0/1、matches=0/1对照；最终12:45命名成功，Calendar导出15:00–16:00正确；提醒事项未宣称通过。",
               "ref": 453
             }
           ],
           "id": "mac-calendar-453-acceptance",
-          "next": "诊断安装版实际事件查询和命名路径，修复后复验。首次授权、参与人、全天事件、拒绝权限、待办导出回读、iPhone和跨版本升级仍未覆盖。",
-          "status": "blocked",
-          "summary": "1.2.2+5日历完全访问与命名开关开启，专用非全天会议存在且Calendar重开后仍在，但12:08、Koe重启后12:14两次录音仍使用默认名称，录音本身正常保存。",
-          "title": "Mac日历会议命名验收：未通过"
+          "next": "用户允许Koe提醒事项权限后，核对一次已发起的导出，再从系统提醒事项勾选完成并回到Koe回读。其余首次日历授权、参与人、全天事件、拒绝权限、iPhone和跨版本升级仍待验。",
+          "status": "in_progress",
+          "summary": "修正验收启动入口为LaunchServices，并提交Calendar编辑后，最终签名安装版会议命名及重启保留通过；合成待办导出日历时间正确。提醒事项授权待用户处理，完成回读未验。",
+          "title": "Mac日历命名与待办导出验收"
         }
       ],
       "title": "代码与文档交付范围"
