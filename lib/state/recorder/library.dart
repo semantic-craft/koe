@@ -11,8 +11,10 @@ mixin _RecorderLibrary on ChangeNotifier {
   abstract final Future<Duration?> Function(String path) _audioDurationProbe;
   abstract final Map<String, int> _bookmarkGenerations;
   abstract final Future<void> _bookmarksLoaded;
+  DeviceCopies get _copies;
   abstract final DeferredFileJobs<SpeechConfiguration> _deferredJobs;
   abstract bool _disposed;
+  List<OfflineFileEntry> get files;
   abstract String? _fileJobKey;
   abstract final FileJobJournal _fileJobs;
   abstract final Future<void> _fileJobsLoaded;
@@ -430,6 +432,7 @@ mixin _RecorderLibrary on ChangeNotifier {
             (id != null && trashedIds.contains(id));
       });
       _registerExportedPaths([...exportedPaths, ...paths]);
+      await _copies.reconcile(files);
       final wavIds = paths
           .where(
             (path) => RecordingAudio.of(path).kind == RecordingAudioKind.wav,
