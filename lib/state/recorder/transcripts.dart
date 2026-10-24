@@ -1129,6 +1129,70 @@ mixin _RecorderTranscripts on ChangeNotifier {
     return true;
   }
 
+  /// Replaces all occurrences of [fromTerm] with [toTerm] across [path]'s
+  /// transcript text and timed segments while preserving segment timecodes
+  /// (#493 / S34).
+  Future<bool> replaceTermInTranscript(
+    String path,
+    String fromTerm,
+    String toTerm,
+  ) async {
+    final from = fromTerm.trim();
+    final to = toTerm.trim();
+    if (from.isEmpty || from == to) return false;
+    final key = _recordingKey(path: path);
+    final prevByPath = transcriptsByPath[path];
+    final fileId = fileIdFromPath(path);
+    final prevById = fileId == null ? null : transcriptsByFileId[fileId];
+    final prevManual = _manualTranscripts[key];
+    final prevIncoming = _incomingTranscripts[key];
+    final prevSegments = _transcriptSegments[key];
+
+    var changed = false;
+    if (prevByPath != null && prevByPath.contains(from)) {
+      transcriptsByPath[path] = prevByPath.replaceAll(from, to);
+      changed = true;
+    }
+    if (fileId != null && prevById != null && prevById.contains(from)) {
+      transcriptsByFileId[fileId] = prevById.replaceAll(from, to);
+      changed = true;
+    }
+    if (prevManual != null && prevManual.contains(from)) {
+      _manualTranscripts[key] = prevManual.replaceAll(from, to);
+      changed = true;
+    }
+    if (prevIncoming != null && prevIncoming.contains(from)) {
+      _incomingTranscripts[key] = prevIncoming.replaceAll(from, to);
+      changed = true;
+    }
+    if (prevSegments != null &&
+        prevSegments.any((seg) => seg.text.contains(from))) {
+      _transcriptSegments[key] = List<TranscriptSegment>.unmodifiable([
+        for (final seg in prevSegments)
+          seg.text.contains(from)
+              ? seg.copyWith(text: seg.text.replaceAll(from, to))
+              : seg,
+      ]);
+      changed = true;
+    }
+    if (!changed) return false;
+    notifyListeners();
+    try {
+      await _persistTranscripts(strict: true);
+    } catch (_) {
+      _setOrRemove(transcriptsByPath, path, prevByPath);
+      if (fileId != null) {
+        _setOrRemove(transcriptsByFileId, fileId, prevById);
+      }
+      _setOrRemove(_manualTranscripts, key, prevManual);
+      _setOrRemove(_incomingTranscripts, key, prevIncoming);
+      _setOrRemove(_transcriptSegments, key, prevSegments);
+      notifyListeners();
+      rethrow;
+    }
+    return true;
+  }
+
   /// Every map holding a recording's transcript state under its key.
   List<Map<String, Object>> get _transcriptStateByKey => [
     _transcriptMetadata,

@@ -416,15 +416,22 @@ class MeetingMinutes {
   /// Replaces all whole-label occurrences of [oldName] (e.g. "说话人 1") with
   /// [newName] across text and action owners when a speaker suggestion is applied.
   MeetingMinutes replaceSpeakerName(String oldName, String newName) {
-    final from = oldName.trim();
-    final to = newName.trim();
-    if (from.isEmpty || to.isEmpty || from == to) return this;
+    return replaceTerm(oldName, newName);
+  }
+
+  /// Replaces all occurrences of [oldTerm] with [newTerm] across title,
+  /// overview, sections, action owners/dues, custom sections, and review items,
+  /// preserving every `[S#]` citation (#493 / S34).
+  MeetingMinutes replaceTerm(String oldTerm, String newTerm) {
+    final from = oldTerm.trim();
+    final to = newTerm.trim();
+    if (from.isEmpty || from == to) return this;
     String sub(String input) => input.replaceAll(from, to);
     MinuteItem subItem(MinuteItem item) => MinuteItem(
       sub(item.text),
       item.sources,
       owner: item.owner == null ? null : sub(item.owner!),
-      due: item.due,
+      due: item.due == null ? null : sub(item.due!),
     );
     return MeetingMinutes(
       title: sub(title),
@@ -436,13 +443,34 @@ class MeetingMinutes {
       custom: [
         for (final sec in custom)
           MinuteCustomSection(
-            title: sec.title,
+            title: sub(sec.title),
             items: sec.items.map(subItem).toList(),
           ),
       ],
       reviewItems: reviewItems.map(sub).toList(),
     );
   }
+
+  /// All human-visible lines in this structured minutes object for full-text
+  /// search (#493 / S33).
+  List<String> searchableLines() => [
+    if (title.trim().isNotEmpty) title.trim(),
+    if (overview.trim().isNotEmpty) overview.trim(),
+    for (final (sectionTitle, items) in sections) ...[
+      if (sectionTitle.trim().isNotEmpty && items.isNotEmpty)
+        sectionTitle.trim(),
+      for (final item in items)
+        [
+          item.text,
+          if (item.owner != null && item.owner!.trim().isNotEmpty)
+            '负责人：${item.owner}',
+          if (item.due != null && item.due!.trim().isNotEmpty)
+            '期限：${item.due}',
+        ].join(' '),
+    ],
+    for (final review in reviewItems)
+      if (review.trim().isNotEmpty) review.trim(),
+  ];
 }
 
 String validateMinutes(String text, List<String> sources) =>

@@ -86,6 +86,7 @@ import 'file_job_journal.dart';
 import 'topic_store.dart';
 import 'topic_note.dart';
 import 'topic_summary.dart';
+import '../ui/transcript_layout.dart';
 import '../platform/device_kind.dart';
 
 export 'context/context_store.dart';
@@ -162,6 +163,24 @@ class _TopicAssistLatest {
 
 typedef TranscriptPersister = Future<void> Function({bool strict});
 
+/// Summary of a single-recording or library-wide term replacement (#493 / S34).
+class TermReplacementReport {
+  const TermReplacementReport({
+    required this.recordingsUpdated,
+    required this.minutesUpdated,
+    required this.documentsUpdated,
+    required this.addedToVocabulary,
+  });
+
+  final int recordingsUpdated;
+  final int minutesUpdated;
+  final int documentsUpdated;
+  final bool addedToVocabulary;
+
+  int get totalUpdated =>
+      recordingsUpdated + minutesUpdated + documentsUpdated;
+}
+
 class RecorderController extends ChangeNotifier
     with
         _RecorderPlayback,
@@ -191,19 +210,43 @@ class RecorderController extends ChangeNotifier
         _RecorderResident {
   @override
   late final RecordingAnalysis analysis =
-      _analysisOverride ??
-      RecordingAnalysis(
-        service: RoutingAnalysisService(
-          backend: () => analysisBackend,
-          qwen: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
-          openAiCompatible: OpenAiCompatibleAnalysisService(
-            baseUrl: () =>
-                analysisOpenAiConfig.baseUrl ?? 'http://localhost:11434/v1',
-          ),
-        ),
-        whileRequesting: _whileAiWorks,
-      );
+      (_analysisOverride ??
+          RecordingAnalysis(
+            service: RoutingAnalysisService(
+              backend: () => analysisBackend,
+              qwen: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
+              openAiCompatible: OpenAiCompatibleAnalysisService(
+                baseUrl: () =>
+                    analysisOpenAiConfig.baseUrl ?? 'http://localhost:11434/v1',
+              ),
+            ),
+            whileRequesting: _whileAiWorks,
+          ))
+        ..onTaskNotice = _recordTaskNotice;
   final RecordingAnalysis? _analysisOverride;
+  final List<TaskCompletionNotice> _taskNotices = [];
+
+  TaskCompletionNotice? get lastTaskNotice =>
+      _taskNotices.isEmpty ? analysis.lastNotice : _taskNotices.last;
+
+  List<TaskCompletionNotice> get taskNotices =>
+      List<TaskCompletionNotice>.unmodifiable(_taskNotices);
+
+  void clearTaskNotice() {
+    _taskNotices.clear();
+    analysis.lastNotice = null;
+    notifyListeners();
+  }
+
+  @override
+  void _recordTaskNotice(TaskCompletionNotice notice) {
+    _taskNotices.add(notice);
+    if (_taskNotices.length > 20) {
+      _taskNotices.removeAt(0);
+    }
+    statusMessage = notice.message;
+    if (!_disposed) notifyListeners();
+  }
   @override
   final Map<String, String> _audioVersions = {};
   @override
@@ -1515,6 +1558,241 @@ class RecorderController extends ChangeNotifier
       segments,
       aliases: aliases,
       includeSpeakers: includeSpeakers,
+    );
+  }
+
+  /// Full-text search hit across a recording's corrected transcript (including
+  /// renamed speaker aliases), structured minutes, bookmark notes, and
+  /// calendar meeting metadata (#493 / S33).
+  ///
+  /// Never searches overwritten raw provider text when the user has manually
+  /// edited or replaced words (#235).
+  TranscriptSearchHit? searchRecordingHit(
+    RecordingReference ref,
+    String query,
+  ) {
+    final needle = query.trim();
+    if (needle.isEmpty) return null;
+    final view = recordingView(ref);
+    final path = view.path ?? ref.path;
+    final key = analysisKey(ref);
+    final extraLines = <String>[];
+
+    // 1. Structured minutes content (title, overview, sections, owners, reviewItems).
+    final minutesResult = analysis.results['$key/minutes'];
+    if (minutesResult != null) {
+      try {
+        final parsed = MeetingMinutes.parse(
+          minutesResult.text,
+          minutesResult.sources.length,
+        );
+        extraLines.addAll(parsed.searchableLines());
+      } catch (_) {}
+    }
+
+    // 2. User bookmark notes and quotes.
+    for (final bm in bookmarksFor(ref)) {
+      if (bm.note.trim().isNotEmpty) extraLines.add(bm.note.trim());
+      if (bm.segmentText != null && bm.segmentText!.trim().isNotEmpty) {
+        extraLines.add(bm.segmentText!.trim());
+      }
+    }
+
+    // 3. Calendar meeting title and participants.
+    final meeting = path == null ? null : library.assetForPath(path)?.meeting;
+    if (meeting != null) {
+      if (meeting.title.trim().isNotEmpty) extraLines.add(meeting.title.trim());
+      if (meeting.participants.isNotEmpty) {
+        extraLines.add('参会人：${meeting.participants.join('、')}');
+      }
+    }
+
+    return findTranscriptSearchHit(
+      text: view.text,
+      segments: view.manuallyEdited
+          ? const <TranscriptSegment>[]
+          : view.segments,
+      query: needle,
+      aliases: path == null
+          ? const <String, String>{}
+          : speakerAliasesForPath(path),
+      duration: path == null ? null : localDurationForPath(path),
+      extraLines: extraLines,
+    );
+  }
+
+  /// Returns true when [query] matches the recording's title or any searchable
+  /// content in [searchRecordingHit] (#493 / S33).
+  bool matchesRecordingSearch(RecordingReference ref, String query) {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) return true;
+    final view = recordingView(ref);
+    if (view.title.toLowerCase().contains(needle)) return true;
+    return searchRecordingHit(ref, query) != null;
+  }
+
+  /// Replaces all occurrences of [fromTerm] with [toTerm] in [ref]'s transcript
+  /// and structured minutes, preserving `[S#]` citations and optionally adding
+  /// [toTerm] to the personal vocabulary (#493 / S34).
+  Future<TermReplacementReport> replaceTermInRecording(
+    RecordingReference ref,
+    String fromTerm,
+    String toTerm, {
+    bool addToVocabulary = false,
+  }) async {
+    final from = fromTerm.trim();
+    final to = toTerm.trim();
+    if (from.isEmpty || from == to) {
+      return const TermReplacementReport(
+        recordingsUpdated: 0,
+        minutesUpdated: 0,
+        documentsUpdated: 0,
+        addedToVocabulary: false,
+      );
+    }
+    final path = recordingView(ref).path ?? ref.path;
+    var recUpdated = 0;
+    if (path != null && await replaceTermInTranscript(path, from, to)) {
+      recUpdated = 1;
+    }
+
+    var minUpdated = 0;
+    final key = analysisKey(ref);
+    final slotKey = '$key/minutes';
+    final existing = analysis.results[slotKey];
+    if (existing != null) {
+      try {
+        final parsed = MeetingMinutes.parse(
+          existing.text,
+          existing.sources.length,
+        );
+        final replacedMinutes = parsed.replaceTerm(from, to);
+        final updatedSources = [
+          for (final s in existing.sources) s.replaceAll(from, to),
+        ];
+        final encoded = validateMinutes(
+          replacedMinutes.encode(),
+          updatedSources,
+        );
+        final freshSourceHash = analysisFingerprint(recordingView(ref).text);
+        final sourcesChanged = !listEquals(existing.sources, updatedSources);
+        if (encoded != existing.text ||
+            sourcesChanged ||
+            (recUpdated > 0 && existing.sourceHash != freshSourceHash)) {
+          await analysis.replaceResultWithSources(
+            slotKey,
+            existing,
+            text: encoded,
+            sources: updatedSources,
+            sourceHash: freshSourceHash,
+          );
+          if (encoded != existing.text || sourcesChanged) {
+            minUpdated = 1;
+          }
+        }
+      } catch (_) {}
+    }
+
+    var vocabAdded = false;
+    if (addToVocabulary && to.isNotEmpty) {
+      await addVocabularyTerm(to);
+      vocabAdded = true;
+    }
+    notifyListeners();
+    return TermReplacementReport(
+      recordingsUpdated: recUpdated,
+      minutesUpdated: minUpdated,
+      documentsUpdated: 0,
+      addedToVocabulary: vocabAdded,
+    );
+  }
+
+  /// Replaces all occurrences of [fromTerm] with [toTerm] across every
+  /// recording transcript, structured minutes, and imported text document in
+  /// the library, optionally adding [toTerm] to the personal vocabulary
+  /// (#493 / S34).
+  Future<TermReplacementReport> replaceTermAcrossLibrary(
+    String fromTerm,
+    String toTerm, {
+    bool addToVocabulary = false,
+  }) async {
+    final from = fromTerm.trim();
+    final to = toTerm.trim();
+    if (from.isEmpty || from == to) {
+      return const TermReplacementReport(
+        recordingsUpdated: 0,
+        minutesUpdated: 0,
+        documentsUpdated: 0,
+        addedToVocabulary: false,
+      );
+    }
+    final allPaths = <String>{
+      ...exportedPaths,
+      ...archiveOnlyPaths,
+      ...transcriptsByPath.keys,
+      for (final asset in library.assets) asset.path,
+    };
+    var recCount = 0;
+    var minCount = 0;
+    for (final path in allPaths) {
+      final report = await replaceTermInRecording(
+        RecordingReference(fileId: fileIdFromPath(path), path: path),
+        from,
+        to,
+        addToVocabulary: false,
+      );
+      recCount += report.recordingsUpdated;
+      minCount += report.minutesUpdated;
+    }
+
+    var docCount = 0;
+    await _minutesLoaded;
+    for (final doc in List<MinutesDocument>.from(minutes.documents)) {
+      final titleChanged = doc.title.contains(from);
+      final segChanged = doc.segments.any(
+        (s) =>
+            s.text.contains(from) ||
+            (s.speaker != null && s.speaker!.contains(from)),
+      );
+      if (!titleChanged && !segChanged) continue;
+      final updatedDoc = MinutesDocument(
+        id: doc.id,
+        title: doc.title.replaceAll(from, to),
+        sourceName: doc.sourceName,
+        importedAt: doc.importedAt,
+        capturedAt: doc.capturedAt,
+        audioPath: doc.audioPath,
+        audioDuration: doc.audioDuration,
+        audioHash: doc.audioHash,
+        segments: [
+          for (final s in doc.segments)
+            MinutesSegment(
+              text: s.text.replaceAll(from, to),
+              start: s.start,
+              end: s.end,
+              speaker: s.speaker?.replaceAll(from, to),
+              highlighted: s.highlighted,
+            ),
+        ],
+        timingReliable: doc.timingReliable,
+        warning: doc.warning,
+        restore: doc.restore,
+      );
+      await minutes.upsert(updatedDoc, strict: true);
+      docCount++;
+    }
+
+    var vocabAdded = false;
+    if (addToVocabulary && to.isNotEmpty) {
+      await addVocabularyTerm(to);
+      vocabAdded = true;
+    }
+    notifyListeners();
+    return TermReplacementReport(
+      recordingsUpdated: recCount,
+      minutesUpdated: minCount,
+      documentsUpdated: docCount,
+      addedToVocabulary: vocabAdded,
     );
   }
 

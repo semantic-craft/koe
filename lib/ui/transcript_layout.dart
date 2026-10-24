@@ -1,3 +1,4 @@
+import '../ai/stt_types.dart';
 import '../state/recording.dart';
 
 /// Splits transcript text into display paragraphs.
@@ -50,11 +51,15 @@ TranscriptSearchHit? findTranscriptSearchHit({
   required String query,
   Map<String, String> aliases = const {},
   Duration? duration,
+  List<String> extraLines = const [],
 }) {
   final needle = query.trim().toLowerCase();
   if (needle.isEmpty) return null;
+  final aliasedText = aliases.isEmpty
+      ? text
+      : applyTranscriptSpeakerAliases(text, aliases);
   final timed =
-      transcriptSegmentsMatchText(segments, text, aliases: aliases) &&
+      transcriptSegmentsMatchText(segments, aliasedText, aliases: aliases) &&
           transcriptSegmentsLocatable(segments, duration: duration)
       ? segments
       : const <TranscriptSegment>[];
@@ -78,16 +83,26 @@ TranscriptSearchHit? findTranscriptSearchHit({
         timecode: segment.start,
       );
     }
-    return null;
+  } else {
+    final paragraphs = splitTranscriptDisplayParagraphs(aliasedText);
+    for (var index = 0; index < paragraphs.length; index++) {
+      final paragraph = paragraphs[index];
+      final at = paragraph.toLowerCase().indexOf(needle);
+      if (at < 0) continue;
+      return TranscriptSearchHit(
+        index: index,
+        snippet: _snippet(paragraph, at, needle.length),
+      );
+    }
   }
-  final paragraphs = splitTranscriptDisplayParagraphs(text);
-  for (var index = 0; index < paragraphs.length; index++) {
-    final paragraph = paragraphs[index];
-    final at = paragraph.toLowerCase().indexOf(needle);
+  for (final extra in extraLines) {
+    final trimmed = extra.trim();
+    if (trimmed.isEmpty) continue;
+    final at = trimmed.toLowerCase().indexOf(needle);
     if (at < 0) continue;
     return TranscriptSearchHit(
-      index: index,
-      snippet: _snippet(paragraph, at, needle.length),
+      index: -1,
+      snippet: _snippet(trimmed, at, needle.length),
     );
   }
   return null;
