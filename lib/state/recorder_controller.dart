@@ -244,7 +244,6 @@ class RecorderController extends ChangeNotifier
     if (_taskNotices.length > 20) {
       _taskNotices.removeAt(0);
     }
-    statusMessage = notice.message;
     if (!_disposed) notifyListeners();
   }
   @override
