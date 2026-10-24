@@ -14,8 +14,13 @@ const audioFileTypes = XTypeGroup(
 /// Feishu Minutes exports: plain text or JSON.
 const minutesTextFileTypes = XTypeGroup(
   label: '妙记文字',
-  extensions: ['json', 'txt'],
-  uniformTypeIdentifiers: ['public.plain-text', 'public.json'],
+  extensions: ['json', 'txt', 'srt', 'vtt', 'md'],
+  uniformTypeIdentifiers: [
+    'public.plain-text',
+    'public.json',
+    'public.text',
+    'net.daringfireball.markdown',
+  ],
 );
 
 /// Koe material packs (`.koepack`). The type is not declared to the system,

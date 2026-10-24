@@ -69,6 +69,7 @@ import 'organize_store.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
 import 'meeting_minutes.dart';
+import 'minutes_export.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
 import 'listening_queue.dart';
@@ -1461,6 +1462,60 @@ class RecorderController extends ChangeNotifier
       await saveManualTranscript(path, previous);
     }
     notifyListeners();
+  }
+
+  /// Formats the transcript segments for [ref] as `.srt` subtitles (#492 / S32).
+  String exportTranscriptSrtText(
+    RecordingReference ref, {
+    bool includeSpeakers = true,
+  }) {
+    final view = recordingView(ref);
+    final path = view.path ?? ref.path;
+    final aliases = path == null
+        ? const <String, String>{}
+        : speakerAliasesForPath(path);
+    final segments = view.segments.isNotEmpty
+        ? view.segments
+        : [
+            if (view.text.trim().isNotEmpty)
+              TranscriptSegment(
+                text: view.text.trim(),
+                start: Duration.zero,
+                end: const Duration(seconds: 5),
+              ),
+          ];
+    return formatTranscriptSrt(
+      segments,
+      aliases: aliases,
+      includeSpeakers: includeSpeakers,
+    );
+  }
+
+  /// Formats the transcript segments for [ref] as `.vtt` subtitles (#492 / S32).
+  String exportTranscriptVttText(
+    RecordingReference ref, {
+    bool includeSpeakers = true,
+  }) {
+    final view = recordingView(ref);
+    final path = view.path ?? ref.path;
+    final aliases = path == null
+        ? const <String, String>{}
+        : speakerAliasesForPath(path);
+    final segments = view.segments.isNotEmpty
+        ? view.segments
+        : [
+            if (view.text.trim().isNotEmpty)
+              TranscriptSegment(
+                text: view.text.trim(),
+                start: Duration.zero,
+                end: const Duration(seconds: 5),
+              ),
+          ];
+    return formatTranscriptVtt(
+      segments,
+      aliases: aliases,
+      includeSpeakers: includeSpeakers,
+    );
   }
 
   @override

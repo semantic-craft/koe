@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../state/meeting_minutes.dart';
+import '../../state/minutes_export.dart';
 import '../../state/recording_analysis.dart';
 import '../../state/recorder_controller.dart';
 import '../../state/transcript_chapters.dart';
@@ -34,6 +35,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
   String selectedLanguage = 'zh';
   bool speakerNamingBusy = false;
   bool correctionBusy = false;
+  String? lastCopiedRichHtml;
   RecordingAnalysis get manager => widget.controller.analysis;
   String get key =>
       '${widget.controller.analysisKey(widget.reference)}/minutes';
@@ -103,14 +105,45 @@ class _MinutesPanelState extends State<MinutesPanel> {
     );
   }
 
-  Future<void> export(MeetingMinutes minutes, AnalysisResult result) async {
+  Future<void> export(
+    MeetingMinutes minutes,
+    AnalysisResult result, {
+    MinutesExportFormat format = MinutesExportFormat.markdown,
+  }) async {
     try {
-      final content = minutes.export(result);
+      if (format == MinutesExportFormat.markdown) {
+        final content = minutes.export(result);
+        if (runsOnPhone) {
+          final box = context.findRenderObject() as RenderBox?;
+          await SharePlus.instance.share(
+            ShareParams(
+              text: content,
+              title: '会议纪要',
+              sharePositionOrigin: box == null
+                  ? null
+                  : box.localToGlobal(Offset.zero) & box.size,
+            ),
+          );
+        } else {
+          final location = await getSaveLocation(suggestedName: '会议纪要.md');
+          if (location != null) {
+            await File(location.path).writeAsString(content);
+          }
+        }
+        return;
+      }
+      final bytes = format == MinutesExportFormat.docx
+          ? minutes.exportDocxBytes(result)
+          : minutes.exportPdfBytes(result);
+      final suggested = '会议纪要.${format.extension}';
       if (runsOnPhone) {
         final box = context.findRenderObject() as RenderBox?;
+        final tempDir = await Directory.systemTemp.createTemp('koe-minutes-');
+        final file = File('${tempDir.path}/$suggested');
+        await file.writeAsBytes(bytes, flush: true);
         await SharePlus.instance.share(
           ShareParams(
-            text: content,
+            files: [XFile(file.path, mimeType: format.mimeType)],
             title: '会议纪要',
             sharePositionOrigin: box == null
                 ? null
@@ -118,11 +151,53 @@ class _MinutesPanelState extends State<MinutesPanel> {
           ),
         );
       } else {
-        final location = await getSaveLocation(suggestedName: '会议纪要.md');
-        if (location != null) await File(location.path).writeAsString(content);
+        final location = await getSaveLocation(suggestedName: suggested);
+        if (location != null) {
+          await File(location.path).writeAsBytes(bytes, flush: true);
+        }
       }
     } catch (_) {
       if (mounted) message('导出失败，请重试');
+    }
+  }
+
+  Future<void> copyRichText(
+    MeetingMinutes minutes,
+    AnalysisResult result,
+  ) async {
+    final html = minutes.exportHtml(result);
+    final plain = minutes.export(result);
+    lastCopiedRichHtml = html;
+    await Clipboard.setData(ClipboardData(text: plain));
+    if (mounted) message('已复制富文本与纯文本');
+  }
+
+  Future<void> exportSubtitle({required bool vtt}) async {
+    try {
+      final content = vtt
+          ? widget.controller.exportTranscriptVttText(widget.reference)
+          : widget.controller.exportTranscriptSrtText(widget.reference);
+      final ext = vtt ? 'vtt' : 'srt';
+      final suggested = '逐字稿.$ext';
+      if (runsOnPhone) {
+        final box = context.findRenderObject() as RenderBox?;
+        await SharePlus.instance.share(
+          ShareParams(
+            text: content,
+            title: suggested,
+            sharePositionOrigin: box == null
+                ? null
+                : box.localToGlobal(Offset.zero) & box.size,
+          ),
+        );
+      } else {
+        final location = await getSaveLocation(suggestedName: suggested);
+        if (location != null) {
+          await File(location.path).writeAsString(content);
+        }
+      }
+    } catch (_) {
+      if (mounted) message('字幕导出失败，请重试');
     }
   }
 
@@ -723,35 +798,111 @@ class _MinutesPanelState extends State<MinutesPanel> {
                   '${result.model} · '
                   '${result.isDraft ? '草稿纪要（实时识别生成）' : (result.editedAt == null ? '已生成' : '已手动编辑')}',
                 ),
-                Wrap(
-                  spacing: 12,
-                  children: [
-                    TextButton(
-                      onPressed: busy ? null : () => edit(minutes!, result),
-                      child: const Text('编辑纪要'),
-                    ),
-                    TextButton(
-                      onPressed: () => Clipboard.setData(
-                        ClipboardData(text: minutes!.export(result)),
-                      ),
-                      child: const Text('复制纪要'),
-                    ),
-                    TextButton(
-                      onPressed: () => export(minutes!, result),
-                      child: const Text('导出纪要'),
-                    ),
-                    if (previous != null)
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
                       TextButton(
-                        onPressed: () => _compare(result, previous),
-                        child: const Text('对比上一版'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: busy ? null : () => edit(minutes!, result),
+                        child: const Text('编辑纪要'),
                       ),
-                    if (versions.isNotEmpty)
                       TextButton(
-                        key: const ValueKey('minutes-version-history-button'),
-                        onPressed: _showVersionHistory,
-                        child: Text('版本历史 (${versions.length})'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: () => Clipboard.setData(
+                          ClipboardData(text: minutes!.export(result)),
+                        ),
+                        child: const Text('复制纪要'),
                       ),
-                  ],
+                      TextButton(
+                        key: const ValueKey('minutes-copy-rich'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: () => copyRichText(minutes!, result),
+                        child: const Text('复制富文本'),
+                      ),
+                      TextButton(
+                        key: const ValueKey('minutes-export-md'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: () => export(minutes!, result),
+                        child: const Text('导出纪要'),
+                      ),
+                      if (previous != null)
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                          onPressed: () => _compare(result, previous),
+                          child: const Text('对比上一版'),
+                        ),
+                      if (versions.isNotEmpty)
+                        TextButton(
+                          key: const ValueKey('minutes-version-history-button'),
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                          onPressed: _showVersionHistory,
+                          child: Text('版本历史 (${versions.length})'),
+                        ),
+                      TextButton(
+                        key: const ValueKey('minutes-export-docx'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: () => export(
+                          minutes!,
+                          result,
+                          format: MinutesExportFormat.docx,
+                        ),
+                        child: const Text('导出 Word'),
+                      ),
+                      TextButton(
+                        key: const ValueKey('minutes-export-pdf'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: () => export(
+                          minutes!,
+                          result,
+                          format: MinutesExportFormat.pdf,
+                        ),
+                        child: const Text('导出 PDF'),
+                      ),
+                      TextButton(
+                        key: const ValueKey('minutes-export-srt'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: () => exportSubtitle(vtt: false),
+                        child: const Text('导出 SRT'),
+                      ),
+                      TextButton(
+                        key: const ValueKey('minutes-export-vtt'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        onPressed: () => exportSubtitle(vtt: true),
+                        child: const Text('导出 VTT'),
+                      ),
+                    ],
+                  ),
                 ),
                 if (minutes.reviewItems.isNotEmpty)
                   Card(
