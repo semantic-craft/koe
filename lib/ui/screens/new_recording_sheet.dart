@@ -868,7 +868,7 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
                 key: const ValueKey('new-record-hold-to-talk'),
                 label: phoneRecording
                     ? '按住说话记一条'
-                    : (runsOnMac ? '按住说话当前不可用' : '按住说话仅在 iPhone 上提供'),
+                    : (runsOnMac ? '按住说话当前不可用' : '按住说话仅在手机上提供'),
                 enabled: phoneRecording,
                 onStart: () => controller.startVoiceHold(VoiceTarget.note),
                 onSend: _sendVoice,
@@ -908,10 +908,10 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
                         : (runsOnMac ? '用麦克风录下来，保存为原件' : '用手机麦克风录下来，保存为原件')
                   : (runsOnMac
                         ? '当前不可用；这里请用录音豆或导入音频'
-                        : '只在 iPhone 上提供；这里请用录音豆或导入音频'),
+                        : '只在手机上提供；这里请用录音豆或导入音频'),
               trailing: phoneRecording
                   ? null
-                  : (runsOnMac ? '不可用' : '仅 iPhone'),
+                  : (runsOnMac ? '不可用' : '仅手机'),
               onTap: phoneRecording
                   ? () => Navigator.pop(context, NewRecordingAction.phone)
                   : null,
@@ -922,10 +922,10 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
               title: '纯文字记录',
               subtitle: phoneRecording
                   ? '一直识别你说的话，只留文字、不存录音；断网也不丢'
-                  : (runsOnMac ? '当前不可用' : '只在 iPhone 上提供'),
+                  : (runsOnMac ? '当前不可用' : '只在手机上提供'),
               trailing: phoneRecording
                   ? null
-                  : (runsOnMac ? '不可用' : '仅 iPhone'),
+                  : (runsOnMac ? '不可用' : '仅手机'),
               onTap: phoneRecording
                   ? () => Navigator.pop(context, NewRecordingAction.textCapture)
                   : null,

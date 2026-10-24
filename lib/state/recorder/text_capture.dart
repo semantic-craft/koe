@@ -280,7 +280,9 @@ mixin _RecorderTextCapture on ChangeNotifier {
     bool allDay = false,
     bool fromDevice = false,
   }) async {
-    if (!phoneRecordingEnabled || textCaptureActive || _textBusy) return false;
+    if (_disposed || !phoneRecordingEnabled || textCaptureActive || _textBusy) {
+      return false;
+    }
     if (!fromDevice && (phoneRecordingActive || voiceHoldTarget != null)) {
       textCaptureError = '麦克风正在录音，先结束那段再开始';
       notifyListeners();
@@ -344,7 +346,6 @@ mixin _RecorderTextCapture on ChangeNotifier {
         _textMic = samples.listen(_onTextSamples, onDone: _onTextMicDone);
         _textMicStates = _micStream.states.listen(_onTextMicState);
       }
-      unawaited(_saveTextState());
       if (!fromDevice) {
         // Started from the sheet or on launch, while Koe is on screen, as
         // Android requires.
@@ -358,10 +359,11 @@ mixin _RecorderTextCapture on ChangeNotifier {
         );
       }
       if (allDay) {
-        unawaited(_writeAllDayMarker());
         _textTicker = Timer.periodic(AllDayTiming.tick, (_) => _onTextTick());
       }
       notifyListeners();
+      await _queueTextSave(_saveTextState);
+      if (allDay) await _queueTextSave(_writeAllDayMarker);
       if (!allDay) unawaited(_connectText());
       return true;
     } finally {
@@ -769,19 +771,29 @@ mixin _RecorderTextCapture on ChangeNotifier {
     });
   }
 
-  Future<void> _saveTextState({int sentBytes = 0}) async {
+  Future<void> _saveTextState({int sentBytes = 0}) {
     final id = _textId;
     final startedAt = _textStartedAt;
     final spool = _textSpool;
-    if (id == null || startedAt == null || spool == null) return;
+    if (id == null || startedAt == null || spool == null) {
+      return Future<void>.value();
+    }
+    return _writeSpoolState(
+      spool,
+      TextCaptureSpoolState(
+        documentId: id,
+        startedAt: startedAt,
+        sentBytes: sentBytes,
+      ),
+    );
+  }
+
+  Future<void> _writeSpoolState(
+    TextCaptureSpool spool,
+    TextCaptureSpoolState state,
+  ) async {
     try {
-      await spool.saveState(
-        TextCaptureSpoolState(
-          documentId: id,
-          startedAt: startedAt,
-          sentBytes: sentBytes,
-        ),
-      );
+      await spool.saveState(state);
     } catch (e) {
       debugPrint('[TextCapture] state: $e');
     }
@@ -1035,7 +1047,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
     try {
       final marker = await _allDayMarker();
       await marker.parent.create(recursive: true);
-      await marker.writeAsString('{"version":1}');
+      await writeFileAtomically(marker, '{"version":1}');
     } catch (e) {
       debugPrint('[TextCapture] marker: $e');
     }
@@ -1054,13 +1066,12 @@ mixin _RecorderTextCapture on ChangeNotifier {
   Future<void> _onTextBackgroundRefused() async {
     if (!textCaptureActive) return;
     final allDay = _textAllDay;
-    await stopTextCapture();
+    await stopTextCapture(keepAllDay: allDay);
     if (_disposed || textCaptureActive) return;
     textCaptureError = allDay
         ? 'Koe 不在屏幕上时 Android 不让它开始用麦克风，回到 Koe 后接着听'
         : 'Koe 不在屏幕上时 Android 不让它开始用麦克风，纯文字记录已停下';
     if (allDay) {
-      await _writeAllDayMarker();
       _textResumeOnScreen = true;
       _textLifecycle ??= AppLifecycleListener(onResume: _onTextBackOnScreen);
     }
@@ -1076,7 +1087,11 @@ mixin _RecorderTextCapture on ChangeNotifier {
   /// Continues all-day listening that was still on when Koe last closed.
   Future<void> _resumeAllDayListening() async {
     try {
-      if (textCaptureActive || !await (await _allDayMarker()).exists()) return;
+      if (_disposed ||
+          textCaptureActive ||
+          !await (await _allDayMarker()).exists()) {
+        return;
+      }
       if (!allDayListening) {
         await _clearAllDayMarker();
         return;
