@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "e17ea7c7b14c503fca1b231f3ea5c1b6c51c3de4",
+    "main": "a4af62fa446e69fb490895b20fd4b46c0d4453e5",
     "open_pulls": [],
     "pulls": [
       {
@@ -696,7 +696,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-24T03:27:36.046475Z",
+  "observed_at": "2026-10-24T03:49:45.077780Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1024,17 +1024,22 @@
             },
             {
               "kind": "note",
-              "ref": "doubao-standard-20261024",
-              "note": "本轮独立HTTP实验适配器真实调用标准版submit/query，SSD300，三次成功、无重发；Qwen复用当日同批保存结果，不重复收费。SHA256核对临时托管文件；Dart和独立Python计分一致。非生产适配器或安装GUI验收。"
+              "note": "本轮独立HTTP实验适配器真实调用标准版submit/query，SSD300，三次成功、无重发；Qwen复用当日同批保存结果，不重复收费。SHA256核对临时托管文件；Dart和独立Python计分一致。非生产适配器或安装GUI验收。",
+              "ref": "doubao-standard-20261024"
             },
             {
               "kind": "note",
-              "ref": "aliyun-temporary-hosting-cleanup",
-              "note": "仅临时托管公开样例，未改服务器配置。三段音频已删除、URL均404、兜底timer停止；TeslaHub未重启、healthy、HTTPS200。系统盘40GiB清理旧日志728.8MiB及少量缓存，可用约18GiB；独立98GiB数据盘可用约86GiB。"
+              "note": "仅临时托管公开样例，未改服务器配置。三段音频已删除、URL均404、兜底timer停止；TeslaHub未重启、healthy、HTTPS200。系统盘40GiB清理旧日志728.8MiB及少量缓存，可用约18GiB；独立98GiB数据盘可用约86GiB。",
+              "ref": "aliyun-temporary-hosting-cleanup"
+            },
+            {
+              "kind": "note",
+              "ref": "mac-qwen-gui-20261024",
+              "note": "Mac安装版1.2.2+5：GUI导入600秒四人公开会议QA-Qwen-4speakers-10min，单条确认上传Qwen并成功转写，4个标签。0/1改名为A/B保存，正文与列表同步更新；Cmd-Q退出且pgrep确认无进程，重开PID57070后同一录音及姓名面板仍为A/B/2/3，未重新转写。截图与AX存本地_artifacts/koe/mac-qwen-gui-20261024。未验中文输入法完整改名、跨设备同步、私人会议及逐句质量；本地模型未调用。"
             }
           ],
           "id": "meeting-cloud-diarization",
-          "next": "按用户最新要求不建设自有音频托管服务，继续现有Qwen直接上传链路（仍是云端识别）。豆包300需要audio.url，仅保留评测记录、暂不接入。Mac安装版会议转写/标签/改名持久化及用户真实会议待验；本地#433继续暂缓。",
+          "next": "继续Qwen直接上传；Mac安装版公开样例核心流程已验，用户真实会议及人工逐句质量仍待验。本地#433继续暂缓，豆包300不建设自有托管。",
           "status": "done",
           "summary": "2026-10-24补测豆包标准版2.0 volc.seedasr.auc + SSD300，三场600秒公开会议真实API均完成，人数4/4/2正确，DER30.14%/17.53%/4.33%。同批Qwen已存结果重计分为24.36%/11.96%/5.30%。豆包300改善极速版标签过多，两人场略优，四人场Qwen更好；不据此承诺复杂抢话完整或纪要准确率。",
           "title": "中文多人云端对照：保留Qwen，豆包300暂不接入"
