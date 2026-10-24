@@ -5,6 +5,7 @@
 import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:koe/platform/calendar_meetings.dart';
 import 'package:koe/platform/system_tasks.dart';
 
 void main() {
@@ -39,6 +40,26 @@ void main() {
     expect(read?.title, title);
     expect(read?.start, start);
     expect(read?.end, start.add(const Duration(minutes: 30)));
+
+    // Verify phone calendar meeting discovery & reminder scheduling (#373) on
+    // the real Android CalendarContract and KoePlatformPlugin.
+    const meetings = ChannelCalendarMeetings();
+    expect(await meetings.requestAccess(), isTrue);
+    final upcoming = await meetings.upcomingMeetings(
+      start.subtract(const Duration(minutes: 5)),
+      start.add(const Duration(hours: 1)),
+    );
+    final matched = upcoming.where((m) => m.title == title).toList();
+    expect(matched, hasLength(1));
+    final named = await meetings.meetingAt(
+      start.subtract(const Duration(minutes: 2)),
+    );
+    expect(named?.title, title);
+    await meetings.syncPhoneReminders(
+      matched,
+      now: start.subtract(const Duration(minutes: 2)),
+    );
+    await meetings.syncPhoneReminders(const [], now: start);
 
     final later = start.add(const Duration(hours: 2));
     expect(
