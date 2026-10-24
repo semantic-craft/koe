@@ -1,6 +1,9 @@
 import '../../platform/system_tasks.dart';
 import 'todo_store.dart';
 
+/// A pending export has not yet established a system link.
+enum SystemExportPhase { authorization, writing }
+
 /// Keeps Koe todos in step with the Reminders (#137) and Calendar (#138)
 /// items the user explicitly exported them to.
 ///
@@ -9,11 +12,16 @@ import 'todo_store.dart';
 /// conflict for the user when both changed differently. A deleted system item
 /// only removes the link, never the todo.
 class TodoSystemSync {
-  TodoSystemSync(this._todos, this._tasks);
+  TodoSystemSync(this._todos, this._tasks, {this.onChanged});
+
+  final void Function()? onChanged;
 
   final TodoStore _todos;
   final SystemTasks _tasks;
-  final Set<String> _exportsInFlight = {};
+  final Map<String, SystemExportPhase> _exportsInFlight = {};
+
+  SystemExportPhase? exportPhase(String id, SystemTaskTarget target) =>
+      _exportsInFlight['${target.name}:$id'];
   Future<void>? _syncing;
 
   /// Last system-app problem worth telling the user about.
@@ -42,7 +50,9 @@ class TodoSystemSync {
     DateTime? end,
   ) async {
     final guard = '${target.name}:$id';
-    if (!_exportsInFlight.add(guard)) return;
+    if (_exportsInFlight.containsKey(guard)) return;
+    _exportsInFlight[guard] = SystemExportPhase.authorization;
+    onChanged?.call();
     try {
       var todo = _todos.todoById(id);
       if (todo == null) throw StateError('找不到这条待办');
@@ -60,6 +70,8 @@ class TodoSystemSync {
               : '没有访问日历的权限，可在系统设置里允许 Koe 访问；Koe 里的待办不受影响',
         );
       }
+      _exportsInFlight[guard] = SystemExportPhase.writing;
+      onChanged?.call();
       // The time picked for the event becomes the todo's time; otherwise
       // the next sync pushes the date-only due back as midnight.
       if (target == SystemTaskTarget.event &&
@@ -93,6 +105,7 @@ class TodoSystemSync {
       );
     } finally {
       _exportsInFlight.remove(guard);
+      onChanged?.call();
     }
   }
 

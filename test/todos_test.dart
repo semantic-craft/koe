@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -31,6 +32,7 @@ class _Assistant implements AnalysisService {
 /// An in-memory Reminders/Calendar.
 class _System implements SystemTasks {
   bool granted = true;
+  Completer<bool>? permission;
   bool offline = false;
   final Map<String, SystemSnapshot> items = {};
   var _next = 0;
@@ -39,7 +41,8 @@ class _System implements SystemTasks {
   bool supports(SystemTaskTarget target) => true;
 
   @override
-  Future<bool> requestAccess(SystemTaskTarget target) async => granted;
+  Future<bool> requestAccess(SystemTaskTarget target) async =>
+      permission == null ? granted : await permission!.future;
 
   @override
   Future<String> save(
@@ -352,6 +355,63 @@ void main() {
     expect(system.items, hasLength(1));
     expect(find.text('提醒事项 · 已关联'), findsOneWidget);
   });
+
+  testWidgets(
+    'pending system authorization stays visible and denial permits retry',
+    (tester) async {
+      final system = _System()..permission = Completer<bool>();
+      late RecorderController c;
+      late Todo milk;
+      await tester.runAsync(() async {
+        c = controller(store: TodoStore(inMemory: true), system: system);
+        final path = await recording(c, 1760850000, _firstTalk);
+        await c.extractTodos(RecordingReference(path: path));
+        milk = c.todos.openMine.single;
+      });
+      addTearDown(c.dispose);
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: c,
+          child: MaterialApp(home: TodoDetailScreen(todoId: milk.id)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('export-reminder')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm-export')));
+      await tester.pumpAndSettle();
+      expect(find.text('提醒事项 · 等待系统授权'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextButton>(find.byKey(const ValueKey('export-reminder')))
+            .onPressed,
+        isNull,
+      );
+      expect(system.items, isEmpty);
+
+      system.permission!.complete(false);
+      await tester.pumpAndSettle();
+      expect(find.text('提醒事项 · 未导出'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextButton>(find.byKey(const ValueKey('export-reminder')))
+            .onPressed,
+        isNotNull,
+      );
+      expect(system.items, isEmpty);
+
+      system.permission = null;
+      await tester.tap(find.byKey(const ValueKey('export-reminder')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const ValueKey('confirm-export')));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('提醒事项 · 已关联'), findsOneWidget);
+      expect(system.items, hasLength(1));
+    },
+  );
 
   testWidgets('on the Mac a todo goes to Reminders through EventKit', (
     tester,
