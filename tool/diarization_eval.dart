@@ -19,9 +19,12 @@ Future<void> main(List<String> args) async {
   var startSeconds = 0.0;
   double? threshold;
   double? maxDer;
+  String? audioPath;
+  String? referencePath;
   var amiOnly = false;
   var mode = 'both';
   var outputPrefix = 'ES2004a';
+  var explicitOutputPrefix = false;
   for (var i = 0; i < args.length; i++) {
     if (args[i] == '--cache-dir' && i + 1 < args.length) {
       cacheDirPath = args[++i];
@@ -33,17 +36,30 @@ Future<void> main(List<String> args) async {
       threshold = double.parse(args[++i]);
     } else if (args[i] == '--max-der' && i + 1 < args.length) {
       maxDer = double.parse(args[++i]);
+    } else if (args[i] == '--audio' && i + 1 < args.length) {
+      audioPath = args[++i];
+    } else if (args[i] == '--reference' && i + 1 < args.length) {
+      referencePath = args[++i];
     } else if (args[i] == '--ami-only') {
       amiOnly = true;
     } else if (args[i] == '--mode' && i + 1 < args.length) {
       mode = args[++i];
     } else if (args[i] == '--output-prefix' && i + 1 < args.length) {
       outputPrefix = args[++i];
+      explicitOutputPrefix = true;
     } else {
       throw ArgumentError('Unknown or incomplete option: ${args[i]}');
     }
   }
 
+  if (audioPath != null && !explicitOutputPrefix) {
+    throw ArgumentError(
+      'Custom audio requires --output-prefix to keep corpus results separate',
+    );
+  }
+  if ((audioPath == null) != (referencePath == null)) {
+    throw ArgumentError('--audio and --reference must be supplied together');
+  }
   if (!startSeconds.isFinite ||
       !clipSeconds.isFinite ||
       (threshold != null && (!threshold.isFinite || threshold <= 0)) ||
@@ -117,10 +133,10 @@ Future<void> main(List<String> args) async {
   }
 
   // 2. AMI ES2004a (CC BY 4.0) DER evaluation
-  final amiWavPath = '$cacheDirPath/ES2004a.Mix-Headset.wav';
-  final amiRttmPath = '$cacheDirPath/ES2004a.rttm';
+  final amiWavPath = audioPath ?? '$cacheDirPath/ES2004a.Mix-Headset.wav';
+  final amiRttmPath = referencePath ?? '$cacheDirPath/ES2004a.rttm';
   if (!await File(amiWavPath).exists() || !await File(amiRttmPath).exists()) {
-    throw StateError('AMI audio and independent RTTM reference are required');
+    throw StateError('Audio and independent RTTM reference are required');
   }
   {
     await ensureSherpaBindingsInitialized();
@@ -176,7 +192,7 @@ Future<void> main(List<String> args) async {
         ]),
       );
       stdout.writeln(
-        '\n[AMI ES2004a $startSeconds-${(startSeconds + evalSec).toStringAsFixed(0)}s (CC BY 4.0)] '
+        '\n[${audioPath ?? 'AMI ES2004a (CC BY 4.0)'} $startSeconds-${(startSeconds + evalSec).toStringAsFixed(0)}s] '
         'expectedSpeakers=${expected ?? "auto"}:\n'
         '  refSpeakers=$refSpeakers, hypSpeakers=$hypSpeakers, turns=${result.turns.length}\n'
         '  single-speaker error (all reference single speech, misses included, no collar) = '

@@ -165,7 +165,7 @@ flutter analyze
 flutter test
 ```
 
-连着 Pixel 时，`scripts/android-check` 构建并安装调试包，在手机上跑 [integration_test/android](integration_test/android/) 的无人值守场景。跑之前解锁手机、放着别动：脚本让屏幕一直亮着，锁屏的场景排在最后；手机锁着时，需要 Koe 在屏幕上的场景记为跳过。设备离线或有场景跳过时以 77 退出，记为跳过。
+连着 Pixel 时，`scripts/android-check` 构建并安装独立验收包（`com.semanticcraft.soundcore.verification`），保留正式版的录音和配置，在手机上跑 [integration_test/android](integration_test/android/) 的无人值守场景。跑之前解锁手机、放着别动：脚本让屏幕一直亮着，锁屏的场景排在最后；手机锁着时，需要 Koe 在屏幕上的场景记为跳过。设备离线或有场景跳过时以 77 退出，记为跳过。
 
 ## 架构
 
@@ -223,3 +223,7 @@ Koe 的蓝牙、协议、加解密、音频和 Wi‑Fi 模块仍有相当部分�
 **License pending：上游项目目前还没有许可证；在原作者授权之前，本仓库不会公开发布。**
 
 在此之前，上游代码的全部权利归原作者所有，本仓库仅供私人使用，请勿再分发。
+
+Android 离线发言人区分场景：`KOE_DIARIZATION_FIXTURES=/path/to/fixtures scripts/android-check integration_test/android/diarization_test.dart`。目录需包含生产固定版本的 `segmentation-model.onnx`、`3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx` 和 [sherpa 官方四人中文样例](https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/0-four-speakers-zh.wav)。模型仍由生产校验逻辑核对 SHA-256；场景禁用模型网络请求、调用真实 Android 解码和原生推理。样例人数检查不代表独立会议 DER 达标。
+
+独立会议评测可用 `dart tool/diarization_eval.dart --cache-dir /path/to/models --audio meeting-mono-16k.wav --reference meeting.rttm --clip-seconds 600 --ami-only --mode both --output-prefix meeting`；音频和人工 RTTM 必须成对提供，保留语料来源、许可、声道和截取区间。

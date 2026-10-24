@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-23T17:33:35.234969Z</p>
-<p>Main: <code>main: 4c9393c22c898c2653ef12a3ed1df07bc66b7c70</code></p>
+<p>Observed: 2026-10-23T23:59:41.310703Z</p>
+<p>Main: <code>main: 05aa4c8dbfc60476f155f9daf0bde991de2ca192</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -62,7 +62,8 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/tool/diarization_eval.dart">file tool/diarization_eval.dart: #389 的评测：独立时间区间、双侧 collar 与重叠计分。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/466">pull 466: 本批 #434 1–5 的实现、红绿回归、公开 AMI 与合成长音频证据。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/465">issue 465: 真实会议、iOS 迁移与备份、编辑和升级验收；尚未完成。</a></li>
-</ul><p>Next: #434 继续 6–14 的效率与清理；#433/#465 做真实长会议、iOS 迁移和编辑验收；有线网络产品选择保留。 #371 还需 scripts/android-check 的发言人区分场景。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/433">issue 433: 第三批：Pixel 隔离包真实解码/原生推理，缓存模型且拒绝模型网络请求，四人中文样例 10 turns / 36.489s，通过。AliMeeting R8001_M8004 第一远场声道 0–600s、4 人、人工 TextGrid：auto DER 14.20% 但输出 12 标签，指定 4 人 DER 31.85%；单说话人错误率分别 7.01% / 30.45%。独立公开会议，不是用户现场录制/三端 GUI 验收。</a></li>
+</ul><p>Next: #434 继续 6–14 的效率与清理；#433/#465 做真实长会议、iOS 迁移和编辑验收；有线网络产品选择保留。 #371 Android 原生场景已补并在 Pixel 通过；#433 继续处理独立中文会议的标签过度拆分和指定人数退化，三端真实会议/UI 编辑仍待验。</p></article>
 <article id="meeting-phase4"><h3>会议纪要第 4 期：对标拾音的 Mac 录音体验</h3><span class="badge">in_progress</span><p>4I（#408）已在 #439 合并：录音中和导入时都能选「大约几个人」。R18.12 的后半（#426）已在 #442 合并：被打断的本机转写和还在上传的云端转写下次打开从头重跑。4F（#405）已在 #447 合并（70db2a1）：别的应用在前台时按 ⌃⌥⌘R 开始或停止录音，录音中按 ⌃⌥⌘B 标重点；真实按键没在真机上跑（#446）。4G（#406）已在 #449 合并（1f31357）：会议应用连续用麦克风 5 秒时，右上角不抢前台的小面板问要不要开录，录着的会议结束 10 秒后问要不要停；可对应用选「不再提醒」，设置「会议提醒」里恢复或整个关掉；每场会议只在第 5 秒判断一次，和拾音不同。77f1000 上 scripts/check 无分析问题、953 个测试全过，macOS debug 构建成功；沙盒里的 Koe 能否读到进程列表、真实入会离会没在真机上跑（#450）。4H（#407）已由 #457 squash 合并（446930a）：接续原作者实现，补冷启动设置读回前立即开录误请求日历的回归。最终 check 961 项通过，CI通过；本轮 iOS debug 无签名构建成功、Mac profile 性能场景阈值通过。真实日历与提醒事项、安装升级仍由 #453 验收。4E（#404）由 #467 交付双路录音、两路 WAV 恢复、分路电平与本机实时文字。接上 #466 后全量 979 项通过，Mac 构建与性能门槛通过；12 秒原生采集两路各 407432 字节，系统峰值 1954。探针关闭 Speech，未证明 GUI 识别；真实会议、蓝牙与安装升级仍待 #464。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/447">pull 447: 4F 的实现：全局快捷键、设置开关、面板自动关闭，已合并（70db2a1）；三项验收写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/405">issue 405: 4F 工单：全局快捷键 ⌃⌥⌘R、⌃⌥⌘B（拾音 R11.3、R19.5）。</a></li>
@@ -88,7 +89,8 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/457">pull 457: 日历会议命名、Mac 系统任务同步及冷启动设置竞态已合并；961项测试与CI通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/467">pull 467: 双路录音与实时文字实现；979 项回归和性能通过，12 秒真实原生采集。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/464">issue 464: 真实会议、蓝牙切换、GUI 识别、权限与安装升级待验。</a></li>
-</ul><p>Next: #440、#441、#446、#450、#453、#464 逐项真机确认；代码交付不等于安装或用户验收。手机日历提醒另有范围，不能用 Mac 日历导出代替。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/464">issue 464: 2026-10-24 私有签名 1.2.2+5 覆盖安装，旧19条录音保留；GUI双路保存成功。退出Sonori仍复现无文字，修正1110静音逐帧重试后公开中文样例出现系统实时文字；真实长会议、双路人声与耳机切换仍待验。</a></li>
+</ul><p>Next: 继续 #464 / #453 等真实环境验收；本轮修复 Speech 静音热重试，不能用短公开样例替代真实会议。</p></article>
 <article id="android-device-issues"><h3>#345 真机验收发现的问题（#436–#438）</h3><span class="badge">done</span><p>#345 第一部分（2026-10-23，Pixel 11 Pro、D3200、main f065809 的 debug 包）发现 3 个问题。#437 已在 #443 合并（543c318）：Wi‑Fi 一次导出多个文件时，分片攒到 64 KB 再写盘、进度每 250 ms 最多一次，断开即报错，已存好的照常进资料库，Android 上热点用过后经蓝牙重开；本机 perf 场景 wifi_save（100 万个分片）从最后一个分片后 25 秒才存好降到约 0.3 秒，合并时未在真机上验证。#438 已在 #445 合并（b6b0ae5）：连着录音豆没活时前台服务照旧在跑，但不再持有 wake lock，通知写「Koe 已连接录音豆」；经蓝牙取回、Wi‑Fi 导出和录音豆实时转写期间才持有，通知写「Koe 正在同步录音」，做完即放开；录音豆每 15 秒回报的设备信息没变时不再写盘；合并时未在真机上验证。#436 已在 #451 合并（28b1070）：录音豆进出 Wi‑Fi 模式后换 BLE 地址，改为按广播里的经典地址认它；全天常驻改由 Koe 向 Android 登记的后台扫描（按经典地址过滤）报告录音豆在不在、在哪个地址，伴侣设备关联只用来从后台启动前台服务；新扫描不再先报上一次扫描的旧地址。手机重启、Koe 更新和 Koe 运行时开关蓝牙后重新登记扫描；Koe 进程不在时开关蓝牙要等下次打开 Koe。三个都已合并。真机上 #436 通过；#437 第 2、3 项通过，第 1 项因录音豆热点中途消失没验成（#461）；#438 第 1 项通过、第 2 项部分通过；详见「Android 综合验收」。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/437">issue 437: Wi‑Fi 导出 4 个问题与验收标准。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/443">pull 443: #437 的修复，已合并；回退测试、perf 前后数字和没跑到的项目写在正文。</a></li>

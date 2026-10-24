@@ -55,6 +55,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Integration tests uninstall their package on exit. Keep the
+            // user's recordings and settings in the production application.
+            if (System.getenv("KOE_ANDROID_VERIFICATION") == "1") {
+                applicationIdSuffix = ".verification"
+            }
+        }
         release {
             signingConfig = signingConfigs.getByName(
                 if (releaseSigning != null) "release" else "debug",

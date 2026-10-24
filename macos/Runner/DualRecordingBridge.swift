@@ -22,6 +22,7 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
     private var lastSound: [String: Double] = [:]
     private var lastRestart: [String: Double] = [:]
     private var notices: [String: String] = [:]
+    private var speechNotices: [String: String] = [:]
     private var timer: Timer?
     private var speech: [String: DualLiveSpeech] = [:]
     private var drainingSpeech: [DualLiveSpeech] = []
@@ -65,7 +66,7 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         active = true; generation += 1
         started = ProcessInfo.processInfo.systemUptime
         pausedSeconds = 0; pauseStarted = nil
-        lastData = [:]; lastSound = [:]; lastRestart = [:]; notices = [:]
+        lastData = [:]; lastSound = [:]; lastRestart = [:]; notices = [:]; speechNotices = [:]
         let mic = MicrophoneSource(deviceUID: input), system = SystemAudioSource()
         self.mic = mic; self.system = system
         configureSource(mic, lane: "microphone")
@@ -82,14 +83,31 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
                     self.emit(["speechNotice": "未允许语音识别；双路原件仍会保存"]); return
                 }
                 for lane in ["microphone", "system"] {
-                    let live = DualLiveSpeech { [weak self] text, offset, final in
-                        self?.emit(["lane": lane, "text": text, "offset": offset, "final": final])
+                    let live = DualLiveSpeech(onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }) { [weak self] text, offset, final, current in
+                        self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane)
                     }
                     if live.start(at: self.elapsed) { self.speech[lane] = live }
                     else { self.emit(["speechNotice": "此设备暂不支持本机实时识别；双路原件仍会保存"]) }
                 }
             }
         }
+    }
+
+    private func speechUpdated(_ text: String, offset: Double, final: Bool, current: Bool, lane: String) {
+        if current && !text.isEmpty && speechNotices.removeValue(forKey: lane) != nil {
+            emit(["speechNotice": speechNotices.keys.sorted().compactMap { speechNotices[$0] }.joined(separator: "\n")])
+        }
+        emit(["lane": lane, "text": text, "offset": offset, "final": final])
+    }
+
+    private func speechFailed(_ error: Error, lane: String) {
+        let failure = error as NSError
+        let source = lane == "system" ? "系统声音" : "麦克风"
+        let noSpeech = failure.domain == "kAFAssistantErrorDomain" && failure.code == 1110
+        speechNotices[lane] = noSpeech
+            ? "\(source)暂未检测到语音，有声音后自动继续识别；原件仍在保存。"
+            : "\(source)的实时文字暂不可用；双路原件仍在保存。暂停后继续可重试。"
+        emit(["speechNotice": speechNotices.keys.sorted().compactMap { speechNotices[$0] }.joined(separator: "\n")])
     }
 
     private var elapsed: Double {
@@ -172,7 +190,7 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         restart("microphone", token: generation); restart("system", token: generation)
         if transcribe && SFSpeechRecognizer.authorizationStatus() == .authorized {
             for lane in ["microphone", "system"] {
-                let live = DualLiveSpeech { [weak self] text, offset, final in self?.emit(["lane": lane, "text": text, "offset": offset, "final": final]) }
+                let live = DualLiveSpeech(onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }) { [weak self] text, offset, final, current in self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane) }
                 if live.start(at: elapsed) { speech[lane] = live }
             }
         }
@@ -209,19 +227,40 @@ private final class DualLiveSpeech {
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
     private var current: DualSpeechRequest?
     private var finishing: [DualSpeechRequest] = []
-    private let update: (String, Double, Bool) -> Void
-    init(update: @escaping (String, Double, Bool) -> Void) { self.update = update }
+    private let update: (String, Double, Bool, Bool) -> Void
+    private let onFailure: (Error) -> Void
+    private var retry = DualSpeechRetryGate()
+    private var latestTime = 0.0
+    private var requestGeneration = 0
+    init(onFailure: @escaping (Error) -> Void, update: @escaping (String, Double, Bool, Bool) -> Void) {
+        self.onFailure = onFailure; self.update = update
+    }
     func start(at time: Double) -> Bool {
+        guard retry.mayStart(at: time, hasVoice: true) else { return false }
+        requestGeneration += 1
+        let token = requestGeneration
         if let current {
             finishing.append(current)
             current.finish { [self, weak current] in finishing.removeAll { $0 === current } }
         }
         current = nil
         guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else { return false }
-        current = DualSpeechRequest(recognizer: recognizer, offset: time, update: update)
+        current = DualSpeechRequest(recognizer: recognizer, offset: time, update: { [weak self] text, offset, final in
+            guard let self else { return }
+            self.update(text, offset, final, self.requestGeneration == token)
+        }) { [weak self] error in
+            guard let self else { return }
+            let failure = error as NSError
+            self.retry.failed(noSpeech: failure.domain == "kAFAssistantErrorDomain" && failure.code == 1110, at: self.latestTime)
+            self.onFailure(error)
+        }
+        retry = DualSpeechRetryGate()
         return true
     }
     func append(_ samples: [Float], at time: Double) {
+        latestTime = time
+        let hasVoice = samples.contains { abs($0) > 0.005 }
+        guard retry.mayStart(at: time, hasVoice: hasVoice) else { return }
         if current == nil || current!.ended || time - current!.offset > 50 {
             guard start(at: time) else { return }
         }
@@ -231,6 +270,7 @@ private final class DualLiveSpeech {
         current?.request.append(buffer)
     }
     func finish(_ completion: @escaping () -> Void) {
+        requestGeneration += 1
         if let current { finishing.append(current) }
         current = nil
         let pending = finishing
@@ -250,13 +290,14 @@ private final class DualSpeechRequest {
     private var completions: [() -> Void] = []
     private var closing = false
     private(set) var ended = false
-    init(recognizer: SFSpeechRecognizer, offset: Double, update: @escaping (String, Double, Bool) -> Void) {
+    init(recognizer: SFSpeechRecognizer, offset: Double, update: @escaping (String, Double, Bool) -> Void, onFailure: @escaping (Error) -> Void) {
         self.offset = offset
         request.requiresOnDeviceRecognition = true; request.shouldReportPartialResults = true
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
                 guard let self, !self.ended else { return }
                 if let result { update(result.bestTranscription.formattedString, offset, result.isFinal) }
+                if let error, !self.closing, result?.isFinal != true { onFailure(error) }
                 if error != nil || result?.isFinal == true { self.complete() }
             }
         }
