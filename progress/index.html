@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-24T12:13:25.423207Z</p>
-<p>Main: <code>main: 6aa6feb6f2146da2b592aed5643c8e7b744c1c9d</code></p>
+<p>Observed: 2026-10-24T12:39:15.917011Z</p>
+<p>Main: <code>main: 5c20d141f2f451d3f62dd7b84853bb43ff3dbc10</code></p>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>
@@ -125,10 +125,11 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/451">pull 451: #436 的修复，已合并；回退测试、没处理的情况和真机项写在正文。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/integration_test/perf/thresholds.json">file integration_test/perf/thresholds.json: wifi_save 的门限：save_ms 3,000、通知 200。</a></li>
 </ul><p>Next: 无后续实现；真机项在 #345 统一跑。</p></article>
-<article id="device-duration-units"><h3>录音豆时长单位与旧副本完整性（#456）</h3><span class="badge">done</span><p>#459 已 squash 合并，完成时长建模、头前估算与头后真实传输字节、旧Opus/WAV副本一次迁移复核；避免12%副本误标完整。最终scripts/check 960项通过，Mac profile性能阈值全过，代码评审发现的旧基线迁移缺口已修复。 CI通过。</p><ul>
+<article id="device-duration-units"><h3>录音豆时长单位与旧副本完整性（#456）</h3><span class="badge">done</span><p>#459 已 squash 合并，完成时长建模、头前估算与头后真实传输字节、旧 Opus/WAV 副本迁移复核。#487 补齐离线升级启动对账（_loadLocalExports 注册本地 exports/ 后立即复核 _retrievedSizes 中尚未写入 verified_retrieved_durations.json 的历史基线）。在 Mac 签名安装版 1.2.2+6 上核实：两条 6 小时录音（1792491365、1792512966，各 21,600,000 ms）及完整旧副本通过 95% 时长复核并保持「原件已保存」，旧版按字节数误判完成的截断副本 1792456949（104.64s / 125.42s = 83.43%）升级启动后自动移出 retrieved_sizes.json 并写入 incomplete_retrievals.json，界面显示「原件不完整」。实体 D3200 现场拉取与断连重拉仍待唤醒后补验。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/459">pull 459: 时长单位、传输进度、历史误标副本修复。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/issues/458">issue 458: 真机与升级验收尚未完成。</a></li>
-</ul><p>Next: 代码已交付；真实录音豆及安装升级验收在 #458。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/487">pull 487: 修复离线升级启动未复核旧 retrieved_sizes.json 基线的问题；988 项测试与 CI 通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/458">issue 458: 2026-10-24 Mac 签名安装版 1.2.2+6 完成旧副本升级启动对账与两条 6 小时录音核实（1792456949 截断副本自动降级为原件不完整）；实体 D3200 现场 BLE/Wi‑Fi 拉取与断连重拉待唤醒补验。</a></li>
+</ul><p>Next: Mac 签名安装版 1.2.2+6 已完成旧副本升级启动对账与两条 6 小时录音核实（#487 已合并）；实体 D3200 当前休眠，现场 BLE/Wi‑Fi 拉取进度与断连重拉待唤醒后在 #458 补验。</p></article>
 </section>
 <section id="pending"><h2>问题与功能范围</h2>
 <article id="reconnect-flake"><h3>一键重连测试偶发失败</h3><span class="badge">planned</span><p>工单记录手动断开后一键重连测试偶发失败；需依据复现时序和行为测试判断根因与修复效果。</p><ul>

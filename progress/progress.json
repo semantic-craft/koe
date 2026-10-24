@@ -372,7 +372,7 @@
         "number": 458,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-23T15:25:46Z"
+        "updated_at": "2026-10-24T12:33:21Z"
       },
       {
         "number": 461,
@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "6aa6feb6f2146da2b592aed5643c8e7b744c1c9d",
+    "main": "5c20d141f2f451d3f62dd7b84853bb43ff3dbc10",
     "open_pulls": [],
     "pulls": [
       {
@@ -715,12 +715,20 @@
         "merged": true,
         "number": 485,
         "state": "closed"
+      },
+      {
+        "base": "2c8f314f3cf9d9b52dad85c86f2adcdc92c24c59",
+        "head": "1d0ab1052d59f817cc84490c92e0c85fb40f3c9b",
+        "merge_commit": "5c20d141f2f451d3f62dd7b84853bb43ff3dbc10",
+        "merged": true,
+        "number": 487,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-24T12:13:25.423207Z",
+  "observed_at": "2026-10-24T12:39:15.917011Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1318,15 +1326,20 @@
               "ref": 459
             },
             {
+              "kind": "pull",
+              "note": "修复离线升级启动未复核旧 retrieved_sizes.json 基线的问题；988 项测试与 CI 通过。",
+              "ref": 487
+            },
+            {
               "kind": "issue",
-              "note": "真机与升级验收尚未完成。",
+              "note": "2026-10-24 Mac 签名安装版 1.2.2+6 完成旧副本升级启动对账与两条 6 小时录音核实（1792456949 截断副本自动降级为原件不完整）；实体 D3200 现场 BLE/Wi‑Fi 拉取与断连重拉待唤醒补验。",
               "ref": 458
             }
           ],
           "id": "device-duration-units",
-          "next": "代码已交付；真实录音豆及安装升级验收在 #458。",
+          "next": "Mac 签名安装版 1.2.2+6 已完成旧副本升级启动对账与两条 6 小时录音核实（#487 已合并）；实体 D3200 当前休眠，现场 BLE/Wi‑Fi 拉取进度与断连重拉待唤醒后在 #458 补验。",
           "status": "done",
-          "summary": "#459 已 squash 合并，完成时长建模、头前估算与头后真实传输字节、旧Opus/WAV副本一次迁移复核；避免12%副本误标完整。最终scripts/check 960项通过，Mac profile性能阈值全过，代码评审发现的旧基线迁移缺口已修复。 CI通过。",
+          "summary": "#459 已 squash 合并，完成时长建模、头前估算与头后真实传输字节、旧 Opus/WAV 副本迁移复核。#487 补齐离线升级启动对账（_loadLocalExports 注册本地 exports/ 后立即复核 _retrievedSizes 中尚未写入 verified_retrieved_durations.json 的历史基线）。在 Mac 签名安装版 1.2.2+6 上核实：两条 6 小时录音（1792491365、1792512966，各 21,600,000 ms）及完整旧副本通过 95% 时长复核并保持「原件已保存」，旧版按字节数误判完成的截断副本 1792456949（104.64s / 125.42s = 83.43%）升级启动后自动移出 retrieved_sizes.json 并写入 incomplete_retrievals.json，界面显示「原件不完整」。实体 D3200 现场拉取与断连重拉仍待唤醒后补验。",
           "title": "录音豆时长单位与旧副本完整性（#456）"
         }
       ],
@@ -1831,7 +1844,8 @@
       471,
       477,
       479,
-      485
+      485,
+      487
     ]
   }
 }
