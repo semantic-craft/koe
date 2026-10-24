@@ -14,6 +14,7 @@ mixin _RecorderSettings on ChangeNotifier {
   abstract bool _autoTransferRunning;
   abstract final BleFilePull _blePull;
   abstract final CalendarMeetings _calendarMeetings;
+  Future<void> refreshPhoneCalendarReminders({DateTime? now});
   Future<String> _convertExportToWav(
     String path, {
     // ignore: unused_element_parameter
@@ -437,7 +438,15 @@ mixin _RecorderSettings on ChangeNotifier {
     meetingFromCalendar = v;
     notifyListeners();
     unawaited(_persistSettings());
-    if (v) unawaited(_calendarMeetings.requestAccess());
+    if (v) {
+      unawaited(
+        _calendarMeetings.requestAccess().then((_) {
+          unawaited(refreshPhoneCalendarReminders());
+        }),
+      );
+    } else {
+      unawaited(refreshPhoneCalendarReminders());
+    }
   }
 
   void setMeetingLocalOnly(bool v) {

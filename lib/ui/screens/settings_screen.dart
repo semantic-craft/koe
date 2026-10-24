@@ -209,15 +209,20 @@ class SettingsScreen extends StatelessWidget {
                     const SizedBox(height: 18),
                     const SectionLabel('会议提醒'),
                     _SettingsGroup(child: _MeetingAppSettings(controller: c)),
+                  ],
+                  if ((runsOnMac || runsOnPhone) && c.phoneRecordingEnabled) ...[
                     const SizedBox(height: 18),
                     const SectionLabel('日历'),
                     _SettingsGroup(
                       child: _SettingsSwitch(
                         key: const ValueKey('settings-meeting-from-calendar'),
-                        title: '用日历里的会议给录音命名',
-                        subtitle:
-                            '麦克风录音以日历里正在开或 5 分钟内开始的会议命名，受邀参会人的名字随原文交给会议纪要的模型。'
-                            '第一次录音时请求日历权限，可在系统设置的「隐私与安全性 › 日历」里更改',
+                        title: runsOnMac
+                            ? '用日历里的会议给录音命名'
+                            : '日历会议开录提醒与命名',
+                        subtitle: runsOnMac
+                            ? '麦克风录音以日历里正在开或 5 分钟内开始的会议命名，受邀参会人的名字随原文交给会议纪要的模型。'
+                                  '第一次录音时请求日历权限，可在系统设置的「隐私与安全性 › 日历」里更改'
+                            : '日历里的会议到点时提醒开录（只提醒，不自动录），手机录音以正在开或 5 分钟内开始的会议命名，受邀参会人的名字交给会议纪要',
                         value: c.meetingFromCalendar,
                         onChanged: c.setMeetingFromCalendar,
                       ),

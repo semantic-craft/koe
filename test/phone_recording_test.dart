@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
+import 'package:device_calendar_plus/device_calendar_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,7 @@ import 'package:koe/ai/doubao_stt.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/main.dart';
+import 'package:koe/platform/calendar_meetings.dart';
 import 'package:koe/platform/credential_store.dart';
 import 'package:koe/platform/phone_recorder.dart';
 import 'package:koe/platform/place_capture.dart';
@@ -958,6 +960,207 @@ void main() {
       },
     );
   });
+
+  group('手机日历事件开录提醒 (#373)', () {
+    test(
+      'calculates reminder delay across timezones and skips all-day, canceled, '
+      'declined, and ended events',
+      () {
+        // Current instant in UTC (2026-10-24 06:00:00Z = 14:00 Beijing time).
+        final nowUtc = DateTime.utc(2026, 10, 24, 6, 0);
+        // Event created in another timezone (e.g. UTC+9 at 15:05 = 06:05Z,
+        // 5 minutes after nowUtc).
+        final startUtc = DateTime.utc(2026, 10, 24, 6, 5);
+        final endUtc = DateTime.utc(2026, 10, 24, 7, 5);
+
+        final reminders = upcomingRemindersAmongEvents(
+          [
+            {
+              'id': 'all-day-1',
+              'title': '全天团建',
+              'start': startUtc.millisecondsSinceEpoch,
+              'end': endUtc.millisecondsSinceEpoch,
+              'allDay': true,
+            },
+            {
+              'id': 'canceled-1',
+              'title': '已取消评审',
+              'start': startUtc.millisecondsSinceEpoch,
+              'end': endUtc.millisecondsSinceEpoch,
+              'canceled': true,
+            },
+            {
+              'id': 'declined-1',
+              'title': '已拒绝访谈',
+              'start': startUtc.millisecondsSinceEpoch,
+              'end': endUtc.millisecondsSinceEpoch,
+              'declined': true,
+            },
+            {
+              'id': 'ended-1',
+              'title': '早会',
+              'start': nowUtc
+                  .subtract(const Duration(hours: 2))
+                  .millisecondsSinceEpoch,
+              'end': nowUtc
+                  .subtract(const Duration(hours: 1))
+                  .millisecondsSinceEpoch,
+            },
+            {
+              'id': 'cross-tz-1',
+              'title': '跨时区产品同步',
+              'start': startUtc.millisecondsSinceEpoch,
+              'end': endUtc.millisecondsSinceEpoch,
+            },
+          ],
+          from: nowUtc.toLocal(),
+          to: nowUtc.add(const Duration(hours: 24)).toLocal(),
+        );
+
+        expect(reminders.map((r) => r.title), ['跨时区产品同步']);
+        expect(
+          reminders.single.delayFrom(nowUtc),
+          const Duration(minutes: 5),
+        );
+      },
+    );
+
+    testWidgets(
+      'on Android a calendar meeting reminder prompts without auto-recording, '
+      'starts recording only when confirmed, and names the take after the meeting',
+      (tester) async {
+        final now = DateTime.now();
+        final start = now.add(const Duration(seconds: 2));
+        final end = start.add(const Duration(minutes: 45));
+        final androidCal = _FakeAndroidDeviceCalendar(
+          events: [
+            Event(
+              eventId: 'ev-1',
+              instanceId: 'ev-1',
+              calendarId: 'cal-1',
+              title: '架构评审会',
+              startDate: start,
+              endDate: end,
+              isAllDay: false,
+              availability: EventAvailability.busy,
+              status: EventStatus.confirmed,
+              isRecurring: false,
+              organizer: const Organizer(
+                name: '陈工',
+                emailAddress: 'chen@example.com',
+              ),
+              attendees: const [
+                Attendee(
+                  name: '林工',
+                  emailAddress: 'lin@example.com',
+                  role: AttendeeRole.required,
+                  status: AttendeeStatus.accepted,
+                ),
+                Attendee(
+                  name: '402 会议室',
+                  role: AttendeeRole.nonParticipant,
+                  status: AttendeeStatus.accepted,
+                ),
+              ],
+            ),
+          ],
+        );
+        final scheduled = <Map<Object?, Object?>>[];
+        var requestedNotificationPermission = false;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const channel = MethodChannel('com.semanticcraft.koe/system_tasks');
+        const permissions = MethodChannel(
+          'flutter.baseflow.com/permissions/methods',
+        );
+        messenger.setMockMethodCallHandler(permissions, (call) async {
+          switch (call.method) {
+            case 'checkPermissionStatus':
+              return 0; // denied initially
+            case 'requestPermissions':
+              requestedNotificationPermission = true;
+              return {17: 1}; // notification (17) -> granted (1)
+          }
+          return null;
+        });
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'scheduleMeetingReminders') {
+            final list =
+                (call.arguments as Map)['meetings'] as List<Object?>? ??
+                const [];
+            scheduled
+              ..clear()
+              ..addAll(list.cast<Map<Object?, Object?>>());
+          }
+          return null;
+        });
+        addTearDown(() {
+          messenger.setMockMethodCallHandler(permissions, null);
+          messenger.setMockMethodCallHandler(channel, null);
+        });
+
+        mic = _FakePhoneRecorder();
+        controller = (await tester.runAsync(
+          () async => RecorderController(
+            loadPersistedState: false,
+            topicsEnabled: true,
+            libraryDirectory: imports,
+            phoneRecorder: mic,
+            phoneRecordingEnabled: true,
+            placeCapture: _FixedPlace(),
+            calendarMeetings: ChannelCalendarMeetings(
+              androidCalendar: androidCal,
+            ),
+          ),
+        ))!;
+        addTearDown(controller.dispose);
+        await pump(tester);
+        await settle(tester, () => scheduled.isNotEmpty);
+        expect(scheduled.single['title'], '架构评审会');
+
+        // Simulate the meeting reaching its start time (or the user tapping
+        // the system reminder notification).
+        await tester.runAsync(
+          () => messenger.handlePlatformMessage(
+            channel.name,
+            channel.codec.encodeMethodCall(
+              const MethodCall('onMeetingReminderTapped', '架构评审会'),
+            ),
+            (_) {},
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Only reminds — never starts recording automatically!
+        expect(
+          find.byKey(const ValueKey('calendar-meeting-reminder-dialog')),
+          findsOneWidget,
+        );
+        expect(find.text('「架构评审会」开始了'), findsOneWidget);
+        expect(controller.phoneRecordingActive, isFalse);
+        expect(mic.path, isNull);
+
+        // Confirming starts the phone recording and names it after the meeting.
+        await tester.tap(
+          find.byKey(const ValueKey('calendar-meeting-reminder-start')),
+        );
+        await pumpDialog(tester);
+        await settle(tester, () => controller.phoneRecordingActive);
+        await pumpDialog(tester);
+        expect(find.text('手机录音中'), findsOneWidget);
+        expect(requestedNotificationPermission, isTrue);
+
+        await tester.tap(find.byKey(const ValueKey('stop-phone-recording')));
+        await settle(tester, () => controller.library.assets.isNotEmpty);
+        await tester.pumpAndSettle();
+
+        final saved = controller.library.assets.single;
+        expect(saved.displayName, startsWith('架构评审会 '));
+        expect(saved.meeting?.participants, ['陈工', '林工']);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  });
 }
 
 final Uint8List _pcmPattern = Uint8List.fromList([
@@ -1159,9 +1362,47 @@ class _OpenPanel extends FileSelectorPlatform {
   }) async => XFile(path);
 }
 
+/// In-memory Android CalendarContract (`device_calendar_plus`) for phone
+/// calendar meeting reminders and naming tests (#373).
+class _FakeAndroidDeviceCalendar implements DeviceCalendar {
+  _FakeAndroidDeviceCalendar({required this.events});
+
+  final List<Event> events;
+
+  @override
+  Future<CalendarPermissionStatus> hasPermissions() async =>
+      CalendarPermissionStatus.granted;
+
+  @override
+  Future<CalendarPermissionStatus> requestPermissions({
+    CalendarAccessLevel level = CalendarAccessLevel.full,
+  }) async => CalendarPermissionStatus.granted;
+
+  @override
+  Future<List<Calendar>> listCalendars() async => const [
+    Calendar(id: 'cal-1', name: 'Work (Subscribed)', readOnly: true, isPrimary: false),
+  ];
+
+  @override
+  Future<List<Event>> listEvents(
+    DateTime startDate,
+    DateTime endDate, {
+    List<String>? calendarIds,
+  }) async => [
+    for (final e in events)
+      if ((calendarIds == null || calendarIds.contains(e.calendarId)) &&
+          e.startDate.isBefore(endDate) &&
+          e.endDate.isAfter(startDate))
+        e,
+  ];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 /// Writes a real WAV on stop so the save path runs on actual bytes.
 class _FakePhoneRecorder implements PhoneRecorder {
-  _FakePhoneRecorder({required this.permission});
+  _FakePhoneRecorder({this.permission = true});
 
   final bool permission;
   final states$ = StreamController<PhoneMicState>.broadcast();
