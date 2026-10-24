@@ -360,7 +360,7 @@
         "number": 453,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-23T12:09:03Z"
+        "updated_at": "2026-10-24T04:16:46Z"
       },
       {
         "number": 456,
@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "a4af62fa446e69fb490895b20fd4b46c0d4453e5",
+    "main": "8ea1e2ffd4ae6f48c40a68ed928b3236f0f7bbc4",
     "open_pulls": [],
     "pulls": [
       {
@@ -696,7 +696,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-24T03:49:45.077780Z",
+  "observed_at": "2026-10-24T04:19:10.208728Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -890,6 +890,20 @@
           "status": "done",
           "summary": "#390（PR #395）：Wi‑Fi 导出由 Koe 自己加入录音豆热点；#391（PR #399）：熄屏时由系统挂着连接请求，录音豆回到身边自动重连；#392（PR #421）：转写和分析期间由前台服务保活，离开 Koe 或锁屏也能做完；#393（PR #422）：全天常驻，录音豆回到身边由系统唤起 Koe，连上取回录音。2026-10-22—23 合并，代码交付与真机验收分开判断，真机结果见「Android 综合验收」。",
           "title": "Android 录音豆 Wi‑Fi 导出、熄屏重连、AI 保活与全天常驻"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "2026-10-24评论6379751508：复现步骤和范围；未确定根因，不关闭工单。",
+              "ref": 453
+            }
+          ],
+          "id": "mac-calendar-453-acceptance",
+          "next": "诊断安装版实际事件查询和命名路径，修复后复验。首次授权、参与人、全天事件、拒绝权限、待办导出回读、iPhone和跨版本升级仍未覆盖。",
+          "status": "blocked",
+          "summary": "1.2.2+5日历完全访问与命名开关开启，专用非全天会议存在且Calendar重开后仍在，但12:08、Koe重启后12:14两次录音仍使用默认名称，录音本身正常保存。",
+          "title": "Mac日历会议命名验收：未通过"
         }
       ],
       "title": "代码与文档交付范围"
@@ -1034,8 +1048,13 @@
             },
             {
               "kind": "note",
-              "ref": "mac-qwen-gui-20261024",
-              "note": "Mac安装版1.2.2+5：GUI导入600秒四人公开会议QA-Qwen-4speakers-10min，单条确认上传Qwen并成功转写，4个标签。0/1改名为A/B保存，正文与列表同步更新；Cmd-Q退出且pgrep确认无进程，重开PID57070后同一录音及姓名面板仍为A/B/2/3，未重新转写。截图与AX存本地_artifacts/koe/mac-qwen-gui-20261024。未验中文输入法完整改名、跨设备同步、私人会议及逐句质量；本地模型未调用。"
+              "note": "Mac安装版1.2.2+5：GUI导入600秒四人公开会议QA-Qwen-4speakers-10min，单条确认上传Qwen并成功转写，4个标签。0/1改名为A/B保存，正文与列表同步更新；Cmd-Q退出且pgrep确认无进程，重开PID57070后同一录音及姓名面板仍为A/B/2/3，未重新转写。截图与AX存本地_artifacts/koe/mac-qwen-gui-20261024。未验中文输入法完整改名、跨设备同步、私人会议及逐句质量；本地模型未调用。",
+              "ref": "mac-qwen-gui-20261024"
+            },
+            {
+              "kind": "note",
+              "note": "用户手动输入并保存张三；agent完整退出、pgrep确认无进程、重开安装版PID9161，同一公开录音列表与正文仍显示张三，无重新转写。中文姓名持久化通过，本地模型未调用。",
+              "ref": "chinese-rename-20261024"
             }
           ],
           "id": "meeting-cloud-diarization",
