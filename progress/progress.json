@@ -360,7 +360,7 @@
         "number": 453,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-10-24T04:52:56Z"
+        "updated_at": "2026-10-24T08:14:55Z"
       },
       {
         "number": 456,
@@ -393,7 +393,7 @@
         "updated_at": "2026-10-23T17:13:35Z"
       }
     ],
-    "main": "1d528ec6f64bbb5dc2f7e96bd506eedd8c02dd82",
+    "main": "09e4d815c416db4bcbdbeb010da74a8761cbc857",
     "open_pulls": [],
     "pulls": [
       {
@@ -699,12 +699,20 @@
         "merged": true,
         "number": 477,
         "state": "closed"
+      },
+      {
+        "base": "7026d79b878450738b6239e8057f01da672685da",
+        "head": "30e39a036777b9b0ec9b195e37aa9617780c765f",
+        "merge_commit": "09e4d815c416db4bcbdbeb010da74a8761cbc857",
+        "merged": true,
+        "number": 479,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-24T04:59:30.086841Z",
+  "observed_at": "2026-10-24T08:17:18.635298Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -910,12 +918,22 @@
               "kind": "pull",
               "note": "启动器修复已squash合并1d528ec，CI通过；提醒事项授权与完成回读继续留#453。",
               "ref": 477
+            },
+            {
+              "kind": "pull",
+              "note": "等待授权回归先红后绿，check987项、CI通过，已签名安装；不证明系统授权或真实导出通过。",
+              "ref": 479
+            },
+            {
+              "kind": "issue",
+              "note": "评论6381876384：TCC AUTHREQ_PROMPTING 与用户不可见反馈；remindctl请求归属Codex，未替代Koe验收。",
+              "ref": 453
             }
           ],
           "id": "mac-calendar-453-acceptance",
-          "next": "用户允许Koe提醒事项权限后，核对一次已发起的导出，再从系统提醒事项勾选完成并回到Koe回读。其余首次日历授权、参与人、全天事件、拒绝权限、iPhone和跨版本升级仍待验。",
-          "status": "in_progress",
-          "summary": "修正验收启动入口为LaunchServices，并提交Calendar编辑后，最终签名安装版会议命名及重启保留通过；合成待办导出日历时间正确。提醒事项授权待用户处理，完成回读未验。",
+          "next": "定位系统授权提示不可见并取得Koe请求的明确结果；随后复验已安装版待办状态、系统端导出与完成回读。其余#453权限边界、参与人、iPhone和升级待验。本地模型继续暂缓。",
+          "status": "blocked",
+          "summary": "会议命名/重开保留与日历导出已有通过证据。提醒事项请求到达TCC提示阶段，但用户两次确认弹窗不可见、请求未返回；不是用户未找到开关。已修授权/写入阶段反馈与重复点击，987项检查、Release签名安装启动通过；实际提醒事项导出和完成回读未验。",
           "title": "Mac日历命名与待办导出验收"
         }
       ],
@@ -1778,7 +1796,8 @@
       467,
       469,
       471,
-      477
+      477,
+      479
     ]
   }
 }
