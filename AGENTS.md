@@ -46,3 +46,5 @@ Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundco
 
 - 工单统一用 semantic-craft/koe 的 GitHub Issues（[issue-tracker](docs/agents/issue-tracker.md)），分流标签见 [triage-labels](docs/agents/triage-labels.md)，领域文档布局见 [domain](docs/agents/domain.md)。
 - 贡献流程、PR 模板与安全报告：[CONTRIBUTING](CONTRIBUTING.md)、[PR 模板](.github/PULL_REQUEST_TEMPLATE.md)、[SECURITY](SECURITY.md)。
+
+When a repository's documentation and its existing code disagree, follow the conventions used in the existing code, and in your final reply point out each inconsistency you found between the documentation and the code.
