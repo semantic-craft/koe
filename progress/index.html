@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-03T14:29:08.291093Z</p>
-<p>Main: <code>main: cfaee6cf1c69eb3b1c92a16a71f505f4bfca617a</code></p>
+<p>Observed: 2026-11-03T14:35:20.776522Z</p>
+<p>Main: <code>main: 18e1146a1241bfebde59326fff6bc80a7cb6b8ec</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -12,15 +12,17 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/507">issue 507: 首批实现与验收边界。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/design/cicada-alignment.md">file docs/design/cicada-alignment.md: 已评审设计；后续阶段仍需详细契约。</a></li>
 </ul><p>Next: #514 补真实会议、设备与性能验收；后续按 #510–#513 推进实时纪要、字幕和同传。</p></article>
-<article id="cicada-exchange-adoption"><h3>资料包纪要交换与术语采纳</h3><span class="badge">in_progress</span><p>实现已完成，EGM 详细方案与独立代码复审均无剩余阻塞。资料包保留当前纪要及历史，无音频可只读阅读并补配原件；术语可加入词表或经确认订正本场，保存期间正文变化会撤销采纳状态。全量 check 静态分析及1057项测试通过，正在完成 PR 交付，未做真实跨端验收。</p><ul>
+<article id="cicada-exchange-adoption"><h3>资料包纪要交换与术语采纳</h3><span class="badge">done</span><p>PR #519 已 squash 合并，CI 通过。资料包 v2 携带当前纪要和最多10版历史，保留本机当前版、重复导入稳定、无音频可只读阅读并补配原件。术语可加入词表或确认订正本场，保留历史依据及正确名称检索。EGM 和独立代码复审无剩余问题；check 静态分析与1057项测试通过，未做真实跨端验收。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/519">pull 519: 实现、回归、评审和 CI 证据；不代表设备与用户验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/508">issue 508: 实现及验收范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/509">issue 509: 实现及验收范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/514">issue 514: 实现及验收范围。</a></li>
-</ul><p>Next: 完成全量检查、性能复测和 PR 合并；#514 跟踪真实跨端文件交换与术语质量。</p></article>
-<article id="cicada-post-meeting-acceptance"><h3>首批真实效果、三端安装与性能</h3><span class="badge">unverified</span><p>未安装新版本，未调用真实千问或用同一录音对照 Cicada。Mac profile 构建成功，但性能驱动启动后 480 秒无数据，退出码 4；无有效性能指标，不能判通过或超标。</p><ul>
+</ul><p>Next: #514 验证真实三端交换、原件补配、术语质量和回听；后续实现按 #510–#513 详细设计推进。</p></article>
+<article id="cicada-post-meeting-acceptance"><h3>首批真实效果、三端安装与性能</h3><span class="badge">unverified</span><p>未安装新版本，未调用真实千问或用同一录音对照 Cicada。PR #519 本次 Mac profile 构建成功且驱动进入 BLE 场景，但窗口 lifecycle=hidden、30秒无帧，退出3；没有有效性能数字，不算通过或超标。资料包与术语的真实三端操作也待验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/514">issue 514: 真实服务、设备和性能未验收项。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: PR 验收记录包含性能运行失败边界。</a></li>
-</ul><p>Next: #514：先恢复性能测试驱动，再记录场景数字；在 Mac/iPhone/Pixel 验证真实录音的阅读、回听、编辑、导出和内容质量。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/519">pull 519: 本次性能复测无有效指标及跨端未验收边界。</a></li>
+</ul><p>Next: #514：保持 profile 窗口可见完成性能场景并记录数字；Mac/iPhone/Pixel 验证真实录音、资料包交换、术语采纳和内容质量。</p></article>
 <article id="cicada-follow-on"><h3>实时字幕纪要和 Mac 同传</h3><span class="badge">planned</span><p>#510–#511 实时纪要字幕、#512–#513 Mac 同传及可选克隆尚未实施；#514–#516 是独立真实验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/510">issue 510: 对应后续范围或独立验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/511">issue 511: 对应后续范围或独立验收。</a></li>
