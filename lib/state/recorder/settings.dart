@@ -40,6 +40,7 @@ mixin _RecorderSettings on ChangeNotifier {
   Future<void> refreshFilesOnTabEnter();
   abstract String? transcriptError;
   bool get translationModeAvailable;
+  void liveTargetChanged(String language);
   // END DEPS
 
   String? settingsStorageError;
@@ -658,6 +659,7 @@ mixin _RecorderSettings on ChangeNotifier {
     if (normalized.isEmpty) return;
     if (translationTargetLanguage == normalized) return;
     translationTargetLanguage = normalized;
+    liveTargetChanged(normalized);
     if (!_liveProcessing) _resetTranslationTurns();
     unawaited(refreshAppleCapabilities());
     notifyListeners();

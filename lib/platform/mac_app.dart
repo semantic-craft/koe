@@ -1,3 +1,4 @@
+import '../state/meeting_end_watch.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -175,6 +176,7 @@ class MacApp {
   /// whenever they change while [MacAppStatus.watchMicrophone] is set, and
   /// once when it is set.
   void Function(List<String> bundleIds)? onMicrophoneUsers;
+  void Function(MicrophoneSnapshot snapshot)? onMicrophoneSnapshot;
 
   /// Runs the button pressed on a [prompt]. Answers as [onHotKey] does, of
   /// which only `failed` shows: the window comes up to say why.
@@ -256,7 +258,13 @@ class MacApp {
       case 'hotKey':
         return onHotKey?.call(call.arguments as String);
       case 'microphoneUsers':
-        onMicrophoneUsers?.call((call.arguments as List).cast<String>());
+        if (call.arguments is List) {
+          onMicrophoneUsers?.call((call.arguments as List).cast<String>());
+        } else {
+          final snapshot = MicrophoneSnapshot.decode(call.arguments);
+          onMicrophoneSnapshot?.call(snapshot);
+          if (snapshot.available) onMicrophoneUsers?.call(snapshot.users);
+        }
       case 'promptAction':
         return onPromptAction?.call(call.arguments as String);
       default:

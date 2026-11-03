@@ -85,6 +85,26 @@ void main() {
     expect(done(), isTrue);
   }
 
+  test('discard closes the live consumers before removing capture', () async {
+    final c = build();
+    await c.startTextCapture();
+    expect(c.liveMeetingClosing, isFalse);
+    await c.discardTextCapture();
+    expect(c.liveMeetingClosing, isTrue);
+  });
+
+  test(
+    'finish-only final is retained as live source without starting new requests',
+    () async {
+      final c = build();
+      await c.startTextCapture();
+      await until(() => c.textCaptureConnected);
+      streams.single.finalText = '末尾完整句';
+      await c.stopTextCapture();
+      expect(c.liveMeetingSegments.map((s) => s.text), contains('末尾完整句'));
+    },
+  );
+
   bool noSpools() =>
       !spoolDir().existsSync() ||
       spoolDir().listSync().whereType<File>().isEmpty;

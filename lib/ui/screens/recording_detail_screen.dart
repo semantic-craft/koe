@@ -1,3 +1,4 @@
+import '../widgets/saved_live_meeting_panel.dart';
 import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
@@ -1587,6 +1588,21 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   tooltip: '更多操作',
                   onSelected: (action) {
                     switch (action) {
+                      case 'live-material':
+                        showModalBottomSheet<void>(
+                          context: context,
+                          isScrollControlled: true,
+                          builder: (_) => ChangeNotifierProvider.value(
+                            value: c,
+                            child: SafeArea(
+                              child: SingleChildScrollView(
+                                child: SavedLiveMeetingPanel(
+                                  recordingKey: 'audio:${recording.path}',
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
                       case 'rename':
                         _rename(recording);
                       case 'save':
@@ -1623,6 +1639,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     }
                   },
                   itemBuilder: (_) => [
+                    if (!recording.live && recording.path != null)
+                      const PopupMenuItem(
+                        value: 'live-material',
+                        child: Text('实时速记与字幕'),
+                      ),
+
                     PopupMenuItem(
                       value: 'rename',
                       enabled: fileReady,

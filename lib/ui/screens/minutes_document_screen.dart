@@ -1,3 +1,4 @@
+import '../widgets/saved_live_meeting_panel.dart';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
@@ -62,6 +63,7 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
     final focusValid =
         focus != null && focus >= 0 && focus < document.segments.length;
     final header = <Widget>[
+      SavedLiveMeetingPanel(recordingKey: 'document:${widget.documentId}'),
       _MetaRow(label: '来源', value: document.sourceName),
       _MetaRow(
         label: '发生时间',

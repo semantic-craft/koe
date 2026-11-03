@@ -1,3 +1,4 @@
+import '../widgets/live_meeting_panel.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -277,6 +278,22 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                     color: AppColors.textSecondary,
                   ),
                 ),
+                if (!allDay)
+                  TextButton(
+                    onPressed: () => showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      builder: (_) => ChangeNotifierProvider.value(
+                        value: controller,
+                        child: const SafeArea(
+                          child: SingleChildScrollView(
+                            child: LiveMeetingPanel(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    child: const Text('实时纪要与双语字幕'),
+                  ),
                 const SizedBox(height: 12),
                 Expanded(
                   child: Container(

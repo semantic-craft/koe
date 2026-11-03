@@ -26,6 +26,7 @@
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
 		7E4F0A122EB0A00100405A01 /* GlobalHotKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E4F0A112EB0A00100405A01 /* GlobalHotKeys.swift */; };
 		7E4F0A142EB0A00100406A01 /* MicrophoneUsers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E4F0A132EB0A00100406A01 /* MicrophoneUsers.swift */; };
+		7E4F0A142EB0A00100511A01 /* CaptionsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E4F0A132EB0A00100511A01 /* CaptionsPanel.swift */; };
 		7E4F0A162EB0A00100406A01 /* PromptPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E4F0A152EB0A00100406A01 /* PromptPanel.swift */; };
 		33CC10F32044A3C60003C045 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F22044A3C60003C045 /* Assets.xcassets */; };
 		33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F42044A3C60003C045 /* MainMenu.xib */; };
@@ -86,6 +87,7 @@
 		33CC10F02044A3C60003C045 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		7E4F0A112EB0A00100405A01 /* GlobalHotKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeys.swift; sourceTree = "<group>"; };
 		7E4F0A132EB0A00100406A01 /* MicrophoneUsers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneUsers.swift; sourceTree = "<group>"; };
+		7E4F0A132EB0A00100511A01 /* CaptionsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptionsPanel.swift; sourceTree = "<group>"; };
 		7E4F0A152EB0A00100406A01 /* PromptPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptPanel.swift; sourceTree = "<group>"; };
 		33CC10F22044A3C60003C045 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Runner/Assets.xcassets; sourceTree = "<group>"; };
 		33CC10F52044A3C60003C045 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
@@ -212,6 +214,7 @@
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				7E4F0A112EB0A00100405A01 /* GlobalHotKeys.swift */,
 				7E4F0A132EB0A00100406A01 /* MicrophoneUsers.swift */,
+				7E4F0A132EB0A00100511A01 /* CaptionsPanel.swift */,
 				7E4F0A152EB0A00100406A01 /* PromptPanel.swift */,
 				A90C71012F40000100A71001 /* CredentialBridge.swift */,
 				A90C71012F40000200A71001 /* AudioTranscodeBridge.swift */,
@@ -492,6 +495,7 @@
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				7E4F0A122EB0A00100405A01 /* GlobalHotKeys.swift in Sources */,
 				7E4F0A142EB0A00100406A01 /* MicrophoneUsers.swift in Sources */,
+				7E4F0A142EB0A00100511A01 /* CaptionsPanel.swift in Sources */,
 				7E4F0A162EB0A00100406A01 /* PromptPanel.swift in Sources */,
 				A90C71012F40000100A71002 /* CredentialBridge.swift in Sources */,
 				A90C71012F40000200A71002 /* AudioTranscodeBridge.swift in Sources */,

@@ -52,6 +52,18 @@ abstract final class TakeSpaceCheck {
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderPhoneRecording on ChangeNotifier {
+  String get appleSourceLanguage;
+  // Provided by _RecorderLiveMeeting.
+  void beginLiveMeeting(
+    String id, {
+    String? recordingKey,
+    bool available = true,
+    String language = 'zh',
+  });
+  void closeLiveMeetingInput(String id);
+  Future<void> discardLiveMeeting(String id);
+  Future<void> finishLiveMeeting(String id, {String? recordingKey});
+
   // --- Provided by RecorderController and its other parts. ---
   abstract bool _disposed;
   abstract final Future<void> _libraryLoaded;
@@ -87,7 +99,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   // END DEPS
 
   ValueListenable<DualRecordingView>? get dualRecordingView =>
-      _phoneRecorder is MacDualRecorder ? (_phoneRecorder as MacDualRecorder).view : null;
+      _phoneRecorder is MacDualRecorder
+      ? (_phoneRecorder as MacDualRecorder).view
+      : null;
 
   static const _takePrefix = 'phone_';
   static const _minimumTakeBytes = 8192;
@@ -281,7 +295,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       return;
     }
     _phoneTakeBusy = true;
-    if (_phoneRecorder case final MacDualRecorder dual) { dual.enabled = captureSystem; }
+    if (_phoneRecorder case final MacDualRecorder dual) {
+      dual.enabled = captureSystem;
+      dual.sourceLanguage = appleSourceLanguage;
+    }
     try {
       await _libraryLoaded;
       // A take started right after launch must respect the saved calendar
@@ -319,6 +336,12 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       _phoneTakeNotes = '';
       _phoneTakeHighlights = const [];
       _phoneTakePath = path;
+      beginLiveMeeting(
+        'phone:$path',
+        recordingKey: 'audio:$path',
+        available: dualRecordingView?.value.active == true,
+        language: appleSourceLanguage,
+      );
       _phoneTakeStartedAt = startedAt;
       _phoneTakeRunningSince = startedAt;
       _phoneTakeElapsed = Duration.zero;
@@ -408,7 +431,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
             ? TakeSpaceCheck.startingBelow
             : TakeSpaceCheck.recordingBelow;
         final notice = available < below
-            ? TakeSpaceCheck.notice(available, lanes: dualRecordingView?.value.active == true ? 2 : 1)
+            ? TakeSpaceCheck.notice(
+                available,
+                lanes: dualRecordingView?.value.active == true ? 2 : 1,
+              )
             : null;
         if (notice == phoneRecordingSpaceNotice) return;
         phoneRecordingSpaceNotice = notice;
@@ -608,14 +634,17 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     try {
       var notes = draft ?? await TakeNotes.read(file);
       final liveFile = File(MacDualRecorder.textPath(path));
-      String? capturedLiveText;
+
       if (await liveFile.exists()) {
         final liveText = await liveFile.readAsString();
         if (liveText.trim().isNotEmpty) {
-          capturedLiveText = liveText.trim();
-          notes = TakeNotes(text: [if (notes != null && notes.text.isNotEmpty) notes.text,
-              '本机实时识别（未校对）\n$liveText'].join('\n\n'),
-              highlights: notes?.highlights ?? const []);
+          notes = TakeNotes(
+            text: [
+              if (notes != null && notes.text.isNotEmpty) notes.text,
+              '本机实时识别（未校对）\n$liveText',
+            ].join('\n\n'),
+            highlights: notes?.highlights ?? const [],
+          );
         }
       }
       if (notes != null && !notes.isEmpty) {
@@ -631,14 +660,6 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       }
       if (await file.exists()) await file.delete();
       if (await liveFile.exists()) await liveFile.delete();
-      if (capturedLiveText != null) {
-        unawaited(
-          generateDraftMinutes(
-            RecordingReference(path: path),
-            liveText: capturedLiveText,
-          ),
-        );
-      }
     } catch (error) {
       debugPrint('[PhoneRecording] notes not saved as bookmarks: $error');
       if (draft != null) {
@@ -677,6 +698,7 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   Future<String?> _stopPhoneTake(String path, DateTime startedAt) async {
     final dual = dualRecordingView?.value.active == true;
+    closeLiveMeetingInput('phone:$path');
     _phoneTakeBusy = true;
     try {
       try {
@@ -697,7 +719,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       if (dual && await File(system).exists()) {
         await _adoptPhoneTake(system, startedAt, label: '系统声音');
       }
-      final hasLiveText = dual && await File(MacDualRecorder.textPath(path)).exists();
+      final hasLiveText =
+          dual && await File(MacDualRecorder.textPath(path)).exists();
       final saved = await _adoptPhoneTake(path, startedAt);
       if (saved == null && !await File(path).exists()) {
         // Nothing of the take is kept, so neither are its notes and the
@@ -710,6 +733,10 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       } else if (saved != null) {
         await _saveTakeNotes(saved, draft: notes);
       }
+      await finishLiveMeeting(
+        'phone:$path',
+        recordingKey: saved == null ? null : 'audio:$saved',
+      );
       return saved;
     } finally {
       _phoneTakeBusy = false;
@@ -725,6 +752,8 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
     _phoneTakeBusy = true;
     try {
       try {
+        closeLiveMeetingInput('phone:$path');
+        await discardLiveMeeting('phone:$path');
         await _phoneRecorder.cancel();
       } catch (_) {}
       _clearPhoneTake();
@@ -851,8 +880,13 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
       if (entity is! File) continue;
       final base = p.basename(entity.path);
       if (base.endsWith('.wav.dual.txt')) {
-        final take = entity.path.substring(0, entity.path.length - '.dual.txt'.length);
-        if (take != _phoneTakePath && library.assetForPath(take) != null) await _saveTakeNotes(take);
+        final take = entity.path.substring(
+          0,
+          entity.path.length - '.dual.txt'.length,
+        );
+        if (take != _phoneTakePath && library.assetForPath(take) != null) {
+          await _saveTakeNotes(take);
+        }
         continue;
       }
       if (base.startsWith(_takePrefix) &&
@@ -862,24 +896,47 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
         continue;
       }
       final isSystem = entity.path.endsWith('.wav.system.wav');
-      final name = p.basenameWithoutExtension(isSystem
-          ? entity.path.substring(0, entity.path.length - '.system.wav'.length) : entity.path);
+      final name = p.basenameWithoutExtension(
+        isSystem
+            ? entity.path.substring(
+                0,
+                entity.path.length - '.system.wav'.length,
+              )
+            : entity.path,
+      );
       if (!name.startsWith(_takePrefix) || p.extension(entity.path) != '.wav') {
         continue;
       }
-      if (entity.path == _phoneTakePath || (_phoneTakePath != null && entity.path == MacDualRecorder.systemPath(_phoneTakePath!))) continue;
+      if (entity.path == _phoneTakePath ||
+          (_phoneTakePath != null &&
+              entity.path == MacDualRecorder.systemPath(_phoneTakePath!))) {
+        continue;
+      }
       if (library.assetForPath(entity.path) != null) continue;
-      final primary = isSystem ? entity.path.substring(0, entity.path.length - '.system.wav'.length) : entity.path;
+      final primary = isSystem
+          ? entity.path.substring(0, entity.path.length - '.system.wav'.length)
+          : entity.path;
       if (await File('$primary.discarded').exists()) {
-        for (final abandoned in [primary, MacDualRecorder.systemPath(primary), MacDualRecorder.textPath(primary)]) {
-          try { if (await File(abandoned).exists()) await File(abandoned).delete(); } catch (_) {}
+        for (final abandoned in [
+          primary,
+          MacDualRecorder.systemPath(primary),
+          MacDualRecorder.textPath(primary),
+        ]) {
+          try {
+            if (await File(abandoned).exists()) await File(abandoned).delete();
+          } catch (_) {}
         }
         continue;
       }
       final micros = int.tryParse(name.substring(_takePrefix.length));
       if (micros == null) continue;
       final started = DateTime.fromMicrosecondsSinceEpoch(micros);
-      if (await _adoptPhoneTake(entity.path, started, label: isSystem ? '系统声音' : null) != null) {
+      if (await _adoptPhoneTake(
+            entity.path,
+            started,
+            label: isSystem ? '系统声音' : null,
+          ) !=
+          null) {
         recovered++;
         if (!isSystem) await _saveTakeNotes(entity.path);
       } else if (!await entity.exists()) {

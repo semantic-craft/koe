@@ -55,6 +55,24 @@ class TextCaptureOutcome {
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderTextCapture on ChangeNotifier {
+  // Provided by _RecorderLiveMeeting.
+  void beginLiveMeeting(
+    String id, {
+    String? recordingKey,
+    bool available = true,
+    String language = 'zh',
+  });
+  void closeLiveMeetingInput(String id);
+  Future<void> discardLiveMeeting(String id);
+  Future<void> finishLiveMeeting(String id, {String? recordingKey});
+  void acceptLiveSpeech(
+    String id,
+    String connection,
+    SttStreamEvent event, {
+    String? language,
+  });
+  void invalidateLiveMeeting(String reason);
+
   // --- Provided by RecorderController and its other parts. ---
   abstract bool _disposed;
   abstract final MinutesDocumentStore minutes;
@@ -322,6 +340,14 @@ mixin _RecorderTextCapture on ChangeNotifier {
         return false;
       }
       _textId = id;
+      if (!allDay) {
+        beginLiveMeeting(
+          'text:$id',
+          recordingKey: 'document:$id',
+          available: config.provider != SttProvider.doubao,
+          language: config.sourceLanguage,
+        );
+      }
       _textStartedAt = startedAt;
       _textConfig = config;
       _textSpool = spool;
@@ -639,6 +665,14 @@ mixin _RecorderTextCapture on ChangeNotifier {
   }
 
   void _onTextEvent(SttStreamEvent event) {
+    if (_textId != null && !_textAllDay) {
+      acceptLiveSpeech(
+        'text:$_textId',
+        'text-$_textGeneration',
+        event,
+        language: _textConfig?.sourceLanguage,
+      );
+    }
     switch (event.type) {
       case 'partial':
         if (event.text.trim().isEmpty) return;
@@ -689,6 +723,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
       _textCommitted = _joinText(_textCommitted, _textAtFinal);
       _textSent = _textFinalMark;
     } else {
+      invalidateLiveMeeting('断线期间存在未确认缺口，请在会后整理');
       _textCommitted = _joinText(_textCommitted, _textLive);
     }
     _textLive = '';
@@ -862,6 +897,14 @@ mixin _RecorderTextCapture on ChangeNotifier {
         await _pumpText();
         try {
           final done = await session.finish();
+          if (done != null && _textId != null && !_textAllDay) {
+            acceptLiveSpeech(
+              'text:$_textId',
+              'text-$_textGeneration',
+              done,
+              language: _textConfig?.sourceLanguage,
+            );
+          }
           final incoming = normalizeSttText(done?.text ?? '');
           if (incoming.isNotEmpty &&
               (_textLive.isEmpty || incoming.contains(_textLive))) {
@@ -1015,6 +1058,8 @@ mixin _RecorderTextCapture on ChangeNotifier {
     required bool keepAllDay,
   }) async {
     _textStopping = true;
+    final liveId = 'text:$_textId';
+    closeLiveMeetingInput(liveId);
     try {
       await _stopTextMicrophone();
       while (_textRolling) {
@@ -1029,6 +1074,12 @@ mixin _RecorderTextCapture on ChangeNotifier {
       );
       if (outcome == null) return null;
       if (!keepAllDay || !_textAllDay) await _clearAllDayMarker();
+      await finishLiveMeeting(
+        liveId,
+        recordingKey: outcome.recordingPath == null
+            ? null
+            : 'audio:${outcome.recordingPath}',
+      );
       _clearTextCapture();
       return outcome;
     } finally {
@@ -1108,6 +1159,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
     final spool = _textSpool;
     if (id == null || spool == null || _textStopping) return;
     _textStopping = true;
+    await discardLiveMeeting('text:$id');
     try {
       await _stopTextMicrophone();
       _detachTextSession();

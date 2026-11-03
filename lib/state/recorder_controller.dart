@@ -69,6 +69,11 @@ import 'organize_store.dart';
 import 'transcript_store.dart';
 import 'recording.dart';
 import 'meeting_minutes.dart';
+import 'live_segments.dart';
+import 'live_minutes.dart';
+import 'live_minutes_store.dart';
+import 'live_captions.dart';
+import 'meeting_end_watch.dart';
 import 'minutes_export.dart';
 import 'recording_analysis.dart';
 import 'recording_library.dart';
@@ -135,6 +140,7 @@ part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
 part 'recorder/transcripts.dart';
 part 'recorder/live_transcription.dart';
+part 'recorder/live_meeting.dart';
 part 'recorder/settings.dart';
 part 'recorder/device.dart';
 part 'recorder/device_files.dart';
@@ -178,8 +184,7 @@ class TermReplacementReport {
   final int documentsUpdated;
   final bool addedToVocabulary;
 
-  int get totalUpdated =>
-      recordingsUpdated + minutesUpdated + documentsUpdated;
+  int get totalUpdated => recordingsUpdated + minutesUpdated + documentsUpdated;
 }
 
 class RecorderController extends ChangeNotifier
@@ -205,6 +210,7 @@ class RecorderController extends ChangeNotifier
         _RecorderTranscriptionJobs,
         _RecorderTranscripts,
         _RecorderLiveTranscription,
+        _RecorderLiveMeeting,
         _RecorderSettings,
         _RecorderDevice,
         _RecorderDeviceFiles,
@@ -213,17 +219,18 @@ class RecorderController extends ChangeNotifier
   @override
   late final RecordingAnalysis analysis =
       (_analysisOverride ??
-          RecordingAnalysis(
-            service: RoutingAnalysisService(
-              backend: () => analysisBackend,
-              qwen: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
-              openAiCompatible: OpenAiCompatibleAnalysisService(
-                baseUrl: () =>
-                    analysisOpenAiConfig.baseUrl ?? 'http://localhost:11434/v1',
+            RecordingAnalysis(
+              service: RoutingAnalysisService(
+                backend: () => analysisBackend,
+                qwen: QwenAnalysisService(origin: () => _qwenStt.baseUrl),
+                openAiCompatible: OpenAiCompatibleAnalysisService(
+                  baseUrl: () =>
+                      analysisOpenAiConfig.baseUrl ??
+                      'http://localhost:11434/v1',
+                ),
               ),
-            ),
-            whileRequesting: _whileAiWorks,
-          ))
+              whileRequesting: _whileAiWorks,
+            ))
         ..onTaskNotice = _recordTaskNotice;
   final RecordingAnalysis? _analysisOverride;
   final List<TaskCompletionNotice> _taskNotices = [];
@@ -248,6 +255,7 @@ class RecorderController extends ChangeNotifier
     }
     if (!_disposed) notifyListeners();
   }
+
   @override
   final Map<String, String> _audioVersions = {};
   @override
@@ -372,6 +380,7 @@ class RecorderController extends ChangeNotifier
     AnswerSpeaker? answerSpeaker,
     bool? phoneRecordingEnabled,
     MinutesDocumentStore? minutesStore,
+    LiveMinutesStore? liveMeetingStore,
     TranscriptPersister? transcriptPersister,
     PlaybackHistoryStore? playbackHistoryStore,
     ListeningQueueStore? listeningQueueStore,
@@ -492,6 +501,9 @@ class RecorderController extends ChangeNotifier
     minutes =
         minutesStore ?? MinutesDocumentStore(inMemory: !loadPersistedState);
     _minutesLoaded = _loadMinutesDocuments();
+    _initLiveMeeting(
+      liveMeetingStore ?? LiveMinutesStore(inMemory: !loadPersistedState),
+    );
     _subs.add(
       _ble.scanResults.listen((list) {
         devices = list;
@@ -739,7 +751,9 @@ class RecorderController extends ChangeNotifier
   @override
   PhoneRecorder get _phoneRecorder =>
       _phoneRecorderOverride ??
-      (_devicePhoneRecorder ??= (runsOnMac ? MacDualRecorder() as PhoneRecorder : DevicePhoneRecorder()));
+      (_devicePhoneRecorder ??= (runsOnMac
+          ? MacDualRecorder() as PhoneRecorder
+          : DevicePhoneRecorder()));
   final PhoneMicStream? _micStreamOverride;
   PhoneMicStream? _deviceMicStream;
   @override
@@ -796,6 +810,7 @@ class RecorderController extends ChangeNotifier
   /// recorder's hotspot disappears mid-batch (#461).
   @override
   final Duration wifiExportReconnectTimeout;
+
   /// How long Koe stays kept running after its last model request, so the
   /// next step of the same work starts under the same foreground service.
   @override
@@ -1613,17 +1628,23 @@ class RecorderController extends ChangeNotifier
       }
     }
 
-    TranscriptSearchHit? find(String value, {List<String> extras = const []}) => findTranscriptSearchHit(
-      text: view.text,
-      segments: view.manuallyEdited ? const <TranscriptSegment>[] : view.segments,
-      query: value,
-      aliases: path == null ? const <String, String>{} : speakerAliasesForPath(path),
-      duration: path == null ? null : localDurationForPath(path),
-      extraLines: extras,
-    );
+    TranscriptSearchHit? find(String value, {List<String> extras = const []}) =>
+        findTranscriptSearchHit(
+          text: view.text,
+          segments: view.manuallyEdited
+              ? const <TranscriptSegment>[]
+              : view.segments,
+          query: value,
+          aliases: path == null
+              ? const <String, String>{}
+              : speakerAliasesForPath(path),
+          duration: path == null ? null : localDurationForPath(path),
+          extraLines: extras,
+        );
     final direct = find(needle);
     if (direct != null) return direct;
-    if (structuredMinutes != null && minutesResult?.sourceHash == analysisFingerprint(view.text)) {
+    if (structuredMinutes != null &&
+        minutesResult?.sourceHash == analysisFingerprint(view.text)) {
       for (final term in structuredMinutes.terms) {
         if (!term.name.toLowerCase().contains(needle.toLowerCase())) continue;
         for (final spelling in term.heard) {
@@ -1632,8 +1653,12 @@ class RecorderController extends ChangeNotifier
           return TranscriptSearchHit(
             index: associated.index,
             snippet: '术语关联（${term.name} ← $spelling）：${associated.snippet}',
-            timecode: view.originalPresent && path != null && !recordingAudioChanged(ref)
-                ? associated.timecode : null,
+            timecode:
+                view.originalPresent &&
+                    path != null &&
+                    !recordingAudioChanged(ref)
+                ? associated.timecode
+                : null,
           );
         }
       }
@@ -1859,6 +1884,7 @@ class RecorderController extends ChangeNotifier
     _todoLifecycle?.dispose();
     _disposeContextServices();
     _disposeAiKeepAlive();
+    _disposeLiveMeeting();
     _disposeResident();
     _lifecycle?.dispose();
     if (topicsEnabled) topics.removeListener(_onTopicsChanged);

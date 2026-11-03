@@ -1,3 +1,6 @@
+import '../platform/mac_captions.dart';
+import '../state/meeting_end_watch.dart';
+import '../state/meeting_minutes.dart';
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
@@ -20,6 +23,7 @@ class MacMenuBar {
       ..onQuit = _beforeQuit
       ..onHotKey = _hotKey
       ..onMicrophoneUsers = _microphoneUsers
+      ..onMicrophoneSnapshot = _microphoneSnapshot
       ..onPromptAction = _promptAction;
     _controller.addListener(_show);
     _controller.addListener(_followTake);
@@ -31,6 +35,8 @@ class MacMenuBar {
 
   final RecorderController _controller;
   final MacApp _app;
+  final _captions = MacCaptions();
+  String? _captionSnapshot;
 
   /// Shows the controls of the take, or all-day listening, just started
   /// from the menu or ⌃⌥⌘R, or why it did not start.
@@ -53,9 +59,46 @@ class MacMenuBar {
   /// listening too, without asking, so a call under way when listening is
   /// stopped is not asked about again.
   bool get _watching =>
-      _controller.meetingAppPrompts && _controller.phoneRecordingEnabled;
+      (_controller.meetingAppPrompts || _controller.phoneRecordingActive) &&
+      _controller.phoneRecordingEnabled;
 
-  void _show() => unawaited(_app.show(_status()));
+  void _show() {
+    unawaited(_app.show(_status()));
+    final c = _controller;
+    final mode = c.liveMeetingClosing ? 'hidden' : c.liveDisplayMode;
+    final entries = c.liveCaptions?.entries ?? c.liveMeetingSegments;
+    final original = entries.isEmpty ? '' : entries.last.text;
+    final translation = entries.isEmpty ? '' : entries.last.translation ?? '';
+    final result = c.liveMinutes?.result;
+    final minutes = result == null
+        ? '速记尚未生成'
+        : MeetingMinutes.parse(
+            result.text,
+            result.sources.length,
+            sourceTexts: result.sources,
+          ).export(result);
+    final snapshot = '$mode|$original|$translation|$minutes';
+    if (snapshot == _captionSnapshot ||
+        (_captionSnapshot == null && mode == 'hidden')) {
+      return;
+    }
+    _captionSnapshot = snapshot;
+    unawaited(
+      _captions
+          .show(
+            mode: mode,
+            original: original,
+            translation: translation,
+            minutes: minutes,
+          )
+          .catchError((Object _) {
+            if (c.liveMeetingNotice != '此平台的独立字幕窗口暂不可用') {
+              c.liveMeetingNotice = '此平台的独立字幕窗口暂不可用';
+              c.notifyListeners();
+            }
+          }),
+    );
+  }
 
   MacAppStatus _status() {
     final c = _controller;
@@ -105,7 +148,21 @@ class MacMenuBar {
       );
     }
     // ⌃⌥⌘B is left to other apps while there is nothing to mark.
+    if (c.liveMeetingId != null &&
+        c.liveMeetingAvailable &&
+        !c.liveMeetingClosing) {
+      actions.addAll(const [
+        MacMenuAction('captions', '切换字幕 / 纪要 / 隐藏'),
+        MacMenuAction('captionsHide', '隐藏字幕窗口'),
+      ]);
+    }
     final hotKeys = [
+      if (c.liveMeetingId != null &&
+          c.liveMeetingAvailable &&
+          !c.liveMeetingClosing) ...[
+        'captions',
+        'captionsHide',
+      ],
       if (c.recordHotKey && c.phoneRecordingEnabled) 'record',
       if (c.highlightHotKey &&
           !saving &&
@@ -117,6 +174,11 @@ class MacMenuBar {
       lines.add('⌃⌥⌘B 被别的应用占用，回到 Koe 标重点');
     }
 
+    if (_app.hotKeysTaken.value.any(
+      (key) => key == 'captions' || key == 'captionsHide',
+    )) {
+      lines.add('字幕快捷键被其它应用占用，可用菜单切换');
+    }
     final transcribing = c.transcribing || c.fileProcessingBusy;
     final retrieving =
         c.isExporting || c.autoTransferActive || c.downloadingFileId != null;
@@ -188,6 +250,10 @@ class MacMenuBar {
   void _run(String action) {
     final c = _controller;
     switch (action) {
+      case 'captions':
+        c.cycleLiveDisplay();
+      case 'captionsHide':
+        c.setLiveDisplayMode('hidden');
       case 'start':
         unawaited(_start());
       case 'pause':
@@ -243,6 +309,12 @@ class MacMenuBar {
       return null;
     }
     switch (key) {
+      case 'captions':
+        c.cycleLiveDisplay();
+        return 'shown';
+      case 'captionsHide':
+        c.setLiveDisplayMode('hidden');
+        return 'hidden';
       case 'record':
         if (c.phoneRecordingActive || c.textCaptureActive) return _stop();
         if (!c.phoneRecordingEnabled) return null;
@@ -268,7 +340,12 @@ class MacMenuBar {
   }
 
   void _microphoneUsers(List<String> bundleIds) {
-    if (_watching) _meetingCalls.microphoneUsers(bundleIds);
+    if (_controller.meetingAppPrompts) _meetingCalls.microphoneUsers(bundleIds);
+  }
+
+  void _microphoneSnapshot(MicrophoneSnapshot snapshot) {
+    _controller.meetingEndWatch.observe(snapshot);
+    if (!snapshot.available) _meetingCalls.reset();
   }
 
   void _askAboutMeeting(MeetingAppAsk ask, String app) {
@@ -292,6 +369,7 @@ class MacMenuBar {
           ),
         );
       case MeetingAppAsk.stop:
+        if (c.meetingEndWatch.enabled || !c.meetingAppPrompts) return;
         final take = c.phoneRecordingActive;
         unawaited(
           _app.prompt(take ? '会议好像结束了，要停止录音吗？' : '会议好像结束了，要停止纯文字记录吗？', [
@@ -341,11 +419,13 @@ class MacMenuBar {
     _controller.modelWorking.removeListener(_show);
     _app.hotKeysTaken.removeListener(_show);
     _meetingCalls.reset();
+    unawaited(_captions.hide().catchError((Object _) {}));
     _app
       ..onAction = null
       ..onQuit = null
       ..onHotKey = null
       ..onMicrophoneUsers = null
+      ..onMicrophoneSnapshot = null
       ..onPromptAction = null;
   }
 }
