@@ -36,7 +36,6 @@ void main() {
   });
 
   tearDown(() async {
-    await Future<void>.delayed(const Duration(milliseconds: 20));
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -49,6 +48,8 @@ void main() {
         ..writeAsBytesSync(List<int>.filled(16000, 0));
       final controller = RecorderController(
         loadPersistedState: false,
+        phoneRecordingEnabled: false,
+        analysisController: RecordingAnalysis(inMemory: true),
         libraryDirectory: tempDir,
         transcriptPersister: ({bool strict = false}) async {},
       );
@@ -255,6 +256,8 @@ void main() {
         ..writeAsBytesSync(List<int>.filled(16000, 0));
       final controller = RecorderController(
         loadPersistedState: false,
+        phoneRecordingEnabled: false,
+        analysisController: RecordingAnalysis(inMemory: true),
         libraryDirectory: tempDir,
         transcriptPersister: ({bool strict = false}) async {},
       );
