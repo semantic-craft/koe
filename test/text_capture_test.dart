@@ -414,13 +414,17 @@ void main() {
       await answered.future;
       expect(first.textCaptureActive, isFalse);
       expect(first.minutesDocuments.single.bodyText, '退出前说的。');
-      bar.dispose();
-      first.dispose();
 
       mic = _Mic();
-      final second = build()..allDayListening = true;
+      final second = build(disposeAtEnd: false)..allDayListening = true;
       await until(() => second.textCaptureActive);
       expect(second.textCaptureAllDay, isTrue);
+      await second.stopTextCapture(keepAllDay: true);
+      await second.waitForMinutesDocuments();
+
+      bar.dispose();
+      first.dispose();
+      second.dispose();
     });
 
     test('quitting on the Mac while a stopped capture is still being saved '
