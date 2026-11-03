@@ -59,6 +59,54 @@ class MinuteFishbone {
   };
 }
 
+/// A local user decision. Model-generated minutes never retain this field.
+class MinuteTermAdoption {
+  const MinuteTermAdoption({
+    required this.kind,
+    required this.at,
+    required this.previousVersion,
+  });
+  final String kind;
+  final DateTime at;
+  final String previousVersion;
+  Map<String, dynamic> toJson() => {
+    'kind': kind,
+    'at': at.toIso8601String(),
+    'previousVersion': previousVersion,
+  };
+}
+
+/// Includes the source snapshot so equal prose from different meetings is not
+/// mistaken for the adoption's earlier evidence.
+String minuteVersionFingerprint(AnalysisResult result) {
+  String canonical;
+  try {
+    canonical = MeetingMinutes.parse(
+      result.text,
+      result.sources.length,
+      sourceTexts: result.sources,
+    ).encode();
+  } catch (_) {
+    // Unreadable historical results remain inspectable without crashing the
+    // rest of the evidence list.
+    canonical = result.text;
+  }
+  return analysisFingerprint(
+    jsonEncode([canonical, result.sources, result.sourceHash]),
+  );
+}
+
+/// Longest literal variants win; the replacement text is never processed again.
+String replaceMinuteTerms(String text, Map<String, String> replacements) {
+  final keys = replacements.keys.where((key) => key.isNotEmpty).toList()
+    ..sort((a, b) => b.length.compareTo(a.length));
+  if (keys.isEmpty) return text;
+  return text.replaceAllMapped(
+    RegExp(keys.map(RegExp.escape).join('|')),
+    (match) => replacements[match[0]]!,
+  );
+}
+
 /// A meeting-local suggestion. [heard] always names current source spellings;
 /// previous spellings live in the existing immutable minutes history.
 class MinuteTerm {
@@ -67,7 +115,9 @@ class MinuteTerm {
     required this.note,
     this.heard = const [],
     required this.sources,
+    this.adoption,
   });
+  final MinuteTermAdoption? adoption;
   final String name, note;
   final List<String> heard, sources;
   Map<String, dynamic> toJson() => {
@@ -75,6 +125,7 @@ class MinuteTerm {
     'note': note,
     'heard': heard,
     'sources': sources,
+    if (adoption != null) 'adoption': adoption!.toJson(),
   };
 }
 
@@ -472,7 +523,27 @@ class MeetingMinutes {
             }
           }
         }
+        MinuteTermAdoption? adoption;
+        final decision = t['adoption'];
+        if (decision != null) {
+          if (decision is! Map ||
+              !const ['vocabulary', 'replaced'].contains(decision['kind']) ||
+              decision['at'] is! String ||
+              DateTime.tryParse(decision['at'] as String) == null ||
+              decision['previousVersion'] is! String ||
+              !RegExp(
+                r'^[0-9a-f]{64}$',
+              ).hasMatch(decision['previousVersion'] as String)) {
+            throw const FormatException('术语采纳记录不完整');
+          }
+          adoption = MinuteTermAdoption(
+            kind: decision['kind'] as String,
+            at: DateTime.parse(decision['at'] as String),
+            previousVersion: decision['previousVersion'] as String,
+          );
+        }
         return MinuteTerm(
+          adoption: adoption,
           name: requiredText(t['name']),
           note: requiredText(t['note']),
           heard: heard,
@@ -631,7 +702,11 @@ class MeetingMinutes {
     final from = oldTerm.trim();
     final to = newTerm.trim();
     if (from.isEmpty || from == to) return this;
-    String sub(String input) => input.replaceAll(from, to);
+    return replaceTerms({from: to});
+  }
+
+  MeetingMinutes replaceTerms(Map<String, String> replacements) {
+    String sub(String input) => replaceMinuteTerms(input, replacements);
     MinuteItem subItem(MinuteItem item) {
       if (item is MinuteTopic) {
         final fishbone = item.fishbone;
@@ -682,6 +757,7 @@ class MeetingMinutes {
       terms: [
         for (final term in terms)
           MinuteTerm(
+            adoption: term.adoption,
             name: sub(term.name),
             note: sub(term.note),
             heard: term.heard,
@@ -706,6 +782,7 @@ class MeetingMinutes {
     terms: [
       for (final term in terms)
         MinuteTerm(
+          adoption: term.adoption,
           name: term.name,
           note: term.note,
           sources: term.sources,
@@ -721,6 +798,38 @@ class MeetingMinutes {
               )
               .toList(),
         ),
+    ],
+  );
+
+  MeetingMinutes adoptTerm(
+    int index,
+    MinuteTermAdoption decision, {
+    Set<String> replaced = const {},
+    String? name,
+  }) => MeetingMinutes(
+    title: title,
+    overview: overview,
+    topics: topics,
+    decisions: decisions,
+    actions: actions,
+    questions: questions,
+    custom: custom,
+    reviewItems: reviewItems,
+    schemaVersion: schemaVersion,
+    terms: [
+      for (var i = 0; i < terms.length; i++)
+        if (i != index)
+          terms[i]
+        else
+          MinuteTerm(
+            name: name ?? terms[i].name,
+            note: terms[i].note,
+            sources: terms[i].sources,
+            heard: terms[i].heard
+                .where((word) => !replaced.contains(word))
+                .toList(),
+            adoption: decision,
+          ),
     ],
   );
 

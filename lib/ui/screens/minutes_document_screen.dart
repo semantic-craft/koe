@@ -9,6 +9,7 @@ import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../file_types.dart';
 import '../widgets/highlight.dart';
+import '../widgets/pack_minutes_panel.dart';
 import 'recording_detail_screen.dart';
 
 /// Read-only 妙记 text import with an optional audio pairing.
@@ -163,8 +164,13 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
         ),
       ],
       const SizedBox(height: 18),
-      const Text(
-        '正文',
+      if (document.restore != null)
+        PackMinutesPanel(manifest: document.restore),
+      Text(
+        document.restore?['transcript'] == null &&
+                document.restore?['minutes'] != null
+            ? '纪要原文快照'
+            : '正文',
         style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 8),

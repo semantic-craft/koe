@@ -208,9 +208,7 @@ mixin _RecorderTranscripts on ChangeNotifier {
     unawaited(_persistTranscripts());
     if (textChanged && !_isRecordingAudioLocked(id, path)) {
       unawaited(
-        upgradeDraftMinutesIfNeeded(
-          RecordingReference(fileId: id, path: path),
-        ),
+        upgradeDraftMinutesIfNeeded(RecordingReference(fileId: id, path: path)),
       );
     }
     if (visibleChanged && topicsEnabled) {
@@ -1136,10 +1134,28 @@ mixin _RecorderTranscripts on ChangeNotifier {
     String path,
     String fromTerm,
     String toTerm,
-  ) async {
+  ) {
     final from = fromTerm.trim();
     final to = toTerm.trim();
-    if (from.isEmpty || from == to) return false;
+    if (from.isEmpty || from == to) return SynchronousFuture(false);
+    return replaceTermsInTranscript(path, {from: to});
+  }
+
+  /// Applies several literal corrections in one save, without recursively
+  /// rewriting their replacement values. A failed stale write must not undo a
+  /// newer manual correction that arrived while storage was awaited.
+  Future<bool> replaceTermsInTranscript(
+    String path,
+    Map<String, String> replacements, {
+    String? expectedHash,
+  }) async {
+    final before = transcriptForPath(path) ?? '';
+    if (expectedHash != null && analysisFingerprint(before) != expectedHash) {
+      throw StateError('原文已变化，请重新确认术语');
+    }
+    String? sub(String? text) =>
+        text == null ? null : replaceMinuteTerms(text, replacements);
+    final intendedHash = analysisFingerprint(sub(before)!);
     final key = _recordingKey(path: path);
     final prevByPath = transcriptsByPath[path];
     final fileId = fileIdFromPath(path);
@@ -1148,50 +1164,77 @@ mixin _RecorderTranscripts on ChangeNotifier {
     final prevIncoming = _incomingTranscripts[key];
     final prevSegments = _transcriptSegments[key];
     final prevSpeakerUndo = _speakerUndo[key];
-
-    var changed = false;
-    if (prevByPath != null && prevByPath.contains(from)) {
-      transcriptsByPath[path] = prevByPath.replaceAll(from, to);
-      changed = true;
-    }
-    if (fileId != null && prevById != null && prevById.contains(from)) {
-      transcriptsByFileId[fileId] = prevById.replaceAll(from, to);
-      changed = true;
-    }
-    if (prevManual != null && prevManual.contains(from)) {
-      _manualTranscripts[key] = prevManual.replaceAll(from, to);
-      changed = true;
-    }
-    if (prevIncoming != null && prevIncoming.contains(from)) {
-      _incomingTranscripts[key] = prevIncoming.replaceAll(from, to);
-      changed = true;
-    }
-    if (prevSegments != null &&
-        prevSegments.any((seg) => seg.text.contains(from))) {
-      _transcriptSegments[key] = List<TranscriptSegment>.unmodifiable([
-        for (final seg in prevSegments)
-          seg.text.contains(from)
-              ? seg.copyWith(text: seg.text.replaceAll(from, to))
-              : seg,
-      ]);
-      changed = true;
-    }
+    final prevAliases = speakerAliasesByPath[path];
+    final prevAliasesById = fileId == null
+        ? null
+        : speakerAliasesByFileId[fileId];
+    Map<String, String>? aliases(Map<String, String>? values) => values == null
+        ? null
+        : Map.unmodifiable({
+            for (final entry in values.entries) entry.key: sub(entry.value)!,
+          });
+    final nextAliases = aliases(prevAliases),
+        nextAliasesById = aliases(prevAliasesById);
+    final nextByPath = sub(prevByPath), nextById = sub(prevById);
+    final nextManual = sub(prevManual), nextIncoming = sub(prevIncoming);
+    final nextSegments = prevSegments == null
+        ? null
+        : List<TranscriptSegment>.unmodifiable([
+            for (final segment in prevSegments)
+              segment.copyWith(text: sub(segment.text)),
+          ]);
+    final changed =
+        nextByPath != prevByPath ||
+        nextById != prevById ||
+        nextManual != prevManual ||
+        nextIncoming != prevIncoming ||
+        !mapEquals(prevAliases, nextAliases) ||
+        !mapEquals(prevAliasesById, nextAliasesById) ||
+        (prevSegments?.any((segment) => sub(segment.text) != segment.text) ??
+            false);
     if (!changed) return false;
+    _setOrRemove(transcriptsByPath, path, nextByPath);
+    if (fileId != null) _setOrRemove(transcriptsByFileId, fileId, nextById);
+    _setOrRemove(_manualTranscripts, key, nextManual);
+    _setOrRemove(_incomingTranscripts, key, nextIncoming);
+    _setOrRemove(_transcriptSegments, key, nextSegments);
+    _setOrRemove(speakerAliasesByPath, path, nextAliases);
+    if (fileId != null) {
+      _setOrRemove(speakerAliasesByFileId, fileId, nextAliasesById);
+    }
     _speakerUndo.remove(key);
     notifyListeners();
     try {
       await _persistTranscripts(strict: true);
     } catch (_) {
-      _setOrRemove(transcriptsByPath, path, prevByPath);
-      if (fileId != null) {
-        _setOrRemove(transcriptsByFileId, fileId, prevById);
+      final stillOurs =
+          transcriptsByPath[path] == nextByPath &&
+          (fileId == null || transcriptsByFileId[fileId] == nextById) &&
+          _manualTranscripts[key] == nextManual &&
+          _incomingTranscripts[key] == nextIncoming &&
+          identical(_transcriptSegments[key], nextSegments) &&
+          _speakerUndo[key] == null &&
+          identical(speakerAliasesByPath[path], nextAliases) &&
+          (fileId == null ||
+              identical(speakerAliasesByFileId[fileId], nextAliasesById));
+      if (stillOurs) {
+        _setOrRemove(transcriptsByPath, path, prevByPath);
+        if (fileId != null) _setOrRemove(transcriptsByFileId, fileId, prevById);
+        _setOrRemove(_manualTranscripts, key, prevManual);
+        _setOrRemove(_incomingTranscripts, key, prevIncoming);
+        _setOrRemove(_transcriptSegments, key, prevSegments);
+        _setOrRemove(_speakerUndo, key, prevSpeakerUndo);
+        _setOrRemove(speakerAliasesByPath, path, prevAliases);
+        if (fileId != null) {
+          _setOrRemove(speakerAliasesByFileId, fileId, prevAliasesById);
+        }
       }
-      _setOrRemove(_manualTranscripts, key, prevManual);
-      _setOrRemove(_incomingTranscripts, key, prevIncoming);
-      _setOrRemove(_transcriptSegments, key, prevSegments);
-      _setOrRemove(_speakerUndo, key, prevSpeakerUndo);
       notifyListeners();
       rethrow;
+    }
+    if (expectedHash != null &&
+        analysisFingerprint(transcriptForPath(path) ?? '') != intendedHash) {
+      throw StateError('原文在保存期间已变化，请检查后重新确认');
     }
     return true;
   }

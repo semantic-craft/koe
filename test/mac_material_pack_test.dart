@@ -4,6 +4,7 @@ import 'package:file_selector_platform_interface/file_selector_platform_interfac
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/state/minutes_document.dart';
+import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_bookmarks.dart';
 import 'package:koe/theme/app_theme.dart';
@@ -43,6 +44,7 @@ class _Panels extends FileSelectorPlatform {
 
 RecorderController _controller(Directory root) => RecorderController(
   loadPersistedState: false,
+  analysisController: RecordingAnalysis(inMemory: true),
   libraryStore: RecordingLibraryStore(
     file: File('${root.path}/recording_library.json'),
   ),
@@ -79,6 +81,7 @@ void main() {
     await c.waitForTranscripts();
     await c.waitForBookmarks();
     await c.waitForMinutesDocuments();
+    await c.analysis.load();
     return c;
   }
 
@@ -166,6 +169,22 @@ void main() {
       ),
     );
     await tester.tap(find.text('导出…'));
+    // The loaded metadata future belongs to the real I/O zone. Wait for
+    // the actual sheet, rather than an intermediate settled frame.
+    for (
+      var i = 0;
+      i < 300 &&
+          find
+              .byKey(const ValueKey('material-export-contents'))
+              .evaluate()
+              .isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
     await tester.pumpAndSettle();
     await tester.tap(find.text('存储为文件…'));
     await pumpUntil(tester, find.text('已导出资料包（不含原音频）'));

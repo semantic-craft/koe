@@ -462,13 +462,13 @@
         "number": 508,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T13:39:11Z"
+        "updated_at": "2026-11-03T14:11:35Z"
       },
       {
         "number": 509,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T13:39:14Z"
+        "updated_at": "2026-11-03T14:11:39Z"
       },
       {
         "number": 510,
@@ -498,7 +498,7 @@
         "number": 514,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T13:55:01Z"
+        "updated_at": "2026-11-03T14:27:56Z"
       },
       {
         "number": 515,
@@ -513,7 +513,7 @@
         "updated_at": "2026-11-03T13:39:32Z"
       }
     ],
-    "main": "5dd678031bc4f900401aaff3fc4989b31ce98f64",
+    "main": "cfaee6cf1c69eb3b1c92a16a71f505f4bfca617a",
     "open_pulls": [],
     "pulls": [
       {
@@ -944,7 +944,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T13:57:24.209267Z",
+  "observed_at": "2026-11-03T14:29:08.291093Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -981,10 +981,34 @@
             }
           ],
           "id": "cicada-post-meeting",
-          "next": "按 #508、#509 推进资料包交换和术语采纳；#514 补真实会议、设备与性能验收。",
+          "next": "#514 补真实会议、设备与性能验收；后续按 #510–#513 推进实时纪要、字幕和同传。",
           "status": "done",
           "summary": "PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。",
           "title": "首批代码：分层议题、因果和术语候选"
+        },
+        {
+          "id": "cicada-exchange-adoption",
+          "title": "资料包纪要交换与术语采纳",
+          "status": "in_progress",
+          "summary": "实现已完成，EGM 详细方案与独立代码复审均无剩余阻塞。资料包保留当前纪要及历史，无音频可只读阅读并补配原件；术语可加入词表或经确认订正本场，保存期间正文变化会撤销采纳状态。全量 check 静态分析及1057项测试通过，正在完成 PR 交付，未做真实跨端验收。",
+          "next": "完成全量检查、性能复测和 PR 合并；#514 跟踪真实跨端文件交换与术语质量。",
+          "evidence": [
+            {
+              "kind": "issue",
+              "ref": 508,
+              "note": "实现及验收范围。"
+            },
+            {
+              "kind": "issue",
+              "ref": 509,
+              "note": "实现及验收范围。"
+            },
+            {
+              "kind": "issue",
+              "ref": 514,
+              "note": "实现及验收范围。"
+            }
+          ]
         },
         {
           "evidence": [
@@ -1007,16 +1031,6 @@
         },
         {
           "evidence": [
-            {
-              "kind": "issue",
-              "note": "对应后续范围或独立验收。",
-              "ref": 508
-            },
-            {
-              "kind": "issue",
-              "note": "对应后续范围或独立验收。",
-              "ref": 509
-            },
             {
               "kind": "issue",
               "note": "对应后续范围或独立验收。",
@@ -1056,8 +1070,8 @@
           "id": "cicada-follow-on",
           "next": "按依赖逐项收口详细设计后实施，不把首批交付算作全量对齐。",
           "status": "planned",
-          "summary": "#508 资料包纪要交换、#509 术语采纳、#510–#511 实时纪要字幕、#512–#513 Mac 同传及可选克隆尚未实施；#514–#516 是独立真实验收。现有资料包不含纪要。",
-          "title": "资料包、术语采纳、实时字幕纪要和 Mac 同传"
+          "summary": "#510–#511 实时纪要字幕、#512–#513 Mac 同传及可选克隆尚未实施；#514–#516 是独立真实验收。",
+          "title": "实时字幕纪要和 Mac 同传"
         }
       ],
       "title": "Cicada 功能对齐"

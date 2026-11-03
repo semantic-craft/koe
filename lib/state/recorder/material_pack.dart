@@ -15,10 +15,12 @@ class MaterialExportPreview {
     this.audioBytes,
     this.audioUnavailable,
     this.identityUnavailable,
+    this.minutesVersions = 0,
   });
 
   final String title;
   final bool hasText;
+  final int minutesVersions;
   final bool edited;
   final int segments;
   final int speakers;
@@ -82,6 +84,7 @@ mixin _RecorderMaterialPack on ChangeNotifier {
   abstract final Map<String, TranscriptMetadata> _transcriptMetadata;
   abstract final Map<String, String> _transcriptPathsByKey;
   abstract final RecordingBookmarkStore bookmarks;
+  abstract final RecordingAnalysis analysis;
   abstract final RecordingLibraryStore library;
   abstract final Map<int, String> localPathsByFileId;
   abstract final MinutesDocumentStore minutes;
@@ -164,6 +167,13 @@ mixin _RecorderMaterialPack on ChangeNotifier {
     final hash = path == null ? null : library.assetForPath(path)?.contentHash;
     return MaterialExportPreview(
       title: recording.title,
+      minutesVersions: analysis.results['$key/minutes'] == null
+          ? 0
+          : 1 +
+                analysis
+                    .versionsFor('$key/minutes')
+                    .length
+                    .clamp(0, PackMinutes.maxHistory),
       hasText: text.isNotEmpty,
       edited: recording.manuallyEdited,
       segments: recording.manuallyEdited ? 0 : recording.segments.length,
@@ -192,6 +202,7 @@ mixin _RecorderMaterialPack on ChangeNotifier {
     await _bookmarksLoaded;
     await _libraryLoaded;
     await topics.load();
+    await analysis.load();
     final recording = recordingView(ref);
     final path = recording.path;
     if (recording.live || recording.audioLocked) {
@@ -239,6 +250,22 @@ mixin _RecorderMaterialPack on ChangeNotifier {
       );
       if (!candidate.isEmpty) transcript = candidate;
     }
+    final currentMinutes = analysis.results['$key/minutes'];
+    final history = analysis.versionsFor('$key/minutes');
+    final portableMinutes = currentMinutes == null
+        ? null
+        : PackMinutes.decode(
+            PackMinutes(
+              current: currentMinutes,
+              history: history
+                  .skip(
+                    history.length > PackMinutes.maxHistory
+                        ? history.length - PackMinutes.maxHistory
+                        : 0,
+                  )
+                  .toList(),
+            ).toJson(),
+          );
     final topic = topics.topicOf(key);
     final audioPath = includeAudio ? path : null;
     final pack = MaterialPack(
@@ -256,6 +283,7 @@ mixin _RecorderMaterialPack on ChangeNotifier {
         audioExtension: path == null ? null : RecordingAudio.of(path).extension,
       ),
       transcript: transcript,
+      minutes: portableMinutes,
       bookmarks: [
         for (final bookmark in bookmarks.forRecording(key))
           PackBookmark(bookmark),
@@ -374,7 +402,7 @@ mixin _RecorderMaterialPack on ChangeNotifier {
     try {
       final opened = await openMaterialPack(packPath, workDirectory: work);
       final pack = opened.pack;
-      var existing = _existingPackMaterial(pack.material);
+      var existing = await _existingPackMaterial(pack.material);
       if (existing == null && opened.audioFile != null) {
         final imported = await importLocalAudio(
           opened.audioFile!.path,
@@ -399,6 +427,15 @@ mixin _RecorderMaterialPack on ChangeNotifier {
         }
       }
       if (existing != null) {
+        // A known asset may have lost only its original file. Restore it from
+        // this already verified pack without replacing any existing file.
+        if (opened.audioFile != null && !await File(existing).exists()) {
+          await _restoreMissingPackAudio(
+            existing,
+            opened.audioFile!,
+            pack.material.contentHash,
+          );
+        }
         final restored = await _restorePackOnto(existing, pack);
         notifyListeners();
         if (restored.nothingNew) {
@@ -412,7 +449,7 @@ mixin _RecorderMaterialPack on ChangeNotifier {
           path: existing,
           conflict: restored.conflict,
           message: restored.conflict
-              ? '资料已在资料库中；资料包的正文与当前校订不同，已并列保留，可在详情页比较'
+              ? '资料已在资料库中；正文或纪要存在不同版本，已保留本机内容；候选纪要可在版本历史中比较'
               : '资料已在资料库中，已补充：${restored.summary}',
         );
       }
@@ -426,23 +463,60 @@ mixin _RecorderMaterialPack on ChangeNotifier {
 
   /// A local recording that is the same material as [material]: the same
   /// recorder file, or a library original with the same audio content.
-  String? _existingPackMaterial(PackMaterial material) {
+  Future<String?> _existingPackMaterial(PackMaterial material) async {
     final fileId = material.deviceFileId;
-    if (fileId != null) {
-      final known = localPathsByFileId[fileId];
-      if (known != null && File(known).existsSync()) return known;
-      for (final candidate in exportedPaths) {
-        if (fileIdFromPath(candidate) == fileId &&
-            library.assetForPath(candidate)?.source !=
-                RecordingSource.localImport &&
-            File(candidate).existsSync()) {
-          return candidate;
-        }
+    final candidates = <String>{
+      if (fileId != null && localPathsByFileId[fileId] != null)
+        localPathsByFileId[fileId]!,
+      if (fileId != null)
+        for (final candidate in exportedPaths)
+          if (fileIdFromPath(candidate) == fileId &&
+              library.assetForPath(candidate)?.source !=
+                  RecordingSource.localImport)
+            candidate,
+    };
+    for (final path in candidates) {
+      if (await File(path).exists() &&
+          await audioVersion(path) == material.contentHash) {
+        return path;
       }
     }
-    final asset = library.assetForHash(material.contentHash);
-    if (asset != null && !asset.trashed) return asset.path;
-    return null;
+    final asset = library.assets
+        .where((a) => a.contentHash == material.contentHash && !a.trashed)
+        .firstOrNull;
+    if (asset == null || asset.trashed) return null;
+    if (await File(asset.path).exists() &&
+        await audioVersion(asset.path) != material.contentHash) {
+      throw const MaterialPackException('本机同身份原音频内容已变化，请检查后再导入');
+    }
+    return asset.path;
+  }
+
+  Future<void> _restoreMissingPackAudio(
+    String path,
+    File source,
+    String hash,
+  ) async {
+    final target = File(path);
+    final partial = File(
+      '$path.pack-${DateTime.now().microsecondsSinceEpoch}.part',
+    );
+    try {
+      await target.parent.create(recursive: true);
+      await source.copy(partial.path);
+      if (await audioVersion(partial.path) != hash) {
+        throw const MaterialPackException('恢复原音频时校验失败，请重试');
+      }
+      if (await target.exists()) {
+        if (await audioVersion(path) != hash) {
+          throw const MaterialPackException('本机原音频已变化，未覆盖');
+        }
+        return;
+      }
+      publishPackAudio(partial.path, path);
+    } finally {
+      if (await partial.exists()) await partial.delete();
+    }
   }
 
   /// A pack without audio for material this library does not have: kept
@@ -450,11 +524,81 @@ mixin _RecorderMaterialPack on ChangeNotifier {
   /// later restores the rest ([_completePackAfterPairing]).
   Future<MaterialPackImportOutcome> _importPackAsText(MaterialPack pack) async {
     final id = 'pack-${pack.material.contentHash.substring(0, 32)}';
-    if (minutes.byId(id) != null) {
+    final existing = minutes.byId(id);
+    if (existing != null) {
+      final previous = existing.restore == null
+          ? null
+          : MaterialPack.fromJson(existing.restore);
+      final incoming = pack.minutes;
+      final transcriptConflict =
+          (previous?.transcript?.visible ??
+              (previous == null ? existing.bodyText : null)) !=
+          pack.transcript?.visible;
+      const textConflictMessage = '资料包正文与当前文字不同；已保留当前文字，外来正文未保存，请保留资料包以便比较';
+      if (previous == null || incoming == null) {
+        return MaterialPackImportOutcome(
+          minutesId: id,
+          duplicate: !transcriptConflict,
+          conflict: transcriptConflict,
+          message: transcriptConflict
+              ? textConflictMessage
+              : '这份资料包已导入为文字资料，未重复导入',
+        );
+      }
+      final current = previous.minutes?.current ?? incoming.current;
+      final history = mergedMinutesHistory(
+        current: current,
+        incoming: incoming.current,
+        existing: previous.minutes?.history ?? const [],
+        history: incoming.history,
+        limit: PackMinutes.maxHistory,
+      );
+      final merged = PackMinutes(current: current, history: history);
+      final raw = previous.toJson()..['version'] = 2;
+      raw['minutes'] = merged.toJson();
+      if (previous.minutes != null &&
+          listEquals(
+            previous.minutes!.history.map((v) => v.portableIdentity).toList(),
+            history.map((v) => v.portableIdentity).toList(),
+          )) {
+        return MaterialPackImportOutcome(
+          minutesId: id,
+          duplicate: !transcriptConflict,
+          conflict: transcriptConflict,
+          message: transcriptConflict
+              ? textConflictMessage
+              : '这份资料包已在资料库中，未重复导入',
+        );
+      }
+      final conflict =
+          current.portableIdentity != incoming.current.portableIdentity ||
+          transcriptConflict;
+      await minutes.upsert(
+        MinutesDocument(
+          id: existing.id,
+          title: existing.title,
+          sourceName: existing.sourceName,
+          importedAt: existing.importedAt,
+          capturedAt: existing.capturedAt,
+          audioPath: existing.audioPath,
+          audioDuration: existing.audioDuration,
+          audioHash: existing.audioHash,
+          segments: existing.segments,
+          timingReliable: existing.timingReliable,
+          warning: existing.warning,
+          restore: raw,
+        ),
+        strict: true,
+      );
+      notifyListeners();
       return MaterialPackImportOutcome(
         minutesId: id,
-        duplicate: true,
-        message: '这份资料包已导入为文字资料，未重复导入',
+        conflict: conflict,
+        message: transcriptConflict
+            ? '$textConflictMessage；纪要版本及其来源快照已合并'
+            : conflict
+            ? '已保留当前文字与纪要；候选纪要及其原文快照可在包内历史中查看'
+            : '已补充纪要历史，原文字未改动',
       );
     }
     final transcript = pack.transcript;
@@ -489,8 +633,15 @@ mixin _RecorderMaterialPack on ChangeNotifier {
         );
       }
     }
+    if (segments.isEmpty && transcript == null && pack.minutes != null) {
+      for (final source in pack.minutes!.current.sources) {
+        if (source.trim().isNotEmpty) {
+          segments.add(MinutesSegment(text: source, start: Duration.zero));
+        }
+      }
+    }
     if (segments.isEmpty) {
-      throw const MaterialPackException('资料包没有原音频也没有正文，无法导入');
+      throw const MaterialPackException('资料包没有原音频也没有可读正文，无法导入');
     }
     final timed =
         !edited &&
@@ -511,7 +662,9 @@ mixin _RecorderMaterialPack on ChangeNotifier {
       audioHash: pack.material.contentHash,
       segments: segments,
       timingReliable: timed,
-      warning: '资料包没有包含原音频；缺少$missing。补配同一份原音频后完整恢复。',
+      warning: transcript == null
+          ? '纪要原文快照，不是完整逐字稿；资料包未包含原音频，补配后仍需真实转写才能定位回听。'
+          : '资料包没有包含原音频；缺少$missing。补配同一份原音频后完整恢复。',
       restore: pack.toJson(),
     );
     try {
@@ -687,12 +840,23 @@ mixin _RecorderMaterialPack on ChangeNotifier {
       await topics.moveRecording(key, match.id);
       restore.topic = true;
     }
+    final incomingMinutes = pack.minutes;
+    if (incomingMinutes != null) {
+      final imported = await analysis.mergeImportedMinutes(
+        '$key/minutes',
+        incomingMinutes.current,
+        incomingMinutes.history,
+      );
+      restore.minutes = imported.changed;
+      restore.conflict = restore.conflict || imported.conflict;
+    }
     return restore;
   }
 }
 
 class _PackRestore {
   bool text = false;
+  bool minutes = false;
   int segments = 0;
   int speakers = 0;
   int bookmarks = 0;
@@ -703,6 +867,7 @@ class _PackRestore {
 
   bool get nothingNew =>
       !text &&
+      !minutes &&
       speakers == 0 &&
       bookmarks == 0 &&
       !place &&
@@ -713,6 +878,7 @@ class _PackRestore {
   String get summary {
     final parts = [
       if (text) segments > 0 ? '正文和 $segments 段时间码' : '正文',
+      if (minutes) '纪要与历史版本',
       if (speakers > 0) '$speakers 位发言人姓名',
       if (bookmarks > 0) '$bookmarks 个书签',
       if (place) '地点',

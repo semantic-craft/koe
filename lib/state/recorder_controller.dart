@@ -129,6 +129,7 @@ part 'recorder/ask.dart';
 part 'recorder/brief.dart';
 part 'recorder/context_export.dart';
 part 'recorder/material_pack.dart';
+part 'recorder/term_adoption.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
 part 'recorder/transcription_jobs.dart';
@@ -198,6 +199,7 @@ class RecorderController extends ChangeNotifier
         _RecorderBrief,
         _RecorderContextExport,
         _RecorderMaterialPack,
+        _RecorderTermAdoption,
         _RecorderArchive,
         _RecorderTopics,
         _RecorderTranscriptionJobs,
@@ -1578,6 +1580,7 @@ class RecorderController extends ChangeNotifier
     final path = view.path ?? ref.path;
     final key = analysisKey(ref);
     final extraLines = <String>[];
+    MeetingMinutes? structuredMinutes;
 
     // 1. Structured minutes content (title, overview, sections, owners, reviewItems).
     final minutesResult = analysis.results['$key/minutes'];
@@ -1588,6 +1591,7 @@ class RecorderController extends ChangeNotifier
           minutesResult.sources.length,
           sourceTexts: minutesResult.sources,
         );
+        structuredMinutes = parsed;
         extraLines.addAll(parsed.searchableLines());
       } catch (_) {}
     }
@@ -1609,18 +1613,32 @@ class RecorderController extends ChangeNotifier
       }
     }
 
-    return findTranscriptSearchHit(
+    TranscriptSearchHit? find(String value, {List<String> extras = const []}) => findTranscriptSearchHit(
       text: view.text,
-      segments: view.manuallyEdited
-          ? const <TranscriptSegment>[]
-          : view.segments,
-      query: needle,
-      aliases: path == null
-          ? const <String, String>{}
-          : speakerAliasesForPath(path),
+      segments: view.manuallyEdited ? const <TranscriptSegment>[] : view.segments,
+      query: value,
+      aliases: path == null ? const <String, String>{} : speakerAliasesForPath(path),
       duration: path == null ? null : localDurationForPath(path),
-      extraLines: extraLines,
+      extraLines: extras,
     );
+    final direct = find(needle);
+    if (direct != null) return direct;
+    if (structuredMinutes != null && minutesResult?.sourceHash == analysisFingerprint(view.text)) {
+      for (final term in structuredMinutes.terms) {
+        if (!term.name.toLowerCase().contains(needle.toLowerCase())) continue;
+        for (final spelling in term.heard) {
+          final associated = find(spelling);
+          if (associated == null) continue;
+          return TranscriptSearchHit(
+            index: associated.index,
+            snippet: '术语关联（${term.name} ← $spelling）：${associated.snippet}',
+            timecode: view.originalPresent && path != null && !recordingAudioChanged(ref)
+                ? associated.timecode : null,
+          );
+        }
+      }
+    }
+    return find(needle, extras: extraLines);
   }
 
   /// Returns true when [query] matches the recording's title or any searchable

@@ -12,7 +12,10 @@ typedef _LinkDart = int Function(Pointer<Utf8> from, Pointer<Utf8> to);
 /// target. `link(2)` fails with EEXIST instead of overwriting, unlike
 /// `File.rename`. The caller still owns [source] and deletes it after success.
 bool get archiveAtomicLinkSupported =>
-    Platform.isMacOS || Platform.isIOS || Platform.isLinux;
+    Platform.isMacOS ||
+    Platform.isIOS ||
+    Platform.isLinux ||
+    Platform.isAndroid;
 
 void archiveAtomicLinkNoReplace(String source, String target) {
   if (!archiveAtomicLinkSupported) {
@@ -22,6 +25,8 @@ void archiveAtomicLinkNoReplace(String source, String target) {
   try {
     library = Platform.isLinux
         ? DynamicLibrary.open('libc.so.6')
+        : Platform.isAndroid
+        ? DynamicLibrary.open('libc.so')
         : DynamicLibrary.process();
   } catch (_) {
     throw const ArchiveException('无法加载系统 link(2)，未覆盖目标文件');
