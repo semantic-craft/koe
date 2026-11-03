@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-03T15:21:03.501390Z</p>
-<p>Main: <code>main: 5c61e6a40de2c5d89068e8e8ebd19af5ce914f4e</code></p>
+<p>Observed: 2026-11-03T15:57:31.403396Z</p>
+<p>Main: <code>main: 31bdf9ca50bedb20cf219542f66fd4df64024e13</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -35,12 +35,21 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/515">issue 515: 独立真机验收仍开放。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/521">pull 521: 代码交付边界和性能证据。</a></li>
 </ul><p>Next: 按 #515 已补的版本/设备/会议软件矩阵验证，并记录未通过或不支持的组合。</p></article>
-<article id="cicada-follow-on"><h3>Mac 同传与可选声音克隆</h3><span class="badge">in_progress</span><p>#512 已直接核对 Cicada 源码并完成 EGM 设计/实现复核；本机check1088项、原生profile构建、八个合成性能场景通过。代码待PR合并，真实路由未验。#513声音克隆尚未实施。</p><ul>
+<article id="cicada-follow-on"><h3>可选自然声和本人声音克隆</h3><span class="badge">planned</span><p>#512 Mac按住同传已由PR #524合并。#513可选自然声/本人声音克隆尚未实施，系统普通声音不依赖它。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/512">issue 512: 剩余实现或真实路由验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/513">issue 513: 剩余实现或真实路由验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/516">issue 516: 剩余实现或真实路由验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/design/mac-interpreting.md">file docs/design/mac-interpreting.md: 直接上游源码对照、收口设计与实施边界。</a></li>
-</ul><p>Next: 合并 #512 并核对CI；真实路由与恢复归 #516，下一实现为 #513。</p></article>
+</ul><p>Next: 按 #513 参考 Cicada 的现成声音管线，用 EGM 收口后实施；真实提供方与本人样本验证仍归 #516。</p></article>
+<article id="cicada-mac-interpreting"><h3>Mac 按住同传与可恢复输入路由</h3><span class="badge">done</span><p>PR #524已squash合并，最终CI1089项通过。直接核对Cicada源码，经EGM设计和实现复核，固定真实麦克风、本机识别、文字翻译、系统PCM定向BlackHole；一次一句且取消无迟到推进，可选输入租约和官方Installer入口。本机check1088项、后补界面回归、原生profile及八个合成性能场景通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/524">pull 524: 最终CI与合并、红绿回归和性能指标。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/512">issue 512: 实现工单已关闭。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/design/mac-interpreting.md">file docs/design/mac-interpreting.md: 上游源码对照、EGM设计与验收边界。</a></li>
+</ul><p>Next: 代码已交付；真实会议路由、安装和恢复按#516独立验收。</p></article>
+<article id="cicada-interpreting-acceptance"><h3>Mac 同传真实路由与输入恢复</h3><span class="badge">unverified</span><p>未安装签名发布版或BlackHole，未更改真实系统输入，未做两端会议译音、真实文字服务或热插拔/睡眠/崩溃恢复。profile合成性能通过不代表同传延迟、音质或真实路由通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/516">issue 516: 独立真机矩阵仍开放且未验。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/524">pull 524: 代码交付不代替真实环境验证。</a></li>
+</ul><p>Next: 按#516补充的版本、设备、会议软件和故障矩阵逐项核验；#513声音克隆实现后另补真实样本证据。</p></article>
 </section>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
