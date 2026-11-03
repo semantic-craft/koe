@@ -298,6 +298,29 @@ List<String> analysisSourceBlocks(String text, {int maxRunes = 6000}) {
   ];
 }
 
+List<String> _minutesSourceLines(String text) {
+  final lines = <String>[];
+  var pending = '';
+  for (final match in RegExp(r'[^\r\n]*(?:\r\n|\r|\n|$)').allMatches(text)) {
+    final line = match.group(0)!;
+    pending += line;
+    if (line.trim().isNotEmpty) {
+      lines.add(pending);
+      pending = '';
+    }
+  }
+  if (pending.isNotEmpty) {
+    if (lines.isEmpty) {
+      lines.add(pending);
+    } else {
+      lines[lines.length - 1] += pending;
+    }
+  }
+  return [
+    for (final line in lines) ...analysisSourceBlocks(line, maxRunes: 5800),
+  ];
+}
+
 /// Completion or failure notification for a background transcription or
 /// minutes/analysis job (#493 / S34).
 class TaskCompletionNotice {
@@ -1682,13 +1705,24 @@ class RecordingAnalysis extends ChangeNotifier {
     if (custom && template == null && resultSlot == null) {
       customInstructions[recording] = prompt;
     }
+    final structuredMinutes =
+        resultSlot == 'minutes' &&
+        validateResult != null &&
+        !preserveInputCitations;
+    final lineSources = structuredMinutes && sourceBlocks == null;
+    final sources =
+        sourceBlocks ??
+        (lineSources
+            ? _minutesSourceLines(source)
+            : analysisSourceBlocks(source));
     final sourceHash = analysisFingerprint(source);
     final templateVersion = template?.version ?? 1;
     final notes = userNotes.trim();
     // Checkpoints made with other notes were made from other inputs.
     final jobHash = analysisFingerprint(
       '$sourceHash/$selected/${template?.id ?? 'custom'}/v$templateVersion/$prompt'
-      '${notes.isEmpty ? '' : '/notes:${analysisFingerprint(notes)}'}',
+      '${notes.isEmpty ? '' : '/notes:${analysisFingerprint(notes)}'}'
+      '${lineSources ? '/source-lines-v1' : ''}',
     );
     final legacyJobHash = analysisFingerprint(
       '$sourceHash/$selected/$prompt/v1',
@@ -1696,7 +1730,7 @@ class RecordingAnalysis extends ChangeNotifier {
     final sourceChanged =
         _jobHashes[k] != null &&
         _jobHashes[k] != jobHash &&
-        _jobHashes[k] != legacyJobHash;
+        (lineSources || _jobHashes[k] != legacyJobHash);
     if (avoidDuplicateCharges && sourceChanged && !confirmedRestart) {
       errors[k] = '笔记已变动，旧检查点不能复用；请确认重新开始，避免意外重复收费。';
       notifyListeners();
@@ -1756,11 +1790,6 @@ class RecordingAnalysis extends ChangeNotifier {
       if (!current()) throw StateError('原文已变化或任务已取消，请重新生成');
     }
 
-    final sources = sourceBlocks ?? analysisSourceBlocks(source);
-    final structuredMinutes =
-        resultSlot == 'minutes' &&
-        validateResult != null &&
-        !preserveInputCitations;
     Set<String> citedIds(String encoded) {
       final ids = <String>{};
       void visit(dynamic value) {
@@ -1867,40 +1896,53 @@ class RecordingAnalysis extends ChangeNotifier {
     String withNotes(String input, String label) =>
         notes.isEmpty ? input : '$notes\n\n$label：\n$input';
 
+    final batches = <List<int>>[];
+    var batchRunes = 0;
+    for (var i = 0; i < sources.length; i++) {
+      final runes = sources[i].runes.length + '[S${i + 1}] \n'.length;
+      if (!lineSources || batches.isEmpty || batchRunes + runes > 6000) {
+        batches.add([]);
+        batchRunes = 0;
+      }
+      batches.last.add(i);
+      batchRunes += runes;
+    }
+    String batchInput(List<int> batch) => batch
+        .map(
+          (i) =>
+              preserveInputCitations ? sources[i] : '[S${i + 1}] ${sources[i]}',
+        )
+        .join('\n');
+    Set<String> batchIds(List<int> batch) => {
+      for (final i in batch) 'S${i + 1}',
+    };
+
     try {
       List<String> level;
-      if (sources.length == 1) {
+      if (batches.length == 1) {
         const id = 'final';
         finalNodeId = id;
         level = [
           await node(
             id,
-            withNotes(
-              preserveInputCitations ? sources.first : '[S1] ${sources.first}',
-              '原文',
-            ),
+            withNotes(batchInput(batches.single), '原文'),
             prompt,
-            allowedSources: structuredMinutes ? {'S1'} : null,
+            allowedSources: structuredMinutes ? batchIds(batches.single) : null,
           ),
         ];
       } else {
         level = [];
-        for (var i = 0; i < sources.length; i++) {
+        for (var i = 0; i < batches.length; i++) {
           level.add(
             await node(
-              '片段 ${i + 1}/${sources.length}',
-              withNotes(
-                preserveInputCitations
-                    ? sources[i]
-                    : '[S${i + 1}] ${sources[i]}',
-                '原文片段',
-              ),
+              '片段 ${i + 1}/${batches.length}',
+              withNotes(batchInput(batches[i]), '原文片段'),
               structuredMinutes
                   ? '$prompt\n这是全文片段，仅使用本片段提供的全局 S 编号。输出完整纪要 JSON，空类别用数组；保留嵌套要点、原因、术语和原文 heard，不改写编号。'
                   : '$prompt\n这是全文中的一个片段。保留与要求有关的事实、'
                         '${preserveInputCitations ? '输入中原有的 N 编号' : '原文引用编号'}'
                         '和不确定性，勿当作全文总结。用不超过 1500 字的笔记输出。',
-              allowedSources: structuredMinutes ? {'S${i + 1}'} : null,
+              allowedSources: structuredMinutes ? batchIds(batches[i]) : null,
             ),
           );
         }
