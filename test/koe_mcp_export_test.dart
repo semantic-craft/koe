@@ -18,6 +18,14 @@ const _sources = [
 ];
 
 void main() {
+  test('stdio protocol and export boundary subprocess suite passes', () async {
+    final process = await Process.run('python3', [
+      '-B',
+      'tools/koe-mcp/test_server.py',
+    ]).timeout(const Duration(seconds: 30));
+    expect(process.exitCode, 0, reason: '${process.stdout}\n${process.stderr}');
+  });
+
   test(
     'production no-audio export is readable through all three MCP tools',
     () async {

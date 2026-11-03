@@ -33,6 +33,5 @@ jobs:
             exit 1
           fi
       - run: flutter pub get
-      - run: python3 -B -m unittest discover -s tools/koe-mcp -p 'test_*.py'
       - run: flutter analyze
       - run: flutter test --reporter expanded
