@@ -8,7 +8,10 @@ import 'package:pointycastle/digests/sha256.dart';
 
 import '../ai/speech_provider.dart';
 import '../ai/stt_types.dart';
+import '../archive/archive_atomic_link.dart';
 import 'recording.dart';
+import 'recording_analysis.dart';
+import 'meeting_minutes.dart';
 import 'recording_bookmarks.dart';
 import 'recording_library.dart';
 import 'topic_store.dart';
@@ -28,10 +31,11 @@ class MaterialPack {
     this.bookmarks = const [],
     this.topic,
     this.audio,
+    this.minutes,
   });
 
   static const formatName = 'koe-material-pack';
-  static const version = 1;
+  static const version = 2;
   static const extension = '.koepack';
 
   /// First line of every pack; anything else is not a pack.
@@ -50,17 +54,20 @@ class MaterialPack {
   /// without audio.
   final PackAudio? audio;
 
+  final PackMinutes? minutes;
+
   bool get includesAudio => audio != null;
 
   Map<String, Object?> toJson() => {
     'format': formatName,
-    'version': version,
+    'version': minutes == null ? 1 : version,
     'exportedAt': exportedAt.toIso8601String(),
     'material': material.toJson(),
     if (transcript != null) 'transcript': transcript!.toJson(),
     if (bookmarks.isNotEmpty)
       'bookmarks': [for (final bookmark in bookmarks) bookmark.toJson()],
     if (topic != null) 'topic': topic!.toJson(),
+    if (minutes != null) 'minutes': minutes!.toJson(),
     'audio': audio == null ? {'included': false} : audio!.toJson(),
   };
 
@@ -72,9 +79,15 @@ class MaterialPack {
       throw const MaterialPackException('这不是 Koe 资料包');
     }
     final packVersion = value['version'];
-    if (packVersion is! int || packVersion > version) {
+    if (packVersion is! int || packVersion < 1 || packVersion > version) {
       throw const MaterialPackException('资料包来自更新版本的 Koe，请先更新 App');
     }
+    if (packVersion == 1 && value.containsKey('minutes')) {
+      throw const MaterialPackException('旧版资料包不能携带纪要，请重新导出');
+    }
+    final minutes = value['minutes'] == null
+        ? null
+        : PackMinutes.decode(value['minutes']);
     final exportedAt = DateTime.tryParse('${value['exportedAt']}');
     final material = PackMaterial.decode(value['material']);
     if (exportedAt == null || material == null) {
@@ -118,7 +131,86 @@ class MaterialPack {
       bookmarks: bookmarks,
       topic: PackTopic.decode(value['topic']),
       audio: audio,
+      minutes: minutes,
     );
+  }
+}
+
+/// Current structured minutes plus a bounded portable history. Only local
+/// recording keys are remapped during import; source hashes remain evidence.
+class PackMinutes {
+  const PackMinutes({required this.current, this.history = const []});
+  static const maxHistory = 10;
+  final AnalysisResult current;
+  final List<AnalysisResult> history;
+
+  Map<String, Object?> toJson() => {
+    'current': current.toPortableJson(),
+    'history': [for (final item in history) item.toPortableJson()],
+  };
+
+  static PackMinutes decode(Object? value) {
+    if (value is! Map ||
+        value['history'] is! List ||
+        (value['history'] as List).length > maxHistory) {
+      throw const MaterialPackException('资料包里的纪要历史不完整或超过10版');
+    }
+    return PackMinutes(
+      current: _result(value['current']),
+      history: List.unmodifiable((value['history'] as List).map(_result)),
+    );
+  }
+
+  static AnalysisResult _result(Object? value) {
+    try {
+      if (value is! Map) throw const FormatException();
+      String text(String key, {bool empty = true}) {
+        final raw = value[key];
+        if (raw is! String || (!empty && raw.trim().isEmpty)) {
+          throw const FormatException();
+        }
+        return raw;
+      }
+
+      DateTime date(String key) {
+        final raw = text(key, empty: false);
+        final result = DateTime.tryParse(raw);
+        if (result == null) throw const FormatException();
+        return result;
+      }
+
+      final rawSources = value['sources'];
+      if (rawSources is! List || rawSources.any((s) => s is! String)) {
+        throw const FormatException();
+      }
+      final sources = List<String>.from(rawSources);
+      final sourceHash = text('sourceHash');
+      if (!_sha256Hex.hasMatch(sourceHash)) throw const FormatException();
+      final templateVersion = value['templateVersion'];
+      if (templateVersion is! int ||
+          templateVersion < 1 ||
+          value['isDraft'] is! bool) {
+        throw const FormatException();
+      }
+      if (value['templateId'] != null && value['templateId'] is! String) {
+        throw const FormatException();
+      }
+      final minutes = validateMinutes(text('text', empty: false), sources);
+      return AnalysisResult(
+        text: minutes,
+        sourceHash: sourceHash,
+        model: text('model', empty: false),
+        instruction: text('instruction'),
+        sources: List.unmodifiable(sources),
+        createdAt: date('createdAt'),
+        editedAt: value['editedAt'] == null ? null : date('editedAt'),
+        templateId: value['templateId'] as String?,
+        templateVersion: templateVersion,
+        isDraft: value['isDraft'] as bool,
+      );
+    } catch (_) {
+      throw const MaterialPackException('资料包里的纪要或原文依据无法校验，未导入');
+    }
   }
 }
 
@@ -433,6 +525,16 @@ class PackAudio {
 final _sha256Hex = RegExp(r'^[0-9a-f]{64}$');
 final _extension = RegExp(r'^\.[A-Za-z0-9]{1,8}$');
 
+/// Publishes a verified replacement for a missing original without overwriting
+/// a target created concurrently. The caller removes its staging file.
+void publishPackAudio(String stagedPath, String targetPath) {
+  try {
+    archiveAtomicLinkNoReplace(stagedPath, targetPath);
+  } catch (_) {
+    throw const MaterialPackException('原音频未发布：目标已存在或无法原子恢复，请检查后重试');
+  }
+}
+
 /// Writes [pack] (and [audioPath] when the pack includes audio) to [target]
 /// through a `.part` file, so a cancelled or failed export never leaves a
 /// file that looks finished. [cancelled] is checked between chunks.
@@ -451,6 +553,9 @@ Future<void> writeMaterialPack(
     await partial.parent.create(recursive: true);
     sink = partial.openWrite();
     final manifest = utf8.encode(jsonEncode(pack.toJson()));
+    if (manifest.length > MaterialPack.maxManifestBytes) {
+      throw const MaterialPackException('资料包文字与纪要超过32 MiB，无法导出');
+    }
     sink.add(utf8.encode('${MaterialPack.magic}\n${manifest.length}\n'));
     sink.add(manifest);
     if (pack.includesAudio) {

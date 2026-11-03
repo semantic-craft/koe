@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/audio/audio_version.dart';
 import 'package:koe/state/minutes_document.dart';
+import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_bookmarks.dart';
 import 'package:koe/ui/screens/minutes_document_screen.dart';
@@ -39,6 +40,7 @@ class _Library {
       topics = TopicStore(inMemory: true) {
     controller = RecorderController(
       loadPersistedState: false,
+      analysisController: RecordingAnalysis(inMemory: true),
       libraryStore: store,
       libraryDirectory: Directory('${root.path}/imports'),
       topicStore: topics,
@@ -65,6 +67,7 @@ class _Library {
     await controller.waitForTranscripts();
     await controller.waitForBookmarks();
     await controller.waitForMinutesDocuments();
+    await controller.analysis.load();
   }
 
   RecordingReference ref(String path) =>
@@ -341,6 +344,22 @@ void main() {
       ),
     );
     await tester.tap(find.text('导出…'));
+    // The loaded metadata future belongs to the real I/O zone. Wait for
+    // the actual sheet, rather than an intermediate settled frame.
+    for (
+      var i = 0;
+      i < 300 &&
+          find
+              .byKey(const ValueKey('material-export-contents'))
+              .evaluate()
+              .isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
     await tester.pumpAndSettle();
 
     final contents = find.byKey(const ValueKey('material-export-contents'));

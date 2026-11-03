@@ -33,10 +33,10 @@ Future<void> importMaterialPackFrom(BuildContext context, String path) async {
         SnackBar(
           content: Text(
             error is MaterialPackException
-                ? '${error.message}；现有资料未改动'
+                ? '${error.message}；请检查资料库后重试'
                 : error is StateError
                 ? error.message
-                : '导入失败，现有资料未改动；请重试',
+                : '导入未完成，部分资料可能已保存；请检查资料库后重试',
           ),
         ),
       );

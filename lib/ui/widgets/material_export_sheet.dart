@@ -56,7 +56,18 @@ Future<void> showMaterialExportSheet(
   RecordingReference reference, {
   MaterialShare? share,
   MaterialShare? save,
-}) {
+}) async {
+  try {
+    await context.read<RecorderController>().analysis.load();
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(const SnackBar(content: Text('纪要尚未读入，无法确认导出内容，请重试')));
+    }
+    return;
+  }
+  if (!context.mounted) return;
   return showModalBottomSheet<void>(
     context: context,
     sheetAnimationStyle: AppMotion.sheetStyle(context),
@@ -190,6 +201,8 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
             ? '含你的校订'
             : '转写原文',
       ),
+      if (pack && preview.minutesVersions > 0)
+        ('纪要', '当前纪要及 ${preview.minutesVersions - 1} 版历史'),
       if (preview.segments > 0) ('时间码', '${preview.segments} 段'),
       if (preview.speakers > 0) ('发言人', '${preview.speakers} 位'),
       if (preview.bookmarks > 0) ('书签', '${preview.bookmarks} 个'),
@@ -249,7 +262,7 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
           const SizedBox(height: 8),
           Text(
             pack
-                ? '.koepack 文件，可导入另一台设备或重装后的 Koe，恢复时间码、发言人、校订和书签。'
+                ? '.koepack 文件，可导入另一台设备或重装后的 Koe，恢复时间码、发言人、校订、书签及包内纪要。'
                 : 'Markdown 文字，给人阅读或粘贴到别处；不能重新导入 Koe。',
             style: const TextStyle(
               fontSize: 13,

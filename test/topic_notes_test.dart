@@ -1374,7 +1374,11 @@ void main() {
       now: () => DateTime(2026, 10, 16, 10),
     );
     await store.load();
-    final analysis = RecordingAnalysis(file: analysisFile, service: service);
+    final analysis = (await tester.runAsync(() async {
+      final manager = RecordingAnalysis(file: analysisFile, service: service);
+      await manager.load();
+      return manager;
+    }))!;
     final controller = _InMemoryUiController(
       topicStore: store,
       analysisController: analysis,
@@ -1465,7 +1469,15 @@ void main() {
         .onPressed!;
     await tester.runAsync(() async {
       save();
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (true) {
+        final persisted =
+            await analysisFile.exists() &&
+            (await analysisFile.readAsString()).contains('修订后的概要');
+        if (persisted && !analysis.busy(TopicNote.slotKey(key))) break;
+        if (DateTime.now().isAfter(deadline)) fail('修订后的读书笔记未完成落盘');
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
     });
     await tester.pumpAndSettle();
 

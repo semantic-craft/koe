@@ -65,6 +65,7 @@ mixin _RecorderSettings on ChangeNotifier {
     analysisBackend = s.analysisBackend;
     analysisOpenAiConfig = s.analysisOpenAiConfig;
     vocabulary = List<String>.unmodifiable(s.vocabulary);
+    _savedVocabulary = vocabulary;
     _syncAnalysisModel();
     autoTranscribe = s.autoTranscribe;
     autoRealtime = s.autoRealtime;
@@ -115,12 +116,22 @@ mixin _RecorderSettings on ChangeNotifier {
     AnalysisBackendKind? backend,
     EngineConfig? openAiConfig,
     List<String>? nextVocabulary,
+    String? vocabularyAddition,
+    String? vocabularyRemoval,
   }) {
     final operation = _settingsWriting.then((_) async {
       try {
         final nextBackend = backend ?? analysisBackend;
         final nextOpenAi = openAiConfig ?? analysisOpenAiConfig;
-        final nextVocab = nextVocabulary ?? vocabulary;
+        final committedVocabulary = _savedVocabulary ?? vocabulary;
+        final nextVocab = vocabularyAddition != null
+            ? _normalizeVocabulary([...committedVocabulary, vocabularyAddition])
+            : vocabularyRemoval != null
+            ? [
+                for (final word in committedVocabulary)
+                  if (word.toLowerCase() != vocabularyRemoval) word,
+              ]
+            : nextVocabulary ?? vocabulary;
         await AppSettingsStore.save(
           AppSettings(
             speechProvider: speechProvider,
@@ -152,8 +163,11 @@ mixin _RecorderSettings on ChangeNotifier {
         if (provider != null) _engineAdapters[provider]!.applySaved(config!);
         if (backend != null) analysisBackend = backend;
         if (openAiConfig != null) analysisOpenAiConfig = openAiConfig;
-        if (nextVocabulary != null) {
-          vocabulary = List<String>.unmodifiable(nextVocabulary);
+        _savedVocabulary = List<String>.unmodifiable(nextVocab);
+        if (nextVocabulary != null ||
+            vocabularyAddition != null ||
+            vocabularyRemoval != null) {
+          vocabulary = _savedVocabulary!;
         }
         _syncAnalysisModel();
         settingsStorageError = null;
@@ -528,6 +542,7 @@ mixin _RecorderSettings on ChangeNotifier {
   AnalysisBackendKind analysisBackend = AnalysisBackendKind.qwen;
   EngineConfig analysisOpenAiConfig = const EngineConfig();
   List<String> vocabulary = const [];
+  List<String>? _savedVocabulary;
 
   String get vocabularyPromptHint => vocabulary.isEmpty
       ? ''
@@ -548,9 +563,6 @@ mixin _RecorderSettings on ChangeNotifier {
 
   Future<void> setVocabulary(Iterable<String> terms) {
     final normalized = _normalizeVocabulary(terms);
-    if (listEquals(vocabulary, normalized)) {
-      return SynchronousFuture<void>(null);
-    }
     vocabulary = normalized;
     notifyListeners();
     return _persistSettings(nextVocabulary: normalized);
@@ -559,16 +571,24 @@ mixin _RecorderSettings on ChangeNotifier {
   Future<void> addVocabularyTerm(String term) {
     final trimmed = term.trim();
     if (trimmed.isEmpty) return SynchronousFuture<void>(null);
-    return setVocabulary([...vocabulary, trimmed]);
+    return _persistSettings(vocabularyAddition: trimmed);
+  }
+
+  /// Local term adoption needs durable success, unlike best-effort settings UI.
+  Future<void> addVocabularyTermStrict(String term) async {
+    final trimmed = term.trim();
+    if (trimmed.isEmpty || trimmed.runes.length > 40) {
+      throw const FormatException('词表名称须为 1–40 个字');
+    }
+    // Persist even when memory already contains the word: a prior best-effort
+    // settings write may have failed before this explicit adoption.
+    await _persistSettings(strict: true, vocabularyAddition: trimmed);
   }
 
   Future<void> removeVocabularyTerm(String term) {
     final target = term.trim().toLowerCase();
     if (target.isEmpty) return SynchronousFuture<void>(null);
-    return setVocabulary([
-      for (final item in vocabulary)
-        if (item.toLowerCase() != target) item,
-    ]);
+    return _persistSettings(vocabularyRemoval: target);
   }
 
   void _syncAnalysisModel() {
@@ -588,7 +608,7 @@ mixin _RecorderSettings on ChangeNotifier {
     analysisBackend = backend;
     _syncAnalysisModel();
     notifyListeners();
-    return _persistSettings( backend: backend);
+    return _persistSettings(backend: backend);
   }
 
   Future<void> setAnalysisOpenAiConfig(EngineConfig config) {

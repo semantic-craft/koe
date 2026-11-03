@@ -306,6 +306,96 @@ class _MinutesPanelState extends State<MinutesPanel> {
     }
   }
 
+  Future<void> _adoptTerm(
+    AnalysisResult result,
+    MeetingMinutes minutes,
+    int index, {
+    required bool replace,
+  }) async {
+    final term = minutes.terms[index];
+    final counts = widget.controller.termReplacementCounts(
+      widget.reference,
+      term,
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(replace ? '确认本场订正' : '加入个人词表'),
+        content: SingleChildScrollView(
+          child: Text(
+            replace
+                ? '仅影响本场逐字稿与纪要，不改其他录音。\n将以下识别写法改为「${term.name}」：\n${counts.entries.map((e) => '${e.key}：${e.value} 处').join('\n')}\n原纪要保留在版本历史中。'
+                : '将「${term.name}」加入个人词表，供以后的转写参考。不会替换当前原文。',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(replace ? '确认订正' : '确认加入词表'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.controller.adoptMinutesTerm(
+        widget.reference,
+        result,
+        index,
+        replace: replace,
+      );
+      if (mounted) message(replace ? '已订正本场原文，原纪要已保留' : '已加入词表，原文保持不变');
+    } catch (error) {
+      if (!mounted) return;
+      final detail = error is FormatException
+          ? error.message
+          : error is StateError
+          ? error.message
+          : '请检查存储后重试';
+      message('采纳未完成，部分内容可能已保存；$detail');
+    }
+  }
+
+  Future<void> _showTermEvidence(MinuteTerm term) async {
+    final fingerprint = term.adoption?.previousVersion;
+    final previous = manager
+        .versionsFor(key)
+        .where((v) => minuteVersionFingerprint(v) == fingerprint)
+        .firstOrNull;
+    String content = '采纳前版本已不在保留的历史中，无法显示当时原文。';
+    if (previous != null) {
+      try {
+        content = MeetingMinutes.parse(
+          previous.text,
+          previous.sources.length,
+          sourceTexts: previous.sources,
+        ).export(previous);
+      } catch (_) {
+        content = previous.text;
+      }
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('采纳前原文'),
+        content: SizedBox(
+          width: 600,
+          child: SingleChildScrollView(child: SelectableText(content)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showVersionHistory() async {
     final versions = manager.versionsFor(key);
     if (versions.isEmpty) return;
@@ -1099,7 +1189,44 @@ class _MinutesPanelState extends State<MinutesPanel> {
                 ),
                 for (final section in minutes.sections) ...[
                   if (section.$1 == '未决问题' && minutes.terms.isNotEmpty)
-                    MinutesTerms(terms: minutes.terms, sources: sources),
+                    MinutesTerms(
+                      terms: minutes.terms,
+                      sources: sources,
+                      replacementCount: (term) => widget.controller
+                          .termReplacementCounts(widget.reference, term)
+                          .values
+                          .fold(0, (a, b) => a + b),
+                      onVocabulary:
+                          busy ||
+                              result.sourceHash !=
+                                  analysisFingerprint(view.text) ||
+                              widget.controller.recordingAudioChanged(
+                                widget.reference,
+                              )
+                          ? null
+                          : (index) => _adoptTerm(
+                              result,
+                              minutes!,
+                              index,
+                              replace: false,
+                            ),
+                      onReplace:
+                          busy ||
+                              result.sourceHash !=
+                                  analysisFingerprint(view.text) ||
+                              widget.controller.recordingAudioChanged(
+                                widget.reference,
+                              )
+                          ? null
+                          : (index) => _adoptTerm(
+                              result,
+                              minutes!,
+                              index,
+                              replace: true,
+                            ),
+                      onEvidence: (index) =>
+                          _showTermEvidence(minutes!.terms[index]),
+                    ),
                   Padding(
                     padding: const EdgeInsets.only(top: 16),
                     child: Text(

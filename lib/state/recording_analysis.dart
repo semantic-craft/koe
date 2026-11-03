@@ -392,6 +392,40 @@ class AnalysisResult {
     'fingerprint': fingerprint,
   };
 
+  /// Portable minutes metadata; no local slot, job state or derived fingerprints.
+  Map<String, Object?> toPortableJson() => {
+    'text': text,
+    'sourceHash': sourceHash,
+    'model': model,
+    'instruction': instruction,
+    'sources': sources,
+    'createdAt': createdAt.toIso8601String(),
+    if (editedAt != null) 'editedAt': editedAt!.toIso8601String(),
+    if (templateId != null) 'templateId': templateId,
+    'templateVersion': templateVersion,
+    'isDraft': isDraft,
+  };
+
+  /// Canonical identity also ignores JSON object ordering inside minutes text.
+  String get portableIdentity {
+    Object? body;
+    try {
+      body = jsonDecode(text);
+    } catch (_) {
+      body = text;
+    }
+    Object? ordered(Object? value) {
+      if (value is Map) {
+        final keys = value.keys.cast<String>().toList()..sort();
+        return {for (final key in keys) key: ordered(value[key])};
+      }
+      if (value is List) return value.map(ordered).toList();
+      return value;
+    }
+
+    return jsonEncode(ordered({...toPortableJson(), 'text': body}));
+  }
+
   factory AnalysisResult.fromJson(Map<String, dynamic> j) => AnalysisResult(
     text: j['text'] as String,
     sourceHash: j['sourceHash'] as String,
@@ -412,6 +446,43 @@ class AnalysisResult {
   bool staleFor(String source) => sourceHash != analysisFingerprint(source);
   String get exportText =>
       '$text\n\n模型：$model\n生成时间：${createdAt.toIso8601String()}\n要求：$instruction\n\n原文依据\n${sources.indexed.map((s) => '[S${s.$1 + 1}] ${s.$2}').join('\n\n')}';
+}
+
+/// Deterministic bounded union: the incoming current stays available as a
+/// conflict candidate. Stable ordering prevents repeated imports cycling
+/// versions that were previously trimmed at the history limit.
+List<AnalysisResult> mergedMinutesHistory({
+  required AnalysisResult current,
+  required AnalysisResult incoming,
+  required Iterable<AnalysisResult> existing,
+  required Iterable<AnalysisResult> history,
+  required int limit,
+}) {
+  final currentId = current.portableIdentity;
+  final incomingId = incoming.portableIdentity;
+  final conflict = currentId != incomingId;
+  final unique = <String, AnalysisResult>{};
+  for (final item in [...existing, ...history]) {
+    final id = item.portableIdentity;
+    if (id == currentId || (conflict && id == incomingId)) continue;
+    unique[id] = item;
+  }
+  final ordered = unique.values.toList()
+    ..sort((a, b) {
+      final time = (a.editedAt ?? a.createdAt).compareTo(
+        b.editedAt ?? b.createdAt,
+      );
+      return time != 0
+          ? time
+          : a.portableIdentity.compareTo(b.portableIdentity);
+    });
+  final remaining = limit - (conflict ? 1 : 0);
+  return [
+    ...ordered.skip(
+      ordered.length > remaining ? ordered.length - remaining : 0,
+    ),
+    if (conflict) incoming,
+  ];
 }
 
 abstract class AnalysisService {
@@ -1020,7 +1091,37 @@ class RecordingAnalysis extends ChangeNotifier {
     }
   }
 
-  Future<void> save() async {
+  final Object _writeZone = Object();
+  Future<void> _writes = Future<void>.value();
+  Object? _activeWriter;
+  final Map<String, Object> _mutationClaims = {};
+
+  Future<T> _serializeWrites<T>(Future<T> Function() operation) {
+    final before = _writes;
+    final finished = Completer<void>();
+    _writes = finished.future;
+    return () async {
+      await before;
+      final owner = Object();
+      _activeWriter = owner;
+      try {
+        return await runZoned(operation, zoneValues: {_writeZone: owner});
+      } finally {
+        _activeWriter = null;
+        finished.complete();
+      }
+    }();
+  }
+
+  Future<void> save() {
+    if (_activeWriter != null &&
+        identical(Zone.current[_writeZone], _activeWriter)) {
+      return _saveSnapshot();
+    }
+    return _serializeWrites(_saveSnapshot);
+  }
+
+  Future<void> _saveSnapshot() async {
     if (inMemory) return;
     final snapshot = jsonEncode({
       'version': 1,
@@ -1050,7 +1151,10 @@ class RecordingAnalysis extends ChangeNotifier {
 
   /// True from the synchronous claim through completion. UI uses this to hide
   /// paid actions while a request is still loading or validating.
-  bool busy(String k) => _running.containsKey(k) || _pendingClaims.contains(k);
+  bool busy(String k) =>
+      _running.containsKey(k) ||
+      _pendingClaims.contains(k) ||
+      _mutationClaims.containsKey(k);
 
   /// True only after the request has a cancellable abort handle.
   bool running(String k) => _running.containsKey(k);
@@ -1085,85 +1189,95 @@ class RecordingAnalysis extends ChangeNotifier {
     previousResults[k] = list.last;
   }
 
-  Future<void> restoreVersion(String k, int index) async {
-    await load();
-    if (busy(k)) {
-      throw StateError('正在生成中，请稍后再复原版本');
-    }
-    final list = versionHistory[k];
-    if (list == null || index < 0 || index >= list.length) {
-      throw RangeError('历史版本不存在');
-    }
-    final target = list[index];
-    final current = results[k];
-    final oldList = List<AnalysisResult>.from(list);
-    final oldPrevious = previousResults[k];
-    list.removeAt(index);
-    if (current != null) {
-      list.add(current);
-      if (list.length > maxVersionHistory) {
-        list.removeRange(0, list.length - maxVersionHistory);
-      }
-    }
-    if (list.isEmpty) {
-      versionHistory.remove(k);
-      previousResults.remove(k);
-    } else {
-      previousResults[k] = list.last;
-    }
-    results[k] = target;
-    try {
-      await save();
-    } catch (_) {
-      versionHistory[k] = oldList;
-      if (oldPrevious == null) {
-        previousResults.remove(k);
-      } else {
-        previousResults[k] = oldPrevious;
-      }
-      if (current == null) {
-        results.remove(k);
-      } else {
-        results[k] = current;
-      }
-      rethrow;
-    } finally {
-      if (!_disposed) notifyListeners();
+  bool _slotSuspended(String k) =>
+      _disposed ||
+      _suspendedRecordings.any((recording) => k.startsWith('$recording/'));
+
+  /// An owned lease survives awaits; a stale owner cannot release a newer one.
+  Object? claimMutation(String k) {
+    if (busy(k) || _slotSuspended(k)) return null;
+    final token = Object();
+    _mutationClaims[k] = token;
+    if (!_disposed) notifyListeners();
+    return token;
+  }
+
+  bool ownsMutation(String k, Object token) =>
+      identical(_mutationClaims[k], token) && !_slotSuspended(k);
+
+  bool releaseMutation(String k, Object token) {
+    if (!identical(_mutationClaims[k], token)) return false;
+    _mutationClaims.remove(k);
+    if (!_disposed) notifyListeners();
+    return true;
+  }
+
+  void _checkMutation(String k, Object token) {
+    if (!ownsMutation(k, token)) throw StateError('纪要写入已取消或资料已变化，请重试');
+  }
+
+  void _checkStillCurrent(bool Function()? isStillCurrent) {
+    if (isStillCurrent != null && !isStillCurrent()) {
+      throw StateError('原文已变化，纪要修改未完成，请重新打开后重试');
     }
   }
 
-  Future<void> editResult(
+  Future<T> _mutateMinutes<T>(
     String k,
-    AnalysisResult expected,
-    String text,
-  ) async {
-    if (busy(k) || !identical(results[k], expected)) {
-      throw StateError('结果已更新，请重新打开后编辑');
+    Future<T> Function(Object token) operation, {
+    Object? mutationClaim,
+    bool Function()? isStillCurrent,
+  }) async {
+    final token = mutationClaim ?? claimMutation(k);
+    if (token == null) throw StateError('纪要正在更新，请完成后重试');
+    try {
+      return await _serializeWrites(() async {
+        _checkMutation(k, token);
+        _checkStillCurrent(isStillCurrent);
+        await load();
+        _checkMutation(k, token);
+        _checkStillCurrent(isStillCurrent);
+        return operation(token);
+      });
+    } finally {
+      if (mutationClaim == null) releaseMutation(k, token);
     }
-    final replacement = AnalysisResult(
-      text: text,
-      sourceHash: expected.sourceHash,
-      model: expected.model,
-      instruction: expected.instruction,
-      sources: expected.sources,
-      createdAt: expected.createdAt,
-      editedAt: DateTime.now(),
-      templateId: expected.templateId,
-      templateVersion: expected.templateVersion,
-      isDraft: false,
-      templateFingerprint: expected.templateFingerprint,
-      fingerprint: expected.fingerprint,
-    );
-    final oldHistory = versionHistory[k] == null
-        ? null
-        : List<AnalysisResult>.from(versionHistory[k]!);
+  }
+
+  /// Called only inside the write queue; rollback finishes before the next
+  /// slot or ordinary save can capture the store.
+  Future<void> _commitMinutes(
+    String k,
+    Object token,
+    AnalysisResult current,
+    List<AnalysisResult> history, {
+    bool Function()? isStillCurrent,
+  }) async {
+    _checkMutation(k, token);
+    _checkStillCurrent(isStillCurrent);
+    final oldCurrent = results[k];
+    final oldHistory = versionHistory[k];
     final oldPrevious = previousResults[k];
-    _recordVersion(k, expected);
-    results[k] = replacement;
+    results[k] = current;
+    if (history.isEmpty) {
+      versionHistory.remove(k);
+      previousResults.remove(k);
+    } else {
+      versionHistory[k] = history;
+      previousResults[k] = history.last;
+    }
+    var saved = false;
     try {
       await save();
+      saved = true;
+      _checkMutation(k, token);
+      _checkStillCurrent(isStillCurrent);
     } catch (_) {
-      if (identical(results[k], replacement)) results[k] = expected;
+      if (oldCurrent == null) {
+        results.remove(k);
+      } else {
+        results[k] = oldCurrent;
+      }
       if (oldHistory == null) {
         versionHistory.remove(k);
       } else {
@@ -1174,63 +1288,146 @@ class RecordingAnalysis extends ChangeNotifier {
       } else {
         previousResults[k] = oldPrevious;
       }
+      // Cancellation while the disk write was finishing must not leave an
+      // unaccepted user action on disk for the next launch.
+      if (saved) await save();
       rethrow;
     } finally {
       if (!_disposed) notifyListeners();
     }
   }
 
-  /// Updates an existing analysis result's [text], [sources], and [sourceHash]
-  /// together (e.g. during global term replacement so the minutes stay aligned
-  /// with the updated transcript and keep version history) (#493 / S34).
+  List<AnalysisResult> _historyWith(String k, AnalysisResult previous) {
+    final list = [...versionsFor(k), previous];
+    return list
+        .skip(
+          list.length > maxVersionHistory ? list.length - maxVersionHistory : 0,
+        )
+        .toList();
+  }
+
+  /// Adds portable versions without overwriting a local current result.
+  Future<({bool changed, bool conflict})> mergeImportedMinutes(
+    String k,
+    AnalysisResult incoming,
+    List<AnalysisResult> history,
+  ) => _mutateMinutes(k, (token) async {
+    final oldCurrent = results[k];
+    final oldHistory = versionHistory[k] ?? const <AnalysisResult>[];
+    final current = oldCurrent ?? incoming;
+    final next = mergedMinutesHistory(
+      current: current,
+      incoming: incoming,
+      existing: oldHistory,
+      history: history,
+      limit: maxVersionHistory,
+    );
+    final conflict = current.portableIdentity != incoming.portableIdentity;
+    final changed =
+        oldCurrent == null ||
+        !listEquals(
+          oldHistory.map((v) => v.portableIdentity).toList(),
+          next.map((v) => v.portableIdentity).toList(),
+        );
+    if (changed) await _commitMinutes(k, token, current, next);
+    return (changed: changed, conflict: conflict);
+  });
+
+  Future<void> restoreVersion(String k, int index) =>
+      _mutateMinutes(k, (token) async {
+        final list = [...versionsFor(k)];
+        if (index < 0 || index >= list.length) throw RangeError('历史版本不存在');
+        final target = list.removeAt(index);
+        final current = results[k];
+        if (current != null) list.add(current);
+        await _commitMinutes(
+          k,
+          token,
+          target,
+          list
+              .skip(
+                list.length > maxVersionHistory
+                    ? list.length - maxVersionHistory
+                    : 0,
+              )
+              .toList(),
+        );
+      });
+
+  Future<void> editResult(
+    String k,
+    AnalysisResult expected,
+    String text, {
+    Object? mutationClaim,
+    bool Function()? isStillCurrent,
+  }) => _mutateMinutes(
+    k,
+    (token) async {
+      if (!identical(results[k], expected)) throw StateError('结果已更新，请重新打开后编辑');
+      final replacement = AnalysisResult(
+        text: text,
+        sourceHash: expected.sourceHash,
+        model: expected.model,
+        instruction: expected.instruction,
+        sources: expected.sources,
+        createdAt: expected.createdAt,
+        editedAt: DateTime.now(),
+        templateId: expected.templateId,
+        templateVersion: expected.templateVersion,
+        isDraft: false,
+        templateFingerprint: expected.templateFingerprint,
+        fingerprint: expected.fingerprint,
+      );
+      await _commitMinutes(
+        k,
+        token,
+        replacement,
+        _historyWith(k, expected),
+        isStillCurrent: isStillCurrent,
+      );
+    },
+    mutationClaim: mutationClaim,
+    isStillCurrent: isStillCurrent,
+  );
+
+  /// Saves corrected sources and their minutes together while retaining the
+  /// previous source snapshot as historical evidence.
   Future<void> replaceResultWithSources(
     String k,
     AnalysisResult expected, {
     required String text,
     required List<String> sources,
     required String sourceHash,
-  }) async {
-    if (busy(k) || !identical(results[k], expected)) {
-      throw StateError('结果已更新，请重新打开后编辑');
-    }
-    final replacement = AnalysisResult(
-      text: text,
-      sourceHash: sourceHash,
-      model: expected.model,
-      instruction: expected.instruction,
-      sources: List<String>.unmodifiable(sources),
-      createdAt: expected.createdAt,
-      editedAt: DateTime.now(),
-      templateId: expected.templateId,
-      templateVersion: expected.templateVersion,
-      isDraft: false,
-      templateFingerprint: expected.templateFingerprint,
-    );
-    final oldHistory = versionHistory[k] == null
-        ? null
-        : List<AnalysisResult>.from(versionHistory[k]!);
-    final oldPrevious = previousResults[k];
-    _recordVersion(k, expected);
-    results[k] = replacement;
-    try {
-      await save();
-    } catch (_) {
-      if (identical(results[k], replacement)) results[k] = expected;
-      if (oldHistory == null) {
-        versionHistory.remove(k);
-      } else {
-        versionHistory[k] = oldHistory;
-      }
-      if (oldPrevious == null) {
-        previousResults.remove(k);
-      } else {
-        previousResults[k] = oldPrevious;
-      }
-      rethrow;
-    } finally {
-      if (!_disposed) notifyListeners();
-    }
-  }
+    Object? mutationClaim,
+    bool Function()? isStillCurrent,
+  }) => _mutateMinutes(
+    k,
+    (token) async {
+      if (!identical(results[k], expected)) throw StateError('结果已更新，请重新打开后编辑');
+      final replacement = AnalysisResult(
+        text: text,
+        sourceHash: sourceHash,
+        model: expected.model,
+        instruction: expected.instruction,
+        sources: List.unmodifiable(sources),
+        createdAt: expected.createdAt,
+        editedAt: DateTime.now(),
+        templateId: expected.templateId,
+        templateVersion: expected.templateVersion,
+        isDraft: false,
+        templateFingerprint: expected.templateFingerprint,
+      );
+      await _commitMinutes(
+        k,
+        token,
+        replacement,
+        _historyWith(k, expected),
+        isStillCurrent: isStillCurrent,
+      );
+    },
+    mutationClaim: mutationClaim,
+    isStillCurrent: isStillCurrent,
+  );
 
   void cancel(String k) {
     final abort = _running.remove(k);
@@ -1250,7 +1447,9 @@ class RecordingAnalysis extends ChangeNotifier {
   void suspendRecording(String recording) {
     _suspendedRecordings.add(recording);
     final prefix = '$recording/';
-    var changed = false;
+    final mutationsBefore = _mutationClaims.length;
+    _mutationClaims.removeWhere((key, _) => key.startsWith(prefix));
+    var changed = mutationsBefore != _mutationClaims.length;
     for (final k
         in _running.keys.where((key) => key.startsWith(prefix)).toList()) {
       final abort = _running.remove(k);
@@ -1272,11 +1471,12 @@ class RecordingAnalysis extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> forgetRecording(String recording) async {
+  Future<void> forgetRecording(String recording) => _serializeWrites(() async {
     _suspendedRecordings.remove(recording);
     await load();
     final prefix = '$recording/';
     bool matches(String k) => k.startsWith(prefix);
+    _mutationClaims.removeWhere((key, _) => matches(key));
     for (final k in _running.keys.where(matches).toList()) {
       final abort = _running.remove(k);
       if (abort != null && !abort.isCompleted) abort.complete();
@@ -1291,34 +1491,36 @@ class RecordingAnalysis extends ChangeNotifier {
     _unconfirmedNodes.removeWhere((k, _) => matches(k));
     await save();
     if (!_disposed) notifyListeners();
-  }
+  });
 
-  Future<void> renameRecordingKey(String oldKey, String newKey) async {
-    if (oldKey == newKey) return;
-    await load();
-    final oldPrefix = '$oldKey/';
-    void moveMap<V>(Map<String, V> map) {
-      final entries = map.entries
-          .where((e) => e.key.startsWith(oldPrefix))
-          .toList();
-      for (final e in entries) {
-        map.remove(e.key);
-        map['$newKey/${e.key.substring(oldPrefix.length)}'] = e.value;
-      }
-    }
+  Future<void> renameRecordingKey(String oldKey, String newKey) =>
+      _serializeWrites(() async {
+        if (oldKey == newKey) return;
+        await load();
+        final oldPrefix = '$oldKey/';
+        _mutationClaims.removeWhere((key, _) => key.startsWith(oldPrefix));
+        void moveMap<V>(Map<String, V> map) {
+          final entries = map.entries
+              .where((e) => e.key.startsWith(oldPrefix))
+              .toList();
+          for (final e in entries) {
+            map.remove(e.key);
+            map['$newKey/${e.key.substring(oldPrefix.length)}'] = e.value;
+          }
+        }
 
-    moveMap(results);
-    moveMap(previousResults);
-    moveMap(versionHistory);
-    moveMap(errors);
-    moveMap(progress);
-    moveMap(_checkpoints);
-    moveMap(_jobHashes);
-    moveMap(_unconfirmedNodes);
-    moveMap(_running);
-    await save();
-    if (!_disposed) notifyListeners();
-  }
+        moveMap(results);
+        moveMap(previousResults);
+        moveMap(versionHistory);
+        moveMap(errors);
+        moveMap(progress);
+        moveMap(_checkpoints);
+        moveMap(_jobHashes);
+        moveMap(_unconfirmedNodes);
+        moveMap(_running);
+        await save();
+        if (!_disposed) notifyListeners();
+      });
 
   /// Set [slotClaimed] when the caller already holds [claim] for the computed
   /// slot and wants [run] to consume it.
@@ -1353,6 +1555,10 @@ class RecordingAnalysis extends ChangeNotifier {
       templateId: templateId,
       resultSlot: resultSlot,
     );
+    if (slotClaimed &&
+        (!_pendingClaims.contains(k) || _mutationClaims.containsKey(k))) {
+      return;
+    }
     if (!slotClaimed && !claim(k)) return;
     if (_suspendedRecordings.contains(recording)) {
       releaseClaim(k);
@@ -1509,7 +1715,12 @@ class RecordingAnalysis extends ChangeNotifier {
 
     String validatedNode(String raw, Set<String>? allowedSources) {
       if (!structuredMinutes) return raw;
-      final encoded = validateResult(raw, sources);
+      final validated = validateResult(raw, sources);
+      final body = jsonDecode(validated) as Map<String, dynamic>;
+      for (final term in (body['terms'] as List? ?? const [])) {
+        (term as Map).remove('adoption');
+      }
+      final encoded = jsonEncode(body);
       if ((jsonDecode(encoded) as Map)['schemaVersion'] != 2) {
         throw const FormatException('新生成的纪要节点必须使用 schemaVersion 2');
       }
@@ -1678,41 +1889,48 @@ class RecordingAnalysis extends ChangeNotifier {
         isDraft: isDraft,
         templateFingerprint: template?.fingerprint,
       );
-      final previous = results[k];
-      final previousVersion = previousResults[k];
-      final previousHistory = versionHistory[k] == null
-          ? null
-          : List<AnalysisResult>.from(versionHistory[k]!);
-      if (preserveUserEdit && previous != null && previous.editedAt != null) {
-        // Keep the user-edited result active and store the newly generated
-        // formal version in version history so the user never loses edits.
-        _recordVersion(k, result);
-      } else {
-        if (previous != null) _recordVersion(k, previous);
-        results[k] = result;
-      }
-      try {
-        await save();
-      } catch (_) {
-        if (identical(_running[k], abort)) {
-          if (previous == null) {
-            results.remove(k);
-          } else {
-            results[k] = previous;
-          }
-          if (previousVersion == null) {
-            previousResults.remove(k);
-          } else {
-            previousResults[k] = previousVersion;
-          }
-          if (previousHistory == null) {
-            versionHistory.remove(k);
-          } else {
-            versionHistory[k] = previousHistory;
-          }
+      await _serializeWrites(() async {
+        check();
+        final previous = results[k];
+        final previousVersion = previousResults[k];
+        final previousHistory = versionHistory[k] == null
+            ? null
+            : List<AnalysisResult>.from(versionHistory[k]!);
+        if (preserveUserEdit && previous != null && previous.editedAt != null) {
+          // Keep the user-edited result active and store the newly generated
+          // formal version in version history so the user never loses edits.
+          _recordVersion(k, result);
+        } else {
+          if (previous != null) _recordVersion(k, previous);
+          results[k] = result;
         }
-        rethrow;
-      }
+        var saved = false;
+        try {
+          await save();
+          saved = true;
+          check();
+        } catch (_) {
+          {
+            if (previous == null) {
+              results.remove(k);
+            } else {
+              results[k] = previous;
+            }
+            if (previousVersion == null) {
+              previousResults.remove(k);
+            } else {
+              previousResults[k] = previousVersion;
+            }
+            if (previousHistory == null) {
+              versionHistory.remove(k);
+            } else {
+              versionHistory[k] = previousHistory;
+            }
+          }
+          if (saved) await save();
+          rethrow;
+        }
+      });
       if (identical(_running[k], abort)) {
         _checkpoints.remove(k);
         _jobHashes.remove(k);
