@@ -292,6 +292,7 @@ void main() {
       final service = _MinutesTestService((instruction) {
         capturedInstruction = instruction;
         return jsonEncode({
+          'schemaVersion': 2,
           'title': '1:1 沟通纪要',
           'overview': '回顾本周工作与支持需求',
           'topics': [

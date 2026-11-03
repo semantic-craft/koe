@@ -23,13 +23,28 @@ List<MinuteMapNode> minuteMapNodes(MeetingMinutes minutes) => [
   MinuteMapNode('root', minutes.title),
   for (final section in minutes.sections.indexed) ...[
     MinuteMapNode('section:${section.$1}', section.$2.$1, parent: 'root'),
-    for (final item in section.$2.$2.indexed)
+    for (final item in section.$2.$2.indexed) ...[
       MinuteMapNode(
         '${section.$1}:${item.$1}',
         item.$2.text,
         parent: 'section:${section.$1}',
         item: item.$2,
       ),
+      if (item.$2 is MinuteTopic) ...[
+        MinuteMapNode(
+          '${section.$1}:${item.$1}:summary',
+          (item.$2 as MinuteTopic).summary,
+          parent: '${section.$1}:${item.$1}',
+        ),
+        for (final point in (item.$2 as MinuteTopic).points.indexed)
+          MinuteMapNode(
+            '${section.$1}:${item.$1}:point:${point.$1}',
+            point.$2.text,
+            parent: '${section.$1}:${item.$1}',
+            item: point.$2,
+          ),
+      ],
+    ],
     if (section.$2.$2.isEmpty)
       MinuteMapNode(
         '${section.$1}:empty',
@@ -326,7 +341,11 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
       MeetingMinutes? minutes;
       if (result != null) {
         try {
-          minutes = MeetingMinutes.parse(result.text, result.sources.length);
+          minutes = MeetingMinutes.parse(
+            result.text,
+            result.sources.length,
+            sourceTexts: result.sources,
+          );
         } catch (_) {}
       }
       if (result == null || minutes == null) {

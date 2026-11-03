@@ -31,8 +31,13 @@ String fixture({String source = 'S1'}) => jsonEncode({
   'questions': [],
 });
 
+String generatedFixture() => jsonEncode({
+  ...jsonDecode(fixture()) as Map<String, dynamic>,
+  'schemaVersion': 2,
+});
+
 class Service implements AnalysisService {
-  String response = fixture();
+  String response = generatedFixture();
   int calls = 0;
   Completer<String>? wait;
   @override
@@ -114,7 +119,7 @@ void main() {
       await generate(manager);
       expect(manager.results['file:1/minutes'], same(original));
       expect(manager.errors, isNotEmpty);
-      service.response = fixture();
+      service.response = generatedFixture();
       await generate(manager);
       expect(service.calls, 3);
       expect(manager.errors, isEmpty);
@@ -162,7 +167,7 @@ void main() {
       manager.cancel('file:1/minutes');
       await manager.editResult('file:1/minutes', original, original.text);
       final edited = manager.results['file:1/minutes'];
-      service.wait!.complete(fixture());
+      service.wait!.complete(generatedFixture());
       await pending;
       expect(manager.results['file:1/minutes'], same(edited));
     },
@@ -383,7 +388,7 @@ void main() {
     await tester.tap(find.text('生成纪要'));
     await tester.pumpAndSettle();
 
-    service.response = fixture().replaceAll('项目会议', '新稿会议');
+    service.response = generatedFixture().replaceAll('项目会议', '新稿会议');
     await tester.tap(find.text('重新生成纪要'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('重新生成'));
@@ -408,7 +413,7 @@ void main() {
       final manager = RecordingAnalysis(file: file, service: service);
       addTearDown(manager.dispose);
       await generate(manager);
-      service.response = fixture().replaceAll('项目会议', '新稿会议');
+      service.response = generatedFixture().replaceAll('项目会议', '新稿会议');
       await generate(manager);
       expect(manager.previousResults['file:1/minutes'], isNotNull);
 

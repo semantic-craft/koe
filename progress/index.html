@@ -3,8 +3,26 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-10-25T00:24:53.899696Z</p>
-<p>Main: <code>main: 8ad1c58575173fd30d1f6acf15a210eacaeb8791</code></p>
+<p>Observed: 2026-11-03T13:44:56.408491Z</p>
+<p>Main: <code>main: fc12765102c7a318cf0644a7687f6befac8fec66</code></p>
+<section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
+<article id="cicada-post-meeting"><h3>首批：分层议题、因果和术语候选</h3><span class="badge">in_progress</span><p>首批 A1 已实现并通过 EGM 与独立代码复核；check 静态分析及 1030 项测试通过。分层内容、旧格式兼容、编辑和导出均有回归证据；尚未安装或验收真实模型效果。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/506">issue 506: 全量范围总工单。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/507">issue 507: 首批实现与验收边界。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/design/cicada-alignment.md">file docs/design/cicada-alignment.md: 已评审设计；后续阶段仍需详细契约。</a></li>
+</ul><p>Next: 完成 PR 合并；本机性能驱动仍未产生有效数据，真实服务及设备在 #514 单独验收。</p></article>
+<article id="cicada-follow-on"><h3>资料包、术语采纳、实时字幕纪要和 Mac 同传</h3><span class="badge">planned</span><p>#508 资料包纪要交换、#509 术语采纳、#510–#511 实时纪要字幕、#512–#513 Mac 同传及可选克隆尚未实施；#514–#516 是独立真实验收。现有资料包不含纪要。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/508">issue 508: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/509">issue 509: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/510">issue 510: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/511">issue 511: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/512">issue 512: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/513">issue 513: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/514">issue 514: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/515">issue 515: 对应后续范围或独立验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/516">issue 516: 对应后续范围或独立验收。</a></li>
+</ul><p>Next: 按依赖逐项收口详细设计后实施，不把首批交付算作全量对齐。</p></article>
+</section>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/347">pull 347: PR 提供工具链或平台界面的实现依据。</a></li>

@@ -445,9 +445,75 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-10-24T23:59:47Z"
+      },
+      {
+        "number": 506,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:35Z"
+      },
+      {
+        "number": 507,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:43:08Z"
+      },
+      {
+        "number": 508,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:11Z"
+      },
+      {
+        "number": 509,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:14Z"
+      },
+      {
+        "number": 510,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:16Z"
+      },
+      {
+        "number": 511,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:18Z"
+      },
+      {
+        "number": 512,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:21Z"
+      },
+      {
+        "number": 513,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:23Z"
+      },
+      {
+        "number": 514,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:26Z"
+      },
+      {
+        "number": 515,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:29Z"
+      },
+      {
+        "number": 516,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T13:39:32Z"
       }
     ],
-    "main": "8ad1c58575173fd30d1f6acf15a210eacaeb8791",
+    "main": "fc12765102c7a318cf0644a7687f6befac8fec66",
     "open_pulls": [],
     "pulls": [
       {
@@ -870,7 +936,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-10-25T00:24:53.899696Z",
+  "observed_at": "2026-11-03T13:44:56.408491Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -880,6 +946,90 @@
   "repository": "semantic-craft/koe",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "cicada-alignment",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "全量范围总工单。",
+              "ref": 506
+            },
+            {
+              "kind": "issue",
+              "note": "首批实现与验收边界。",
+              "ref": 507
+            },
+            {
+              "kind": "file",
+              "note": "已评审设计；后续阶段仍需详细契约。",
+              "ref": "docs/design/cicada-alignment.md"
+            }
+          ],
+          "id": "cicada-post-meeting",
+          "next": "完成 PR 合并；本机性能驱动仍未产生有效数据，真实服务及设备在 #514 单独验收。",
+          "status": "in_progress",
+          "summary": "首批 A1 已实现并通过 EGM 与独立代码复核；check 静态分析及 1030 项测试通过。分层内容、旧格式兼容、编辑和导出均有回归证据；尚未安装或验收真实模型效果。",
+          "title": "首批：分层议题、因果和术语候选"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 508
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 509
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 510
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 511
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 512
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 513
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 514
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 515
+            },
+            {
+              "kind": "issue",
+              "note": "对应后续范围或独立验收。",
+              "ref": 516
+            }
+          ],
+          "id": "cicada-follow-on",
+          "next": "按依赖逐项收口详细设计后实施，不把首批交付算作全量对齐。",
+          "status": "planned",
+          "summary": "#508 资料包纪要交换、#509 术语采纳、#510–#511 实时纪要字幕、#512–#513 Mac 同传及可选克隆尚未实施；#514–#516 是独立真实验收。现有资料包不含纪要。",
+          "title": "资料包、术语采纳、实时字幕纪要和 Mac 同传"
+        }
+      ],
+      "title": "Cicada 功能对齐"
+    },
     {
       "id": "merged",
       "items": [
@@ -1060,8 +1210,8 @@
             },
             {
               "kind": "pull",
-              "ref": 497,
-              "note": "#461 的修复（e25a3af）：Wi‑Fi 导出中途录音豆热点断开时，自动经蓝牙重新发送开启 Wi‑Fi 指令并重连热点续导剩余文件。"
+              "note": "#461 的修复（e25a3af）：Wi‑Fi 导出中途录音豆热点断开时，自动经蓝牙重新发送开启 Wi‑Fi 指令并重连热点续导剩余文件。",
+              "ref": 497
             }
           ],
           "id": "android-recorder-link",
@@ -1114,13 +1264,13 @@
             },
             {
               "kind": "pull",
-              "ref": 482,
-              "note": "记录 #453 剩余 Mac 真机验收结果（参会人提取过滤会议室、全天事件、拒绝权限、升级后权限保留）。"
+              "note": "记录 #453 剩余 Mac 真机验收结果（参会人提取过滤会议室、全天事件、拒绝权限、升级后权限保留）。",
+              "ref": 482
             },
             {
               "kind": "pull",
-              "ref": 483,
-              "note": "记录 #453 iPhone 提醒事项导出与完成状态回读回归、首次日历授权弹窗及提前 119.95 秒录音按会议命名验收；#453 已收口关闭。"
+              "note": "记录 #453 iPhone 提醒事项导出与完成状态回读回归、首次日历授权弹窗及提前 119.95 秒录音按会议命名验收；#453 已收口关闭。",
+              "ref": 483
             }
           ],
           "id": "mac-calendar-453-acceptance",
@@ -1446,23 +1596,23 @@
             },
             {
               "kind": "issue",
-              "ref": 494,
-              "note": "Android 收口计划：覆盖 #444 测试竞态修复、#461 热点断开续导、#373 范围第 4 条手机日历会议提醒开录及 Pixel 11 Pro 真机验证，已完成并关闭。"
+              "note": "Android 收口计划：覆盖 #444 测试竞态修复、#461 热点断开续导、#373 范围第 4 条手机日历会议提醒开录及 Pixel 11 Pro 真机验证，已完成并关闭。",
+              "ref": 494
             },
             {
               "kind": "pull",
-              "ref": 498,
-              "note": "#373 范围第 4 条（M9 手机按日历事件提醒开录）实现（3152357）：iOS（EventKit + UNUserNotificationCenter）与 Android（device_calendar_plus + AlarmManager.setAndAllowWhileIdle + BroadcastReceiver）读取未来 24 小时日历会议并调度到点通知；跨时区按 UTC 毫秒计算，过滤全天/已取消/已拒绝/已结束事件；到点或点击通知弹出 calendar-meeting-reminder-dialog，只提醒、不自动开录，确认后启动手机录音并带入会议名与参会人。"
+              "note": "#373 范围第 4 条（M9 手机按日历事件提醒开录）实现（3152357）：iOS（EventKit + UNUserNotificationCenter）与 Android（device_calendar_plus + AlarmManager.setAndAllowWhileIdle + BroadcastReceiver）读取未来 24 小时日历会议并调度到点通知；跨时区按 UTC 毫秒计算，过滤全天/已取消/已拒绝/已结束事件；到点或点击通知弹出 calendar-meeting-reminder-dialog，只提醒、不自动开录，确认后启动手机录音并带入会议名与参会人。",
+              "ref": 498
             },
             {
               "kind": "pull",
-              "ref": 500,
-              "note": "在 integration_test/android/calendar_test.dart 覆盖真机日历会议发现、meetingAt 与 AlarmManager 提醒调度，已在 Pixel 11 Pro（Android 17）真机跑通（002dafc）。"
+              "note": "在 integration_test/android/calendar_test.dart 覆盖真机日历会议发现、meetingAt 与 AlarmManager 提醒调度，已在 Pixel 11 Pro（Android 17）真机跑通（002dafc）。",
+              "ref": 500
             },
             {
               "kind": "pull",
-              "ref": 501,
-              "note": "同步 ROADMAP.md 中 #494 与 #373 手机日历会议提醒的代码合并与真机状态（36880cb）。"
+              "note": "同步 ROADMAP.md 中 #494 与 #373 手机日历会议提醒的代码合并与真机状态（36880cb）。",
+              "ref": 501
             }
           ],
           "id": "meeting-phase4",
@@ -1540,68 +1690,68 @@
           "title": "录音豆时长单位与旧副本完整性（#456）"
         },
         {
-          "id": "meeting-minutes-m8",
-          "title": "会议纪要第 5–6 期（M8）：纪要质量、模板、多格式导出与全局替换",
-          "status": "done",
-          "summary": "已完成 M8 四个子项的代码实现、单测回归、squash 合并及 Mac 签名安装版（/Applications/Koe.app，main@8ad1c58，CDHash 72aa7d8ad147326e2b425be29861462ec1da2482）端到端实测：① 5A（#490 / PR #495 6531594，已关闭）：内置一般会议、一对一、访谈、课堂／演讲、脑力激荡模板（中/英/日）及自定义分区，整理后端支持千问、OpenAI 兼容接口（含本机 Ollama 预设）与「不整理」，字节级回归测试验证请求体仅发文字、不发音频。② 5B（#491 / PR #499 2751ef9，已关闭；父单 #374 已关闭）：个人词汇表与候选词建议（从参会人、发言人别名、手改词与会议标题提取并注入提示词）、停止录音先用实时稿出草稿纪要且正式转写完成后自动升级而不覆盖用户手改、纪要版本历史（最多 10 版）与一键复原、待确认问题（最多 8 题）回答修订并保持 [S#] 出处合法、AI 猜发言人名字与同音词校正建议（支持加入词汇表与复原）。③ 6A（#492 / PR #502 dc44fa5，已关闭）：纪要多格式导出 PDF（%PDF-1.4 多页中文含内嵌 Markdown 文本流）、Word（.docx OOXML）、Markdown 与富文本 HTML 复制；逐字稿导出/导入 SRT、VTT 字幕（保留时码与发言人姓名）及 Markdown 导入。④ 6B（#493 / PR #503 8ad1c58，已关闭）：全文搜索覆盖订正后文本、说话人改名（含手改后别名）、结构化纪要与书签备注且不误命中被覆盖旧词；单条与全库词条查找替换（同步更新逐字稿、分段时间戳、结构化纪要 JSON 并保留 [S#] 引文与过期纪要状态，清理说话人撤销快照，支持一键加入个人词汇表）；后台转写与纪要完成/失败状态通知。⑤ Mac 签名安装版实测：在 /Applications/Koe.app 上对 QA-Qwen-4speakers-10min 切换「脑力激荡」模板并用千问 Qwen3.8-Flash 生成含「点子清单」、[S1] 00:24 出处及 5 项待确认问题的结构化纪要；一键将「+ 张三」加入词汇表；导出 M8验收_会议纪要.docx（7,588 B OOXML）、M8验收_会议纪要.pdf（39,253 B %PDF-1.4）、M8验收_逐字稿.srt（12,184 B 359 行，保留时码与「张三」「说话人 B」改名）；执行全库查找替换同步更新 3 条逐字稿、90 段时码、1 份纪要与词汇表且 [S1] 00:24 保持可定位，再经「版本历史 (1)」一键复原上一版并恢复测试前数据。",
-          "next": "#374 及 #490/#491/#492/#493 均已关闭；#375 仅剩跨设备声纹库（S20）随本地说话人/识别模型（#371/#433/#434/#372）继续暂缓。iPhone/Pixel 端多格式导出系统分享面板与外部 Office/Pages 打开排版未在手机端单独人工演练。",
           "evidence": [
             {
               "kind": "issue",
-              "ref": 374,
-              "note": "第 5 期总工单：纪要质量与模板（5A #490、5B #491 全部合并后已关闭）。"
+              "note": "第 5 期总工单：纪要质量与模板（5A #490、5B #491 全部合并后已关闭）。",
+              "ref": 374
             },
             {
               "kind": "issue",
-              "ref": 375,
-              "note": "第 6 期总工单：多格式导出、字幕、全文搜索与全局替换（6A #492、6B #493）已完成；仅剩声纹（S20）随本地模型暂缓。"
+              "note": "第 6 期总工单：多格式导出、字幕、全文搜索与全局替换（6A #492、6B #493）已完成；仅剩声纹（S20）随本地模型暂缓。",
+              "ref": 375
             },
             {
               "kind": "issue",
-              "ref": 490,
-              "note": "5A 子工单：内置会议模板、自定义章节与可切换整理后端（已关闭）。"
+              "note": "5A 子工单：内置会议模板、自定义章节与可切换整理后端（已关闭）。",
+              "ref": 490
             },
             {
               "kind": "pull",
-              "ref": 495,
-              "note": "5A 实现与字节级仅发文字回归测试（6531594），CI 通过并合并。"
+              "note": "5A 实现与字节级仅发文字回归测试（6531594），CI 通过并合并。",
+              "ref": 495
             },
             {
               "kind": "issue",
-              "ref": 491,
-              "note": "5B 子工单：个人词汇表、草稿转正式纪要、版本历史、待确认问题修订、AI 猜发言人名字与同音词校正（已关闭）。"
+              "note": "5B 子工单：个人词汇表、草稿转正式纪要、版本历史、待确认问题修订、AI 猜发言人名字与同音词校正（已关闭）。",
+              "ref": 491
             },
             {
               "kind": "pull",
-              "ref": 499,
-              "note": "5B 实现与回退测试（2751ef9），CI 通过并合并。"
+              "note": "5B 实现与回退测试（2751ef9），CI 通过并合并。",
+              "ref": 499
             },
             {
               "kind": "issue",
-              "ref": 492,
-              "note": "6A 子工单：纪要导出 PDF/Word/Markdown/富文本与 SRT/VTT 字幕导出导入（已关闭）。"
+              "note": "6A 子工单：纪要导出 PDF/Word/Markdown/富文本与 SRT/VTT 字幕导出导入（已关闭）。",
+              "ref": 492
             },
             {
               "kind": "pull",
-              "ref": 502,
-              "note": "6A 实现与 PDF/DOCX/SRT/VTT 往返测试（dc44fa5），CI 通过并合并。"
+              "note": "6A 实现与 PDF/DOCX/SRT/VTT 往返测试（dc44fa5），CI 通过并合并。",
+              "ref": 502
             },
             {
               "kind": "issue",
-              "ref": 493,
-              "note": "6B 子工单：订正后全文搜索、全库查找替换入词表与后台任务完成通知（已关闭）。"
+              "note": "6B 子工单：订正后全文搜索、全库查找替换入词表与后台任务完成通知（已关闭）。",
+              "ref": 493
             },
             {
               "kind": "pull",
-              "ref": 503,
-              "note": "6B 实现与全文搜索/全库替换/通知回归测试（8ad1c58），CI 通过并合并。"
+              "note": "6B 实现与全文搜索/全库替换/通知回归测试（8ad1c58），CI 通过并合并。",
+              "ref": 503
             },
             {
               "kind": "note",
-              "ref": "mac-m8-acceptance-20261025",
-              "note": "2026-10-25 基于 main 8ad1c58 重新编译、Developer ID 签名并安装至 /Applications/Koe.app（CDHash 72aa7d8ad147326e2b425be29861462ec1da2482），完成「脑力激荡」模板纪要生成、候选词入库、Word/PDF/SRT 导出落盘校验、全库查找替换及版本历史一键复原实测；导出产物归档于 _artifacts/koe/m8-mac-acceptance-20261025/。"
+              "note": "2026-10-25 基于 main 8ad1c58 重新编译、Developer ID 签名并安装至 /Applications/Koe.app（CDHash 72aa7d8ad147326e2b425be29861462ec1da2482），完成「脑力激荡」模板纪要生成、候选词入库、Word/PDF/SRT 导出落盘校验、全库查找替换及版本历史一键复原实测；导出产物归档于 _artifacts/koe/m8-mac-acceptance-20261025/。",
+              "ref": "mac-m8-acceptance-20261025"
             }
-          ]
+          ],
+          "id": "meeting-minutes-m8",
+          "next": "#374 及 #490/#491/#492/#493 均已关闭；#375 仅剩跨设备声纹库（S20）随本地说话人/识别模型（#371/#433/#434/#372）继续暂缓。iPhone/Pixel 端多格式导出系统分享面板与外部 Office/Pages 打开排版未在手机端单独人工演练。",
+          "status": "done",
+          "summary": "已完成 M8 四个子项的代码实现、单测回归、squash 合并及 Mac 签名安装版（/Applications/Koe.app，main@8ad1c58，CDHash 72aa7d8ad147326e2b425be29861462ec1da2482）端到端实测：① 5A（#490 / PR #495 6531594，已关闭）：内置一般会议、一对一、访谈、课堂／演讲、脑力激荡模板（中/英/日）及自定义分区，整理后端支持千问、OpenAI 兼容接口（含本机 Ollama 预设）与「不整理」，字节级回归测试验证请求体仅发文字、不发音频。② 5B（#491 / PR #499 2751ef9，已关闭；父单 #374 已关闭）：个人词汇表与候选词建议（从参会人、发言人别名、手改词与会议标题提取并注入提示词）、停止录音先用实时稿出草稿纪要且正式转写完成后自动升级而不覆盖用户手改、纪要版本历史（最多 10 版）与一键复原、待确认问题（最多 8 题）回答修订并保持 [S#] 出处合法、AI 猜发言人名字与同音词校正建议（支持加入词汇表与复原）。③ 6A（#492 / PR #502 dc44fa5，已关闭）：纪要多格式导出 PDF（%PDF-1.4 多页中文含内嵌 Markdown 文本流）、Word（.docx OOXML）、Markdown 与富文本 HTML 复制；逐字稿导出/导入 SRT、VTT 字幕（保留时码与发言人姓名）及 Markdown 导入。④ 6B（#493 / PR #503 8ad1c58，已关闭）：全文搜索覆盖订正后文本、说话人改名（含手改后别名）、结构化纪要与书签备注且不误命中被覆盖旧词；单条与全库词条查找替换（同步更新逐字稿、分段时间戳、结构化纪要 JSON 并保留 [S#] 引文与过期纪要状态，清理说话人撤销快照，支持一键加入个人词汇表）；后台转写与纪要完成/失败状态通知。⑤ Mac 签名安装版实测：在 /Applications/Koe.app 上对 QA-Qwen-4speakers-10min 切换「脑力激荡」模板并用千问 Qwen3.8-Flash 生成含「点子清单」、[S1] 00:24 出处及 5 项待确认问题的结构化纪要；一键将「+ 张三」加入词汇表；导出 M8验收_会议纪要.docx（7,588 B OOXML）、M8验收_会议纪要.pdf（39,253 B %PDF-1.4）、M8验收_逐字稿.srt（12,184 B 359 行，保留时码与「张三」「说话人 B」改名）；执行全库查找替换同步更新 3 条逐字稿、90 段时码、1 份纪要与词汇表且 [S1] 00:24 保持可定位，再经「版本历史 (1)」一键复原上一版并恢复测试前数据。",
+          "title": "会议纪要第 5–6 期（M8）：纪要质量、模板、多格式导出与全局替换"
         }
       ],
       "title": "实现差异与范围核对"
@@ -1613,18 +1763,18 @@
           "evidence": [
             {
               "kind": "issue",
-              "ref": 335,
-              "note": "旧偶发失败记录工单（已关闭）。"
+              "note": "旧偶发失败记录工单（已关闭）。",
+              "ref": 335
             },
             {
               "kind": "issue",
-              "ref": 444,
-              "note": "定位并跟踪一键重连测试异步竞态与残留文案清理（已关闭）。"
+              "note": "定位并跟踪一键重连测试异步竞态与残留文案清理（已关闭）。",
+              "ref": 444
             },
             {
               "kind": "pull",
-              "ref": 496,
-              "note": "修复测试异步时序竞态并清理残留文案（534735a），CI 与全量测试通过。"
+              "note": "修复测试异步时序竞态并清理残留文案（534735a），CI 与全量测试通过。",
+              "ref": 496
             }
           ],
           "id": "reconnect-flake",
@@ -1761,28 +1911,28 @@
             },
             {
               "kind": "issue",
-              "ref": 494,
-              "note": "Android 收口计划：阶段 1–4 代码与 Pixel 11 Pro 无人值守真机验证已完成并关闭。"
+              "note": "Android 收口计划：阶段 1–4 代码与 Pixel 11 Pro 无人值守真机验证已完成并关闭。",
+              "ref": 494
             },
             {
               "kind": "pull",
-              "ref": 496,
-              "note": "修复 #444 测试竞态与残留文案（534735a）。"
+              "note": "修复 #444 测试竞态与残留文案（534735a）。",
+              "ref": 496
             },
             {
               "kind": "pull",
-              "ref": 497,
-              "note": "修复 #461 Wi‑Fi 导出中途热点断开自动经蓝牙重开热点并续导（e25a3af）。"
+              "note": "修复 #461 Wi‑Fi 导出中途热点断开自动经蓝牙重开热点并续导（e25a3af）。",
+              "ref": 497
             },
             {
               "kind": "pull",
-              "ref": 498,
-              "note": "实现 #373 手机按日历会议事件到点提醒开录与命名（3152357）。"
+              "note": "实现 #373 手机按日历会议事件到点提醒开录与命名（3152357）。",
+              "ref": 498
             },
             {
               "kind": "pull",
-              "ref": 500,
-              "note": "Pixel 11 Pro 真机跑通 integration_test/android/calendar_test.dart，验证系统日历会议读取与 AlarmManager 开录提醒调度（002dafc）。"
+              "note": "Pixel 11 Pro 真机跑通 integration_test/android/calendar_test.dart，验证系统日历会议读取与 AlarmManager 开录提醒调度（002dafc）。",
+              "ref": 500
             }
           ],
           "id": "android-acceptance",
@@ -2107,7 +2257,18 @@
       491,
       492,
       493,
-      494
+      494,
+      506,
+      507,
+      508,
+      509,
+      510,
+      511,
+      512,
+      513,
+      514,
+      515,
+      516
     ],
     "pulls": [
       62,

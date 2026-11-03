@@ -12,6 +12,8 @@ import '../../state/recorder_controller.dart';
 import '../../state/transcript_chapters.dart';
 import '../transcript_jump.dart';
 import 'minutes_mind_map.dart';
+import 'minutes_topic_card.dart';
+import 'minutes_terms.dart';
 import '../../platform/device_kind.dart';
 
 class MinutesPanel extends StatefulWidget {
@@ -279,24 +281,29 @@ class _MinutesPanelState extends State<MinutesPanel> {
     final from = fromController.text.trim();
     final to = toController.text.trim();
     if (confirmed != true || from.isEmpty || from == to) return;
-    final report = applyAll
-        ? await widget.controller.replaceTermAcrossLibrary(
-            from,
-            to,
-            addToVocabulary: addToVocab,
-          )
-        : await widget.controller.replaceTermInRecording(
-            widget.reference,
-            from,
-            to,
-            addToVocabulary: addToVocab,
-          );
-    if (!mounted) return;
-    setState(() {});
-    message(
-      '已更新 ${report.recordingsUpdated} 条逐字稿、${report.minutesUpdated} 份纪要'
-      '${report.addedToVocabulary ? '，并已加入词汇表' : ''}',
-    );
+    try {
+      final report = applyAll
+          ? await widget.controller.replaceTermAcrossLibrary(
+              from,
+              to,
+              addToVocabulary: addToVocab,
+            )
+          : await widget.controller.replaceTermInRecording(
+              widget.reference,
+              from,
+              to,
+              addToVocabulary: addToVocab,
+            );
+      if (!mounted) return;
+      setState(() {});
+      message(
+        '已更新 ${report.recordingsUpdated} 条逐字稿、${report.minutesUpdated} 份纪要'
+        '${report.addedToVocabulary ? '，并已加入词汇表' : ''}',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      message(applyAll ? '替换未完成，部分记录可能已更新，请检查后重试' : '替换未完成，请检查逐字稿与纪要后重试');
+    }
   }
 
   Future<void> _showVersionHistory() async {
@@ -304,7 +311,11 @@ class _MinutesPanelState extends State<MinutesPanel> {
     if (versions.isEmpty) return;
     String readable(AnalysisResult r) {
       try {
-        return MeetingMinutes.parse(r.text, r.sources.length).export(r);
+        return MeetingMinutes.parse(
+          r.text,
+          r.sources.length,
+          sourceTexts: r.sources,
+        ).export(r);
       } catch (_) {
         return r.text;
       }
@@ -350,10 +361,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  SelectableText(
-                    readable(v),
-                    maxLines: 6,
-                  ),
+                  SelectableText(readable(v), maxLines: 6),
                 ],
               );
             },
@@ -514,6 +522,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
         return MeetingMinutes.parse(
           result.text,
           result.sources.length,
+          sourceTexts: result.sources,
         ).export(result);
       } catch (_) {
         return result.text;
@@ -671,6 +680,15 @@ class _MinutesPanelState extends State<MinutesPanel> {
       try {
         List<MinuteItem> edited(List<MinuteItem> items) => items.map((item) {
           final f = fields.firstWhere((f) => identical(f.$1, item));
+          if (item is MinuteTopic) {
+            return MinuteTopic(
+              f.$2.text,
+              item.sources,
+              summary: item.summary,
+              points: item.points,
+              fishbone: item.fishbone,
+            );
+          }
           return MinuteItem(
             f.$2.text,
             item.sources,
@@ -690,6 +708,8 @@ class _MinutesPanelState extends State<MinutesPanel> {
               MinuteCustomSection(title: sec.title, items: edited(sec.items)),
           ],
           reviewItems: minutes.reviewItems,
+          schemaVersion: minutes.schemaVersion,
+          terms: minutes.terms,
         );
         await manager.editResult(
           key,
@@ -733,7 +753,11 @@ class _MinutesPanelState extends State<MinutesPanel> {
       MeetingMinutes? minutes;
       if (result != null) {
         try {
-          minutes = MeetingMinutes.parse(result.text, result.sources.length);
+          minutes = MeetingMinutes.parse(
+            result.text,
+            result.sources.length,
+            sourceTexts: result.sources,
+          );
         } catch (_) {}
       }
       final busy = manager.busy(key);
@@ -767,6 +791,65 @@ class _MinutesPanelState extends State<MinutesPanel> {
           }
         }
       }
+      Widget sources(List<String> ids) {
+        if (result == null) return const SizedBox();
+        return Wrap(
+          spacing: 4,
+          children: [
+            for (final index
+                in ids
+                    .map((id) => int.parse(id.substring(1)) - 1)
+                    .where(
+                      (index) => index >= 0 && index < result.sources.length,
+                    ))
+              TextButton(
+                onPressed: () => _openSource(
+                  index,
+                  result.sources[index],
+                  sourceMatches[index],
+                ),
+                child: Text(
+                  sourceMatches[index] == null
+                      ? '出处 [S${index + 1}]'
+                      : '出处 [S${index + 1}] ${_time(sourceMatches[index]!.start)}',
+                ),
+              ),
+          ],
+        );
+      }
+
+      String? sourcePosition(MinuteTopic topic) {
+        final starts =
+            topic.sources
+                .map(
+                  (id) => sourceMatches[int.parse(id.substring(1)) - 1]?.start,
+                )
+                .whereType<Duration>()
+                .toList()
+              ..sort();
+        return starts.isEmpty ? null : _time(starts.first);
+      }
+
+      Widget itemCard(MinuteItem item) => item is MinuteTopic
+          ? MinutesTopicCard(
+              topic: item,
+              sources: sources,
+              sourcePosition: sourcePosition(item),
+            )
+          : Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SelectableText(item.text),
+                    if (item.owner != null)
+                      Text('负责人：${item.owner} · 期限：${item.due}'),
+                    sources(item.sources),
+                  ],
+                ),
+              ),
+            );
       return Scaffold(
         appBar: AppBar(
           title: const Text('结构化纪要'),
@@ -880,8 +963,14 @@ class _MinutesPanelState extends State<MinutesPanel> {
                   (widget.controller.recordingAudioChanged(widget.reference) ||
                       result.sourceHash != analysisFingerprint(view.text)))
                 const Text('原文已更新，这份纪要已过期，请重新生成。'),
-              if (result != null && minutes == null)
-                const Text('纪要格式无效，请重新生成；原数据仍保留。'),
+              if (result != null && minutes == null) ...[
+                const Text('当前纪要格式无法结构化显示或编辑；原数据仍保留。'),
+                TextButton(
+                  onPressed: () =>
+                      Clipboard.setData(ClipboardData(text: result.text)),
+                  child: const Text('复制原始结果'),
+                ),
+              ],
               if (result != null && minutes != null) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -1008,6 +1097,19 @@ class _MinutesPanelState extends State<MinutesPanel> {
                     ],
                   ),
                 ),
+                for (final section in minutes.sections) ...[
+                  if (section.$1 == '未决问题' && minutes.terms.isNotEmpty)
+                    MinutesTerms(terms: minutes.terms, sources: sources),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: Text(
+                      section.$1,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  if (section.$2.isEmpty) const Text('未提及'),
+                  for (final item in section.$2) itemCard(item),
+                ],
                 if (minutes.reviewItems.isNotEmpty)
                   Card(
                     key: const ValueKey('minutes-review-items-card'),
@@ -1021,8 +1123,9 @@ class _MinutesPanelState extends State<MinutesPanel> {
                               Expanded(
                                 child: Text(
                                   '待确认问题（${minutes.reviewItems.length}）',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
                                 ),
                               ),
                               FilledButton.tonal(
@@ -1046,59 +1149,6 @@ class _MinutesPanelState extends State<MinutesPanel> {
                       ),
                     ),
                   ),
-                for (final section in minutes.sections) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16),
-                    child: Text(
-                      section.$1,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  if (section.$2.isEmpty) const Text('未提及'),
-                  for (final item in section.$2)
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SelectableText(item.text),
-                            if (item.owner != null)
-                              Text('负责人：${item.owner} · 期限：${item.due}'),
-                            Wrap(
-                              spacing: 4,
-                              children: [
-                                for (final sourceIndex
-                                    in item.sources
-                                        .map(
-                                          (id) =>
-                                              int.parse(id.substring(1)) - 1,
-                                        )
-                                        .where(
-                                          (index) =>
-                                              index >= 0 &&
-                                              index < result.sources.length,
-                                        ))
-                                  TextButton(
-                                    onPressed: () => _openSource(
-                                      sourceIndex,
-                                      result.sources[sourceIndex],
-                                      sourceMatches[sourceIndex],
-                                    ),
-                                    child: Text(
-                                      sourceMatches[sourceIndex] == null
-                                          ? '出处 [S${sourceIndex + 1}]'
-                                          : '出处 [S${sourceIndex + 1}] '
-                                                '${_time(sourceMatches[sourceIndex]!.start)}',
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
               ],
               if (vocabSuggestions.isNotEmpty) ...[
                 const SizedBox(height: 12),
@@ -1131,14 +1181,13 @@ class _MinutesPanelState extends State<MinutesPanel> {
                     OutlinedButton(
                       key: const ValueKey('minutes-suggest-speakers'),
                       onPressed: speakerNamingBusy ? null : _runSpeakerNaming,
-                      child: Text(
-                        speakerNamingBusy ? '正在推测发言人…' : 'AI 猜发言人名字',
-                      ),
+                      child: Text(speakerNamingBusy ? '正在推测发言人…' : 'AI 猜发言人名字'),
                     ),
                     OutlinedButton(
                       key: const ValueKey('minutes-suggest-corrections'),
-                      onPressed:
-                          correctionBusy ? null : _runTranscriptCorrections,
+                      onPressed: correctionBusy
+                          ? null
+                          : _runTranscriptCorrections,
                       child: Text(correctionBusy ? '正在检查错词…' : 'AI 校正建议'),
                     ),
                     if (canRevertCorrection)
@@ -1187,8 +1236,8 @@ class _MinutesPanelState extends State<MinutesPanel> {
                           children: [
                             TextButton(
                               key: ValueKey('accept-correction-${c.wrong}'),
-                              onPressed: () => widget.controller
-                                  .acceptTranscriptCorrection(
+                              onPressed: () =>
+                                  widget.controller.acceptTranscriptCorrection(
                                     widget.reference,
                                     c,
                                   ),
@@ -1198,8 +1247,8 @@ class _MinutesPanelState extends State<MinutesPanel> {
                               key: ValueKey(
                                 'accept-correction-vocab-${c.wrong}',
                               ),
-                              onPressed: () => widget.controller
-                                  .acceptTranscriptCorrection(
+                              onPressed: () =>
+                                  widget.controller.acceptTranscriptCorrection(
                                     widget.reference,
                                     c,
                                     addToVocabulary: true,

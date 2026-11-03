@@ -1275,6 +1275,7 @@ class RecorderController extends ChangeNotifier
     final currentMinutes = MeetingMinutes.parse(
       currentResult.text,
       currentResult.sources.length,
+      sourceTexts: currentResult.sources,
     );
     final view = recordingView(ref);
     final source = view.text.trim().isNotEmpty
@@ -1383,6 +1384,7 @@ class RecorderController extends ChangeNotifier
         final parsed = MeetingMinutes.parse(
           existing.text,
           existing.sources.length,
+          sourceTexts: existing.sources,
         );
         final updated = parsed
             .replaceSpeakerName(oldLabel, suggestion.suggestedName)
@@ -1584,6 +1586,7 @@ class RecorderController extends ChangeNotifier
         final parsed = MeetingMinutes.parse(
           minutesResult.text,
           minutesResult.sources.length,
+          sourceTexts: minutesResult.sources,
         );
         extraLines.addAll(parsed.searchableLines());
       } catch (_) {}
@@ -1649,55 +1652,57 @@ class RecorderController extends ChangeNotifier
         addedToVocabulary: false,
       );
     }
-    final path = recordingView(ref).path ?? ref.path;
-    final preReplaceSourceHash = analysisFingerprint(recordingView(ref).text);
+    final view = recordingView(ref);
+    final path = view.path ?? ref.path;
+    final preReplaceSourceHash = analysisFingerprint(view.text);
+    final key = analysisKey(ref);
+    final slotKey = '$key/minutes';
+    final existing = analysis.results[slotKey];
+    String? encoded;
+    List<String>? updatedSources;
+    // Validate the entire candidate before writing the transcript. In
+    // particular, historical mishearings must not invalidate a correction
+    // after the user's source has already been saved.
+    if (existing != null) {
+      if (analysis.busy(slotKey)) {
+        throw StateError('纪要正在更新，请完成后再替换');
+      }
+      final parsed = MeetingMinutes.parse(
+        existing.text,
+        existing.sources.length,
+        sourceTexts: existing.sources,
+      );
+      updatedSources = [
+        for (final source in existing.sources) source.replaceAll(from, to),
+      ];
+      final candidate = parsed.replaceTerm(from, to).pruneHeard(updatedSources);
+      encoded = validateMinutes(candidate.encode(), updatedSources);
+    }
+
     var recUpdated = 0;
     if (path != null && await replaceTermInTranscript(path, from, to)) {
       recUpdated = 1;
     }
-
     var minUpdated = 0;
-    final key = analysisKey(ref);
-    final slotKey = '$key/minutes';
-    final existing = analysis.results[slotKey];
-    if (existing != null) {
-      MeetingMinutes? parsed;
-      try {
-        parsed = MeetingMinutes.parse(
-          existing.text,
-          existing.sources.length,
+    if (existing != null && encoded != null && updatedSources != null) {
+      final wasUpToDate = existing.sourceHash == preReplaceSourceHash;
+      final nextSourceHash = wasUpToDate
+          ? analysisFingerprint(recordingView(ref).text)
+          : existing.sourceHash;
+      final sourcesChanged = !listEquals(existing.sources, updatedSources);
+      if (encoded != existing.text ||
+          sourcesChanged ||
+          (recUpdated > 0 && existing.sourceHash != nextSourceHash)) {
+        // A persistence error restores the old result and is propagated.
+        // Its old fingerprint keeps playback disabled against changed text.
+        await analysis.replaceResultWithSources(
+          slotKey,
+          existing,
+          text: encoded,
+          sources: updatedSources,
+          sourceHash: nextSourceHash,
         );
-      } on FormatException {
-        parsed = null;
-      }
-      if (parsed != null) {
-        final replacedMinutes = parsed.replaceTerm(from, to);
-        final updatedSources = [
-          for (final s in existing.sources) s.replaceAll(from, to),
-        ];
-        final encoded = validateMinutes(
-          replacedMinutes.encode(),
-          updatedSources,
-        );
-        final wasUpToDate = existing.sourceHash == preReplaceSourceHash;
-        final nextSourceHash = wasUpToDate
-            ? analysisFingerprint(recordingView(ref).text)
-            : existing.sourceHash;
-        final sourcesChanged = !listEquals(existing.sources, updatedSources);
-        if (encoded != existing.text ||
-            sourcesChanged ||
-            (recUpdated > 0 && existing.sourceHash != nextSourceHash)) {
-          await analysis.replaceResultWithSources(
-            slotKey,
-            existing,
-            text: encoded,
-            sources: updatedSources,
-            sourceHash: nextSourceHash,
-          );
-          if (encoded != existing.text || sourcesChanged) {
-            minUpdated = 1;
-          }
-        }
+        if (encoded != existing.text || sourcesChanged) minUpdated = 1;
       }
     }
 

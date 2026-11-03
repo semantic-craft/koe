@@ -20,6 +20,64 @@ class MinuteItem {
   };
 }
 
+/// A discussion topic retains the legacy item shape for existing consumers.
+class MinuteTopic extends MinuteItem {
+  const MinuteTopic(
+    super.text,
+    super.sources, {
+    required this.summary,
+    required this.points,
+    this.fishbone,
+  });
+  final String summary;
+  final List<MinuteItem> points;
+  final MinuteFishbone? fishbone;
+
+  @override
+  Map<String, dynamic> toJson() => {
+    ...super.toJson(),
+    'summary': summary,
+    'points': points.map((p) => p.toJson()).toList(),
+    if (fishbone != null) 'fishbone': fishbone!.toJson(),
+  };
+}
+
+class MinuteCause extends MinuteItem {
+  const MinuteCause(super.text, super.sources, {required this.detail});
+  final String detail;
+  @override
+  Map<String, dynamic> toJson() => {...super.toJson(), 'detail': detail};
+}
+
+class MinuteFishbone {
+  const MinuteFishbone({required this.question, required this.branches});
+  final String question;
+  final List<MinuteCause> branches;
+  Map<String, dynamic> toJson() => {
+    'question': question,
+    'branches': branches.map((b) => b.toJson()).toList(),
+  };
+}
+
+/// A meeting-local suggestion. [heard] always names current source spellings;
+/// previous spellings live in the existing immutable minutes history.
+class MinuteTerm {
+  const MinuteTerm({
+    required this.name,
+    required this.note,
+    this.heard = const [],
+    required this.sources,
+  });
+  final String name, note;
+  final List<String> heard, sources;
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'note': note,
+    'heard': heard,
+    'sources': sources,
+  };
+}
+
 class MinuteCustomSection {
   const MinuteCustomSection({required this.title, required this.items});
   final String title;
@@ -58,11 +116,12 @@ class MeetingMinutesTemplate {
   final String instructionsEn;
   final String instructionsJa;
 
-  String labelForLanguage(String language) => switch (_normalizeLang(language)) {
-    'en' => nameEn,
-    'ja' => nameJa,
-    _ => nameZh,
-  };
+  String labelForLanguage(String language) =>
+      switch (_normalizeLang(language)) {
+        'en' => nameEn,
+        'ja' => nameJa,
+        _ => nameZh,
+      };
 
   List<String> customSectionsForLanguage(String language) =>
       switch (_normalizeLang(language)) {
@@ -108,8 +167,7 @@ const List<MeetingMinutesTemplate> builtInMeetingTemplates = [
     customSectionTitlesZh: ['近况与进展', '反馈', '需要的支持'],
     customSectionTitlesEn: ['Updates & progress', 'Feedback', 'Support needed'],
     customSectionTitlesJa: ['近況と進捗', 'フィードバック', '必要なサポート'],
-    instructionsZh:
-        '这是一对一（One-on-one）面谈。关注双方各自的近况、提出的反馈、工作或目标上的阻碍，以及承诺跟进的事项。',
+    instructionsZh: '这是一对一（One-on-one）面谈。关注双方各自的近况、提出的反馈、工作或目标上的阻碍，以及承诺跟进的事项。',
     instructionsEn:
         'This is a One-on-one meeting. Focus on personal updates, mutual feedback, blockers on goals, and agreed follow-ups.',
     instructionsJa:
@@ -127,8 +185,7 @@ const List<MeetingMinutesTemplate> builtInMeetingTemplates = [
       'Insights & opportunities',
     ],
     customSectionTitlesJa: ['対象者の背景', '重要な発言・引用', 'インサイトと機会'],
-    instructionsZh:
-        '这是用户访谈或招聘面谈。如实保留受访者的原话与具体例子，不要过度概括；将你的归纳放在洞察与机会一栏。',
+    instructionsZh: '这是用户访谈或招聘面谈。如实保留受访者的原话与具体例子，不要过度概括；将你的归纳放在洞察与机会一栏。',
     instructionsEn:
         'This is a user or candidate interview. Preserve concrete examples and key quotes faithfully without over-abstracting; place synthesis under Insights & opportunities.',
     instructionsJa:
@@ -142,8 +199,7 @@ const List<MeetingMinutesTemplate> builtInMeetingTemplates = [
     customSectionTitlesZh: ['重点概念', '问答'],
     customSectionTitlesEn: ['Key concepts', 'Q&A'],
     customSectionTitlesJa: ['重要概念', '質疑応答'],
-    instructionsZh:
-        '这是课堂或演讲。按讲者的脉络整理核心论点、定义与例子，若有听众提问则整理在问答一栏。',
+    instructionsZh: '这是课堂或演讲。按讲者的脉络整理核心论点、定义与例子，若有听众提问则整理在问答一栏。',
     instructionsEn:
         'This is a lecture or talk. Organize core arguments, definitions, and examples following the speaker flow, and capture audience Q&A.',
     instructionsJa:
@@ -157,8 +213,7 @@ const List<MeetingMinutesTemplate> builtInMeetingTemplates = [
     customSectionTitlesZh: ['点子清单', '评估与取舍'],
     customSectionTitlesEn: ['Ideas', 'Evaluation & trade-offs'],
     customSectionTitlesJa: ['アイデア一覧', '評価と取捨選択'],
-    instructionsZh:
-        '这是脑力激荡。先完整列出被提出的点子（包含尚未成熟的），再整理讨论中提到的利弊与收敛方向。',
+    instructionsZh: '这是脑力激荡。先完整列出被提出的点子（包含尚未成熟的），再整理讨论中提到的利弊与收敛方向。',
     instructionsEn:
         'This is a brainstorming session. List all proposed ideas (including rough ones), then organize pros/cons and trade-offs discussed.',
     instructionsJa:
@@ -198,9 +253,9 @@ String buildMeetingMinutesPrompt({
                 '${customTitles.join('、')}。',
         };
   final schemaLine = customTitles.isEmpty
-      ? '{"title":"...","overview":"...","topics":[{"text":"...","sources":["S1"]}],"decisions":[{"text":"...","sources":["S1"]}],"actions":[{"text":"...","owner":"...","due":"...","sources":["S1"]}],"questions":[{"text":"...","sources":["S1"]}],"reviewItems":["..."]}'
-      : '{"title":"...","overview":"...","topics":[{"text":"...","sources":["S1"]}],"decisions":[{"text":"...","sources":["S1"]}],"actions":[{"text":"...","owner":"...","due":"...","sources":["S1"]}],"questions":[{"text":"...","sources":["S1"]}],"custom":[{"title":"${customTitles.first}","items":[{"text":"...","sources":["S1"]}]}],"reviewItems":["..."]}';
-  return switch (lang) {
+      ? '{"schemaVersion":2,"title":"...","overview":"...","topics":[{"text":"...","sources":["S1"],"summary":"...","points":[{"text":"...","sources":["S1"]}],"fishbone":{"question":"...","branches":[{"text":"...","detail":"...","sources":["S1"]}]}}],"terms":[{"name":"...","note":"...","heard":[],"sources":["S1"]}],"decisions":[{"text":"...","sources":["S1"]}],"actions":[{"text":"...","owner":"...","due":"...","sources":["S1"]}],"questions":[{"text":"...","sources":["S1"]}],"reviewItems":["..."]}'
+      : '{"schemaVersion":2,"title":"...","overview":"...","topics":[{"text":"...","sources":["S1"],"summary":"...","points":[{"text":"...","sources":["S1"]}],"fishbone":{"question":"...","branches":[{"text":"...","detail":"...","sources":["S1"]}]}}],"terms":[{"name":"...","note":"...","heard":[],"sources":["S1"]}],"decisions":[{"text":"...","sources":["S1"]}],"actions":[{"text":"...","owner":"...","due":"...","sources":["S1"]}],"questions":[{"text":"...","sources":["S1"]}],"custom":[{"title":"${customTitles.first}","items":[{"text":"...","sources":["S1"]}]}],"reviewItems":["..."]}';
+  final prompt = switch (lang) {
     'en' =>
       'Generate structured meeting minutes in English (${tpl.nameEn}). '
           'Output ONLY a single JSON object without Markdown code fences:\n'
@@ -227,6 +282,7 @@ String buildMeetingMinutesPrompt({
                 '如有不确定的专有名词、人名、负责人或期限需要用户确认，放入 "reviewItems"（最多 8 题，没有则用 []）。'
                 '${tpl.instructionsZh}$customHint',
   };
+  return '$prompt\n$minutesStructureInstruction';
 }
 
 /// Extracts the outer JSON object if a model wraps its response in ```json fences
@@ -260,7 +316,11 @@ class MeetingMinutes {
     required this.questions,
     this.custom = const [],
     this.reviewItems = const [],
+    this.schemaVersion = 1,
+    this.terms = const [],
   });
+  final int schemaVersion;
+  final List<MinuteTerm> terms;
   final String title, overview;
   final List<MinuteItem> topics, decisions, actions, questions;
   final List<MinuteCustomSection> custom;
@@ -273,47 +333,152 @@ class MeetingMinutes {
     ('未决问题', questions),
   ];
 
-  factory MeetingMinutes.parse(String text, int sourceCount) {
+  factory MeetingMinutes.parse(
+    String text,
+    int sourceCount, {
+    List<String>? sourceTexts,
+  }) {
     final dynamic value = jsonDecode(extractJsonObject(text));
     if (value is! Map) throw const FormatException('纪要必须是 JSON 对象');
+    final version = value.containsKey('schemaVersion')
+        ? value['schemaVersion']
+        : 1;
+    if (version is! int || (version != 1 && version != 2)) {
+      throw const FormatException('不支持此纪要版本，请更新 Koe；原始结果仍保留');
+    }
     String requiredText(dynamic v) {
-      if (v is! String || v.trim().isEmpty) {
-        throw const FormatException('纪要字段为空');
+      if (v is! String ||
+          v.trim().isEmpty ||
+          (version == 2 && v.length > 20000)) {
+        throw const FormatException('纪要字段为空或过长');
       }
       return v.trim();
     }
 
-    MinuteItem parseItem(dynamic item, {required bool isAction}) {
-      if (item is! Map ||
-          item['sources'] is! List ||
-          (item['sources'] as List).isEmpty) {
-        throw const FormatException('缺少原文依据');
+    List<dynamic> boundedList(dynamic v, int max, String name) {
+      if (v is! List || (version == 2 && v.length > max)) {
+        throw FormatException('$name 不是数组或超过上限');
       }
-      final ids = (item['sources'] as List)
+      return v;
+    }
+
+    List<String> sourceIds(dynamic raw) {
+      if (raw is! List || raw.isEmpty || (version == 2 && raw.length > 10000)) {
+        throw const FormatException('缺少原文依据或原文编号过多');
+      }
+      return raw
           .map((dynamic id) {
             if (id is! String ||
                 !RegExp(r'^S[1-9]\d*$').hasMatch(id) ||
-                int.parse(id.substring(1)) > sourceCount) {
+                (int.tryParse(id.substring(1)) ?? (sourceCount + 1)) >
+                    sourceCount) {
               throw const FormatException('无效原文编号');
             }
             return id;
           })
           .toSet()
           .toList();
+    }
+
+    MinuteItem parseItem(dynamic item, {bool isAction = false}) {
+      if (item is! Map) throw const FormatException('条目不是对象');
+      if (item.containsKey('summary') ||
+          item.containsKey('points') ||
+          item.containsKey('fishbone')) {
+        throw const FormatException('非议题条目不接受议题扩展');
+      }
       return MinuteItem(
         requiredText(item['text']),
-        ids,
+        sourceIds(item['sources']),
         owner: isAction ? requiredText(item['owner']) : null,
         due: isAction ? requiredText(item['due']) : null,
       );
     }
 
-    List<MinuteItem> items(String name) {
-      final list = value[name];
-      if (list is! List) throw FormatException('缺少 $name');
-      return list
-          .map((dynamic item) => parseItem(item, isAction: name == 'actions'))
-          .toList();
+    MinuteItem parseTopic(dynamic item) {
+      if (item is! Map) throw const FormatException('议题不是对象');
+      final expanded =
+          item.containsKey('summary') ||
+          item.containsKey('points') ||
+          item.containsKey('fishbone');
+      if (!expanded) return parseItem(item);
+      if (version != 2) throw const FormatException('议题扩展需要纪要版本 2');
+      MinuteFishbone? fishbone;
+      final rawFish = item['fishbone'];
+      if (rawFish != null) {
+        if (rawFish is! Map) throw const FormatException('因果图不是对象');
+        final branches = boundedList(rawFish['branches'], 30, '原因');
+        if (branches.isEmpty) throw const FormatException('因果图缺少原因');
+        fishbone = MinuteFishbone(
+          question: requiredText(rawFish['question']),
+          branches: [
+            for (final b in branches)
+              if (b is Map)
+                MinuteCause(
+                  requiredText(b['text']),
+                  sourceIds(b['sources']),
+                  detail: requiredText(b['detail']),
+                )
+              else
+                throw const FormatException('原因不是对象'),
+          ],
+        );
+      }
+      return MinuteTopic(
+        requiredText(item['text']),
+        sourceIds(item['sources']),
+        summary: requiredText(item['summary']),
+        points: boundedList(
+          item['points'],
+          100,
+          '议题要点',
+        ).map((e) => parseItem(e)).toList(),
+        fishbone: fishbone,
+      );
+    }
+
+    List<MinuteItem> items(String name) => boundedList(value[name], 100, name)
+        .map(
+          (dynamic item) => name == 'topics'
+              ? parseTopic(item)
+              : parseItem(item, isAction: name == 'actions'),
+        )
+        .toList();
+    List<MinuteTerm> parseTerms() {
+      if (version == 1 && value.containsKey('terms')) {
+        throw const FormatException('术语需要纪要版本 2');
+      }
+      final raw = value['terms'];
+      if (raw == null && !value.containsKey('terms')) return const [];
+      return boundedList(raw, 200, '术语').map((dynamic t) {
+        if (t is! Map) throw const FormatException('术语不是对象');
+        final ids = sourceIds(t['sources']);
+        final heard = boundedList(
+          t.containsKey('heard') ? t['heard'] : [],
+          30,
+          '识别变体',
+        ).map(requiredText).toSet().toList();
+        if (heard.isNotEmpty) {
+          if (sourceTexts == null || sourceTexts.length != sourceCount) {
+            throw const FormatException('校验识别变体需要原文');
+          }
+          for (final spelling in heard) {
+            if (!ids.any(
+              (id) => sourceTexts[int.parse(id.substring(1)) - 1].contains(
+                spelling,
+              ),
+            )) {
+              throw const FormatException('识别变体没有对应原文');
+            }
+          }
+        }
+        return MinuteTerm(
+          name: requiredText(t['name']),
+          note: requiredText(t['note']),
+          heard: heard,
+          sources: ids,
+        );
+      }).toList();
     }
 
     List<MinuteCustomSection> customSections() {
@@ -367,10 +532,16 @@ class MeetingMinutes {
       questions: items('questions'),
       custom: customSections(),
       reviewItems: parseReviewItems(),
+      schemaVersion: version,
+      terms: parseTerms(),
     );
   }
 
   Map<String, dynamic> toJson() => {
+    if (schemaVersion == 2 ||
+        topics.any((t) => t is MinuteTopic) ||
+        terms.isNotEmpty)
+      'schemaVersion': 2,
     'title': title,
     'overview': overview,
     'topics': topics.map((e) => e.toJson()).toList(),
@@ -379,28 +550,62 @@ class MeetingMinutes {
     'questions': questions.map((e) => e.toJson()).toList(),
     if (custom.isNotEmpty) 'custom': custom.map((e) => e.toJson()).toList(),
     if (reviewItems.isNotEmpty) 'reviewItems': reviewItems,
+    if (terms.isNotEmpty) 'terms': terms.map((t) => t.toJson()).toList(),
   };
   String encode() => const JsonEncoder.withIndent('  ').convert(toJson());
-  String export(AnalysisResult result) => [
-    '# $title',
-    overview,
-    for (final section in sections) ...[
-      '## ${section.$1}',
-      if (section.$2.isEmpty) '未提及',
-      for (final item in section.$2)
-        '- ${item.text}${item.owner == null ? '' : '\n  负责人：${item.owner}；期限：${item.due}'} ${item.sources.map((s) => '[$s]').join(' ')}',
-    ],
-    if (reviewItems.isNotEmpty) ...[
-      '## 待确认问题',
-      for (final q in reviewItems) '- $q',
-    ],
-    '模型：${result.model} · 模板：meeting-v1',
-    '生成时间：${result.createdAt.toIso8601String()}',
-    if (result.editedAt != null) '编辑时间：${result.editedAt!.toIso8601String()}',
-    '## 原文依据',
-    for (final source in result.sources.indexed)
-      '[S${source.$1 + 1}] ${source.$2}',
-  ].join('\n\n');
+
+  /// Nested text used by Markdown. Other formats render the same typed fields.
+  String export(AnalysisResult result) {
+    String citations(List<String> ids) => ids.map((s) => '[$s]').join(' ');
+    final lines = <String>['# $title', overview];
+    for (final section in sections) {
+      lines.add('## ${section.$1}');
+      if (section.$2.isEmpty) lines.add('未提及');
+      for (final item in section.$2) {
+        if (item is MinuteTopic) {
+          lines.add('### ${item.text} ${citations(item.sources)}');
+          lines.add(item.summary);
+          for (final point in item.points) {
+            lines.add('- ${point.text} ${citations(point.sources)}');
+          }
+          final fishbone = item.fishbone;
+          if (fishbone != null) {
+            lines.add('#### 因果分析：${fishbone.question}');
+            for (final branch in fishbone.branches) {
+              lines.add(
+                '- ${branch.text}：${branch.detail} ${citations(branch.sources)}',
+              );
+            }
+          }
+        } else {
+          lines.add(
+            '- ${item.text}${item.owner == null ? '' : '\n  负责人：${item.owner}；期限：${item.due}'} ${citations(item.sources)}',
+          );
+        }
+      }
+    }
+    if (terms.isNotEmpty) {
+      lines.add('## 人名和术语（待确认）');
+      for (final term in terms) {
+        lines.add(
+          '- ${term.name}：${term.note}${term.heard.isEmpty ? '' : '；原文识别为：${term.heard.join('、')}'} ${citations(term.sources)}',
+        );
+      }
+    }
+    if (reviewItems.isNotEmpty) {
+      lines.add('## 待确认问题');
+      lines.addAll(reviewItems.map((q) => '- $q'));
+    }
+    lines.addAll([
+      '模型：${result.model} · 模板：${result.templateId ?? 'meeting'} v${result.templateVersion}',
+      '生成时间：${result.createdAt.toIso8601String()}',
+      if (result.editedAt != null) '编辑时间：${result.editedAt!.toIso8601String()}',
+      '## 原文依据',
+      for (final source in result.sources.indexed)
+        '[S${source.$1 + 1}] ${source.$2}',
+    ]);
+    return lines.join('\n\n');
+  }
 
   /// Semantic Rich Text HTML representation (#492 / S32).
   String exportHtml(AnalysisResult result) => buildMinutesHtml(this, result);
@@ -427,12 +632,37 @@ class MeetingMinutes {
     final to = newTerm.trim();
     if (from.isEmpty || from == to) return this;
     String sub(String input) => input.replaceAll(from, to);
-    MinuteItem subItem(MinuteItem item) => MinuteItem(
-      sub(item.text),
-      item.sources,
-      owner: item.owner == null ? null : sub(item.owner!),
-      due: item.due == null ? null : sub(item.due!),
-    );
+    MinuteItem subItem(MinuteItem item) {
+      if (item is MinuteTopic) {
+        final fishbone = item.fishbone;
+        return MinuteTopic(
+          sub(item.text),
+          item.sources,
+          summary: sub(item.summary),
+          points: item.points.map(subItem).toList(),
+          fishbone: fishbone == null
+              ? null
+              : MinuteFishbone(
+                  question: sub(fishbone.question),
+                  branches: [
+                    for (final cause in fishbone.branches)
+                      MinuteCause(
+                        sub(cause.text),
+                        cause.sources,
+                        detail: sub(cause.detail),
+                      ),
+                  ],
+                ),
+        );
+      }
+      return MinuteItem(
+        sub(item.text),
+        item.sources,
+        owner: item.owner == null ? null : sub(item.owner!),
+        due: item.due == null ? null : sub(item.due!),
+      );
+    }
+
     return MeetingMinutes(
       title: sub(title),
       overview: sub(overview),
@@ -448,8 +678,51 @@ class MeetingMinutes {
           ),
       ],
       reviewItems: reviewItems.map(sub).toList(),
+      schemaVersion: schemaVersion,
+      terms: [
+        for (final term in terms)
+          MinuteTerm(
+            name: sub(term.name),
+            note: sub(term.note),
+            heard: term.heard,
+            sources: term.sources,
+          ),
+      ],
     );
   }
+
+  /// Remove only variants no longer present after a trusted local correction.
+  /// Never rewrite a historical mishearing into a new mishearing.
+  MeetingMinutes pruneHeard(List<String> sourceTexts) => MeetingMinutes(
+    title: title,
+    overview: overview,
+    topics: topics,
+    decisions: decisions,
+    actions: actions,
+    questions: questions,
+    custom: custom,
+    reviewItems: reviewItems,
+    schemaVersion: schemaVersion,
+    terms: [
+      for (final term in terms)
+        MinuteTerm(
+          name: term.name,
+          note: term.note,
+          sources: term.sources,
+          heard: term.heard
+              .where(
+                (spelling) => term.sources.any((id) {
+                  final index = int.tryParse(id.substring(1));
+                  return index != null &&
+                      index > 0 &&
+                      index <= sourceTexts.length &&
+                      sourceTexts[index - 1].contains(spelling);
+                }),
+              )
+              .toList(),
+        ),
+    ],
+  );
 
   /// All human-visible lines in this structured minutes object for full-text
   /// search (#493 / S33).
@@ -462,19 +735,28 @@ class MeetingMinutes {
       for (final item in items)
         [
           item.text,
+          if (item is MinuteTopic) ...[
+            item.summary,
+            for (final point in item.points) point.text,
+            if (item.fishbone != null) ...[
+              item.fishbone!.question,
+              for (final cause in item.fishbone!.branches)
+                '${cause.text} ${cause.detail}',
+            ],
+          ],
           if (item.owner != null && item.owner!.trim().isNotEmpty)
             '负责人：${item.owner}',
-          if (item.due != null && item.due!.trim().isNotEmpty)
-            '期限：${item.due}',
+          if (item.due != null && item.due!.trim().isNotEmpty) '期限：${item.due}',
         ].join(' '),
     ],
+    for (final term in terms) '${term.name} ${term.note}',
     for (final review in reviewItems)
       if (review.trim().isNotEmpty) review.trim(),
   ];
 }
 
 String validateMinutes(String text, List<String> sources) =>
-    MeetingMinutes.parse(text, sources.length).encode();
+    MeetingMinutes.parse(text, sources.length, sourceTexts: sources).encode();
 
 /// Prompt to revise existing [MeetingMinutes] after the user answers one or
 /// more [reviewItems] (adapted from Shiyin `Sources/Shiyin/Notes/NotesPrompt.swift`,
@@ -500,7 +782,8 @@ String buildReviseMinutesWithAnswersPrompt({
       '要求：\n'
       '1. 将用户确认的人名、专有名词、负责人、期限或结论更新到对应条目中；\n'
       '2. 已回答的问题必须从 "reviewItems" 中移除（未回答的问题保留：${jsonEncode(remainingReview)}）；\n'
-      '3. 每条记录的 "sources" 必须继续引用真实存在的原文编号（如 ["S1"]），不得编造编号。\n\n'
+      '3. 保留 schemaVersion、议题 summary/points/fishbone、terms 及所有未修改字段，heard 必须仍是原文识别形式，不将用户确认的新名字伪造为 heard。\n'
+      '4. 每条记录的 "sources" 必须继续引用真实存在的原文编号（如 ["S1"]），不得编造编号。\n\n'
       '当前纪要 JSON：\n${jsonEncode(currentMinutes.toJson())}\n\n'
       '用户确认回答：\n$qaLines';
 }
@@ -571,8 +854,8 @@ List<SpeakerNameSuggestion> parseSpeakerNameSuggestions(
     speakerId = speakerId
         .replaceFirst(RegExp(r'^(说话人|Speaker)\s*', caseSensitive: false), '')
         .trim();
-    final suggestedName =
-        '${item['suggestedName'] ?? item['name'] ?? ''}'.trim();
+    final suggestedName = '${item['suggestedName'] ?? item['name'] ?? ''}'
+        .trim();
     final reason = '${item['reason'] ?? ''}'.trim();
     final confidence = '${item['confidence'] ?? 'medium'}'.trim();
     final quote = '${item['evidenceQuote'] ?? item['quote'] ?? ''}'.trim();
@@ -708,8 +991,10 @@ List<String> extractVocabularySuggestions({
         .replaceAll(RegExp(r'[\s\-—:：·•"“”‘’()（）\[\]【】]+$'), '');
     if (cleaned.runes.length < 2 || cleaned.runes.length > 28) return;
     if (ignored.contains(cleaned)) return;
-    if (RegExp(r'^(说话人|Speaker)\s*\d+$', caseSensitive: false)
-        .hasMatch(cleaned)) {
+    if (RegExp(
+      r'^(说话人|Speaker)\s*\d+$',
+      caseSensitive: false,
+    ).hasMatch(cleaned)) {
       return;
     }
     if (RegExp(r'^\d+([:：.-]\d+)*$').hasMatch(cleaned)) return;
@@ -732,7 +1017,9 @@ List<String> extractVocabularySuggestions({
         .replaceFirst(RegExp(r'\s+\d{2,4}[-/]\d{1,2}(\s+\d{1,2}:\d{2})?$'), '')
         .replaceFirst(RegExp(r'\s+\d{1,2}:\d{2}(:\d{2})?$'), '')
         .trim();
-    for (final part in titleWithoutTime.split(RegExp(r'[\s/｜|、，,：:—\-()（）]+'))) {
+    for (final part in titleWithoutTime.split(
+      RegExp(r'[\s/｜|、，,：:—\-()（）]+'),
+    )) {
       if (part.trim().length >= 2) addCandidate(part);
     }
   }
@@ -742,9 +1029,7 @@ List<String> extractVocabularySuggestions({
     final tokenPattern = RegExp(
       r'[A-Za-z][A-Za-z0-9_.\-+]{1,24}|[\u4e00-\u9fff]{2,12}',
     );
-    final stopSplit = RegExp(
-      r'[的了在是和与或把将对为就都而及着过先去来要会能可让给从向到于被]',
-    );
+    final stopSplit = RegExp(r'[的了在是和与或把将对为就都而及着过先去来要会能可让给从向到于被]');
     Set<String> extractPhrases(String text) {
       final out = <String>{};
       for (final m in tokenPattern.allMatches(text)) {

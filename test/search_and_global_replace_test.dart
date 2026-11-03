@@ -385,6 +385,7 @@ void main() {
       }) async {
         if (shouldFail) throw const HttpException('network down');
         return jsonEncode({
+          'schemaVersion': 2,
           'title': '通知测试纪要',
           'overview': '整理成功。',
           'topics': [

@@ -399,6 +399,7 @@ class _Minutes implements AnalysisService {
   }) async {
     inputs.add(source);
     return jsonEncode({
+      'schemaVersion': 2,
       'title': '项目会议 ${inputs.length}',
       'overview': '讨论发布',
       'topics': [
