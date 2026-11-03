@@ -20,18 +20,9 @@ jobs:
       FLUTTER_VERSION: 3.47.7
     steps:
       - uses: actions/checkout@v4
-      # Use the Mac's installed Flutter. 3.47.7 ships Dart 3.13.5, which
-      # satisfies pubspec's sdk ^3.12.2 (main@f42af90: analyze clean, 573 tests).
-      - name: Check Flutter version
+        with:
+          fetch-depth: 0
+      - name: Run required checks
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
-          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
-          flutter --version
-          actual=$(flutter --version --machine | python3 -c 'import json,sys;print(json.load(sys.stdin)["frameworkVersion"])')
-          if [ "$actual" != "$FLUTTER_VERSION" ]; then
-            echo "::error::Runner has Flutter $actual, CI expects $FLUTTER_VERSION"
-            exit 1
-          fi
-      - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test --reporter expanded
+          python3 scripts/ci.py
