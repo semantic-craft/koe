@@ -10,6 +10,11 @@ void main() {
       c.acceptCumulative('two', '第二句');
       c.acceptCumulative('two', '第二句第三句');
       expect(c.segments.map((s) => s.text).join(), '第一句第二句第三句');
+      c.acceptCumulative(
+        'two',
+        '',
+      ); // Empty finish acknowledgements are not revisions.
+      expect(c.stale, isFalse);
       c.acceptCumulative('two', '改写第二句');
       expect(c.stale, isTrue);
       expect(c.segments.first.text, '第一句');

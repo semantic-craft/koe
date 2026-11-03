@@ -72,6 +72,7 @@ class LiveSegmentCollector {
     String? targetLanguage,
     String provider = '',
   }) {
+    if (text.trim().isEmpty) return;
     final previous = _confirmed[connectionId] ?? '';
     if (!text.startsWith(previous)) {
       stale = true;
