@@ -498,7 +498,7 @@
         "number": 514,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T14:31:35Z"
+        "updated_at": "2026-11-03T16:35:15Z"
       },
       {
         "number": 515,
@@ -514,18 +514,24 @@
       },
       {
         "number": 527,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T16:05:31Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T16:16:44Z"
       },
       {
         "number": 528,
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-03T16:05:40Z"
+      },
+      {
+        "number": 533,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T16:32:17Z"
       }
     ],
-    "main": "a93d6fdcfb51790d5c3de6acfcbb8b1bf9aa02c1",
+    "main": "882b033ed01373b21157164d51e0a6692d8beca2",
     "open_pulls": [],
     "pulls": [
       {
@@ -991,12 +997,28 @@
         "merged": true,
         "number": 526,
         "state": "closed"
+      },
+      {
+        "base": "451b32fb00eacae4455da05f7a3016ed530a7b66",
+        "head": "96d68af2f82547da0d278137c8f888641d029380",
+        "merge_commit": "8759b30b6aca2b9ec68917271fdead23c7c5bde2",
+        "merged": true,
+        "number": 532,
+        "state": "closed"
+      },
+      {
+        "base": "8759b30b6aca2b9ec68917271fdead23c7c5bde2",
+        "head": "a17a2962077e15e5783bc3ff696f70aa36052d98",
+        "merge_commit": "882b033ed01373b21157164d51e0a6692d8beca2",
+        "merged": true,
+        "number": 534,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T16:14:09.061225Z",
+  "observed_at": "2026-11-03T16:36:06.377548Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1088,12 +1110,17 @@
               "kind": "pull",
               "note": "本次有效性能数字与设备未验收边界。",
               "ref": 521
+            },
+            {
+              "kind": "pull",
+              "note": "来源细分与请求批次分离，1094项Flutter CI通过；安装版同样本后段回听和历史保留已复验。",
+              "ref": 534
             }
           ],
           "id": "cicada-post-meeting-acceptance",
-          "next": "#514：Mac/iPhone/Pixel 验证真实录音、资料包交换、术语采纳和内容质量。",
+          "next": "继续#514的两人/抢话/术语会议样本、Cicada输出与跨端交换。iPhone控制通道paused、Pixel未连接；Mac工具恢复后已导出含S1…S9的修复版纪要。",
           "status": "unverified",
-          "summary": "未安装新版本，未调用真实千问或用同一录音对照 Cicada；资料包和术语真实三端操作仍待验收。PR #521 已完成可见 profile App 的八个合成性能场景，全部在阈值内；该结果不代表真实会议内容质量。",
+          "summary": "Mac当前源码Release已签名安装，用公开56秒无决定样本完成真实千问转写、正式纪要、Markdown导出并在TextEdit打开、含原音频v2资料包导出和哈希核对。实测发现出处均回到开头，#534已修复并在安装版确认S6/00:27实际跳到后段，旧纪要保留一版历史。尚未完成Cicada真实同音频对照、三端交换和术语采纳；既有合成性能结果不代表内容质量。",
           "title": "首批真实效果、三端安装与性能"
         },
         {
@@ -1453,6 +1480,20 @@
           "status": "done",
           "summary": "Mac/iPhone验收完成，#453已关闭。#483已合并；首次日历授权用途说明由用户确认正确并允许，实际提前119.945173秒录音按会议名保存；既有参与人、全天、拒绝权限、升级权限保留、导出及完成回读均通过。",
           "title": "Mac日历命名与待办导出验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "分流实现及真实GitHub runner完整路径通过。",
+              "ref": 532
+            }
+          ],
+          "id": "ci-docs-routing",
+          "next": "用本批真实进度更新核对轻量路径，不新增演示PR或重复Flutter检查。",
+          "status": "done",
+          "summary": "#532已合并。保留test检查，根Markdown、docs下Markdown和两份进度文件走轻量检查；未知路径、脚本、工作流、手动触发均走完整检查。12项路由行为测试通过，完整检查统一调用scripts/check。",
+          "title": "纯文档与进度更新的轻量CI"
         }
       ],
       "title": "代码与文档交付范围"
@@ -2484,7 +2525,8 @@
       515,
       516,
       527,
-      528
+      528,
+      533
     ],
     "pulls": [
       62,
@@ -2544,7 +2586,9 @@
       521,
       522,
       524,
-      526
+      526,
+      532,
+      534
     ]
   }
 }

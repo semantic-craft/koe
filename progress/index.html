@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-03T16:14:09.061225Z</p>
-<p>Main: <code>main: a93d6fdcfb51790d5c3de6acfcbb8b1bf9aa02c1</code></p>
+<p>Observed: 2026-11-03T16:36:06.377548Z</p>
+<p>Main: <code>main: 882b033ed01373b21157164d51e0a6692d8beca2</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -18,12 +18,13 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/509">issue 509: 实现及验收范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/514">issue 514: 实现及验收范围。</a></li>
 </ul><p>Next: 优先按 #514 用同一真实录音对照 Cicada 与 Koe，并验证三端交换和术语采纳；#513自然声与克隆已由用户取消。</p></article>
-<article id="cicada-post-meeting-acceptance"><h3>首批真实效果、三端安装与性能</h3><span class="badge">unverified</span><p>未安装新版本，未调用真实千问或用同一录音对照 Cicada；资料包和术语真实三端操作仍待验收。PR #521 已完成可见 profile App 的八个合成性能场景，全部在阈值内；该结果不代表真实会议内容质量。</p><ul>
+<article id="cicada-post-meeting-acceptance"><h3>首批真实效果、三端安装与性能</h3><span class="badge">unverified</span><p>Mac当前源码Release已签名安装，用公开56秒无决定样本完成真实千问转写、正式纪要、Markdown导出并在TextEdit打开、含原音频v2资料包导出和哈希核对。实测发现出处均回到开头，#534已修复并在安装版确认S6/00:27实际跳到后段，旧纪要保留一版历史。尚未完成Cicada真实同音频对照、三端交换和术语采纳；既有合成性能结果不代表内容质量。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/514">issue 514: 真实服务、设备和性能未验收项。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: PR 验收记录包含性能运行失败边界。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/519">pull 519: 本次性能复测无有效指标及跨端未验收边界。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/521">pull 521: 本次有效性能数字与设备未验收边界。</a></li>
-</ul><p>Next: #514：Mac/iPhone/Pixel 验证真实录音、资料包交换、术语采纳和内容质量。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/534">pull 534: 来源细分与请求批次分离，1094项Flutter CI通过；安装版同样本后段回听和历史保留已复验。</a></li>
+</ul><p>Next: 继续#514的两人/抢话/术语会议样本、Cicada输出与跨端交换。iPhone控制通道paused、Pixel未连接；Mac工具恢复后已导出含S1…S9的修复版纪要。</p></article>
 <article id="cicada-live-meeting"><h3>实时纪要、双语字幕与 Mac 会议收尾</h3><span class="badge">done</span><p>PR #521 已 squash 合并、最终CI通过。每场显式开启，确定句段有界处理，先保存后显示，手改保留、续写成为候选；Mac字幕/纪要/隐藏三态、快捷键与可取消倒计时。EGM及独立代码复审收口，本机check1076项测试、原生profile构建和八个性能场景通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/521">pull 521: 实现、红绿回归、CI与性能数字；不代表用户验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/510">issue 510: 实时纪要工单已关闭。</a></li>
@@ -99,6 +100,9 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/482">pull 482: 记录 #453 剩余 Mac 真机验收结果（参会人提取过滤会议室、全天事件、拒绝权限、升级后权限保留）。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/483">pull 483: 记录 #453 iPhone 提醒事项导出与完成状态回读回归、首次日历授权弹窗及提前 119.95 秒录音按会议命名验收；#453 已收口关闭。</a></li>
 </ul><p>Next: #453已收口；#464已完成Mac签名安装版双路核心、USB耳机输出切换、默认麦克风实时文字落盘与kill -9双路恢复（#485已合并），后续继续#464真人10分钟会议/蓝牙硬件与#458录音豆验收；本地模型继续暂缓。</p></article>
+<article id="ci-docs-routing"><h3>纯文档与进度更新的轻量CI</h3><span class="badge">done</span><p>#532已合并。保留test检查，根Markdown、docs下Markdown和两份进度文件走轻量检查；未知路径、脚本、工作流、手动触发均走完整检查。12项路由行为测试通过，完整检查统一调用scripts/check。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/532">pull 532: 分流实现及真实GitHub runner完整路径通过。</a></li>
+</ul><p>Next: 用本批真实进度更新核对轻量路径，不新增演示PR或重复Flutter检查。</p></article>
 </section>
 <section id="ongoing"><h2>实现差异与范围核对</h2>
 <article id="android-identity-pr"><h3>旧 Android 应用身份 PR（已关闭）</h3><span class="badge">done</span><p>PR #62 与工单 #38 已被 #331 的范围取代：Koe 名称与图标由 #336（PR #347）完成，后台同步通知由 #339（PR #351）、录音与监听通知由 #340（PR #354）完成。2026-10-22 关闭 PR #62 与 #38，不再合并。</p><ul>
