@@ -450,13 +450,13 @@
         "number": 506,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T13:39:35Z"
+        "updated_at": "2026-11-03T13:55:17Z"
       },
       {
         "number": 507,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T13:43:08Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T13:55:19Z"
       },
       {
         "number": 508,
@@ -498,7 +498,7 @@
         "number": 514,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T13:39:26Z"
+        "updated_at": "2026-11-03T13:55:01Z"
       },
       {
         "number": 515,
@@ -513,7 +513,7 @@
         "updated_at": "2026-11-03T13:39:32Z"
       }
     ],
-    "main": "fc12765102c7a318cf0644a7687f6befac8fec66",
+    "main": "5dd678031bc4f900401aaff3fc4989b31ce98f64",
     "open_pulls": [],
     "pulls": [
       {
@@ -931,12 +931,20 @@
         "merged": true,
         "number": 503,
         "state": "closed"
+      },
+      {
+        "base": "fc12765102c7a318cf0644a7687f6befac8fec66",
+        "head": "69b1badd24cd8988300f89b8f764091c9f523957",
+        "merge_commit": "5dd678031bc4f900401aaff3fc4989b31ce98f64",
+        "merged": true,
+        "number": 517,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T13:44:56.408491Z",
+  "observed_at": "2026-11-03T13:57:24.209267Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -951,6 +959,11 @@
       "items": [
         {
           "evidence": [
+            {
+              "kind": "pull",
+              "note": "首批实现及回归已合并，CI 通过。",
+              "ref": 517
+            },
             {
               "kind": "issue",
               "note": "全量范围总工单。",
@@ -968,10 +981,29 @@
             }
           ],
           "id": "cicada-post-meeting",
-          "next": "完成 PR 合并；本机性能驱动仍未产生有效数据，真实服务及设备在 #514 单独验收。",
-          "status": "in_progress",
-          "summary": "首批 A1 已实现并通过 EGM 与独立代码复核；check 静态分析及 1030 项测试通过。分层内容、旧格式兼容、编辑和导出均有回归证据；尚未安装或验收真实模型效果。",
-          "title": "首批：分层议题、因果和术语候选"
+          "next": "按 #508、#509 推进资料包交换和术语采纳；#514 补真实会议、设备与性能验收。",
+          "status": "done",
+          "summary": "PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。",
+          "title": "首批代码：分层议题、因果和术语候选"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "真实服务、设备和性能未验收项。",
+              "ref": 514
+            },
+            {
+              "kind": "pull",
+              "note": "PR 验收记录包含性能运行失败边界。",
+              "ref": 517
+            }
+          ],
+          "id": "cicada-post-meeting-acceptance",
+          "next": "#514：先恢复性能测试驱动，再记录场景数字；在 Mac/iPhone/Pixel 验证真实录音的阅读、回听、编辑、导出和内容质量。",
+          "status": "unverified",
+          "summary": "未安装新版本，未调用真实千问或用同一录音对照 Cicada。Mac profile 构建成功，但性能驱动启动后 480 秒无数据，退出码 4；无有效性能指标，不能判通过或超标。",
+          "title": "首批真实效果、三端安装与性能"
         },
         {
           "evidence": [
@@ -2322,7 +2354,8 @@
       500,
       501,
       502,
-      503
+      503,
+      517
     ]
   }
 }
