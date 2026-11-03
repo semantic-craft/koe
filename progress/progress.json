@@ -450,7 +450,7 @@
         "number": 506,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T14:33:25Z"
+        "updated_at": "2026-11-03T15:09:15Z"
       },
       {
         "number": 507,
@@ -472,15 +472,15 @@
       },
       {
         "number": 510,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T13:39:16Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T15:09:18Z"
       },
       {
         "number": 511,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T13:39:18Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T15:09:20Z"
       },
       {
         "number": 512,
@@ -504,7 +504,7 @@
         "number": 515,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T13:39:29Z"
+        "updated_at": "2026-11-03T15:02:17Z"
       },
       {
         "number": 516,
@@ -513,7 +513,7 @@
         "updated_at": "2026-11-03T13:39:32Z"
       }
     ],
-    "main": "18e1146a1241bfebde59326fff6bc80a7cb6b8ec",
+    "main": "92e5bbdc7057ededf74c56c5fe5289a6a5ec6bf9",
     "open_pulls": [],
     "pulls": [
       {
@@ -947,12 +947,20 @@
         "merged": true,
         "number": 519,
         "state": "closed"
+      },
+      {
+        "base": "bdbeb4b99a15e50f5406fcc611a6fb67dd291f5b",
+        "head": "54113b54ac738e29d5d80aa01ae1ea06fd1539cb",
+        "merge_commit": "92e5bbdc7057ededf74c56c5fe5289a6a5ec6bf9",
+        "merged": true,
+        "number": 521,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T14:35:20.776522Z",
+  "observed_at": "2026-11-03T15:11:09.911238Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -989,7 +997,7 @@
             }
           ],
           "id": "cicada-post-meeting",
-          "next": "#514 补真实会议、设备与性能验收；后续按 #510–#513 推进实时纪要、字幕和同传。",
+          "next": "#514 补真实会议、设备与性能验收；后续按 #512–#513 推进Mac 同传与声音克隆。",
           "status": "done",
           "summary": "PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。",
           "title": "首批代码：分层议题、因果和术语候选"
@@ -1018,7 +1026,7 @@
             }
           ],
           "id": "cicada-exchange-adoption",
-          "next": "#514 验证真实三端交换、原件补配、术语质量和回听；后续实现按 #510–#513 详细设计推进。",
+          "next": "#514 验证真实三端交换、原件补配、术语质量和回听；后续实现按 #512–#513 详细设计推进。",
           "status": "done",
           "summary": "PR #519 已 squash 合并，CI 通过。资料包 v2 携带当前纪要和最多10版历史，保留本机当前版、重复导入稳定、无音频可只读阅读并补配原件。术语可加入词表或确认订正本场，保留历史依据及正确名称检索。EGM 和独立代码复审无剩余问题；check 静态分析与1057项测试通过，未做真实跨端验收。",
           "title": "资料包纪要交换与术语采纳"
@@ -1039,62 +1047,90 @@
               "kind": "pull",
               "note": "本次性能复测无有效指标及跨端未验收边界。",
               "ref": 519
+            },
+            {
+              "kind": "pull",
+              "note": "本次有效性能数字与设备未验收边界。",
+              "ref": 521
             }
           ],
           "id": "cicada-post-meeting-acceptance",
-          "next": "#514：保持 profile 窗口可见完成性能场景并记录数字；Mac/iPhone/Pixel 验证真实录音、资料包交换、术语采纳和内容质量。",
+          "next": "#514：Mac/iPhone/Pixel 验证真实录音、资料包交换、术语采纳和内容质量。",
           "status": "unverified",
-          "summary": "未安装新版本，未调用真实千问或用同一录音对照 Cicada。PR #519 本次 Mac profile 构建成功且驱动进入 BLE 场景，但窗口 lifecycle=hidden、30秒无帧，退出3；没有有效性能数字，不算通过或超标。资料包与术语的真实三端操作也待验收。",
+          "summary": "未安装新版本，未调用真实千问或用同一录音对照 Cicada；资料包和术语真实三端操作仍待验收。PR #521 已完成可见 profile App 的八个合成性能场景，全部在阈值内；该结果不代表真实会议内容质量。",
           "title": "首批真实效果、三端安装与性能"
         },
         {
           "evidence": [
             {
+              "kind": "pull",
+              "note": "实现、红绿回归、CI与性能数字；不代表用户验收。",
+              "ref": 521
+            },
+            {
               "kind": "issue",
-              "note": "对应后续范围或独立验收。",
+              "note": "实时纪要工单已关闭。",
               "ref": 510
             },
             {
               "kind": "issue",
-              "note": "对应后续范围或独立验收。",
+              "note": "字幕与收尾工单已关闭。",
               "ref": 511
             },
             {
+              "kind": "file",
+              "note": "收口设计及上游源码对照。",
+              "ref": "docs/design/live-minutes-captions.md"
+            }
+          ],
+          "id": "cicada-live-meeting",
+          "next": "真实跨端字幕、长会及逐会议软件共享/自动结束验证归 #515。",
+          "status": "done",
+          "summary": "PR #521 已 squash 合并、最终CI通过。每场显式开启，确定句段有界处理，先保存后显示，手改保留、续写成为候选；Mac字幕/纪要/隐藏三态、快捷键与可取消倒计时。EGM及独立代码复审收口，本机check1076项测试、原生profile构建和八个性能场景通过。",
+          "title": "实时纪要、双语字幕与 Mac 会议收尾"
+        },
+        {
+          "evidence": [
+            {
               "kind": "issue",
-              "note": "对应后续范围或独立验收。",
+              "note": "独立真机验收仍开放。",
+              "ref": 515
+            },
+            {
+              "kind": "pull",
+              "note": "代码交付边界和性能证据。",
+              "ref": 521
+            }
+          ],
+          "id": "cicada-live-acceptance",
+          "next": "按 #515 已补的版本/设备/会议软件矩阵验证，并记录未通过或不支持的组合。",
+          "status": "unverified",
+          "summary": "未安装签名发布版本，未做真实千问/Apple会议、iPhone/Pixel字幕和共享屏幕矩阵；合成profile性能通过不替代真实内容效果。",
+          "title": "真实会议字幕、长会与自动结束验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "剩余实现或真实路由验收。",
               "ref": 512
             },
             {
               "kind": "issue",
-              "note": "对应后续范围或独立验收。",
+              "note": "剩余实现或真实路由验收。",
               "ref": 513
             },
             {
               "kind": "issue",
-              "note": "对应后续范围或独立验收。",
-              "ref": 514
-            },
-            {
-              "kind": "issue",
-              "note": "对应后续范围或独立验收。",
-              "ref": 515
-            },
-            {
-              "kind": "issue",
-              "note": "对应后续范围或独立验收。",
+              "note": "剩余实现或真实路由验收。",
               "ref": 516
-            },
-            {
-              "kind": "file",
-              "ref": "docs/design/live-minutes-captions.md",
-              "note": "B1/B2 已收口设计及验收边界。"
             }
           ],
           "id": "cicada-follow-on",
-          "next": "完成 #510/#511 回归、CI、合并；真实长会和三端字幕另在 #515 验收。",
-          "status": "in_progress",
-          "summary": "#510–#511 详细设计经 EGM 复审，实时纪要、双语字幕、Mac浮窗和可取消收尾已实现，独立代码复审通过，check静态分析与1076项测试、Mac原生构建及八个性能场景通过；尚未合并。#512–#513 Mac 同传及可选克隆未实施，#514–#516 独立真实验收。",
-          "title": "实时字幕纪要和 Mac 同传"
+          "next": "先对照 Cicada SpeakEngine、AudioRouter 和 VirtualMic，收口 #512 详细设计，再按工单实施。",
+          "status": "planned",
+          "summary": "#512/#513 尚未实施；实时纪要和双语字幕已由 PR #521 交付。真实路由与服务验收独立归 #516。",
+          "title": "Mac 同传及可选声音克隆"
         }
       ],
       "title": "Cicada 功能对齐"
@@ -2393,7 +2429,8 @@
       502,
       503,
       517,
-      519
+      519,
+      521
     ]
   }
 }
