@@ -529,9 +529,21 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-03T16:32:17Z"
+      },
+      {
+        "number": 536,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T17:11:32Z"
+      },
+      {
+        "number": 537,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T16:56:51Z"
       }
     ],
-    "main": "882b033ed01373b21157164d51e0a6692d8beca2",
+    "main": "6598f0046ff91a98da1c605c34b1c37c57eb17b4",
     "open_pulls": [],
     "pulls": [
       {
@@ -1013,12 +1025,20 @@
         "merged": true,
         "number": 534,
         "state": "closed"
+      },
+      {
+        "base": "c3bffcab0f5803491ec2c992b6d192854a605073",
+        "head": "ab63a5a1173e4859fcba24789facb595a52afd0d",
+        "merge_commit": "6598f0046ff91a98da1c605c34b1c37c57eb17b4",
+        "merged": true,
+        "number": 538,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T16:36:06.377548Z",
+  "observed_at": "2026-11-03T17:14:11.480272Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1098,18 +1118,18 @@
             },
             {
               "kind": "pull",
-              "note": "PR 验收记录包含性能运行失败边界。",
-              "ref": 517
+              "note": "合并6598f00：真实样本确认建议不再升级为决议/待办，保留不确定度；不判内容全通过。",
+              "ref": 538
             },
             {
-              "kind": "pull",
-              "note": "本次性能复测无有效指标及跨端未验收边界。",
-              "ref": 519
+              "kind": "issue",
+              "note": "同一公开样本中摘要仍推导未明说基数。",
+              "ref": 537
             },
             {
-              "kind": "pull",
-              "note": "本次有效性能数字与设备未验收边界。",
-              "ref": 521
+              "kind": "issue",
+              "note": "英文模板入口预算回归已修。",
+              "ref": 536
             },
             {
               "kind": "pull",
@@ -1118,9 +1138,9 @@
             }
           ],
           "id": "cicada-post-meeting-acceptance",
-          "next": "继续#514的两人/抢话/术语会议样本、Cicada输出与跨端交换。iPhone控制通道paused、Pixel未连接；Mac工具恢复后已导出含S1…S9的修复版纪要。",
+          "next": "继续#514的Cicada真实同音频输出、跨端交换和术语采纳；另按#537处理数字关系仍被推导的问题。iPhone控制通道paused、Pixel未连接时先做不依赖设备部分。",
           "status": "unverified",
-          "summary": "Mac当前源码Release已签名安装，用公开56秒无决定样本完成真实千问转写、正式纪要、Markdown导出并在TextEdit打开、含原音频v2资料包导出和哈希核对。实测发现出处均回到开头，#534已修复并在安装版确认S6/00:27实际跳到后段，旧纪要保留一版历史。尚未完成Cicada真实同音频对照、三端交换和术语采纳；既有合成性能结果不代表内容质量。",
+          "summary": "Mac签名安装版用公开AliMeeting两段共198.4秒真人会议音频完成真实Qwen转写与纪要对照。两人片段覆盖2人/术语，交叠片段覆盖4人/20.81秒标注重叠。PR #538已合并：同一转写下交叠错误decisions/actions由各1项降为0，建议留在议题；两人最终恢复“可能增加2–3人”，decisions/actions为空；4个英文模板超2000字入口的问题已修，15种模板/语言最长1959字，CI通过。仍不通过：两人议题摘要推导原文未明说的社保基数，已开#537；ASR有交叠漏句和短句归属错误。Cicada官方v1.0.0已校验并启动，但未配置Ling，无实际输出；跨端交换与术语采纳未跑。",
           "title": "首批真实效果、三端安装与性能"
         },
         {
@@ -2526,7 +2546,9 @@
       516,
       527,
       528,
-      533
+      533,
+      536,
+      537
     ],
     "pulls": [
       62,
@@ -2588,7 +2610,8 @@
       524,
       526,
       532,
-      534
+      534,
+      538
     ]
   }
 }
