@@ -129,10 +129,7 @@ void main() {
     final separateFacts = Map<String, dynamic>.of(synthesized);
     (separateFacts['topics'] as List).single['summary'] =
         '社保计划约60%；基本工资约3000元。';
-    expect(
-      validateMinutes(jsonEncode(separateFacts), sources),
-      isA<String>(),
-    );
+    expect(validateMinutes(jsonEncode(separateFacts), sources), isA<String>());
 
     final groundedCalculation = Map<String, dynamic>.of(synthesized);
     (groundedCalculation['topics'] as List).single['summary'] =
@@ -140,6 +137,24 @@ void main() {
     (groundedCalculation['topics'] as List).single['sources'] = ['S3'];
     expect(
       validateMinutes(jsonEncode(groundedCalculation), sources),
+      isA<String>(),
+    );
+
+    final implicitRelation = Map<String, dynamic>.of(synthesized);
+    (implicitRelation['topics'] as List).single['summary'] =
+        '确认按最低比例缴纳，按基本工资的60%缴纳。';
+    (implicitRelation['topics'] as List).single['sources'] = ['S1', 'S2'];
+    expect(
+      () => validateMinutes(jsonEncode(implicitRelation), sources),
+      throwsFormatException,
+    );
+
+    final groundedImplicitRelation = Map<String, dynamic>.of(synthesized);
+    (groundedImplicitRelation['topics'] as List).single['summary'] =
+        '确认按最低比例缴纳，按基本工资的60%缴纳。';
+    (groundedImplicitRelation['topics'] as List).single['sources'] = ['S3'];
+    expect(
+      validateMinutes(jsonEncode(groundedImplicitRelation), sources),
       isA<String>(),
     );
   });
