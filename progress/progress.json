@@ -450,7 +450,7 @@
         "number": 506,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T15:55:32Z"
+        "updated_at": "2026-11-03T16:03:59Z"
       },
       {
         "number": 507,
@@ -490,9 +490,9 @@
       },
       {
         "number": 513,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T13:39:23Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-03T16:03:56Z"
       },
       {
         "number": 514,
@@ -510,10 +510,10 @@
         "number": 516,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T15:47:19Z"
+        "updated_at": "2026-11-03T16:04:01Z"
       }
     ],
-    "main": "31bdf9ca50bedb20cf219542f66fd4df64024e13",
+    "main": "1d2a8010bb44f55ae82fe891e1f483984b8c10ca",
     "open_pulls": [],
     "pulls": [
       {
@@ -971,12 +971,20 @@
         "merged": true,
         "number": 524,
         "state": "closed"
+      },
+      {
+        "base": "86e974ec9e8dba6722c943abddb8c50d487593ba",
+        "head": "a7bf575989e2278f611de145ec4739c4b8d3bb69",
+        "merge_commit": "1d2a8010bb44f55ae82fe891e1f483984b8c10ca",
+        "merged": true,
+        "number": 526,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T15:57:31.403396Z",
+  "observed_at": "2026-11-03T16:07:49.502124Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1013,7 +1021,7 @@
             }
           ],
           "id": "cicada-post-meeting",
-          "next": "#514 补真实会议、设备与性能验收；后续按 #512–#513 推进Mac 同传与声音克隆。",
+          "next": "优先按 #514 用同一真实录音对照 Cicada 与 Koe，并验证三端交换和术语采纳；#513自然声与克隆已由用户取消。",
           "status": "done",
           "summary": "PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。",
           "title": "首批代码：分层议题、因果和术语候选"
@@ -1042,7 +1050,7 @@
             }
           ],
           "id": "cicada-exchange-adoption",
-          "next": "#514 验证真实三端交换、原件补配、术语质量和回听；后续实现按 #512–#513 详细设计推进。",
+          "next": "优先按 #514 用同一真实录音对照 Cicada 与 Koe，并验证三端交换和术语采纳；#513自然声与克隆已由用户取消。",
           "status": "done",
           "summary": "PR #519 已 squash 合并，CI 通过。资料包 v2 携带当前纪要和最多10版历史，保留本机当前版、重复导入稳定、无音频可只读阅读并补配原件。术语可加入词表或确认订正本场，保留历史依据及正确名称检索。EGM 和独立代码复审无剩余问题；check 静态分析与1057项测试通过，未做真实跨端验收。",
           "title": "资料包纪要交换与术语采纳"
@@ -1132,35 +1140,6 @@
         {
           "evidence": [
             {
-              "kind": "issue",
-              "note": "剩余实现或真实路由验收。",
-              "ref": 512
-            },
-            {
-              "kind": "issue",
-              "note": "剩余实现或真实路由验收。",
-              "ref": 513
-            },
-            {
-              "kind": "issue",
-              "note": "剩余实现或真实路由验收。",
-              "ref": 516
-            },
-            {
-              "kind": "file",
-              "note": "直接上游源码对照、收口设计与实施边界。",
-              "ref": "docs/design/mac-interpreting.md"
-            }
-          ],
-          "id": "cicada-follow-on",
-          "next": "按 #513 参考 Cicada 的现成声音管线，用 EGM 收口后实施；真实提供方与本人样本验证仍归 #516。",
-          "status": "planned",
-          "summary": "#512 Mac按住同传已由PR #524合并。#513可选自然声/本人声音克隆尚未实施，系统普通声音不依赖它。",
-          "title": "可选自然声和本人声音克隆"
-        },
-        {
-          "evidence": [
-            {
               "kind": "pull",
               "note": "最终CI与合并、红绿回归和性能指标。",
               "ref": 524
@@ -1174,12 +1153,22 @@
               "kind": "file",
               "note": "上游源码对照、EGM设计与验收边界。",
               "ref": "docs/design/mac-interpreting.md"
+            },
+            {
+              "kind": "issue",
+              "note": "用户明确取消，not planned关闭；未实现。",
+              "ref": 513
+            },
+            {
+              "kind": "pull",
+              "note": "路线图与设计收缩范围，保留系统普通声音。",
+              "ref": 526
             }
           ],
           "id": "cicada-mac-interpreting",
           "next": "代码已交付；真实会议路由、安装和恢复按#516独立验收。",
           "status": "done",
-          "summary": "PR #524已squash合并，最终CI1089项通过。直接核对Cicada源码，经EGM设计和实现复核，固定真实麦克风、本机识别、文字翻译、系统PCM定向BlackHole；一次一句且取消无迟到推进，可选输入租约和官方Installer入口。本机check1088项、后补界面回归、原生profile及八个合成性能场景通过。",
+          "summary": "PR #524已squash合并，最终CI1089项通过。直接核对Cicada源码，经EGM设计和实现复核，固定真实麦克风、本机识别、文字翻译、系统PCM定向BlackHole；一次一句且取消无迟到推进，可选输入租约和官方Installer入口。本机check1088项、后补界面回归、原生profile及八个合成性能场景通过。 2026-11-04用户取消#513自然声和声音克隆，保留系统普通声音；取消项未实现。",
           "title": "Mac 按住同传与可恢复输入路由"
         },
         {
@@ -1196,7 +1185,7 @@
             }
           ],
           "id": "cicada-interpreting-acceptance",
-          "next": "按#516补充的版本、设备、会议软件和故障矩阵逐项核验；#513声音克隆实现后另补真实样本证据。",
+          "next": "按#516版本、设备、会议软件和故障矩阵验证系统普通声音同传；#513已取消，不再验收克隆。",
           "status": "unverified",
           "summary": "未安装签名发布版或BlackHole，未更改真实系统输入，未做两端会议译音、真实文字服务或热插拔/睡眠/崩溃恢复。profile合成性能通过不代表同传延迟、音质或真实路由通过。",
           "title": "Mac 同传真实路由与输入恢复"
@@ -2501,7 +2490,8 @@
       519,
       521,
       522,
-      524
+      524,
+      526
     ]
   }
 }
