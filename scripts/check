@@ -6,6 +6,7 @@ cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 # Static analysis and unit tests. Device, install and signing acceptance stay manual (see AGENTS.md).
 python3 scripts/test_cleanup_app_registrations.py
 python3 scripts/test_android_check.py
+python3 scripts/test_ci.py
 if [[ "$(uname)" == "Darwin" ]]; then scripts/test-input-device-lease; fi
 flutter analyze
-flutter test
+flutter test "$@"

@@ -19,7 +19,7 @@ flutter pub get
 scripts/check
 ```
 
-`scripts/check` 运行 `flutter analyze` 和 `flutter test`，与 CI 相同。要逐文件确认跑了哪些测试，用 `flutter test --reporter expanded`。改动 BLE、播放、音频转换、JSON 存储或问答检索时，再跑一次 `scripts/perf-check` 并把数字写进 PR。
+`scripts/check` 运行 Python 脚本回归、Mac 输入租约夹具、`flutter analyze` 和 `flutter test`。要逐文件确认跑了哪些测试，用 `scripts/check --reporter expanded`。CI 对代码改动运行此入口；纯文档和进度更新的分流见 [CI 运行机](docs/agents/ci-runner.md)。改动 BLE、播放、音频转换、JSON 存储或问答检索时，再跑一次 `scripts/perf-check` 并把数字写进 PR。
 
 ## 交付
 
