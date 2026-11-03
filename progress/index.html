@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-03T16:07:49.502124Z</p>
-<p>Main: <code>main: 1d2a8010bb44f55ae82fe891e1f483984b8c10ca</code></p>
+<p>Observed: 2026-11-03T16:14:09.061225Z</p>
+<p>Main: <code>main: a93d6fdcfb51790d5c3de6acfcbb8b1bf9aa02c1</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -287,6 +287,15 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/cleanup_app_registrations.py">file scripts/cleanup_app_registrations.py: 限定临时目录，包含嵌套 App、大小写别名及延迟注册复核</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/463">pull 463: 清理脚本改动、复审与验证记录；不代表安装或用户体验验收。</a></li>
 </ul><p>Next: 后续打包和验收沿用清理入口；运行副本或注销失败时保留目录并报告。</p></article>
+</section>
+<section id="export-mcp"><h2>本机导出只读 MCP</h2>
+<article id="export-mcp-implementation"><h3>指定导出目录的三个只读工具</h3><span class="badge">done</span><p>三个只读工具已实现；生产导出器合成包经真实子进程读取通过，11项协议测试通过。静态分析与全量1090项Flutter测试通过；追加现有CI包装后的两项定向测试通过。未安装客户端。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/527">issue 527: 用户单独批准的最小导出接入范围</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/tools/koe-mcp/README.md">file tools/koe-mcp/README.md: 启动、协议、导出格式边界与复验命令</a></li>
+</ul><p>Next: 真实资料、安装App导出与客户端接入验收见 #528。</p></article>
+<article id="export-mcp-acceptance"><h3>真实资料导出与客户端接入</h3><span class="badge">unverified</span><p>合成内容不等于真实录音；未安装或配置客户端连接。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/528">issue 528: 真实 App 导出、内容对照和客户端恢复独立验收</a></li>
+</ul><p>Next: 在授权的客户端读取用户指定的真实无音频资料包。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
