@@ -511,9 +511,21 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-03T16:04:01Z"
+      },
+      {
+        "number": 527,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T16:05:31Z"
+      },
+      {
+        "number": 528,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T16:05:40Z"
       }
     ],
-    "main": "1d2a8010bb44f55ae82fe891e1f483984b8c10ca",
+    "main": "a93d6fdcfb51790d5c3de6acfcbb8b1bf9aa02c1",
     "open_pulls": [],
     "pulls": [
       {
@@ -984,7 +996,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T16:07:49.502124Z",
+  "observed_at": "2026-11-03T16:14:09.061225Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2342,6 +2354,45 @@
         }
       ],
       "title": "构建清理"
+    },
+    {
+      "id": "export-mcp",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "用户单独批准的最小导出接入范围",
+              "ref": 527
+            },
+            {
+              "kind": "file",
+              "note": "启动、协议、导出格式边界与复验命令",
+              "ref": "tools/koe-mcp/README.md"
+            }
+          ],
+          "id": "export-mcp-implementation",
+          "next": "真实资料、安装App导出与客户端接入验收见 #528。",
+          "status": "done",
+          "summary": "三个只读工具已实现；生产导出器合成包经真实子进程读取通过，11项协议测试通过。静态分析与全量1090项Flutter测试通过；追加现有CI包装后的两项定向测试通过。未安装客户端。",
+          "title": "指定导出目录的三个只读工具"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "真实 App 导出、内容对照和客户端恢复独立验收",
+              "ref": 528
+            }
+          ],
+          "id": "export-mcp-acceptance",
+          "next": "在授权的客户端读取用户指定的真实无音频资料包。",
+          "status": "unverified",
+          "summary": "合成内容不等于真实录音；未安装或配置客户端连接。",
+          "title": "真实资料导出与客户端接入"
+        }
+      ],
+      "title": "本机导出只读 MCP"
     }
   ],
   "title": "Koe 开发进度",
@@ -2431,7 +2482,9 @@
       513,
       514,
       515,
-      516
+      516,
+      527,
+      528
     ],
     "pulls": [
       62,

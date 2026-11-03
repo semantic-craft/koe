@@ -83,4 +83,6 @@
 
 ## 怎么更新本文
 
+2026-11-04 用户单独排期 [#527](https://github.com/semantic-craft/koe/issues/527)：先验证合成导出内容，再提供本机指定目录的只读 stdio MCP，见 [使用说明](tools/koe-mcp/README.md)。仅开放无音频导出快照的列表、文稿与已有纪要读取；#152–#155 的手机连接界面、交办及回写仍冻结。真实 App 导出和客户端接入另验 [#528](https://github.com/semantic-craft/koe/issues/528)。
+
 合并 PR 或改变排期后，在同一个 PR 里更新本文对应的行；工单本身仍是需求的唯一来源。
