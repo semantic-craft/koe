@@ -4,12 +4,14 @@ import FlutterMacOS
 @main
 class AppDelegate: FlutterAppDelegate {
   private var macApp: MacAppChannel?
+  private let captions = CaptionsPanel()
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController
     else { return }
     macApp = MacAppChannel(
       binaryMessenger: controller.engine.binaryMessenger, window: mainFlutterWindow)
+    captions.configure(controller.engine.binaryMessenger)
     addCloseWindowItem()
   }
 

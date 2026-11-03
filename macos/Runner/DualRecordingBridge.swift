@@ -17,6 +17,8 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
     private var active = false
     private var transcribe = true
     private var generation = 0
+    private var sessionID = ""
+    private var localeID = "zh-CN"
     private var lastLevel: [String: Double] = [:]
     private var lastData: [String: Double] = [:]
     private var lastSound: [String: Double] = [:]
@@ -41,6 +43,8 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
                     guard let args = call.arguments as? [String: Any], let path = args["path"] as? String else {
                         throw CocoaError(.fileWriteInvalidFileName)
                     }
+                    self.sessionID = args["session"] as? String ?? UUID().uuidString
+                    self.localeID = args["locale"] as? String ?? "zh-CN"
                     try self.start(path: path, input: args["input"] as? String ?? "", transcribe: args["transcribe"] as? Bool ?? true)
                     result(nil)
                 case "pause": self.pause(); result(nil)
@@ -85,27 +89,30 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
                 guard status == .authorized else {
                     self.emit(["speechNotice": "未允许语音识别；双路原件仍会保存"]); return
                 }
-                let probe = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+                let probe = SFSpeechRecognizer(locale: Locale(identifier: self.localeID))
                 guard let probe, probe.supportsOnDeviceRecognition, probe.isAvailable else {
                     self.emit(["speechNotice": "此设备暂不支持本机实时识别；双路原件仍会保存"]); return
                 }
                 for lane in ["microphone", "system"] {
+                    let session = self.sessionID
                     self.speech[lane] = DualLiveSpeech(
+                        locale: self.localeID,
                         onEnded: { [weak self] in self?.arbiter.requestEnded(lane: lane) },
                         onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }
-                    ) { [weak self] text, offset, final, current in
-                        self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane)
+                    ) { [weak self] text, offset, final, current, requestID in
+                        self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane, requestID: requestID, session: session)
                     }
                 }
             }
         }
     }
 
-    private func speechUpdated(_ text: String, offset: Double, final: Bool, current: Bool, lane: String) {
+    private func speechUpdated(_ text: String, offset: Double, final: Bool, current: Bool, lane: String, requestID: String, session: String) {
+        guard session == sessionID else { return }
         if current && !text.isEmpty && speechNotices.removeValue(forKey: lane) != nil {
             emit(["speechNotice": speechNotices.keys.sorted().compactMap { speechNotices[$0] }.joined(separator: "\n")])
         }
-        emit(["lane": lane, "text": text, "offset": offset, "final": final])
+        emit(["lane": lane, "text": text, "offset": offset, "final": final, "requestId": requestID, "sourceLanguage": localeID])
     }
 
     private func speechFailed(_ error: Error, lane: String) {
@@ -242,11 +249,13 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         restart("microphone", token: generation); restart("system", token: generation)
         if transcribe && SFSpeechRecognizer.authorizationStatus() == .authorized {
             for lane in ["microphone", "system"] {
+                let session = sessionID
                 speech[lane] = DualLiveSpeech(
+                    locale: localeID,
                     onEnded: { [weak self] in self?.arbiter.requestEnded(lane: lane) },
                     onFailure: { [weak self] error in self?.speechFailed(error, lane: lane) }
-                ) { [weak self] text, offset, final, current in
-                    self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane)
+                ) { [weak self] text, offset, final, current, requestID in
+                    self?.speechUpdated(text, offset: offset, final: final, current: current, lane: lane, requestID: requestID, session: session)
                 }
             }
         }
@@ -274,16 +283,16 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
         guard active, token == generation else { return }
         stop { [weak self] _ in self?.emit(["error": "写入录音失败：\(error.localizedDescription)", "stopped": true]) }
     }
-    private func emit(_ value: [String: Any]) { sink?(value) }
+    private func emit(_ value: [String: Any]) { var event = value; event["session"] = sessionID; sink?(event) }
 }
 
 /// Separate on-device recognition requests for the two sources. Rollover keeps
 /// Apple's bounded request lifetime out of a long recording's capture lifecycle.
 private final class DualLiveSpeech {
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+    private let recognizer: SFSpeechRecognizer?
     private var current: DualSpeechRequest?
     private var finishing: [DualSpeechRequest] = []
-    private let update: (String, Double, Bool, Bool) -> Void
+    private let update: (String, Double, Bool, Bool, String) -> Void
     private let onEnded: () -> Void
     private let onFailure: (Error) -> Void
     private var requestGeneration = 0
@@ -292,20 +301,23 @@ private final class DualLiveSpeech {
         return false
     }
     init(
+        locale: String,
         onEnded: @escaping () -> Void,
         onFailure: @escaping (Error) -> Void,
-        update: @escaping (String, Double, Bool, Bool) -> Void
+        update: @escaping (String, Double, Bool, Bool, String) -> Void
     ) {
+        self.recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale))
         self.onEnded = onEnded; self.onFailure = onFailure; self.update = update
     }
     func start(at time: Double) -> Bool {
         requestGeneration += 1
         let token = requestGeneration
+        let requestID = UUID().uuidString
         closeCurrentRequest()
         guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else { return false }
         current = DualSpeechRequest(recognizer: recognizer, offset: time, update: { [weak self] text, offset, final in
             guard let self else { return }
-            self.update(text, offset, final, self.requestGeneration == token)
+            self.update(text, offset, final, self.requestGeneration == token, requestID)
             if final && self.requestGeneration == token {
                 self.onEnded()
             }

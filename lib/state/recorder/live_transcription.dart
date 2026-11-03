@@ -7,6 +7,23 @@ part of '../recorder_controller.dart';
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderLiveTranscription on ChangeNotifier {
+  // Provided by _RecorderLiveMeeting.
+  void beginLiveMeeting(
+    String id, {
+    String? recordingKey,
+    bool available = true,
+    String language = 'zh',
+  });
+  void closeLiveMeetingInput(String id);
+  Future<void> finishLiveMeeting(String id, {String? recordingKey});
+  void acceptLiveSpeech(
+    String id,
+    String connection,
+    SttStreamEvent event, {
+    String? language,
+  });
+  void invalidateLiveMeeting(String reason);
+
   // --- Provided by RecorderController and its other parts. ---
   bool get _activeAutoTranscribe;
   bool get _activeSttConfigured;
@@ -126,6 +143,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       }
     }());
   }
+
   bool _isConfigured(SpeechConfiguration config) {
     if (config.provider.retired) return false;
     if (config.provider.needsCredentials) {
@@ -396,6 +414,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         return false;
       }
 
+      if (previousSession != null) {
+        invalidateLiveMeeting('实时连接中断，可能存在未确认缺口，请在会后整理');
+      }
       _streamTranscriptPrefix = (transcriptPartial ?? transcript).trim();
       _currentRecording?.transcriptionComplete = false;
       session = _createStreamSession(config);
@@ -511,6 +532,14 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   }
 
   void _onSttStreamEvent(SttStreamEvent e) {
+    if (_currentSessionId != null) {
+      acceptLiveSpeech(
+        _currentSessionId!,
+        'ble-$_sttLifecycleRevision',
+        e,
+        language: _activeConfiguration.sourceLanguage,
+      );
+    }
     final translationSnapshotUpdated =
         (translationModeActive || communicationModeActive) &&
         (e.type == 'partial' || e.type == 'done');
@@ -609,11 +638,16 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   Future<void> _finishStreamStt({String? bindPath}) async {
     final session = _sttStream;
     final recordingSession = _currentRecording;
+    if (recordingSession != null) closeLiveMeetingInput(recordingSession.id);
     if (session == null && _pendingPcm.isEmpty) {
       if (recordingSession != null) {
         recordingSession.finalizing = false;
         _snapshotLiveText();
         _saveLiveRecording(recordingSession, path: bindPath);
+        await finishLiveMeeting(
+          recordingSession.id,
+          recordingKey: bindPath == null ? null : 'audio:$bindPath',
+        );
       }
       return;
     }
@@ -629,6 +663,14 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         final done = await session.finish();
         if (revision != _sttLifecycleRevision) return;
         if (done != null) {
+          if (recordingSession != null) {
+            acceptLiveSpeech(
+              recordingSession.id,
+              'ble-$revision',
+              done,
+              language: _activeConfiguration.sourceLanguage,
+            );
+          }
           // The same rule as the subscribed `done` event: never let a short
           // final tail replace the longer text already shown or saved.
           _applyServerFinalText(done.text);
@@ -651,6 +693,14 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         _saveLiveRecording(recordingSession, path: bindPath);
       }
     } finally {
+      if (recordingSession != null) {
+        await finishLiveMeeting(
+          recordingSession.id,
+          recordingKey: (bindPath ?? recordingSession.path) == null
+              ? null
+              : 'audio:${bindPath ?? recordingSession.path}',
+        );
+      }
       await subscription?.cancel();
       await session?.dispose();
       if (recordingSession != null) {
@@ -790,6 +840,13 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       config,
     )..textOnly = textOnly;
     _liveConfiguration = config;
+    if (!textOnly) {
+      beginLiveMeeting(
+        _currentSessionId!,
+        available: config.provider != SttProvider.doubao,
+        language: config.sourceLanguage,
+      );
+    }
     if (appleLanguagePreparationBusy) {
       _fileCancellation = _appleSpeech.cancelFileProcessing();
     }

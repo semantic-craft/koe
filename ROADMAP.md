@@ -68,7 +68,7 @@
 - **首批 A1 [#507](https://github.com/semantic-craft/koe/issues/507)**：分层议题、带出处的因果分支、人名术语候选、版本兼容、编辑保全及多格式导出，代码与回归已完成，交付见 [#517](https://github.com/semantic-craft/koe/pull/517)。真实三端/千问效果在 [#514](https://github.com/semantic-craft/koe/issues/514) 单独验收。
 - **A1b [#508](https://github.com/semantic-craft/koe/issues/508)**：v2 资料包携带当前纪要和最多10版历史，重复导入去重、冲突保留本机版本、无音频阅读与同原件补配；代码实现完成，静态分析和全量1057项测试通过；真实跨端验收归 #514。
 - **A2 [#509](https://github.com/semantic-craft/koe/issues/509)**：词表采纳、本场订正确认、名称关联原句及跨包历史凭证；代码实现完成，静态分析和全量1057项测试通过；真实跨端验收归 #514。
-- **B1/B2 [#510](https://github.com/semantic-craft/koe/issues/510)、[#511](https://github.com/semantic-craft/koe/issues/511)**：有界实时纪要、双语字幕、可取消会议收尾；真机验收 [#515](https://github.com/semantic-craft/koe/issues/515)。
+- **B1/B2 [#510](https://github.com/semantic-craft/koe/issues/510)、[#511](https://github.com/semantic-craft/koe/issues/511)**：有界实时纪要、双语字幕、Mac字幕条/纪要窗口和可取消会议收尾已实现；EGM详细设计三路复审通过，check静态分析和1076项测试通过，Mac原生构建与八个性能场景通过。真机验收 [#515](https://github.com/semantic-craft/koe/issues/515)。
 - **C1/C2 [#512](https://github.com/semantic-craft/koe/issues/512)、[#513](https://github.com/semantic-craft/koe/issues/513)**：Mac 同传与虚拟麦克风、可选自然声和本人声音克隆；真实路由/服务验收 [#516](https://github.com/semantic-craft/koe/issues/516)。
 
 首批完成不代表全量对齐，不用模型输出格式合法代替真实会议内容准确。后续实现无需重新询问已批准的产品边界；本地模型旧暂缓项仅在具体能力确有依赖时重新排期。

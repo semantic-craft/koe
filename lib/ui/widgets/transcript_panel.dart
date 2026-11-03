@@ -1,3 +1,4 @@
+import 'live_meeting_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -40,6 +41,7 @@ class TranscriptPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const LiveMeetingPanel(),
             if (!c.sttConfigured)
               Text(
                 '请在设置中配置语音服务',
@@ -48,6 +50,7 @@ class TranscriptPanel extends StatelessWidget {
             else if (hasText)
               Row(
                 children: [
+                  const LiveMeetingPanel(),
                   Expanded(
                     child: Text(
                       '转写',

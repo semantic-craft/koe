@@ -13,6 +13,7 @@ final class GlobalHotKeys {
   /// here plus one.
   private static let keys: [(name: String, code: Int)] = [
     ("record", kVK_ANSI_R), ("highlight", kVK_ANSI_B),
+    ("captions", kVK_ANSI_C), ("captionsHide", kVK_ANSI_H),
   ]
   private static let signature: OSType = 0x4B6F_6548  // 'KoeH'
   private var held: [String: EventHotKeyRef] = [:]

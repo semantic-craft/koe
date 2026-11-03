@@ -27,6 +27,57 @@ class Mic extends PhoneRecorder {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('dual-test');
+  test(
+    'partial and old-session speech never become confirmed minutes sources',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('dual-final-');
+      final events = StreamController<dynamic>.broadcast(sync: true);
+      String? session;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'supported') return true;
+            if (call.method == 'start') {
+              session = (call.arguments as Map)['session'] as String?;
+            }
+            return null;
+          });
+      final recorder = MacDualRecorder(
+        microphone: Mic(),
+        channel: channel,
+        events: events.stream,
+      )..enabled = true;
+      await recorder.start('${dir.path}/a.wav');
+      events.add({
+        'session': session,
+        'lane': 'microphone',
+        'requestId': 'one',
+        'offset': 0,
+        'text': '半句',
+        'final': false,
+      });
+      expect(recorder.view.value.segments, isEmpty);
+      events.add({
+        'session': session,
+        'lane': 'microphone',
+        'requestId': 'one',
+        'offset': 0,
+        'text': '确定一句',
+        'final': true,
+      });
+      events.add({
+        'session': 'old',
+        'lane': 'microphone',
+        'requestId': 'two',
+        'offset': 1,
+        'text': '旧会话',
+        'final': true,
+      });
+      expect(recorder.view.value.segments.single.text, '确定一句');
+      await recorder.dispose();
+      await events.close();
+      await dir.delete(recursive: true);
+    },
+  );
   test('discard deletes both lanes even when native stop fails', () async {
     final directory = await Directory.systemTemp.createTemp('koe-dual-test-');
     final path = '${directory.path}/phone_123.wav';

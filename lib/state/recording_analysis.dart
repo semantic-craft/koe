@@ -768,6 +768,25 @@ class RecordingAnalysis extends ChangeNotifier {
        _doc = ContextFile('analysis.json', file: file, inMemory: inMemory);
   final AnalysisService _service;
 
+  /// One bounded live request, without whole-recording chunking or retries.
+  Future<String> runLiveRevision({
+    required String source,
+    required String instruction,
+    required String selectedModel,
+    required String apiKey,
+    required Future<void> abort,
+    required bool Function() isCurrent,
+  }) => _whileRequesting(() {
+    if (!isCurrent()) throw StateError('实时请求已取消或文字服务配置变化');
+    return _service.generate(
+      model: selectedModel,
+      apiKey: apiKey,
+      source: source,
+      instruction: instruction,
+      abort: abort,
+    );
+  });
+
   /// Wraps each model request; the controller keeps Koe running on Android
   /// until it returns.
   final Future<String> Function(Future<String> Function() request)

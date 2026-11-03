@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../state/atomic_file.dart';
+import '../state/live_segments.dart';
+import '../ai/cloud_stt_stream.dart' show speechRequestId;
 import 'dual_recording_text.dart';
 import 'phone_recorder.dart';
 
@@ -35,6 +37,9 @@ class MacDualRecorder
   StreamSubscription<PhoneMicState>? _fallbackStates;
   StreamSubscription<double>? _fallbackLevels;
   bool enabled = false;
+  String sourceLanguage = 'zh-CN';
+  String? _sessionId;
+  LiveSegmentCollector? _confirmed;
   bool _native = false;
   bool _started = false;
   String? _path;
@@ -63,6 +68,8 @@ class MacDualRecorder
   @override
   Future<void> start(String path) async {
     _path = path;
+    _sessionId = speechRequestId();
+    _confirmed = LiveSegmentCollector(_sessionId!);
     _text.clear();
     view.value = const DualRecordingView();
     _native = enabled && await _channel.invokeMethod<bool>('supported') == true;
@@ -88,6 +95,8 @@ class MacDualRecorder
     );
     await _channel.invokeMethod<void>('start', {
       'path': path,
+      'session': _sessionId,
+      'locale': sourceLanguage == 'auto' ? 'zh-CN' : sourceLanguage,
       'input': _input?.id,
     });
     _started = true;
@@ -97,6 +106,7 @@ class MacDualRecorder
 
   void _event(dynamic raw) {
     if (!_native || raw is! Map) return;
+    if (raw['session'] != _sessionId) return;
     final lane = raw['lane'];
     if (raw['level'] case final num level) {
       if (lane == 'microphone') {
@@ -116,8 +126,29 @@ class MacDualRecorder
       view.value = view.value.copyWith(speechNotice: notice);
     }
     if (raw['text'] case final String text) {
-      _text.update(lane as String, (raw['offset'] as num).toDouble(), text);
-      view.value = view.value.copyWith(text: _text.text);
+      if (lane is! String ||
+          raw['offset'] is! num ||
+          raw['requestId'] is! String) {
+        return;
+      }
+      final id = '$lane/${raw['requestId']}';
+      final finalAlready = _confirmed!.segments.any((s) => s.id == id);
+      if (raw['final'] != true && finalAlready) return;
+      _text.update(lane, (raw['offset'] as num).toDouble(), text);
+      if (raw['final'] == true) {
+        _confirmed!.acceptFinal(
+          session: _sessionId!,
+          id: id,
+          text: text,
+          sourceLanguage: raw['sourceLanguage'] as String? ?? sourceLanguage,
+          provider: 'Apple',
+        );
+      }
+      view.value = view.value.copyWith(
+        text: _text.text,
+        segments: _confirmed!.segments,
+        stale: _confirmed!.stale,
+      );
       final path = _path;
       final snapshot = _text.text;
       if (path != null) {
@@ -220,8 +251,11 @@ class DualRecordingView {
     this.systemNotice = '',
     this.speechNotice = '',
     this.text = '',
+    this.segments = const [],
+    this.stale = false,
   });
-  final bool active;
+  final bool active, stale;
+  final List<LiveSegment> segments;
   final double systemLevel;
   final String notice, systemNotice, speechNotice, text;
   DualRecordingView copyWith({
@@ -231,6 +265,8 @@ class DualRecordingView {
     String? systemNotice,
     String? speechNotice,
     String? text,
+    List<LiveSegment>? segments,
+    bool? stale,
   }) => DualRecordingView(
     active: active ?? this.active,
     systemLevel: systemLevel ?? this.systemLevel,
@@ -238,5 +274,7 @@ class DualRecordingView {
     systemNotice: systemNotice ?? this.systemNotice,
     speechNotice: speechNotice ?? this.speechNotice,
     text: text ?? this.text,
+    segments: segments ?? this.segments,
+    stale: stale ?? this.stale,
   );
 }
