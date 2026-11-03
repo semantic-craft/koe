@@ -27,6 +27,7 @@ class _MacInterpretingPanelState extends State<MacInterpretingPanel> {
   @override
   void initState() {
     super.initState();
+    _automatic = m.autoInput;
     unawaited(_refresh());
   }
 
@@ -37,6 +38,8 @@ class _MacInterpretingPanelState extends State<MacInterpretingPanel> {
       );
       if (!mounted) return;
       setState(() {
+        _input ??= m.inputUID;
+        _output ??= m.outputUID;
         _inputs = (result['inputs'] as List)
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
@@ -149,13 +152,19 @@ class _MacInterpretingPanelState extends State<MacInterpretingPanel> {
               '真实麦克风',
               _inputs,
               _input,
-              (v) => setState(() => _input = v),
+              (v) => setState(() {
+                _input = v;
+                m.inputUID = v;
+              }),
             ),
             _device(
               '译音输出',
               _outputs,
               _output,
-              (v) => setState(() => _output = v),
+              (v) => setState(() {
+                _output = v;
+                m.outputUID = v;
+              }),
             ),
             _language('我说的语种', m.sourceLanguage, (v) => m.sourceLanguage = v),
             _language('译成', m.targetLanguage, (v) => m.targetLanguage = v),

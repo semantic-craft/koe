@@ -7,6 +7,8 @@ import 'package:koe/state/live_minutes_store.dart';
 import 'package:koe/ui/widgets/mac_interpreting_panel.dart';
 
 class Devices extends MacInterpreting {
+  Devices({this.ready = false});
+  final bool ready;
   @override
   Stream<Map<String, dynamic>> get events => const Stream.empty();
   @override
@@ -18,14 +20,52 @@ class Devices extends MacInterpreting {
           'inputs': [
             {'uid': 'mic', 'name': '内置麦克风'},
           ],
-          'outputs': [],
-          'defaultInput': 'mic',
+          'outputs': ready
+              ? [
+                  {'uid': 'hole', 'name': 'BlackHole 2ch'},
+                ]
+              : [],
+          'defaultInput': ready ? 'hole' : 'mic',
           'error': '',
         }
       : null;
 }
 
 void main() {
+  testWidgets(
+    'reopening settings shows the pinned input after automatic routing',
+    (tester) async {
+      final m = MacInterpretingState(
+        bridge: Devices(ready: true),
+        store: LiveMinutesStore(inMemory: true),
+        translate: (s, a, c) async => '',
+        configuration: () => 'test',
+      );
+      await m.enable(input: 'mic', output: 'hole', automatic: true);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: MacInterpretingPanel(
+                model: m,
+                onEnable: (a, b, c) async {},
+                canInstall: () => true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('内置麦克风'), findsOneWidget);
+      expect(
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+      m.dispose();
+    },
+  );
+
   testWidgets(
     'missing driver has recovery instructions at narrow width and large text',
     (tester) async {

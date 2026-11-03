@@ -43,6 +43,7 @@ class MacInterpretingState extends ChangeNotifier {
       targetLanguage = 'en';
   String _session = '', _token = '', _fingerprint = '';
   String? _heldBy;
+  String? inputUID, outputUID;
   int _generation = 0;
   bool enabled = false, autoInput = false, _disposed = false, _restored = false;
   Completer<void>? _abort;
@@ -87,6 +88,8 @@ class MacInterpretingState extends ChangeNotifier {
     if (_enabling != null || enabled || _disposed) return;
     final g = ++_generation;
     _session = _id();
+    inputUID = input;
+    outputUID = output;
     _show(InterpretingPhase.preparing);
     final task = () async {
       try {
