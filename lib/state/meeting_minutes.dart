@@ -897,17 +897,14 @@ void _validateMinuteCalculations(
     }
   }
 
-  claim(
-    minutes.overview,
-    [for (var index = 1; index <= sourceTexts.length; index++) 'S$index'],
-  );
+  claim(minutes.overview, [
+    for (var index = 1; index <= sourceTexts.length; index++) 'S$index',
+  ]);
   addSectionItems(minutes.topics);
   addSectionItems(minutes.decisions);
   addSectionItems(minutes.actions);
   addSectionItems(minutes.questions);
-  addSectionItems([
-    for (final section in minutes.custom) ...section.items,
-  ]);
+  addSectionItems([for (final section in minutes.custom) ...section.items]);
   for (final term in minutes.terms) {
     claim('${term.name} ${term.note}', term.sources);
   }
@@ -916,12 +913,11 @@ void _validateMinuteCalculations(
     r'基数|按[^。；]{0,24}计算|基于[^。；]{0,24}计算|'
     r'按[^。；]{0,24}比例[^。；]{0,16}(?:缴纳|计算)',
   );
-  final percentage = RegExp(
-    r'\d+(?:\.\d+)?\s*%|百分之\d+(?:点\d+)?',
-  );
+  final percentage = RegExp(r'\d+(?:\.\d+)?\s*%|百分之\d+(?:点\d+)?');
   final wage = RegExp('工资');
+  final clause = RegExp(r'[。；！？\n]');
   for (final (text, sourceIndices) in claims) {
-    if (!calculation.hasMatch(text) || !percentage.hasMatch(text)) continue;
+    if (!percentage.hasMatch(text)) continue;
     final grounded = sourceIndices.any(
       (index) =>
           index >= 0 &&
@@ -929,7 +925,11 @@ void _validateMinuteCalculations(
           wage.hasMatch(sourceTexts[index]) &&
           percentage.hasMatch(sourceTexts[index]),
     );
-    if (!grounded) {
+    final combinesWageAndPercentage = text
+        .split(clause)
+        .any((part) => wage.hasMatch(part) && percentage.hasMatch(part));
+    if (!grounded &&
+        (calculation.hasMatch(text) || combinesWageAndPercentage)) {
       throw const FormatException('纪要拼接了原文未说明的计算基数');
     }
   }
