@@ -513,7 +513,7 @@
         "updated_at": "2026-11-03T13:39:32Z"
       }
     ],
-    "main": "92e5bbdc7057ededf74c56c5fe5289a6a5ec6bf9",
+    "main": "5c61e6a40de2c5d89068e8e8ebd19af5ce914f4e",
     "open_pulls": [],
     "pulls": [
       {
@@ -955,12 +955,20 @@
         "merged": true,
         "number": 521,
         "state": "closed"
+      },
+      {
+        "base": "92e5bbdc7057ededf74c56c5fe5289a6a5ec6bf9",
+        "head": "5e97b1f7e3d1e5da5e18e65ff6027b07c2d71a35",
+        "merge_commit": "5c61e6a40de2c5d89068e8e8ebd19af5ce914f4e",
+        "merged": true,
+        "number": 522,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T15:11:09.911238Z",
+  "observed_at": "2026-11-03T15:21:03.501390Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1081,6 +1089,11 @@
               "kind": "file",
               "note": "收口设计及上游源码对照。",
               "ref": "docs/design/live-minutes-captions.md"
+            },
+            {
+              "kind": "pull",
+              "note": "进度同步及字幕导出测试的后台目录清理竞态修复，最终CI通过。",
+              "ref": 522
             }
           ],
           "id": "cicada-live-meeting",
@@ -2430,7 +2443,8 @@
       503,
       517,
       519,
-      521
+      521,
+      522
     ]
   }
 }
