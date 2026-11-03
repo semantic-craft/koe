@@ -143,6 +143,7 @@ void main() {
       }) async {
         final isDraftInput = source.contains('实时识别草稿');
         return jsonEncode({
+          'schemaVersion': 2,
           'title': isDraftInput ? '草稿会议主题' : '正式会议主题',
           'overview': isDraftInput ? '来自实时草稿的概览' : '来自正式转写的概览',
           'topics': [
@@ -284,6 +285,7 @@ void main() {
         if (instruction.contains('用户确认回答')) {
           expect(instruction, contains('负责人确认是陈工'));
           return jsonEncode({
+            'schemaVersion': 2,
             'title': '架构升级纪要',
             'overview': '已根据确认回答更新负责人',
             'topics': [
@@ -306,6 +308,7 @@ void main() {
           });
         }
         return jsonEncode({
+          'schemaVersion': 2,
           'title': '架构升级纪要',
           'overview': '初版纪要',
           'topics': [
@@ -428,6 +431,7 @@ void main() {
           });
         }
         return jsonEncode({
+          'schemaVersion': 2,
           'title': '纪要标题',
           'overview': '说话人 1 安排了测试任务',
           'topics': [
@@ -550,6 +554,7 @@ void main() {
       }) async {
         if (instruction.contains('用户确认回答')) {
           return jsonEncode({
+            'schemaVersion': 2,
             'title': '产品周会（已修订）',
             'overview': '已确认发布负责人为张工',
             'topics': [
@@ -572,6 +577,7 @@ void main() {
           });
         }
         return jsonEncode({
+          'schemaVersion': 2,
           'title': '产品周会（初稿）',
           'overview': '讨论周五上线安排',
           'topics': [

@@ -61,6 +61,18 @@
 - [#374](https://github.com/semantic-craft/koe/issues/374) 第 5 期：纪要质量（词汇表、草稿、待确认、模板、OpenAI 兼容接口与本机 Ollama）
 - [#375](https://github.com/semantic-craft/koe/issues/375) 第 6 期：导出 PDF、Word、Markdown 和字幕，全文搜索，声纹（只存本机）
 
+## Cicada 功能对齐（2026-11-03 用户批准）
+
+总工单 [#506](https://github.com/semantic-craft/koe/issues/506)，设计见 [cicada-alignment](docs/design/cicada-alignment.md)。Mac 全量对齐；macOS/iOS/Android 共用会后能力，手机实时限定系统稳定支持的入口。千问保持默认，Mac 同传可选，普通系统声音默认。EGM 五阶段评审已完成，首批 A1 经复审无 Blocker/Major；后续阶段详细契约随工单收口。
+
+- **首批 A1 [#507](https://github.com/semantic-craft/koe/issues/507)**：分层议题、带出处的因果分支、人名术语候选、版本兼容、编辑保全及多格式导出，代码与回归已完成，正在通过 PR 交付。真实三端/千问效果在 [#514](https://github.com/semantic-craft/koe/issues/514) 单独验收。
+- **A1b [#508](https://github.com/semantic-craft/koe/issues/508)**：资料包纪要交换待详细设计。现有 `.koepack` 不携带纪要，不能把逐字稿交换当作纪要交换。
+- **A2 [#509](https://github.com/semantic-craft/koe/issues/509)**：术语采纳、名称关联原句及历史凭证。
+- **B1/B2 [#510](https://github.com/semantic-craft/koe/issues/510)、[#511](https://github.com/semantic-craft/koe/issues/511)**：有界实时纪要、双语字幕、可取消会议收尾；真机验收 [#515](https://github.com/semantic-craft/koe/issues/515)。
+- **C1/C2 [#512](https://github.com/semantic-craft/koe/issues/512)、[#513](https://github.com/semantic-craft/koe/issues/513)**：Mac 同传与虚拟麦克风、可选自然声和本人声音克隆；真实路由/服务验收 [#516](https://github.com/semantic-craft/koe/issues/516)。
+
+首批完成不代表全量对齐，不用模型输出格式合法代替真实会议内容准确。后续实现无需重新询问已批准的产品边界；本地模型旧暂缓项仅在具体能力确有依赖时重新排期。
+
 ## 冻结（暂不开工，除非用户重新排期）
 
 - **P3**：#151 判断与结果复盘；外部账号自动收件、硬件增强、逐词对齐/合成播客等尚未细化，不能直接开工。

@@ -245,10 +245,7 @@ List<TranscriptSegment> parseSubtitleTranscriptSegments(String raw) => [
     final speaker = vttMatch.group(1)!.trim();
     final text = vttMatch.group(2)!.trim();
     if (text.isNotEmpty) {
-      return (
-        text: text,
-        speaker: speaker.isEmpty ? null : speaker,
-      );
+      return (text: text, speaker: speaker.isEmpty ? null : speaker);
     }
   }
   // Prefix style: `张三：内容` or `说话人 1: 内容`
@@ -287,9 +284,45 @@ Duration? _parseCueClock(String value) {
 }
 
 /// Builds semantic Rich Text HTML for [minutes] and [result] (#492 / S32).
+/// Text fallbacks keep nested evidence in every portable document format.
+Iterable<MinuteItem> _topicDetails(MinuteItem item) sync* {
+  if (item is! MinuteTopic) return;
+  yield MinuteItem('概括：${item.summary}', item.sources);
+  for (final point in item.points) {
+    yield MinuteItem('要点：${point.text}', point.sources);
+  }
+  final fishbone = item.fishbone;
+  if (fishbone != null) {
+    yield MinuteItem('原因分析：${fishbone.question}', item.sources);
+    for (final cause in fishbone.branches) {
+      yield MinuteItem('原因 · ${cause.text}：${cause.detail}', cause.sources);
+    }
+  }
+}
+
+Iterable<(String, List<MinuteItem>)> _exportSections(
+  MeetingMinutes minutes,
+) sync* {
+  for (final section in minutes.sections) {
+    if (section.$1 == '未决问题' && minutes.terms.isNotEmpty) {
+      yield (
+        '人名和术语（待确认）',
+        [
+          for (final term in minutes.terms)
+            MinuteItem(
+              '${term.name}：${term.note}'
+              '${term.heard.isEmpty ? '' : '；识别变体：${term.heard.join('、')}'}',
+              term.sources,
+            ),
+        ],
+      );
+    }
+    yield section;
+  }
+}
+
 String buildMinutesHtml(MeetingMinutes minutes, AnalysisResult result) {
-  String esc(String s) =>
-      const HtmlEscape(HtmlEscapeMode.element).convert(s);
+  String esc(String s) => const HtmlEscape(HtmlEscapeMode.element).convert(s);
   final b = StringBuffer()
     ..writeln('<!DOCTYPE html>')
     ..writeln('<html lang="zh"><head><meta charset="utf-8">')
@@ -310,7 +343,7 @@ String buildMinutesHtml(MeetingMinutes minutes, AnalysisResult result) {
     b.writeln('</ul>');
   }
 
-  for (final (sectionTitle, items) in minutes.sections) {
+  for (final (sectionTitle, items) in _exportSections(minutes)) {
     b.writeln('<h2>${esc(sectionTitle)}</h2>');
     if (items.isEmpty) {
       b.writeln('<p>未提及</p>');
@@ -336,7 +369,17 @@ String buildMinutesHtml(MeetingMinutes minutes, AnalysisResult result) {
       b.writeln('<ul>');
       for (final item in items) {
         final cites = item.sources.map((s) => '[$s]').join(' ');
-        b.writeln('<li>${esc(item.text)} ${esc(cites)}</li>');
+        b.writeln('<li>${esc(item.text)} ${esc(cites)}');
+        final details = _topicDetails(item).toList();
+        if (details.isNotEmpty) {
+          b.writeln('<ul>');
+          for (final detail in details) {
+            final refs = detail.sources.map((s) => '[$s]').join(' ');
+            b.writeln('<li>${esc(detail.text)} ${esc(refs)}</li>');
+          }
+          b.writeln('</ul>');
+        }
+        b.writeln('</li>');
       }
       b.writeln('</ul>');
     }
@@ -358,10 +401,7 @@ String buildMinutesHtml(MeetingMinutes minutes, AnalysisResult result) {
 /// `_rels/.rels`, `word/_rels/document.xml.rels`, `word/styles.xml`, and
 /// `word/document.xml` with structured headings, bullet items, an action-items
 /// table, and `[S#]` source citations.
-Uint8List buildMinutesDocxBytes(
-  MeetingMinutes minutes,
-  AnalysisResult result,
-) {
+Uint8List buildMinutesDocxBytes(MeetingMinutes minutes, AnalysisResult result) {
   String escXml(String text) => text
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
@@ -370,7 +410,9 @@ Uint8List buildMinutesDocxBytes(
       .replaceAll("'", '&apos;');
 
   String wParagraph(String text, {String? style, bool bold = false}) {
-    final pPr = style != null ? '<w:pPr><w:pStyle w:val="$style"/></w:pPr>' : '';
+    final pPr = style != null
+        ? '<w:pPr><w:pStyle w:val="$style"/></w:pPr>'
+        : '';
     final rPr = bold ? '<w:rPr><w:b/></w:rPr>' : '';
     return '<w:p>$pPr<w:r>$rPr<w:t xml:space="preserve">${escXml(text)}</w:t></w:r></w:p>';
   }
@@ -397,7 +439,7 @@ Uint8List buildMinutesDocxBytes(
     }
   }
 
-  for (final (sectionTitle, items) in minutes.sections) {
+  for (final (sectionTitle, items) in _exportSections(minutes)) {
     body.write(wParagraph(sectionTitle, style: 'Heading2', bold: true));
     if (items.isEmpty) {
       body.write(wParagraph('未提及'));
@@ -428,7 +470,13 @@ Uint8List buildMinutesDocxBytes(
     } else {
       for (final item in items) {
         final cites = item.sources.map((s) => '[$s]').join(' ');
-        body.write(wParagraph('• ${item.text} $cites'));
+        body.write(
+          wParagraph('• ${item.text} $cites', bold: item is MinuteTopic),
+        );
+        for (final detail in _topicDetails(item)) {
+          final refs = detail.sources.map((s) => '[$s]').join(' ');
+          body.write(wParagraph('  ${detail.text} $refs'));
+        }
       }
     }
   }
@@ -529,7 +577,7 @@ Uint8List buildMinutesPdfBytes(
     }
   }
 
-  for (final (sectionTitle, items) in minutes.sections) {
+  for (final (sectionTitle, items) in _exportSections(minutes)) {
     lines.add((text: '', fontSize: 11));
     lines.add((text: sectionTitle, fontSize: 14));
     if (items.isEmpty) {
@@ -543,6 +591,12 @@ Uint8List buildMinutesPdfBytes(
           : '';
       for (final wrapped in _wrapPdfLines('• ${item.text}$meta $cites', 42)) {
         lines.add((text: wrapped, fontSize: 11));
+      }
+      for (final detail in _topicDetails(item)) {
+        final refs = detail.sources.map((s) => '[$s]').join(' ');
+        for (final wrapped in _wrapPdfLines('  ${detail.text} $refs', 42)) {
+          lines.add((text: wrapped, fontSize: 11));
+        }
       }
     }
   }
@@ -612,9 +666,7 @@ Uint8List buildMinutesPdfBytes(
     );
   }
 
-  objects[1] = utf8.encode(
-    '<< /Type /Catalog /Pages 2 0 R /Metadata 5 0 R >>',
-  );
+  objects[1] = utf8.encode('<< /Type /Catalog /Pages 2 0 R /Metadata 5 0 R >>');
   final kids = pageObjectIds.map((id) => '$id 0 R').join(' ');
   objects[2] = utf8.encode(
     '<< /Type /Pages /Kids [ $kids ] /Count ${pageObjectIds.length} >>',
