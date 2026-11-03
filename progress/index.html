@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-03T17:35:08.414625Z</p>
-<p>Main: <code>main: febd615c30e36b18fa9961c76f448baf9f31f13f</code></p>
+<p>Observed: 2026-11-03T17:55:03.179532Z</p>
+<p>Main: <code>main: a7bd4aff5f2fd0fc32a3338b2cc441f41346ff90</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -18,12 +18,13 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/509">issue 509: 实现及验收范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/514">issue 514: 实现及验收范围。</a></li>
 </ul><p>Next: 优先按 #514 用同一真实录音对照 Cicada 与 Koe，并验证三端交换和术语采纳；#513自然声与克隆已由用户取消。</p></article>
-<article id="cicada-post-meeting-acceptance"><h3>首批真实效果、三端安装与性能</h3><span class="badge">unverified</span><p>Mac签名安装版用公开AliMeeting两段共198.4秒真人会议音频完成真实Qwen转写与纪要对照。两人片段覆盖2人/术语，交叠片段覆盖4人/20.81秒标注重叠。PR #538已合并：同一转写下交叠错误decisions/actions由各1项降为0，建议留在议题；两人最终恢复“可能增加2–3人”，decisions/actions为空；4个英文模板超2000字入口的问题已修，15种模板/语言最长1959字，CI通过。PR #540已合并并经安装版构建：计算基数类数量关系必须能在同一条被引用原句找到，保存的真实拼接输出被拒、同批交叠输出通过；这防止错误纪要入库，不证明模型完全不再生成。ASR仍有交叠漏句和短句归属错误。Cicada官方v1.0.0已校验并启动，但未配置Ling，无实际输出；跨端交换与术语采纳未跑。</p><ul>
+<article id="cicada-post-meeting-acceptance"><h3>首批真实效果、三端安装与性能</h3><span class="badge">unverified</span><p>Mac签名安装版用公开AliMeeting两段共198.4秒真人会议音频完成真实Qwen转写与纪要对照。两人片段覆盖2人/术语，交叠片段覆盖4人/20.81秒标注重叠。PR #538已合并：同一转写下交叠错误decisions/actions由各1项降为0，建议留在议题；两人最终恢复“可能增加2–3人”，decisions/actions为空；4个英文模板超2000字入口的问题已修，15种模板/语言最长1959字，CI通过。PR #540已合并并经安装版构建：计算基数类数量关系必须能在同一条被引用原句找到，保存的真实拼接输出被拒、同批交叠输出通过；PR #542进一步拒绝未写“基数”的工资百分比同子句拼接。这防止错误纪要入库，不证明模型完全不再生成。ASR仍有交叠漏句和短句归属错误。Cicada官方v1.0.0已校验并启动，但未配置Ling，无实际输出；跨端交换与术语采纳未跑。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/514">issue 514: 真实服务、设备和性能未验收项。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/538">pull 538: 合并6598f00：真实样本确认建议不再升级为决议/待办，保留不确定度；不判内容全通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/536">issue 536: 英文模板入口预算回归已修。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/534">pull 534: 来源细分与请求批次分离，1094项Flutter CI通过；安装版同样本后段回听和历史保留已复验。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/540">pull 540: 合并febd615：保存真实拼接输出被拒、同批交叠输出通过；不证明模型完全不再生成。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/542">pull 542: 合并a7bd4af：同一子句拼接工资和百分比且引用原句缺一时被拒；分开事实和同句计算仍放行。</a></li>
 </ul><p>Next: 继续#514的Cicada真实同音频输出、跨端交换和术语采纳；ASR漏句与归属错误可在不依赖设备时单独核查。iPhone控制通道paused、Pixel未连接时先做不依赖设备部分。</p></article>
 <article id="cicada-live-meeting"><h3>实时纪要、双语字幕与 Mac 会议收尾</h3><span class="badge">done</span><p>PR #521 已 squash 合并、最终CI通过。每场显式开启，确定句段有界处理，先保存后显示，手改保留、续写成为候选；Mac字幕/纪要/隐藏三态、快捷键与可取消倒计时。EGM及独立代码复审收口，本机check1076项测试、原生profile构建和八个性能场景通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/521">pull 521: 实现、红绿回归、CI与性能数字；不代表用户验收。</a></li>
