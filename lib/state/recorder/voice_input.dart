@@ -20,6 +20,11 @@ enum VoiceTarget {
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderVoiceInput on ChangeNotifier {
+  // Provided by _RecorderInterpreting.
+  Future<T> withMicrophoneTransition<T>(
+    Future<T> Function() operation, {
+    bool starting = false,
+  });
   // --- Provided by RecorderController and its other parts. ---
   abstract bool _disposed;
   abstract final Future<void> _libraryLoaded;
@@ -80,6 +85,19 @@ mixin _RecorderVoiceInput on ChangeNotifier {
   /// Starts a hold. Returns false, with a reason in [voiceInputErrors], when
   /// the microphone cannot be used; the text input stays available.
   Future<bool> startVoiceHold(VoiceTarget target, {String? sessionId}) async {
+    try {
+      return await withMicrophoneTransition(
+        () => _startVoiceHold(target, sessionId: sessionId),
+        starting: true,
+      );
+    } catch (e) {
+      voiceInputErrors[target] = '$e';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> _startVoiceHold(VoiceTarget target, {String? sessionId}) async {
     if (_voiceTarget != null || _voiceBusy) return false;
     if (!phoneRecordingEnabled) {
       voiceInputErrors[target] = runsOnMac
@@ -161,7 +179,8 @@ mixin _RecorderVoiceInput on ChangeNotifier {
 
   /// Drops the current hold: the audio is deleted and nothing is sent or
   /// saved.
-  Future<void> cancelVoiceHold() async {
+  Future<void> cancelVoiceHold() => withMicrophoneTransition(_cancelVoiceHold);
+  Future<void> _cancelVoiceHold() async {
     final path = _voicePath;
     final target = _voiceTarget;
     if (path == null || target == null) return;
@@ -182,7 +201,9 @@ mixin _RecorderVoiceInput on ChangeNotifier {
   /// Ends a note hold and saves it as an original, then starts transcription
   /// unless automatic organizing already will. Returns the saved path, or
   /// null with a reason in [voiceInputErrors].
-  Future<String?> finishVoiceNote() async {
+  Future<String?> finishVoiceNote() =>
+      withMicrophoneTransition(_finishVoiceNote);
+  Future<String?> _finishVoiceNote() async {
     final path = _voicePath;
     final startedAt = _voiceStartedAt;
     if (_voiceTarget != VoiceTarget.note || path == null || startedAt == null) {
@@ -253,7 +274,9 @@ mixin _RecorderVoiceInput on ChangeNotifier {
   }
 
   /// Ends a question hold, recognizes it and sends the text to Ask Koe.
-  Future<void> finishVoiceQuestion() async {
+  Future<void> finishVoiceQuestion() =>
+      withMicrophoneTransition(_finishVoiceQuestion);
+  Future<void> _finishVoiceQuestion() async {
     final path = _voicePath;
     final sessionId = _voiceSessionId;
     if (_voiceTarget != VoiceTarget.ask || path == null || sessionId == null) {

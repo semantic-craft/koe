@@ -1,3 +1,6 @@
+import 'package:koe/platform/mac_interpreting.dart';
+import 'package:koe/state/mac_interpreting.dart';
+import 'package:koe/state/live_minutes_store.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -145,6 +148,53 @@ void main() {
     );
   }
 
+  testWidgets(
+    'cold-start lease recovery failure blocks ordinary microphone capture',
+    (tester) async {
+      final controller = await openKoe(tester, _Mic());
+      final interpreting = MacInterpretingState(
+        bridge: _RestoreFailure(prepare: true),
+        store: LiveMinutesStore(inMemory: true),
+        translate: (s, a, c) async => '',
+        configuration: () => 'test',
+      );
+      controller.interpreting?.dispose();
+      controller.interpreting = interpreting;
+      expect(interpreting.autoInput, isFalse);
+      await tester.runAsync(controller.startPhoneRecording);
+      expect(controller.phoneRecordingActive, isFalse);
+      expect(
+        controller.phoneRecordingError,
+        contains('original input missing'),
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  testWidgets(
+    'input restoration failure still saves the ordinary take before quitting',
+    (tester) async {
+      final controller = await openKoe(tester, _Mic());
+      await startFromMenu(tester, controller);
+      final interpreting = MacInterpretingState(
+        bridge: _RestoreFailure(),
+        store: LiveMinutesStore(inMemory: true),
+        translate: (s, a, c) async => '',
+        configuration: () => 'test',
+      );
+      controller.interpreting?.dispose();
+      controller.interpreting = interpreting;
+      await tester.runAsync(() => fromMac('quit'));
+      await settle(
+        tester,
+        () =>
+            !controller.phoneRecordingActive &&
+            !controller.phoneRecordingSaving,
+      );
+      await settle(tester, () => controller.library.assets.length == 1);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
   testWidgets(
     'the menu bar item shows the take, and its menu starts, pauses, resumes '
     'and saves it',
@@ -717,5 +767,22 @@ class _HeldStt extends QwenSttService {
     );
     uploading.complete();
     return done.future;
+  }
+}
+
+class _RestoreFailure extends MacInterpreting {
+  _RestoreFailure({this.prepare = false});
+  final bool prepare;
+  @override
+  Stream<Map<String, dynamic>> get events => const Stream.empty();
+  @override
+  Future<dynamic> call(
+    String method, [
+    Map<String, dynamic> args = const {},
+  ]) async {
+    if (method == 'disable' || prepare && method == 'prepareCapture') {
+      throw StateError('original input missing');
+    }
+    return null;
   }
 }

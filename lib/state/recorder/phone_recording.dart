@@ -53,6 +53,11 @@ abstract final class TakeSpaceCheck {
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderPhoneRecording on ChangeNotifier {
   String get appleSourceLanguage;
+  // Provided by _RecorderInterpreting.
+  Future<T> withMicrophoneTransition<T>(
+    Future<T> Function() operation, {
+    bool starting = false,
+  });
   // Provided by _RecorderLiveMeeting.
   void beginLiveMeeting(
     String id, {
@@ -291,6 +296,18 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
 
   /// Starts a microphone take. A denied permission leaves import available.
   Future<void> startPhoneRecording({bool captureSystem = false}) async {
+    try {
+      await withMicrophoneTransition(
+        () => _startPhoneRecording(captureSystem: captureSystem),
+        starting: true,
+      );
+    } catch (e) {
+      phoneRecordingError = '$e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> _startPhoneRecording({bool captureSystem = false}) async {
     if (!phoneRecordingEnabled || phoneRecordingActive || _phoneTakeBusy) {
       return;
     }
@@ -684,7 +701,9 @@ mixin _RecorderPhoneRecording on ChangeNotifier {
   /// null when nothing usable was recorded or the save failed; a failed save
   /// keeps the audio file and is retried on the next launch. A stop while
   /// one is under way waits for it.
-  Future<String?> stopPhoneRecording() {
+  Future<String?> stopPhoneRecording() =>
+      withMicrophoneTransition(_stopPhoneRecording);
+  Future<String?> _stopPhoneRecording() {
     if (_phoneTakeStop case final stopping?) return stopping;
     final path = _phoneTakePath;
     final startedAt = _phoneTakeStartedAt;

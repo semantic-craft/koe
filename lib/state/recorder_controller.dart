@@ -1,3 +1,5 @@
+import '../platform/mac_interpreting.dart';
+import 'mac_interpreting.dart';
 import '../platform/credential_store.dart';
 import '../platform/mac_dual_recorder.dart';
 
@@ -141,6 +143,7 @@ part 'recorder/transcription_jobs.dart';
 part 'recorder/transcripts.dart';
 part 'recorder/live_transcription.dart';
 part 'recorder/live_meeting.dart';
+part 'recorder/interpreting.dart';
 part 'recorder/settings.dart';
 part 'recorder/device.dart';
 part 'recorder/device_files.dart';
@@ -211,6 +214,7 @@ class RecorderController extends ChangeNotifier
         _RecorderTranscripts,
         _RecorderLiveTranscription,
         _RecorderLiveMeeting,
+        _RecorderInterpreting,
         _RecorderSettings,
         _RecorderDevice,
         _RecorderDeviceFiles,
@@ -320,6 +324,7 @@ class RecorderController extends ChangeNotifier
     AnalysisBackendKind.none => '',
   };
 
+  @override
   bool get analysisConfigured => switch (analysisBackend) {
     AnalysisBackendKind.qwen => (_qwenStt.apiKey ?? '').trim().isNotEmpty,
     AnalysisBackendKind.openaiCompatible => () {
@@ -504,6 +509,7 @@ class RecorderController extends ChangeNotifier
     _initLiveMeeting(
       liveMeetingStore ?? LiveMinutesStore(inMemory: !loadPersistedState),
     );
+    _initInterpreting();
     _subs.add(
       _ble.scanResults.listen((list) {
         devices = list;
@@ -1884,6 +1890,7 @@ class RecorderController extends ChangeNotifier
     _todoLifecycle?.dispose();
     _disposeContextServices();
     _disposeAiKeepAlive();
+    _disposeInterpreting();
     _disposeLiveMeeting();
     _disposeResident();
     _lifecycle?.dispose();

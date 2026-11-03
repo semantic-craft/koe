@@ -71,8 +71,10 @@ final class MicrophoneSource: AudioSource {
         mElement: kAudioObjectPropertyElementMain
     )
     private let deviceUID: String
+    private let strictDevice: Bool
 
-    init(deviceUID: String) {
+    init(deviceUID: String, strictDevice: Bool = false) {
+        self.strictDevice = strictDevice
         self.deviceUID = deviceUID
     }
 
@@ -82,7 +84,8 @@ final class MicrophoneSource: AudioSource {
         let input = engine.inputNode
         if !deviceUID.isEmpty, let id = AudioDevices.deviceID(forUID: deviceUID) {
             try input.auAudioUnit.setDeviceID(id)
-        }
+            if strictDevice && input.auAudioUnit.deviceID != id { throw CaptureError.noInput }
+        } else if strictDevice { throw CaptureError.noInput }
         let hardwareFormat = input.inputFormat(forBus: 0)
         let format = (hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0)
             ? hardwareFormat
@@ -151,8 +154,8 @@ final class SystemAudioSource: AudioSource {
 
     func start() throws {
         // 排除自己（播放錄音時不要錄進去）
-        let own = AudioDevices.processObject(pid: ProcessInfo.processInfo.processIdentifier)
-        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: own.map { [$0] } ?? [])
+        guard let own = AudioDevices.processObject(pid: ProcessInfo.processInfo.processIdentifier) else { throw CaptureError.noInput }
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [own])
         description.uuid = UUID()
         description.muteBehavior = .unmuted
         description.isPrivate = true
@@ -294,7 +297,7 @@ enum AudioDevices {
         return AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr && size > 0
     }
 
-    private static func string(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
+    static func string(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
         var value: Unmanaged<CFString>?

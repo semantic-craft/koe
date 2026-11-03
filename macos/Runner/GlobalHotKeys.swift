@@ -8,20 +8,24 @@ import Carbon.HIToolbox
 final class GlobalHotKeys {
   /// Runs on the main thread with the name of the key pressed.
   var onPress: ((String) -> Void)?
+  var onPhase: ((String) -> Void)?
+  private var interpretDown = false
 
   /// The names Dart uses and their keys; a key's hot key ID is its place
   /// here plus one.
   private static let keys: [(name: String, code: Int)] = [
     ("record", kVK_ANSI_R), ("highlight", kVK_ANSI_B),
-    ("captions", kVK_ANSI_C), ("captionsHide", kVK_ANSI_H),
+    ("interpret", kVK_ANSI_T), ("captions", kVK_ANSI_C), ("captionsHide", kVK_ANSI_H),
   ]
   private static let signature: OSType = 0x4B6F_6548  // 'KoeH'
   private var held: [String: EventHotKeyRef] = [:]
   private var handler: EventHandlerRef?
 
   init() {
-    var pressed = EventTypeSpec(
-      eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+    var events = [
+      EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+      EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+    ]
     InstallEventHandler(
       GetApplicationEventTarget(),
       { _, event, userData in
@@ -32,8 +36,8 @@ final class GlobalHotKeys {
           MemoryLayout<EventHotKeyID>.size, nil, &id)
         guard status == noErr else { return status }
         let hotKeys = Unmanaged<GlobalHotKeys>.fromOpaque(userData).takeUnretainedValue()
-        return hotKeys.pressed(id) ? noErr : OSStatus(eventNotHandledErr)
-      }, 1, &pressed, Unmanaged.passUnretained(self).toOpaque(), &handler)
+        return hotKeys.pressed(id, down: GetEventKind(event) == UInt32(kEventHotKeyPressed)) ? noErr : OSStatus(eventNotHandledErr)
+      }, 2, &events, Unmanaged.passUnretained(self).toOpaque(), &handler)
   }
 
   deinit {
@@ -45,6 +49,7 @@ final class GlobalHotKeys {
   /// app holds, tried again on every call.
   func hold(_ names: Set<String>) -> [String] {
     for (name, ref) in held where !names.contains(name) {
+      if name == "interpret", interpretDown { interpretDown = false; onPhase?("cancel") }
       UnregisterEventHotKey(ref)
       held[name] = nil
     }
@@ -65,10 +70,13 @@ final class GlobalHotKeys {
     return taken
   }
 
-  private func pressed(_ id: EventHotKeyID) -> Bool {
+  private func pressed(_ id: EventHotKeyID, down: Bool) -> Bool {
     let index = Int(id.id) - 1
     guard id.signature == Self.signature, Self.keys.indices.contains(index) else { return false }
-    onPress?(Self.keys[index].name)
+    if Self.keys[index].name == "interpret" {
+      guard held["interpret"] != nil else { return true }
+      if down != interpretDown { interpretDown = down; onPhase?(down ? "down" : "up") }
+    } else if down { onPress?(Self.keys[index].name) }
     return true
   }
 }

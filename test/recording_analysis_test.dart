@@ -27,7 +27,28 @@ class FakeAnalysis implements AnalysisService {
   void dispose() {}
 }
 
+class FailedConfigurationStore extends RecordingAnalysis {
+  FailedConfigurationStore() : super(inMemory: true);
+  @override
+  Future<void> save() async => throw StateError('disk full');
+}
+
 void main() {
+  test(
+    'model change notifies live consumers even when configuration saving fails',
+    () async {
+      final analysis = FailedConfigurationStore();
+      addTearDown(analysis.dispose);
+      await analysis.load();
+      var changed = false;
+      analysis.addListener(() {
+        changed = analysis.model == 'new-model';
+      });
+      await expectLater(analysis.configure('new-model'), throwsStateError);
+      expect(changed, isTrue);
+    },
+  );
+
   test('source splitting retains all characters and supplementary unicode', () {
     final text = List.filled(7001, '一🙂\n').join();
     final blocks = analysisSourceBlocks(text);
@@ -216,10 +237,7 @@ void main() {
       expect(manager.requireTemplate(minutesTemplateId).builtIn, isTrue);
       expect(manager.requireTemplate(bookNoteTemplateId).builtIn, isTrue);
       expect(manager.requireTemplate(thinkingNoteTemplateId).builtIn, isTrue);
-      expect(
-        () => manager.deleteTemplate(summaryTemplateId),
-        throwsStateError,
-      );
+      expect(() => manager.deleteTemplate(summaryTemplateId), throwsStateError);
       expect(
         () => manager.updateTemplate(
           bookNoteTemplateId,

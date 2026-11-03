@@ -7,6 +7,52 @@ import 'package:http/testing.dart';
 
 void main() {
   test(
+    'translation uses a dedicated system prompt for both text providers',
+    () async {
+      for (final compatible in [false, true]) {
+        final client = MockClient((request) async {
+          final messages =
+              (jsonDecode(request.body) as Map)['messages'] as List;
+          expect((messages.first as Map)['content'], translationSystemPrompt);
+          expect((messages.first as Map)['content'], isNot(contains('用中文')));
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'finish_reason': 'stop',
+                  'message': {'content': 'Hello'},
+                },
+              ],
+            }),
+            200,
+          );
+        });
+        final analysis = RecordingAnalysis(
+          inMemory: true,
+          service: compatible
+              ? OpenAiCompatibleAnalysisService(
+                  client: client,
+                  baseUrl: () => 'https://example.test/v1',
+                )
+              : QwenAnalysisService(client: client),
+        );
+        expect(
+          await analysis.runTranslation(
+            source: '你好',
+            instruction: '翻译为英语',
+            selectedModel: 'test',
+            apiKey: 'test',
+            abort: Completer<void>().future,
+            isCurrent: () => true,
+          ),
+          'Hello',
+        );
+        analysis.dispose();
+      }
+    },
+  );
+
+  test(
     'Qwen analysis preserves workspace endpoint and rejects truncated output',
     () async {
       var truncated = false;

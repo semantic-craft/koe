@@ -55,6 +55,11 @@ class TextCaptureOutcome {
 /// Mixed into [RecorderController]; members the rest of the controller owns
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderTextCapture on ChangeNotifier {
+  // Provided by _RecorderInterpreting.
+  Future<T> withMicrophoneTransition<T>(
+    Future<T> Function() operation, {
+    bool starting = false,
+  });
   // Provided by _RecorderLiveMeeting.
   void beginLiveMeeting(
     String id, {
@@ -295,6 +300,23 @@ mixin _RecorderTextCapture on ChangeNotifier {
   /// [fromDevice] takes speech from the connected recorder's live stream
   /// (fed through [feedDeviceTextCapture]) instead of the phone microphone.
   Future<bool> startTextCapture({
+    bool allDay = false,
+    bool fromDevice = false,
+  }) async {
+    if (fromDevice) return _startTextCapture(allDay: allDay, fromDevice: true);
+    try {
+      return await withMicrophoneTransition(
+        () => _startTextCapture(allDay: allDay),
+        starting: true,
+      );
+    } catch (e) {
+      textCaptureError = '$e';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> _startTextCapture({
     bool allDay = false,
     bool fromDevice = false,
   }) async {
@@ -1031,6 +1053,12 @@ mixin _RecorderTextCapture on ChangeNotifier {
   /// was closed. A stop while one is under way waits for that one, which
   /// keeps its own options.
   Future<TextCaptureOutcome?> stopTextCapture({
+    bool keepAudio = false,
+    bool keepAllDay = false,
+  }) => withMicrophoneTransition(
+    () => _stopTextCaptureEntry(keepAudio: keepAudio, keepAllDay: keepAllDay),
+  );
+  Future<TextCaptureOutcome?> _stopTextCaptureEntry({
     bool keepAudio = false,
     bool keepAllDay = false,
   }) {

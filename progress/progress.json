@@ -1137,13 +1137,18 @@
               "kind": "issue",
               "note": "剩余实现或真实路由验收。",
               "ref": 516
+            },
+            {
+              "kind": "file",
+              "ref": "docs/design/mac-interpreting.md",
+              "note": "直接上游源码对照、收口设计与实施边界。"
             }
           ],
           "id": "cicada-follow-on",
-          "next": "先对照 Cicada SpeakEngine、AudioRouter 和 VirtualMic，收口 #512 详细设计，再按工单实施。",
-          "status": "planned",
-          "summary": "#512/#513 尚未实施；实时纪要和双语字幕已由 PR #521 交付。真实路由与服务验收独立归 #516。",
-          "title": "Mac 同传及可选声音克隆"
+          "next": "合并 #512 并核对CI；真实路由与恢复归 #516，下一实现为 #513。",
+          "status": "in_progress",
+          "summary": "#512 已直接核对 Cicada 源码并完成 EGM 设计/实现复核；本机check1088项、原生profile构建、八个合成性能场景通过。代码待PR合并，真实路由未验。#513声音克隆尚未实施。",
+          "title": "Mac 同传与可选声音克隆"
         }
       ],
       "title": "Cicada 功能对齐"

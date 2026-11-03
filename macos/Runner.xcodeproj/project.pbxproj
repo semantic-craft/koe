@@ -44,6 +44,8 @@
 		D404A1002F40000100404002 /* DualRecordingWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D404A1002F40000100404001 /* DualRecordingWriter.swift */; };
 		D404A1002F40000300404002 /* DualSpeechRetryGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D404A1002F40000300404001 /* DualSpeechRetryGate.swift */; };
 		D404A1002F40000200404002 /* DualRecordingBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D404A1002F40000200404001 /* DualRecordingBridge.swift */; };
+		20A0BE485F840B6EA0AB1576 /* InputDeviceLease.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C293808C0EF1A6C9B385505 /* InputDeviceLease.swift */; };
+		23B1EA0F617051A1274D7071 /* InterpretingBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 742270F05831FBBD9B73599E /* InterpretingBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -118,6 +120,8 @@
 		D404A1002F40000100404001 /* DualRecordingWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualRecordingWriter.swift; sourceTree = "<group>"; };
 		D404A1002F40000300404001 /* DualSpeechRetryGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualSpeechRetryGate.swift; sourceTree = "<group>"; };
 		D404A1002F40000200404001 /* DualRecordingBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualRecordingBridge.swift; sourceTree = "<group>"; };
+		7C293808C0EF1A6C9B385505 /* InputDeviceLease.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputDeviceLease.swift; sourceTree = "<group>"; };
+		742270F05831FBBD9B73599E /* InterpretingBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterpretingBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -211,6 +215,8 @@
 				D404A1002F40000100404001 /* DualRecordingWriter.swift */,
 				D404A1002F40000300404001 /* DualSpeechRetryGate.swift */,
 				D404A1002F40000200404001 /* DualRecordingBridge.swift */,
+				7C293808C0EF1A6C9B385505 /* InputDeviceLease.swift */,
+				742270F05831FBBD9B73599E /* InterpretingBridge.swift */,
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				7E4F0A112EB0A00100405A01 /* GlobalHotKeys.swift */,
 				7E4F0A132EB0A00100406A01 /* MicrophoneUsers.swift */,
@@ -492,6 +498,8 @@
 				D404A1002F40000100404002 /* DualRecordingWriter.swift in Sources */,
 				D404A1002F40000300404002 /* DualSpeechRetryGate.swift in Sources */,
 				D404A1002F40000200404002 /* DualRecordingBridge.swift in Sources */,
+				20A0BE485F840B6EA0AB1576 /* InputDeviceLease.swift in Sources */,
+				23B1EA0F617051A1274D7071 /* InterpretingBridge.swift in Sources */,
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				7E4F0A122EB0A00100405A01 /* GlobalHotKeys.swift in Sources */,
 				7E4F0A142EB0A00100406A01 /* MicrophoneUsers.swift in Sources */,

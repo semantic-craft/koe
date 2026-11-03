@@ -288,7 +288,7 @@ final class DualRecordingBridge: NSObject, FlutterStreamHandler {
 
 /// Separate on-device recognition requests for the two sources. Rollover keeps
 /// Apple's bounded request lifetime out of a long recording's capture lifecycle.
-private final class DualLiveSpeech {
+final class DualLiveSpeech {
     private let recognizer: SFSpeechRecognizer?
     private var current: DualSpeechRequest?
     private var finishing: [DualSpeechRequest] = []
