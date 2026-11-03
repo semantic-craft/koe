@@ -63,15 +63,16 @@
 
 ## Cicada 功能对齐（2026-11-03 用户批准）
 
-总工单 [#506](https://github.com/semantic-craft/koe/issues/506)，设计见 [cicada-alignment](docs/design/cicada-alignment.md)。Mac 全量对齐；macOS/iOS/Android 共用会后能力，手机实时限定系统稳定支持的入口。千问保持默认，Mac 同传可选，普通系统声音默认。EGM 五阶段评审已完成，首批 A1 经复审无 Blocker/Major；后续阶段详细契约随工单收口。
+总工单 [#506](https://github.com/semantic-craft/koe/issues/506)，设计见 [cicada-alignment](docs/design/cicada-alignment.md)。Mac按保留范围对齐（2026-11-04取消自然声与声音克隆）；macOS/iOS/Android 共用会后能力，手机实时限定系统稳定支持的入口。千问保持默认，Mac 同传可选，普通系统声音默认。EGM 五阶段评审已完成，首批 A1 经复审无 Blocker/Major；后续阶段详细契约随工单收口。
 
 - **首批 A1 [#507](https://github.com/semantic-craft/koe/issues/507)**：分层议题、带出处的因果分支、人名术语候选、版本兼容、编辑保全及多格式导出，代码与回归已完成，交付见 [#517](https://github.com/semantic-craft/koe/pull/517)。真实三端/千问效果在 [#514](https://github.com/semantic-craft/koe/issues/514) 单独验收。
 - **A1b [#508](https://github.com/semantic-craft/koe/issues/508)**：v2 资料包携带当前纪要和最多10版历史，重复导入去重、冲突保留本机版本、无音频阅读与同原件补配；代码实现完成，静态分析和全量1057项测试通过；真实跨端验收归 #514。
 - **A2 [#509](https://github.com/semantic-craft/koe/issues/509)**：词表采纳、本场订正确认、名称关联原句及跨包历史凭证；代码实现完成，静态分析和全量1057项测试通过；真实跨端验收归 #514。
 - **B1/B2 [#510](https://github.com/semantic-craft/koe/issues/510)、[#511](https://github.com/semantic-craft/koe/issues/511)**：有界实时纪要、双语字幕、Mac字幕条/纪要窗口和可取消会议收尾已实现；EGM详细设计三路复审通过，check静态分析和1076项测试通过，Mac原生构建与八个性能场景通过。真机验收 [#515](https://github.com/semantic-craft/koe/issues/515)。
-- **C1/C2 [#512](https://github.com/semantic-craft/koe/issues/512)、[#513](https://github.com/semantic-craft/koe/issues/513)**：Mac 同传与虚拟麦克风、可选自然声和本人声音克隆；其中 #512 已按 Cicada 源码完成 EGM 详细设计与本地实施；代码交付与验证见 #512；#513 尚未实施。真实路由/服务验收 [#516](https://github.com/semantic-craft/koe/issues/516)。
+- **C1 [#512](https://github.com/semantic-craft/koe/issues/512)**：Mac按住同传、系统普通声音及虚拟麦克风路由已由PR #524合并；真实路由与输入恢复仍待 [#516](https://github.com/semantic-craft/koe/issues/516) 验收。
+- **C2 [#513](https://github.com/semantic-craft/koe/issues/513) 已取消**：2026-11-04用户明确不做自然声与本人声音克隆，工单以 not planned 关闭；未实现，不再排期。
 
-首批完成不代表全量对齐，不用模型输出格式合法代替真实会议内容准确。后续实现无需重新询问已批准的产品边界；本地模型旧暂缓项仅在具体能力确有依赖时重新排期。
+保留范围内#507–#512代码均已合并；剩余#514/#515/#516真实验收。优先用同一段录音对照Cicada与Koe的纪要质量，不用模型输出格式合法代替真实会议内容准确。后续实现无需重新询问已批准的产品边界；本地模型旧暂缓项仅在具体能力确有依赖时重新排期。
 
 ## 冻结（暂不开工，除非用户重新排期）
 
