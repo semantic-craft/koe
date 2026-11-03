@@ -450,7 +450,7 @@
         "number": 506,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T13:55:17Z"
+        "updated_at": "2026-11-03T14:33:25Z"
       },
       {
         "number": 507,
@@ -460,15 +460,15 @@
       },
       {
         "number": 508,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T14:11:35Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T14:33:27Z"
       },
       {
         "number": 509,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T14:11:39Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-03T14:33:29Z"
       },
       {
         "number": 510,
@@ -498,7 +498,7 @@
         "number": 514,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T14:27:56Z"
+        "updated_at": "2026-11-03T14:31:35Z"
       },
       {
         "number": 515,
@@ -513,7 +513,7 @@
         "updated_at": "2026-11-03T13:39:32Z"
       }
     ],
-    "main": "cfaee6cf1c69eb3b1c92a16a71f505f4bfca617a",
+    "main": "18e1146a1241bfebde59326fff6bc80a7cb6b8ec",
     "open_pulls": [],
     "pulls": [
       {
@@ -939,12 +939,20 @@
         "merged": true,
         "number": 517,
         "state": "closed"
+      },
+      {
+        "base": "cfaee6cf1c69eb3b1c92a16a71f505f4bfca617a",
+        "head": "86bb8c9f78ff9462b63f529f1a32cb9460d07bfe",
+        "merge_commit": "18e1146a1241bfebde59326fff6bc80a7cb6b8ec",
+        "merged": true,
+        "number": 519,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T14:29:08.291093Z",
+  "observed_at": "2026-11-03T14:35:20.776522Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -987,28 +995,33 @@
           "title": "首批代码：分层议题、因果和术语候选"
         },
         {
-          "id": "cicada-exchange-adoption",
-          "title": "资料包纪要交换与术语采纳",
-          "status": "in_progress",
-          "summary": "实现已完成，EGM 详细方案与独立代码复审均无剩余阻塞。资料包保留当前纪要及历史，无音频可只读阅读并补配原件；术语可加入词表或经确认订正本场，保存期间正文变化会撤销采纳状态。全量 check 静态分析及1057项测试通过，正在完成 PR 交付，未做真实跨端验收。",
-          "next": "完成全量检查、性能复测和 PR 合并；#514 跟踪真实跨端文件交换与术语质量。",
           "evidence": [
             {
-              "kind": "issue",
-              "ref": 508,
-              "note": "实现及验收范围。"
+              "kind": "pull",
+              "note": "实现、回归、评审和 CI 证据；不代表设备与用户验收。",
+              "ref": 519
             },
             {
               "kind": "issue",
-              "ref": 509,
-              "note": "实现及验收范围。"
+              "note": "实现及验收范围。",
+              "ref": 508
             },
             {
               "kind": "issue",
-              "ref": 514,
-              "note": "实现及验收范围。"
+              "note": "实现及验收范围。",
+              "ref": 509
+            },
+            {
+              "kind": "issue",
+              "note": "实现及验收范围。",
+              "ref": 514
             }
-          ]
+          ],
+          "id": "cicada-exchange-adoption",
+          "next": "#514 验证真实三端交换、原件补配、术语质量和回听；后续实现按 #510–#513 详细设计推进。",
+          "status": "done",
+          "summary": "PR #519 已 squash 合并，CI 通过。资料包 v2 携带当前纪要和最多10版历史，保留本机当前版、重复导入稳定、无音频可只读阅读并补配原件。术语可加入词表或确认订正本场，保留历史依据及正确名称检索。EGM 和独立代码复审无剩余问题；check 静态分析与1057项测试通过，未做真实跨端验收。",
+          "title": "资料包纪要交换与术语采纳"
         },
         {
           "evidence": [
@@ -1021,12 +1034,17 @@
               "kind": "pull",
               "note": "PR 验收记录包含性能运行失败边界。",
               "ref": 517
+            },
+            {
+              "kind": "pull",
+              "note": "本次性能复测无有效指标及跨端未验收边界。",
+              "ref": 519
             }
           ],
           "id": "cicada-post-meeting-acceptance",
-          "next": "#514：先恢复性能测试驱动，再记录场景数字；在 Mac/iPhone/Pixel 验证真实录音的阅读、回听、编辑、导出和内容质量。",
+          "next": "#514：保持 profile 窗口可见完成性能场景并记录数字；Mac/iPhone/Pixel 验证真实录音、资料包交换、术语采纳和内容质量。",
           "status": "unverified",
-          "summary": "未安装新版本，未调用真实千问或用同一录音对照 Cicada。Mac profile 构建成功，但性能驱动启动后 480 秒无数据，退出码 4；无有效性能指标，不能判通过或超标。",
+          "summary": "未安装新版本，未调用真实千问或用同一录音对照 Cicada。PR #519 本次 Mac profile 构建成功且驱动进入 BLE 场景，但窗口 lifecycle=hidden、30秒无帧，退出3；没有有效性能数字，不算通过或超标。资料包与术语的真实三端操作也待验收。",
           "title": "首批真实效果、三端安装与性能"
         },
         {
@@ -2369,7 +2387,8 @@
       501,
       502,
       503,
-      517
+      517,
+      519
     ]
   }
 }
