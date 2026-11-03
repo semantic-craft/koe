@@ -42,6 +42,19 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
       }
       throw MissingPluginException();
     });
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('com.semanticcraft.koe/interpreting'),
+      (call) async {
+        if (call.method == 'devices') {
+          return {'inputs': [], 'outputs': [], 'defaultInput': '', 'error': ''};
+        }
+        return null;
+      },
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('com.semanticcraft.koe/interpreting/events'),
+      (_) async => null,
+    );
     for (final entry in _pluginMocks.entries) {
       messenger.setMockMethodCallHandler(entry.key, entry.value());
     }

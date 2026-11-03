@@ -166,6 +166,7 @@ class MacApp {
   /// saved, which brings the window up to say why; null when there was
   /// nothing to do.
   Future<String?> Function(String key)? onHotKey;
+  void Function(String phase)? onHotKeyPhase;
 
   /// The hot keys another app holds, so Koe could not take them; checked
   /// again whenever [show] sends a change.
@@ -255,6 +256,9 @@ class MacApp {
         onAction?.call(call.arguments as String);
       case 'quit':
         await onQuit?.call();
+      case 'hotKeyPhase':
+        onHotKeyPhase?.call(call.arguments as String);
+        return null;
       case 'hotKey':
         return onHotKey?.call(call.arguments as String);
       case 'microphoneUsers':

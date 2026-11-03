@@ -141,7 +141,7 @@ Mac 字幕有纪要窗口、字幕条、隐藏三个状态；鼠标经过字幕�
 
 复用现有 Core Audio process tap；自身 process object 解析失败时禁止向虚拟设备播音，不回落为空排除列表。真实麦克风按 UID 绑定，不跟随系统默认输入切到 BlackHole。BlackHole 2ch 从官方入口由系统 Installer 安装，不打包驱动、不新增特权 helper、不在录音时重启 coreaudiod。默认让会议软件选择输入，显式自动切换开关使用持久设备租约：先记录原/目标 UID，再切换并读回验证；关闭/重启只在仍持有目标时恢复，设备消失则由用户选择真实设备。
 
-C1 默认复用本机/已有授权识别与文字翻译；系统 TTS 使用 AVSpeechSynthesizer.write(_:toBufferCallback:) 取得 PCM，交 AVAudioEngine/AVAudioPlayerNode，输出 AudioUnit 定向到用户选择的虚拟设备，不改默认扬声器。该 API 有官方证据，真实路由仍需签名安装版验证。默认沿用 Carbon 组合键并补 pressed/released 成对事件，不强求右 Option 或 Input Monitoring。按住会话有唯一 generation，松开只完成当前会话，取消使所有迟到结果失效。声音队列最多保留当前一句和下一句，超出时停下并说明，避免数分钟后播放陈旧讲话。
+C1 默认复用本机/已有授权识别与文字翻译；系统 TTS 使用 AVSpeechSynthesizer.write(_:toBufferCallback:) 取得 PCM，交 AVAudioEngine/AVAudioPlayerNode，输出 AudioUnit 定向到用户选择的虚拟设备，不改默认扬声器。该 API 有官方证据，真实路由仍需签名安装版验证。默认沿用 Carbon 组合键并补 pressed/released 成对事件，不强求右 Option 或 Input Monitoring。按住会话有唯一 generation，松开只完成当前会话，取消使所有迟到结果失效。本批按住同传一次只处理一句，忙时拒绝新句；详细实现以[Mac 同传设计](mac-interpreting.md)为准。
 
 C2 选择可选 Ming 无状态 reference TTS，不新增 voice ID/训练任务。POST /v1/audio/speech，模型 Ming-3.0-tts-0.5B，PCM 24000 Hz；普通声传 voice，克隆传 references（WAV data URI 与参考文本，编码音频不超过 10 MB）。SSE speech.audio.delta 的 Base64 音频必须跨网络块缓冲解析，speech.audio.done 才完成；奇数字节 PCM 留待后块。用户本人 8–30 秒样本明确启用后上传，每次请求前落盘状态；未知付费请求不重发。样本不进资料包、归档、日志或备份，删除立即停用。云合成尚未播放字节时可退回系统 TTS，播放一半失败只提示不从头重读；未配置云服务不阻塞普通声音。
 
@@ -239,7 +239,7 @@ C0/C1/C2 统一交付门槛：C0 的文档与协议调查已经有 本节列明�
 
 C0 的官方文档调查已形成平台证据；剩下可重放隔离实验：普通 TTS 音频进入虚拟输入、会议应用接收到、无自身反馈、取消静音和设备选择恢复。报告放 `.scratch`，稳定结论进入正式设计/工单。调查不安装驱动或改变当前设备，实际安装与路由在对应设备验收执行。
 
-C1 新增 `lib/state/interpretation_session.dart`、`lib/platform/interpretation_audio.dart`、`macos/Runner/InterpretationAudioBridge.swift`；通道方法为列出输入/输出 UID、开始/停止本句、播 PCM、取消、读取/恢复租约，事件有 generation、状态与错误。真实麦克风接现有采集所有权，PCM 统一 24000 Hz 单声道有符号 16-bit little-endian，系统 TTS 回调格式经转换再输出；格式转换失败停句。`AppDelegate.swift`、`GlobalHotKeys.swift`、工程 project.pbxproj 接线，新增 `lib/ui/widgets/interpretation_controls.dart` 和 `test/interpretation_session_test.dart`、`test/interpretation_device_lease_test.dart`。不复用 Android-only TtsAnswerSpeaker 假装 Mac 可用。
+C1 的文件、通道、采集/TTS格式、单句策略与测试由[Mac 同传详细设计](mac-interpreting.md)替代本段旧契约。采集复用16kHz Float32，系统TTS在原生侧保留实际格式，Dart不传PCM。C2云TTS的24kHz契约不改变。
 
 C2 新增 `lib/ai/ming_tts.dart`（请求与 SSE）、`lib/state/voice_sample_store.dart`（样本元数据与独立文件）、`lib/ui/widgets/voice_sample_settings.dart`、`test/ming_tts_test.dart`、`test/voice_sample_store_test.dart`；修改 `lib/state/app_settings_store.dart` 仅存非秘密选择，密钥用既有 credential_store 入口，settings_screen 接线。样本存应用私人目录下 voice-samples，平台标记不备份，资料包/归档白名单不得包含；删样本前先停止当前克隆并取消关联队列，文件删除失败显示原因且不重新启用。测试覆盖切片 SSE、超限请求、取消迟到音频、零字节回退、部分播音不重读、删除/重启和秘密不进设置。真实服务与设备工单独立。
 

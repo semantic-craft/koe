@@ -1,3 +1,4 @@
+import '../widgets/mac_interpreting_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -210,15 +211,14 @@ class SettingsScreen extends StatelessWidget {
                     const SectionLabel('会议提醒'),
                     _SettingsGroup(child: _MeetingAppSettings(controller: c)),
                   ],
-                  if ((runsOnMac || runsOnPhone) && c.phoneRecordingEnabled) ...[
+                  if ((runsOnMac || runsOnPhone) &&
+                      c.phoneRecordingEnabled) ...[
                     const SizedBox(height: 18),
                     const SectionLabel('日历'),
                     _SettingsGroup(
                       child: _SettingsSwitch(
                         key: const ValueKey('settings-meeting-from-calendar'),
-                        title: runsOnMac
-                            ? '用日历里的会议给录音命名'
-                            : '日历会议开录提醒与命名',
+                        title: runsOnMac ? '用日历里的会议给录音命名' : '日历会议开录提醒与命名',
                         subtitle: runsOnMac
                             ? '麦克风录音以日历里正在开或 5 分钟内开始的会议命名，受邀参会人的名字随原文交给会议纪要的模型。'
                                   '第一次录音时请求日历权限，可在系统设置的「隐私与安全性 › 日历」里更改'
@@ -296,6 +296,13 @@ class SettingsScreen extends StatelessWidget {
                     key: const ValueKey('settings-analysis-backend-group'),
                     child: _AnalysisBackendSettings(controller: c),
                   ),
+                  const SizedBox(height: 18),
+                  if (c.interpreting case final interpreting?)
+                    MacInterpretingPanel(
+                      model: interpreting,
+                      onEnable: c.enableInterpreting,
+                      canInstall: () => c.interpretingCanInstall,
+                    ),
                 ],
               ),
             ),

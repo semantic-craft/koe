@@ -35,11 +35,12 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/515">issue 515: 独立真机验收仍开放。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/521">pull 521: 代码交付边界和性能证据。</a></li>
 </ul><p>Next: 按 #515 已补的版本/设备/会议软件矩阵验证，并记录未通过或不支持的组合。</p></article>
-<article id="cicada-follow-on"><h3>Mac 同传及可选声音克隆</h3><span class="badge">planned</span><p>#512/#513 尚未实施；实时纪要和双语字幕已由 PR #521 交付。真实路由与服务验收独立归 #516。</p><ul>
+<article id="cicada-follow-on"><h3>Mac 同传与可选声音克隆</h3><span class="badge">in_progress</span><p>#512 已直接核对 Cicada 源码并完成 EGM 设计/实现复核；本机check1088项、原生profile构建、八个合成性能场景通过。代码待PR合并，真实路由未验。#513声音克隆尚未实施。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/512">issue 512: 剩余实现或真实路由验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/513">issue 513: 剩余实现或真实路由验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/516">issue 516: 剩余实现或真实路由验收。</a></li>
-</ul><p>Next: 先对照 Cicada SpeakEngine、AudioRouter 和 VirtualMic，收口 #512 详细设计，再按工单实施。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/design/mac-interpreting.md">file docs/design/mac-interpreting.md: 直接上游源码对照、收口设计与实施边界。</a></li>
+</ul><p>Next: 合并 #512 并核对CI；真实路由与恢复归 #516，下一实现为 #513。</p></article>
 </section>
 <section id="merged"><h2>代码与文档交付范围</h2>
 <article id="android-foundation"><h3>Android 工具链与手机界面</h3><span class="badge">done</span><p>覆盖工具链、应用身份与图标、手机平台判断和能力提示；代码交付与安装、设备验收分别判断。</p><ul>

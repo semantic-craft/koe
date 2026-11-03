@@ -22,6 +22,7 @@ class MacMenuBar {
       ..onAction = _run
       ..onQuit = _beforeQuit
       ..onHotKey = _hotKey
+      ..onHotKeyPhase = _interpretPhase
       ..onMicrophoneUsers = _microphoneUsers
       ..onMicrophoneSnapshot = _microphoneSnapshot
       ..onPromptAction = _promptAction;
@@ -31,6 +32,16 @@ class MacMenuBar {
     _app.hotKeysTaken.addListener(_show);
     _followTake();
     _show();
+  }
+
+  void _interpretPhase(String phase) {
+    final m = _controller.interpreting;
+    if (m == null) return;
+    unawaited(switch (phase) {
+      'down' => m.press(origin: 'hotkey'),
+      'up' => m.release(origin: 'hotkey'),
+      _ => m.cancel(),
+    });
   }
 
   final RecorderController _controller;
@@ -156,7 +167,18 @@ class MacMenuBar {
         MacMenuAction('captionsHide', '隐藏字幕窗口'),
       ]);
     }
+    if (c.interpreting?.enabled == true) {
+      lines.add('Mac同传：⌃⌥⌘T 按住说话');
+      actions.add(const MacMenuAction('interpretOff', '关闭同传'));
+      keepAwake ??= 'Koe is interpreting';
+      quitMessage ??= '同传已启用，要退出 Koe 吗？';
+      quitInfo.add('当前译音会立即停止，临时切换的输入会尝试恢复。');
+      if (_app.hotKeysTaken.value.contains('interpret')) {
+        lines.add('⌃⌥⌘T 被占用，请用设置里的按住按钮');
+      }
+    }
     final hotKeys = [
+      if (c.interpreting?.enabled == true) 'interpret',
       if (c.liveMeetingId != null &&
           c.liveMeetingAvailable &&
           !c.liveMeetingClosing) ...[
@@ -250,6 +272,12 @@ class MacMenuBar {
   void _run(String action) {
     final c = _controller;
     switch (action) {
+      case 'interpretOff':
+        unawaited(
+          _controller.interpreting?.disable().catchError((Object _) {}) ??
+              Future.value(),
+        );
+        return;
       case 'captions':
         c.cycleLiveDisplay();
       case 'captionsHide':
@@ -406,6 +434,11 @@ class MacMenuBar {
   /// launch; a save under way is waited for. Transcription is left to its
   /// journal.
   Future<void> _beforeQuit() async {
+    try {
+      await _controller.interpreting?.disable();
+    } catch (_) {
+      /* Native already stopped audio; still save takes. */
+    }
     final c = _controller;
     await Future.wait<Object?>([
       c.stopPhoneRecording(),
@@ -424,6 +457,7 @@ class MacMenuBar {
       ..onAction = null
       ..onQuit = null
       ..onHotKey = null
+      ..onHotKeyPhase = null
       ..onMicrophoneUsers = null
       ..onMicrophoneSnapshot = null
       ..onPromptAction = null;

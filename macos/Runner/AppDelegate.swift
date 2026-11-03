@@ -5,6 +5,7 @@ import FlutterMacOS
 class AppDelegate: FlutterAppDelegate {
   private var macApp: MacAppChannel?
   private let captions = CaptionsPanel()
+  private let interpreting = InterpretingBridge()
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     guard let controller = mainFlutterWindow?.contentViewController as? FlutterViewController
@@ -12,6 +13,8 @@ class AppDelegate: FlutterAppDelegate {
     macApp = MacAppChannel(
       binaryMessenger: controller.engine.binaryMessenger, window: mainFlutterWindow)
     captions.configure(controller.engine.binaryMessenger)
+    interpreting.configure(controller.engine.binaryMessenger)
+    macApp?.onConfirmedQuit = { [weak self] in self?.interpreting.shutdown() }
     addCloseWindowItem()
   }
 
@@ -45,6 +48,10 @@ class AppDelegate: FlutterAppDelegate {
     return macApp?.confirmQuit() ?? super.applicationShouldTerminate(sender)
   }
 
+  override func applicationWillTerminate(_ notification: Notification) {
+    interpreting.shutdown()
+  }
+
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
   }
@@ -67,6 +74,7 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
   private var clock: Timer?
   private var quitting = false
   private let hotKeys = GlobalHotKeys()
+  var onConfirmedQuit: (() -> Void)?
   private let microphoneUsers = MicrophoneUsers()
   private let prompts = PromptPanel()
 
@@ -98,6 +106,7 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
     statusItem.menu = menu
     showState()
     hotKeys.onPress = { [weak self] name in self?.pressed(name) }
+    hotKeys.onPhase = { [weak self] phase in self?.channel.invokeMethod("hotKeyPhase", arguments: phase) }
     microphoneUsers.onChange = { [weak self] users in
       self?.channel.invokeMethod("microphoneUsers", arguments: users)
     }
@@ -279,8 +288,10 @@ final class MacAppChannel: NSObject, NSMenuDelegate {
       NSApp.activate(ignoringOtherApps: true)
       guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
     } else if !status.saving {
+      onConfirmedQuit?()
       return nil
     }
+    onConfirmedQuit?()
     quitting = true
     channel.invokeMethod("quit", arguments: nil) { [weak self] _ in self?.finishQuit() }
     // The app waits in the modal panel run loop mode until it is answered;

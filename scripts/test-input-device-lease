@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+swiftc macos/Runner/InputDeviceLease.swift test/native/input_device_lease_test.swift -o "$work/lease-test"
+"$work/lease-test"
