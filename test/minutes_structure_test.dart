@@ -111,4 +111,36 @@ void main() {
       );
     },
   );
+  test('numeric calculations may not combine facts from separate sources', () {
+    final sources = [
+      '社保计划按最低比例，买个60%左右。',
+      '基本工资目前是平均工资在3000块左右。',
+      '缴费基数按基本工资3000元的60%计算。',
+    ];
+    final synthesized = structureFixture()..remove('terms');
+    final topic = (synthesized['topics'] as List).single;
+    topic['summary'] = '确认按最低比例缴纳，基数约为基本工资的60%。';
+    topic['sources'] = ['S1', 'S2'];
+    expect(
+      () => validateMinutes(jsonEncode(synthesized), sources),
+      throwsFormatException,
+    );
+
+    final separateFacts = Map<String, dynamic>.of(synthesized);
+    (separateFacts['topics'] as List).single['summary'] =
+        '社保计划约60%；基本工资约3000元。';
+    expect(
+      validateMinutes(jsonEncode(separateFacts), sources),
+      isA<String>(),
+    );
+
+    final groundedCalculation = Map<String, dynamic>.of(synthesized);
+    (groundedCalculation['topics'] as List).single['summary'] =
+        '缴费基数按基本工资3000元的60%计算。';
+    (groundedCalculation['topics'] as List).single['sources'] = ['S3'];
+    expect(
+      validateMinutes(jsonEncode(groundedCalculation), sources),
+      isA<String>(),
+    );
+  });
 }
