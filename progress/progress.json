@@ -450,7 +450,7 @@
         "number": 506,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T15:55:32Z"
+        "updated_at": "2026-11-03T16:03:59Z"
       },
       {
         "number": 507,
@@ -490,9 +490,9 @@
       },
       {
         "number": 513,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T13:39:23Z"
+        "reason": "not_planned",
+        "state": "closed",
+        "updated_at": "2026-11-03T16:03:56Z"
       },
       {
         "number": 514,
@@ -510,10 +510,22 @@
         "number": 516,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T15:47:19Z"
+        "updated_at": "2026-11-03T16:04:01Z"
+      },
+      {
+        "number": 527,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T16:05:31Z"
+      },
+      {
+        "number": 528,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-03T16:05:40Z"
       }
     ],
-    "main": "31bdf9ca50bedb20cf219542f66fd4df64024e13",
+    "main": "1d2a8010bb44f55ae82fe891e1f483984b8c10ca",
     "open_pulls": [],
     "pulls": [
       {
@@ -976,7 +988,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T15:57:31.403396Z",
+  "observed_at": "2026-11-03T16:08:16.154702Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2353,6 +2365,45 @@
         }
       ],
       "title": "构建清理"
+    },
+    {
+      "id": "export-mcp",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "用户单独批准的最小导出接入范围",
+              "ref": 527
+            },
+            {
+              "kind": "file",
+              "ref": "tools/koe-mcp/README.md",
+              "note": "启动、协议、导出格式边界与复验命令"
+            }
+          ],
+          "id": "export-mcp-implementation",
+          "next": "完成独立复核与 PR 交付；真实资料及客户端验收见 #528。",
+          "status": "in_progress",
+          "summary": "三个只读工具已实现；生产导出器合成包经真实子进程读取通过，flutter analyze 与全量1090项测试通过。尚未安装客户端。",
+          "title": "指定导出目录的三个只读工具"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "真实 App 导出、内容对照和客户端恢复独立验收",
+              "ref": 528
+            }
+          ],
+          "id": "export-mcp-acceptance",
+          "next": "在授权的客户端读取用户指定的真实无音频资料包。",
+          "status": "unverified",
+          "summary": "合成内容不等于真实录音；未安装或配置客户端连接。",
+          "title": "真实资料导出与客户端接入"
+        }
+      ],
+      "title": "本机导出只读 MCP"
     }
   ],
   "title": "Koe 开发进度",
@@ -2442,7 +2493,9 @@
       513,
       514,
       515,
-      516
+      516,
+      527,
+      528
     ],
     "pulls": [
       62,
