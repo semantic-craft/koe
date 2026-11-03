@@ -132,6 +132,7 @@ const minutesStructureInstruction =
     'schemaVersion 必须为 2。议题按讨论顺序排列，每题有 summary 和 points；只在原文讨论原因时输出 fishbone，否则省略。原因分支保留 text/detail/sources。terms 是本场待确认人名术语，name 为建议名称、note 为本场解释、heard 只能是引用原文实际出现的误识别形式，不确定就用空数组；不得用常识杜撰身份或因果。所有嵌套 sources 使用原始全局 S 编号。'
     '所有层级（含 overview、议题 summary、points）都保留原文的时态与确定程度；计划、约数、可能性不得改写成已确定、必须或已完成。'
     '数量、比例、计算基数和因果关系仅按原文明说记录，不从相邻数字或上下文推导补全。'
+    '计算基数等数量关系必须来自同一条被引用原句。'
     '已实行的政策、背景事实、一般流程和操作说明放 topics，不当成本次新增决议；泛指流程步骤不当成具体执行承诺。'
     'decisions 仅记录本次讨论中明确达成或确认采纳的决议，sources 必须引用确认该决定的原句。'
     'actions 仅记录有人明确承诺执行或被明确指派执行的具体事项，sources 必须引用承诺或指派的原句。'
@@ -224,35 +225,35 @@ const List<PromptTemplate> builtInPromptTemplates = [
     id: minutesTemplateId,
     name: '结构化纪要',
     prompt: defaultMinutesPrompt,
-    version: 3,
+    version: 4,
     builtIn: true,
   ),
   PromptTemplate(
     id: minutesOneOnOneTemplateId,
     name: '一对一纪要',
     prompt: defaultMinutesOneOnOnePrompt,
-    version: 3,
+    version: 4,
     builtIn: true,
   ),
   PromptTemplate(
     id: minutesInterviewTemplateId,
     name: '访谈纪要',
     prompt: defaultMinutesInterviewPrompt,
-    version: 3,
+    version: 4,
     builtIn: true,
   ),
   PromptTemplate(
     id: minutesLectureTemplateId,
     name: '课堂／演讲纪要',
     prompt: defaultMinutesLecturePrompt,
-    version: 3,
+    version: 4,
     builtIn: true,
   ),
   PromptTemplate(
     id: minutesBrainstormTemplateId,
     name: '脑力激荡纪要',
     prompt: defaultMinutesBrainstormPrompt,
-    version: 3,
+    version: 4,
     builtIn: true,
   ),
   PromptTemplate(

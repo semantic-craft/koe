@@ -594,7 +594,7 @@ class MeetingMinutes {
       return items;
     }
 
-    return MeetingMinutes(
+    final minutes = MeetingMinutes(
       title: requiredText(value['title']),
       overview: requiredText(value['overview']),
       topics: items('topics'),
@@ -606,6 +606,10 @@ class MeetingMinutes {
       schemaVersion: version,
       terms: parseTerms(),
     );
+    if (sourceTexts != null) {
+      _validateMinuteCalculations(minutes, sourceTexts);
+    }
+    return minutes;
   }
 
   Map<String, dynamic> toJson() => {
@@ -866,6 +870,70 @@ class MeetingMinutes {
 
 String validateMinutes(String text, List<String> sources) =>
     MeetingMinutes.parse(text, sources.length, sourceTexts: sources).encode();
+
+void _validateMinuteCalculations(
+  MeetingMinutes minutes,
+  List<String> sourceTexts,
+) {
+  final claims = <(String, List<int>)>[];
+  void claim(String text, List<String> sources) => claims.add((
+    text,
+    sources.map((id) => int.parse(id.substring(1)) - 1).toList(),
+  ));
+  void addSectionItems(Iterable<MinuteItem> items) {
+    for (final item in items) {
+      claim(item.text, item.sources);
+      if (item is MinuteTopic) {
+        claim(item.summary, item.sources);
+        for (final point in item.points) {
+          claim(point.text, point.sources);
+        }
+        if (item.fishbone case final fishbone?) {
+          for (final branch in fishbone.branches) {
+            claim('${branch.text} ${branch.detail}', branch.sources);
+          }
+        }
+      }
+    }
+  }
+
+  claim(
+    minutes.overview,
+    [for (var index = 1; index <= sourceTexts.length; index++) 'S$index'],
+  );
+  addSectionItems(minutes.topics);
+  addSectionItems(minutes.decisions);
+  addSectionItems(minutes.actions);
+  addSectionItems(minutes.questions);
+  addSectionItems([
+    for (final section in minutes.custom) ...section.items,
+  ]);
+  for (final term in minutes.terms) {
+    claim('${term.name} ${term.note}', term.sources);
+  }
+
+  final calculation = RegExp(
+    r'基数|按[^。；]{0,24}计算|基于[^。；]{0,24}计算|'
+    r'按[^。；]{0,24}比例[^。；]{0,16}(?:缴纳|计算)',
+  );
+  final percentage = RegExp(
+    r'\d+(?:\.\d+)?\s*%|百分之\d+(?:点\d+)?',
+  );
+  final wage = RegExp('工资');
+  for (final (text, sourceIndices) in claims) {
+    if (!calculation.hasMatch(text) || !percentage.hasMatch(text)) continue;
+    final grounded = sourceIndices.any(
+      (index) =>
+          index >= 0 &&
+          index < sourceTexts.length &&
+          wage.hasMatch(sourceTexts[index]) &&
+          percentage.hasMatch(sourceTexts[index]),
+    );
+    if (!grounded) {
+      throw const FormatException('纪要拼接了原文未说明的计算基数');
+    }
+  }
+}
 
 /// Prompt to revise existing [MeetingMinutes] after the user answers one or
 /// more [reviewItems] (adapted from Shiyin `Sources/Shiyin/Notes/NotesPrompt.swift`,
