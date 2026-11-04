@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,10 +7,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/stt_types.dart';
+import 'package:koe/state/meeting_minutes.dart';
 import 'package:koe/state/organize_store.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:koe/ui/widgets/context_timeline.dart';
 import 'package:provider/provider.dart';
 
 import 'support/wav_fixture.dart';
@@ -19,6 +22,7 @@ class _Apple extends AppleSpeechService {
   int calls = 0;
   Completer<void>? hold;
   Object? failure;
+  String? nextTranscript;
 
   @override
   Future<AppleSpeechCapabilities> capabilities({
@@ -40,7 +44,9 @@ class _Apple extends AppleSpeechService {
     calls++;
     await hold?.future;
     if (failure != null) throw failure!;
-    return SttResult(text: '我明天去买牛奶。', language: sourceLanguage);
+    final transcript = nextTranscript;
+    nextTranscript = null;
+    return SttResult(text: transcript ?? '我明天去买牛奶。', language: sourceLanguage);
   }
 }
 
@@ -49,6 +55,13 @@ class _Apple extends AppleSpeechService {
 class _Summarizer implements AnalysisService {
   int calls = 0;
   int timeouts = 0;
+  int minuteTimeouts = 0;
+  Completer<void>? minuteHold;
+  final minuteSources = <String>[];
+
+  int minuteCallsFor(String source) => minuteSources
+      .where((requestSource) => requestSource.contains(source))
+      .length;
 
   @override
   Future<String> generate({
@@ -59,6 +72,36 @@ class _Summarizer implements AnalysisService {
     required Future<void> abort,
   }) async {
     calls++;
+    if (instruction.contains('结构化会议纪要')) {
+      minuteSources.add(source);
+      await minuteHold?.future;
+      if (minuteTimeouts > 0) {
+        minuteTimeouts--;
+        throw TimeoutException('no answer');
+      }
+      return jsonEncode({
+        'schemaVersion': 2,
+        'title': '买牛奶',
+        'overview': '记录了一次日常口述。',
+        'topics': [
+          {
+            'text': '日常安排',
+            'summary': '提到明天买牛奶。',
+            'sources': ['S1'],
+            'points': [
+              {
+                'text': '明天买牛奶',
+                'sources': ['S1'],
+              },
+            ],
+          },
+        ],
+        'terms': [],
+        'decisions': [],
+        'actions': [],
+        'questions': [],
+      });
+    }
     if (timeouts > 0) {
       timeouts--;
       throw TimeoutException('no answer');
@@ -117,6 +160,7 @@ void main() {
   Future<RecorderController> build({
     OrganizeStore? store,
     bool owned = true,
+    File? analysisFile,
   }) async {
     final c =
         RecorderController(
@@ -125,7 +169,8 @@ void main() {
             qwenSpeech: QwenSttService()..apiKeyOverride = 'test-key',
             analysisController: RecordingAnalysis(
               service: summarizer,
-              inMemory: true,
+              file: analysisFile,
+              inMemory: analysisFile == null,
             ),
             contextAnalysisService: extractor,
             organizeStore: store,
@@ -139,8 +184,13 @@ void main() {
     return c;
   }
 
-  Future<String> importAudio(RecorderController c, String name) async {
+  Future<String> importAudio(
+    RecorderController c,
+    String name, {
+    String? transcript,
+  }) async {
     final source = File('${directory.path}/$name.wav');
+    if (transcript != null) apple.nextTranscript = transcript;
     await source.writeAsBytes(
       wavBytes(List.generate(3200, (i) => (i * 7 + name.hashCode) & 0xff)),
     );
@@ -152,6 +202,18 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect(done(), isTrue);
+  }
+
+  String minutesKey(RecorderController c, String path) =>
+      '${c.analysisKey(RecordingReference(path: path))}/minutes';
+
+  MeetingMinutes minutesOf(RecorderController c, String path) {
+    final result = c.analysis.results[minutesKey(c, path)]!;
+    return MeetingMinutes.parse(
+      result.text,
+      result.sources.length,
+      sourceTexts: result.sources,
+    );
   }
 
   test('once on, only new recordings are transcribed, summarized and '
@@ -167,9 +229,22 @@ void main() {
     expect(c.recordingView(RecordingReference(path: fresh)).text, '我明天去买牛奶。');
     expect(c.todos.openMine.single.title, '买牛奶');
     expect(c.organizeStore.queued, isEmpty);
+    expect(
+      minutesOf(
+        c,
+        fresh,
+      ).topics.whereType<MinuteTopic>().single.points.single.text,
+      '明天买牛奶',
+    );
+    expect(minutesOf(c, fresh).decisions, isEmpty);
+    expect(minutesOf(c, fresh).actions, isEmpty);
+    expect(
+      c.analysis.results[minutesKey(c, fresh)]!.sources.single,
+      '我明天去买牛奶。',
+    );
     expect(c.organizeStatusFor(before).stage, OrganizeStage.none);
     expect(apple.calls, 1);
-    expect(summarizer.calls, 1);
+    expect(summarizer.calls, 2);
     expect(extractor.calls, 1);
   });
 
@@ -220,7 +295,7 @@ void main() {
       expect(apple.calls, 0);
       expect(c.recordingView(RecordingReference(path: recent)).text, '已有的手改文字');
       expect(c.organizeStatusFor(old).stage, OrganizeStage.none);
-      expect(summarizer.calls, 1);
+      expect(summarizer.calls, 2);
     },
   );
 
@@ -246,7 +321,8 @@ void main() {
 
       await c.retryOrganize(path);
       await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
-      expect(summarizer.calls, callsForBoth + 1);
+      expect(summarizer.calls, callsForBoth + 2);
+      expect(summarizer.minuteSources, hasLength(2));
     },
   );
 
@@ -268,6 +344,155 @@ void main() {
     expect(c.todos.openMine.single.title, '买牛奶');
   });
 
+  test('an unknown minutes request is not resent until confirmed', () async {
+    summarizer.minuteTimeouts = 1;
+    final c = await build();
+    await c.waitForOrganize();
+    await c.setAutoOrganize(true);
+    final path = await importAudio(c, 'lost-minutes');
+    await until(
+      () => c.organizeStatusFor(path).stage == OrganizeStage.needsCheck,
+    );
+    final key = minutesKey(c, path);
+    final source = c.recordingView(RecordingReference(path: path)).text.trim();
+    expect(c.organizeStatusFor(path).message, contains('纪要'));
+    expect(c.analysis.hasUnconfirmedNode(key), isTrue);
+    expect(summarizer.minuteCallsFor(source), 1);
+
+    const wakeSource = '我后天去公园。';
+    final wakePath = await importAudio(
+      c,
+      'wake-minutes',
+      transcript: wakeSource,
+    );
+    await c.waitForOrganize();
+    await until(
+      () => c.organizeStatusFor(wakePath).stage == OrganizeStage.done,
+    );
+    expect(summarizer.minuteCallsFor(source), 1);
+    expect(c.organizeStatusFor(path).stage, OrganizeStage.needsCheck);
+
+    await c.retryOrganize(path);
+    await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+    expect(summarizer.minuteCallsFor(source), 2);
+  });
+
+  test(
+    'one explicit retry recovers first minutes interrupted by a source edit',
+    () async {
+      summarizer.minuteHold = Completer<void>();
+      final c = await build();
+      await c.waitForOrganize();
+      await c.setAutoOrganize(true);
+      final path = await importAudio(c, 'interrupted-minutes');
+      await until(() => summarizer.minuteSources.isNotEmpty);
+      c.rememberTranscript(path, '改为后天买牛奶。');
+      summarizer.minuteHold!.complete();
+      summarizer.minuteHold = null;
+      await until(
+        () => c.organizeStatusFor(path).stage == OrganizeStage.failed,
+      );
+      expect(c.analysis.results[minutesKey(c, path)], isNull);
+      await c.retryOrganize(path);
+      await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+      expect(
+        c.analysis.results[minutesKey(c, path)]!.sourceHash,
+        analysisFingerprint('改为后天买牛奶。'),
+      );
+      expect(summarizer.minuteSources, hasLength(2));
+    },
+  );
+
+  test(
+    'source changes regenerate generated minutes from a current snapshot',
+    () async {
+      final c = await build();
+      await c.waitForOrganize();
+      await c.setAutoOrganize(true);
+      final path = await importAudio(c, 'changed');
+      await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+      final key = minutesKey(c, path);
+      final old = c.analysis.results[key]!;
+      c.rememberTranscript(path, '校订后的文字：我明天去买牛奶。');
+
+      await c.organizeHistory([path]);
+      await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+
+      expect(c.analysis.results[key]!.sourceHash, isNot(old.sourceHash));
+      expect(c.analysis.results[key]!.isDraft, isFalse);
+      expect(c.analysis.results[key]!.editedAt, isNull);
+      expect(summarizer.minuteSources, hasLength(2));
+    },
+  );
+
+  test(
+    'a user-edited minutes result waits instead of being overwritten',
+    () async {
+      final c = await build();
+      await c.waitForOrganize();
+      await c.setAutoOrganize(true);
+      final path = await importAudio(c, 'edited-minutes');
+      await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+      final key = minutesKey(c, path);
+      final original = c.analysis.results[key]!;
+      await c.analysis.editResult(key, original, original.text);
+      final edited = c.analysis.results[key]!;
+
+      c.rememberTranscript(path, '校订后的文字：我明天去买牛奶。');
+      await c.organizeHistory([path]);
+      await until(() => c.organizeStatusFor(path).stage.name == 'needsReview');
+
+      expect(c.analysis.results[key], same(edited));
+      expect(
+        edited.staleFor(c.recordingView(RecordingReference(path: path)).text),
+        isTrue,
+      );
+      expect(c.organizeStatusFor(path).stage.name, 'needsReview');
+      expect(c.organizeStatusFor(path).message, contains('人工'));
+      expect(summarizer.minuteSources, hasLength(1));
+    },
+  );
+
+  test(
+    'automatic organizing reuses a persisted completed minutes slot',
+    () async {
+      final storeFile = File('${directory.path}/organize.json');
+      final analysisFile = File('${directory.path}/analysis.json');
+      final first = await build(
+        store: OrganizeStore(file: storeFile),
+        owned: false,
+        analysisFile: analysisFile,
+      );
+      await first.waitForOrganize();
+      await first.setAutoOrganize(true);
+      final path = await importAudio(first, 'persisted');
+      await until(
+        () => first.organizeStatusFor(path).stage == OrganizeStage.done,
+      );
+      const transcript = '我明天去买牛奶。';
+      final persistedResult = first.analysis.results[minutesKey(first, path)]!;
+      await first.organizeStore.idle;
+      first.dispose();
+
+      final second = await build(
+        store: OrganizeStore(file: storeFile),
+        analysisFile: analysisFile,
+      );
+      await second.analysis.load();
+      second.rememberTranscript(path, transcript);
+      await second.organizeHistory([path]);
+      await until(
+        () => second.organizeStatusFor(path).stage == OrganizeStage.done,
+      );
+      await second.waitForOrganize();
+      expect(summarizer.minuteCallsFor(transcript), 1);
+      expect(
+        second.analysis.results[minutesKey(second, path)]!.toJson(),
+        persistedResult.toJson(),
+      );
+    },
+  );
+
   test('a user-edited summary is never overwritten', () async {
     final c = await build();
     await c.waitForOrganize();
@@ -284,7 +509,8 @@ void main() {
     await until(() => c.organizeStore.queued.isEmpty);
 
     expect(c.analysis.results[key]!.text, '我自己写的摘要');
-    expect(summarizer.calls, 1);
+    expect(summarizer.calls, 3);
+    expect(summarizer.minuteSources, hasLength(2));
   });
 
   test('queued recordings continue after a restart', () async {
@@ -347,6 +573,7 @@ void main() {
     await tester.tap(find.text('先不'));
     await tester.pumpAndSettle();
     expect(summarizer.calls, 1);
+    expect(summarizer.minuteSources, isEmpty);
 
     await tester.tap(find.byKey(const ValueKey('organize-retry')));
     await tester.pumpAndSettle();
@@ -362,9 +589,75 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(summarizer.calls, 2);
+    expect(summarizer.calls, 3);
+    expect(summarizer.minuteSources, hasLength(1));
     expect(find.byKey(const ValueKey('organize-banner')), findsNothing);
   });
+
+  testWidgets('today timeline opens persisted full minutes directly', (
+    tester,
+  ) async {
+    late RecorderController c;
+    late String path;
+    await tester.runAsync(() async {
+      c = await build();
+      await c.waitForOrganize();
+      await c.setAutoOrganize(true);
+      path = await importAudio(c, 'timeline');
+      await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+      final key = minutesKey(c, path);
+      final original = c.analysis.results[key]!;
+      await c.analysis.editResult(key, original, original.text);
+      final edited = c.analysis.results[key]!;
+      c.rememberTranscript(path, '校订后的文字：我明天去买牛奶。');
+      await c.organizeHistory([path]);
+      await until(() => c.organizeStatusFor(path).stage.name == 'needsReview');
+      expect(c.analysis.results[key], same(edited));
+    });
+    final key = c.analysisKey(RecordingReference(path: path));
+    final item = ContextItem(
+      id: 'recording:timeline',
+      kind: ContextKind.recording,
+      title: '日常口述',
+      addedAt: DateTime(2026, 11, 4),
+      source: ContextSource(recordingKey: key, path: path),
+    );
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: c,
+        child: MaterialApp(
+          home: Scaffold(body: ContextTimelineRow(item: item)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(ValueKey('timeline-minutes-${item.id}')));
+    await tester.pumpAndSettle();
+    expect(find.text('买牛奶'), findsWidgets);
+    expect(find.text('明天买牛奶'), findsOneWidget);
+  });
+
+  test(
+    'minutes source hash uses the same trimmed transcript everywhere',
+    () async {
+      final c = await build();
+      await c.waitForOrganize();
+      await c.setAutoOrganize(true);
+      final path = await importAudio(c, 'trimmed');
+      await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+
+      c.rememberTranscript(path, '  我明天去买牛奶。  ');
+      await c.organizeHistory([path]);
+      await until(() => c.organizeStatusFor(path).stage == OrganizeStage.done);
+
+      expect(
+        c.analysis.results[minutesKey(c, path)]!.sources.single,
+        '我明天去买牛奶。',
+      );
+      expect(summarizer.minuteSources, hasLength(1));
+    },
+  );
 
   test('a transcription still running is not reported as unknown', () async {
     apple.hold = Completer<void>();

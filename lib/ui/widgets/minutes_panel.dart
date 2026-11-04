@@ -64,6 +64,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
   }
 
   Future<void> generate(AnalysisResult? previous) async {
+    var confirmedRestart = previous != null;
     if (previous != null) {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -83,27 +84,32 @@ class _MinutesPanelState extends State<MinutesPanel> {
         ),
       );
       if (confirmed != true || !mounted) return;
+    } else if (manager.hasIncompleteJob(key)) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('可能重复收费？'),
+          content: const Text('上次生成尚未完成，或原文已变更。重新开始可能重复收费；取消不发送请求。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: const Text('继续生成'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      confirmedRestart = true;
     }
-    final source = widget.controller.recordingView(widget.reference).text;
-    final template = manager.requireTemplate(selectedTemplateId);
-    final prompt = buildMeetingMinutesPrompt(
+    await widget.controller.generateMinutes(
+      widget.reference,
       templateId: selectedTemplateId,
       language: selectedLanguage,
-    );
-    await manager.run(
-      recording: widget.controller.analysisKey(widget.reference),
-      source: source,
-      apiKey: widget.controller.analysisApiKey,
-      custom: true,
-      templateId: template.id,
-      resultSlot: 'minutes',
-      instruction: prompt,
-      validateResult: validateMinutes,
-      userNotes: widget.controller.analysisNotesFor(widget.reference),
-      currentSource: () =>
-          widget.controller.recordingAudioChanged(widget.reference)
-          ? ''
-          : widget.controller.recordingView(widget.reference).text,
+      confirmedRestart: confirmedRestart,
     );
   }
 
@@ -827,6 +833,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
     builder: (context, _) {
       final view = widget.controller.recordingView(widget.reference);
       final result = manager.results[key];
+      final sourceHash = analysisFingerprint(view.text.trim());
       final previous = manager.previousResults[key];
       final versions = manager.versionsFor(key);
       final vocabSuggestions = widget.controller.suggestVocabularyFor(
@@ -855,7 +862,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
       final notes = widget.controller.bookmarksFor(widget.reference).length;
       final sourceMatches = <int, TranscriptSourceMatch>{};
       if (result != null &&
-          result.sourceHash == analysisFingerprint(view.text) &&
+          result.sourceHash == sourceHash &&
           !widget.controller.recordingAudioChanged(widget.reference) &&
           view.originalPresent &&
           view.path != null) {
@@ -1051,7 +1058,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
               if (manager.errors[key] != null) Text(manager.errors[key]!),
               if (result != null &&
                   (widget.controller.recordingAudioChanged(widget.reference) ||
-                      result.sourceHash != analysisFingerprint(view.text)))
+                      result.sourceHash != sourceHash))
                 const Text('原文已更新，这份纪要已过期，请重新生成。'),
               if (result != null && minutes == null) ...[
                 const Text('当前纪要格式无法结构化显示或编辑；原数据仍保留。'),
@@ -1198,8 +1205,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
                           .fold(0, (a, b) => a + b),
                       onVocabulary:
                           busy ||
-                              result.sourceHash !=
-                                  analysisFingerprint(view.text) ||
+                              result.sourceHash != sourceHash ||
                               widget.controller.recordingAudioChanged(
                                 widget.reference,
                               )
@@ -1212,8 +1218,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
                             ),
                       onReplace:
                           busy ||
-                              result.sourceHash !=
-                                  analysisFingerprint(view.text) ||
+                              result.sourceHash != sourceHash ||
                               widget.controller.recordingAudioChanged(
                                 widget.reference,
                               )

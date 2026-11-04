@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-03T17:55:03.179532Z</p>
-<p>Main: <code>main: a7bd4aff5f2fd0fc32a3338b2cc441f41346ff90</code></p>
+<p>Observed: 2026-11-04T16:27:23.041342Z</p>
+<p>Main: <code>main: 6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -303,10 +303,12 @@
 </ul><p>Next: 在授权的客户端读取用户指定的真实无音频资料包。</p></article>
 </section>
 <section id="minutes-relay"><h2>录音豆纪要与 MCP 全自动接力</h2>
-<article id="minutes-relay-bootstrap"><h3>全自动验收与接力切片</h3><span class="badge">in_progress</span><p>用户确认复用已配置 ASR 与 Qwen/指定 LLM，在 iOS 自动生成分层纪要和实时摘要，MCP 提供最新内容。本轮建立接力与差距说明，尚未实现新的业务行为或验收真实设备。</p><ul>
+<article id="minutes-relay-bootstrap"><h3>全自动验收与接力切片</h3><span class="badge">in_progress</span><p>Slice A/B 已完成。自动整理复用既有模型生成完整纪要，并从手机详情、今日和文件列表打开。本轮 check 1110 项通过；离线 30 项、iOS 独立模拟器导航/持久读回/截图、真实 Qwen ASR/LLM 合成语音及 8 个性能场景通过。未合并、未发布，未代表真人录音、真实 iPhone 或 D3200 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: 目标、自动验收分层、并发护栏与后续切片</a></li>
-</ul><p>Next: Slice B 先补齐自动验收入口并核对 agent-preflight 工作区重叠改动，再验证单条录音到 iOS 纪要。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/verify-minutes-flow">file scripts/verify-minutes-flow: 分层验收入口；本轮回执在 .scratch/pstack-relay/slice-b-receipt.json，device/mcp 尚未实现且非零退出</a></li>
+</ul><p>Next: Slice C 接入录音豆实时摘要与停止收尾，补 device 自动验收；缺实体按键自动证据保持未验收。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/548">#548</a> <code>2c2d29a152e73b6cdc7a6a9763b58c9c328751f0</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

@@ -160,3 +160,11 @@
 - 修复：导出状态由 TodoSystemSync 持有，授权与写入分阶段通知界面；挂起期间禁用重复导出，结束后恢复。
 - 证据：`test/todos_test.dart` 的 pending system authorization 行为测试改前失败、改后通过；TCC 的 AUTHREQ_PROMPTING 只证明系统发起提示，不证明用户可见或已授权。
 - 验证点：先核对安装版、系统请求结果与用户可见界面；remindctl 的权限归属与 Koe 分开，不把 CLI 诊断或模拟通道通过写成真实导出验收。首次记录 2026-10-24，独立复发次数 1。
+
+
+### iOS 验收必须保留截图元数据并驱动真实页面入口
+
+- 出处：2026-11-05 Slice B，iOS 业务断言通过但验收脚本因缺少截图返回失败；测试写入 reportData 时覆盖了 takeScreenshot 的元数据，直接挂载纪要页也未覆盖生产导航。
+- 修复：合并已有 reportData，从 RecordingDetailScreen 经摘要与分析进入结构化纪要；独立驱动器同时保存截图与行为证明，入口缺任一证据均非零退出。
+- 验证点：运行 `scripts/verify-minutes-flow ios`，核对回执、两张截图及持久读回/章节/重开证明；`test/support/minutes_flow_scenario.dart` 同时用于离线回归。截图存在不能替代断言。
+- Seen 1x (2026-11-05)。

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -139,10 +140,21 @@ void main() {
     );
     final phone = await connectedPhone(desk);
 
+    final waitingInGap = Completer<String>();
+    void observeWaiting() {
+      final label = phone.linkLabel;
+      if (label == '等待 Mac' && !waitingInGap.isCompleted) {
+        waitingInGap.complete(label);
+      }
+    }
+
+    phone.addListener(observeWaiting);
+    addTearDown(() => phone.removeListener(observeWaiting));
     String? labelInGap;
     server.beforeRestart = () async {
-      await until(() => phone.linkLabel == '等待 Mac');
-      labelInGap = phone.linkLabel;
+      labelInGap = await waitingInGap.future.timeout(
+        const Duration(seconds: 10),
+      );
     };
     await desk.resetDeskPairing();
     expect(labelInGap, '等待 Mac');

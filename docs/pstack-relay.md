@@ -22,21 +22,27 @@
 | 离线门禁 | scripts/check；上述控制器和 widget 测试 | 可验证行为，但不证明真实供应商与设备链路 |
 | iOS 自动界面 | integration_test/screenshots/app_tour.dart | 文件明确写无断言；目前不构成纪要端到端验收。Slice B 首先补齐 |
 
-另一工作区 `/Users/xianweizhang/Projects/.worktrees/koe/agent-preflight` 已有未提交修改，涉及 organize.dart、recorder_controller.dart、minutes_panel.dart、归档、转写、MCP server 及测试。其改动不视为已交付，本棒不编辑这些文件；B 开始前核对该工作区最新状态与所有权，复用已合并改动，避免双写。该工作区还新增 `integration_test/screenshots/daily_minutes_acceptance.dart`、`test/minutes_sync_mcp_e2e_test.dart` 与同步协调器；这些是可复用候选，不是本次通过证据。其 iOS 场景采用 ASR/LLM 替身，不能代替真实服务或 BLE 验收。当前主工作区原有 docs/agents/lessons.md、docs/notes/README.md、未跟踪 docs/design/qwennote-mcp-lessons-and-plan.md 均保留，不纳入本棒提交。
+另一工作区 `/Users/xianweizhang/Projects/.worktrees/koe/agent-preflight` 已有未提交修改，涉及 organize.dart、recorder_controller.dart、minutes_panel.dart、归档、转写、MCP server 及测试。其改动不视为已交付，Slice A 未编辑这些文件；Slice B 已核对重叠，并按下节记录在当前分支选择性复用候选，原工作区保持不动。该工作区还新增 `integration_test/screenshots/daily_minutes_acceptance.dart`、`test/minutes_sync_mcp_e2e_test.dart` 与同步协调器；这些是可复用候选，不是本次通过证据。其 iOS 场景采用 ASR/LLM 替身，不能代替真实服务或 BLE 验收。当前主工作区原有 docs/agents/lessons.md、docs/notes/README.md、未跟踪 docs/design/qwennote-mcp-lessons-and-plan.md 均保留，不纳入本棒提交。
 
 现有总工单 #543、实现 #544/#545/#546、真实验收 #514/#515/#528 继续复用，不新开重复工单。#543 记录指定 GLM 执行及不合并、不发布边界，本棒不接管其业务分支、不合并该工作。新要求全自动与实时更新写在本队列；后续在原工单协调增量范围。
 
 代码定位：main 自动整理仅 summary/todos（organize.dart:450–456）；实时识别已在 live_transcription.dart:536 接入 acceptLiveSpeech，但每场 live_meeting.dart:77 重置 liveMinutesEnabled=false。优先补这两处真实体验缺口，不另造处理系统。
 
+## Slice B 当前工作
+
+已核对 agent-preflight 的未提交候选，在当前接力分支选择性复用自动纪要、手机打开入口及相关测试，未修改该工作区，也未引入 Mac 同步或 MCP 业务改动。自动整理与手动入口共用控制器生成动作和原有纪要模型。本轮四项完成门禁全部通过，汇总见 `.scratch/pstack-relay/slice-b-receipt.json`。`scripts/check` 静态分析及 1110 项 Flutter 测试通过；付费场景在普通套件按设计跳过，独立真实 Qwen 门禁通过。离线 30 项、iOS 独立模拟器的生产详情导航/保存重建/章节/大字号/截图、8 个性能场景通过。真实服务输入为合成语音，未验收真人录音、D3200 或真实 iPhone。未合并、未发布。
+
 ## 全自动验收契约
 
-Slice B 要建立 `scripts/verify-minutes-flow`，后续 Done Predicate 中该命令目前尚不存在，不能提前声称通过。提供 `offline`、`ios`、`provider`、`device`、`mcp` 和 `all` 模式，使用隔离测试资料，输出机器可读回执与去敏截图。记录提交、输入哈希、模型标识、平台、步骤状态、版本和证据路径；缺条件必须非零退出。all 必须同时要求所有层通过，不能只汇总测试数量。
+Slice B 已建立 `scripts/verify-minutes-flow`。每个模式分别产出回执，只有实际执行通过才能满足 Done Predicate。提供 `offline`、`ios`、`provider`、`device`、`mcp` 和 `all` 模式，使用隔离测试资料，输出机器可读回执与去敏截图。记录提交、输入哈希、模型标识、平台、步骤状态、版本和证据路径；缺条件必须非零退出。all 必须同时要求所有层通过，不能只汇总测试数量。
 
 - offline：固定语料含理由、例子、否定、改口、未知事项；断言结果保存和重启读回、修订与引用一致、失败恢复。模型替身只证明流程。
 - ios：自动启动隔离应用、驱动录音详情、核对章节和正文、滚动及重开读回，抓截图检查溢出；不读个人资料。截图存在本身不等于成功。
 - provider：指定授权音频经实际配置 ASR 和 LLM。用预定义事实、必须保留的改口、不得出现的断言及来源定位评估内容；模型评分仅补充，不能独自决定 PASS。
 - device：真实 iPhone 与 D3200 输入到持久结果。自动声源和远程录音命令可验证声音链路，但不能冒充实体按键；实体键若无自动驱动装置或可观察事件证据，报告对应项未验收，不转嫁人工验收、不降低目标。
 - mcp：真实子进程和实际客户端读取同一版本；继续转写、校订、撤销后再次读取，确认最新版本和访问范围；不能用导出夹具代替客户端证明。
+
+运行 `scripts/verify-minutes-flow offline` 或 `ios`；iOS 模式自动创建并回收独立模拟器，使用合成服务并检查持久化、重新打开、章节、溢出和截图。真实服务单独运行 `provider`，通过已有授权启动入口向进程传入 `DASHSCOPE_API_KEY`、`KOE_MINUTES_AUDIO` 与 `KOE_MINUTES_EXPECTATIONS`；不从个人 Keychain 回退。期望 JSON 包含音频 `audio_sha256`、五类 `source_facts`（reason/example/correction/unknown/negation，每项有 source 与 minutes 字符串或同义候选列表）及 `forbidden_minutes`。真实测试使用生产 Qwen ASR 和纪要服务，并检查逐条来源及磁盘读回。`device`、`mcp` 暂未实现自动场景，明确非零退出，`all` 因此不能通过。
 
 回执存 .scratch/pstack-relay/，不提交录音、全文或运行日志。业务改动仍跑 scripts/check；涉及 BLE/音频/JSON 存储或检索时跑 scripts/perf-check。需真机的项独立 GitHub 工单；代码合并与产品全自动验收分开记录，不因代码合并勾完产品切片。
 
@@ -54,11 +60,11 @@ scripts/pstack-relay 已安装；.agents/hooks.json 是本机配置。此脚本�
 - **Done Predicate**: `scripts/pstack-relay selftest`、`python3 progress/progress.py check`、现有自动整理/纪要页面/实时纪要/MCP四组定向测试通过；缺少 iOS 端到端断言明确列为 B 首个前置工作。
 - **Evidence**: docs/pstack-relay.md; .scratch/pstack-relay/baseline.log (20 tests PASS); MCP subprocess 11 tests PASS; progress check PASS
 
-### [ ] Slice B: 自动验收入口与单条录音的 iOS 完整纪要
+### [x] Slice B: 自动验收入口与单条录音的 iOS 完整纪要
 - **Playbook**: Feature
 - **Outcome**: 先核对 agent-preflight 重叠改动，补齐自动验收入口；复用已有 ASR/Qwen 与纪要模型，自动生成并在 iOS 保存、分章显示个人口述纪要。无需人工点击或审稿才能判通过。
 - **Done Predicate**: `scripts/check`、`scripts/verify-minutes-flow offline`、`scripts/verify-minutes-flow ios`、`scripts/verify-minutes-flow provider` 均通过；入口在本片先实现，真实模型失败或设备缺失不得记为通过。
-- **Evidence**: PENDING
+- **Evidence**: .scratch/pstack-relay/slice-b-receipt.json (check 1110 PASS; offline 30 PASS; iOS PASS; real Qwen provider PASS; perf 8 PASS)
 
 ### [ ] Slice C: 录音豆实时摘要与自动收尾
 - **Playbook**: Feature
