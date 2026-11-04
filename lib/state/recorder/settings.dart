@@ -41,6 +41,7 @@ mixin _RecorderSettings on ChangeNotifier {
   abstract String? transcriptError;
   bool get translationModeAvailable;
   void liveTargetChanged(String language);
+  void livePrivacyChanged();
   // END DEPS
 
   String? settingsStorageError;
@@ -467,7 +468,10 @@ mixin _RecorderSettings on ChangeNotifier {
   void setMeetingLocalOnly(bool v) {
     if (meetingLocalOnly == v) return;
     meetingLocalOnly = v;
-    if (v) _revokeCloudLiveStreamIfNeeded();
+    if (v) {
+      _revokeCloudLiveStreamIfNeeded();
+      livePrivacyChanged();
+    }
     notifyListeners();
     unawaited(_persistSettings());
     if (v) unawaited(refreshAppleCapabilities());

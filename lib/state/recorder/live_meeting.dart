@@ -4,6 +4,8 @@ part of '../recorder_controller.dart';
 mixin _RecorderLiveMeeting on ChangeNotifier {
   // Provided by RecorderController / settings / recording parts.
   RecordingAnalysis get analysis;
+  bool get autoOrganize;
+  bool get meetingLocalOnly;
   AnalysisBackendKind get analysisBackend;
   EngineConfig get analysisOpenAiConfig;
   String get analysisApiKey;
@@ -35,6 +37,7 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
       liveMeetingClosing = false;
   String _liveLanguage = 'zh';
   bool _liveDiscarded = false;
+  bool _automaticLiveMinutes = false;
   Timer? _liveTicker;
   ValueListenable<DualRecordingView>? _dualLive;
   String get _liveTextConfiguration => [
@@ -44,6 +47,7 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
     analysis.model ?? '',
     _liveLanguage,
     translationTargetLanguage,
+    if (_automaticLiveMinutes) meetingLocalOnly.toString(),
   ].join('|');
   List<LiveSegment> get liveMeetingSegments =>
       _liveCollector?.segments ?? const [];
@@ -58,6 +62,7 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
     String? recordingKey,
     bool available = true,
     String language = 'zh',
+    bool automaticMinutes = false,
   }) {
     final old = liveMeetingId;
     if (old != null) unawaited(finishLiveMeeting(old));
@@ -68,6 +73,7 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
     liveCaptions = null;
     liveMeetingId = id;
     _liveDiscarded = false;
+    _automaticLiveMinutes = automaticMinutes;
     liveMeetingKey = recordingKey;
     _liveCollector = LiveSegmentCollector(id);
     _liveLanguage = language;
@@ -88,6 +94,9 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
       }
     }
     if (id.startsWith('phone:')) _acceptDualLive();
+    if (automaticMinutes && autoOrganize && !meetingLocalOnly) {
+      unawaited(setLiveMinutesEnabled(true));
+    }
     notifyListeners();
   }
 
@@ -202,6 +211,11 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (_automaticLiveMinutes && meetingLocalOnly) {
+      liveMeetingNotice = '已开启录音只留本机，本场不自动发送实时文字';
+      notifyListeners();
+      return;
+    }
     if (analysisBackend == AnalysisBackendKind.none || analysisApiKey.isEmpty) {
       liveMeetingNotice = '请先配置文字分析服务';
       notifyListeners();
@@ -295,6 +309,11 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
       await liveCaptions!.resume();
     }
     _feedLiveMeeting();
+  }
+
+  void livePrivacyChanged() {
+    if (!_automaticLiveMinutes || !meetingLocalOnly) return;
+    invalidateLiveMeeting('已开启录音只留本机，本场实时文字整理已暂停');
   }
 
   void liveTargetChanged(String language) {

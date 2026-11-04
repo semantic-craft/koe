@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name('verify-minutes-flow')
 loader = importlib.machinery.SourceFileLoader('verify_minutes_flow', str(SCRIPT))
@@ -38,10 +39,71 @@ class VerificationEntryTest(unittest.TestCase):
         self.assertNotIn('passed', [step['status'] for step in receipt['steps']])
         self.assertIn('KOE_MINUTES_AUDIO', receipt['steps'][0]['message'])
 
-    def test_unimplemented_hardware_is_never_a_pass(self):
-        result, receipt = self.run_mode('device')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(receipt['status'], 'blocked')
+    def test_device_command_failure_always_leaves_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            verification = module.Verification('device', Path(directory))
+            with patch.object(module.sys, 'platform', 'darwin'), \
+                    patch.object(verification, 'command', side_effect=module.Failed(
+                        'device-inventory interrupted or timed out')):
+                code = verification.execute()
+            receipt = json.loads((verification.directory / 'receipt.json').read_text())
+            self.assertEqual(code, 1)
+            self.assertEqual(receipt['status'], 'failed')
+            self.assertIn('timed out', receipt['steps'][-1]['message'])
+            self.assertEqual(receipt['device_coverage']['physical_button'], 'unverified')
+
+    def device_run(self, devices, lock=None):
+        with tempfile.TemporaryDirectory() as directory:
+            verification = module.Verification('device', Path(directory))
+            verification.environment.pop('KOE_MINUTES_DEVICE', None)
+            commands = []
+
+            def command(name, argv, timeout=1200, provider=False):
+                commands.append(argv)
+                payload = ({'devices': devices} if name == 'device-inventory'
+                           else lock or {})
+                output = Path(argv[argv.index('--json-output') + 1])
+                output.write_text(json.dumps({'info': {'outcome': 'success'},
+                                             'result': payload}))
+                return ''
+
+            with patch.object(module.sys, 'platform', 'darwin'), \
+                    patch.object(verification, 'command', side_effect=command):
+                code = verification.execute()
+            return code, verification.receipt, commands
+
+    def test_device_simulator_cannot_satisfy_physical_gate(self):
+        code, receipt, commands = self.device_run([{
+            'identifier': 'simulator',
+            'properties': {'hardware': {'reality': 'simulated',
+                                        'deviceType': 'iPhone'}}}])
+        self.assertEqual(code, 77)
+        self.assertIn('physical iPhone', receipt['steps'][-1]['message'])
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(receipt['device_coverage']['physical_button'], 'unverified')
+
+    def test_locked_phone_records_observation_without_installing(self):
+        code, receipt, commands = self.device_run([{
+            'identifier': 'physical-phone',
+            'properties': {'hardware': {'reality': 'physical',
+                                        'deviceType': 'iPhone', 'udid': 'udid'}}}],
+            {'passcodeRequired': True, 'unlockedSinceBoot': True})
+        self.assertEqual(code, 77)
+        self.assertTrue(receipt['device']['passcode_required'])
+        self.assertIn('locked', receipt['steps'][-1]['message'])
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(receipt['device_coverage']['d3200_input'], 'unverified')
+
+    def test_unlocked_phone_is_not_device_minutes_acceptance(self):
+        code, receipt, commands = self.device_run([{
+            'identifier': 'physical-phone',
+            'properties': {'hardware': {'reality': 'physical',
+                                        'deviceType': 'iPhone', 'udid': 'udid'}}}],
+            {'passcodeRequired': False, 'unlockedSinceBoot': True})
+        self.assertEqual(code, 77)
+        self.assertIn('stop', receipt['steps'][-1]['message'])
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(receipt['device_coverage']['stop_finalization'], 'unverified')
 
     def test_flutter_skip_cannot_satisfy_gate(self):
         events = '\n'.join(json.dumps(value) for value in [

@@ -13,6 +13,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     String? recordingKey,
     bool available = true,
     String language = 'zh',
+    bool automaticMinutes = false,
   });
   void closeLiveMeetingInput(String id);
   Future<void> finishLiveMeeting(String id, {String? recordingKey});
@@ -635,9 +636,23 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
   void handleRealtimeStateForTesting(RealtimeStreamState state) =>
       _onRealtimeState(state);
 
-  Future<void> _finishStreamStt({String? bindPath}) async {
+  final Map<String, Future<void>> _finishingStreams = {};
+
+  Future<void> _finishStreamStt({String? bindPath}) {
+    final id = _currentSessionId;
+    if (id == null) return _completeStreamStt(bindPath: bindPath);
+    return _finishingStreams.putIfAbsent(
+      id,
+      () => _completeStreamStt(bindPath: bindPath).whenComplete(() {
+        _finishingStreams.remove(id);
+      }),
+    );
+  }
+
+  Future<void> _completeStreamStt({String? bindPath}) async {
     final session = _sttStream;
     final recordingSession = _currentRecording;
+    final transcriptPrefix = _streamTranscriptPrefix;
     if (recordingSession != null) closeLiveMeetingInput(recordingSession.id);
     if (session == null && _pendingPcm.isEmpty) {
       if (recordingSession != null) {
@@ -661,7 +676,22 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       if (session != null && _liveStreamSendPermitted) {
         _flushPendingPcmTo(session);
         final done = await session.finish();
-        if (revision != _sttLifecycleRevision) return;
+        if (revision != _sttLifecycleRevision) {
+          if (recordingSession != null && done != null) {
+            final incoming = normalizeSttText(
+              transcriptPrefix.isEmpty
+                  ? done.text
+                  : '$transcriptPrefix\n${done.text}',
+            ).trim();
+            if (incoming.isNotEmpty &&
+                incoming.contains(recordingSession.text.trim())) {
+              recordingSession.text = incoming;
+            }
+            recordingSession.transcriptionComplete = true;
+            _saveLiveRecording(recordingSession, path: bindPath);
+          }
+          return;
+        }
         if (done != null) {
           if (recordingSession != null) {
             acceptLiveSpeech(
@@ -687,6 +717,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       }
     } catch (e) {
       debugPrint('[STT] stream finish: $e');
+      recordingSession?.error = '实时转写收尾未完成，请在录音详情中重试';
       if (revision == _sttLifecycleRevision && recordingSession != null) {
         transcriptError = '部分处理未完成，可在录音详情中重试';
         _snapshotLiveText();
@@ -713,8 +744,8 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       if (revision == _sttLifecycleRevision) {
         _pendingPcm.clear();
         transcribing = _fileJobKey != null;
-        notifyListeners();
       }
+      notifyListeners();
     }
   }
 
@@ -819,7 +850,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         previous.paused = false;
         previous.ended = true;
       }
-      previous.finalizing = false;
+      previous.finalizing = _finishingStreams.containsKey(previous.id);
       _saveLiveRecording(previous);
       if (previous.path != null &&
           !realtimeState.active &&
@@ -845,6 +876,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         _currentSessionId!,
         available: config.provider != SttProvider.doubao,
         language: config.sourceLanguage,
+        automaticMinutes: true,
       );
     }
     if (appleLanguagePreparationBusy) {

@@ -546,7 +546,7 @@
     "main": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
     "open_pulls": [
       {
-        "head": "2c2d29a152e73b6cdc7a6a9763b58c9c328751f0",
+        "head": "288dc10c89ae1e196e4e1560ea19ba00e57265d9",
         "number": 548
       }
     ],
@@ -1059,7 +1059,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-04T16:27:23.041342Z",
+  "observed_at": "2026-11-04T16:52:41.256276Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2493,14 +2493,14 @@
             },
             {
               "kind": "file",
-              "ref": "scripts/verify-minutes-flow",
-              "note": "分层验收入口；本轮回执在 .scratch/pstack-relay/slice-b-receipt.json，device/mcp 尚未实现且非零退出"
+              "note": "分层验收入口；device 实际预检退出77，六项硬件链路未验收，不能作为Slice C完成证据",
+              "ref": "scripts/verify-minutes-flow"
             }
           ],
           "id": "minutes-relay-bootstrap",
-          "next": "Slice C 接入录音豆实时摘要与停止收尾，补 device 自动验收；缺实体按键自动证据保持未验收。",
+          "next": "继续 Slice C 真机验收；需已解锁 iPhone 和有自动证据的录音豆结束事件。仅解锁不足以通过，已知协议没有结束命令；不要重做 A/B。",
           "status": "in_progress",
-          "summary": "Slice A/B 已完成。自动整理复用既有模型生成完整纪要，并从手机详情、今日和文件列表打开。本轮 check 1110 项通过；离线 30 项、iOS 独立模拟器导航/持久读回/截图、真实 Qwen ASR/LLM 合成语音及 8 个性能场景通过。未合并、未发布，未代表真人录音、真实 iPhone 或 D3200 验收。",
+          "summary": "Slice A/B 已完成。Slice C 已补自动阶段摘要、等待末句与音频转换后生成完整版、重复停止与跨场隔离；本轮代码验证见 docs/pstack-relay.md。device 只完成真实 iPhone 发现及锁屏预检，真实录音豆输入、停止、进程重启和实体按键仍未验收；无已知结束命令和自动按键证据，C不推进。草稿 PR #548 未合并、未发布。",
           "title": "全自动验收与接力切片"
         }
       ],

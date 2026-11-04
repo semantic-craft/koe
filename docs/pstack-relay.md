@@ -32,6 +32,16 @@
 
 已核对 agent-preflight 的未提交候选，在当前接力分支选择性复用自动纪要、手机打开入口及相关测试，未修改该工作区，也未引入 Mac 同步或 MCP 业务改动。自动整理与手动入口共用控制器生成动作和原有纪要模型。本轮四项完成门禁全部通过，汇总见 `.scratch/pstack-relay/slice-b-receipt.json`。`scripts/check` 静态分析及 1110 项 Flutter 测试通过；付费场景在普通套件按设计跳过，独立真实 Qwen 门禁通过。离线 30 项、iOS 独立模拟器的生产详情导航/保存重建/章节/大字号/截图、8 个性能场景通过。真实服务输入为合成语音，未验收真人录音、D3200 或真实 iPhone。未合并、未发布。
 
+## Slice C 当前工作
+
+已实现录音豆会话在开启自动整理且未启用“只留本机”时自动开启阶段摘要。完整整理等待录制、末句识别及音频转换结束；重复停止共用同一次 ASR 收尾，下一场开始不会提前释放上一场或接收其末句。阶段稿失败保持未知请求状态，不自动重发。完整纪要仍由 Slice B 的队列生成。
+
+`device` 已从固定未实现改为真实 iPhone 发现和锁屏预检，尚无完整真机场景。2026-11-05 的实际预检发现物理 iPhone 已连接但锁屏；`PROTOCOL.md:211-234` 只有开始/暂停，没有已验证的结束录音命令，也没有实体按键自动驱动证据。入口非零退出，未发起无法自动结束的录音。解锁本身不能满足门禁。真实录音豆输入、实际 ASR、录制中更新、停止最终化、App 进程重启读回及实体按键均未验收。
+
+本轮 `scripts/check --reporter expanded` 静态分析无问题、1118 项 Flutter 测试通过，另有 1 项默认跳过的独立付费场景；定向 88 项通过。`KOE_PERF_FOREGROUND=1 scripts/perf-check` 八个场景在既有阈值内，单次合成负载运行，不作提速比较。汇总回执 `.scratch/pstack-relay/slice-c-receipt.json`，check 原始输出与源码指纹保存在同目录。
+
+本轮磁盘重建测试仅证明保存后的对象读回，不证明应用崩溃重启；录制中阶段稿在崩溃后从详情页恢复仍未验收。Slice C 保持未完成，不运行 `advance C`。继续复用草稿 PR #548 与真实验收工单 #515，不合并、不发布，不重做 A/B。
+
 ## 全自动验收契约
 
 Slice B 已建立 `scripts/verify-minutes-flow`。每个模式分别产出回执，只有实际执行通过才能满足 Done Predicate。提供 `offline`、`ios`、`provider`、`device`、`mcp` 和 `all` 模式，使用隔离测试资料，输出机器可读回执与去敏截图。记录提交、输入哈希、模型标识、平台、步骤状态、版本和证据路径；缺条件必须非零退出。all 必须同时要求所有层通过，不能只汇总测试数量。
@@ -42,7 +52,7 @@ Slice B 已建立 `scripts/verify-minutes-flow`。每个模式分别产出回执
 - device：真实 iPhone 与 D3200 输入到持久结果。自动声源和远程录音命令可验证声音链路，但不能冒充实体按键；实体键若无自动驱动装置或可观察事件证据，报告对应项未验收，不转嫁人工验收、不降低目标。
 - mcp：真实子进程和实际客户端读取同一版本；继续转写、校订、撤销后再次读取，确认最新版本和访问范围；不能用导出夹具代替客户端证明。
 
-运行 `scripts/verify-minutes-flow offline` 或 `ios`；iOS 模式自动创建并回收独立模拟器，使用合成服务并检查持久化、重新打开、章节、溢出和截图。真实服务单独运行 `provider`，通过已有授权启动入口向进程传入 `DASHSCOPE_API_KEY`、`KOE_MINUTES_AUDIO` 与 `KOE_MINUTES_EXPECTATIONS`；不从个人 Keychain 回退。期望 JSON 包含音频 `audio_sha256`、五类 `source_facts`（reason/example/correction/unknown/negation，每项有 source 与 minutes 字符串或同义候选列表）及 `forbidden_minutes`。真实测试使用生产 Qwen ASR 和纪要服务，并检查逐条来源及磁盘读回。`device`、`mcp` 暂未实现自动场景，明确非零退出，`all` 因此不能通过。
+运行 `scripts/verify-minutes-flow offline` 或 `ios`；iOS 模式自动创建并回收独立模拟器，使用合成服务并检查持久化、重新打开、章节、溢出和截图。真实服务单独运行 `provider`，通过已有授权启动入口向进程传入 `DASHSCOPE_API_KEY`、`KOE_MINUTES_AUDIO` 与 `KOE_MINUTES_EXPECTATIONS`；不从个人 Keychain 回退。期望 JSON 包含音频 `audio_sha256`、五类 `source_facts`（reason/example/correction/unknown/negation，每项有 source 与 minutes 字符串或同义候选列表）及 `forbidden_minutes`。真实测试使用生产 Qwen ASR 和纪要服务，并检查逐条来源及磁盘读回。`device` 执行真实 iPhone 发现及锁屏预检，但完整硬件场景尚缺；`mcp` 尚未实现自动场景。两者明确非零退出，`all` 因此不能通过。
 
 回执存 .scratch/pstack-relay/，不提交录音、全文或运行日志。业务改动仍跑 scripts/check；涉及 BLE/音频/JSON 存储或检索时跑 scripts/perf-check。需真机的项独立 GitHub 工单；代码合并与产品全自动验收分开记录，不因代码合并勾完产品切片。
 

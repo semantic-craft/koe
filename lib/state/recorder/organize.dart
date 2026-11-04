@@ -60,6 +60,7 @@ mixin _RecorderOrganize on ChangeNotifier {
   abstract final Future<void> _libraryLoaded;
   abstract final Map<String, String> _recordingErrors;
   abstract final DeviceCopies _copies;
+  abstract final Set<String> _finalizingRecordings;
   abstract String? _fileJobKey;
   abstract final Future<void> _settingsLoaded;
   abstract Future<void> _transcriptsLoaded;
@@ -211,7 +212,7 @@ mixin _RecorderOrganize on ChangeNotifier {
         await _runTodos(path, confirmed: true);
       }
     } else if (status.stage == OrganizeStage.failed &&
-        _transcriptOf(path).isEmpty) {
+        (_transcriptOf(path).isEmpty || _failedLiveTranscript(ref))) {
       _recordingErrors.remove(analysisKey(ref));
       _organizeTranscribeRequested.add(path);
       unawaited(_retryOrganizeTranscription(path));
@@ -270,6 +271,13 @@ mixin _RecorderOrganize on ChangeNotifier {
   String _transcriptOf(String path) =>
       recordingView(_organizeRef(path)).text.trim();
 
+  bool _failedLiveTranscript(RecordingReference ref) {
+    final session = _sessionForReference(ref);
+    return session?.ended == true &&
+        session?.transcriptionComplete == false &&
+        session?.error != null;
+  }
+
   /// Derived from the saved transcript, analysis and todo records, so it is
   /// the same after a restart and for recordings organized by hand.
   OrganizeStatus organizeStatusFor(String path) {
@@ -277,6 +285,15 @@ mixin _RecorderOrganize on ChangeNotifier {
     final failure = _organizeFailures[path];
     final ref = _organizeRef(path);
     final key = analysisKey(ref);
+    final session = _sessionForReference(ref);
+    if (session != null &&
+            (session.active || session.paused || session.finalizing) ||
+        _finalizingRecordings.contains(key)) {
+      return const OrganizeStatus(OrganizeStage.waiting);
+    }
+    if (_failedLiveTranscript(ref)) {
+      return OrganizeStatus(OrganizeStage.failed, session!.error);
+    }
     final text = _transcriptOf(path);
     if (text.isEmpty) {
       final job = _fileJobs.jobs[key];
@@ -459,6 +476,13 @@ mixin _RecorderOrganize on ChangeNotifier {
       await _dequeueOrganize(path);
       return;
     }
+    final ref = _organizeRef(path);
+    final session = _sessionForReference(ref);
+    if (session != null &&
+            (session.active || session.paused || session.finalizing) ||
+        _finalizingRecordings.contains(analysisKey(ref))) {
+      return;
+    }
     final status = organizeStatusFor(path);
     switch (status.stage) {
       case OrganizeStage.done:
@@ -476,7 +500,6 @@ mixin _RecorderOrganize on ChangeNotifier {
       case OrganizeStage.waiting:
         break;
     }
-    final ref = _organizeRef(path);
     if (_transcriptOf(path).isEmpty) {
       // A device recording still being retrieved, or cut short, waits for
       // the retrieval path's own completeness check.

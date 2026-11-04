@@ -259,10 +259,73 @@ class Verification:
             raise Failed('Provider proof incomplete')
         self.receipt['provider_proof'] = str(proof)
 
+    def device(self):
+        self.receipt['device_coverage'] = {
+            name: 'unverified' for name in (
+                'd3200_input', 'real_asr', 'recording_updates',
+                'stop_finalization', 'process_restart_readback', 'physical_button')
+        }
+        self.receipt['device_blockers'] = [
+            'end_recording_command_unavailable', 'physical_button_unverified',
+        ]
+        self.receipt['protocol_evidence'] = 'PROTOCOL.md:211-234'
+        self.receipt['service_evidence'] = (
+            'device discovery only; no recording or provider request started')
+        if sys.platform != 'darwin':
+            raise Blocked('Physical iPhone verification requires macOS')
+
+        def query(name, arguments):
+            path = self.directory / f'{name}.json'
+            self.command(name, ['xcrun', 'devicectl', *arguments,
+                                '--json-output', str(path), '--timeout', '20'], 30)
+            payload = json.loads(path.read_text())
+            if (not isinstance(payload, dict) or
+                    payload.get('info', {}).get('outcome') != 'success' or
+                    not isinstance(payload.get('result'), dict)):
+                raise Failed(f'{name} did not return successful device evidence')
+            return payload['result']
+
+        inventory = query('device-inventory', ['list', 'devices'])
+        selected = self.environment.get('KOE_MINUTES_DEVICE')
+        candidates = []
+        for device in inventory.get('devices', []):
+            properties = device.get('properties', {})
+            hardware = properties.get('hardware', device.get('hardwareProperties', {}))
+            if hardware.get('reality') != 'physical' or hardware.get('deviceType') != 'iPhone':
+                continue
+            identifier = device.get('identifier')
+            udid = hardware.get('udid')
+            if selected and selected not in (identifier, udid):
+                continue
+            candidates.append((identifier, udid, hardware))
+        if not candidates:
+            raise Blocked('No matching physical iPhone is available; simulators do not satisfy device acceptance')
+        if len(candidates) != 1:
+            raise Blocked('Multiple physical iPhones are available; set KOE_MINUTES_DEVICE to the intended device')
+        identifier, udid, hardware = candidates[0]
+        if not isinstance(identifier, str) or not identifier:
+            raise Failed('Physical iPhone inventory has no usable identifier')
+        self.receipt['device'] = {
+            'id': identifier, 'udid': udid, 'kind': 'physical iPhone',
+            'model': hardware.get('productType'),
+        }
+        lock = query('device-lock-state', ['device', 'info', 'lockState',
+                                          '--device', identifier])
+        if not isinstance(lock.get('passcodeRequired'), bool):
+            raise Failed('Device lock state is unknown')
+        self.receipt['device']['passcode_required'] = lock['passcodeRequired']
+        self.receipt['device']['unlocked_since_boot'] = lock.get('unlockedSinceBoot')
+        if lock['passcodeRequired']:
+            self.receipt['device_blockers'].insert(0, 'locked')
+            raise Blocked('Physical iPhone is locked; D3200 input, stop and restart remain unverified')
+        raise Blocked(
+            'No verified D3200 stop command or automatic physical-button actuator exists; '
+            'start/pause cannot prove stop finalization. Recording was not started')
+
     def execute(self):
         try:
             for mode in MODES if self.mode == 'all' else (self.mode,):
-                if mode in ('device', 'mcp'):
+                if mode == 'mcp':
                     raise Blocked(f'{mode} automatic acceptance is not implemented in Slice B')
                 getattr(self, mode)()
             if self.source_snapshot() != self.snapshot:
