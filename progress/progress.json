@@ -2475,6 +2475,26 @@
         }
       ],
       "title": "本机导出只读 MCP"
+    },
+    {
+      "id": "minutes-relay",
+      "title": "录音豆纪要与 MCP 全自动接力",
+      "items": [
+        {
+          "id": "minutes-relay-bootstrap",
+          "title": "全自动验收与接力切片",
+          "status": "in_progress",
+          "summary": "用户确认复用已配置 ASR 与 Qwen/指定 LLM，在 iOS 自动生成分层纪要和实时摘要，MCP 提供最新内容。本轮建立接力与差距说明，尚未实现新的业务行为或验收真实设备。",
+          "next": "Slice B 先补齐自动验收入口并核对 agent-preflight 工作区重叠改动，再验证单条录音到 iOS 纪要。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/pstack-relay.md",
+              "note": "目标、自动验收分层、并发护栏与后续切片"
+            }
+          ]
+        }
+      ]
     }
   ],
   "title": "Koe 开发进度",
