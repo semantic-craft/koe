@@ -522,7 +522,7 @@
         "number": 528,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T16:05:40Z"
+        "updated_at": "2026-11-04T17:36:40Z"
       },
       {
         "number": 533,
@@ -546,7 +546,7 @@
     "main": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
     "open_pulls": [
       {
-        "head": "5edc14e4fbe6cb750dcd97f960d06e26cfbaf5c4",
+        "head": "7d4474ccfdf08824e84d4674710f09bda5affccd",
         "number": 548
       }
     ],
@@ -1059,7 +1059,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-04T17:24:09.151293Z",
+  "observed_at": "2026-11-04T17:41:37.043292Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2498,8 +2498,8 @@
             },
             {
               "kind": "file",
-              "ref": "test/mcp_live_publication_test.dart",
-              "note": "生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。"
+              "note": "生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。",
+              "ref": "test/mcp_live_publication_test.dart"
             }
           ],
           "id": "minutes-relay-bootstrap",
