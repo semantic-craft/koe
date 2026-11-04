@@ -105,6 +105,41 @@ class VerificationEntryTest(unittest.TestCase):
         self.assertEqual(len(commands), 2)
         self.assertEqual(receipt['device_coverage']['stop_finalization'], 'unverified')
 
+    def run_mcp(self, *, proof=True, skipped=False):
+        with tempfile.TemporaryDirectory() as directory:
+            verification = module.Verification('mcp', Path(directory))
+            def command(name, argv, timeout=1200, provider=False):
+                if proof:
+                    payload = {key: True for key in (
+                        'automatic_publication', 'persistent_client',
+                        'continued_transcript', 'corrected_transcript',
+                        'minutes_updated', 'revision_guard', 'revoked',
+                        'ungranted_denied')}
+                    payload['input_sha256'] = 'a' * 64
+                    (verification.directory / 'mcp-proof.json').write_text(json.dumps(payload))
+                return '\n'.join(json.dumps(event) for event in [
+                    {'type': 'testDone', 'skipped': skipped, 'result': 'success'},
+                    {'type': 'done', 'success': True}])
+            with patch.object(verification, 'command', side_effect=command):
+                code = verification.execute()
+            return code, verification.receipt
+
+    def test_mcp_gate_accepts_complete_client_evidence(self):
+        code, receipt = self.run_mcp()
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt['status'], 'passed')
+        self.assertEqual(receipt['input_sha256'], 'a' * 64)
+
+    def test_mcp_gate_rejects_missing_behavior_proof(self):
+        code, receipt = self.run_mcp(proof=False)
+        self.assertEqual(code, 1)
+        self.assertIn('proof', receipt['steps'][-1]['message'])
+
+    def test_mcp_gate_rejects_skipped_client_test(self):
+        code, receipt = self.run_mcp(skipped=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(receipt['status'], 'failed')
+
     def test_flutter_skip_cannot_satisfy_gate(self):
         events = '\n'.join(json.dumps(value) for value in [
             {'type': 'testDone', 'skipped': True, 'result': 'success'},

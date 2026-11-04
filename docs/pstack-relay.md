@@ -10,7 +10,7 @@
 
 ## 现状 vs 目标差距对表与防冲突护栏
 
-基线 main `6a8c217`；本棒分支 `codex/koe-minutes-relay`。GitHub semantic-craft/koe 当前开放 PR 为 0；不得省略 gh 的 --repo，否则可能选到 upstream。
+基线 main `6a8c217`；本棒分支 `codex/koe-minutes-relay`。Slice A 初次盘点时 GitHub semantic-craft/koe 开放 PR 为 0，当前接力复用草稿 PR #548；不得省略 gh 的 --repo，否则可能选到 upstream。
 
 | 环节 | 已观察入口 | 差距与验证要求 |
 | --- | --- | --- |
@@ -32,6 +32,10 @@
 
 已核对 agent-preflight 的未提交候选，在当前接力分支选择性复用自动纪要、手机打开入口及相关测试，未修改该工作区，也未引入 Mac 同步或 MCP 业务改动。自动整理与手动入口共用控制器生成动作和原有纪要模型。本轮四项完成门禁全部通过，汇总见 `.scratch/pstack-relay/slice-b-receipt.json`。`scripts/check` 静态分析及 1110 项 Flutter 测试通过；付费场景在普通套件按设计跳过，独立真实 Qwen 门禁通过。离线 30 项、iOS 独立模拟器的生产详情导航/保存重建/章节/大字号/截图、8 个性能场景通过。真实服务输入为合成语音，未验收真人录音、D3200 或真实 iPhone。未合并、未发布。
 
+## 当前推进顺序
+
+2026-11-05 用户明确暂留 C 真机验收未完成，禁止反复执行同一阻塞预检，先实施不依赖设备的 D。队列因此调整为 A、B、D、C、E；C 的验收条件和缺项原样保留，不以跳过表示通过。
+
 ## Slice C 当前工作
 
 已实现录音豆会话在开启自动整理且未启用“只留本机”时自动开启阶段摘要。完整整理等待录制、末句识别及音频转换结束；重复停止共用同一次 ASR 收尾，下一场开始不会提前释放上一场或接收其末句。阶段稿失败保持未知请求状态，不自动重发。完整纪要仍由 Slice B 的队列生成。
@@ -41,6 +45,14 @@
 本轮 `scripts/check --reporter expanded` 静态分析无问题、1118 项 Flutter 测试通过，另有 1 项默认跳过的独立付费场景；定向 88 项通过。`KOE_PERF_FOREGROUND=1 scripts/perf-check` 八个场景在既有阈值内，单次合成负载运行，不作提速比较。汇总回执 `.scratch/pstack-relay/slice-c-receipt.json`，check 原始输出与源码指纹保存在同目录。
 
 本轮磁盘重建测试仅证明保存后的对象读回，不证明应用崩溃重启；录制中阶段稿在崩溃后从详情页恢复仍未验收。Slice C 保持未完成，不运行 `advance C`。继续复用草稿 PR #548 与真实验收工单 #515，不合并、不发布，不重做 A/B。
+
+## Slice D 当前工作
+
+本轮先推进不依赖设备的 MCP。App 按记录逐条授权，自动发布最新文字和纪要；Python 的 `--live-directory` 读取同一原子文档，稳定记录 ID 与发布版本分开，`expected_revision` 拒绝跨版本读取。未授权记录不发布，撤销移出当前授权。授权仅当前 App 会话有效，异常退出最多15秒租约过期；不引入外部写回、原音频、地点、主题或书签读取。
+
+本轮客户端是实际运行的 stdio 协议客户端与 MCP 子进程，输入由生产控制器的转写、校订和纪要动作自动发布，使用隔离合成资料。它不代表 Codex 等外部客户端已安装，不代表 iPhone 与 Mac 的真实跨端同步。C 的真实输入、停止、进程重启和实体按键缺项继续保留，不再反复执行同一阻塞预检。
+
+D 的完成门禁已通过：`scripts/check --reporter expanded` 分析无问题、1121项通过（另1项独立付费场景默认跳过）；Python MCP服务18项通过；`scripts/verify-minutes-flow mcp` 的3项行为场景全部通过、无跳过，回执含5个含setup/teardown的完成事件。测试直接驱动生产写入，不手动发送变更通知；新Mac菜单和授权等待期间关闭也已覆盖。额外 `scripts/perf-check` 八场景在既有阈值内，transcript_save workload 518ms（单次合成负载，不作提速比较）。汇总回执 `.scratch/pstack-relay/slice-d-receipt.json`。
 
 ## 全自动验收契约
 
@@ -52,7 +64,7 @@ Slice B 已建立 `scripts/verify-minutes-flow`。每个模式分别产出回执
 - device：真实 iPhone 与 D3200 输入到持久结果。自动声源和远程录音命令可验证声音链路，但不能冒充实体按键；实体键若无自动驱动装置或可观察事件证据，报告对应项未验收，不转嫁人工验收、不降低目标。
 - mcp：真实子进程和实际客户端读取同一版本；继续转写、校订、撤销后再次读取，确认最新版本和访问范围；不能用导出夹具代替客户端证明。
 
-运行 `scripts/verify-minutes-flow offline` 或 `ios`；iOS 模式自动创建并回收独立模拟器，使用合成服务并检查持久化、重新打开、章节、溢出和截图。真实服务单独运行 `provider`，通过已有授权启动入口向进程传入 `DASHSCOPE_API_KEY`、`KOE_MINUTES_AUDIO` 与 `KOE_MINUTES_EXPECTATIONS`；不从个人 Keychain 回退。期望 JSON 包含音频 `audio_sha256`、五类 `source_facts`（reason/example/correction/unknown/negation，每项有 source 与 minutes 字符串或同义候选列表）及 `forbidden_minutes`。真实测试使用生产 Qwen ASR 和纪要服务，并检查逐条来源及磁盘读回。`device` 执行真实 iPhone 发现及锁屏预检，但完整硬件场景尚缺；`mcp` 尚未实现自动场景。两者明确非零退出，`all` 因此不能通过。
+运行 `scripts/verify-minutes-flow offline` 或 `ios`；iOS 模式自动创建并回收独立模拟器，使用合成服务并检查持久化、重新打开、章节、溢出和截图。真实服务单独运行 `provider`，通过已有授权启动入口向进程传入 `DASHSCOPE_API_KEY`、`KOE_MINUTES_AUDIO` 与 `KOE_MINUTES_EXPECTATIONS`；不从个人 Keychain 回退。期望 JSON 包含音频 `audio_sha256`、五类 `source_facts`（reason/example/correction/unknown/negation，每项有 source 与 minutes 字符串或同义候选列表）及 `forbidden_minutes`。真实测试使用生产 Qwen ASR 和纪要服务，并检查逐条来源及磁盘读回。`device` 执行真实 iPhone 发现及锁屏预检，但完整硬件场景尚缺；`mcp` 在 Slice D 验证控制器自动发布与真实 stdio 客户端。`all` 仍须通过 C 的真实硬件场景，不能因 D 通过而计为完成。
 
 回执存 .scratch/pstack-relay/，不提交录音、全文或运行日志。业务改动仍跑 scripts/check；涉及 BLE/音频/JSON 存储或检索时跑 scripts/perf-check。需真机的项独立 GitHub 工单；代码合并与产品全自动验收分开记录，不因代码合并勾完产品切片。
 
@@ -76,17 +88,17 @@ scripts/pstack-relay 已安装；.agents/hooks.json 是本机配置。此脚本�
 - **Done Predicate**: `scripts/check`、`scripts/verify-minutes-flow offline`、`scripts/verify-minutes-flow ios`、`scripts/verify-minutes-flow provider` 均通过；入口在本片先实现，真实模型失败或设备缺失不得记为通过。
 - **Evidence**: .scratch/pstack-relay/slice-b-receipt.json (check 1110 PASS; offline 30 PASS; iOS PASS; real Qwen provider PASS; perf 8 PASS)
 
-### [ ] Slice C: 录音豆实时摘要与自动收尾
-- **Playbook**: Feature
-- **Outcome**: 实际录音豆输入持续进入转写与阶段摘要，停止后完整纪要落盘；重启恢复、失败提示、旧版本保护可自动验证。
-- **Done Predicate**: `scripts/check`、`scripts/perf-check`、`scripts/verify-minutes-flow device` 通过，包含录制中更新、停止最终化与重启读回；实体按键覆盖必须有自动证据，否则保留未验收。
-- **Evidence**: PENDING
-
-### [ ] Slice D: MCP 自动读取最新文字和纪要
+### [x] Slice D: MCP 自动读取最新文字和纪要
 - **Playbook**: Feature
 - **Outcome**: 外部 AI 无需手动导出即可读取允许范围内的最新文字与纪要，与 iPhone 同一记录和版本对应；不扩展外部写回和插件 UI。
 - **Done Predicate**: `scripts/check`、`python3 -B tools/koe-mcp/test_server.py`、`scripts/verify-minutes-flow mcp` 通过，包含实际客户端读取、更新再读和撤销检查。
-- **Evidence**: PENDING
+- **Evidence**: .scratch/pstack-relay/slice-d-receipt.json (check 1121 PASS; MCP server 18 PASS; live client PASS; perf 8 PASS; C deferred)
+
+### [ ] Slice C: 录音豆实时摘要与自动收尾
+- **Playbook**: Feature
+- **Outcome**: 真机验收按用户要求暂缓，不重复执行同一阻塞预检；只有设备条件或自动结束机制有新证据后再继续。原目标保留：实际录音豆输入持续进入转写与阶段摘要，停止后完整纪要落盘；重启恢复、失败提示、旧版本保护可自动验证。
+- **Done Predicate**: `scripts/check`、`scripts/perf-check`、`scripts/verify-minutes-flow device` 通过，包含录制中更新、停止最终化与重启读回；实体按键覆盖必须有自动证据，否则保留未验收。
+- **Evidence**: .scratch/pstack-relay/slice-c-receipt.json (软件门禁通过，真实输入/停止/进程重启/实体按键未验收；用户要求暂缓)
 
 ### [ ] Slice E: 全流程无人值守复验与交付
 - **Playbook**: Shipping

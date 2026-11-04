@@ -175,3 +175,10 @@
 - 修复：完整整理等待录制、暂停、ASR 与音频转换结束；同场共享一次收尾，旧场末句仅保存到旧记录。Apple 收尾失败且已有部分文字时，明确重试会重新转写完整音频。
 - 验证点：`test/device_live_minutes_test.dart` 用受控异步时序验证阶段摘要、末句、重复停止、跨场隔离、只留本机撤销、失败恢复与磁盘重读。真实进程重启和实体按键另验，不能用对象重建代替。
 - Seen 1x (2026-11-05)。
+
+### 自动发布验收必须由生产写入触发，不能由测试代发通知
+
+- 出处：2026-11-05 Slice D，持续 MCP 客户端测试若手动调用 notifyListeners，会遮住 rememberTranscript 不通知导致的旧文字；授权等待中关闭还会恢复计时器。
+- 修复：生产转写写入显式调度发布，授权每个 await 后复核关闭状态，撤销清空发布及旧内容错误。
+- 验证：test/mcp_live_publication_test.dart 直接调用生产续写/校订/纪要动作，以持续 stdio 客户端读回；改前失败证据在 .scratch/pstack-relay/slice-d-auto-update-before.log、slice-d-dispose-before.log 和 slice-d-revoke-error-before.log。
+- Seen 1x (2026-11-05)。

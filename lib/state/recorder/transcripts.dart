@@ -16,6 +16,7 @@ mixin _RecorderTranscripts on ChangeNotifier {
     List<String>? conversionFailures,
   });
   _RecordingSession? get _currentRecording;
+  void _scheduleMcpPublication();
   abstract bool _disposed;
   SpeakerDiarizer get _effectiveSpeakerDiarizer;
   bool _isRecordingAudioLocked(int? id, String? path);
@@ -206,6 +207,7 @@ mixin _RecorderTranscripts on ChangeNotifier {
     final id = fileIdFromPath(path);
     if (id != null) transcriptsByFileId[id] = t;
     unawaited(_persistTranscripts());
+    _scheduleMcpPublication();
     if (textChanged && !_isRecordingAudioLocked(id, path)) {
       unawaited(
         upgradeDraftMinutesIfNeeded(RecordingReference(fileId: id, path: path)),

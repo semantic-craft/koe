@@ -1,6 +1,9 @@
 import json
+import hashlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,9 +31,9 @@ def write_pack(path, value):
 
 
 class Client:
-    def __init__(self, directory):
+    def __init__(self, directory, live=False):
         self.process = subprocess.Popen(
-            [sys.executable, str(SERVER), '--directory', str(directory)],
+            [sys.executable, str(SERVER), '--live-directory' if live else '--directory', str(directory)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         self.sequence = 0
@@ -203,6 +206,132 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(result['isError'])
         self.assertIn('export_directory_too_large', result['content'][0]['text'])
         self.assertEqual(self.client.request('ping')['result'], {})
+
+
+class LiveServerTest(unittest.TestCase):
+    identifier = 'b' * 64
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.live = self.root / 'live.json'
+        self.publish({})
+        self.client = Client(self.root, live=True)
+        self.addCleanup(self.client.close)
+        self.client.initialize()
+
+    def publish(self, records, generation=1, seconds=15):
+        value = {'version': 1, 'generation': generation,
+                 'expiresAt': (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat(),
+                 'records': records}
+        temporary = self.root / 'live.part'
+        temporary.write_text(json.dumps(value))
+        temporary.replace(self.live)
+
+    def error(self, tool, **arguments):
+        result = self.client.call(tool, **arguments)
+        self.assertTrue(result['isError'])
+        return json.loads(result['content'][0]['text'])['error']
+
+    def test_updates_use_stable_id_and_old_revision_is_rejected(self):
+        self.assertEqual(self.client.data('list_recordings')['recordings'], [])
+        value = manifest()
+        self.publish({self.identifier: value})
+        listing = self.client.data('list_recordings')
+        self.assertFalse(listing['snapshotOnly'])
+        self.assertEqual(listing['snapshotRevision'], '1')
+        self.assertEqual(listing['recordings'][0]['recording_id'], self.identifier)
+        self.assertEqual(listing['recordings'][0]['materialContentHash'], 'a' * 64)
+        value['transcript']['manual'] = '校订后的新文字'
+        self.publish({self.identifier: value}, generation=2)
+        self.assertEqual(self.error('get_transcript', recording_id=self.identifier,
+                                    expected_revision='1'), 'snapshot_changed')
+        result = self.client.data('get_transcript', recording_id=self.identifier, expected_revision='2')
+        self.assertEqual(result['text'], '校订后的新文字')
+        self.assertEqual(result['snapshotRevision'], '2')
+        self.assertEqual(result['materialContentHash'], 'a' * 64)
+        minutes = self.client.data('get_minutes', recording_id=self.identifier)
+        self.assertEqual(minutes['materialContentHash'], 'a' * 64)
+        self.assertNotIn('startMs', result['sources'][0])
+
+    def test_revoke_removes_access_without_restarting_client(self):
+        self.publish({self.identifier: manifest()})
+        self.client.data('get_transcript', recording_id=self.identifier)
+        self.publish({}, generation=2)
+        self.assertEqual(self.client.data('list_recordings')['recordings'], [])
+        self.assertEqual(self.error('get_transcript', recording_id=self.identifier), 'recording_unavailable')
+
+    def test_missing_expired_or_unbounded_lease_is_not_an_empty_success(self):
+        self.publish({self.identifier: manifest()}, seconds=-1)
+        self.assertEqual(self.error('list_recordings'), 'publication_expired')
+        self.publish({self.identifier: manifest()}, seconds=3600)
+        self.assertEqual(self.error('list_recordings'), 'invalid_publication')
+        self.live.unlink()
+        self.assertEqual(self.error('list_recordings'), 'publication_unavailable')
+        self.publish({self.identifier: manifest()})
+        self.assertEqual(len(self.client.data('list_recordings')['recordings']), 1)
+
+    def test_invalid_record_rejects_entire_generation(self):
+        invalid = manifest()
+        invalid['audio']['included'] = True
+        self.publish({self.identifier: manifest(), 'c' * 64: invalid})
+        self.assertEqual(self.error('list_recordings'), 'invalid_publication')
+        for value in [[], {'version': 1, 'generation': True, 'records': {}},
+                      {'version': 1, 'generation': 0, 'records': {}, 'expiresAt': '2026-11-05'}]:
+            self.live.write_text(json.dumps(value))
+            self.assertEqual(self.error('list_recordings'), 'invalid_publication')
+        self.assertEqual(self.client.request('ping')['result'], {})
+
+    def test_symlink_and_replaced_directory_cannot_retain_access(self):
+        outside = self.root / 'private.json'
+        self.publish({self.identifier: manifest()})
+        self.live.rename(outside)
+        self.live.symlink_to(outside)
+        self.assertEqual(self.error('list_recordings'), 'publication_unavailable')
+        self.live.unlink()
+        moved = self.root.with_name(self.root.name + '-moved')
+        self.root.rename(moved)
+        self.root.mkdir()
+        self.addCleanup(lambda: shutil.rmtree(moved))
+        self.publish({self.identifier: manifest()})
+        self.assertEqual(self.error('list_recordings'), 'directory_replaced')
+
+    def test_live_limits_fail_closed_and_schema_exposes_revision_guard(self):
+        tools = self.client.request('tools/list')['result']['tools']
+        self.assertEqual([tool['name'] for tool in tools], ['list_recordings', 'get_transcript', 'get_minutes'])
+        self.assertIn('expected_revision', tools[1]['inputSchema']['properties'])
+        self.publish({format(index, '064x'): manifest() for index in range(1001)})
+        self.assertEqual(self.error('list_recordings'), 'invalid_publication')
+        with self.live.open('wb') as output:
+            output.truncate(32 * 1024 * 1024 + 1)
+        self.assertEqual(self.error('list_recordings'), 'invalid_publication')
+        self.publish({self.identifier: manifest()})
+        self.assertEqual(self.error('get_transcript', recording_id=self.identifier,
+                                    expected_revision=1), 'invalid_arguments')
+        self.assertEqual(self.error('list_recordings', expected_revision='1'), 'invalid_arguments')
+        self.assertEqual(self.client.request('ping')['result'], {})
+
+    def test_minutes_freshness_compares_effective_text_in_same_generation(self):
+        value = manifest()
+        value['version'] = 2
+        text = value['transcript']['text']
+        value['minutes'] = {'current': {
+            'text': '{"title":"合成纪要"}', 'sourceHash': hashlib.sha256(text.encode()).hexdigest(),
+            'model': 'synthetic', 'instruction': '', 'sources': [text],
+            'createdAt': '2026-11-04T10:00:00Z', 'templateVersion': 1, 'isDraft': False,
+        }, 'history': []}
+        self.publish({self.identifier: value})
+        self.assertEqual(self.client.data('get_minutes', recording_id=self.identifier)['freshness'], 'current')
+        value['transcript']['manual'] = '校订后的原文'
+        self.publish({self.identifier: value}, generation=2)
+        result = self.client.data('get_minutes', recording_id=self.identifier)
+        self.assertEqual(result['freshness'], 'stale')
+        self.assertEqual(result['snapshotRevision'], '2')
+        self.assertEqual(result['current']['sources'], [text])
+        value.pop('transcript')
+        self.publish({self.identifier: value}, generation=3)
+        self.assertEqual(self.client.data('get_minutes', recording_id=self.identifier)['freshness'], 'unverified')
 
 
 if __name__ == '__main__':

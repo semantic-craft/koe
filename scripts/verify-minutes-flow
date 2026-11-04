@@ -97,7 +97,8 @@ class Verification:
             files.update((ROOT / directory).rglob('*.dart'))
         files.update(ROOT / path for path in (
             'pubspec.yaml', 'pubspec.lock', 'scripts/check',
-            'scripts/verify-minutes-flow', 'scripts/test_verify_minutes_flow.py'))
+            'scripts/verify-minutes-flow', 'scripts/test_verify_minutes_flow.py',
+            'tools/koe-mcp/server.py', 'tools/koe-mcp/test_server.py'))
         return {str(path.relative_to(ROOT)): sha(path) for path in sorted(files)
                 if path.is_file()}
 
@@ -259,6 +260,31 @@ class Verification:
             raise Failed('Provider proof incomplete')
         self.receipt['provider_proof'] = str(proof)
 
+    def mcp(self):
+        target = 'test/mcp_live_publication_test.dart'
+        self.receipt['test_source_sha256'] = sha(ROOT / target)
+        output = self.command('mcp-client-flow', [
+            'flutter', 'test', '--reporter', 'json', target])
+        self.receipt['test_events'] = flutter_result(output)
+        proof = self.directory / 'mcp-proof.json'
+        if not proof.is_file():
+            raise Failed('MCP client behavior proof missing')
+        result = json.loads(proof.read_text())
+        required = ('automatic_publication', 'persistent_client',
+                    'continued_transcript', 'corrected_transcript',
+                    'minutes_updated', 'revision_guard', 'revoked',
+                    'ungranted_denied')
+        if not isinstance(result, dict) or not all(result.get(key) is True for key in required):
+            raise Failed('MCP publication, version or authorization proof incomplete')
+        digest = result.get('input_sha256')
+        if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise Failed('MCP synthetic input hash missing')
+        self.receipt['input_sha256'] = digest
+        self.receipt['mcp_proof'] = str(proof)
+        self.receipt['service_evidence'] = (
+            'production controller publication and real stdio client/server; '
+            'synthetic content, no installed external AI client or cross-device acceptance')
+
     def device(self):
         self.receipt['device_coverage'] = {
             name: 'unverified' for name in (
@@ -325,8 +351,6 @@ class Verification:
     def execute(self):
         try:
             for mode in MODES if self.mode == 'all' else (self.mode,):
-                if mode == 'mcp':
-                    raise Blocked(f'{mode} automatic acceptance is not implemented in Slice B')
                 getattr(self, mode)()
             if self.source_snapshot() != self.snapshot:
                 raise Failed('Source changed during verification; receipt cannot identify one tested version')

@@ -504,7 +504,7 @@
         "number": 515,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T15:02:17Z"
+        "updated_at": "2026-11-04T16:55:27Z"
       },
       {
         "number": 516,
@@ -546,7 +546,7 @@
     "main": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
     "open_pulls": [
       {
-        "head": "288dc10c89ae1e196e4e1560ea19ba00e57265d9",
+        "head": "5edc14e4fbe6cb750dcd97f960d06e26cfbaf5c4",
         "number": 548
       }
     ],
@@ -1059,7 +1059,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-04T16:52:41.256276Z",
+  "observed_at": "2026-11-04T17:24:09.151293Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2495,12 +2495,17 @@
               "kind": "file",
               "note": "分层验收入口；device 实际预检退出77，六项硬件链路未验收，不能作为Slice C完成证据",
               "ref": "scripts/verify-minutes-flow"
+            },
+            {
+              "kind": "file",
+              "ref": "test/mcp_live_publication_test.dart",
+              "note": "生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。"
             }
           ],
           "id": "minutes-relay-bootstrap",
-          "next": "继续 Slice C 真机验收；需已解锁 iPhone 和有自动证据的录音豆结束事件。仅解锁不足以通过，已知协议没有结束命令；不要重做 A/B。",
+          "next": "C 真机按用户要求暂缓，不重复同一阻塞预检；只有设备或自动结束机制有新证据后恢复。外部客户端安装和真实跨端同步另按 #528 验收，不重做已完成的 A/B/D。",
           "status": "in_progress",
-          "summary": "Slice A/B 已完成。Slice C 已补自动阶段摘要、等待末句与音频转换后生成完整版、重复停止与跨场隔离；本轮代码验证见 docs/pstack-relay.md。device 只完成真实 iPhone 发现及锁屏预检，真实录音豆输入、停止、进程重启和实体按键仍未验收；无已知结束命令和自动按键证据，C不推进。草稿 PR #548 未合并、未发布。",
+          "summary": "Slice A/B/D 已完成。D 在 Mac 按记录授权并自动发布最新文字和纪要，check 1121项通过、MCP服务18项通过、正式mcp门禁通过（生产控制器＋持续stdio客户端＋合成资料），混版、未授权、撤销和关闭均自动验证。C 软件实现保留，真实录音豆输入、停止、进程重启及实体按键未验收。外部AI客户端安装和真实iPhone↔Mac同步未验收。草稿PR #548未合并、未发布。",
           "title": "全自动验收与接力切片"
         }
       ],
