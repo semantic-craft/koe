@@ -21,6 +21,7 @@ class AppSettingsStore {
   static final _credentials = CredentialStore();
   static const _providers = ['qwen', 'doubao'];
   static const _analysisOpenAiKey = 'analysisOpenAiCompatible';
+  static const _mcpSyncTokenKey = 'mcpSyncToken';
 
   @visibleForTesting
   static void resetForTesting() {
@@ -87,6 +88,7 @@ class AppSettingsStore {
           baseUrl: settings.analysisOpenAiConfig.baseUrl,
           model: settings.analysisOpenAiConfig.model,
         ),
+        mcpSyncToken: migrated[_mcpSyncTokenKey],
       );
       // Strip both nested and old flat keys only after successful Keychain
       // read/write verification. A failed migration leaves the original intact.
@@ -118,6 +120,9 @@ class AppSettingsStore {
             if (settings.analysisOpenAiConfig.apiKey != null ||
                 previous.containsKey(_analysisOpenAiKey))
               _analysisOpenAiKey: settings.analysisOpenAiConfig.apiKey,
+            if (settings.mcpSyncToken != null ||
+                previous.containsKey(_mcpSyncTokenKey))
+              _mcpSyncTokenKey: settings.mcpSyncToken,
           };
           final changed = !mapEquals(previous, desired);
           try {
@@ -147,6 +152,9 @@ class AppSettings {
     this.engines = const {},
     this.analysisBackend = AnalysisBackendKind.qwen,
     this.analysisOpenAiConfig = const EngineConfig(),
+    this.mcpSyncUrl,
+    this.mcpSyncMode,
+    this.mcpSyncToken,
     this.vocabulary = const [],
     this.autoTranscribe = true,
     this.autoRealtime = true,
@@ -174,6 +182,11 @@ class AppSettings {
 
   /// OpenAI-compatible / Ollama endpoint configuration (`baseUrl`, `model`, and Keychain-backed `apiKey`).
   final EngineConfig analysisOpenAiConfig;
+
+  /// Remote or LAN MCP sync base URL; the Bearer token lives in Keychain (`mcpSyncToken`).
+  final String? mcpSyncUrl;
+  final String? mcpSyncMode;
+  final String? mcpSyncToken;
 
   /// User-maintained personal glossary terms injected into prompts (#491).
   final List<String> vocabulary;
@@ -227,6 +240,9 @@ class AppSettings {
     Map<String, EngineConfig>? engines,
     AnalysisBackendKind? analysisBackend,
     EngineConfig? analysisOpenAiConfig,
+    String? mcpSyncUrl,
+    String? mcpSyncMode,
+    String? mcpSyncToken,
     List<String>? vocabulary,
     bool? autoTranscribe,
     bool? autoRealtime,
@@ -250,6 +266,9 @@ class AppSettings {
       engines: engines ?? this.engines,
       analysisBackend: analysisBackend ?? this.analysisBackend,
       analysisOpenAiConfig: analysisOpenAiConfig ?? this.analysisOpenAiConfig,
+      mcpSyncUrl: mcpSyncUrl ?? this.mcpSyncUrl,
+      mcpSyncMode: mcpSyncMode ?? this.mcpSyncMode,
+      mcpSyncToken: mcpSyncToken ?? this.mcpSyncToken,
       vocabulary: vocabulary ?? this.vocabulary,
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
@@ -281,6 +300,10 @@ class AppSettings {
         if (analysisOpenAiConfig.isConfigured)
           'credentialRef': AppSettingsStore._analysisOpenAiKey,
       },
+    if (mcpSyncUrl != null && mcpSyncUrl!.trim().isNotEmpty)
+      'mcpSyncUrl': mcpSyncUrl!.trim(),
+    if (mcpSyncMode != null && mcpSyncMode!.trim().isNotEmpty)
+      'mcpSyncMode': mcpSyncMode!.trim(),
     if (vocabulary.isNotEmpty) 'vocabulary': vocabulary,
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
@@ -337,6 +360,8 @@ class AppSettings {
       engines: engines,
       analysisBackend: AnalysisBackendKind.parse(map['analysisBackend']),
       analysisOpenAiConfig: analysisOpenAiConfig,
+      mcpSyncUrl: _str(map['mcpSyncUrl']),
+      mcpSyncMode: _str(map['mcpSyncMode']),
       vocabulary: vocabulary,
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,

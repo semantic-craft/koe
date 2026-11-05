@@ -5,6 +5,7 @@ import '../../state/minutes_document.dart';
 import '../../state/recorder_controller.dart';
 import '../../theme/app_theme.dart';
 import '../context_source.dart';
+import 'minutes_panel.dart';
 import '../recording_navigation.dart';
 import 'highlight.dart';
 import 'widgets.dart';
@@ -44,6 +45,9 @@ class ContextTimelineRow extends StatelessWidget {
     ];
     final details = [contextTimeLabel(item), ?item.location];
     final document = c.contextDocument(item);
+    final minutesRef = !isText && ref != null && c.savedMinutesFor(ref) != null
+        ? ref
+        : null;
     final highlights = [
       for (final (index, segment)
           in (document?.segments ?? const <MinutesSegment>[]).indexed)
@@ -133,6 +137,18 @@ class ContextTimelineRow extends StatelessWidget {
                 ],
               ),
             ),
+            if (minutesRef != null)
+              KoeIconButton(
+                key: ValueKey('timeline-minutes-${item.id}'),
+                tooltip: '打开完整纪要',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        MinutesPanel(controller: c, reference: minutesRef),
+                  ),
+                ),
+                icon: const Icon(Icons.description_outlined, size: 20),
+              ),
             KoeIconButton(
               key: ValueKey('timeline-links-${item.id}'),
               tooltip: '修改关联',

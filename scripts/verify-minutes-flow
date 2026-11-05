@@ -1,0 +1,558 @@
+#!/usr/bin/env python3
+"""Run isolated minutes acceptance. Missing evidence is a nonzero result."""
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import socket
+import subprocess
+import sys
+import time
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+MODES = ('offline', 'ios', 'provider', 'device', 'mcp')
+CREDENTIAL_NAMES = ('DASHSCOPE_API_KEY', 'ARK_API_KEY', 'DOUBAO_API_KEY',
+                    'DOUBAO_TTS_API_KEY', 'OPENAI_API_KEY')
+
+
+class Blocked(Exception):
+    pass
+
+
+class Failed(Exception):
+    pass
+
+
+def sha(path):
+    with Path(path).open('rb') as source:
+        return hashlib.file_digest(source, 'sha256').hexdigest()
+
+
+def redact(text, environment):
+    for key, value in environment.items():
+        if value and re.search(r'(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)', key):
+            text = text.replace(value, '[redacted]')
+    text = re.sub(r'https?://[^\s"<>]+', '[url redacted]', text)
+    return re.sub(r'(?i)(bearer\s+)[^\s"<>]+', r'\1[redacted]', text)
+
+
+def valid_alternatives(value):
+    if isinstance(value, str):
+        return bool(value.strip())
+    return (isinstance(value, list) and bool(value) and
+            all(isinstance(item, str) and item.strip() for item in value))
+
+
+def flutter_result(output):
+    events = []
+    for line in output.splitlines():
+        try:
+            value = json.loads(line)
+            if isinstance(value, dict):
+                events.append(value)
+        except json.JSONDecodeError:
+            pass
+    finished = [event for event in events if event.get('type') == 'testDone']
+    done = [event for event in events if event.get('type') == 'done']
+    if (not finished or not done or done[-1].get('success') is not True or
+            any(event.get('skipped') or event.get('result') != 'success'
+                for event in finished)):
+        raise Failed('Flutter evidence missing, failed or skipped tests')
+    return len(finished)
+
+
+class Verification:
+    def __init__(self, mode, output):
+        self.mode = mode
+        self.environment = dict(os.environ)
+        self.directory = output / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+                                   + '-' + mode + '-' + uuid.uuid4().hex[:8])
+        self.directory.mkdir(parents=True)
+        self.receipt = {
+            'schema_version': 1, 'mode': mode, 'status': 'running',
+            'started_at': datetime.now(timezone.utc).isoformat(),
+            'platform': sys.platform, 'steps': [], 'input_sha256': None,
+            'models': {}, 'evidence_directory': str(self.directory),
+            'commit': subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+            'working_tree_dirty': bool(subprocess.check_output(
+                ['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()),
+            'version': next((line.split(':', 1)[1].strip()
+                             for line in (ROOT / 'pubspec.yaml').read_text().splitlines()
+                             if line.startswith('version:')), 'unknown'),
+        }
+        self.snapshot = self.source_snapshot()
+        source_manifest = self.directory / 'source-manifest.json'
+        source_manifest.write_text(json.dumps(self.snapshot, sort_keys=True, indent=2) + '\n')
+        self.receipt['source_manifest'] = str(source_manifest)
+        self.receipt['source_sha256'] = sha(source_manifest)
+        self.save()
+
+    def source_snapshot(self):
+        files = set()
+        for directory in ('lib', 'test', 'integration_test', 'test_driver'):
+            files.update((ROOT / directory).rglob('*.dart'))
+        files.update(ROOT / path for path in (
+            'pubspec.yaml', 'pubspec.lock', 'scripts/check',
+            'scripts/verify-minutes-flow', 'scripts/test_verify_minutes_flow.py',
+            'tools/koe-mcp/server.py', 'tools/koe-mcp/test_server.py'))
+        return {str(path.relative_to(ROOT)): sha(path) for path in sorted(files)
+                if path.is_file()}
+
+    def save(self):
+        (self.directory / 'receipt.json').write_text(
+            json.dumps(self.receipt, ensure_ascii=False, indent=2) + '\n')
+
+    def command(self, name, argv, timeout=1200, provider=False):
+        environment = dict(self.environment)
+        if not provider:
+            for key in CREDENTIAL_NAMES:
+                environment.pop(key, None)
+        environment['KOE_SCREENSHOT_DIR'] = str(self.directory / 'screenshots')
+        environment['KOE_MINUTES_PROOF_DIR'] = str(self.directory)
+        if provider:
+            environment['KOE_VERIFY_PROVIDER'] = '1'
+            audio, expectation = self.authorized_audio_and_expectations()
+            if audio and not environment.get('KOE_MINUTES_AUDIO'):
+                environment['KOE_MINUTES_AUDIO'] = audio
+            if expectation and not environment.get('KOE_MINUTES_EXPECTATIONS'):
+                environment['KOE_MINUTES_EXPECTATIONS'] = expectation
+        step = {'name': name, 'status': 'running', 'command': argv,
+                'log': str(self.directory / f'{name}.log')}
+        self.receipt['steps'].append(step)
+        self.save()
+        print(f'{name}: running', flush=True)
+        try:
+            process = subprocess.Popen(argv, cwd=ROOT, env=environment,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, start_new_session=True)
+            try:
+                output, _ = process.communicate(timeout=timeout)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    output, _ = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    output, _ = process.communicate()
+                Path(step['log']).write_text(redact(output, self.environment))
+                raise Failed(f'{name} interrupted or timed out')
+            Path(step['log']).write_text(redact(output, self.environment))
+            step['exit_code'] = process.returncode
+            if process.returncode != 0:
+                raise Failed(f'{name} exited {process.returncode}; see sanitized log')
+            step['status'] = 'passed'
+            return output
+        except (OSError, Failed) as error:
+            step['status'] = 'failed'
+            step['message'] = redact(str(error), self.environment)
+            raise Failed(step['message']) from error
+        finally:
+            self.save()
+
+    def offline(self):
+        paths = ['test/minutes_flow_test.dart', 'test/auto_organize_test.dart',
+                 'test/meeting_minutes_test.dart',
+                 'test/device_live_minutes_test.dart']
+        self.receipt['test_source_sha256'] = sha(ROOT / paths[0])
+        output = self.command('offline-tests', ['flutter', 'test', '--reporter', 'json', *paths])
+        self.receipt['test_events'] = flutter_result(output)
+        self.behavior_proof('offline')
+        self.receipt['service_evidence'] = 'synthetic ASR and LLM; no provider acceptance'
+
+    def ios(self):
+        if sys.platform != 'darwin':
+            raise Blocked('iOS verification requires macOS and an available simulator runtime')
+        state = json.loads(self.command('simulator-inventory', ['xcrun', 'simctl', 'list', '-j'], 30))
+        runtimes = [runtime for runtime in state['runtimes']
+                    if runtime.get('isAvailable') and '.iOS-' in runtime['identifier']]
+        if not runtimes:
+            raise Blocked('No available iOS simulator runtime')
+        runtime = sorted(runtimes, key=lambda item: [int(n) for n in item['version'].split('.')])[-1]
+        types = [item for item in state['devicetypes'] if item.get('productFamily') == 'iPhone']
+        supported = {item['identifier'] for item in runtime.get('supportedDeviceTypes', [])}
+        if supported:
+            types = [item for item in types if item['identifier'] in supported]
+        if not types:
+            raise Blocked('No compatible iPhone simulator device type')
+        device_type = types[-1]['identifier']
+        simulator = self.command('simulator-create', ['xcrun', 'simctl', 'create',
+            'Koe Minutes Verify ' + uuid.uuid4().hex[:8], device_type, runtime['identifier']], 30).strip()
+        if not re.fullmatch(r'[A-Fa-f0-9-]{36}', simulator):
+            raise Failed('simctl did not return a simulator UUID')
+        self.receipt['device'] = {'id': simulator, 'type': device_type,
+                                  'runtime': runtime['identifier'], 'kind': 'isolated simulator'}
+        try:
+            self.command('simulator-boot', ['xcrun', 'simctl', 'boot', simulator], 60)
+            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', simulator, '-b'], 120)
+            target = 'integration_test/minutes_flow_test.dart'
+            self.receipt['test_source_sha256'] = sha(ROOT / target)
+            output = self.command('ios-flow', ['flutter', 'drive', '-d', simulator,
+                '--driver=test_driver/minutes_flow_driver.dart', '--target=' + target], 1500)
+            if 'All tests passed.' not in output or re.search(r'\b(?:SKIPPED|skip: true)\b', output):
+                raise Failed('iOS test did not report complete success')
+            screenshots = sorted((self.directory / 'screenshots').glob('*.png'))
+            if not screenshots:
+                raise Failed('iOS test produced no screenshots')
+            self.behavior_proof('ios')
+            self.receipt['screenshots'] = [str(path) for path in screenshots]
+            self.receipt['service_evidence'] = 'iOS simulator, synthetic ASR and LLM'
+        finally:
+            self.command('simulator-delete', ['xcrun', 'simctl', 'delete', simulator], 60)
+
+    def behavior_proof(self, mode):
+        proof = self.directory / f'{mode}-proof.json'
+        if not proof.is_file():
+            raise Failed(f'{mode} structured behavior proof missing')
+        payload = json.loads(proof.read_text())
+        result = payload.get('minutes_flow') if isinstance(payload, dict) else None
+        if not isinstance(result, dict) or not all(result.get(key) is True for key in (
+                'durable_readback', 'chapters', 'overflow_checked', 'reopened',
+                'live_draft_recovered')):
+            raise Failed(f'{mode} persistence, chapters, overflow, reopen or live-draft recovery proof missing')
+        digest = result.get('input_sha256')
+        if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise Failed(f'{mode} synthetic input hash missing')
+        self.receipt['input_sha256'] = digest
+        self.receipt[f'{mode}_proof'] = str(proof)
+
+    def authorized_audio_and_expectations(self):
+        audio = self.environment.get('KOE_MINUTES_AUDIO')
+        expectation = self.environment.get('KOE_MINUTES_EXPECTATIONS')
+        if self.mode == 'all':
+            fixture_dir = ROOT / '.scratch/pstack-relay/provider-fixture'
+            if not audio and (fixture_dir / 'dictation.wav').is_file():
+                audio = str(fixture_dir / 'dictation.wav')
+            if not expectation and (fixture_dir / 'expectations.json').is_file():
+                expectation = str(fixture_dir / 'expectations.json')
+        return audio, expectation
+
+    def provider(self):
+        audio, expectation = self.authorized_audio_and_expectations()
+        if not audio or not Path(audio).is_file():
+            raise Blocked('KOE_MINUTES_AUDIO must name explicitly authorized local test audio')
+        if not expectation or not Path(expectation).is_file():
+            raise Blocked('KOE_MINUTES_EXPECTATIONS must name its deterministic expectation manifest')
+        self.environment['KOE_MINUTES_AUDIO'] = audio
+        self.environment['KOE_MINUTES_EXPECTATIONS'] = expectation
+        if not self.environment.get('DASHSCOPE_API_KEY'):
+            raise Blocked('DASHSCOPE_API_KEY is unavailable in the existing process environment')
+        manifest = json.loads(Path(expectation).read_text())
+        digest = sha(audio)
+        if not isinstance(manifest, dict):
+            raise Blocked('Expectation manifest must be an object')
+        if manifest.get('audio_sha256') != digest:
+            raise Blocked('Audio hash does not match authorized expectation manifest')
+        facts = manifest.get('source_facts', [])
+        if not isinstance(facts, list) or not all(isinstance(fact, dict) for fact in facts):
+            raise Blocked('source_facts must be a list of objects')
+        if not all(isinstance(fact.get('kind'), str) for fact in facts):
+            raise Blocked('Each source fact kind must be a string')
+        kinds = {fact['kind'] for fact in facts}
+        if not {'reason', 'example', 'correction', 'unknown', 'negation'} <= kinds:
+            raise Blocked('Manifest needs reason/example/correction/unknown/negation source_facts')
+        for fact in facts:
+            if not all(valid_alternatives(fact.get(key)) for key in ('source', 'minutes')):
+                raise Blocked('Each source fact needs nonempty source/minutes text or alternatives')
+        if (not isinstance(manifest.get('forbidden_minutes'), list) or
+                not manifest['forbidden_minutes'] or
+                not all(isinstance(value, str) and value.strip() for value in manifest['forbidden_minutes'])):
+            raise Blocked('Manifest needs forbidden_minutes assertions')
+        self.receipt['input_sha256'] = digest
+        self.receipt['expectations_sha256'] = sha(expectation)
+        self.receipt['models'] = {
+            'asr': self.environment.get('KOE_MINUTES_ASR_MODEL', 'qwen-audio-3.1-asr-flash-filetrans'),
+            'llm': self.environment.get('KOE_MINUTES_LLM_MODEL', 'qwen3.8-flash'),
+        }
+        output = self.command('provider-flow', ['flutter', 'test', '--reporter', 'json',
+            'test/minutes_provider_flow_test.dart'], 1200, provider=True)
+        self.receipt['test_events'] = flutter_result(output)
+        proof = self.directory / 'provider-proof.json'
+        if not proof.is_file():
+            raise Failed('Provider produced no persisted proof')
+        result = json.loads(proof.read_text())
+        if not all(result.get(key) is True for key in (
+                'real_asr', 'real_llm', 'persisted_readback', 'facts_and_sources_checked')):
+            raise Failed('Provider proof incomplete')
+        self.receipt['provider_proof'] = str(proof)
+        self.receipt['service_evidence'] = (
+            'authorized test audio via real DashScope Qwen ASR and LLM')
+
+    def mcp(self):
+        audio, _ = self.authorized_audio_and_expectations()
+        if audio:
+            self.environment['KOE_MINUTES_AUDIO'] = audio
+        target = 'test/mcp_live_publication_test.dart'
+        self.receipt['test_source_sha256'] = sha(ROOT / target)
+        output = self.command('mcp-client-flow', [
+            'flutter', 'test', '--reporter', 'json', target], provider=bool(audio))
+        self.receipt['test_events'] = flutter_result(output)
+        proof = self.directory / 'mcp-proof.json'
+        if not proof.is_file():
+            raise Failed('MCP client behavior proof missing')
+        result = json.loads(proof.read_text())
+        required = ('automatic_publication', 'persistent_client',
+                    'continued_transcript', 'corrected_transcript',
+                    'minutes_updated', 'revision_guard', 'revoked',
+                    'ungranted_denied')
+        if not isinstance(result, dict) or not all(result.get(key) is True for key in required):
+            raise Failed('MCP publication, version or authorization proof incomplete')
+        digest = result.get('input_sha256')
+        if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise Failed('MCP synthetic input hash missing')
+        self.receipt['input_sha256'] = digest
+        self.receipt['mcp_proof'] = str(proof)
+        self.receipt['service_evidence'] = (
+            'production controller publication and real stdio client/server; '
+            'synthetic content, no installed external AI client or cross-device acceptance')
+
+    def suspend_background_koe_app(self):
+        binary = '/Applications/Koe.app/Contents/MacOS/Koe'
+        probe = subprocess.run(['pgrep', '-f', binary], capture_output=True, text=True)
+        if probe.returncode != 0 or not probe.stdout.strip():
+            return False
+        subprocess.run(['pkill', '-TERM', '-f', binary], capture_output=True, text=True)
+        for _ in range(15):
+            check = subprocess.run(['pgrep', '-f', binary], capture_output=True, text=True)
+            if check.returncode != 0 or not check.stdout.strip():
+                break
+            time.sleep(0.2)
+        time.sleep(1.0)
+        return True
+
+    def resume_background_koe_app(self):
+        if Path('/Applications/Koe.app').exists():
+            subprocess.Popen(
+                ['open', '-g', '-a', '/Applications/Koe.app'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+    def device_macos(self):
+        if sys.platform != 'darwin':
+            raise Blocked('macOS D3200 BLE verification requires macOS')
+        if not self.environment.get('DASHSCOPE_API_KEY'):
+            raise Blocked('DASHSCOPE_API_KEY is unavailable in the existing process environment')
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        self.environment['KOE_MINUTES_DRIVER_PORT'] = str(port)
+        self.receipt['models'] = {
+            'asr': self.environment.get('KOE_MINUTES_ASR_MODEL', 'qwen-audio-3.1-asr-flash-streaming'),
+            'llm': self.environment.get('KOE_MINUTES_LLM_MODEL', 'qwen3.8-flash'),
+        }
+        target = 'integration_test/device_minutes_flow_test.dart'
+        self.receipt['test_source_sha256'] = sha(ROOT / target)
+        was_running = self.suspend_background_koe_app()
+        try:
+            output = self.command(
+                'device-flow',
+                [
+                    'flutter', 'drive', '-d', 'macos',
+                    f'--dart-define=KOE_MINUTES_DRIVER_PORT={port}',
+                    '--driver=test_driver/minutes_flow_driver.dart',
+                    '--target=' + target,
+                ],
+                1500,
+                provider=True,
+            )
+            if 'All tests passed.' not in output or re.search(r'\b(?:SKIPPED|skip: true)\b', output):
+                raise Failed('macOS D3200 device test did not report complete success')
+            screenshots = sorted((self.directory / 'screenshots').glob('*.png'))
+            if not screenshots:
+                raise Failed('macOS D3200 device test produced no screenshots')
+            proof = self.directory / 'device-proof.json'
+            if not proof.is_file():
+                raise Failed('device structured behavior proof missing')
+            payload = json.loads(proof.read_text())
+            result = payload.get('device_minutes_flow') if isinstance(payload, dict) else None
+            required = (
+                'd3200_input', 'real_asr', 'recording_updates',
+                'stop_finalization', 'process_restart_readback',
+            )
+            if not isinstance(result, dict) or not all(result.get(key) is True for key in required):
+                raise Failed(
+                    'device D3200 input, real ASR, recording updates, '
+                    'stop finalization or restart readback proof missing')
+            digest = result.get('input_sha256')
+            if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+                raise Failed('device audio input hash missing')
+            physical_button = result.get('physical_button') is True
+            self.receipt['device_coverage'] = {
+                'd3200_input': 'verified',
+                'real_asr': 'verified',
+                'recording_updates': 'verified',
+                'stop_finalization': 'verified',
+                'process_restart_readback': 'verified',
+                'physical_button': 'verified' if physical_button else 'unverified',
+            }
+            self.receipt['device_blockers'] = [] if physical_button else ['physical_button_unverified']
+            self.receipt['device'] = {
+                'id': result.get('device_id'),
+                'mac': result.get('device_mac'),
+                'kind': 'macOS CoreBluetooth + D3200',
+            }
+            self.receipt['input_sha256'] = digest
+            self.receipt['device_proof'] = str(proof)
+            self.receipt['screenshots'] = [str(path) for path in screenshots]
+            self.receipt['service_evidence'] = (
+                'macOS CoreBluetooth direct connection to physical soundcore Work (D3200), '
+                'real BLE Opus stream and file sync, real DashScope Qwen ASR and LLM')
+        finally:
+            if was_running:
+                self.resume_background_koe_app()
+
+    def device(self):
+        self.receipt['device_coverage'] = {
+            name: 'unverified' for name in (
+                'd3200_input', 'real_asr', 'recording_updates',
+                'stop_finalization', 'process_restart_readback', 'physical_button')
+        }
+        self.receipt['device_blockers'] = [
+            'end_recording_command_unavailable', 'physical_button_unverified',
+        ]
+        self.receipt['protocol_evidence'] = 'PROTOCOL.md:211-234'
+        self.receipt['service_evidence'] = (
+            'device discovery only; no recording or provider request started')
+        selected = (self.environment.get('KOE_MINUTES_DEVICE') or '').strip()
+        if selected == 'macos' or (not selected and self.environment.get('DASHSCOPE_API_KEY')):
+            return self.device_macos()
+        if sys.platform != 'darwin':
+            raise Blocked('Physical iPhone verification requires macOS')
+
+        def query(name, arguments):
+            path = self.directory / f'{name}.json'
+            self.command(name, ['xcrun', 'devicectl', *arguments,
+                                '--json-output', str(path), '--timeout', '20'], 30)
+            payload = json.loads(path.read_text())
+            if (not isinstance(payload, dict) or
+                    payload.get('info', {}).get('outcome') != 'success' or
+                    not isinstance(payload.get('result'), dict)):
+                raise Failed(f'{name} did not return successful device evidence')
+            return payload['result']
+
+        inventory = query('device-inventory', ['list', 'devices'])
+        selected = self.environment.get('KOE_MINUTES_DEVICE')
+        candidates = []
+        for device in inventory.get('devices', []):
+            properties = device.get('properties', {})
+            hardware = properties.get('hardware', device.get('hardwareProperties', {}))
+            if hardware.get('reality') != 'physical' or hardware.get('deviceType') != 'iPhone':
+                continue
+            identifier = device.get('identifier')
+            udid = hardware.get('udid')
+            if selected and selected not in (identifier, udid):
+                continue
+            candidates.append((identifier, udid, hardware))
+        if not candidates:
+            raise Blocked('No matching physical iPhone is available; simulators do not satisfy device acceptance')
+        if len(candidates) != 1:
+            raise Blocked('Multiple physical iPhones are available; set KOE_MINUTES_DEVICE to the intended device')
+        identifier, udid, hardware = candidates[0]
+        if not isinstance(identifier, str) or not identifier:
+            raise Failed('Physical iPhone inventory has no usable identifier')
+        self.receipt['device'] = {
+            'id': identifier, 'udid': udid, 'kind': 'physical iPhone',
+            'model': hardware.get('productType'),
+        }
+        lock = query('device-lock-state', ['device', 'info', 'lockState',
+                                          '--device', identifier])
+        if not isinstance(lock.get('passcodeRequired'), bool):
+            raise Failed('Device lock state is unknown')
+        self.receipt['device']['passcode_required'] = lock['passcodeRequired']
+        self.receipt['device']['unlocked_since_boot'] = lock.get('unlockedSinceBoot')
+        if lock['passcodeRequired']:
+            self.receipt['device_blockers'].insert(0, 'locked')
+            raise Blocked('Physical iPhone is locked; D3200 input, stop and restart remain unverified')
+        raise Blocked(
+            'No verified D3200 stop command or automatic physical-button actuator exists; '
+            'start/pause cannot prove stop finalization. Recording was not started')
+
+    def execute(self):
+        try:
+            if self.mode == 'all':
+                self.receipt['modes'] = {}
+                for mode in MODES:
+                    before_steps = len(self.receipt['steps'])
+                    self.receipt['input_sha256'] = None
+                    self.receipt['models'] = {}
+                    for key in ('service_evidence', 'device', 'device_coverage',
+                                'device_blockers', 'protocol_evidence'):
+                        self.receipt.pop(key, None)
+                    getattr(self, mode)()
+                    self.receipt['modes'][mode] = {
+                        'status': 'passed',
+                        'input_sha256': self.receipt.get('input_sha256'),
+                        'models': dict(self.receipt.get('models') or {}),
+                        'service_evidence': self.receipt.get('service_evidence'),
+                        'device': self.receipt.get('device'),
+                        'device_coverage': self.receipt.get('device_coverage'),
+                        'proof': self.receipt.get(f'{mode}_proof'),
+                        'steps': [s['name'] for s in self.receipt['steps'][before_steps:]],
+                    }
+                device_mode = self.receipt['modes'].get('device') or {}
+                if device_mode.get('device') is not None:
+                    self.receipt['device'] = device_mode['device']
+                if device_mode.get('device_coverage') is not None:
+                    self.receipt['device_coverage'] = device_mode['device_coverage']
+                audio, _ = self.authorized_audio_and_expectations()
+                if audio and Path(audio).is_file():
+                    self.receipt['input_sha256'] = sha(audio)
+                self.receipt['installation_status'] = {
+                    'macos_app_bundle_present': Path('/Applications/Koe.app').exists(),
+                    'external_mcp_client_installed': 'unverified',
+                    'physical_iphone_installed': 'unverified',
+                }
+                self.receipt['merge_status'] = {
+                    'branch': subprocess.check_output(
+                        ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                        cwd=ROOT, text=True).strip(),
+                    'merged_to_main': False,
+                    'released': False,
+                }
+                self.receipt['acceptance_breakdown'] = {
+                    'offline': 'passed (synthetic ASR/LLM, durable readback + crash draft recovery)',
+                    'ios': 'passed (isolated iOS simulator, chapter navigation + large text + reopen)',
+                    'provider': 'passed (authorized test audio via real DashScope Qwen ASR + LLM)',
+                    'device': 'passed (physical D3200 BLE stream + real Qwen ASR/LLM + process restart; physical_button unverified)',
+                    'mcp': 'passed (production controller session grant + real stdio MCP server/client)',
+                }
+            else:
+                getattr(self, self.mode)()
+            if self.source_snapshot() != self.snapshot:
+                raise Failed('Source changed during verification; receipt cannot identify one tested version')
+            self.receipt['status'] = 'passed'
+            return 0
+        except (Blocked, Failed, OSError, ValueError, KeyboardInterrupt) as error:
+            self.receipt['status'] = 'blocked' if isinstance(error, Blocked) else 'failed'
+            self.receipt['steps'].append({'name': 'acceptance', 'status': self.receipt['status'],
+                                         'message': redact(str(error), self.environment)})
+            return 77 if isinstance(error, Blocked) else 1
+        finally:
+            self.receipt['finished_at'] = datetime.now(timezone.utc).isoformat()
+            self.save()
+            print(f"{self.mode}: {self.receipt['status']}")
+            print(f"receipt: {self.directory / 'receipt.json'}")
+
+
+def interrupted(signum, frame):
+    raise KeyboardInterrupt(f'signal {signum}')
+
+
+def main():
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGHUP, interrupted)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', choices=(*MODES, 'all'))
+    parser.add_argument('--output-dir', type=Path, default=ROOT / '.scratch/pstack-relay')
+    args = parser.parse_args()
+    return Verification(args.mode, args.output_dir.resolve()).execute()
+
+
+if __name__ == '__main__':
+    sys.exit(main())

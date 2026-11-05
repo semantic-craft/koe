@@ -1,0 +1,123 @@
+# Koe 录音纪要与 MCP 接力
+
+## 目标与边界
+
+按下录音豆说话，Koe 使用已配置的 ASR 转写、Qwen 或指定 LLM 整理；iPhone 在录音过程中显示阶段摘要，停止后保存有概述、章节、分层要点与回顾的完整纪要。MCP 对外提供允许范围内的最新文字与纪要。核心整理不依赖 Codex、Mac 中转或手动复制；外部结果回写、sidecar、插件 UI 暂不在范围内。
+
+用户 2026-11-05 明确要求全自动验收。不得把人工听录音、点击页面、确认截图列为完成条件。自动化必须实际驱动并检查结果；设备离线、权限不足、提供商不可用、实体键无法自动驱动时记为未验收，不能将 skip 当 PASS。合成、真实服务、模拟器和真实设备证据分开。用户无需重新选择模型或配置已有凭据。
+
+参照本轮已读取的钉钉闪记样例：整体标题和概述、时间章节、章内编号、要点卡片、关键回顾。保留口述的观点、理由、例子和改口；不强制套用会议待办模板。样例排版观察不证明其原音频准确性。
+
+## 现状 vs 目标差距对表与防冲突护栏
+
+基线 main `6a8c217`；本棒分支 `codex/koe-minutes-relay`。Slice A 初次盘点时 GitHub semantic-craft/koe 开放 PR 为 0，当前接力复用草稿 PR #548；不得省略 gh 的 --repo，否则可能选到 upstream。
+
+| 环节 | 已观察入口 | 差距与验证要求 |
+| --- | --- | --- |
+| 模型配置 | lib/state/recorder_controller.dart 的 QwenAnalysisService、analysisBackend、analysisApiKey | 复用设置，自动测试不得读取个人 Keychain 或打印凭据；真实服务只用授权测试输入 |
+| 自动整理 | lib/state/recorder/organize.dart；test/auto_organize_test.dart | 已有转写、摘要、待办流程；核对是否会自动产出完整分层纪要，不把摘要完成当纪要完成 |
+| 分层纪要 | lib/state/meeting_minutes.dart；lib/ui/widgets/minutes_panel.dart、minutes_topic_card.dart | 核对个人口述类型、细节保留、章节与手机布局，不重复造模型 |
+| 实时摘要 | lib/state/recorder/live_meeting.dart；lib/state/live_minutes.dart；test/live_meeting_test.dart | 已有实时纪要流程，需证明录音豆输入接线、停止收尾、持续更新和旧结果失效 |
+| 外部读取 | tools/koe-mcp/server.py；test/koe_mcp_export_test.dart | 当前 main 为手动导出快照；需自动提供允许范围内最新版本并在真实客户端读回 |
+| 离线门禁 | scripts/check；上述控制器和 widget 测试 | 可验证行为，但不证明真实供应商与设备链路 |
+| iOS 自动界面 | integration_test/screenshots/app_tour.dart | 文件明确写无断言；目前不构成纪要端到端验收。Slice B 首先补齐 |
+
+另一工作区 `/Users/xianweizhang/Projects/.worktrees/koe/agent-preflight` 已有未提交修改，涉及 organize.dart、recorder_controller.dart、minutes_panel.dart、归档、转写、MCP server 及测试。其改动不视为已交付，Slice A 未编辑这些文件；Slice B 已核对重叠，并按下节记录在当前分支选择性复用候选，原工作区保持不动。该工作区还新增 `integration_test/screenshots/daily_minutes_acceptance.dart`、`test/minutes_sync_mcp_e2e_test.dart` 与同步协调器；这些是可复用候选，不是本次通过证据。其 iOS 场景采用 ASR/LLM 替身，不能代替真实服务或 BLE 验收。当前主工作区原有 docs/agents/lessons.md、docs/notes/README.md、未跟踪 docs/design/qwennote-mcp-lessons-and-plan.md 均保留，不纳入本棒提交。
+
+现有总工单 #543、实现 #544/#545/#546、真实验收 #514/#515/#528 继续复用，不新开重复工单。#543 记录指定 GLM 执行及不合并、不发布边界，本棒不接管其业务分支、不合并该工作。新要求全自动与实时更新写在本队列；后续在原工单协调增量范围。
+
+代码定位：main 自动整理仅 summary/todos（organize.dart:450–456）；实时识别已在 live_transcription.dart:536 接入 acceptLiveSpeech，但每场 live_meeting.dart:77 重置 liveMinutesEnabled=false。优先补这两处真实体验缺口，不另造处理系统。
+
+## Slice B 当前工作
+
+已核对 agent-preflight 的未提交候选，在当前接力分支选择性复用自动纪要、手机打开入口及相关测试，未修改该工作区，也未引入 Mac 同步或 MCP 业务改动。自动整理与手动入口共用控制器生成动作和原有纪要模型。本轮四项完成门禁全部通过，汇总见 `.scratch/pstack-relay/slice-b-receipt.json`。`scripts/check` 静态分析及 1110 项 Flutter 测试通过；付费场景在普通套件按设计跳过，独立真实 Qwen 门禁通过。离线 30 项、iOS 独立模拟器的生产详情导航/保存重建/章节/大字号/截图、8 个性能场景通过。真实服务输入为合成语音，未验收真人录音、D3200 或真实 iPhone。未合并、未发布。
+
+## 当前推进顺序
+
+2026-11-05 用户明确暂留 C 真机验收未完成，禁止反复执行同一阻塞预检，先实施不依赖设备的 D。队列因此调整为 A、B、D、C、E；C 的验收条件和缺项原样保留，不以跳过表示通过。
+
+## Slice C 当前工作
+
+已实现录音豆会话在开启自动整理且未启用“只留本机”时自动开启阶段摘要。完整整理等待录制、末句识别及音频转换结束；重复停止共用同一次 ASR 收尾，下一场开始不会提前释放上一场或接收其末句。阶段稿失败保持未知请求状态，不自动重发。完整纪要仍由 Slice B 的队列生成。
+
+本轮按用户授权用 Mac 直连已在线的真实 `soundcore Work`（D3200，MAC `00:7F:1D:06:63:9D`，CoreBluetooth ID `99141753-4327-7C9A-8C1D-D82602FF5B3E`）完成 `scripts/verify-minutes-flow device` 端到端硬件验收：
+- 修复实时录制结束时的两处真实硬件竞态（已先写回归测试复现再修复）：
+  1. `DeviceCopies.reconcile` 在实时录制刚结束、Opus 转 WAV 仍被锁定时运行 `listFiles()`，在 `AudioDuration.read` 前后检查 `isAudioLocked` / `_retrieving`，避免将正在收尾的实时文件永久标为 `partial`（`test/device_copies_test.dart`）。
+  2. 主机端 `finalizeLiveRecordingAfterHostStopForTesting()` 停止录制时先停电量轮询、发送 `pauseRecord()` 并拦截在途 `0x01 0x01`（`recordingStatus=1`）+ `0x18 0x82 status=2` 暂停回报重开第二场 `paused` 会话；收尾完成后按转换后的 `wavPath` 绑定并入队自动整理（`test/device_live_minutes_test.dart`）。
+- `direnv exec . scripts/verify-minutes-flow device` 真实硬件验收通过（exit `0`）：真实 D3200 BLE 录制 `fileId=1793863889`（接收 `312960` 字节、解码 `1956` 帧 Opus PCM）、经真实 `qwen-audio-3.1-asr-flash-streaming` 实时识别与 `qwen3.8-flash` 录制中生成阶段摘要、主机停录后自动生成 3 章完整分层纪要（`revision=a21ab7dbed3d324d84f5029f0259a8015af5dc257ca3b59326f313e021b0f94c`）、新进程冷启动 `RecorderController` 读回完整纪要与崩溃恢复阶段草稿并抓取去敏桌面截图。因本轮使用远程 BLE 指令与自动声源，无自动实体按键装置，回执如实记录 `physical_button: "unverified"`。
+- `scripts/check --reporter expanded`（Python 门禁单元测试 + `flutter analyze` 0 问题 + `1124` 项 Flutter 测试通过，另 1 项独立付费测试默认跳过）与 `KOE_PERF_FOREGROUND=1 scripts/perf-check`（8 个场景全部在阈值内）均通过。汇总回执 `.scratch/pstack-relay/slice-c-receipt.json`。
+
+## Slice D 当前工作
+
+本轮先推进不依赖设备的 MCP。App 按记录逐条授权，自动发布最新文字和纪要；Python 的 `--live-directory` 读取同一原子文档，稳定记录 ID 与发布版本分开，`expected_revision` 拒绝跨版本读取。未授权记录不发布，撤销移出当前授权。授权仅当前 App 会话有效，异常退出最多15秒租约过期；不引入外部写回、原音频、地点、主题或书签读取。
+
+本轮客户端是实际运行的 stdio 协议客户端与 MCP 子进程，输入由生产控制器的转写、校订和纪要动作自动发布，使用隔离合成资料。它不代表 Codex 等外部客户端已安装，不代表 iPhone 与 Mac 的真实跨端同步。C 的真实输入、停止、进程重启和实体按键缺项继续保留，不再反复执行同一阻塞预检。
+
+D 的完成门禁已通过：`scripts/check --reporter expanded` 分析无问题、1121项通过（另1项独立付费场景默认跳过）；Python MCP服务18项通过；`scripts/verify-minutes-flow mcp` 的3项行为场景全部通过、无跳过，回执含5个含setup/teardown的完成事件。测试直接驱动生产写入，不手动发送变更通知；新Mac菜单和授权等待期间关闭也已覆盖。额外 `scripts/perf-check` 八场景在既有阈值内，transcript_save workload 518ms（单次合成负载，不作提速比较）。汇总回执 `.scratch/pstack-relay/slice-d-receipt.json`。
+
+## Slice E 当前工作
+
+已完成全流程无人值守复验与状态分项核算（汇总回执 `.scratch/pstack-relay/slice-e-receipt.json`，原始运行目录 `.scratch/pstack-relay/20261105T080512Z-all-dd760226`）：
+- **同一授权测试音频贯穿全链路**：`scripts/verify-minutes-flow all` 默认解析 `.scratch/pstack-relay/provider-fixture/dictation.wav`（`sha256=bc453c9dd4d7a0b57c45d111cb23bbdd32e08d14f178c8d5b30811f1d904fccb`）与 `expectations.json`（`sha256=74d7dd15661ba1d21cd456d5b01b90523124b55ea66439b280861e08441837e5`），依次无人值守跑通 `offline`、`ios`、`provider`、`device`、`mcp` 五层并逐层写入 `modes`、安装状态、合并状态与分项验收明细（单元测试 `scripts/test_verify_minutes_flow.py` 14 项通过）。
+- **版本、安装、合并、实际验收四项分离记录**：
+  - **版本**：`1.2.2+5`（分支 `codex/koe-minutes-relay`，草稿 PR `#548`）。
+  - **安装状态**：macOS 本机 `/Applications/Koe.app` 已存在（`macos_app_bundle_present: true`）；外部宿主 AI 客户端（Codex/Claude Desktop 等）MCP 注册与真实物理 iPhone 安装均未执行，如实记为 `unverified`。
+  - **合并与发布状态**：`merged_to_main: false`、`released: false`（遵守 `#543` 不自动合并、不发布边界）。
+  - **实际验收分项**：
+    1. `offline`：PASS（4 个测试文件 30 项通过，持久读回与崩溃阶段稿恢复）。
+    2. `ios`：PASS（新建并销毁独立模拟器 `iPhone 11 / iOS 27.0`，生产详情导航、分章展示、1.35x 大字号无溢出及重开读回）。
+    3. `provider`：PASS（同一授权测试音频经真实 DashScope `qwen-audio-3.1-asr-flash-filetrans` 与 `qwen3.8-flash`，5 类事实、来源定位及禁用改写断言全部通过）。
+    4. `device`：PASS（macOS CoreBluetooth 直连物理 `soundcore Work` D3200 `00:7F:1D:06:63:9D`，声学播放同一授权音频并经真实 BLE Opus 流、`qwen-audio-3.1-asr-flash-streaming` 实时识别与 `qwen3.8-flash` 阶段摘要、停录落盘完整分层纪要及冷启动重启读回；因无机械按键致动器，`physical_button: "unverified"`）。
+    5. `mcp`：PASS（同一授权音频导入生产 `RecorderController` 会话授权、真实 `tools/koe-mcp/server.py --live-directory` 子进程与持续 stdio 客户端读取、续写/校订/纪要更新/版本护栏/撤销与未授权隔离）。
+
+## 全自动验收契约
+
+Slice B 已建立 `scripts/verify-minutes-flow`。每个模式分别产出回执，只有实际执行通过才能满足 Done Predicate。提供 `offline`、`ios`、`provider`、`device`、`mcp` 和 `all` 模式，使用隔离测试资料，输出机器可读回执与去敏截图。记录提交、输入哈希、模型标识、平台、步骤状态、版本和证据路径；缺条件必须非零退出。all 必须同时要求所有层通过，不能只汇总测试数量。
+
+- offline：固定语料含理由、例子、否定、改口、未知事项；断言结果保存和重启读回、修订与引用一致、失败恢复。模型替身只证明流程。
+- ios：自动启动隔离应用、驱动录音详情、核对章节和正文、滚动及重开读回，抓截图检查溢出；不读个人资料。截图存在本身不等于成功。
+- provider：指定授权音频经实际配置 ASR 和 LLM。用预定义事实、必须保留的改口、不得出现的断言及来源定位评估内容；模型评分仅补充，不能独自决定 PASS。
+- device：真实 iPhone 与 D3200 输入到持久结果。自动声源和远程录音命令可验证声音链路，但不能冒充实体按键；实体键若无自动驱动装置或可观察事件证据，报告对应项未验收，不转嫁人工验收、不降低目标。
+- mcp：真实子进程和实际客户端读取同一版本；继续转写、校订、撤销后再次读取，确认最新版本和访问范围；不能用导出夹具代替客户端证明。
+
+运行 `scripts/verify-minutes-flow offline` 或 `ios`；iOS 模式自动创建并回收独立模拟器，使用合成服务并检查持久化、重新打开、章节、溢出和截图。真实服务单独运行 `provider`，通过已有授权启动入口向进程传入 `DASHSCOPE_API_KEY`、`KOE_MINUTES_AUDIO` 与 `KOE_MINUTES_EXPECTATIONS`；不从个人 Keychain 回退。期望 JSON 包含音频 `audio_sha256`、五类 `source_facts`（reason/example/correction/unknown/negation，每项有 source 与 minutes 字符串或同义候选列表）及 `forbidden_minutes`。真实测试使用生产 Qwen ASR 和纪要服务，并检查逐条来源及磁盘读回。`device` 执行真实 iPhone 发现及锁屏预检，但完整硬件场景尚缺；`mcp` 在 Slice D 验证控制器自动发布与真实 stdio 客户端。`all` 仍须通过 C 的真实硬件场景，不能因 D 通过而计为完成。
+
+回执存 .scratch/pstack-relay/，不提交录音、全文或运行日志。业务改动仍跑 scripts/check；涉及 BLE/音频/JSON 存储或检索时跑 scripts/perf-check。需真机的项独立 GitHub 工单；代码合并与产品全自动验收分开记录，不因代码合并勾完产品切片。
+
+## 接力运行说明
+
+scripts/pstack-relay 已安装；.agents/hooks.json 是本机配置。此脚本的 hook 格式面向 Antigravity，尚无 Codex 自动触发证据，不能声称在 Codex 已自动接线。本会话显式运行 status/advance 生成提示词和复制剪贴板。selftest 只验接力文件，不验应用；advance 本身不会执行 Done Predicate，调用前必须核对实际回执。
+
+下一棒在 `/Users/xianweizhang/Projects/koe` 读取本文件与分支状态。账本只是线索，完成证据与当前源码不符时调查，不盲信历史勾选。未来缺少本机 .scratch 时以提交的本文件和 PR 证据恢复。
+
+## 全景切片队列
+
+### [x] Slice A: 现状与全自动验收边界
+- **Playbook**: Investigation
+- **Outcome**: 核对现有能力、并发改动和自动验证缺口，建立可接续队列；不宣称产品已实现。
+- **Done Predicate**: `scripts/pstack-relay selftest`、`python3 progress/progress.py check`、现有自动整理/纪要页面/实时纪要/MCP四组定向测试通过；缺少 iOS 端到端断言明确列为 B 首个前置工作。
+- **Evidence**: docs/pstack-relay.md; .scratch/pstack-relay/baseline.log (20 tests PASS); MCP subprocess 11 tests PASS; progress check PASS
+
+### [x] Slice B: 自动验收入口与单条录音的 iOS 完整纪要
+- **Playbook**: Feature
+- **Outcome**: 先核对 agent-preflight 重叠改动，补齐自动验收入口；复用已有 ASR/Qwen 与纪要模型，自动生成并在 iOS 保存、分章显示个人口述纪要。无需人工点击或审稿才能判通过。
+- **Done Predicate**: `scripts/check`、`scripts/verify-minutes-flow offline`、`scripts/verify-minutes-flow ios`、`scripts/verify-minutes-flow provider` 均通过；入口在本片先实现，真实模型失败或设备缺失不得记为通过。
+- **Evidence**: .scratch/pstack-relay/slice-b-receipt.json (check 1110 PASS; offline 30 PASS; iOS PASS; real Qwen provider PASS; perf 8 PASS)
+
+### [x] Slice D: MCP 自动读取最新文字和纪要
+- **Playbook**: Feature
+- **Outcome**: 外部 AI 无需手动导出即可读取允许范围内的最新文字与纪要，与 iPhone 同一记录和版本对应；不扩展外部写回和插件 UI。
+- **Done Predicate**: `scripts/check`、`python3 -B tools/koe-mcp/test_server.py`、`scripts/verify-minutes-flow mcp` 通过，包含实际客户端读取、更新再读和撤销检查。
+- **Evidence**: .scratch/pstack-relay/slice-d-receipt.json (check 1121 PASS; MCP server 18 PASS; live client PASS; perf 8 PASS; C deferred)
+
+### [x] Slice C: 录音豆实时摘要与自动收尾
+- **Playbook**: Feature
+- **Outcome**: 真机验收按用户要求暂缓，不重复执行同一阻塞预检；只有设备条件或自动结束机制有新证据后再继续。原目标保留：实际录音豆输入持续进入转写与阶段摘要，停止后完整纪要落盘；重启恢复、失败提示、旧版本保护可自动验证。
+- **Done Predicate**: `scripts/check`、`scripts/perf-check`、`scripts/verify-minutes-flow device` 通过，包含录制中更新、停止最终化与重启读回；实体按键覆盖必须有自动证据，否则保留未验收。
+- **Evidence**: .scratch/pstack-relay/slice-c-receipt.json (check 1124 PASS; device D3200 BLE + real Qwen ASR/LLM PASS; perf 8 PASS; physical_button unverified)
+
+### [x] Slice E: 全流程无人值守复验与交付
+- **Playbook**: Shipping
+- **Outcome**: 同一授权测试音频无人值守走过录音豆、实际 ASR/LLM、iPhone 纪要和外部 MCP，记录版本、安装、合并、实际验收分别状态。
+- **Done Predicate**: `scripts/verify-minutes-flow all`、`scripts/check`、`python3 progress/progress.py check` 通过；无 skip、缺失证据或人工验收项，所有切片完成后再运行 `scripts/pstack-relay status --require-all-done`。
+- **Evidence**: .scratch/pstack-relay/slice-e-receipt.json (verify-minutes-flow all PASS; check 1124 PASS; progress check PASS; physical_button unverified)

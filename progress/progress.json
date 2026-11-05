@@ -504,7 +504,7 @@
         "number": 515,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T15:02:17Z"
+        "updated_at": "2026-11-04T16:55:27Z"
       },
       {
         "number": 516,
@@ -522,7 +522,7 @@
         "number": 528,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-03T16:05:40Z"
+        "updated_at": "2026-11-04T17:36:40Z"
       },
       {
         "number": 533,
@@ -538,13 +538,22 @@
       },
       {
         "number": 537,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-03T16:56:51Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-04T02:51:43Z"
       }
     ],
-    "main": "a7bd4aff5f2fd0fc32a3338b2cc441f41346ff90",
-    "open_pulls": [],
+    "main": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
+    "open_pulls": [
+      {
+        "head": "bd23ac2571d42fb3ae751da0af64e70915dd5883",
+        "number": 548
+      },
+      {
+        "head": "e8676498b47a73d1588f329834bbef22a11048c3",
+        "number": 551
+      }
+    ],
     "pulls": [
       {
         "base": "75749acdf6c097eda495a29b9c6f31d48f16e067",
@@ -1054,7 +1063,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-03T17:55:03.179532Z",
+  "observed_at": "2026-11-05T08:14:24.602488Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2475,6 +2484,46 @@
         }
       ],
       "title": "本机导出只读 MCP"
+    },
+    {
+      "id": "minutes-relay",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "全景切片 A–E 队列、版本/安装/合并/实际验收四项分列记录",
+              "ref": "docs/pstack-relay.md"
+            },
+            {
+              "kind": "file",
+              "note": "五层无人值守门禁（offline/ios/provider/device/mcp/all）全部 exit 0；实体按键无机械驱动如实记为 unverified",
+              "ref": "scripts/verify-minutes-flow"
+            },
+            {
+              "kind": "file",
+              "note": "macOS CoreBluetooth 直连真实 soundcore Work (D3200) 实时流式 ASR、阶段摘要、停录落盘与进程重启读回",
+              "ref": "integration_test/device_minutes_flow_test.dart"
+            },
+            {
+              "kind": "file",
+              "note": "生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。",
+              "ref": "test/mcp_live_publication_test.dart"
+            },
+            {
+              "kind": "file",
+              "note": "轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板一键接入",
+              "ref": "test/mcp_sync_test.dart"
+            }
+          ],
+          "id": "minutes-relay-bootstrap",
+          "next": "草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）与真实公网 VPS / 手机移动网络验收（#528）保留独立验收。",
+          "status": "in_progress",
+          "summary": "Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板一键接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并通过 scripts/check（Python 22 项 + Flutter 1127 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与公网 VPS 实机验收如实记为 unverified。",
+          "title": "全自动验收与接力切片"
+        }
+      ],
+      "title": "录音豆纪要与 MCP 全自动接力"
     }
   ],
   "title": "Koe 开发进度",

@@ -36,7 +36,7 @@ On top of that, Koe is growing into a phone-first personal record: recordings, p
 
 ### Recording and transcription
 
-- Scan, pair and bind the recorder over Bluetooth; see recorder and charging-case battery; start, pause and stop recording remotely
+- Scan, pair and bind the recorder over Bluetooth; see recorder and charging-case battery; start and pause recording remotely, and end recording with the recorder's physical button
 - Live transcription while you record, with optional live translation (Apple on-device)
 - Pull recordings from the recorder (Bluetooth, or Wi‑Fi direct batch export); recordings that grew after a resumed session are fetched again automatically
 - Record with the phone microphone too (iPhone or Pixel); keeps recording when locked, pauses on incoming calls and recovers after the app is killed

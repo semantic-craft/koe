@@ -688,11 +688,35 @@ class _WireRecordingClient extends http.BaseClient {
           jsonDecode(utf8.decode(bodyBytes)) as Map<String, dynamic>;
       final messages = (decoded['messages'] as List).cast<Map>();
       final userContent = '${messages.last['content']}';
-      final content =
-          userContent.contains('提取出用户自己承诺要做的事') ||
-              userContent.contains('"items"')
-          ? '{"items":[{"type":"mine","title":"跟进本机区分验收","due":null,"segment":1}],"updates":[]}'
-          : '先由甲介绍背景，再由乙说明进展 [S1]。';
+      String content;
+      if (userContent.contains('结构化会议纪要')) {
+        content = jsonEncode({
+          'schemaVersion': 2,
+          'title': '本机区分验收',
+          'overview': '先由甲介绍背景，再由乙说明进展。',
+          'topics': [
+            {
+              'text': '本机区分验收',
+              'sources': ['S1'],
+              'summary': '先由甲介绍背景，再由乙说明进展。',
+              'points': [
+                {'text': '先由甲介绍背景 [S1]', 'sources': ['S1']},
+                {'text': '再由乙说明进展 [S1]', 'sources': ['S1']},
+              ],
+            },
+          ],
+          'terms': <Object>[],
+          'decisions': <Object>[],
+          'actions': <Object>[],
+          'questions': <Object>[],
+        });
+      } else if (userContent.contains('提取出用户自己承诺要做的事') ||
+          userContent.contains('"items"')) {
+        content =
+            '{"items":[{"type":"mine","title":"跟进本机区分验收","due":null,"segment":1}],"updates":[]}';
+      } else {
+        content = '先由甲介绍背景，再由乙说明进展 [S1]。';
+      }
       final reply = jsonEncode({
         'choices': [
           {

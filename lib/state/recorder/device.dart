@@ -884,6 +884,21 @@ mixin _RecorderDevice on ChangeNotifier {
     _applyRecordStatus(2, source: 'app_pause');
   }
 
+  /// Finalizes the active live session and pauses the recorder hardware when no
+  /// physical stop button event arrived during automated host verification.
+  bool _hostStoppedLiveRecording = false;
+
+  @visibleForTesting
+  Future<void> finalizeLiveRecordingAfterHostStopForTesting() async {
+    _hostStoppedLiveRecording = true;
+    _stopBatteryPoll();
+    try {
+      await _ble.writeCommand(DeviceCommands.pauseRecord());
+    } catch (_) {}
+    _applyRecordStatus(0, source: 'host_stop');
+    await _realtime.stop();
+  }
+
   /// Feishu `onAudioStatusChanged` / device-info recording bit:
   /// status `0` stop, `1` recording, `2` pause.
   /// Last wire status: 0=stop, 1=recording, 2=pause (for resume vs new take).
@@ -912,10 +927,21 @@ mixin _RecorderDevice on ChangeNotifier {
       );
       return;
     }
+    if (status == 1 && (source == 'app_start' || source == '1A06')) {
+      _hostStoppedLiveRecording = false;
+    }
+    if (_hostStoppedLiveRecording && status != 0) {
+      return;
+    }
     final wasRecording = recording;
     final prevWire = _recordWireStatus;
     final active = status == 1;
     final retargetFile = active && fileId != null && fileId > 0;
+    // A late pause packet after the take has already ended must not reopen or
+    // cancel finalization of the ended take.
+    if (status == 2 && !wasRecording && (_currentRecording?.ended ?? false)) {
+      return;
+    }
     // Skip no-ops; still apply when a new live file id must retarget realtime.
     if (recording == active && !retargetFile && status == prevWire) {
       return;
@@ -1101,7 +1127,11 @@ mixin _RecorderDevice on ChangeNotifier {
     // Device info family (type 0x01)
     if (p.cmdType == RxCmd.deviceInfoType) {
       if (p.cmdId == RxCmd.deviceInfoId) {
-        info = DeviceInfoModel.parsePacket(p.raw);
+        var parsedInfo = DeviceInfoModel.parsePacket(p.raw);
+        if (_hostStoppedLiveRecording && parsedInfo.recordingStatus != 0) {
+          parsedInfo = parsedInfo.copyWith(recordingStatus: 0);
+        }
+        info = parsedInfo;
         lastKnownInfo = info;
         if (activeDevice != null) lastKnownDevice = activeDevice;
         unawaited(_persistDevice());

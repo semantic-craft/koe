@@ -237,14 +237,22 @@ class DeviceCopies {
       final expectedDuration = baseline ?? file.durationMs;
       final path = _context.localPathFor(id);
       if (path == null) continue;
+      if (_context.isAudioLocked(id, path) || _retrieving.contains(id)) {
+        continue;
+      }
       try {
         final local = File(path);
         if (!await local.exists()) continue;
         // Local paths may be raw Opus or decoded WAV: compare durations,
         // never compressed bytes with milliseconds (or WAV bytes).
         final duration = await AudioDuration.read(path);
-        // A retrieval may have finished while the local metadata was read.
-        if (_retrievedSizes[id] != baseline || _partial.contains(id)) continue;
+        // A retrieval or live finalization may have changed while metadata read.
+        if (_retrievedSizes[id] != baseline ||
+            _partial.contains(id) ||
+            _context.isAudioLocked(id, path) ||
+            _retrieving.contains(id)) {
+          continue;
+        }
         if (duration != null &&
             duration.inMicroseconds >= expectedDuration * 1000 * 0.95) {
           await _setRetrievedSize(id, expectedDuration);

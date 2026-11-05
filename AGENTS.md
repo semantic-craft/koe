@@ -1,5 +1,7 @@
 # Koe 开发入口
 
+- **PStack 自动接力约定（A → B → C 跨对话推进）**：全景切片队列在 [docs/pstack-relay.md](docs/pstack-relay.md)，决策账本在 `.scratch/pstack-relay/decisions.tsv`。每次对话完成一个切片并通过验证后，必须运行 `scripts/pstack-relay advance <SLICE_ID> --evidence "<sha/receipt>" --copy`（若仅查询状态则运行 `scripts/pstack-relay status --copy`），并在回复末尾附上生成的 `## Next Chat Prompt (Copy & Paste)` 代码块，供用户直接粘贴到下一个新对话。
+
 Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundcore Work（D3200）录音豆：BLE 连接、取回录音、指定模型转写与分析，并逐步做成手机优先的个人记录与持续事项工具（录音 + 地点 + 待办 + 日记，可交给 AI）。产品身份以 [pubspec.yaml](pubspec.yaml) 和 [README](README.md) 为准；当前做什么、冻结什么见 [ROADMAP](ROADMAP.md)。
 
 开发进度在 `progress/`（progress.json + 生成的自包含 index.html），更新时按 progress-page 技能 `python3 progress/progress.py refresh|render|check`，生成物不手改。

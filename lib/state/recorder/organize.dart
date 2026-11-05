@@ -19,6 +19,9 @@ enum OrganizeStage {
   /// A paid request may have reached the provider without a saved answer.
   /// Koe does not resend it on its own; the user decides.
   needsCheck,
+
+  /// A user-edited minutes result is older than its transcript.
+  needsReview,
 }
 
 class OrganizeStatus {
@@ -34,6 +37,7 @@ class OrganizeStatus {
     OrganizeStage.done => '已整理',
     OrganizeStage.failed => '整理失败',
     OrganizeStage.needsCheck => '待核实',
+    OrganizeStage.needsReview => '需复核',
   };
 }
 
@@ -54,8 +58,10 @@ mixin _RecorderOrganize on ChangeNotifier {
   abstract final FileJobJournal _fileJobs;
   abstract final Future<void> _fileJobsLoaded;
   abstract final Future<void> _libraryLoaded;
+  Future<void> get liveMeetingLoaded;
   abstract final Map<String, String> _recordingErrors;
   abstract final DeviceCopies _copies;
+  abstract final Set<String> _finalizingRecordings;
   abstract String? _fileJobKey;
   abstract final Future<void> _settingsLoaded;
   abstract Future<void> _transcriptsLoaded;
@@ -108,6 +114,7 @@ mixin _RecorderOrganize on ChangeNotifier {
       _libraryLoaded,
       _fileJobsLoaded,
       _transcriptsLoaded,
+      liveMeetingLoaded,
       analysis.load(),
       todos.load(),
     ]);
@@ -136,6 +143,7 @@ mixin _RecorderOrganize on ChangeNotifier {
         ..addAll(exportedPaths);
     } else {
       organizeStore.queued.clear();
+      _confirmedMinutesRestarts.clear();
       _organizeFailures.clear();
     }
     await _saveOrganize();
@@ -200,14 +208,24 @@ mixin _RecorderOrganize on ChangeNotifier {
         unawaited(_retryOrganizeTranscription(path));
       } else if (analysis.hasUnconfirmedNode(summaryKey)) {
         await _runSummary(path, confirmed: true);
+      } else if (analysis.hasUnconfirmedNode('$key/minutes')) {
+        await _runMinutes(path, confirmed: true);
       } else {
         await _runTodos(path, confirmed: true);
       }
     } else if (status.stage == OrganizeStage.failed &&
-        _transcriptOf(path).isEmpty) {
+        (_transcriptOf(path).isEmpty || _failedLiveTranscript(ref))) {
       _recordingErrors.remove(analysisKey(ref));
       _organizeTranscribeRequested.add(path);
       unawaited(_retryOrganizeTranscription(path));
+    }
+    final key = analysisKey(ref);
+    final text = _transcriptOf(path);
+    if (status.stage == OrganizeStage.failed &&
+        text.isNotEmpty &&
+        analysis.errors.containsKey('$key/minutes') &&
+        analysis.hasIncompleteJob('$key/minutes')) {
+      _confirmedMinutesRestarts[path] = analysisFingerprint(text);
     }
     notifyListeners();
     _scheduleOrganize();
@@ -255,6 +273,13 @@ mixin _RecorderOrganize on ChangeNotifier {
   String _transcriptOf(String path) =>
       recordingView(_organizeRef(path)).text.trim();
 
+  bool _failedLiveTranscript(RecordingReference ref) {
+    final session = _sessionForReference(ref);
+    return session?.ended == true &&
+        session?.transcriptionComplete == false &&
+        session?.error != null;
+  }
+
   /// Derived from the saved transcript, analysis and todo records, so it is
   /// the same after a restart and for recordings organized by hand.
   OrganizeStatus organizeStatusFor(String path) {
@@ -262,6 +287,15 @@ mixin _RecorderOrganize on ChangeNotifier {
     final failure = _organizeFailures[path];
     final ref = _organizeRef(path);
     final key = analysisKey(ref);
+    final session = _sessionForReference(ref);
+    if (session != null &&
+            (session.active || session.paused || session.finalizing) ||
+        _finalizingRecordings.contains(key)) {
+      return const OrganizeStatus(OrganizeStage.waiting);
+    }
+    if (_failedLiveTranscript(ref)) {
+      return OrganizeStatus(OrganizeStage.failed, session!.error);
+    }
     final text = _transcriptOf(path);
     if (text.isEmpty) {
       final job = _fileJobs.jobs[key];
@@ -316,18 +350,71 @@ mixin _RecorderOrganize on ChangeNotifier {
     if (_summaryCurrent(path, summaryKey, text) &&
         extraction != null &&
         extraction.fingerprint == analysisFingerprint(text)) {
+      final minutesStatus = _minutesStatusFor(path, text, queued);
+      if (minutesStatus != null) return minutesStatus;
       return const OrganizeStatus(OrganizeStage.done);
     }
     return OrganizeStatus(queued ? OrganizeStage.waiting : OrganizeStage.none);
   }
 
   final Set<String> _organizeExtracting = {};
+  final Set<String> _organizeGeneratingMinutes = {};
+  final Map<String, String> _confirmedMinutesRestarts = {};
 
   /// A user-edited summary counts as current: Koe never overwrites it.
   bool _summaryCurrent(String path, String summaryKey, String text) {
     final result = analysis.results[summaryKey];
     if (result == null) return false;
     return result.editedAt != null || !result.staleFor(text);
+  }
+
+  AnalysisResult? _readableMinutes(String path, String text) {
+    final key = analysisKey(_organizeRef(path));
+    final result = analysis.results['$key/minutes'];
+    final ref = _organizeRef(path);
+    if (result == null ||
+        result.isDraft ||
+        recordingAudioChanged(ref) ||
+        result.staleFor(text)) {
+      return null;
+    }
+    try {
+      MeetingMinutes.parse(
+        result.text,
+        result.sources.length,
+        sourceTexts: result.sources,
+      );
+      return result;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  OrganizeStatus? _minutesStatusFor(String path, String text, bool queued) {
+    final key = analysisKey(_organizeRef(path));
+    final minutesKey = '$key/minutes';
+    final result = analysis.results[minutesKey];
+    if (analysis.hasUnconfirmedNode(minutesKey) &&
+        !analysis.running(minutesKey)) {
+      return const OrganizeStatus(
+        OrganizeStage.needsCheck,
+        '纪要请求结果未知；为避免重复收费，确认后再重新生成',
+      );
+    }
+    final failure = _organizeFailures[path];
+    if (failure != null) return OrganizeStatus(OrganizeStage.failed, failure);
+    if (analysis.running(minutesKey) ||
+        _organizeGeneratingMinutes.contains(path)) {
+      return const OrganizeStatus(OrganizeStage.organizing);
+    }
+    if (_readableMinutes(path, text) != null) return null;
+    if (result?.editedAt != null) {
+      return const OrganizeStatus(
+        OrganizeStage.needsReview,
+        '人工编辑的纪要已过期；Koe 不会自动覆盖，请在纪要页选择保留或重新生成',
+      );
+    }
+    return OrganizeStatus(queued ? OrganizeStage.waiting : OrganizeStage.none);
   }
 
   void _scheduleOrganize() {
@@ -391,6 +478,13 @@ mixin _RecorderOrganize on ChangeNotifier {
       await _dequeueOrganize(path);
       return;
     }
+    final ref = _organizeRef(path);
+    final session = _sessionForReference(ref);
+    if (session != null &&
+            (session.active || session.paused || session.finalizing) ||
+        _finalizingRecordings.contains(analysisKey(ref))) {
+      return;
+    }
     final status = organizeStatusFor(path);
     switch (status.stage) {
       case OrganizeStage.done:
@@ -398,6 +492,7 @@ mixin _RecorderOrganize on ChangeNotifier {
         return;
       case OrganizeStage.failed:
       case OrganizeStage.needsCheck:
+      case OrganizeStage.needsReview:
       case OrganizeStage.organizing:
         return;
       case OrganizeStage.transcribing:
@@ -407,7 +502,6 @@ mixin _RecorderOrganize on ChangeNotifier {
       case OrganizeStage.waiting:
         break;
     }
-    final ref = _organizeRef(path);
     if (_transcriptOf(path).isEmpty) {
       // A device recording still being retrieved, or cut short, waits for
       // the retrieval path's own completeness check.
@@ -434,11 +528,7 @@ mixin _RecorderOrganize on ChangeNotifier {
         return;
       }
       _organizeTranscribeRequested.add(path);
-      await _deferredJobs.enqueue(
-        analysisKey(ref),
-        path,
-        config,
-      );
+      await _deferredJobs.enqueue(analysisKey(ref), path, config);
       notifyListeners();
       return;
     }
@@ -454,6 +544,8 @@ mixin _RecorderOrganize on ChangeNotifier {
       if (organizeStatusFor(path).stage != OrganizeStage.waiting) return;
     }
     await _runTodos(path, confirmed: false);
+    if (organizeStatusFor(path).stage != OrganizeStage.waiting) return;
+    await _runMinutes(path, confirmed: false);
     if (organizeStatusFor(path).stage == OrganizeStage.done) {
       await _dequeueOrganize(path);
     }
@@ -536,7 +628,102 @@ mixin _RecorderOrganize on ChangeNotifier {
     }
   }
 
+  Future<void> _runMinutes(String path, {required bool confirmed}) async {
+    final ref = _organizeRef(path);
+    final text = _transcriptOf(path);
+    final minutesKey = '${analysisKey(ref)}/minutes';
+    final restartSource = _confirmedMinutesRestarts.remove(path);
+    confirmed = confirmed || restartSource == analysisFingerprint(text);
+    if (analysis.hasUnconfirmedNode(minutesKey) && !confirmed) return;
+    if (_readableMinutes(path, text) != null) return;
+    if (_organizeGeneratingMinutes.contains(path)) return;
+    _organizeGeneratingMinutes.add(path);
+    notifyListeners();
+    try {
+      await generateMinutes(
+        ref,
+        avoidDuplicateCharges: true,
+        confirmedRestart: confirmed,
+        preserveUserEdit: true,
+      );
+      if (_readableMinutes(path, text) == null &&
+          !analysis.hasUnconfirmedNode(minutesKey)) {
+        _organizeFailures[path] = analysis.errors[minutesKey] ?? '纪要没有生成，请重试';
+      }
+    } catch (error) {
+      if (!analysis.hasUnconfirmedNode(minutesKey)) {
+        _organizeFailures[path] =
+            analysis.errors[minutesKey] ??
+            (error is StateError ? error.message : '纪要生成失败，请重试');
+      }
+    } finally {
+      _organizeGeneratingMinutes.remove(path);
+      notifyListeners();
+    }
+  }
+
+  /// The one application action for full minutes. Manual generation supplies
+  /// the chosen template and language; automatic organizing uses the defaults.
+  Future<void> generateMinutes(
+    RecordingReference ref, {
+    String templateId = minutesTemplateId,
+    String language = 'zh',
+    bool avoidDuplicateCharges = true,
+    bool confirmedRestart = false,
+    bool preserveUserEdit = false,
+  }) async {
+    final source = recordingView(ref).text.trim();
+    final prompt = buildMeetingMinutesPrompt(
+      templateId: templateId,
+      language: language,
+    );
+    await analysis.run(
+      recording: analysisKey(ref),
+      source: source,
+      apiKey: analysisApiKey,
+      custom: true,
+      templateId: templateId,
+      resultSlot: 'minutes',
+      instruction: prompt,
+      validateResult: validateMinutes,
+      avoidDuplicateCharges: avoidDuplicateCharges,
+      confirmedRestart: confirmedRestart,
+      preserveUserEdit: preserveUserEdit,
+      userNotes: analysisNotesFor(ref),
+      currentSource: () =>
+          recordingAudioChanged(ref) ? '' : recordingView(ref).text.trim(),
+    );
+    if (!_disposed) notifyListeners();
+  }
+
+  /// The current full-minutes slot only when it is readable and current.
+  AnalysisResult? currentMinutesFor(RecordingReference ref) {
+    final path = ref.path;
+    return path == null ? null : _readableMinutes(path, _transcriptOf(path));
+  }
+
+  /// Any saved readable minutes, including an edited result older than the
+  /// transcript, so its review entry stays reachable.
+  AnalysisResult? savedMinutesFor(RecordingReference ref) {
+    final key = analysisKey(ref);
+    final result = analysis.results['$key/minutes'];
+    if (result == null || result.isDraft || recordingAudioChanged(ref)) {
+      return null;
+    }
+    try {
+      MeetingMinutes.parse(
+        result.text,
+        result.sources.length,
+        sourceTexts: result.sources,
+      );
+      return result;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _dequeueOrganize(String path) async {
+    _confirmedMinutesRestarts.remove(path);
     _organizeTranscribeRequested.remove(path);
     if (!organizeStore.queued.remove(path)) return;
     await _saveOrganize();
@@ -556,6 +743,7 @@ mixin _RecorderOrganize on ChangeNotifier {
           working++;
         case OrganizeStage.failed:
         case OrganizeStage.needsCheck:
+        case OrganizeStage.needsReview:
           attention++;
         case OrganizeStage.done:
           break;

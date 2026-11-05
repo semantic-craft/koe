@@ -177,20 +177,20 @@ class _WireRecordingClient extends http.BaseClient {
       String content;
       if (userContent.contains('结构化会议纪要')) {
         content = jsonEncode({
-          'title': '第1期评审会议',
-          'overview': '确定会议录音默认只留本机 [S1]',
+          'schemaVersion': 2,
+          'title': '会议录音方案',
+          'overview': '我们决定会议录音只留本机 [S1]',
           'topics': [
             {
               'text': '会议录音转写不上传音频 [S1]',
               'sources': ['S1'],
+              'summary': '会议录音只留本机 [S1]',
+              'points': [
+                {'text': '我周五前提交纪要方案 [S1]', 'sources': ['S1']},
+              ],
             },
           ],
-          'decisions': [
-            {
-              'text': '默认打开录音只留本机开关 [S1]',
-              'sources': ['S1'],
-            },
-          ],
+          'decisions': <Object>[],
           'actions': [
             {
               'text': '周五前提交纪要方案',
@@ -867,7 +867,10 @@ void main() {
         recKey,
         minutesTemplateId,
       );
-      expect(controller.analysis.results[minutesKey]?.text, contains('第1期评审会议'));
+      expect(
+        controller.analysis.results[minutesKey]?.text,
+        contains('会议录音方案'),
+      );
 
       // 4. 检查所有出网请求与序列化后的真实请求字节
       expect(wire.requests, isNotEmpty, reason: '整理与纪要请求应正常发出');

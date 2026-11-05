@@ -37,8 +37,14 @@ class _SavedLiveMeetingPanelState extends State<SavedLiveMeetingPanel> {
         future: _records,
         builder: (context, snapshot) {
           if (snapshot.hasError) return const Text('实时资料暂无法读取');
+          final controller = context.read<RecorderController>();
           final records = (snapshot.data ?? [])
-              .where((j) => j['recordingKey'] == widget.recordingKey)
+              .where(
+                (j) => controller.liveRecordMatchesRecordingKey(
+                  j,
+                  widget.recordingKey,
+                ),
+              )
               .toList();
           if (records.isEmpty) return const SizedBox.shrink();
           return ExpansionTile(

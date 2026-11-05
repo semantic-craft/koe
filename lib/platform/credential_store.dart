@@ -68,6 +68,7 @@ class CredentialStore {
               'qwen',
               'doubao',
               'analysisOpenAiCompatible',
+              'mcpSyncToken',
             ].contains(e.key) ||
             (e.value != null && e.value is! String),
       )) {

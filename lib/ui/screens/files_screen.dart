@@ -17,6 +17,7 @@ import '../import_audio.dart';
 import '../import_pack.dart';
 import '../library_filter.dart';
 import '../recording_navigation.dart';
+import '../widgets/minutes_panel.dart';
 import '../transcript_layout.dart';
 import '../widgets/widgets.dart';
 import '../widgets/koe_icon_button.dart';
@@ -972,12 +973,34 @@ class _LocalExportCard extends StatelessWidget {
                   ),
                 ),
                 if (!selecting)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 3, left: 8),
-                    child: Icon(
-                      Icons.chevron_right_rounded,
-                      color: AppColors.textMuted,
-                      size: 20,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3, left: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (c.savedMinutesFor(reference) != null)
+                          KoeIconButton(
+                            key: ValueKey('recording-minutes-$path'),
+                            tooltip: '打开完整纪要',
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => MinutesPanel(
+                                  controller: c,
+                                  reference: reference,
+                                ),
+                              ),
+                            ),
+                            icon: const Icon(
+                              Icons.description_outlined,
+                              size: 20,
+                            ),
+                          ),
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppColors.textMuted,
+                          size: 20,
+                        ),
+                      ],
                     ),
                   ),
               ],

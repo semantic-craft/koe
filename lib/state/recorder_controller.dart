@@ -4,6 +4,7 @@ import '../platform/credential_store.dart';
 import '../platform/mac_dual_recorder.dart';
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:io';
 import 'dart:typed_data';
@@ -136,6 +137,7 @@ part 'recorder/ask.dart';
 part 'recorder/brief.dart';
 part 'recorder/context_export.dart';
 part 'recorder/material_pack.dart';
+part 'recorder/mcp_publication.dart';
 part 'recorder/term_adoption.dart';
 part 'recorder/archive.dart';
 part 'recorder/topics.dart';
@@ -207,6 +209,7 @@ class RecorderController extends ChangeNotifier
         _RecorderBrief,
         _RecorderContextExport,
         _RecorderMaterialPack,
+        _RecorderMcpPublication,
         _RecorderTermAdoption,
         _RecorderArchive,
         _RecorderTopics,
@@ -376,6 +379,7 @@ class RecorderController extends ChangeNotifier
     this.aiKeepAliveGrace = const Duration(seconds: 10),
     RecordingLibraryStore? libraryStore,
     Directory? libraryDirectory,
+    Directory? mcpDirectory,
     PlaceCapture? placeCapture,
     CalendarMeetings? calendarMeetings,
     OrganizeStore? organizeStore,
@@ -734,6 +738,7 @@ class RecorderController extends ChangeNotifier
     } else {
       _persistedDeviceLoaded = Future<void>.value();
     }
+    _initMcpPublication(mcpDirectory);
   }
 
   bool _ownsContextItems = true;
@@ -1870,6 +1875,7 @@ class RecorderController extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    _disposeMcpPublication();
     removeListener(_scheduleOrganize);
     unawaited(_phoneMicStates?.cancel());
     unawaited(_devicePhoneRecorder?.dispose());

@@ -14,7 +14,13 @@ class LiveMeetingPanel extends StatelessWidget {
     final m = c.liveMinutes, captions = c.liveCaptions;
     return ExpansionTile(
       title: const Text('实时纪要与双语字幕'),
-      subtitle: Text(c.liveMeetingClosing ? '本场已收尾' : '本场手动开启 · 使用已配置的文字服务'),
+      subtitle: Text(
+        c.liveMeetingClosing
+            ? '本场实时整理已结束'
+            : c.liveMinutesEnabled
+            ? '录制中持续整理'
+            : '使用已配置的文字服务',
+      ),
       children: [
         SizedBox(
           height: 320,

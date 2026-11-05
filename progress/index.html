@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-03T17:55:03.179532Z</p>
-<p>Main: <code>main: a7bd4aff5f2fd0fc32a3338b2cc441f41346ff90</code></p>
+<p>Observed: 2026-11-05T08:14:24.602488Z</p>
+<p>Main: <code>main: 6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -302,6 +302,17 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/528">issue 528: 真实 App 导出、内容对照和客户端恢复独立验收</a></li>
 </ul><p>Next: 在授权的客户端读取用户指定的真实无音频资料包。</p></article>
 </section>
+<section id="minutes-relay"><h2>录音豆纪要与 MCP 全自动接力</h2>
+<article id="minutes-relay-bootstrap"><h3>全自动验收与接力切片</h3><span class="badge">in_progress</span><p>Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板一键接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并通过 scripts/check（Python 22 项 + Flutter 1127 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与公网 VPS 实机验收如实记为 unverified。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: 全景切片 A–E 队列、版本/安装/合并/实际验收四项分列记录</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/verify-minutes-flow">file scripts/verify-minutes-flow: 五层无人值守门禁（offline/ios/provider/device/mcp/all）全部 exit 0；实体按键无机械驱动如实记为 unverified</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/integration_test/device_minutes_flow_test.dart">file integration_test/device_minutes_flow_test.dart: macOS CoreBluetooth 直连真实 soundcore Work (D3200) 实时流式 ASR、阶段摘要、停录落盘与进程重启读回</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/mcp_live_publication_test.dart">file test/mcp_live_publication_test.dart: 生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/mcp_sync_test.dart">file test/mcp_sync_test.dart: 轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板一键接入</a></li>
+</ul><p>Next: 草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）与真实公网 VPS / 手机移动网络验收（#528）保留独立验收。</p></article>
+</section>
 <section><h2>Open pull requests</h2><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/548">#548</a> <code>bd23ac2571d42fb3ae751da0af64e70915dd5883</code></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/551">#551</a> <code>e8676498b47a73d1588f329834bbef22a11048c3</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

@@ -1415,6 +1415,75 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     return saved == true;
   }
 
+  Future<void> _configureMcpAccess() async {
+    final c = context.read<RecorderController>();
+    if (c.mcpAccessGranted(widget.reference)) {
+      try {
+        await c.revokeMcpAccess(widget.reference);
+        _notice('已撤销这条录音的 MCP 读取权限');
+      } catch (_) {
+        _notice('撤销未能保存，请关闭本次读取会话');
+      }
+      return;
+    }
+    final allowed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('允许本机 AI 读取这条录音？'),
+        content: const Text(
+          '仅提供这条录音的最新文字和纪要，不提供音频、地点或其他录音。后续转写和校订会自动更新。本次 Koe 会话结束后撤销；异常退出最多15秒后失效。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('允许读取'),
+          ),
+        ],
+      ),
+    );
+    if (allowed != true || !mounted) return;
+    try {
+      await c.grantMcpAccess(widget.reference);
+      final directory = await c.mcpPublicationDirectory;
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('本次 MCP 读取已开启'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('在本机 MCP 客户端中，给 Koe 服务配置 --live-directory 参数：'),
+                SelectableText(directory.path),
+                const Text('此目录仅本次会话有效，可在这条录音的更多操作中撤销。'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: directory.path));
+              },
+              child: const Text('复制目录'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('完成'),
+            ),
+          ],
+        ),
+      );
+    } catch (_) {
+      _notice(c.mcpPublicationError ?? 'MCP 读取未能开启');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
@@ -1588,6 +1657,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                   tooltip: '更多操作',
                   onSelected: (action) {
                     switch (action) {
+                      case 'mcp-access':
+                        _configureMcpAccess();
                       case 'live-material':
                         showModalBottomSheet<void>(
                           context: context,
@@ -1639,6 +1710,18 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                     }
                   },
                   itemBuilder: (_) => [
+                    if (!kIsWeb &&
+                        defaultTargetPlatform == TargetPlatform.macOS &&
+                        recording.path != null)
+                      PopupMenuItem(
+                        value: 'mcp-access',
+                        child: Text(
+                          c.mcpAccessGranted(widget.reference)
+                              ? '撤销 MCP 读取'
+                              : '允许本机 AI 读取文字和纪要',
+                        ),
+                      ),
+
                     if (!recording.live && recording.path != null)
                       const PopupMenuItem(
                         value: 'live-material',
@@ -1743,6 +1826,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
           body: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (c.mcpAccessGranted(widget.reference) &&
+                  c.mcpPublicationError != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 8,
+                  ),
+                  child: Text(
+                    c.mcpPublicationError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
               Align(
                 alignment: Alignment.center,
                 child: ConstrainedBox(
@@ -1831,7 +1928,11 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             ),
                             label: const Text('主题笔记'),
                           ),
-                        if (source.isNotEmpty && !recording.live)
+                        if ((source.isNotEmpty ||
+                                c.hasMinutesOrLiveNoticeFor(
+                                  widget.reference,
+                                )) &&
+                            !recording.live)
                           KoeIconButton(
                             tooltip: '摘要与分析',
                             icon: const Icon(Icons.auto_awesome_outlined),

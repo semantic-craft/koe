@@ -458,6 +458,27 @@ class _Summary implements AnalysisService {
     required String instruction,
     required Future<void> abort,
   }) async {
+    if (instruction.contains('结构化会议纪要')) {
+      return jsonEncode({
+        'schemaVersion': 2,
+        'title': '日常安排',
+        'overview': '我明天去买牛奶。',
+        'topics': [
+          {
+            'text': '日常安排',
+            'sources': ['S1'],
+            'summary': '我明天去买牛奶。',
+            'points': [
+              {'text': '我明天去买牛奶 [S1]', 'sources': ['S1']},
+            ],
+          },
+        ],
+        'terms': <Object>[],
+        'decisions': <Object>[],
+        'actions': <Object>[],
+        'questions': <Object>[],
+      });
+    }
     inputs.add(source);
     return '要点：买牛奶';
   }

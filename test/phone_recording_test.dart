@@ -1238,11 +1238,37 @@ class _WireRecordingClient extends http.BaseClient {
           jsonDecode(utf8.decode(bodyBytes)) as Map<String, dynamic>;
       final messages = (decoded['messages'] as List).cast<Map>();
       final userContent = '${messages.last['content']}';
-      final content =
-          userContent.contains('提取出用户自己承诺要做的事') ||
-              userContent.contains('"items"')
-          ? '{"items":[{"type":"mine","title":"确认录音不上传","due":null,"segment":1}],"updates":[]}'
-          : '会议决定默认打开录音只留本机，确认录音不上传 [S1]。';
+      String content;
+      if (userContent.contains('结构化会议纪要')) {
+        content = jsonEncode({
+          'schemaVersion': 2,
+          'title': 'Mac 麦克风会议录音方案',
+          'overview': '今天讨论了 Mac 麦克风会议录音方案。',
+          'topics': [
+            {
+              'text': 'Mac 麦克风会议录音方案',
+              'sources': ['S1'],
+              'summary': '今天讨论了 Mac 麦克风会议录音方案。',
+              'points': [
+                {
+                  'text': '今天讨论了 Mac 麦克风会议录音方案 [S1]',
+                  'sources': ['S1'],
+                },
+              ],
+            },
+          ],
+          'terms': <Object>[],
+          'decisions': <Object>[],
+          'actions': <Object>[],
+          'questions': <Object>[],
+        });
+      } else if (userContent.contains('提取出用户自己承诺要做的事') ||
+          userContent.contains('"items"')) {
+        content =
+            '{"items":[{"type":"mine","title":"确认录音不上传","due":null,"segment":1}],"updates":[]}';
+      } else {
+        content = '会议决定默认打开录音只留本机，确认录音不上传 [S1]。';
+      }
       final reply = jsonEncode({
         'choices': [
           {
