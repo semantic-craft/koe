@@ -43,6 +43,8 @@ mixin _RecorderSettings on ChangeNotifier {
   void liveTargetChanged(String language);
   void livePrivacyChanged();
   McpSyncConfig? get mcpSyncConfig;
+  String? get mcpSyncUrl;
+  String? get mcpSyncEmail;
   void applySavedMcpSyncConfig(McpSyncConfig? config);
   // END DEPS
 
@@ -77,6 +79,7 @@ mixin _RecorderSettings on ChangeNotifier {
           baseUrl: s.mcpSyncUrl!.trim(),
           token: s.mcpSyncToken!.trim(),
           mode: McpSyncMode.parse(s.mcpSyncMode),
+          email: s.mcpSyncEmail?.trim(),
         ),
       );
     } else {
@@ -160,9 +163,10 @@ mixin _RecorderSettings on ChangeNotifier {
             },
             analysisBackend: nextBackend,
             analysisOpenAiConfig: nextOpenAi,
-            mcpSyncUrl: mcpSyncConfig?.baseUrl,
+            mcpSyncUrl: mcpSyncConfig?.baseUrl ?? mcpSyncUrl,
             mcpSyncMode: mcpSyncConfig?.mode.name,
             mcpSyncToken: mcpSyncConfig?.token,
+            mcpSyncEmail: mcpSyncConfig?.email ?? mcpSyncEmail,
             vocabulary: nextVocab,
             autoTranscribe: autoTranscribe,
             autoRealtime: autoRealtime,

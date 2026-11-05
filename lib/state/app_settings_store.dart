@@ -155,6 +155,7 @@ class AppSettings {
     this.mcpSyncUrl,
     this.mcpSyncMode,
     this.mcpSyncToken,
+    this.mcpSyncEmail,
     this.vocabulary = const [],
     this.autoTranscribe = true,
     this.autoRealtime = true,
@@ -187,6 +188,7 @@ class AppSettings {
   final String? mcpSyncUrl;
   final String? mcpSyncMode;
   final String? mcpSyncToken;
+  final String? mcpSyncEmail;
 
   /// User-maintained personal glossary terms injected into prompts (#491).
   final List<String> vocabulary;
@@ -243,6 +245,7 @@ class AppSettings {
     String? mcpSyncUrl,
     String? mcpSyncMode,
     String? mcpSyncToken,
+    String? mcpSyncEmail,
     List<String>? vocabulary,
     bool? autoTranscribe,
     bool? autoRealtime,
@@ -269,6 +272,7 @@ class AppSettings {
       mcpSyncUrl: mcpSyncUrl ?? this.mcpSyncUrl,
       mcpSyncMode: mcpSyncMode ?? this.mcpSyncMode,
       mcpSyncToken: mcpSyncToken ?? this.mcpSyncToken,
+      mcpSyncEmail: mcpSyncEmail ?? this.mcpSyncEmail,
       vocabulary: vocabulary ?? this.vocabulary,
       autoTranscribe: autoTranscribe ?? this.autoTranscribe,
       autoRealtime: autoRealtime ?? this.autoRealtime,
@@ -304,6 +308,8 @@ class AppSettings {
       'mcpSyncUrl': mcpSyncUrl!.trim(),
     if (mcpSyncMode != null && mcpSyncMode!.trim().isNotEmpty)
       'mcpSyncMode': mcpSyncMode!.trim(),
+    if (mcpSyncEmail != null && mcpSyncEmail!.trim().isNotEmpty)
+      'mcpSyncEmail': mcpSyncEmail!.trim(),
     if (vocabulary.isNotEmpty) 'vocabulary': vocabulary,
     'autoTranscribe': autoTranscribe,
     'autoRealtime': autoRealtime,
@@ -362,6 +368,7 @@ class AppSettings {
       analysisOpenAiConfig: analysisOpenAiConfig,
       mcpSyncUrl: _str(map['mcpSyncUrl']),
       mcpSyncMode: _str(map['mcpSyncMode']),
+      mcpSyncEmail: _str(map['mcpSyncEmail']),
       vocabulary: vocabulary,
       autoTranscribe: map['autoTranscribe'] != false,
       autoRealtime: map['autoRealtime'] != false,

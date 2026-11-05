@@ -18,6 +18,7 @@ class McpSyncConfig {
     required this.baseUrl,
     required this.token,
     required this.mode,
+    this.email,
   });
 
   static const prefix = 'KOEMCP1.';
@@ -26,17 +27,23 @@ class McpSyncConfig {
   final String baseUrl;
   final String token;
   final McpSyncMode mode;
+  final String? email;
 
   Uri get mcpEndpoint => Uri.parse('$baseUrl/mcp');
   Uri get packsIndexUri => Uri.parse('$baseUrl/sync/packs');
   Uri packUri(String id) => Uri.parse('$baseUrl/sync/packs/$id');
+  static Uri pairRequestUri(String baseUrl) =>
+      Uri.parse('${_normalizeBaseUrl(baseUrl)}/pair/request');
+  static Uri pairVerifyUri(String baseUrl) =>
+      Uri.parse('${_normalizeBaseUrl(baseUrl)}/pair/verify');
 
   String get redactedLabel {
     final uri = Uri.tryParse(baseUrl);
     final hostPort = uri == null || uri.host.isEmpty
         ? baseUrl
         : (uri.hasPort ? '${uri.host}:${uri.port}' : uri.host);
-    return '${mode.label} · $hostPort';
+    final emailSuffix = email != null && email!.isNotEmpty ? ' ($email)' : '';
+    return '${mode.label} · $hostPort$emailSuffix';
   }
 
   String encodePairingCode() {
@@ -45,6 +52,7 @@ class McpSyncConfig {
       'u': _normalizeBaseUrl(baseUrl),
       't': token,
       'm': mode.name,
+      if (email != null && email!.isNotEmpty) 'e': email,
     });
     final encoded = base64UrlEncode(utf8.encode(payload)).replaceAll('=', '');
     return '$prefix$encoded';
@@ -82,6 +90,7 @@ class McpSyncConfig {
     }
     final rawUrl = decoded['u'];
     final rawToken = decoded['t'];
+    final rawEmail = decoded['e'];
     if (rawUrl is! String || rawUrl.trim().isEmpty) {
       throw const FormatException('连接码缺少服务地址');
     }
@@ -99,6 +108,7 @@ class McpSyncConfig {
       baseUrl: normalizedUrl,
       token: rawToken.trim(),
       mode: McpSyncMode.parse(decoded['m']),
+      email: rawEmail is String && rawEmail.trim().isNotEmpty ? rawEmail.trim() : null,
     );
   }
 }
@@ -159,6 +169,8 @@ mixin _RecorderMcpPublication on ChangeNotifier {
   String? get mcpPublicationError => _mcpContentError ?? _mcpWriteError;
 
   McpSyncConfig? _mcpSyncConfig;
+  String? _mcpSyncUrl;
+  String? _mcpSyncEmail;
   McpSyncState _mcpSyncState = const McpSyncState();
   Future<void>? _mcpSyncInFlight;
   Timer? _mcpSyncDebounce;
@@ -166,10 +178,18 @@ mixin _RecorderMcpPublication on ChangeNotifier {
   final Map<String, String> _mcpKnownRemoteShas = {};
 
   McpSyncConfig? get mcpSyncConfig => _mcpSyncConfig;
+  String? get mcpSyncUrl => _mcpSyncConfig?.baseUrl ?? _mcpSyncUrl;
+  String? get mcpSyncEmail => _mcpSyncConfig?.email ?? _mcpSyncEmail;
   McpSyncState get mcpSyncState => _mcpSyncState;
 
   void applySavedMcpSyncConfig(McpSyncConfig? config) {
     _mcpSyncConfig = config;
+    if (config != null) {
+      _mcpSyncUrl = config.baseUrl;
+      if (config.email != null && config.email!.isNotEmpty) {
+        _mcpSyncEmail = config.email;
+      }
+    }
     _mcpSyncState = config == null
         ? const McpSyncState()
         : McpSyncState(
@@ -182,22 +202,146 @@ mixin _RecorderMcpPublication on ChangeNotifier {
     }
   }
 
-  String buildAgentMcpSetupPrompt({required bool hasVps}) {
+  Future<Map<String, dynamic>> requestMcpOtpPairing({
+    required String baseUrl,
+    required String email,
+  }) async {
+    final normalizedUrl = McpSyncConfig._normalizeBaseUrl(baseUrl);
+    final uri = McpSyncConfig.pairRequestUri(normalizedUrl);
+    if (uri.scheme != 'https' && uri.scheme != 'http') {
+      throw const FormatException('服务地址必须以 http:// 或 https:// 开头');
+    }
+    if (uri.host.isEmpty) {
+      throw const FormatException('服务地址域名或 IP 无效');
+    }
+    final cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail.isEmpty || !cleanEmail.contains('@')) {
+      throw const FormatException('请输入有效的邮箱地址');
+    }
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+    try {
+      final req = await client.postUrl(uri);
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode({'email': cleanEmail}));
+      final resp = await req.close().timeout(const Duration(seconds: 12));
+      final respBody = await utf8.decoder.bind(resp).join();
+      final Map<String, dynamic> json;
+      try {
+        json = jsonDecode(respBody) as Map<String, dynamic>;
+      } catch (_) {
+        throw HttpException('服务器返回无效响应 (HTTP ${resp.statusCode})');
+      }
+      if (resp.statusCode == 403) {
+        throw const HttpException('该邮箱未被授权接入此 VPS 服务');
+      }
+      if (resp.statusCode != 200 || json['ok'] != true) {
+        final err =
+            json['error'] as String? ?? '发送验证码失败 (HTTP ${resp.statusCode})';
+        throw HttpException(err);
+      }
+      _mcpSyncUrl = normalizedUrl;
+      _mcpSyncEmail = cleanEmail;
+      unawaited(_persistSettings());
+      return json;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<McpSyncConfig> verifyMcpOtpPairing({
+    required String baseUrl,
+    required String email,
+    required String code,
+  }) async {
+    final normalizedUrl = McpSyncConfig._normalizeBaseUrl(baseUrl);
+    final uri = McpSyncConfig.pairVerifyUri(normalizedUrl);
+    if (uri.scheme != 'https' && uri.scheme != 'http') {
+      throw const FormatException('服务地址必须以 http:// 或 https:// 开头');
+    }
+    if (uri.host.isEmpty) {
+      throw const FormatException('服务地址域名或 IP 无效');
+    }
+    final cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail.isEmpty || !cleanEmail.contains('@')) {
+      throw const FormatException('请输入有效的邮箱地址');
+    }
+    final cleanCode = code.trim();
+    if (cleanCode.length != 6 || !RegExp(r'^\d{6}$').hasMatch(cleanCode)) {
+      throw const FormatException('请输入 6 位数字验证码');
+    }
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+    try {
+      final req = await client.postUrl(uri);
+      req.headers.contentType = ContentType.json;
+      req.write(jsonEncode({
+        'email': cleanEmail,
+        'code': cleanCode,
+      }));
+      final resp = await req.close().timeout(const Duration(seconds: 12));
+      final respBody = await utf8.decoder.bind(resp).join();
+      final Map<String, dynamic> json;
+      try {
+        json = jsonDecode(respBody) as Map<String, dynamic>;
+      } catch (_) {
+        throw HttpException('服务器返回无效响应 (HTTP ${resp.statusCode})');
+      }
+      if (resp.statusCode == 401) {
+        throw const HttpException('验证码错误或已失效');
+      }
+      if (resp.statusCode == 429) {
+        throw const HttpException('重试次数过多，请重新获取验证码');
+      }
+      if (resp.statusCode != 200 || json['ok'] != true) {
+        final err =
+            json['error'] as String? ?? '验证码校验失败 (HTTP ${resp.statusCode})';
+        throw HttpException(err);
+      }
+      final token = json['token'] as String?;
+      if (token == null || token.trim().length < 24) {
+        throw const FormatException('服务端颁发的令牌格式无效');
+      }
+      final isLocal = uri.host == 'localhost' ||
+          uri.host == '127.0.0.1' ||
+          uri.host.startsWith('192.168.') ||
+          uri.host.startsWith('10.');
+      final config = McpSyncConfig(
+        baseUrl: normalizedUrl,
+        token: token.trim(),
+        mode: isLocal ? McpSyncMode.lan : McpSyncMode.vps,
+        email: cleanEmail,
+      );
+      _mcpSyncConfig = config;
+      _mcpSyncUrl = normalizedUrl;
+      _mcpSyncEmail = cleanEmail;
+      _mcpKnownRemoteShas.clear();
+      _mcpSyncState = const McpSyncState(phase: McpSyncPhase.idle);
+      _notifyMcpStatus();
+      unawaited(_persistSettings());
+      await syncMcpNow();
+      return config;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  String buildAgentMcpSetupPrompt({required bool hasVps, String? ownerEmail}) {
     if (hasVps) {
+      final emailFlag = ownerEmail != null && ownerEmail.trim().isNotEmpty
+          ? ' --owner-email ${ownerEmail.trim()}'
+          : '';
       return '''
 请帮我在我的 VPS 上部署 Koe 的轻量同步与远程 HTTP MCP 服务（零第三方依赖，仅用 Python 3.10+ 标准库），并把它配置进我的 MCP 客户端（如 Magpie / Codex / Claude Code / Antigravity）：
 
 1. 将当前仓库下的 `tools/koe-mcp/server.py` 上传到我的 VPS（例如 `/opt/koe-mcp/server.py`），并创建数据目录 `~/.koe/mcp-sync`。
-2. 在 VPS 上执行以下命令生成 32 字节安全令牌与 Koe App 一键配对码（请把 `<你的域名或公网地址>` 换成实际 HTTPS 地址）：
-   python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url https://<你的域名或公网地址>/mcp --mode vps --print-pairing
-3. 用 systemd 或后台常驻方式启动 HTTP 服务（并通过 Caddy / Nginx 反代到该端口）：
-   python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 127.0.0.1:8787 --token-file ~/.koe/mcp-token
-4. 在本机的 Magpie 或 MCP 配置中添加 HTTP MCP 服务器：
+2. 用 systemd 或后台常驻方式启动 HTTP 服务（并通过 Caddy / Nginx 反代到该端口，支持邮箱 OTP 验证码绑定与 Bearer Token 鉴权）：
+   python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 127.0.0.1:8787 --token-file ~/.koe/mcp-token$emailFlag
+3. 在本机的 Magpie 或 MCP 配置中添加 HTTP MCP 服务器：
    - 名称：`koe-minutes`
    - 运行方式：`HTTP`
    - URL：`https://<你的域名或公网地址>/mcp`
    - 请求头：`Authorization: Bearer <~/.koe/mcp-token 中的令牌>`
-5. 最后，请把第 2 步输出的 `KOEMCP1.` 开头的一整串连接码直接发给我。我复制后回到 Koe App 点击「从剪贴板一键接入」即可自动完成手机与 Mac 同步配置。
+4. 部署完成后，请告诉我你的 VPS 访问地址（例如 `https://<你的域名或公网地址>`）。我在 Koe App 的设置中输入该地址和邮箱，即可接收验证码一键绑定；也可以执行以下命令直接生成 KOEMCP1. 开头的连接码发给我从剪贴板接入：
+   python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url https://<你的域名或公网地址>/mcp --mode vps --print-pairing
 '''.trim();
     }
     return '''

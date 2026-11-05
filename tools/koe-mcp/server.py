@@ -16,10 +16,12 @@ from pathlib import Path
 import re
 import secrets
 import select
+import shutil
 import socket
 import stat
 import sys
 import threading
+import time
 import urllib.parse
 
 
@@ -613,7 +615,55 @@ def resolve_or_create_token(token_file=None, token_env='KOE_MCP_TOKEN'):
     return token
 
 
-def serve_http(directory, listen_addr, token, fallback_upstream=None):
+def send_otp_email(owner_email, code, smtp_url=None):
+    """Deliver 6-digit OTP code to owner email via SMTP or local sendmail."""
+    subject = f'Koe 配对验证码：{code}'
+    content = (
+        f'你好，\n\n'
+        f'你的 Koe 录音豆与 VPS 同步配对验证码为：\n\n'
+        f'    {code}\n\n'
+        f'验证码有效期为 10 分钟。如果不是你在连接 Koe，请忽略此邮件。\n'
+    )
+    if smtp_url:
+        try:
+            parsed = urllib.parse.urlsplit(smtp_url)
+            import smtplib
+            from email.message import EmailMessage
+            msg = EmailMessage()
+            msg['Subject'] = subject
+            from_addr = parsed.username if '@' in (parsed.username or '') else f'koe@{parsed.hostname}'
+            msg['From'] = from_addr
+            msg['To'] = owner_email
+            msg.set_content(content)
+            port = parsed.port or (465 if parsed.scheme == 'smtps' else 587)
+            if parsed.scheme == 'smtps':
+                with smtplib.SMTP_SSL(parsed.hostname, port, timeout=10) as s:
+                    if parsed.username and parsed.password:
+                        s.login(parsed.username, parsed.password)
+                    s.send_message(msg)
+            else:
+                with smtplib.SMTP(parsed.hostname, port, timeout=10) as s:
+                    s.starttls()
+                    if parsed.username and parsed.password:
+                        s.login(parsed.username, parsed.password)
+                    s.send_message(msg)
+            return True
+        except Exception:
+            return False
+
+    sendmail = shutil.which('sendmail') or shutil.which('msmtp') or '/usr/sbin/sendmail'
+    if os.path.exists(sendmail):
+        try:
+            msg = f'Subject: {subject}\nTo: {owner_email}\nFrom: koe@localhost\n\n{content}'
+            proc = subprocess.run([sendmail, '-t'], input=msg.encode('utf-8'), capture_output=True, timeout=5)
+            if proc.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def serve_http(directory, listen_addr, token, fallback_upstream=None, owner_email=None, smtp_url=None):
     host, port_text = listen_addr.rsplit(':', 1)
     port = int(port_text)
     expected_auth = f'Bearer {token}'
@@ -623,6 +673,9 @@ def serve_http(directory, listen_addr, token, fallback_upstream=None):
         if not parsed_up.hostname or not parsed_up.port:
             raise ToolError('invalid_fallback_upstream')
         upstream_target = (parsed_up.hostname, parsed_up.port)
+
+    otp_lock = threading.Lock()
+    active_otps = {}  # {email: {"code": str, "expires": float, "attempts": int}}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -645,7 +698,7 @@ def serve_http(directory, listen_addr, token, fallback_upstream=None):
 
         def is_koe_route(self):
             clean = self.path.split('?', 1)[0]
-            if clean in ('/mcp', '/koe/healthz', '/sync/packs') or clean.startswith('/sync/packs/'):
+            if clean in ('/mcp', '/koe/healthz', '/sync/packs', '/pair/request', '/pair/verify') or clean.startswith('/sync/packs/'):
                 return True
             if clean == '/healthz' and upstream_target is None:
                 return True
@@ -821,9 +874,89 @@ def serve_http(directory, listen_addr, token, fallback_upstream=None):
             if not self.is_koe_route():
                 self.proxy_fallback()
                 return
+
+            clean = self.path.split('?', 1)[0]
+            if clean == '/pair/request':
+                raw = self.read_body(4096)
+                if not raw:
+                    self.send_json(400, {'error': 'invalid_body'})
+                    return
+                try:
+                    req_data = parse_json(raw.decode('utf-8'))
+                    req_email = (req_data.get('email') or '').strip().lower()
+                except Exception:
+                    self.send_json(400, {'error': 'invalid_json'})
+                    return
+                if not req_email or '@' not in req_email:
+                    self.send_json(400, {'error': 'invalid_email'})
+                    return
+                if owner_email and req_email != owner_email.strip().lower():
+                    self.send_json(403, {'error': 'owner_email_mismatch'})
+                    return
+
+                code = f'{secrets.randbelow(1000000):06d}'
+                now = time.time()
+                with otp_lock:
+                    active_otps[req_email] = {
+                        'code': code,
+                        'expires': now + 600,
+                        'attempts': 0,
+                    }
+
+                delivered = send_otp_email(req_email, code, smtp_url)
+                resp_payload = {
+                    'ok': True,
+                    'step': 'email_sent',
+                    'email': req_email,
+                    'delivered': delivered,
+                    'expires_in_seconds': 600,
+                }
+                if not delivered:
+                    # In test/dev mode or unconfigured mail, expose code in response for local automation
+                    resp_payload['dev_code'] = code
+                self.send_json(200, resp_payload)
+                return
+
+            if clean == '/pair/verify':
+                raw = self.read_body(4096)
+                if not raw:
+                    self.send_json(400, {'error': 'invalid_body'})
+                    return
+                try:
+                    req_data = parse_json(raw.decode('utf-8'))
+                    req_email = (req_data.get('email') or '').strip().lower()
+                    code = (req_data.get('code') or '').strip()
+                except Exception:
+                    self.send_json(400, {'error': 'invalid_json'})
+                    return
+                now = time.time()
+                with otp_lock:
+                    record = active_otps.get(req_email)
+                    if not record or record['expires'] < now:
+                        self.send_json(400, {'error': 'code_expired_or_not_found'})
+                        return
+                    if record['attempts'] >= 5:
+                        active_otps.pop(req_email, None)
+                        self.send_json(429, {'error': 'too_many_attempts'})
+                        return
+                    record['attempts'] += 1
+                    if not hmac.compare_digest(record['code'].encode('ascii'), code.encode('ascii')):
+                        self.send_json(401, {'error': 'invalid_code'})
+                        return
+                    active_otps.pop(req_email, None)
+
+                # Successful verification issues a valid token
+                self.send_json(200, {
+                    'ok': True,
+                    'paired': True,
+                    'token': token,
+                    'email': req_email,
+                    'expires_at': None,
+                })
+                return
+
             if not self.check_auth():
                 return
-            clean = self.path.split('?', 1)[0]
             if clean != '/mcp':
                 self.send_json(404, {'error': 'not_found'})
                 return
@@ -872,6 +1005,8 @@ def main():
     mode.add_argument('--live-directory', help='Explicit directory containing a leased live.json publication')
     parser.add_argument('--http-listen', help='Serve HTTP MCP (/mcp) and sync (/sync/packs) on host:port')
     parser.add_argument('--fallback-upstream', help='Forward non-Koe HTTP paths to http://host:port')
+    parser.add_argument('--owner-email', help='Owner email address allowed to pair via OTP')
+    parser.add_argument('--smtp-url', help='SMTP URL for delivering OTP codes (e.g. smtps://user:pass@smtp.example.com:465)')
     parser.add_argument('--token-file', help='Path to Bearer token file (minted with 0600 if missing)')
     parser.add_argument('--token-env', default='KOE_MCP_TOKEN', help='Environment variable holding Bearer token')
     parser.add_argument('--public-url', help='Public or LAN URL for generating a KOEMCP1. pairing code')
@@ -897,7 +1032,14 @@ def main():
             return 0
         if args.http_listen:
             token = resolve_or_create_token(args.token_file, args.token_env)
-            serve_http(directory, args.http_listen, token, args.fallback_upstream)
+            serve_http(
+                directory,
+                args.http_listen,
+                token,
+                fallback_upstream=args.fallback_upstream,
+                owner_email=args.owner_email,
+                smtp_url=args.smtp_url,
+            )
             return 0
         serve(directory)
     except (OSError, ToolError):
