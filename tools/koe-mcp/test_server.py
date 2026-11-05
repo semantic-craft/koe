@@ -841,6 +841,115 @@ class HttpServerTest(unittest.TestCase):
                 ['list_recordings', 'get_transcript', 'get_minutes'],
             )
 
+    def test_otp_email_pairing_lifecycle_and_security(self):
+        otp_root = Path(self.temp.name) / 'otp-packs'
+        otp_root.mkdir(parents=True, exist_ok=True)
+        otp_root.chmod(0o700)
+        token_file = Path(self.temp.name) / 'otp-token'
+        token_file.write_text(self.token + '\n', encoding='utf-8')
+        token_file.chmod(0o600)
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', 0))
+            otp_port = s.getsockname()[1]
+
+        proc = subprocess.Popen(
+            [
+                sys.executable, '-B', str(SERVER),
+                '--directory', str(otp_root),
+                '--http-listen', f'127.0.0.1:{otp_port}',
+                '--token-file', str(token_file),
+                '--owner-email', 'owner@example.com',
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        def stop_proc():
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            for s in (proc.stdout, proc.stderr):
+                if s:
+                    s.close()
+        self.addCleanup(stop_proc)
+
+        base_url = f'http://127.0.0.1:{otp_port}'
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f'{base_url}/healthz', timeout=0.5) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.05)
+
+        # 1. Reject invalid email format
+        bad_req = urllib.request.Request(
+            f'{base_url}/pair/request',
+            data=b'{"email":"not-an-email"}',
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(bad_req, timeout=5)
+        self.assertEqual(ctx.exception.code, 400)
+
+        # 2. Reject email mismatch when owner-email is configured
+        wrong_owner_req = urllib.request.Request(
+            f'{base_url}/pair/request',
+            data=b'{"email":"stranger@example.com"}',
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(wrong_owner_req, timeout=5)
+        self.assertEqual(ctx.exception.code, 403)
+
+        # 3. Successful pair request for owner
+        good_req = urllib.request.Request(
+            f'{base_url}/pair/request',
+            data=b'{"email":"owner@example.com"}',
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(good_req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            req_data = json.loads(resp.read().decode('utf-8'))
+            self.assertTrue(req_data['ok'])
+            self.assertEqual(req_data['step'], 'email_sent')
+            self.assertIn('dev_code', req_data)
+            dev_code = req_data['dev_code']
+            self.assertEqual(len(dev_code), 6)
+
+        # 4. Reject invalid code
+        verify_bad_req = urllib.request.Request(
+            f'{base_url}/pair/verify',
+            data=b'{"email":"owner@example.com","code":"000000"}',
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(verify_bad_req, timeout=5)
+        self.assertEqual(ctx.exception.code, 401)
+
+        # 5. Successful verify returns token
+        verify_good_req = urllib.request.Request(
+            f'{base_url}/pair/verify',
+            data=json.dumps({'email': 'owner@example.com', 'code': dev_code}).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(verify_good_req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            verify_data = json.loads(resp.read().decode('utf-8'))
+            self.assertTrue(verify_data['ok'])
+            self.assertTrue(verify_data['paired'])
+            self.assertEqual(verify_data['token'], self.token)
+
 
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--probe':

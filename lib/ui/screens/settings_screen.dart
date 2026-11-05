@@ -1,3 +1,4 @@
+import 'dart:io';
 import '../widgets/mac_interpreting_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -323,100 +324,242 @@ class SettingsScreen extends StatelessWidget {
   ) {
     return showDialog<void>(
       context: context,
-      builder: (dialogContext) => AnimatedBuilder(
-        animation: c,
-        builder: (dialogContext, _) {
-          final config = c.mcpSyncConfig;
-          final state = c.mcpSyncState;
-          return AlertDialog(
-            title: const Text('外部 AI 与云同步 (MCP)'),
-            content: SingleChildScrollView(
+      builder: (dialogContext) => _ExternalAiDialog(controller: c),
+    );
+  }
+}
+
+class _ExternalAiDialog extends StatefulWidget {
+  const _ExternalAiDialog({required this.controller});
+
+  final RecorderController controller;
+
+  @override
+  State<_ExternalAiDialog> createState() => _ExternalAiDialogState();
+}
+
+class _ExternalAiDialogState extends State<_ExternalAiDialog> {
+  late final TextEditingController _urlController;
+  late final TextEditingController _emailController;
+  late final TextEditingController _codeController;
+
+  bool _isRequesting = false;
+  bool _isVerifying = false;
+  String? _statusNotice;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    final c = widget.controller;
+    _urlController = TextEditingController(
+      text: c.mcpSyncConfig?.baseUrl ?? c.mcpSyncUrl ?? '',
+    );
+    _emailController = TextEditingController(
+      text: c.mcpSyncConfig?.email ?? c.mcpSyncEmail ?? '',
+    );
+    _codeController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    _emailController.dispose();
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _requestOtp() async {
+    final url = _urlController.text.trim();
+    final email = _emailController.text.trim();
+    if (url.isEmpty) {
+      setState(() => _errorMessage = '请填写 VPS 服务器地址');
+      return;
+    }
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() => _errorMessage = '请填写有效的 Owner 邮箱');
+      return;
+    }
+    setState(() {
+      _isRequesting = true;
+      _errorMessage = null;
+      _statusNotice = null;
+    });
+    try {
+      final res = await widget.controller.requestMcpOtpPairing(
+        baseUrl: url,
+        email: email,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isRequesting = false;
+        _statusNotice = '验证码已发送至 $email，请查收并填入下方';
+      });
+      if (res['dev_code'] is String) {
+        _codeController.text = res['dev_code'] as String;
+      }
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _isRequesting = false;
+        _errorMessage = err is HttpException
+            ? err.message
+            : err is FormatException
+            ? err.message
+            : '$err';
+      });
+    }
+  }
+
+  Future<void> _verifyOtp() async {
+    final url = _urlController.text.trim();
+    final email = _emailController.text.trim();
+    final code = _codeController.text.trim();
+    if (code.length != 6) {
+      setState(() => _errorMessage = '请输入 6 位数字验证码');
+      return;
+    }
+    setState(() {
+      _isVerifying = true;
+      _errorMessage = null;
+      _statusNotice = null;
+    });
+    try {
+      await widget.controller.verifyMcpOtpPairing(
+        baseUrl: url,
+        email: email,
+        code: code,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isVerifying = false;
+        _statusNotice = '接入成功！已连接并开启云同步';
+      });
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('已成功绑定 VPS 并开启同步')),
+      );
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _isVerifying = false;
+        _errorMessage = err is HttpException
+            ? err.message
+            : err is FormatException
+            ? err.message
+            : '$err';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (dialogContext, _) {
+        final config = widget.controller.mcpSyncConfig;
+        final state = widget.controller.mcpSyncState;
+        return AlertDialog(
+          title: const Text('外部 AI 与云同步 (MCP)'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    '无需手动填写服务器或密钥。复制下方提示词发给你的 AI Agent（Claude Code / Codex / Antigravity），Agent 会自动部署配置并回复连接码；未绑定前不会发起连接。',
-                  ),
-                  const SizedBox(height: 12),
                   if (config != null) ...[
-                    Text(
-                      '当前已接入：${config.redactedLabel}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    Text(
-                      'MCP 地址：${config.mcpEndpoint}（已同步 ${state.syncedCount} 条）',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface0,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.check_circle_rounded,
+                                color: Colors.green,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  config.redactedLabel,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'MCP 地址：${config.mcpEndpoint}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          Text(
+                            state.phase == McpSyncPhase.syncing
+                                ? '正在同步中...'
+                                : '已同步 ${state.syncedCount} 条记录',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              TextButton.icon(
+                                key: const ValueKey('mcp-sync-now'),
+                                onPressed: state.phase == McpSyncPhase.syncing
+                                    ? null
+                                    : () => widget.controller.syncMcpNow(),
+                                icon: const Icon(Icons.sync_rounded, size: 16),
+                                label: const Text('立即同步'),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton.icon(
+                                key: const ValueKey('mcp-disconnect'),
+                                onPressed: () =>
+                                    widget.controller.disconnectMcpSync(),
+                                icon: const Icon(
+                                  Icons.link_off_rounded,
+                                  size: 16,
+                                ),
+                                label: const Text('断开连接'),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        TextButton(
-                          key: const ValueKey('mcp-sync-now'),
-                          onPressed: state.phase == McpSyncPhase.syncing
-                              ? null
-                              : () => c.syncMcpNow(),
-                          child: const Text('立即同步'),
-                        ),
-                        TextButton(
-                          key: const ValueKey('mcp-disconnect'),
-                          onPressed: () => c.disconnectMcpSync(),
-                          child: const Text('断开连接'),
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 20),
+                    const Divider(height: 24),
                   ],
-                  OutlinedButton.icon(
-                    key: const ValueKey('mcp-copy-vps-prompt'),
-                    onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(
-                          text: c.buildAgentMcpSetupPrompt(hasVps: true),
-                        ),
-                      );
-                      if (dialogContext.mounted) {
-                        ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
-                          const SnackBar(content: Text('已复制「我有 VPS」配置提示词')),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.cloud_outlined, size: 18),
-                    label: const Text('复制 Agent 配置提示词（我有 VPS）'),
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    key: const ValueKey('mcp-copy-lan-prompt'),
-                    onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(
-                          text: c.buildAgentMcpSetupPrompt(hasVps: false),
-                        ),
-                      );
-                      if (dialogContext.mounted) {
-                        ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
-                          const SnackBar(
-                            content: Text('已复制「我没有 VPS（本机 Mac）」配置提示词'),
-                          ),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.laptop_mac_outlined, size: 18),
-                    label: const Text('复制 Agent 配置提示词（无 VPS / 用本机 Mac）'),
+                  const Text(
+                    '无需手动填写密钥。复制提示词交给 AI Agent 自动部署配置，或输入自建 VPS 地址与邮箱接收验证码直接绑定；未绑定前不会发起连接。',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   FilledButton.icon(
                     key: const ValueKey('mcp-bind-clipboard'),
                     onPressed: () async {
                       try {
-                        await c.bindMcpSyncFromClipboard();
+                        await widget.controller.bindMcpSyncFromClipboard();
                         if (dialogContext.mounted) {
                           ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
-                            const SnackBar(content: Text('已从剪贴板接入外部 AI 与同步服务')),
+                            const SnackBar(
+                              content: Text('已从剪贴板接入外部 AI 与同步服务'),
+                            ),
                           );
                         }
                       } on FormatException catch (error) {
@@ -428,20 +571,176 @@ class SettingsScreen extends StatelessWidget {
                       }
                     },
                     icon: const Icon(Icons.paste_rounded, size: 18),
-                    label: const Text('从剪贴板一键接入（粘贴 Agent 回复）'),
+                    label: const Text('从剪贴板一键接入（KOEMCP1. 连接码）'),
                   ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        key: const ValueKey('mcp-copy-vps-prompt'),
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(
+                              text: widget.controller.buildAgentMcpSetupPrompt(
+                                hasVps: true,
+                                ownerEmail: _emailController.text.trim().isNotEmpty
+                                    ? _emailController.text.trim()
+                                    : null,
+                              ),
+                            ),
+                          );
+                          if (dialogContext.mounted) {
+                            ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
+                              const SnackBar(content: Text('已复制「我有 VPS」配置提示词')),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.cloud_outlined, size: 16),
+                        label: const Text('复制 VPS 配置提示词'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('mcp-copy-lan-prompt'),
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(
+                              text: widget.controller.buildAgentMcpSetupPrompt(
+                                hasVps: false,
+                              ),
+                            ),
+                          );
+                          if (dialogContext.mounted) {
+                            ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
+                              const SnackBar(
+                                content: Text('已复制「无 VPS（本机 Mac）」配置提示词'),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.laptop_mac_outlined, size: 16),
+                        label: const Text('复制本机 Mac 配置提示词'),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  const Text(
+                    '邮箱验证码安全配对（推荐，零剪贴板）',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '输入你的自建 VPS 地址与所有者邮箱，接收 6 位验证码直接握手绑定；设备专用令牌由 VPS 直接签发，全程不暴露密钥。',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('mcp-server-url-field'),
+                    controller: _urlController,
+                    decoration: const InputDecoration(
+                      labelText: 'VPS 服务器地址',
+                      hintText: 'https://anet.sonori.dev',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.url,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          key: const ValueKey('mcp-email-field'),
+                          controller: _emailController,
+                          decoration: const InputDecoration(
+                            labelText: 'Owner 邮箱',
+                            hintText: 'gakalone@gmail.com',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          keyboardType: TextInputType.emailAddress,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonal(
+                        key: const ValueKey('mcp-request-otp-button'),
+                        onPressed: _isRequesting ? null : _requestOtp,
+                        child: _isRequesting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('获取验证码'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          key: const ValueKey('mcp-otp-code-field'),
+                          controller: _codeController,
+                          decoration: const InputDecoration(
+                            labelText: '6 位数字验证码',
+                            hintText: '123456',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          keyboardType: TextInputType.number,
+                          maxLength: 6,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        key: const ValueKey('mcp-verify-otp-button'),
+                        onPressed: _isVerifying ? null : _verifyOtp,
+                        child: _isVerifying
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('验证并连接'),
+                      ),
+                    ],
+                  ),
+                  if (_statusNotice != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _statusNotice!,
+                      style: const TextStyle(fontSize: 12, color: Colors.green),
+                    ),
+                  ],
+                  if (_errorMessage != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _errorMessage!,
+                      style: const TextStyle(fontSize: 12, color: Colors.red),
+                    ),
+                  ],
                 ],
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('知道了'),
-              ),
-            ],
-          );
-        },
-      ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
     );
   }
 }

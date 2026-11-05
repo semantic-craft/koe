@@ -425,4 +425,186 @@ $code
       );
     },
   );
+
+  test(
+    'requestMcpOtpPairing and verifyMcpOtpPairing complete zero-clipboard handshake with VPS',
+    () async {
+      final previousOverrides = HttpOverrides.current;
+      HttpOverrides.global = null;
+      addTearDown(() => HttpOverrides.global = previousOverrides);
+      final root = await Directory.systemTemp.createTemp('koe-otp-test-');
+      final serverStore = Directory('${root.path}/server-store')..createSync();
+      final tokenFile = File('${root.path}/token');
+      final port = await _freePort();
+      final baseUrl = 'http://127.0.0.1:$port';
+
+      final serverProcess = await Process.start('python3', [
+        '-B',
+        'tools/koe-mcp/server.py',
+        '--directory',
+        serverStore.path,
+        '--http-listen',
+        '127.0.0.1:$port',
+        '--token-file',
+        tokenFile.path,
+        '--owner-email',
+        'gakalone@gmail.com',
+      ]);
+
+      final controller = RecorderController(
+        loadPersistedState: false,
+        analysisController: RecordingAnalysis(inMemory: true),
+      );
+
+      addTearDown(() async {
+        controller.dispose();
+        serverProcess.kill();
+        await serverProcess.exitCode.timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => -1,
+        );
+        await root.delete(recursive: true);
+      });
+
+      // Wait for HTTP server /healthz
+      final httpClient = HttpClient();
+      var ready = false;
+      for (var i = 0; i < 40; i++) {
+        try {
+          final req = await httpClient.getUrl(Uri.parse('$baseUrl/healthz'));
+          final resp = await req.close();
+          await resp.drain<void>();
+          if (resp.statusCode == 200) {
+            ready = true;
+            break;
+          }
+        } catch (_) {}
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      httpClient.close(force: true);
+      expect(ready, isTrue, reason: 'HTTP MCP server did not start in time');
+
+      // 1. Mismatched email should throw HttpException
+      expect(
+        () => controller.requestMcpOtpPairing(
+          baseUrl: baseUrl,
+          email: 'unauthorized@example.com',
+        ),
+        throwsA(isA<HttpException>()),
+      );
+
+      // 2. Matching email should succeed and return payload with dev_code
+      final reqResult = await controller.requestMcpOtpPairing(
+        baseUrl: baseUrl,
+        email: 'gakalone@gmail.com',
+      );
+      expect(reqResult['ok'], isTrue);
+      final devCode = reqResult['dev_code'] as String;
+      expect(devCode.length, 6);
+
+      // 3. Invalid code should throw HttpException
+      expect(
+        () => controller.verifyMcpOtpPairing(
+          baseUrl: baseUrl,
+          email: 'gakalone@gmail.com',
+          code: '000000',
+        ),
+        throwsA(isA<HttpException>()),
+      );
+
+      // 4. Valid code completes handshake, issues token, and binds
+      final config = await controller.verifyMcpOtpPairing(
+        baseUrl: baseUrl,
+        email: 'gakalone@gmail.com',
+        code: devCode,
+      );
+      expect(config.baseUrl, baseUrl);
+      expect(config.token.length, greaterThanOrEqualTo(24));
+      expect(config.email, 'gakalone@gmail.com');
+      expect(controller.mcpSyncConfig?.token, config.token);
+      expect(controller.mcpSyncEmail, 'gakalone@gmail.com');
+    },
+  );
+
+  testWidgets(
+    'SettingsScreen external-ai-entry validates input fields and renders OTP pairing interface',
+    (tester) async {
+      final controller = RecorderController(
+        loadPersistedState: false,
+        analysisController: RecordingAnalysis(inMemory: true),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: controller,
+          child: const MaterialApp(home: SettingsScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final entry = find.byKey(const ValueKey('external-ai-entry'));
+      await tester.scrollUntilVisible(
+        entry,
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+
+      final urlField = find.byKey(const ValueKey('mcp-server-url-field'));
+      final emailField = find.byKey(const ValueKey('mcp-email-field'));
+      final reqButton = find.byKey(const ValueKey('mcp-request-otp-button'));
+      final codeField = find.byKey(const ValueKey('mcp-otp-code-field'));
+      final verifyButton = find.byKey(const ValueKey('mcp-verify-otp-button'));
+
+      expect(urlField, findsOneWidget);
+      expect(emailField, findsOneWidget);
+      expect(reqButton, findsOneWidget);
+      expect(codeField, findsOneWidget);
+      expect(verifyButton, findsOneWidget);
+
+      // 1. Validation: Empty URL triggers error notice
+      await tester.ensureVisible(reqButton);
+      await tester.tap(reqButton);
+      await tester.pumpAndSettle();
+      expect(find.text('请填写 VPS 服务器地址'), findsOneWidget);
+
+      // 2. Validation: Empty or bad email triggers error notice
+      await tester.enterText(urlField, 'https://anet.sonori.dev');
+      await tester.enterText(emailField, 'notanemail');
+      await tester.ensureVisible(reqButton);
+      await tester.tap(reqButton);
+      await tester.pumpAndSettle();
+      expect(find.text('请填写有效的 Owner 邮箱'), findsOneWidget);
+
+      // 3. Validation: Invalid code length triggers error notice
+      await tester.enterText(emailField, 'gakalone@gmail.com');
+      await tester.enterText(codeField, '123');
+      await tester.ensureVisible(verifyButton);
+      await tester.tap(verifyButton);
+      await tester.pumpAndSettle();
+      expect(find.text('请输入 6 位数字验证码'), findsOneWidget);
+
+      // 4. When config is applied, dialog displays active connection card and disconnect button
+      controller.applySavedMcpSyncConfig(
+        const McpSyncConfig(
+          baseUrl: 'https://anet.sonori.dev',
+          token: 'token-01234567890123456789012345',
+          mode: McpSyncMode.vps,
+          email: 'gakalone@gmail.com',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('gakalone@gmail.com'), findsWidgets);
+      expect(find.byKey(const ValueKey('mcp-sync-now')), findsOneWidget);
+      expect(find.byKey(const ValueKey('mcp-disconnect')), findsOneWidget);
+
+      // Disconnect clears config
+      await tester.tap(find.byKey(const ValueKey('mcp-disconnect')));
+      await tester.pumpAndSettle();
+      expect(controller.mcpSyncConfig, isNull);
+    },
+  );
 }
