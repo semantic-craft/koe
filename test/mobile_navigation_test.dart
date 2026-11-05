@@ -424,7 +424,7 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('external-ai-entry')));
     await tester.pumpAndSettle();
-    expect(find.text('外部 AI 尚未开放'), findsOneWidget);
+    expect(find.text('外部 AI 与云同步 (MCP)'), findsOneWidget);
     expect(find.textContaining('不会发起连接'), findsOneWidget);
 
     await tester.tap(find.text('知道了'));

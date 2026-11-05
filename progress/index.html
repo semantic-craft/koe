@@ -303,12 +303,13 @@
 </ul><p>Next: 在授权的客户端读取用户指定的真实无音频资料包。</p></article>
 </section>
 <section id="minutes-relay"><h2>录音豆纪要与 MCP 全自动接力</h2>
-<article id="minutes-relay-bootstrap"><h3>全自动验收与接力切片</h3><span class="badge">in_progress</span><p>Slice A/B/D/C/E 全部完成并通过 verify-minutes-flow all（offline 30 / iOS 独立模拟器 / 真实 Qwen provider / 真实 D3200 BLE + Qwen 流式 ASR 与 LLM / 真实 stdio MCP 客户端）及 scripts/check（1124 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与外部宿主客户端安装如实记为 unverified。</p><ul>
+<article id="minutes-relay-bootstrap"><h3>全自动验收与接力切片</h3><span class="badge">in_progress</span><p>Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板一键接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并通过 scripts/check（Python 22 项 + Flutter 1127 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与公网 VPS 实机验收如实记为 unverified。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: 全景切片 A–E 队列、版本/安装/合并/实际验收四项分列记录</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/verify-minutes-flow">file scripts/verify-minutes-flow: 五层无人值守门禁（offline/ios/provider/device/mcp/all）全部 exit 0；实体按键无机械驱动如实记为 unverified</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/integration_test/device_minutes_flow_test.dart">file integration_test/device_minutes_flow_test.dart: macOS CoreBluetooth 直连真实 soundcore Work (D3200) 实时流式 ASR、阶段摘要、停录落盘与进程重启读回</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/mcp_live_publication_test.dart">file test/mcp_live_publication_test.dart: 生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。</a></li>
-</ul><p>Next: 草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）及外部客户端安装与跨端同步（#528）保留独立验收。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/mcp_sync_test.dart">file test/mcp_sync_test.dart: 轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板一键接入</a></li>
+</ul><p>Next: 草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）与真实公网 VPS / 手机移动网络验收（#528）保留独立验收。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/548">#548</a> <code>bd23ac2571d42fb3ae751da0af64e70915dd5883</code></li>

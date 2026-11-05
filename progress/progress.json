@@ -2509,12 +2509,17 @@
               "kind": "file",
               "note": "生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。",
               "ref": "test/mcp_live_publication_test.dart"
+            },
+            {
+              "kind": "file",
+              "note": "轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板一键接入",
+              "ref": "test/mcp_sync_test.dart"
             }
           ],
           "id": "minutes-relay-bootstrap",
-          "next": "草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）及外部客户端安装与跨端同步（#528）保留独立验收。",
+          "next": "草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）与真实公网 VPS / 手机移动网络验收（#528）保留独立验收。",
           "status": "in_progress",
-          "summary": "Slice A/B/D/C/E 全部完成并通过 verify-minutes-flow all（offline 30 / iOS 独立模拟器 / 真实 Qwen provider / 真实 D3200 BLE + Qwen 流式 ASR 与 LLM / 真实 stdio MCP 客户端）及 scripts/check（1124 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与外部宿主客户端安装如实记为 unverified。",
+          "summary": "Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板一键接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并通过 scripts/check（Python 22 项 + Flutter 1127 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与公网 VPS 实机验收如实记为 unverified。",
           "title": "全自动验收与接力切片"
         }
       ],

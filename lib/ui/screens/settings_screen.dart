@@ -1,5 +1,6 @@
 import '../widgets/mac_interpreting_panel.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_identity.dart';
@@ -268,15 +269,19 @@ class SettingsScreen extends StatelessWidget {
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.hub_outlined),
                       title: const Text('外部 AI 连接'),
-                      subtitle: const Text('尚未开放 · 后续用于让授权客户端读取资料'),
-                      trailing: const Text(
-                        '未开放',
-                        style: TextStyle(
+                      subtitle: Text(
+                        c.mcpSyncConfig == null
+                            ? '复制提示词交给 AI 即可自动配置 VPS 或本机同步'
+                            : '${c.mcpSyncConfig!.redactedLabel} · 已同步 ${c.mcpSyncState.syncedCount} 条',
+                      ),
+                      trailing: Text(
+                        c.mcpSyncConfig == null ? '一键接入' : '已连接',
+                        style: const TextStyle(
                           fontSize: 12,
                           color: AppColors.textSecondary,
                         ),
                       ),
-                      onTap: () => _showExternalAiNotice(context),
+                      onTap: () => _showExternalAiNotice(context, c),
                     ),
                   ),
                   const SizedBox(height: 18),
@@ -312,21 +317,130 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _showExternalAiNotice(BuildContext context) {
+  Future<void> _showExternalAiNotice(
+    BuildContext context,
+    RecorderController c,
+  ) {
     return showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('外部 AI 尚未开放'),
-        content: const Text(
-          '这里以后用于连接经授权的外部客户端，让它们读取你选择的资料并交办任务。'
-          '当前版本不会发起连接、不会申请权限，也不会显示连接成功。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('知道了'),
-          ),
-        ],
+      builder: (dialogContext) => AnimatedBuilder(
+        animation: c,
+        builder: (dialogContext, _) {
+          final config = c.mcpSyncConfig;
+          final state = c.mcpSyncState;
+          return AlertDialog(
+            title: const Text('外部 AI 与云同步 (MCP)'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '无需手动填写服务器或密钥。复制下方提示词发给你的 AI Agent（Claude Code / Codex / Antigravity），Agent 会自动部署配置并回复连接码；未绑定前不会发起连接。',
+                  ),
+                  const SizedBox(height: 12),
+                  if (config != null) ...[
+                    Text(
+                      '当前已接入：${config.redactedLabel}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      'MCP 地址：${config.mcpEndpoint}（已同步 ${state.syncedCount} 条）',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        TextButton(
+                          key: const ValueKey('mcp-sync-now'),
+                          onPressed: state.phase == McpSyncPhase.syncing
+                              ? null
+                              : () => c.syncMcpNow(),
+                          child: const Text('立即同步'),
+                        ),
+                        TextButton(
+                          key: const ValueKey('mcp-disconnect'),
+                          onPressed: () => c.disconnectMcpSync(),
+                          child: const Text('断开连接'),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 20),
+                  ],
+                  OutlinedButton.icon(
+                    key: const ValueKey('mcp-copy-vps-prompt'),
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(
+                          text: c.buildAgentMcpSetupPrompt(hasVps: true),
+                        ),
+                      );
+                      if (dialogContext.mounted) {
+                        ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
+                          const SnackBar(content: Text('已复制「我有 VPS」配置提示词')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.cloud_outlined, size: 18),
+                    label: const Text('复制 Agent 配置提示词（我有 VPS）'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    key: const ValueKey('mcp-copy-lan-prompt'),
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(
+                          text: c.buildAgentMcpSetupPrompt(hasVps: false),
+                        ),
+                      );
+                      if (dialogContext.mounted) {
+                        ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
+                          const SnackBar(
+                            content: Text('已复制「我没有 VPS（本机 Mac）」配置提示词'),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.laptop_mac_outlined, size: 18),
+                    label: const Text('复制 Agent 配置提示词（无 VPS / 用本机 Mac）'),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    key: const ValueKey('mcp-bind-clipboard'),
+                    onPressed: () async {
+                      try {
+                        await c.bindMcpSyncFromClipboard();
+                        if (dialogContext.mounted) {
+                          ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
+                            const SnackBar(content: Text('已从剪贴板接入外部 AI 与同步服务')),
+                          );
+                        }
+                      } on FormatException catch (error) {
+                        if (dialogContext.mounted) {
+                          ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
+                            SnackBar(content: Text(error.message)),
+                          );
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.paste_rounded, size: 18),
+                    label: const Text('从剪贴板一键接入（粘贴 Agent 回复）'),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('知道了'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

@@ -42,6 +42,8 @@ mixin _RecorderSettings on ChangeNotifier {
   bool get translationModeAvailable;
   void liveTargetChanged(String language);
   void livePrivacyChanged();
+  McpSyncConfig? get mcpSyncConfig;
+  void applySavedMcpSyncConfig(McpSyncConfig? config);
   // END DEPS
 
   String? settingsStorageError;
@@ -66,6 +68,20 @@ mixin _RecorderSettings on ChangeNotifier {
     }
     analysisBackend = s.analysisBackend;
     analysisOpenAiConfig = s.analysisOpenAiConfig;
+    if (s.mcpSyncUrl != null &&
+        s.mcpSyncUrl!.trim().isNotEmpty &&
+        s.mcpSyncToken != null &&
+        s.mcpSyncToken!.trim().isNotEmpty) {
+      applySavedMcpSyncConfig(
+        McpSyncConfig(
+          baseUrl: s.mcpSyncUrl!.trim(),
+          token: s.mcpSyncToken!.trim(),
+          mode: McpSyncMode.parse(s.mcpSyncMode),
+        ),
+      );
+    } else {
+      applySavedMcpSyncConfig(null);
+    }
     vocabulary = List<String>.unmodifiable(s.vocabulary);
     _savedVocabulary = vocabulary;
     _syncAnalysisModel();
@@ -144,6 +160,9 @@ mixin _RecorderSettings on ChangeNotifier {
             },
             analysisBackend: nextBackend,
             analysisOpenAiConfig: nextOpenAi,
+            mcpSyncUrl: mcpSyncConfig?.baseUrl,
+            mcpSyncMode: mcpSyncConfig?.mode.name,
+            mcpSyncToken: mcpSyncConfig?.token,
             vocabulary: nextVocab,
             autoTranscribe: autoTranscribe,
             autoRealtime: autoRealtime,
