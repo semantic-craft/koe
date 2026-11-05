@@ -698,6 +698,149 @@ class HttpServerTest(unittest.TestCase):
         self.assertTrue(min_data['hasMinutes'])
         self.assertIn('闪记同步纪要', min_data['current']['text'])
 
+    def test_http_fallback_upstream_coexists_with_koe_routes(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import threading
+
+        class MockUpstreamHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                return
+
+            def do_GET(self):
+                if self.path == '/healthz':
+                    body = b'{"ok":true,"version":"0.3.3","wire":3}'
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == '/hub/identity':
+                    body = b'{"hub":"anet.sonori.dev","wire":3}'
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+            def do_POST(self):
+                length = int(self.headers.get('Content-Length', '0'))
+                req_body = self.rfile.read(length)
+                if self.path == '/relay/status':
+                    resp_body = json.dumps({
+                        'echoPath': self.path,
+                        'receivedBytes': len(req_body),
+                    }).encode('utf-8')
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(resp_body)))
+                    self.end_headers()
+                    self.wfile.write(resp_body)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+        upstream_srv = HTTPServer(('127.0.0.1', 0), MockUpstreamHandler)
+        upstream_port = upstream_srv.server_address[1]
+        upstream_thread = threading.Thread(target=upstream_srv.serve_forever, daemon=True)
+        upstream_thread.start()
+        self.addCleanup(upstream_srv.server_close)
+        self.addCleanup(upstream_srv.shutdown)
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', 0))
+            proxy_port = s.getsockname()[1]
+
+        proxy_root = Path(self.temp.name) / 'proxy-packs'
+        proxy_root.mkdir(parents=True, exist_ok=True)
+        proxy_root.chmod(0o700)
+        token_file = Path(self.temp.name) / 'proxy-token'
+        token_file.write_text(self.token + '\n', encoding='utf-8')
+        token_file.chmod(0o600)
+
+        proc = subprocess.Popen(
+            [
+                sys.executable, '-B', str(SERVER),
+                '--directory', str(proxy_root),
+                '--http-listen', f'127.0.0.1:{proxy_port}',
+                '--fallback-upstream', f'http://127.0.0.1:{upstream_port}',
+                '--token-file', str(token_file),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        def stop_proc():
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            for s in (proc.stdout, proc.stderr):
+                if s:
+                    s.close()
+        self.addCleanup(stop_proc)
+
+        proxy_base = f'http://127.0.0.1:{proxy_port}'
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f'{proxy_base}/koe/healthz', timeout=0.5) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.05)
+
+        with urllib.request.urlopen(f'{proxy_base}/healthz', timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(
+                json.loads(resp.read().decode('utf-8')),
+                {'ok': True, 'version': '0.3.3', 'wire': 3},
+            )
+
+        with urllib.request.urlopen(f'{proxy_base}/hub/identity', timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(
+                json.loads(resp.read().decode('utf-8')),
+                {'hub': 'anet.sonori.dev', 'wire': 3},
+            )
+
+        relay_req = urllib.request.Request(
+            f'{proxy_base}/relay/status',
+            data=b'{"rid":"test"}',
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(relay_req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(
+                json.loads(resp.read().decode('utf-8')),
+                {'echoPath': '/relay/status', 'receivedBytes': 14},
+            )
+
+        mcp_req = urllib.request.Request(
+            f'{proxy_base}/mcp',
+            data=json.dumps({
+                'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list',
+            }).encode('utf-8'),
+            headers={
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(mcp_req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            tools_res = json.loads(resp.read().decode('utf-8'))
+            self.assertEqual(
+                [t['name'] for t in tools_res['result']['tools']],
+                ['list_recordings', 'get_transcript', 'get_minutes'],
+            )
+
 
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--probe':

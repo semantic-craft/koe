@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import hmac
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
@@ -14,9 +15,12 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
+import socket
 import stat
 import sys
 import threading
+import urllib.parse
 
 
 MAX_MANIFEST = 32 * 1024 * 1024
@@ -609,10 +613,16 @@ def resolve_or_create_token(token_file=None, token_env='KOE_MCP_TOKEN'):
     return token
 
 
-def serve_http(directory, listen_addr, token):
+def serve_http(directory, listen_addr, token, fallback_upstream=None):
     host, port_text = listen_addr.rsplit(':', 1)
     port = int(port_text)
     expected_auth = f'Bearer {token}'
+    upstream_target = None
+    if fallback_upstream:
+        parsed_up = urllib.parse.urlsplit(fallback_upstream)
+        if not parsed_up.hostname or not parsed_up.port:
+            raise ToolError('invalid_fallback_upstream')
+        upstream_target = (parsed_up.hostname, parsed_up.port)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -632,6 +642,92 @@ def serve_http(directory, listen_addr, token):
                 self.send_json(401, {'error': 'unauthorized'})
                 return False
             return True
+
+        def is_koe_route(self):
+            clean = self.path.split('?', 1)[0]
+            if clean in ('/mcp', '/koe/healthz', '/sync/packs') or clean.startswith('/sync/packs/'):
+                return True
+            if clean == '/healthz' and upstream_target is None:
+                return True
+            return False
+
+        def proxy_fallback(self):
+            if upstream_target is None:
+                self.send_json(404, {'error': 'not_found'})
+                return
+            up_host, up_port = upstream_target
+            if self.headers.get('Upgrade', '').lower() == 'websocket':
+                try:
+                    up_sock = socket.create_connection((up_host, up_port), timeout=10)
+                except OSError:
+                    self.send_json(502, {'error': 'bad_gateway'})
+                    return
+                try:
+                    lines = [f'{self.command} {self.path} {self.request_version}\r\n']
+                    for key, value in self.headers.items():
+                        lines.append(f'{key}: {value}\r\n')
+                    lines.append('\r\n')
+                    up_sock.sendall(''.join(lines).encode('latin-1', errors='replace'))
+                    self.close_connection = True
+                    client_sock = self.connection
+                    sockets = [client_sock, up_sock]
+                    while sockets:
+                        readable, _, errored = select.select(sockets, [], sockets, 60.0)
+                        if errored or not readable:
+                            break
+                        eof = False
+                        for sock in readable:
+                            data = sock.recv(16384)
+                            if not data:
+                                eof = True
+                                break
+                            peer = up_sock if sock is client_sock else client_sock
+                            peer.sendall(data)
+                        if eof:
+                            break
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        up_sock.close()
+                    except OSError:
+                        pass
+                return
+
+            has_body = (
+                'Content-Length' in self.headers
+                or 'chunked' in self.headers.get('Transfer-Encoding', '').lower()
+            )
+            body = self.read_body(MAX_MANIFEST + 32) if has_body else b''
+            if body is None:
+                self.send_json(400, {'error': 'invalid_body'})
+                return
+            hop_by_hop = {
+                'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+                'te', 'trailers', 'transfer-encoding', 'upgrade', 'content-length',
+            }
+            fwd_headers = {
+                k: v for k, v in self.headers.items() if k.lower() not in hop_by_hop
+            }
+            if body:
+                fwd_headers['Content-Length'] = str(len(body))
+            conn = http.client.HTTPConnection(up_host, up_port, timeout=30)
+            try:
+                conn.request(self.command, self.path, body=body if body else None, headers=fwd_headers)
+                resp = conn.getresponse()
+                resp_body = resp.read()
+                self.send_response(resp.status)
+                for key, value in resp.getheaders():
+                    if key.lower() not in hop_by_hop:
+                        self.send_header(key, value)
+                self.send_header('Content-Length', str(len(resp_body)))
+                self.end_headers()
+                if self.command != 'HEAD' and resp_body:
+                    self.wfile.write(resp_body)
+            except OSError:
+                self.send_json(502, {'error': 'bad_gateway'})
+            finally:
+                conn.close()
 
         def read_body(self, limit):
             if 'chunked' in self.headers.get('Transfer-Encoding', '').lower():
@@ -662,19 +758,23 @@ def serve_http(directory, listen_addr, token):
             return self.rfile.read(length)
 
         def do_GET(self):
-            if self.path == '/healthz':
+            if not self.is_koe_route():
+                self.proxy_fallback()
+                return
+            clean = self.path.split('?', 1)[0]
+            if clean in ('/healthz', '/koe/healthz'):
                 self.send_json(200, {'ok': True})
                 return
             if not self.check_auth():
                 return
-            if self.path == '/sync/packs':
+            if clean == '/sync/packs':
                 try:
                     self.send_json(200, {'packs': directory.list_sync_packs()})
                 except ToolError as error:
                     self.send_json(500, {'error': str(error)})
                 return
-            if self.path.startswith('/sync/packs/'):
-                material_id = self.path[len('/sync/packs/'):]
+            if clean.startswith('/sync/packs/'):
+                material_id = clean[len('/sync/packs/'):]
                 try:
                     raw = directory.read_raw_pack(material_id)
                 except InvalidPack:
@@ -693,12 +793,16 @@ def serve_http(directory, listen_addr, token):
             self.send_json(404, {'error': 'not_found'})
 
         def do_PUT(self):
+            if not self.is_koe_route():
+                self.proxy_fallback()
+                return
             if not self.check_auth():
                 return
-            if not self.path.startswith('/sync/packs/'):
+            clean = self.path.split('?', 1)[0]
+            if not clean.startswith('/sync/packs/'):
                 self.send_json(404, {'error': 'not_found'})
                 return
-            material_id = self.path[len('/sync/packs/'):]
+            material_id = clean[len('/sync/packs/'):]
             raw = self.read_body(MAX_MANIFEST + 32)
             if not raw:
                 self.send_json(400, {'error': 'invalid_body'})
@@ -714,9 +818,13 @@ def serve_http(directory, listen_addr, token):
             self.send_json(200, info)
 
         def do_POST(self):
+            if not self.is_koe_route():
+                self.proxy_fallback()
+                return
             if not self.check_auth():
                 return
-            if self.path != '/mcp':
+            clean = self.path.split('?', 1)[0]
+            if clean != '/mcp':
                 self.send_json(404, {'error': 'not_found'})
                 return
             raw = self.read_body(MAX_REQUEST)
@@ -738,6 +846,18 @@ def serve_http(directory, listen_addr, token):
                 return
             self.send_json(200, response)
 
+        def do_DELETE(self):
+            self.proxy_fallback()
+
+        def do_HEAD(self):
+            self.proxy_fallback()
+
+        def do_OPTIONS(self):
+            self.proxy_fallback()
+
+        def do_PATCH(self):
+            self.proxy_fallback()
+
     server = ThreadingHTTPServer((host, port), Handler)
     try:
         server.serve_forever()
@@ -751,6 +871,7 @@ def main():
     mode.add_argument('--directory', help='Explicit directory containing no-audio .koepack exports')
     mode.add_argument('--live-directory', help='Explicit directory containing a leased live.json publication')
     parser.add_argument('--http-listen', help='Serve HTTP MCP (/mcp) and sync (/sync/packs) on host:port')
+    parser.add_argument('--fallback-upstream', help='Forward non-Koe HTTP paths to http://host:port')
     parser.add_argument('--token-file', help='Path to Bearer token file (minted with 0600 if missing)')
     parser.add_argument('--token-env', default='KOE_MCP_TOKEN', help='Environment variable holding Bearer token')
     parser.add_argument('--public-url', help='Public or LAN URL for generating a KOEMCP1. pairing code')
@@ -776,10 +897,7 @@ def main():
             return 0
         if args.http_listen:
             token = resolve_or_create_token(args.token_file, args.token_env)
-            if args.public_url:
-                code = encode_pairing_code(args.public_url, token, args.mode)
-                print(f'KOE_PAIRING_CODE={code}', file=sys.stderr, flush=True)
-            serve_http(directory, args.http_listen, token)
+            serve_http(directory, args.http_listen, token, args.fallback_upstream)
             return 0
         serve(directory)
     except (OSError, ToolError):
