@@ -161,6 +161,7 @@ mixin _RecorderMcpPublication on ChangeNotifier {
   McpSyncConfig? _mcpSyncConfig;
   McpSyncState _mcpSyncState = const McpSyncState();
   Future<void>? _mcpSyncInFlight;
+  Timer? _mcpSyncDebounce;
   bool _mcpSyncQueued = false;
   final Map<String, String> _mcpKnownRemoteShas = {};
 
@@ -635,16 +636,23 @@ mixin _RecorderMcpPublication on ChangeNotifier {
   void _scheduleMcpPublication() {
     if (_mcpNotifying) return;
     if (_mcpClosed) return;
-    if (_mcpSyncConfig != null && _mcpSyncInFlight == null) {
-      try {
-        final localPacks = _collectMcpSyncPacks();
-        final hasDirty = localPacks.entries.any(
-          (e) => _mcpKnownRemoteShas[e.key] != _manifestSha256(e.value),
-        );
-        if (hasDirty) {
-          unawaited(syncMcpNow());
+    if (_mcpSyncConfig != null) {
+      _mcpSyncDebounce?.cancel();
+      _mcpSyncDebounce = Timer(const Duration(milliseconds: 400), () {
+        _mcpSyncDebounce = null;
+        if (_mcpClosed || _mcpSyncConfig == null || _mcpSyncInFlight != null) {
+          return;
         }
-      } catch (_) {}
+        try {
+          final localPacks = _collectMcpSyncPacks();
+          final hasDirty = localPacks.entries.any(
+            (e) => _mcpKnownRemoteShas[e.key] != _manifestSha256(e.value),
+          );
+          if (hasDirty) {
+            unawaited(syncMcpNow());
+          }
+        } catch (_) {}
+      });
     }
     if (_mcpGrants.isEmpty && _mcpRecords.isEmpty && _mcpContentError == null) {
       return;
@@ -726,6 +734,8 @@ mixin _RecorderMcpPublication on ChangeNotifier {
   void _disposeMcpPublication() {
     _mcpClosed = true;
     _mcpHeartbeat?.cancel();
+    _mcpSyncDebounce?.cancel();
+    _mcpSyncDebounce = null;
     removeListener(_scheduleMcpPublication);
     analysis.removeListener(_scheduleMcpPublication);
     if (_mcpDirectoryPending != null) {

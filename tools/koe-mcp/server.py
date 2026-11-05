@@ -329,6 +329,7 @@ class ExportDirectory:
 
 class LiveDirectory(ExportDirectory):
     def scan(self):
+        pack_recordings, rejected, _ = super().scan()
         try:
             with self.open_directory() as directory:
                 fd = os.open('live.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -366,8 +367,16 @@ class LiveDirectory(ExportDirectory):
                             snapshot.minutes['current']['sourceHash'] else 'stale')
                         snapshot.minutes['freshnessScope'] = 'published_text_consistency'
                     recordings[identifier] = snapshot
-                return recordings, 0, str(generation)
+                live_hashes = {r.content_hash for r in recordings.values() if r.content_hash}
+                merged = {
+                    k: v for k, v in pack_recordings.items()
+                    if k not in recordings and v.content_hash not in live_hashes
+                }
+                merged.update(recordings)
+                return merged, rejected, str(generation)
         except OSError:
+            if pack_recordings:
+                return pack_recordings, rejected, '0'
             raise ToolError('publication_unavailable') from None
         except (ValueError, TypeError, RecursionError, OverflowError):
             raise ToolError('invalid_publication') from None
@@ -473,7 +482,7 @@ def call_tool(directory, params):
         if recording is None:
             raise ToolError('recording_unavailable')
         if actual_revision is not None:
-            publication['materialContentHash'] = recording.material_content_hash
+            publication['materialContentHash'] = recording.material_content_hash or recording.content_hash
         if name == 'get_transcript':
             return tool_result({'recording_id': identifier, 'exportedAt': recording.exported_at,
                                 'hasTranscript': recording.transcript is not None, **publication,

@@ -280,6 +280,8 @@ class Verification:
                 'real_asr', 'real_llm', 'persisted_readback', 'facts_and_sources_checked')):
             raise Failed('Provider proof incomplete')
         self.receipt['provider_proof'] = str(proof)
+        self.receipt['service_evidence'] = (
+            'authorized test audio via real DashScope Qwen ASR and LLM')
 
     def mcp(self):
         audio, _ = self.authorized_audio_and_expectations()
@@ -477,6 +479,11 @@ class Verification:
                 self.receipt['modes'] = {}
                 for mode in MODES:
                     before_steps = len(self.receipt['steps'])
+                    self.receipt['input_sha256'] = None
+                    self.receipt['models'] = {}
+                    for key in ('service_evidence', 'device', 'device_coverage',
+                                'device_blockers', 'protocol_evidence'):
+                        self.receipt.pop(key, None)
                     getattr(self, mode)()
                     self.receipt['modes'][mode] = {
                         'status': 'passed',
@@ -488,6 +495,11 @@ class Verification:
                         'proof': self.receipt.get(f'{mode}_proof'),
                         'steps': [s['name'] for s in self.receipt['steps'][before_steps:]],
                     }
+                device_mode = self.receipt['modes'].get('device') or {}
+                if device_mode.get('device') is not None:
+                    self.receipt['device'] = device_mode['device']
+                if device_mode.get('device_coverage') is not None:
+                    self.receipt['device_coverage'] = device_mode['device_coverage']
                 audio, _ = self.authorized_audio_and_expectations()
                 if audio and Path(audio).is_file():
                     self.receipt['input_sha256'] = sha(audio)

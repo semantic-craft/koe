@@ -568,6 +568,136 @@ class HttpServerTest(unittest.TestCase):
         )
         self.assertEqual(status, 400)
 
+    def test_live_directory_http_merges_synced_packs_with_live_json(self):
+        live_root = Path(tempfile.mkdtemp(prefix='koe-mcp-live-http-'))
+        self.addCleanup(lambda: shutil.rmtree(live_root, ignore_errors=True))
+        token_file = live_root / 'token'
+        token_file.write_text(self.token + '\n', encoding='utf-8')
+        token_file.chmod(0o600)
+        live_port = free_port()
+        live_base_url = f'http://127.0.0.1:{live_port}'
+
+        live_id = 'c' * 64
+        live_rec = manifest()
+        live_rec['material']['title'] = '本机实时纪要'
+        live_rec['material']['contentHash'] = 'd' * 64
+        live_payload = {
+            'version': 1,
+            'generation': 9,
+            'expiresAt': (datetime.now(timezone.utc) + timedelta(seconds=15)).isoformat(),
+            'records': {live_id: live_rec},
+        }
+        (live_root / 'live.json').write_text(json.dumps(live_payload), encoding='utf-8')
+
+        proc = subprocess.Popen(
+            [
+                sys.executable, '-B', str(SERVER),
+                '--live-directory', str(live_root),
+                '--http-listen', f'127.0.0.1:{live_port}',
+                '--token-file', str(token_file),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        def stop_proc():
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            for s in (proc.stdout, proc.stderr):
+                if s:
+                    s.close()
+        self.addCleanup(stop_proc)
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f'{live_base_url}/healthz', timeout=0.5) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.05)
+
+        pack_val = manifest()
+        pack_val['version'] = 2
+        pack_val['material']['title'] = '手机上传的闪记纪要'
+        text = pack_val['transcript']['text']
+        pack_val['minutes'] = {
+            'current': {
+                'text': '{"title":"闪记同步纪要","overview":"跨设备同步验证"}',
+                'sourceHash': hashlib.sha256(text.encode('utf-8')).hexdigest(),
+                'model': 'qwen-plus',
+                'instruction': '',
+                'sources': [text],
+                'createdAt': '2026-11-05T10:00:00Z',
+                'templateVersion': 1,
+                'isDraft': False,
+            },
+            'history': [],
+        }
+        pack_id = pack_val['material']['contentHash']
+        raw_pack = pack_bytes(pack_val)
+
+        put_req = urllib.request.Request(
+            f'{live_base_url}/sync/packs/{pack_id}',
+            data=raw_pack,
+            headers={
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/x-koepack',
+            },
+            method='PUT',
+        )
+        with urllib.request.urlopen(put_req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            put_info = json.loads(resp.read().decode('utf-8'))
+
+        mcp_list_req = urllib.request.Request(
+            f'{live_base_url}/mcp',
+            data=json.dumps({
+                'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                'params': {'name': 'list_recordings', 'arguments': {}},
+            }).encode('utf-8'),
+            headers={
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(mcp_list_req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            listing = json.loads(
+                json.loads(resp.read().decode('utf-8'))['result']['content'][0]['text']
+            )
+        titles = {r['title'] for r in listing['recordings']}
+        self.assertIn('本机实时纪要', titles)
+        self.assertIn('手机上传的闪记纪要', titles)
+
+        mcp_min_req = urllib.request.Request(
+            f'{live_base_url}/mcp',
+            data=json.dumps({
+                'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+                'params': {
+                    'name': 'get_minutes',
+                    'arguments': {'recording_id': put_info['recording_id']},
+                },
+            }).encode('utf-8'),
+            headers={
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json',
+            },
+            method='POST',
+        )
+        with urllib.request.urlopen(mcp_min_req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            min_data = json.loads(
+                json.loads(resp.read().decode('utf-8'))['result']['content'][0]['text']
+            )
+        self.assertTrue(min_data['hasMinutes'])
+        self.assertIn('闪记同步纪要', min_data['current']['text'])
+
 
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--probe':

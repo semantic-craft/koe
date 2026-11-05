@@ -331,6 +331,31 @@ $code
         (d) => d.title.contains('买咖啡豆'),
       );
       expect(syncedTextOnly.bodyText, contains('埃塞俄比亚手冲咖啡豆'));
+
+      // 6. Subsequent updates coalesce via _mcpSyncDebounce and push after 400ms
+      await phoneController.minutes.upsert(
+        MinutesDocument(
+          id: 'text-note-2',
+          title: '防抖自动同步测试',
+          sourceName: '纯文字记录',
+          importedAt: DateTime.utc(2026, 11, 5, 12, 10),
+          capturedAt: DateTime.utc(2026, 11, 5, 12, 10),
+          segments: const [
+            MinutesSegment(text: '防抖定时器触发上传。', start: Duration.zero),
+          ],
+          timingReliable: false,
+        ),
+        strict: true,
+      );
+      phoneController.analysis.notifyListeners();
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+      final afterDebounce = await _callRemoteMcpTool(
+        baseUrl: baseUrl,
+        token: token,
+        name: 'list_recordings',
+        arguments: const {'query': '防抖定时器'},
+      );
+      expect((afterDebounce['recordings'] as List).length, 1);
     },
   );
 

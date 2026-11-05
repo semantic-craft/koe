@@ -353,6 +353,17 @@ class VerificationEntryTest(unittest.TestCase):
             self.assertEqual(set(receipt['modes'].keys()), set(module.MODES))
             for mode in module.MODES:
                 self.assertEqual(receipt['modes'][mode]['status'], 'passed')
+            self.assertEqual(
+                receipt['modes']['provider']['service_evidence'],
+                'authorized test audio via real DashScope Qwen ASR and LLM',
+            )
+            self.assertIsNone(receipt['modes']['provider']['device'])
+            self.assertIsNone(receipt['modes']['provider']['device_coverage'])
+            self.assertEqual(receipt['modes']['mcp']['models'], {})
+            self.assertIsNone(receipt['modes']['mcp']['device'])
+            self.assertIsNone(receipt['modes']['mcp']['device_coverage'])
+            self.assertEqual(receipt['modes']['device']['device']['kind'], 'macOS CoreBluetooth + D3200')
+            self.assertEqual(receipt['modes']['device']['device_coverage']['d3200_input'], 'verified')
             self.assertEqual(receipt['input_sha256'], audio_sha)
             self.assertIn('installation_status', receipt)
             self.assertIn('merge_status', receipt)
