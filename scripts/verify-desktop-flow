@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+
+root = Path(__file__).resolve().parents[1]
+receipt_dir = root / ".scratch" / "pstack-auto" / "gpui-migration"
+receipt_dir.mkdir(parents=True, exist_ok=True)
+receipt_path = receipt_dir / "verify-desktop-receipt.json"
+
+steps = []
+
+
+def run_step(name, cmd):
+    started = time.time()
+    proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
+    elapsed = round(time.time() - started, 3)
+    steps.append(
+        {
+            "name": name,
+            "cmd": [str(c) for c in cmd],
+            "exit_code": proc.returncode,
+            "elapsed_sec": elapsed,
+        }
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Step {name} failed (exit {proc.returncode}):\n{proc.stdout}\n{proc.stderr}"
+        )
+    return proc.stdout.strip()
+
+
+run_step("check-desktop", [str(root / "scripts" / "check-desktop")])
+run_step(
+    "flutter-rust-pack-interop",
+    [
+        "flutter",
+        "test",
+        "--no-pub",
+        "desktop/core/tests/production_pack_test.dart",
+        "--reporter",
+        "expanded",
+    ],
+)
+app_bundle = Path(
+    run_step("package-preview", ["python3", "desktop/scripts/package-preview.py"])
+)
+exe = app_bundle / "Contents" / "MacOS" / "koe-desktop"
+
+with tempfile.TemporaryDirectory(prefix="koe-verify-desktop-") as tmp:
+    tmp_path = Path(tmp)
+    lib_dir = tmp_path / "library"
+    run_step(
+        "make-library-fixture",
+        ["python3", "desktop/scripts/make-fixture.py", str(lib_dir)],
+    )
+    run_step("gpui-smoke-library", [str(exe), "--smoke-test", str(lib_dir)])
+
+    pack_path = tmp_path / "sample.koepack"
+    manifest = {
+        "format": "koe-material-pack",
+        "version": 1,
+        "exportedAt": "2026-11-05T10:00:00.000Z",
+        "material": {
+            "contentHash": hashlib.sha256(b"verify").hexdigest(),
+            "title": "桌面端冒烟测试资料包",
+            "source": "phone",
+        },
+        "transcript": {
+            "text": "桌面端冒烟测试正文",
+            "manual": "桌面端冒烟测试校订正文",
+            "segments": [{"text": "桌面端冒烟测试正文", "startMs": 0, "endMs": 1000}],
+            "revision": 1,
+        },
+        "audio": {"included": False},
+    }
+    raw = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
+    pack_path.write_bytes(b"KOEPACK1\n" + str(len(raw)).encode("ascii") + b"\n" + raw)
+    run_step("gpui-smoke-pack", [str(exe), "--smoke-test", str(pack_path)])
+
+receipt = {
+    "status": "PASS",
+    "app_bundle": str(app_bundle),
+    "steps": steps,
+}
+receipt_path.write_text(
+    json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+)
+print(json.dumps(receipt, ensure_ascii=False))

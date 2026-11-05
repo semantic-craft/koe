@@ -1,0 +1,16 @@
+[package]
+name = "koe-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+gpui-kit.workspace = true
+koe-core = { path = "../core" }
+rodio.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "koe-desktop"
+path = "src/main.rs"

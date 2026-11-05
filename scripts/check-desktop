@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo fmt --manifest-path desktop/Cargo.toml --all --check
+cargo clippy --manifest-path desktop/Cargo.toml --workspace --locked --all-targets -- -D warnings
+cargo test --manifest-path desktop/Cargo.toml --workspace --locked
+cargo build --manifest-path desktop/Cargo.toml --workspace --locked
