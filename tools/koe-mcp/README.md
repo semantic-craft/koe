@@ -20,6 +20,29 @@ live 纪要的 `freshness` 为 `current`、`stale` 或 `unverified`。它只比�
 
 本机模式不建立手机到 Mac 的同步，也不自动修改 Codex、Magpie 等客户端配置。手机记录需要已通过项目既有方式到达本机，才可在本机逐条授权；真实跨端链路仍另验。
 
+## 远程 HTTP MCP 与双端同步模式（VPS 或 Mac 局域网）
+
+在同一套 `.koepack` v2 无音频目录上开启 Bearer 鉴权的 HTTP 服务，同时暴露 `POST /mcp`（供 Magpie、Claude Code、Codex、Antigravity 等外部 AI 远程读取）与 `/sync/packs`（供手机录制生成纪要后自动推送、Mac 打开后自动拉取）：
+
+```sh
+# 1. 生成或读取 32 字节令牌，并打印供 Koe App 一键接入的 KOEMCP1. 连接码
+python3 tools/koe-mcp/server.py \
+  --directory ~/.koe/mcp-sync \
+  --token-file ~/.koe/mcp-token \
+  --public-url https://koe.example.com/mcp \
+  --mode vps \
+  --print-pairing
+
+# 2. 启动 HTTP MCP + 同步服务（置于 Caddy/Nginx HTTPS 反代后，或在 Mac 局域网直接监听）
+python3 tools/koe-mcp/server.py \
+  --directory ~/.koe/mcp-sync \
+  --http-listen 127.0.0.1:8787 \
+  --token-file ~/.koe/mcp-token
+```
+
+- 在 Koe「设置 → 外部 AI 与云同步（MCP）」中，用户只需点击复制「我有 VPS」或「我没有 VPS（使用本机 Mac）」的 Agent 自动配置提示词发给 AI Agent；Agent 部署服务并回复 `KOEMCP1.<base64url>` 连接码后，回到 Koe 点「从剪贴板一键接入」即可完成绑定（Bearer 令牌单独存入系统 Keychain）。
+- 手机录制或纯文字记录生成逐字稿与纪要后，自动将不含原音频的 `.koepack` v2 推送至 `PUT /sync/packs/<contentHash>`；Mac 打开 Koe 自动从 `GET /sync/packs` 拉取合并；任何配置了 `POST /mcp`（请求头 `Authorization: Bearer <token>`）的 Agent 均可随时调用 `list_recordings`（支持可选 `query` 关键词过滤）、`get_transcript`、`get_minutes`。
+
 ## 手动导出模式
 
 1. 在 Koe 的资料详情中选择「更多 → 导出… → 可恢复资料包」。关闭「包含原音频」。

@@ -1,13 +1,18 @@
+import base64
 import json
 import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import select
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import urllib.error
+import urllib.request
 
 
 SERVER = Path(__file__).with_name('server.py')
@@ -332,6 +337,236 @@ class LiveServerTest(unittest.TestCase):
         value.pop('transcript')
         self.publish({self.identifier: value}, generation=3)
         self.assertEqual(self.client.data('get_minutes', recording_id=self.identifier)['freshness'], 'unverified')
+
+
+def free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(('127.0.0.1', 0))
+        return sock.getsockname()[1]
+
+
+def pack_bytes(value):
+    body = json.dumps(value, ensure_ascii=False).encode('utf-8')
+    return b'KOEPACK1\n' + str(len(body)).encode('ascii') + b'\n' + body
+
+
+class HttpServerTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.store = self.root / 'store'
+        self.store.mkdir()
+        self.token_file = self.root / 'token'
+        self.port = free_port()
+        self.base_url = f'http://127.0.0.1:{self.port}'
+
+        pairing_out = subprocess.check_output([
+            sys.executable, str(SERVER),
+            '--directory', str(self.store),
+            '--token-file', str(self.token_file),
+            '--public-url', f'{self.base_url}/mcp',
+            '--mode', 'vps',
+            '--print-pairing',
+        ], text=True)
+        self.pairing = json.loads(pairing_out)
+        self.token = self.token_file.read_text().strip()
+
+        self.process = subprocess.Popen(
+            [
+                sys.executable, str(SERVER),
+                '--directory', str(self.store),
+                '--http-listen', f'127.0.0.1:{self.port}',
+                '--token-file', str(self.token_file),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.addCleanup(self.stop_server)
+        self.wait_ready()
+
+    def stop_server(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
+        for stream in [self.process.stdout, self.process.stderr]:
+            if stream:
+                stream.close()
+
+    def wait_ready(self):
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f'{self.base_url}/healthz', timeout=0.5) as resp:
+                    if resp.status == 200:
+                        return
+            except Exception:
+                time.sleep(0.05)
+        raise AssertionError('HTTP server did not become ready within 5s')
+
+    def http_request(self, method, path, body=None, token=None, content_type='application/json'):
+        headers = {}
+        if token is not None:
+            headers['Authorization'] = f'Bearer {token}'
+        if body is not None:
+            headers['Content-Type'] = content_type
+        req = urllib.request.Request(
+            f'{self.base_url}{path}',
+            data=body,
+            headers=headers,
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as err:
+            try:
+                return err.code, err.read()
+            finally:
+                err.close()
+
+    def mcp_rpc(self, method, params=None, req_id=1):
+        payload = {'jsonrpc': '2.0', 'method': method, 'params': params or {}}
+        if req_id is not None:
+            payload['id'] = req_id
+        status, raw = self.http_request(
+            'POST', '/mcp',
+            body=json.dumps(payload).encode('utf-8'),
+            token=self.token,
+        )
+        if req_id is None:
+            return status, None
+        self.assertEqual(status, 200, raw)
+        return status, json.loads(raw.decode('utf-8'))
+
+    def test_print_pairing_mints_token_and_encodes_koemcp1_ticket(self):
+        code = self.pairing['pairingCode']
+        self.assertTrue(code.startswith('KOEMCP1.'))
+        encoded = code[len('KOEMCP1.'):]
+        padded = encoded + '=' * (-len(encoded) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(padded).decode('utf-8'))
+        self.assertEqual(decoded['v'], 1)
+        self.assertEqual(decoded['u'], self.base_url)
+        self.assertEqual(decoded['t'], self.token)
+        self.assertEqual(decoded['m'], 'vps')
+        self.assertGreaterEqual(len(self.token), 32)
+
+    def test_auth_guard_rejects_missing_or_wrong_bearer_token(self):
+        status, _ = self.http_request('GET', '/sync/packs', token=None)
+        self.assertEqual(status, 401)
+        status, _ = self.http_request('GET', '/sync/packs', token='wrong-token')
+        self.assertEqual(status, 401)
+        status, _ = self.http_request(
+            'POST', '/mcp',
+            body=b'{"jsonrpc":"2.0","id":1,"method":"ping"}',
+            token='wrong-token',
+        )
+        self.assertEqual(status, 401)
+
+    def test_sync_put_get_and_remote_http_mcp_end_to_end(self):
+        value = manifest()
+        value['version'] = 2
+        value['material']['title'] = '明天下午三点客户评审'
+        text = value['transcript']['text']
+        value['minutes'] = {
+            'current': {
+                'text': '{"title":"客户评审纪要","overview":"明天下午三点复盘"}',
+                'sourceHash': hashlib.sha256(text.encode('utf-8')).hexdigest(),
+                'model': 'qwen-plus',
+                'instruction': '',
+                'sources': [text],
+                'createdAt': '2026-11-05T10:00:00Z',
+                'templateVersion': 1,
+                'isDraft': False,
+            },
+            'history': [],
+        }
+        material_id = value['material']['contentHash']
+        raw_pack = pack_bytes(value)
+
+        status, put_raw = self.http_request(
+            'PUT', f'/sync/packs/{material_id}',
+            body=raw_pack,
+            token=self.token,
+            content_type='application/x-koepack',
+        )
+        self.assertEqual(status, 200, put_raw)
+        put_info = json.loads(put_raw.decode('utf-8'))
+        self.assertEqual(put_info['id'], material_id)
+
+        status, list_raw = self.http_request('GET', '/sync/packs', token=self.token)
+        self.assertEqual(status, 200)
+        packs = json.loads(list_raw.decode('utf-8'))['packs']
+        self.assertEqual(len(packs), 1)
+        self.assertEqual(packs[0]['id'], material_id)
+        self.assertEqual(packs[0]['sha256'], put_info['sha256'])
+        self.assertEqual(packs[0]['title'], '明天下午三点客户评审')
+        self.assertTrue(packs[0]['hasMinutes'])
+
+        status, fetched_pack = self.http_request(
+            'GET', f'/sync/packs/{material_id}',
+            token=self.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(fetched_pack, raw_pack)
+
+        _, init_res = self.mcp_rpc('initialize', {
+            'protocolVersion': '2025-11-25',
+            'capabilities': {},
+            'clientInfo': {'name': 'magpie', 'version': '1.0'},
+        })
+        self.assertEqual(init_res['result']['protocolVersion'], '2025-11-25')
+        notif_status, _ = self.mcp_rpc('notifications/initialized', req_id=None)
+        self.assertEqual(notif_status, 202)
+
+        _, list_rpc = self.mcp_rpc('tools/call', {
+            'name': 'list_recordings',
+            'arguments': {'query': '客户评审'},
+        })
+        listing = json.loads(list_rpc['result']['content'][0]['text'])
+        self.assertEqual(len(listing['recordings']), 1)
+        rec_id = listing['recordings'][0]['recording_id']
+
+        _, no_match_rpc = self.mcp_rpc('tools/call', {
+            'name': 'list_recordings',
+            'arguments': {'query': '不存在的词'},
+        })
+        self.assertEqual(
+            json.loads(no_match_rpc['result']['content'][0]['text'])['recordings'],
+            [],
+        )
+
+        _, minutes_rpc = self.mcp_rpc('tools/call', {
+            'name': 'get_minutes',
+            'arguments': {'recording_id': rec_id},
+        })
+        minutes_data = json.loads(minutes_rpc['result']['content'][0]['text'])
+        self.assertTrue(minutes_data['hasMinutes'])
+        self.assertIn('客户评审纪要', minutes_data['current']['text'])
+
+    def test_sync_rejects_audio_pack_or_hash_mismatch(self):
+        value = manifest()
+        material_id = value['material']['contentHash']
+        status, _ = self.http_request(
+            'PUT', f'/sync/packs/{"b" * 64}',
+            body=pack_bytes(value),
+            token=self.token,
+            content_type='application/x-koepack',
+        )
+        self.assertEqual(status, 400)
+
+        value['audio']['included'] = True
+        status, _ = self.http_request(
+            'PUT', f'/sync/packs/{material_id}',
+            body=pack_bytes(value),
+            token=self.token,
+            content_type='application/x-koepack',
+        )
+        self.assertEqual(status, 400)
 
 
 if __name__ == '__main__':
