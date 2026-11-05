@@ -42,6 +42,8 @@ class VerificationEntryTest(unittest.TestCase):
     def test_device_command_failure_always_leaves_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             verification = module.Verification('device', Path(directory))
+            verification.environment.pop('DASHSCOPE_API_KEY', None)
+            verification.environment.pop('KOE_MINUTES_DEVICE', None)
             with patch.object(module.sys, 'platform', 'darwin'), \
                     patch.object(verification, 'command', side_effect=module.Failed(
                         'device-inventory interrupted or timed out')):
@@ -55,6 +57,7 @@ class VerificationEntryTest(unittest.TestCase):
     def device_run(self, devices, lock=None):
         with tempfile.TemporaryDirectory() as directory:
             verification = module.Verification('device', Path(directory))
+            verification.environment.pop('DASHSCOPE_API_KEY', None)
             verification.environment.pop('KOE_MINUTES_DEVICE', None)
             commands = []
 
@@ -104,6 +107,58 @@ class VerificationEntryTest(unittest.TestCase):
         self.assertIn('stop', receipt['steps'][-1]['message'])
         self.assertEqual(len(commands), 2)
         self.assertEqual(receipt['device_coverage']['stop_finalization'], 'unverified')
+
+    def run_macos_device(self, *, proof=True, physical_button=False):
+        with tempfile.TemporaryDirectory() as directory:
+            verification = module.Verification('device', Path(directory))
+            verification.environment['KOE_MINUTES_DEVICE'] = 'macos'
+            verification.environment['DASHSCOPE_API_KEY'] = 'synthetic-test-key'
+
+            def command(name, argv, timeout=1200, provider=False):
+                screenshots = verification.directory / 'screenshots'
+                screenshots.mkdir(parents=True, exist_ok=True)
+                (screenshots / 'device_minutes_reopened.png').write_bytes(b'png')
+                if proof:
+                    payload = {
+                        'device_minutes_flow': {
+                            'd3200_input': True,
+                            'real_asr': True,
+                            'recording_updates': True,
+                            'stop_finalization': True,
+                            'process_restart_readback': True,
+                            'physical_button': physical_button,
+                            'input_sha256': 'b' * 64,
+                            'device_id': 'D3200-ID',
+                            'device_mac': '48:79:7A:17:46:3D',
+                        },
+                    }
+                    (verification.directory / 'device-proof.json').write_text(
+                        json.dumps(payload))
+                return 'All tests passed.'
+
+            with patch.object(module.sys, 'platform', 'darwin'), \
+                    patch.object(verification, 'suspend_background_koe_app', return_value=False), \
+                    patch.object(verification, 'command', side_effect=command):
+                code = verification.execute()
+            return code, verification.receipt
+
+    def test_macos_device_gate_records_verified_coverage_and_unverified_button(self):
+        code, receipt = self.run_macos_device(proof=True, physical_button=False)
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt['status'], 'passed')
+        self.assertEqual(receipt['device_coverage']['d3200_input'], 'verified')
+        self.assertEqual(receipt['device_coverage']['real_asr'], 'verified')
+        self.assertEqual(receipt['device_coverage']['recording_updates'], 'verified')
+        self.assertEqual(receipt['device_coverage']['stop_finalization'], 'verified')
+        self.assertEqual(receipt['device_coverage']['process_restart_readback'], 'verified')
+        self.assertEqual(receipt['device_coverage']['physical_button'], 'unverified')
+        self.assertEqual(receipt['device_blockers'], ['physical_button_unverified'])
+
+    def test_macos_device_gate_rejects_missing_proof(self):
+        code, receipt = self.run_macos_device(proof=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertIn('proof', receipt['steps'][-1]['message'])
 
     def run_mcp(self, *, proof=True, skipped=False):
         with tempfile.TemporaryDirectory() as directory:

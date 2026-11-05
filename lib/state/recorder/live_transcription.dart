@@ -257,10 +257,11 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
           final key = _recordingKey(path: s.path);
           _finalizingRecordings.add(key);
           unawaited(
-            _convertExportToWav(s.path!).whenComplete(() {
+            _convertExportToWav(s.path!).then((wavPath) {
               _finalizingRecordings.remove(key);
+              owner.path = wavPath;
               if (s.fileId != null) unawaited(_applyDeviceMarks(s.fileId!));
-              unawaited(_enqueueDeferredRecording(owner, s.path!));
+              unawaited(_enqueueDeferredRecording(owner, wavPath));
               notifyListeners();
             }),
           );
@@ -282,14 +283,15 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       final finishedKey = _recordingKey(path: finishedPath);
       _finalizingRecordings.add(finishedKey);
       unawaited(
-        _convertExportToWav(finishedPath).whenComplete(() {
+        _convertExportToWav(finishedPath).then((wavPath) {
           _finalizingRecordings.remove(finishedKey);
+          _bindCurrentRecording(fileId: s.fileId, path: wavPath);
           if (s.fileId != null) unawaited(_applyDeviceMarks(s.fileId!));
           final owner = _sessionForReference(
-            RecordingReference(path: finishedPath),
+            RecordingReference(fileId: s.fileId, path: wavPath),
           );
           if (owner?.configuration.provider.defersTranscription == true) {
-            unawaited(_enqueueDeferredRecording(owner!, finishedPath));
+            unawaited(_enqueueDeferredRecording(owner!, wavPath));
           }
           notifyListeners();
         }),

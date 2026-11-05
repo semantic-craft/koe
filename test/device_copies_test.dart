@@ -192,4 +192,24 @@ void main() {
       expect(copies.usableForProcessing(fileId: 14), isTrue);
     },
   );
+
+  test(
+    'reconcile skips a live take still being finalized until its audio unlocks',
+    () async {
+      final live = File('${dir.path}/15.opus')
+        ..writeAsBytesSync(List.filled(160, 0));
+      context.paths[15] = live.path;
+      context.locked.add(15);
+      final copies = open();
+
+      expect(await copies.reconcile([listed(15, 100)]), isFalse);
+      expect(copies.isPartial(15), isFalse);
+
+      live.writeAsBytesSync(List.filled(800, 0));
+      context.locked.remove(15);
+      expect(copies.usableForProcessing(fileId: 15), isTrue);
+      expect(await copies.reconcile([listed(15, 100)]), isFalse);
+      expect(copies.statusOf(listed(15, 100)), DeviceCopyStatus.downloaded);
+    },
+  );
 }

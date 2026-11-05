@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 import subprocess
 import sys
+import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -287,6 +289,102 @@ class Verification:
             'production controller publication and real stdio client/server; '
             'synthetic content, no installed external AI client or cross-device acceptance')
 
+    def suspend_background_koe_app(self):
+        binary = '/Applications/Koe.app/Contents/MacOS/Koe'
+        probe = subprocess.run(['pgrep', '-f', binary], capture_output=True, text=True)
+        if probe.returncode != 0 or not probe.stdout.strip():
+            return False
+        subprocess.run(['pkill', '-TERM', '-f', binary], capture_output=True, text=True)
+        for _ in range(15):
+            check = subprocess.run(['pgrep', '-f', binary], capture_output=True, text=True)
+            if check.returncode != 0 or not check.stdout.strip():
+                break
+            time.sleep(0.2)
+        time.sleep(1.0)
+        return True
+
+    def resume_background_koe_app(self):
+        if Path('/Applications/Koe.app').exists():
+            subprocess.Popen(
+                ['open', '-g', '-a', '/Applications/Koe.app'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+    def device_macos(self):
+        if sys.platform != 'darwin':
+            raise Blocked('macOS D3200 BLE verification requires macOS')
+        if not self.environment.get('DASHSCOPE_API_KEY'):
+            raise Blocked('DASHSCOPE_API_KEY is unavailable in the existing process environment')
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        self.environment['KOE_MINUTES_DRIVER_PORT'] = str(port)
+        self.receipt['models'] = {
+            'asr': self.environment.get('KOE_MINUTES_ASR_MODEL', 'qwen-audio-3.1-asr-flash-streaming'),
+            'llm': self.environment.get('KOE_MINUTES_LLM_MODEL', 'qwen3.8-flash'),
+        }
+        target = 'integration_test/device_minutes_flow_test.dart'
+        self.receipt['test_source_sha256'] = sha(ROOT / target)
+        was_running = self.suspend_background_koe_app()
+        try:
+            output = self.command(
+                'device-flow',
+                [
+                    'flutter', 'drive', '-d', 'macos',
+                    f'--dart-define=KOE_MINUTES_DRIVER_PORT={port}',
+                    '--driver=test_driver/minutes_flow_driver.dart',
+                    '--target=' + target,
+                ],
+                1500,
+                provider=True,
+            )
+            if 'All tests passed.' not in output or re.search(r'\b(?:SKIPPED|skip: true)\b', output):
+                raise Failed('macOS D3200 device test did not report complete success')
+            screenshots = sorted((self.directory / 'screenshots').glob('*.png'))
+            if not screenshots:
+                raise Failed('macOS D3200 device test produced no screenshots')
+            proof = self.directory / 'device-proof.json'
+            if not proof.is_file():
+                raise Failed('device structured behavior proof missing')
+            payload = json.loads(proof.read_text())
+            result = payload.get('device_minutes_flow') if isinstance(payload, dict) else None
+            required = (
+                'd3200_input', 'real_asr', 'recording_updates',
+                'stop_finalization', 'process_restart_readback',
+            )
+            if not isinstance(result, dict) or not all(result.get(key) is True for key in required):
+                raise Failed(
+                    'device D3200 input, real ASR, recording updates, '
+                    'stop finalization or restart readback proof missing')
+            digest = result.get('input_sha256')
+            if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+                raise Failed('device audio input hash missing')
+            physical_button = result.get('physical_button') is True
+            self.receipt['device_coverage'] = {
+                'd3200_input': 'verified',
+                'real_asr': 'verified',
+                'recording_updates': 'verified',
+                'stop_finalization': 'verified',
+                'process_restart_readback': 'verified',
+                'physical_button': 'verified' if physical_button else 'unverified',
+            }
+            self.receipt['device_blockers'] = [] if physical_button else ['physical_button_unverified']
+            self.receipt['device'] = {
+                'id': result.get('device_id'),
+                'mac': result.get('device_mac'),
+                'kind': 'macOS CoreBluetooth + D3200',
+            }
+            self.receipt['input_sha256'] = digest
+            self.receipt['device_proof'] = str(proof)
+            self.receipt['screenshots'] = [str(path) for path in screenshots]
+            self.receipt['service_evidence'] = (
+                'macOS CoreBluetooth direct connection to physical soundcore Work (D3200), '
+                'real BLE Opus stream and file sync, real DashScope Qwen ASR and LLM')
+        finally:
+            if was_running:
+                self.resume_background_koe_app()
+
     def device(self):
         self.receipt['device_coverage'] = {
             name: 'unverified' for name in (
@@ -299,6 +397,9 @@ class Verification:
         self.receipt['protocol_evidence'] = 'PROTOCOL.md:211-234'
         self.receipt['service_evidence'] = (
             'device discovery only; no recording or provider request started')
+        selected = (self.environment.get('KOE_MINUTES_DEVICE') or '').strip()
+        if selected == 'macos' or (not selected and self.environment.get('DASHSCOPE_API_KEY')):
+            return self.device_macos()
         if sys.platform != 'darwin':
             raise Blocked('Physical iPhone verification requires macOS')
 

@@ -40,11 +40,12 @@
 
 已实现录音豆会话在开启自动整理且未启用“只留本机”时自动开启阶段摘要。完整整理等待录制、末句识别及音频转换结束；重复停止共用同一次 ASR 收尾，下一场开始不会提前释放上一场或接收其末句。阶段稿失败保持未知请求状态，不自动重发。完整纪要仍由 Slice B 的队列生成。
 
-`device` 已从固定未实现改为真实 iPhone 发现和锁屏预检，尚无完整真机场景。2026-11-05 的实际预检发现物理 iPhone 已连接但锁屏；`PROTOCOL.md:211-234` 只有开始/暂停，没有已验证的结束录音命令，也没有实体按键自动驱动证据。入口非零退出，未发起无法自动结束的录音。解锁本身不能满足门禁。真实录音豆输入、实际 ASR、录制中更新、停止最终化、App 进程重启读回及实体按键均未验收。
-
-本轮补齐录制中崩溃重启从详情页恢复阶段稿、未知请求失败提示与正式纪要防旧稿覆盖的自动验证：实时录制绑定 `recordingKey`、启动时自动收尾未关会话并将 `pending` 转为 `unknown`（不自动重发）、以草稿合并恢复阶段摘要而不覆盖已有正式纪要；`scripts/verify-minutes-flow offline`（47 项事件）、`scripts/verify-minutes-flow ios`（独立 iPhone 11 模拟器，含 `live_draft_recovered: true`）、`scripts/check --reporter expanded`（1122 项通过，另 1 项独立付费场景默认跳过）及 `KOE_PERF_FOREGROUND=1 scripts/perf-check`（8 个场景阈值内）全部通过，且未重复执行阻塞的 `device` 预检。汇总回执 `.scratch/pstack-relay/slice-c-receipt.json`。
-
-真机 `device`（真实录音豆输入、停止、真实 iPhone 进程重启及实体按键）按用户要求暂缓，Slice C 保持未完成，不运行 `advance C`。继续复用草稿 PR #548 与真实验收工单 #515，不合并、不发布，不重做 A/B/D。
+本轮按用户授权用 Mac 直连已在线的真实 `soundcore Work`（D3200，MAC `00:7F:1D:06:63:9D`，CoreBluetooth ID `99141753-4327-7C9A-8C1D-D82602FF5B3E`）完成 `scripts/verify-minutes-flow device` 端到端硬件验收：
+- 修复实时录制结束时的两处真实硬件竞态（已先写回归测试复现再修复）：
+  1. `DeviceCopies.reconcile` 在实时录制刚结束、Opus 转 WAV 仍被锁定时运行 `listFiles()`，在 `AudioDuration.read` 前后检查 `isAudioLocked` / `_retrieving`，避免将正在收尾的实时文件永久标为 `partial`（`test/device_copies_test.dart`）。
+  2. 主机端 `finalizeLiveRecordingAfterHostStopForTesting()` 停止录制时先停电量轮询、发送 `pauseRecord()` 并拦截在途 `0x01 0x01`（`recordingStatus=1`）+ `0x18 0x82 status=2` 暂停回报重开第二场 `paused` 会话；收尾完成后按转换后的 `wavPath` 绑定并入队自动整理（`test/device_live_minutes_test.dart`）。
+- `direnv exec . scripts/verify-minutes-flow device` 真实硬件验收通过（exit `0`）：真实 D3200 BLE 录制 `fileId=1793863889`（接收 `312960` 字节、解码 `1956` 帧 Opus PCM）、经真实 `qwen-audio-3.1-asr-flash-streaming` 实时识别与 `qwen3.8-flash` 录制中生成阶段摘要、主机停录后自动生成 3 章完整分层纪要（`revision=a21ab7dbed3d324d84f5029f0259a8015af5dc257ca3b59326f313e021b0f94c`）、新进程冷启动 `RecorderController` 读回完整纪要与崩溃恢复阶段草稿并抓取去敏桌面截图。因本轮使用远程 BLE 指令与自动声源，无自动实体按键装置，回执如实记录 `physical_button: "unverified"`。
+- `scripts/check --reporter expanded`（Python 门禁单元测试 + `flutter analyze` 0 问题 + `1124` 项 Flutter 测试通过，另 1 项独立付费测试默认跳过）与 `KOE_PERF_FOREGROUND=1 scripts/perf-check`（8 个场景全部在阈值内）均通过。汇总回执 `.scratch/pstack-relay/slice-c-receipt.json`。
 
 ## Slice D 当前工作
 
@@ -94,11 +95,11 @@ scripts/pstack-relay 已安装；.agents/hooks.json 是本机配置。此脚本�
 - **Done Predicate**: `scripts/check`、`python3 -B tools/koe-mcp/test_server.py`、`scripts/verify-minutes-flow mcp` 通过，包含实际客户端读取、更新再读和撤销检查。
 - **Evidence**: .scratch/pstack-relay/slice-d-receipt.json (check 1121 PASS; MCP server 18 PASS; live client PASS; perf 8 PASS; C deferred)
 
-### [ ] Slice C: 录音豆实时摘要与自动收尾
+### [x] Slice C: 录音豆实时摘要与自动收尾
 - **Playbook**: Feature
 - **Outcome**: 真机验收按用户要求暂缓，不重复执行同一阻塞预检；只有设备条件或自动结束机制有新证据后再继续。原目标保留：实际录音豆输入持续进入转写与阶段摘要，停止后完整纪要落盘；重启恢复、失败提示、旧版本保护可自动验证。
 - **Done Predicate**: `scripts/check`、`scripts/perf-check`、`scripts/verify-minutes-flow device` 通过，包含录制中更新、停止最终化与重启读回；实体按键覆盖必须有自动证据，否则保留未验收。
-- **Evidence**: .scratch/pstack-relay/slice-c-receipt.json (check 1122 PASS; offline 47 PASS; iOS simulator crash-draft recovery PASS; perf 8 PASS; 真实录音豆输入/停止/实体按键按用户要求暂缓未验收)
+- **Evidence**: .scratch/pstack-relay/slice-c-receipt.json (check 1124 PASS; device D3200 BLE + real Qwen ASR/LLM PASS; perf 8 PASS; physical_button unverified)
 
 ### [ ] Slice E: 全流程无人值守复验与交付
 - **Playbook**: Shipping

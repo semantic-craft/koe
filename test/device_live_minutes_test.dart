@@ -292,6 +292,57 @@ void main() {
     },
   );
   test(
+    'late pause packet after stop does not block automatic full minutes finalization',
+    () async {
+      await start();
+      speech.emit(opening);
+      await _until(() => c.liveMeetingSegments.isNotEmpty);
+      await c.finalizeLiveRecordingAfterHostStopForTesting();
+      await _until(() => !c.recording);
+      // In-flight device_info response still carrying recordingStatus=1 arrives
+      // right before the hardware pause ACK (0x18/0x82 status=2).
+      final rawInfo = Uint8List.fromList([
+        0x09, 0xFF, 0x00, 0x00, 0x01, 0x01, 0x01, 0x4B, 0x00,
+        0x01, 0x09, 0x00, 0x30, 0x34, 0x2E, 0x39, 0x32, 0x33, 0x32, 0x30,
+        0x30, 0x30, 0x30, 0x37, 0x66, 0x31, 0x64, 0x30, 0x36, 0x36, 0x33,
+        0x39, 0x64, 0x00, 0xF1, 0xA3, 0x03, 0x80, 0xD2, 0xA3, 0x03, 0x00,
+        0x31, 0x2E, 0x32, 0x2E, 0x32, 0x09, 0x21, 0x21, 0x21, 0x21, 0x21,
+        0x21, 0x32, 0x00, 0x01, 0x00, 0x00, 0x01, 0x30, 0x33, 0x2E, 0x30,
+        0x36, 0x01, 0x00, 0xBE, 0x2A, 0xEC, 0x6A, 0x00, 0x00, 0x00, 0xD9,
+      ]);
+      ble.packetsController.add(
+        DecodedPacket(
+          raw: rawInfo,
+          statusByte: 1,
+          cmdType: 0x01,
+          cmdId: 0x01,
+          payload: rawInfo.sublist(9, rawInfo.length - 1),
+        ),
+      );
+      ble.packetsController.add(
+        DecodedPacket(
+          raw: Uint8List(0),
+          statusByte: 1,
+          cmdType: 0x18,
+          cmdId: 0x82,
+          payload: Uint8List.fromList([2]),
+        ),
+      );
+      c.handleRealtimeStateForTesting(
+        RealtimeStreamState(fileId: 301, path: audio.path, bytesReceived: 3200),
+      );
+      await speech.finishStarted.future;
+      speech.finished.complete(
+        SttStreamEvent(type: 'done', text: '$opening 最后补充', speechFinal: true),
+      );
+      final key =
+          '${c.analysisKey(RecordingReference(path: audio.path))}/minutes';
+      await c.waitForOrganize();
+      await _until(() => c.analysis.results[key]?.isDraft == false);
+      expect(c.analysis.results[key]!.text, contains('包含最后补充'));
+    },
+  );
+  test(
     'local-only change aborts automatic live text before publication',
     () async {
       await start();
