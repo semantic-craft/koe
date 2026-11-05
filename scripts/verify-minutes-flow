@@ -150,7 +150,8 @@ class Verification:
 
     def offline(self):
         paths = ['test/minutes_flow_test.dart', 'test/auto_organize_test.dart',
-                 'test/meeting_minutes_test.dart']
+                 'test/meeting_minutes_test.dart',
+                 'test/device_live_minutes_test.dart']
         self.receipt['test_source_sha256'] = sha(ROOT / paths[0])
         output = self.command('offline-tests', ['flutter', 'test', '--reporter', 'json', *paths])
         self.receipt['test_events'] = flutter_result(output)
@@ -204,8 +205,9 @@ class Verification:
         payload = json.loads(proof.read_text())
         result = payload.get('minutes_flow') if isinstance(payload, dict) else None
         if not isinstance(result, dict) or not all(result.get(key) is True for key in (
-                'durable_readback', 'chapters', 'overflow_checked', 'reopened')):
-            raise Failed(f'{mode} persistence, chapters, overflow or reopen proof missing')
+                'durable_readback', 'chapters', 'overflow_checked', 'reopened',
+                'live_draft_recovered')):
+            raise Failed(f'{mode} persistence, chapters, overflow, reopen or live-draft recovery proof missing')
         digest = result.get('input_sha256')
         if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
             raise Failed(f'{mode} synthetic input hash missing')

@@ -134,6 +134,12 @@ class LiveMinutes extends ChangeNotifier {
       for (final s in j['segments'] as List? ?? [])
         LiveSegment.fromJson(Map<String, dynamic>.from(s as Map)),
     ]);
+    for (final raw in j['requests'] as List? ?? []) {
+      if (raw is String) {
+        final parsed = DateTime.tryParse(raw);
+        if (parsed != null) _requests.add(parsed);
+      }
+    }
     watermark = j['watermark'] as int;
     machine = j['machine'] as String?;
     active = j['active'] as String?;
@@ -379,19 +385,21 @@ class LiveMinutes extends ChangeNotifier {
     }
   }
 
-  AnalysisResult? get result => active == null
-      ? null
-      : AnalysisResult(
-          text: active!,
-          sourceHash: analysisFingerprint(_sources.take(watermark).join('\n')),
-          model: model,
-          instruction: '实时速记',
-          sources: List.unmodifiable(_sources.take(watermark)),
-          createdAt: clock(),
-          editedAt: edited ? clock() : null,
-          isDraft: true,
-          templateId: minutesTemplateId,
-        );
+  AnalysisResult? get result {
+    if (active == null) return null;
+    final stamp = _requests.isNotEmpty ? _requests.last : clock();
+    return AnalysisResult(
+      text: active!,
+      sourceHash: analysisFingerprint(_sources.take(watermark).join('\n')),
+      model: model,
+      instruction: '实时速记',
+      sources: List.unmodifiable(_sources.take(watermark)),
+      createdAt: stamp,
+      editedAt: edited ? stamp : null,
+      isDraft: true,
+      templateId: minutesTemplateId,
+    );
+  }
   @override
   void dispose() {
     _disposed = true;

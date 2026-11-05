@@ -75,6 +75,7 @@ class _Speech extends AppleSpeechService {
 
 class _Analysis implements AnalysisService {
   int minutesCalls = 0;
+  int liveDraftCalls = 0;
   @override
   Future<String> generate({
     required String model,
@@ -84,6 +85,31 @@ class _Analysis implements AnalysisService {
     required Future<void> abort,
   }) async {
     if (instruction.contains('从句段里找出承诺')) return '{"items":[],"updates":[]}';
+    if (instruction.contains('实时增量')) {
+      liveDraftCalls++;
+      return jsonEncode({
+        'schemaVersion': 2,
+        'title': '阶段草稿：资料核对',
+        'overview': '录制中已捕获地址核对要点。',
+        'topics': [
+          {
+            'text': '地址核对阶段记录',
+            'summary': '旧地址可能有误。',
+            'sources': ['S1'],
+            'points': [
+              {
+                'text': dictationLines[0],
+                'sources': ['S1'],
+              },
+            ],
+          },
+        ],
+        'terms': [],
+        'decisions': [],
+        'actions': [],
+        'questions': [],
+      });
+    }
     if (!instruction.contains('结构化会议纪要')) return '先核对地址，提交改为下周一，上线日期未定。';
     minutesCalls++;
     for (var i = 0; i < dictationLines.length; i++) {
@@ -168,6 +194,7 @@ Future<void> minutesFlowScenario(
   late RecorderController first;
   late RecorderController restored;
   late RecordingReference reference;
+  late RecordingReference liveDraftReference;
   late Map<String, dynamic> saved;
   final speech = _Speech();
   final analysis = _Analysis();
@@ -253,6 +280,26 @@ Future<void> minutesFlowScenario(
       (await TranscriptStore.load()).byPath[imported.path],
       dictationTranscript,
     );
+    final liveAudio = File('${directory.path}/imports/309.wav');
+    await liveAudio.writeAsBytes(wavBytes(List.filled(16000, 128)));
+    first.organizeStore.known.add(liveAudio.path);
+    await first.organizeStore.save();
+    liveDraftReference = RecordingReference(path: liveAudio.path, fileId: 309);
+    first.setMeetingLocalOnly(false);
+    first.beginLiveMeeting('live-crash-309', automaticMinutes: true);
+    first.bindLiveMeetingRecording('live-crash-309', 'audio:${liveAudio.path}');
+    first.acceptLiveSpeech(
+      'live-crash-309',
+      'ble-309',
+      SttStreamEvent(
+        type: 'partial',
+        text: '${dictationLines[0]} ' * 12,
+        speechFinal: true,
+      ),
+    );
+    await _until(() => first.liveMinutes != null);
+    await first.liveMinutes!.tick();
+    await _until(() => first.liveMinutes?.active != null);
     await first.organizeStore.idle;
     first.dispose();
     activeControllers.remove(first);
@@ -263,15 +310,24 @@ Future<void> minutesFlowScenario(
       () => restored.recordingView(reference).text == dictationTranscript,
     );
     expect(restored.currentMinutesFor(reference)!.toJson(), saved);
+    expect(
+      restored.analysis.results['file:309/minutes']?.isDraft,
+      isTrue,
+    );
     expect(restored.organizeStatusFor(imported.path).stage, OrganizeStage.done);
     expect(speech.calls, 1);
     expect(analysis.minutesCalls, 1);
+    expect(analysis.liveDraftCalls, 1);
   });
-  Future<void> openFromRecordingDetail() async {
+  Future<void> openFromRecordingDetail([RecordingReference? target]) async {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
     await tester.pumpWidget(
       ChangeNotifierProvider<RecorderController>.value(
         value: restored,
-        child: MaterialApp(home: RecordingDetailScreen(reference: reference)),
+        child: MaterialApp(
+          home: RecordingDetailScreen(reference: target ?? reference),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -285,6 +341,11 @@ Future<void> minutesFlowScenario(
     await tester.pumpAndSettle();
     expect(find.byType(MinutesPanel), findsOneWidget);
   }
+
+  await openFromRecordingDetail(liveDraftReference);
+  expect(find.text('阶段草稿：资料核对'), findsOneWidget);
+  expect(find.textContaining('草稿纪要（实时识别生成）'), findsOneWidget);
+  expect(tester.takeException(), isNull);
 
   await openFromRecordingDetail();
   expect(find.text(dictationTitle), findsOneWidget);

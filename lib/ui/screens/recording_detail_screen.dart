@@ -1928,7 +1928,11 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             ),
                             label: const Text('主题笔记'),
                           ),
-                        if (source.isNotEmpty && !recording.live)
+                        if ((source.isNotEmpty ||
+                                c.hasMinutesOrLiveNoticeFor(
+                                  widget.reference,
+                                )) &&
+                            !recording.live)
                           KoeIconButton(
                             tooltip: '摘要与分析',
                             icon: const Icon(Icons.auto_awesome_outlined),

@@ -18,6 +18,7 @@ void main() {
                 'chapters': true,
                 'overflow_checked': true,
                 'reopened': true,
+                'live_draft_recovered': true,
                 'input_sha256': dictationInputSha,
               },
             }),

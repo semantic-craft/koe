@@ -58,6 +58,7 @@ mixin _RecorderOrganize on ChangeNotifier {
   abstract final FileJobJournal _fileJobs;
   abstract final Future<void> _fileJobsLoaded;
   abstract final Future<void> _libraryLoaded;
+  Future<void> get liveMeetingLoaded;
   abstract final Map<String, String> _recordingErrors;
   abstract final DeviceCopies _copies;
   abstract final Set<String> _finalizingRecordings;
@@ -113,6 +114,7 @@ mixin _RecorderOrganize on ChangeNotifier {
       _libraryLoaded,
       _fileJobsLoaded,
       _transcriptsLoaded,
+      liveMeetingLoaded,
       analysis.load(),
       todos.load(),
     ]);

@@ -51,10 +51,134 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
   ].join('|');
   List<LiveSegment> get liveMeetingSegments =>
       _liveCollector?.segments ?? const [];
+  late final Future<void> _liveMeetingLoaded;
+  Future<void> get liveMeetingLoaded => _liveMeetingLoaded;
+  final Map<String, String> _recoveredLiveNotices = {};
 
   void _initLiveMeeting(LiveMinutesStore store) {
     liveMeetingStore = store;
     meetingEndWatch.addListener(notifyListeners);
+    _liveMeetingLoaded = _recoverLiveMeetings();
+  }
+
+  Future<void> _recoverLiveMeetings() async {
+    try {
+      await analysis.load();
+      final records = await liveMeetingStore.all();
+      var changed = false;
+      for (final j in records) {
+        final id = j['id'];
+        if (id is! String || id.isEmpty || id == liveMeetingId) continue;
+        final kind = j['kind'];
+        if (kind == 'captions') {
+          final journal = j['journal'];
+          final hasPending =
+              journal is Map && journal.values.any((v) => v == 'pending');
+          if (j['closed'] != true || hasPending) {
+            final c = LiveCaptions(
+              sessionId: id,
+              store: liveMeetingStore,
+              target: j['target'] as String? ?? translationTargetLanguage,
+              recordingKey: j['recordingKey'] as String?,
+              translate: (_, _) =>
+                  Future.error(StateError('recovered session must not retry')),
+            );
+            await c.restore();
+            await c.persist();
+            c.dispose();
+            changed = true;
+          }
+          continue;
+        }
+        if (kind != 'minutes') continue;
+        final m = LiveMinutes(
+          sessionId: id,
+          store: liveMeetingStore,
+          model: j['model'] as String? ?? 'live',
+          configuration: j['configuration'] as String? ?? '',
+          recordingKey: j['recordingKey'] as String?,
+          request: (_) =>
+              Future.error(StateError('recovered session must not retry')),
+        );
+        await m.restore();
+        if (j['closed'] != true || j['requestStatus'] == 'pending') {
+          await m.persist();
+          changed = true;
+        }
+        final key = m.recordingKey;
+        if (key != null && key.startsWith('audio:')) {
+          final ref = RecordingReference(path: key.substring(6));
+          final aKey = analysisKey(ref);
+          if (m.error != null || m.requestStatus == 'unknown') {
+            _recoveredLiveNotices[aKey] = m.error ?? '上次请求结果未知，未自动重发';
+            changed = true;
+          }
+          final result = m.result;
+          if (result != null) {
+            final merged = await analysis.mergeImportedMinutes(
+              '$aKey/minutes',
+              result,
+              const [],
+            );
+            if (merged.changed) changed = true;
+          }
+        }
+        m.dispose();
+      }
+      if (changed) notifyListeners();
+    } catch (_) {}
+  }
+
+  void bindLiveMeetingRecording(String id, String recordingKey) {
+    if (liveMeetingId != id || _liveDiscarded) return;
+    if (liveMeetingKey == recordingKey &&
+        (liveMinutes == null || liveMinutes!.recordingKey == recordingKey) &&
+        (liveCaptions == null || liveCaptions!.recordingKey == recordingKey)) {
+      return;
+    }
+    liveMeetingKey = recordingKey;
+    final m = liveMinutes, c = liveCaptions;
+    if (m != null && m.recordingKey != recordingKey) {
+      m.recordingKey = recordingKey;
+      unawaited(m.persist().catchError((Object _) {}));
+    }
+    if (c != null && c.recordingKey != recordingKey) {
+      c.recordingKey = recordingKey;
+      unawaited(c.persist().catchError((Object _) {}));
+    }
+  }
+
+  String? liveMinutesNoticeFor(RecordingReference ref) {
+    final aKey = analysisKey(ref);
+    final currentKey = liveMinutes?.recordingKey ?? liveMeetingKey;
+    if (currentKey != null &&
+        currentKey.startsWith('audio:') &&
+        analysisKey(RecordingReference(path: currentKey.substring(6))) ==
+            aKey) {
+      final err = liveMinutes?.error ?? liveMeetingNotice;
+      if (err != null && err.isNotEmpty) return err;
+    }
+    return _recoveredLiveNotices[aKey];
+  }
+
+  bool hasMinutesOrLiveNoticeFor(RecordingReference ref) {
+    final aKey = analysisKey(ref);
+    return analysis.results['$aKey/minutes'] != null ||
+        liveMinutesNoticeFor(ref) != null;
+  }
+
+  bool liveRecordMatchesRecordingKey(
+    Map<String, dynamic> record,
+    String recordingKey,
+  ) {
+    final saved = record['recordingKey'];
+    if (saved is! String || saved.isEmpty) return false;
+    if (saved == recordingKey) return true;
+    if (saved.startsWith('audio:') && recordingKey.startsWith('audio:')) {
+      return analysisKey(RecordingReference(path: saved.substring(6))) ==
+          analysisKey(RecordingReference(path: recordingKey.substring(6)));
+    }
+    return false;
   }
 
   void beginLiveMeeting(
@@ -372,13 +496,15 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
         await c.end();
       }
       final result = m?.result;
-      if (result != null && key?.startsWith('audio:') == true) {
+      if (key?.startsWith('audio:') == true) {
         final ref = RecordingReference(path: key!.substring(6));
-        await analysis.mergeImportedMinutes(
-          '${analysisKey(ref)}/minutes',
-          result,
-          const [],
-        );
+        final aKey = analysisKey(ref);
+        if (m != null && (m.error != null || m.requestStatus == 'unknown')) {
+          _recoveredLiveNotices[aKey] = m.error ?? '上次请求结果未知，未自动重发';
+        }
+        if (result != null) {
+          await analysis.mergeImportedMinutes('$aKey/minutes', result, const []);
+        }
       }
     } catch (_) {
       if (liveMeetingId == id) {

@@ -42,9 +42,9 @@
 
 `device` 已从固定未实现改为真实 iPhone 发现和锁屏预检，尚无完整真机场景。2026-11-05 的实际预检发现物理 iPhone 已连接但锁屏；`PROTOCOL.md:211-234` 只有开始/暂停，没有已验证的结束录音命令，也没有实体按键自动驱动证据。入口非零退出，未发起无法自动结束的录音。解锁本身不能满足门禁。真实录音豆输入、实际 ASR、录制中更新、停止最终化、App 进程重启读回及实体按键均未验收。
 
-本轮 `scripts/check --reporter expanded` 静态分析无问题、1118 项 Flutter 测试通过，另有 1 项默认跳过的独立付费场景；定向 88 项通过。`KOE_PERF_FOREGROUND=1 scripts/perf-check` 八个场景在既有阈值内，单次合成负载运行，不作提速比较。汇总回执 `.scratch/pstack-relay/slice-c-receipt.json`，check 原始输出与源码指纹保存在同目录。
+本轮补齐录制中崩溃重启从详情页恢复阶段稿、未知请求失败提示与正式纪要防旧稿覆盖的自动验证：实时录制绑定 `recordingKey`、启动时自动收尾未关会话并将 `pending` 转为 `unknown`（不自动重发）、以草稿合并恢复阶段摘要而不覆盖已有正式纪要；`scripts/verify-minutes-flow offline`（47 项事件）、`scripts/verify-minutes-flow ios`（独立 iPhone 11 模拟器，含 `live_draft_recovered: true`）、`scripts/check --reporter expanded`（1122 项通过，另 1 项独立付费场景默认跳过）及 `KOE_PERF_FOREGROUND=1 scripts/perf-check`（8 个场景阈值内）全部通过，且未重复执行阻塞的 `device` 预检。汇总回执 `.scratch/pstack-relay/slice-c-receipt.json`。
 
-本轮磁盘重建测试仅证明保存后的对象读回，不证明应用崩溃重启；录制中阶段稿在崩溃后从详情页恢复仍未验收。Slice C 保持未完成，不运行 `advance C`。继续复用草稿 PR #548 与真实验收工单 #515，不合并、不发布，不重做 A/B。
+真机 `device`（真实录音豆输入、停止、真实 iPhone 进程重启及实体按键）按用户要求暂缓，Slice C 保持未完成，不运行 `advance C`。继续复用草稿 PR #548 与真实验收工单 #515，不合并、不发布，不重做 A/B/D。
 
 ## Slice D 当前工作
 
@@ -98,7 +98,7 @@ scripts/pstack-relay 已安装；.agents/hooks.json 是本机配置。此脚本�
 - **Playbook**: Feature
 - **Outcome**: 真机验收按用户要求暂缓，不重复执行同一阻塞预检；只有设备条件或自动结束机制有新证据后再继续。原目标保留：实际录音豆输入持续进入转写与阶段摘要，停止后完整纪要落盘；重启恢复、失败提示、旧版本保护可自动验证。
 - **Done Predicate**: `scripts/check`、`scripts/perf-check`、`scripts/verify-minutes-flow device` 通过，包含录制中更新、停止最终化与重启读回；实体按键覆盖必须有自动证据，否则保留未验收。
-- **Evidence**: .scratch/pstack-relay/slice-c-receipt.json (软件门禁通过，真实输入/停止/进程重启/实体按键未验收；用户要求暂缓)
+- **Evidence**: .scratch/pstack-relay/slice-c-receipt.json (check 1122 PASS; offline 47 PASS; iOS simulator crash-draft recovery PASS; perf 8 PASS; 真实录音豆输入/停止/实体按键按用户要求暂缓未验收)
 
 ### [ ] Slice E: 全流程无人值守复验与交付
 - **Playbook**: Shipping

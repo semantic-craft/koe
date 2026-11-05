@@ -1013,7 +1013,11 @@ class _MinutesPanelState extends State<MinutesPanel> {
               ),
               const SizedBox(height: 8),
               if (loadError != null) Text(loadError!),
-              if (view.text.trim().isEmpty) const Text('请先完成转写'),
+              if (view.text.trim().isEmpty &&
+                  result == null &&
+                  widget.controller.liveMinutesNoticeFor(widget.reference) ==
+                      null)
+                const Text('请先完成转写'),
               if (widget.controller.analysisApiKey.isEmpty)
                 Text(
                   widget.controller.analysisBackend == AnalysisBackendKind.none
@@ -1056,9 +1060,14 @@ class _MinutesPanelState extends State<MinutesPanel> {
                   ),
                 ),
               if (manager.errors[key] != null) Text(manager.errors[key]!),
+              if ((result == null || result.isDraft) &&
+                  widget.controller.liveMinutesNoticeFor(widget.reference) !=
+                      null)
+                Text(widget.controller.liveMinutesNoticeFor(widget.reference)!),
               if (result != null &&
                   (widget.controller.recordingAudioChanged(widget.reference) ||
-                      result.sourceHash != sourceHash))
+                      ((!result.isDraft || view.text.trim().isNotEmpty) &&
+                          result.sourceHash != sourceHash)))
                 const Text('原文已更新，这份纪要已过期，请重新生成。'),
               if (result != null && minutes == null) ...[
                 const Text('当前纪要格式无法结构化显示或编辑；原数据仍保留。'),

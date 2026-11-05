@@ -15,6 +15,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     String language = 'zh',
     bool automaticMinutes = false,
   });
+  void bindLiveMeetingRecording(String id, String recordingKey);
   void closeLiveMeetingInput(String id);
   Future<void> finishLiveMeeting(String id, {String? recordingKey});
   void acceptLiveSpeech(
@@ -171,7 +172,10 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       return;
     }
     session.fileId ??= fileId ?? (path == null ? null : fileIdFromPath(path));
-    if (path != null) session.path = path;
+    if (path != null) {
+      session.path = path;
+      bindLiveMeetingRecording(session.id, 'audio:$path');
+    }
   }
 
   void _snapshotLiveText() {

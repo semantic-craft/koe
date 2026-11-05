@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/ai/apple_speech.dart';
@@ -15,6 +16,9 @@ import 'package:koe/state/live_minutes_store.dart';
 import 'package:koe/state/live_minutes.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
+import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:koe/ui/widgets/minutes_panel.dart';
+import 'package:provider/provider.dart';
 
 import 'support/wav_fixture.dart';
 
@@ -436,6 +440,171 @@ void main() {
       await _until(() => c.analysis.results[key]?.isDraft == false);
       expect(model.fullSources.single, contains('完整录音重新转写'));
       expect(c.analysis.results[key]!.text, contains('包含最后补充'));
+    },
+  );
+  testWidgets(
+    'mid-recording crash recovers stage draft and unknown notice in detail view without overwriting formal minutes',
+    (tester) async {
+      await tester.runAsync(() async {
+        await start();
+        speech.emit(opening);
+        await _until(() => c.liveMeetingSegments.isNotEmpty);
+        await c.liveMinutes!.tick();
+        await _until(() => c.liveMinutes?.active != null);
+      });
+      final secondModel = _Model();
+      late RecorderController crashedWithFailure;
+      await tester.runAsync(() async {
+        // Also record a mid-recording failed live revision on a second file to verify failure notice recovery.
+        final secondAudio = File('${dir.path}/302.wav');
+        await secondAudio.writeAsBytes(wavBytes(List.filled(3200, 0)));
+        secondModel.failLive = true;
+        crashedWithFailure = RecorderController(
+          loadPersistedState: false,
+          meetingLocalOnly: false,
+          ble: ble,
+          qwenSpeech: _Qwen()..apiKeyOverride = 'test-key',
+          appleSpeech: _Apple(),
+          analysisController: RecordingAnalysis(
+            service: secondModel,
+            file: analysisFile,
+          ),
+          contextAnalysisService: secondModel,
+          liveMeetingStore: LiveMinutesStore(file: liveFile),
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${dir.path}/imports'),
+        )..speechProvider = SttProvider.qwen;
+        await crashedWithFailure.setAutoOrganize(true);
+        await crashedWithFailure.startRecord();
+        final speech2 = _Speech();
+        crashedWithFailure.attachSttStreamForTesting(speech2);
+        crashedWithFailure.handleRealtimeStateForTesting(
+          RealtimeStreamState(
+            active: true,
+            fileId: 302,
+            path: secondAudio.path,
+            bytesReceived: 3200,
+          ),
+        );
+        speech2.emit(opening);
+        await _until(() => crashedWithFailure.liveMeetingSegments.isNotEmpty);
+        await crashedWithFailure.liveMinutes!.tick();
+        expect(crashedWithFailure.liveMinutes!.requestStatus, 'unknown');
+        await speech2.dispose();
+        crashedWithFailure.dispose();
+      });
+
+      late RecorderController restarted;
+      await tester.runAsync(() async {
+        restarted = RecorderController(
+          loadPersistedState: false,
+          meetingLocalOnly: false,
+          ble: _Ble(),
+          qwenSpeech: _Qwen()..apiKeyOverride = 'test-key',
+          appleSpeech: _Apple(),
+          analysisController: RecordingAnalysis(
+            service: secondModel,
+            file: analysisFile,
+          ),
+          contextAnalysisService: secondModel,
+          liveMeetingStore: LiveMinutesStore(file: liveFile),
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${dir.path}/imports'),
+        )..speechProvider = SttProvider.qwen;
+        await restarted.waitForOrganize();
+      });
+      addTearDown(restarted.dispose);
+      expect(
+        secondModel.liveSources,
+        hasLength(1),
+        reason: 'restart must not retry unknown live request',
+      );
+
+      Future<void> openMinutesFor(String path) async {
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          ChangeNotifierProvider<RecorderController>.value(
+            value: restarted,
+            child: MaterialApp(
+              home: RecordingDetailScreen(
+                reference: RecordingReference(
+                  path: path,
+                  fileId: restarted.fileIdFromPath(path),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final analysisButton = find.byTooltip('摘要与分析');
+        await tester.ensureVisible(analysisButton);
+        await tester.tap(analysisButton);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(AppBar),
+            matching: find.text('结构化纪要'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(MinutesPanel), findsOneWidget);
+      }
+
+      await openMinutesFor(audio.path);
+      expect(find.text('阶段摘要'), findsWidgets);
+      expect(find.textContaining('草稿纪要（实时识别生成）'), findsOneWidget);
+
+      await openMinutesFor('${dir.path}/302.wav');
+      expect(find.textContaining('未自动重发'), findsOneWidget);
+
+      // Formal minutes protection: once formal minutes exist, recovering live.json on next restart must not overwrite them.
+      late RecorderController afterFormal;
+      await tester.runAsync(() async {
+        restarted.rememberTranscript(audio.path, '$opening 最后补充');
+        await _until(
+          () => restarted.analysis.results['file:301/minutes']?.isDraft == false,
+        );
+        afterFormal = RecorderController(
+          loadPersistedState: false,
+          meetingLocalOnly: false,
+          ble: _Ble(),
+          qwenSpeech: _Qwen()..apiKeyOverride = 'test-key',
+          appleSpeech: _Apple(),
+          analysisController: RecordingAnalysis(
+            service: secondModel,
+            file: analysisFile,
+          ),
+          contextAnalysisService: secondModel,
+          liveMeetingStore: LiveMinutesStore(file: liveFile),
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${dir.path}/imports'),
+        )..speechProvider = SttProvider.qwen;
+        await afterFormal.waitForOrganize();
+      });
+      addTearDown(afterFormal.dispose);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: afterFormal,
+          child: MaterialApp(
+            home: RecordingDetailScreen(
+              reference: RecordingReference(path: audio.path, fileId: 301),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('摘要与分析'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(of: find.byType(AppBar), matching: find.text('结构化纪要')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('包含最后补充'), findsWidgets);
+      expect(find.text('阶段摘要'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 }
