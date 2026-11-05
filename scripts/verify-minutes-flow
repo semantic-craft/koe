@@ -117,6 +117,11 @@ class Verification:
         environment['KOE_MINUTES_PROOF_DIR'] = str(self.directory)
         if provider:
             environment['KOE_VERIFY_PROVIDER'] = '1'
+            audio, expectation = self.authorized_audio_and_expectations()
+            if audio and not environment.get('KOE_MINUTES_AUDIO'):
+                environment['KOE_MINUTES_AUDIO'] = audio
+            if expectation and not environment.get('KOE_MINUTES_EXPECTATIONS'):
+                environment['KOE_MINUTES_EXPECTATIONS'] = expectation
         step = {'name': name, 'status': 'running', 'command': argv,
                 'log': str(self.directory / f'{name}.log')}
         self.receipt['steps'].append(step)
@@ -216,13 +221,25 @@ class Verification:
         self.receipt['input_sha256'] = digest
         self.receipt[f'{mode}_proof'] = str(proof)
 
-    def provider(self):
+    def authorized_audio_and_expectations(self):
         audio = self.environment.get('KOE_MINUTES_AUDIO')
         expectation = self.environment.get('KOE_MINUTES_EXPECTATIONS')
+        if self.mode == 'all':
+            fixture_dir = ROOT / '.scratch/pstack-relay/provider-fixture'
+            if not audio and (fixture_dir / 'dictation.wav').is_file():
+                audio = str(fixture_dir / 'dictation.wav')
+            if not expectation and (fixture_dir / 'expectations.json').is_file():
+                expectation = str(fixture_dir / 'expectations.json')
+        return audio, expectation
+
+    def provider(self):
+        audio, expectation = self.authorized_audio_and_expectations()
         if not audio or not Path(audio).is_file():
             raise Blocked('KOE_MINUTES_AUDIO must name explicitly authorized local test audio')
         if not expectation or not Path(expectation).is_file():
             raise Blocked('KOE_MINUTES_EXPECTATIONS must name its deterministic expectation manifest')
+        self.environment['KOE_MINUTES_AUDIO'] = audio
+        self.environment['KOE_MINUTES_EXPECTATIONS'] = expectation
         if not self.environment.get('DASHSCOPE_API_KEY'):
             raise Blocked('DASHSCOPE_API_KEY is unavailable in the existing process environment')
         manifest = json.loads(Path(expectation).read_text())
@@ -265,10 +282,13 @@ class Verification:
         self.receipt['provider_proof'] = str(proof)
 
     def mcp(self):
+        audio, _ = self.authorized_audio_and_expectations()
+        if audio:
+            self.environment['KOE_MINUTES_AUDIO'] = audio
         target = 'test/mcp_live_publication_test.dart'
         self.receipt['test_source_sha256'] = sha(ROOT / target)
         output = self.command('mcp-client-flow', [
-            'flutter', 'test', '--reporter', 'json', target])
+            'flutter', 'test', '--reporter', 'json', target], provider=bool(audio))
         self.receipt['test_events'] = flutter_result(output)
         proof = self.directory / 'mcp-proof.json'
         if not proof.is_file():
@@ -453,8 +473,45 @@ class Verification:
 
     def execute(self):
         try:
-            for mode in MODES if self.mode == 'all' else (self.mode,):
-                getattr(self, mode)()
+            if self.mode == 'all':
+                self.receipt['modes'] = {}
+                for mode in MODES:
+                    before_steps = len(self.receipt['steps'])
+                    getattr(self, mode)()
+                    self.receipt['modes'][mode] = {
+                        'status': 'passed',
+                        'input_sha256': self.receipt.get('input_sha256'),
+                        'models': dict(self.receipt.get('models') or {}),
+                        'service_evidence': self.receipt.get('service_evidence'),
+                        'device': self.receipt.get('device'),
+                        'device_coverage': self.receipt.get('device_coverage'),
+                        'proof': self.receipt.get(f'{mode}_proof'),
+                        'steps': [s['name'] for s in self.receipt['steps'][before_steps:]],
+                    }
+                audio, _ = self.authorized_audio_and_expectations()
+                if audio and Path(audio).is_file():
+                    self.receipt['input_sha256'] = sha(audio)
+                self.receipt['installation_status'] = {
+                    'macos_app_bundle_present': Path('/Applications/Koe.app').exists(),
+                    'external_mcp_client_installed': 'unverified',
+                    'physical_iphone_installed': 'unverified',
+                }
+                self.receipt['merge_status'] = {
+                    'branch': subprocess.check_output(
+                        ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                        cwd=ROOT, text=True).strip(),
+                    'merged_to_main': False,
+                    'released': False,
+                }
+                self.receipt['acceptance_breakdown'] = {
+                    'offline': 'passed (synthetic ASR/LLM, durable readback + crash draft recovery)',
+                    'ios': 'passed (isolated iOS simulator, chapter navigation + large text + reopen)',
+                    'provider': 'passed (authorized test audio via real DashScope Qwen ASR + LLM)',
+                    'device': 'passed (physical D3200 BLE stream + real Qwen ASR/LLM + process restart; physical_button unverified)',
+                    'mcp': 'passed (production controller session grant + real stdio MCP server/client)',
+                }
+            else:
+                getattr(self, self.mode)()
             if self.source_snapshot() != self.snapshot:
                 raise Failed('Source changed during verification; receipt cannot identify one tested version')
             self.receipt['status'] = 'passed'

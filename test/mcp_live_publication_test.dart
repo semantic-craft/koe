@@ -134,8 +134,17 @@ void main() {
         await c.flushMcpPublication();
         await root.delete(recursive: true);
       });
+      final configuredAudio = Platform.environment['KOE_MINUTES_AUDIO']?.trim();
+      final hasConfiguredAudio =
+          configuredAudio != null &&
+          configuredAudio.isNotEmpty &&
+          File(configuredAudio).existsSync();
       final source = File('${root.path}/speech.wav')
-        ..writeAsBytesSync(wavBytes(List.filled(2000, 0)));
+        ..writeAsBytesSync(
+          hasConfiguredAudio
+              ? File(configuredAudio).readAsBytesSync()
+              : wavBytes(List.filled(2000, 0)),
+        );
       final imported = await c.importLocalAudio(source.path);
       final privateAudio = File('${root.path}/ungranted.wav')
         ..writeAsBytesSync(wavBytes(List.filled(2000, 12)));
@@ -357,7 +366,9 @@ void main() {
             'revision_guard': true,
             'revoked': true,
             'ungranted_denied': true,
-            'input_sha256': analysisFingerprint(original),
+            'input_sha256': hasConfiguredAudio
+                ? materialHash
+                : analysisFingerprint(original),
             'evidence':
                 'controller + real stdio client/server; synthetic content',
           }),

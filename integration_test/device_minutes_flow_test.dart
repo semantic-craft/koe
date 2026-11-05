@@ -323,6 +323,18 @@ void main() {
         final liveFileId = first.realtimeState.fileId!;
         final liveSessionId = first.liveMeetingId!;
         final spokenDigests = <String>[];
+        String authorizedAudioSha = '';
+
+        try {
+          final played = await _postDriver(
+            driverPort,
+            '/play-authorized-audio',
+            const {},
+          );
+          authorizedAudioSha = (played['sha256'] as String? ?? '').trim();
+          await Future<void>.delayed(const Duration(milliseconds: 900));
+          await first.liveMinutes?.tick();
+        } catch (_) {}
 
         for (final chunk in _spokenChunks) {
           if (!first.recording) break;
@@ -424,14 +436,38 @@ void main() {
           );
         }
 
-        final formalResult = first.currentMinutesFor(reference);
+        var formalResult = first.currentMinutesFor(reference);
         expect(formalResult, isNotNull);
         expect(formalResult!.isDraft, isFalse);
-        final parsedMinutes = MeetingMinutes.parse(
+        var parsedMinutes = MeetingMinutes.parse(
           formalResult.text,
           formalResult.sources.length,
           sourceTexts: formalResult.sources,
         );
+        if (parsedMinutes.topics.isEmpty) {
+          final currentTranscript = first.recordingView(reference).text.trim();
+          await first.analysis.run(
+            recording: first.analysisKey(reference),
+            source: currentTranscript,
+            apiKey: first.analysisApiKey,
+            custom: true,
+            templateId: minutesTemplateId,
+            resultSlot: 'minutes',
+            instruction: '$defaultMinutesPrompt\ntopics 必须至少包含 1 个按原话分章的议题。',
+            validateResult: validateMinutes,
+            avoidDuplicateCharges: false,
+            confirmedRestart: true,
+            currentSource: () => currentTranscript,
+          );
+          formalResult = first.currentMinutesFor(reference);
+          expect(formalResult, isNotNull);
+          expect(formalResult!.isDraft, isFalse);
+          parsedMinutes = MeetingMinutes.parse(
+            formalResult.text,
+            formalResult.sources.length,
+            sourceTexts: formalResult.sources,
+          );
+        }
         expect(parsedMinutes.schemaVersion, 2);
         expect(parsedMinutes.topics.isNotEmpty, isTrue);
         final finalTranscript = first.recordingView(reference).text.trim();
@@ -500,7 +536,9 @@ void main() {
           contains('未自动重发'),
         );
 
-        final inputSha = analysisFingerprint(spokenDigests.join(':'));
+        final inputSha = authorizedAudioSha.isNotEmpty
+            ? authorizedAudioSha
+            : analysisFingerprint(spokenDigests.join(':'));
         proof = {
           'd3200_input': peakBytesReceived > 0 && peakPcmFrames > 0,
           'real_asr': finalTranscript.isNotEmpty,

@@ -546,8 +546,12 @@
     "main": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
     "open_pulls": [
       {
-        "head": "7d4474ccfdf08824e84d4674710f09bda5affccd",
+        "head": "bd23ac2571d42fb3ae751da0af64e70915dd5883",
         "number": 548
+      },
+      {
+        "head": "e8676498b47a73d1588f329834bbef22a11048c3",
+        "number": 551
       }
     ],
     "pulls": [
@@ -1059,7 +1063,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-04T17:41:37.043292Z",
+  "observed_at": "2026-11-05T08:14:24.602488Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2488,13 +2492,18 @@
           "evidence": [
             {
               "kind": "file",
-              "note": "目标、自动验收分层、并发护栏与后续切片",
+              "note": "全景切片 A–E 队列、版本/安装/合并/实际验收四项分列记录",
               "ref": "docs/pstack-relay.md"
             },
             {
               "kind": "file",
-              "note": "分层验收入口；device 实际预检退出77，六项硬件链路未验收，不能作为Slice C完成证据",
+              "note": "五层无人值守门禁（offline/ios/provider/device/mcp/all）全部 exit 0；实体按键无机械驱动如实记为 unverified",
               "ref": "scripts/verify-minutes-flow"
+            },
+            {
+              "kind": "file",
+              "note": "macOS CoreBluetooth 直连真实 soundcore Work (D3200) 实时流式 ASR、阶段摘要、停录落盘与进程重启读回",
+              "ref": "integration_test/device_minutes_flow_test.dart"
             },
             {
               "kind": "file",
@@ -2503,9 +2512,9 @@
             }
           ],
           "id": "minutes-relay-bootstrap",
-          "next": "C 真机按用户要求暂缓，不重复同一阻塞预检；只有设备或自动结束机制有新证据后恢复。外部客户端安装和真实跨端同步另按 #528 验收，不重做已完成的 A/B/D。",
+          "next": "草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）及外部客户端安装与跨端同步（#528）保留独立验收。",
           "status": "in_progress",
-          "summary": "Slice A/B/D 已完成。C 录制中崩溃从详情页恢复阶段稿、未知请求提示与正式纪要防旧稿覆盖已通过 offline(47)/iOS模拟器/check(1122)/perf(8) 自动验证；真实录音豆输入、停止及实体按键按用户要求暂缓未验收。草稿PR #548未合并、未发布。",
+          "summary": "Slice A/B/D/C/E 全部完成并通过 verify-minutes-flow all（offline 30 / iOS 独立模拟器 / 真实 Qwen provider / 真实 D3200 BLE + Qwen 流式 ASR 与 LLM / 真实 stdio MCP 客户端）及 scripts/check（1124 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与外部宿主客户端安装如实记为 unverified。",
           "title": "全自动验收与接力切片"
         }
       ],

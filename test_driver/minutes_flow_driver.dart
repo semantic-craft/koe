@@ -58,6 +58,37 @@ Future<HttpServer?> _startSpeechServer(Directory directory) async {
                 'bytes': bytes.length,
               }),
             );
+        } else if (request.uri.path == '/play-authorized-audio') {
+          final audioPath =
+              (Platform.environment['KOE_MINUTES_AUDIO'] ?? '').trim();
+          final file = audioPath.isNotEmpty
+              ? File(audioPath)
+              : File('.scratch/pstack-relay/provider-fixture/dictation.wav');
+          if (!await file.exists()) {
+            request.response
+              ..statusCode = HttpStatus.notFound
+              ..write('authorized audio file not found');
+          } else {
+            final bytes = await file.readAsBytes();
+            final shasum = await Process.run('/usr/bin/shasum', [
+              '-a',
+              '256',
+              file.path,
+            ]);
+            final digest = '${shasum.stdout}'.trim().split(RegExp(r'\s+')).first;
+            await Process.run('/usr/bin/afplay', ['-v', '2.0', file.path]);
+            request.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode({
+                  'ok': true,
+                  'sha256': digest,
+                  'bytes': bytes.length,
+                  'path': file.path,
+                }),
+              );
+          }
         } else if (request.uri.path == '/prompt' && text.isNotEmpty) {
           await Process.run('/usr/bin/say', ['-v', 'Tingting', '-r', '195', text]);
           request.response

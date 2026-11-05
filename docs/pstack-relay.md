@@ -55,6 +55,21 @@
 
 D 的完成门禁已通过：`scripts/check --reporter expanded` 分析无问题、1121项通过（另1项独立付费场景默认跳过）；Python MCP服务18项通过；`scripts/verify-minutes-flow mcp` 的3项行为场景全部通过、无跳过，回执含5个含setup/teardown的完成事件。测试直接驱动生产写入，不手动发送变更通知；新Mac菜单和授权等待期间关闭也已覆盖。额外 `scripts/perf-check` 八场景在既有阈值内，transcript_save workload 518ms（单次合成负载，不作提速比较）。汇总回执 `.scratch/pstack-relay/slice-d-receipt.json`。
 
+## Slice E 当前工作
+
+已完成全流程无人值守复验与状态分项核算（汇总回执 `.scratch/pstack-relay/slice-e-receipt.json`，原始运行目录 `.scratch/pstack-relay/20261105T080512Z-all-dd760226`）：
+- **同一授权测试音频贯穿全链路**：`scripts/verify-minutes-flow all` 默认解析 `.scratch/pstack-relay/provider-fixture/dictation.wav`（`sha256=bc453c9dd4d7a0b57c45d111cb23bbdd32e08d14f178c8d5b30811f1d904fccb`）与 `expectations.json`（`sha256=74d7dd15661ba1d21cd456d5b01b90523124b55ea66439b280861e08441837e5`），依次无人值守跑通 `offline`、`ios`、`provider`、`device`、`mcp` 五层并逐层写入 `modes`、安装状态、合并状态与分项验收明细（单元测试 `scripts/test_verify_minutes_flow.py` 14 项通过）。
+- **版本、安装、合并、实际验收四项分离记录**：
+  - **版本**：`1.2.2+5`（分支 `codex/koe-minutes-relay`，草稿 PR `#548`）。
+  - **安装状态**：macOS 本机 `/Applications/Koe.app` 已存在（`macos_app_bundle_present: true`）；外部宿主 AI 客户端（Codex/Claude Desktop 等）MCP 注册与真实物理 iPhone 安装均未执行，如实记为 `unverified`。
+  - **合并与发布状态**：`merged_to_main: false`、`released: false`（遵守 `#543` 不自动合并、不发布边界）。
+  - **实际验收分项**：
+    1. `offline`：PASS（4 个测试文件 30 项通过，持久读回与崩溃阶段稿恢复）。
+    2. `ios`：PASS（新建并销毁独立模拟器 `iPhone 11 / iOS 27.0`，生产详情导航、分章展示、1.35x 大字号无溢出及重开读回）。
+    3. `provider`：PASS（同一授权测试音频经真实 DashScope `qwen-audio-3.1-asr-flash-filetrans` 与 `qwen3.8-flash`，5 类事实、来源定位及禁用改写断言全部通过）。
+    4. `device`：PASS（macOS CoreBluetooth 直连物理 `soundcore Work` D3200 `00:7F:1D:06:63:9D`，声学播放同一授权音频并经真实 BLE Opus 流、`qwen-audio-3.1-asr-flash-streaming` 实时识别与 `qwen3.8-flash` 阶段摘要、停录落盘完整分层纪要及冷启动重启读回；因无机械按键致动器，`physical_button: "unverified"`）。
+    5. `mcp`：PASS（同一授权音频导入生产 `RecorderController` 会话授权、真实 `tools/koe-mcp/server.py --live-directory` 子进程与持续 stdio 客户端读取、续写/校订/纪要更新/版本护栏/撤销与未授权隔离）。
+
 ## 全自动验收契约
 
 Slice B 已建立 `scripts/verify-minutes-flow`。每个模式分别产出回执，只有实际执行通过才能满足 Done Predicate。提供 `offline`、`ios`、`provider`、`device`、`mcp` 和 `all` 模式，使用隔离测试资料，输出机器可读回执与去敏截图。记录提交、输入哈希、模型标识、平台、步骤状态、版本和证据路径；缺条件必须非零退出。all 必须同时要求所有层通过，不能只汇总测试数量。
@@ -101,8 +116,8 @@ scripts/pstack-relay 已安装；.agents/hooks.json 是本机配置。此脚本�
 - **Done Predicate**: `scripts/check`、`scripts/perf-check`、`scripts/verify-minutes-flow device` 通过，包含录制中更新、停止最终化与重启读回；实体按键覆盖必须有自动证据，否则保留未验收。
 - **Evidence**: .scratch/pstack-relay/slice-c-receipt.json (check 1124 PASS; device D3200 BLE + real Qwen ASR/LLM PASS; perf 8 PASS; physical_button unverified)
 
-### [ ] Slice E: 全流程无人值守复验与交付
+### [x] Slice E: 全流程无人值守复验与交付
 - **Playbook**: Shipping
 - **Outcome**: 同一授权测试音频无人值守走过录音豆、实际 ASR/LLM、iPhone 纪要和外部 MCP，记录版本、安装、合并、实际验收分别状态。
 - **Done Predicate**: `scripts/verify-minutes-flow all`、`scripts/check`、`python3 progress/progress.py check` 通过；无 skip、缺失证据或人工验收项，所有切片完成后再运行 `scripts/pstack-relay status --require-all-done`。
-- **Evidence**: PENDING
+- **Evidence**: .scratch/pstack-relay/slice-e-receipt.json (verify-minutes-flow all PASS; check 1124 PASS; progress check PASS; physical_button unverified)

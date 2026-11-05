@@ -226,6 +226,138 @@ class VerificationEntryTest(unittest.TestCase):
         result, receipt = self.run_mode('provider', {'DASHSCOPE_API_KEY': secret})
         self.assertNotIn(secret, result.stdout + result.stderr + json.dumps(receipt))
 
+    def test_all_mode_runs_all_five_layers_and_records_status_breakdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / 'authorized.wav'
+            audio.write_bytes(b'authorized-audio-bytes')
+            audio_sha = hashlib.sha256(audio.read_bytes()).hexdigest()
+            manifest = Path(directory) / 'expectations.json'
+            manifest.write_text(json.dumps({
+                'audio_sha256': audio_sha,
+                'source_facts': [
+                    {'kind': 'reason', 'source': '地址', 'minutes': '地址'},
+                    {'kind': 'example', 'source': '门牌号', 'minutes': '门牌号'},
+                    {'kind': 'correction', 'source': '下周一', 'minutes': '下周一'},
+                    {'kind': 'unknown', 'source': '还没确定', 'minutes': '未定'},
+                    {'kind': 'negation', 'source': '不采用自动发布', 'minutes': '不采用自动发布'},
+                ],
+                'forbidden_minutes': ['资料已经核对完成'],
+            }))
+            verification = module.Verification('all', Path(directory))
+            verification.environment['DASHSCOPE_API_KEY'] = 'synthetic-test-key'
+            verification.environment['KOE_MINUTES_AUDIO'] = str(audio)
+            verification.environment['KOE_MINUTES_EXPECTATIONS'] = str(manifest)
+            verification.environment['KOE_MINUTES_DEVICE'] = 'macos'
+
+            def command(name, argv, timeout=1200, provider=False):
+                screenshots = verification.directory / 'screenshots'
+                screenshots.mkdir(parents=True, exist_ok=True)
+                if name == 'offline-tests':
+                    (verification.directory / 'offline-proof.json').write_text(json.dumps({
+                        'minutes_flow': {
+                            'durable_readback': True,
+                            'chapters': True,
+                            'overflow_checked': True,
+                            'reopened': True,
+                            'live_draft_recovered': True,
+                            'input_sha256': audio_sha,
+                        },
+                    }))
+                    return '\n'.join(json.dumps(e) for e in [
+                        {'type': 'testDone', 'skipped': False, 'result': 'success'},
+                        {'type': 'done', 'success': True},
+                    ])
+                if name == 'simulator-inventory':
+                    return json.dumps({
+                        'runtimes': [{
+                            'isAvailable': True,
+                            'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-18-0',
+                            'version': '18.0',
+                            'supportedDeviceTypes': [{'identifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-15'}],
+                        }],
+                        'devicetypes': [{
+                            'productFamily': 'iPhone',
+                            'identifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-15',
+                        }],
+                    })
+                if name == 'simulator-create':
+                    return '11111111-2222-3333-4444-555555555555'
+                if name in ('simulator-boot', 'simulator-ready', 'simulator-delete'):
+                    return ''
+                if name == 'ios-flow':
+                    (screenshots / 'minutes-chapters.png').write_bytes(b'png')
+                    (verification.directory / 'ios-proof.json').write_text(json.dumps({
+                        'minutes_flow': {
+                            'durable_readback': True,
+                            'chapters': True,
+                            'overflow_checked': True,
+                            'reopened': True,
+                            'live_draft_recovered': True,
+                            'input_sha256': audio_sha,
+                        },
+                    }))
+                    return 'All tests passed.'
+                if name == 'provider-flow':
+                    (verification.directory / 'provider-proof.json').write_text(json.dumps({
+                        'real_asr': True,
+                        'real_llm': True,
+                        'persisted_readback': True,
+                        'facts_and_sources_checked': True,
+                        'input_sha256': audio_sha,
+                    }))
+                    return '\n'.join(json.dumps(e) for e in [
+                        {'type': 'testDone', 'skipped': False, 'result': 'success'},
+                        {'type': 'done', 'success': True},
+                    ])
+                if name == 'device-flow':
+                    (screenshots / 'device_minutes_reopened.png').write_bytes(b'png')
+                    (verification.directory / 'device-proof.json').write_text(json.dumps({
+                        'device_minutes_flow': {
+                            'd3200_input': True,
+                            'real_asr': True,
+                            'recording_updates': True,
+                            'stop_finalization': True,
+                            'process_restart_readback': True,
+                            'physical_button': False,
+                            'input_sha256': audio_sha,
+                            'device_id': 'D3200-ID',
+                            'device_mac': '00:7F:1D:06:63:9D',
+                        },
+                    }))
+                    return 'All tests passed.'
+                if name == 'mcp-client-flow':
+                    (verification.directory / 'mcp-proof.json').write_text(json.dumps({
+                        'automatic_publication': True,
+                        'persistent_client': True,
+                        'continued_transcript': True,
+                        'corrected_transcript': True,
+                        'minutes_updated': True,
+                        'revision_guard': True,
+                        'revoked': True,
+                        'ungranted_denied': True,
+                        'input_sha256': audio_sha,
+                    }))
+                    return '\n'.join(json.dumps(e) for e in [
+                        {'type': 'testDone', 'skipped': False, 'result': 'success'},
+                        {'type': 'done', 'success': True},
+                    ])
+                raise AssertionError(f'unexpected command {name}')
+
+            with patch.object(module.sys, 'platform', 'darwin'), \
+                    patch.object(verification, 'suspend_background_koe_app', return_value=False), \
+                    patch.object(verification, 'command', side_effect=command):
+                code = verification.execute()
+            self.assertEqual(code, 0)
+            receipt = verification.receipt
+            self.assertEqual(receipt['status'], 'passed')
+            self.assertEqual(set(receipt['modes'].keys()), set(module.MODES))
+            for mode in module.MODES:
+                self.assertEqual(receipt['modes'][mode]['status'], 'passed')
+            self.assertEqual(receipt['input_sha256'], audio_sha)
+            self.assertIn('installation_status', receipt)
+            self.assertIn('merge_status', receipt)
+            self.assertIn('acceptance_breakdown', receipt)
+
 
 if __name__ == '__main__':
     unittest.main()
