@@ -100,7 +100,10 @@ class _QueueEmpty extends StatelessWidget {
             const SizedBox(height: 16),
             const Text(
               '收听队列还是空的',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: AppFontSizes.lg,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 8),
             const Text(
@@ -144,7 +147,7 @@ class _QueueBanner extends StatelessWidget {
             Expanded(
               child: Text(
                 message,
-                style: const TextStyle(fontSize: 12, height: 1.4),
+                style: const TextStyle(fontSize: AppFontSizes.xs, height: 1.4),
               ),
             ),
           ],
@@ -188,11 +191,11 @@ class _QueueTile extends StatelessWidget {
     if (!availability.playable) {
       status = availability.reason;
     } else if (current && playing) {
-      status = '当前 · 正在播放';
+      status = '当前，正在播放';
     } else if (current && loaded && controller.playbackCompleted) {
-      status = '当前 · 已听完';
+      status = '当前，已听完';
     } else if (current && loaded) {
-      status = '当前 · 已暂停';
+      status = '当前，已暂停';
     } else if (point != null && point.completed) {
       status = '已听完';
     } else if (point != null && point.duration > Duration.zero) {
@@ -284,7 +287,7 @@ class _QueueTile extends StatelessWidget {
                                   '当前',
                                   style: TextStyle(
                                     color: Colors.white,
-                                    fontSize: 11,
+                                    fontSize: AppFontSizes.xs,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
@@ -297,7 +300,7 @@ class _QueueTile extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 15,
+                                  fontSize: AppFontSizes.md,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -310,7 +313,7 @@ class _QueueTile extends StatelessWidget {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: AppFontSizes.xs,
                             height: 1.35,
                             color: availability.playable
                                 ? AppColors.textSecondary

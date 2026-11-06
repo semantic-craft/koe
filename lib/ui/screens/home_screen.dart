@@ -47,7 +47,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Expanded(
                   child: Text(
                     '录音库',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
                   ),
                 ),
                 if (RecordingNavigation.of(context)?.wide ?? false) ...[
@@ -168,7 +168,7 @@ class _ConnectionHeader extends StatelessWidget {
                                     ? c.statusMessage!
                                     : '正在播放')
                               : _idleStatus(c))
-                        : '点「扫描」查找安克录音豆',
+                        : '尚未连接安克录音豆',
                     style: TextStyle(
                       fontSize: 12,
                       color: c.isPlaying
@@ -183,15 +183,14 @@ class _ConnectionHeader extends StatelessWidget {
             ),
           ),
           if (!online)
-            KoeIconButton(
-              tooltip: '扫描',
+            TextButton(
               onPressed: onScan,
-              style: IconButton.styleFrom(
+              style: TextButton.styleFrom(
                 foregroundColor: AppColors.accent,
-                minimumSize: const Size(48, 48),
-                padding: EdgeInsets.zero,
+                minimumSize: const Size(48, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
               ),
-              icon: const Icon(Icons.radar_rounded, size: 24),
+              child: const Text('连接录音豆'),
             ),
         ],
       ),

@@ -138,7 +138,7 @@ void main() {
     now = DateTime(2026, 10, 17, 0, 0, 1);
     await tester.pump(const Duration(seconds: 3));
     expect(find.text('当前主题：职业规划'), findsNothing);
-    expect(find.text('主题 · 今天未设当前主题'), findsOneWidget);
+    expect(find.text('主题，今天未设当前主题'), findsOneWidget);
   });
 
   test('BLE and Wi-Fi retrievals go to the current topic, or to 待归类 when '

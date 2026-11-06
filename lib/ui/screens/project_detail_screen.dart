@@ -22,12 +22,12 @@ String _dayLabel(DateTime day) {
   return '${local.month}月${local.day}日';
 }
 
-/// `最新：周会 · 10月18日`, from the newest linked item.
+/// `最新：周会，10月18日`, from the newest linked item.
 String projectLatestLabel(ProjectProgress progress) {
   final latest = progress.latest;
   if (latest == null) return '还没有关联资料';
   final when = latest.timeKnown ? _dayLabel(latest.start!) : '时间未知';
-  return '最新：${latest.title} · $when';
+  return '最新：${latest.title}，$when';
 }
 
 String projectNextLabel(ProjectProgress progress) =>
@@ -150,7 +150,7 @@ class ProjectDetailScreen extends StatelessWidget {
         children: [
           Text(
             '${projectStatusLabel(project.status)}'
-            '${project.goal.isEmpty ? '' : ' · 目标：${project.goal}'}',
+            '${project.goal.isEmpty ? '' : '，目标：${project.goal}'}',
             style: const TextStyle(color: AppColors.textSecondary),
           ),
           const SizedBox(height: 18),
@@ -194,7 +194,7 @@ class ProjectDetailScreen extends StatelessWidget {
               child: Text(
                 entry.key,
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: AppFontSizes.xs,
                   color: AppColors.textSecondary,
                 ),
               ),
@@ -285,7 +285,7 @@ class ProjectDetailScreen extends StatelessWidget {
                 Text(
                   '关联到「${project.title}」',
                   style: const TextStyle(
-                    fontSize: 20,
+                    fontSize: AppFontSizes.lg,
                     fontWeight: FontWeight.w700,
                   ),
                 ),

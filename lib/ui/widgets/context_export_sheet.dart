@@ -30,14 +30,17 @@ Future<void> showContextExportSheet(
           children: [
             const Text(
               '导出给外部 AI',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                fontSize: AppFontSizes.lg,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               '$count 条资料，含转写原文、待办和出处（录音与时间位置），地点只到区县。'
               '复制后可粘贴到任意 AI 对话里。',
               style: const TextStyle(
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
                 color: AppColors.textSecondary,
               ),
             ),
@@ -54,7 +57,10 @@ Future<void> showContextExportSheet(
                   child: SelectableText(
                     markdown,
                     key: const ValueKey('context-export-preview'),
-                    style: const TextStyle(fontSize: 12, height: 1.4),
+                    style: const TextStyle(
+                      fontSize: AppFontSizes.xs,
+                      height: 1.4,
+                    ),
                   ),
                 ),
               ),

@@ -268,7 +268,7 @@ void main() {
         ),
       );
       expect(find.text('推荐归入《法学方法论》'), findsOneWidget);
-      expect(find.text('建议新建主题《正义论》 · 罗尔斯'), findsOneWidget);
+      expect(find.text('建议新建主题《正义论》，罗尔斯'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('change-recommend-$k1')));
       await tester.pumpAndSettle();

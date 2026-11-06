@@ -211,12 +211,12 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
     if (c.textCapturePaused) return '系统暂停了麦克风（如来电），结束后会自动继续';
     if (c.textCaptureResting) {
       final saved = c.textCaptureFinishedRecords;
-      return saved > 0 ? '安静中，说话时自动接上 · 已分出 $saved 条' : '安静中，说话时自动接上';
+      return saved > 0 ? '安静中，说话时自动接上，已分出 $saved 条' : '安静中，说话时自动接上';
     }
     if (!c.textCaptureConnected) return '正在连接语音服务…';
     final backlog = c.textCaptureBacklogSeconds;
     if (backlog >= 2) return '正在补识别断线时的 $backlog 秒';
-    return '正在识别 · 只留文字，不存录音';
+    return '正在识别，只留文字，不存录音';
   }
 
   @override
@@ -254,7 +254,7 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                           : (active ? '纯文字记录中' : '纯文字记录'),
                       key: const ValueKey('text-capture-title'),
                       style: const TextStyle(
-                        fontSize: 18,
+                        fontSize: AppFontSizes.md,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -274,7 +274,7 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                   key: const ValueKey('text-capture-status'),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: AppFontSizes.sm,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -323,7 +323,7 @@ class _TextCapturePanelState extends State<TextCapturePanel> {
                           ),
                           key: const ValueKey('text-capture-text'),
                           style: TextStyle(
-                            fontSize: 16,
+                            fontSize: AppFontSizes.md,
                             height: 1.5,
                             color: text.isEmpty
                                 ? AppColors.textSecondary

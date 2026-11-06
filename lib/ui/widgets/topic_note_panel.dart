@@ -246,7 +246,10 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
         for (final sourceId in sources)
           ActionChip(
             key: ValueKey('topic-note-source-$sourceId'),
-            label: Text(sourceId, style: const TextStyle(fontSize: 12)),
+            label: Text(
+              sourceId,
+              style: const TextStyle(fontSize: AppFontSizes.xs),
+            ),
             visualDensity: VisualDensity.compact,
             onPressed: () {
               final transcript = widget.controller
@@ -276,7 +279,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
     child: Text(
       title,
       style: const TextStyle(
-        fontSize: 15,
+        fontSize: AppFontSizes.sm,
         fontWeight: FontWeight.w600,
         color: AppColors.textPrimary,
       ),
@@ -455,9 +458,9 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                       children: [
                         Expanded(
                           child: Text(
-                            topic == null ? '主题笔记' : '${topic.title} · 主题笔记',
+                            topic == null ? '主题笔记' : '${topic.title}，主题笔记',
                             style: const TextStyle(
-                              fontSize: 18,
+                              fontSize: AppFontSizes.md,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -496,7 +499,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                           '原文、所属主题或模板已变化，当前笔记可能已过期',
                           style: TextStyle(
                             color: AppColors.coral,
-                            fontSize: 13,
+                            fontSize: AppFontSizes.sm,
                           ),
                         ),
                       ),
@@ -561,7 +564,10 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                       ] else
                         Text(
                           note.overview,
-                          style: const TextStyle(fontSize: 16, height: 1.55),
+                          style: const TextStyle(
+                            fontSize: AppFontSizes.md,
+                            height: 1.55,
+                          ),
                         ),
                       if (_editing)
                         note.kind == TopicKind.book
@@ -580,7 +586,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                                     Text(
                                       excerpt.page!,
                                       style: const TextStyle(
-                                        fontSize: 13,
+                                        fontSize: AppFontSizes.sm,
                                         color: AppColors.textSecondary,
                                       ),
                                     ),
@@ -616,7 +622,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                                       child: Text(
                                         '对应摘录：${comment.excerpt}',
                                         style: const TextStyle(
-                                          fontSize: 13,
+                                          fontSize: AppFontSizes.sm,
                                           color: AppColors.textSecondary,
                                         ),
                                       ),
@@ -653,7 +659,7 @@ class _TopicNotePanelState extends State<TopicNotePanel> {
                                       child: Text(
                                         '理由：${idea.reason}',
                                         style: const TextStyle(
-                                          fontSize: 13,
+                                          fontSize: AppFontSizes.sm,
                                           color: AppColors.textSecondary,
                                         ),
                                       ),

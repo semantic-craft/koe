@@ -135,7 +135,7 @@ void main() {
     await showDetail(tester, c);
 
     expect(
-      find.text('有人声 00:30 · 录音 00:40'),
+      find.text('有人声 00:30，录音 00:40'),
       findsOneWidget,
       reason: '分母写明是有人声总时长，并给出录音总时长',
     );
@@ -225,7 +225,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('speaker-audio-missing')), findsOneWidget);
-    expect(find.text('有人声 00:30 · 录音 时长未知'), findsOneWidget);
+    expect(find.text('有人声 00:30，录音 时长未知'), findsOneWidget);
     expectShare('1', '00:16  53%');
     expectMetric('silence', '未知');
 

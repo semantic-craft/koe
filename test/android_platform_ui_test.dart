@@ -86,7 +86,7 @@ void main() {
     );
     await pumpPhone(tester, c, const TodoDetailScreen(todoId: 't1'));
 
-    expect(find.text('提醒事项 · 此设备不支持'), findsOneWidget);
+    expect(find.text('提醒事项，此设备不支持'), findsOneWidget);
     expect(find.byKey(const ValueKey('export-reminder')), findsNothing);
   }, variant: android);
 }

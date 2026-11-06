@@ -135,7 +135,7 @@ void main() {
     );
     await tester.pump();
     expect(find.text('装修师傅说什么时候开工'), findsOneWidget);
-    expect(find.text('语音识别 · 已发送'), findsOneWidget);
+    expect(find.text('语音识别，已发送'), findsOneWidget);
     expect(find.textContaining('下周一开工'), findsWidgets);
     expect(assistant.instructions.single, contains('装修师傅说什么时候开工'));
     final askedPath = stt.paths.single;
@@ -271,7 +271,7 @@ void main() {
     final asset = c.library.assets.single;
     expect(asset.displayName, startsWith('语音记录 '));
     expect(asset.path, mic.path);
-    expect(find.text('已保存为原件 · 已转写'), findsOneWidget);
+    expect(find.text('已保存为原件，已转写'), findsOneWidget);
     expect(find.text('记一下，把这份整理交给代理准备方案'), findsOneWidget);
     // Saved as material only: nothing was asked, answered or turned into work.
     expect(c.asks.sessions, isEmpty);

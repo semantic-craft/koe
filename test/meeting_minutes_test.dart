@@ -193,7 +193,7 @@ void main() {
       await tester.tap(find.text('生成纪要'));
       await tester.pumpAndSettle();
       expect(find.text('项目会议'), findsOneWidget);
-      expect(find.text('负责人：未提及 · 期限：未提及'), findsOneWidget);
+      expect(find.text('负责人：未提及，期限：未提及'), findsOneWidget);
       await tester.tap(find.text('编辑纪要'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).first, '已编辑会议');

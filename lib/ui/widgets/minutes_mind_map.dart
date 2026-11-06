@@ -9,6 +9,7 @@ import 'package:graphview/GraphView.dart';
 import '../../state/meeting_minutes.dart';
 import '../../state/recording_analysis.dart';
 import '../../state/recorder_controller.dart';
+import '../../theme/app_theme.dart';
 import 'koe_icon_button.dart';
 import '../../platform/device_kind.dart';
 
@@ -90,9 +91,9 @@ class MinuteMapLayout {
     size = Size(width, height);
   }
   static const textStyle = TextStyle(
-    fontSize: 15,
+    fontSize: AppFontSizes.sm,
     height: 1.4,
-    color: Color(0xff292724),
+    color: AppColors.textPrimary,
   );
   final List<MinuteMapNode> nodes;
   final String title, metadata;
@@ -131,7 +132,7 @@ class MinuteMapPainter extends CustomPainter {
   final MinuteMapLayout layout;
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
+    canvas.drawRect(Offset.zero & size, Paint()..color = AppColors.bgCard);
     void text(String value, Offset offset, double width, TextStyle style) {
       (TextPainter(
         text: TextSpan(text: value, style: style),
@@ -144,8 +145,8 @@ class MinuteMapPainter extends CustomPainter {
       text: TextSpan(
         text: layout.title,
         style: const TextStyle(
-          fontSize: 20,
-          color: Colors.black,
+          fontSize: AppFontSizes.lg,
+          color: AppColors.textPrimary,
           fontWeight: FontWeight.bold,
         ),
       ),
@@ -158,7 +159,7 @@ class MinuteMapPainter extends CustomPainter {
       layout.metadata,
       const Offset(20, 52),
       size.width - 40,
-      const TextStyle(fontSize: 12, color: Color(0xff666666)),
+      const TextStyle(fontSize: AppFontSizes.xs, color: AppColors.textSecondary),
     );
     for (final node in layout.nodes) {
       final r = layout.rects[node.id]!;
@@ -176,7 +177,7 @@ class MinuteMapPainter extends CustomPainter {
               r.center.dy,
             ),
           Paint()
-            ..color = const Color(0xffb66c50)
+            ..color = AppColors.accent
             ..style = PaintingStyle.stroke
             ..strokeWidth = 2,
         );
@@ -188,8 +189,8 @@ class MinuteMapPainter extends CustomPainter {
         RRect.fromRectAndRadius(r, const Radius.circular(12)),
         Paint()
           ..color = node.parent == null
-              ? const Color(0xfff0d9cc)
-              : const Color(0xfff5f3ef),
+              ? AppColors.accentSoft
+              : AppColors.bgSubtle,
       );
       text(
         node.text,
@@ -259,7 +260,7 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
           children: [
             SelectableText(node.text),
             if (node.item?.owner != null)
-              Text('负责人：${node.item!.owner} · 期限：${node.item!.due}'),
+              Text('负责人：${node.item!.owner}，期限：${node.item!.due}'),
             for (final id in node.item?.sources ?? <String>[]) ...[
               const SizedBox(height: 12),
               Text('原文 [$id]'),
@@ -369,7 +370,7 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
           : (cached ??= MinuteMapLayout(
               visible,
               view.title,
-              '${result.model} · 纪要版本 ${result.editedAt ?? result.createdAt}',
+              '${result.model}，纪要版本 ${result.editedAt ?? result.createdAt}',
             ));
       return Scaffold(
         appBar: AppBar(
@@ -424,7 +425,7 @@ class _MinutesMindMapState extends State<MinutesMindMap> {
                             minutes!,
                             result,
                             view.title,
-                            '${result.model} · 纪要版本 ${result.editedAt ?? result.createdAt}',
+                            '${result.model}，纪要版本 ${result.editedAt ?? result.createdAt}',
                           ),
                     child: Text(exporting ? '正在导出…' : '导出完整图片'),
                   ),

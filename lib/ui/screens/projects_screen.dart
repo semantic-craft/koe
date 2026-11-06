@@ -45,22 +45,13 @@ class ProjectsScreen extends StatelessWidget {
                   const Text(
                     '项目',
                     style: TextStyle(
-                      fontSize: 30,
-                      height: 1.15,
+                      fontSize: AppFontSizes.lg,
+                      height: 1.2,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: -0.6,
+                      letterSpacing: -0.4,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    '把跨天的讨论、目标和承诺放在一起。',
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.45,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 16),
                   SectionLabel(
                     '进行中项目',
                     trailing: TextButton(
@@ -79,7 +70,7 @@ class ProjectsScreen extends StatelessWidget {
                           const Text(
                             '还没有进行中的项目',
                             style: TextStyle(
-                              fontSize: 18,
+                              fontSize: AppFontSizes.md,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -87,7 +78,7 @@ class ProjectsScreen extends StatelessWidget {
                           const Text(
                             '新建一个目标项目，再把不同日子的录音和待办关联进来。',
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: AppFontSizes.sm,
                               height: 1.45,
                               color: AppColors.textSecondary,
                             ),
@@ -136,7 +127,7 @@ class ProjectsScreen extends StatelessWidget {
                       child: Text(
                         '主题在当前平台暂不可用；录音与资料仍可正常使用。',
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: AppFontSizes.sm,
                           color: AppColors.textSecondary,
                         ),
                       ),
@@ -200,7 +191,7 @@ class _ProjectCard extends StatelessWidget {
                   Text(
                     project.title,
                     style: const TextStyle(
-                      fontSize: 17,
+                      fontSize: AppFontSizes.md,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -209,7 +200,7 @@ class _ProjectCard extends StatelessWidget {
                       project.goal,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13),
+                      style: const TextStyle(fontSize: AppFontSizes.sm),
                     ),
                   const SizedBox(height: 4),
                   Text(
@@ -217,7 +208,7 @@ class _ProjectCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -226,7 +217,7 @@ class _ProjectCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
                     ),
                   ),

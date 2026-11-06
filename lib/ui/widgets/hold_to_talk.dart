@@ -144,7 +144,7 @@ class _HoldToTalkButtonState extends State<HoldToTalkButton> {
     final status = cancelling
         ? '松开手指，取消发送'
         : holding
-        ? '正在听 ${_clock()} · 松开发送，上滑取消'
+        ? '正在听 ${_clock()}，松开发送，上滑取消'
         : _hint
         ? '按住说话，松开发送'
         : null;
@@ -218,7 +218,7 @@ class _HoldToTalkButtonState extends State<HoldToTalkButton> {
                 key: const ValueKey('hold-to-talk-status'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: AppFontSizes.sm,
                   color: cancelling ? AppColors.coral : AppColors.textSecondary,
                 ),
               ),

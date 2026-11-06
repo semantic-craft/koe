@@ -571,10 +571,10 @@ class _AllDayListeningBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.watch<RecorderController>();
     final label = c.textCapturePaused
-        ? '全天监听已暂停 · 打开'
+        ? '全天监听已暂停，点击打开'
         : c.textCaptureResting
-        ? '全天监听中 · 安静'
-        : '全天监听中 · 打开';
+        ? '全天监听中（安静）'
+        : '全天监听中，点击打开';
     return Material(
       color: AppColors.bgCard,
       child: Container(
@@ -616,7 +616,7 @@ class _ActiveRecordingBar extends StatelessWidget {
                     : const Icon(Icons.mic_rounded, color: AppColors.textMuted),
                 label: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(c.recording ? '录音中 · 打开' : '录音已暂停 · 打开'),
+                  child: Text(c.recording ? '正在录音，点击打开' : '录音已暂停，点击打开'),
                 ),
               ),
             ),
@@ -858,7 +858,7 @@ class _ReaderPlaceholder extends StatelessWidget {
             SizedBox(height: 20),
             Text(
               '从一段录音开始',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w500),
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w500),
             ),
             SizedBox(height: 12),
             Text(
@@ -927,7 +927,7 @@ class _DesktopSidebar extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.w600,
                       ),
                     ),

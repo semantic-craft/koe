@@ -148,12 +148,16 @@ class _TranslationPanel extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    language.label,
-                    style: TextStyle(
-                      color: accentColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                  Flexible(
+                    child: Text(
+                      language.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: accentColor,
+                        fontSize: AppFontSizes.sm,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
@@ -166,7 +170,7 @@ class _TranslationPanel extends StatelessWidget {
                           '…',
                           style: TextStyle(
                             color: accentColor.withValues(alpha: 0.55),
-                            fontSize: 44,
+                            fontSize: AppFontSizes.lg,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -182,7 +186,7 @@ class _TranslationPanel extends StatelessWidget {
                                 turn.text,
                                 style: const TextStyle(
                                   color: AppColors.textMuted,
-                                  fontSize: 16,
+                                  fontSize: AppFontSizes.md,
                                   height: 1.35,
                                 ),
                               ),
@@ -195,7 +199,7 @@ class _TranslationPanel extends StatelessWidget {
                               ),
                               style: const TextStyle(
                                 color: AppColors.textPrimary,
-                                fontSize: 30,
+                                fontSize: AppFontSizes.lg,
                                 fontWeight: FontWeight.w700,
                                 height: 1.2,
                                 letterSpacing: -0.5,
@@ -258,7 +262,10 @@ class _CenterControls extends StatelessWidget {
                 Expanded(
                   child: Text(
                     current && c.recording ? '交流' : '已暂停',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: AppFontSizes.sm,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 IconButton.filledTonal(
@@ -282,7 +289,7 @@ class _CenterControls extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppColors.coral,
-                  fontSize: 11,
+                  fontSize: AppFontSizes.xs,
                   height: 1.25,
                 ),
               ),

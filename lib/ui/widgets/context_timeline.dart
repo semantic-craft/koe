@@ -82,9 +82,9 @@ class ContextTimelineRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    details.join(' · '),
+                    details.join('  '),
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -106,7 +106,7 @@ class ContextTimelineRow extends StatelessWidget {
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13),
+                        style: const TextStyle(fontSize: AppFontSizes.sm),
                       ),
                     ),
                   if (topicTitles.isNotEmpty || projectTitles.isNotEmpty) ...[
@@ -119,7 +119,7 @@ class ContextTimelineRow extends StatelessWidget {
                           Text(
                             '# $title',
                             style: const TextStyle(
-                              fontSize: 12,
+                              fontSize: AppFontSizes.xs,
                               color: AppColors.textSecondary,
                             ),
                           ),
@@ -127,7 +127,7 @@ class ContextTimelineRow extends StatelessWidget {
                           Text(
                             '▸ $title',
                             style: const TextStyle(
-                              fontSize: 12,
+                              fontSize: AppFontSizes.xs,
                               color: AppColors.textSecondary,
                             ),
                           ),
@@ -264,13 +264,16 @@ class _ContextLinksSheetState extends State<_ContextLinksSheet> {
           children: [
             const Text(
               '关联主题和项目',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                fontSize: AppFontSizes.lg,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               '只改「${widget.item.title}」的关联，不移动录音本身的主题，也不复制录音。',
               style: const TextStyle(
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
                 color: AppColors.textSecondary,
               ),
             ),

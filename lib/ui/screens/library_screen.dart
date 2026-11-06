@@ -71,18 +71,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         Row(
                           children: [
                             const Expanded(
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  '资料',
-                                  maxLines: 1,
-                                  style: TextStyle(
-                                    fontSize: 30,
-                                    height: 1.15,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: -0.6,
-                                  ),
+                              child: Text(
+                                '资料',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: AppFontSizes.lg,
+                                  height: 1.2,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.4,
                                 ),
                               ),
                             ),
@@ -133,16 +130,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          '原声留在手机，标题、时间和文字都能找回同一条资料。',
-                          style: TextStyle(
-                            fontSize: 14,
-                            height: 1.45,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 12),
                         TextField(
                           key: const ValueKey('library-search'),
                           controller: _search,
@@ -361,7 +349,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           child: Text(
                             '文字资料',
                             style: TextStyle(
-                              fontSize: 20,
+                              fontSize: AppFontSizes.lg,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -427,9 +415,9 @@ class _MinutesRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final time = document.capturedAt;
     final status = document.textOnly
-        ? '只有文字 · 尚未补配音频'
+        ? '只有文字，尚未补配音频'
         : document.unaligned
-        ? '已取得音频 · 时码不可靠'
+        ? '已取得音频，时码不可靠'
         : '可回听';
     return SurfaceCard(
       key: ValueKey('minutes-row-${document.id}'),
@@ -455,12 +443,12 @@ class _MinutesRow extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   time == null
-                      ? '发生时间未知 · 导入 ${_shortDate(document.importedAt)}'
-                      : '${_shortDateTime(time)} · ${document.sourceName}',
+                      ? '发生时间未知，导入 ${_shortDate(document.importedAt)}'
+                      : '${_shortDateTime(time)}  ${document.sourceName}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -468,7 +456,7 @@ class _MinutesRow extends StatelessWidget {
                 Text(
                   status,
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -560,7 +548,7 @@ class _LibraryContinueCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '继续回听 · $title',
+                  '继续回听：$title',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w600),
@@ -569,7 +557,7 @@ class _LibraryContinueCard extends StatelessWidget {
                 Text(
                   subtitle,
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textSecondary,
                   ),
                 ),

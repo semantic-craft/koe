@@ -48,7 +48,11 @@ void main() {
     expect(tester.getSize(list).height, greaterThan(300));
 
     final last = find.byKey(ValueKey('recording-row-${paths.last}'));
-    await tester.dragUntilVisible(last, list, const Offset(0, -200));
+    await tester.dragUntilVisible(
+      last.hitTestable(),
+      list,
+      const Offset(0, -200),
+    );
     expect(last.hitTestable(), findsOneWidget);
   });
 

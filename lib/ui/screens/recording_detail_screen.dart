@@ -511,27 +511,6 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   Future<void> _trash(RecordingViewData recording) async {
     final path = recording.path;
     if (path == null || recording.audioLocked) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('移到回收站？'),
-        content: const Text(
-          '原件、转写和主题关联会保留 30 天，期间可以恢复。'
-          '移到回收站后会从资料列表和继续回听中消失；独立笔记不会删除。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('移到回收站'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
     final result = await context.read<RecorderController>().trashLocalExports([
       path,
     ]);
@@ -726,7 +705,10 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
                 child: Text(
                   '说话人姓名',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontSize: AppFontSizes.lg,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               for (final speaker in controller.transcriptSpeakersForPath(path))
@@ -932,7 +914,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     if (recording.translationStale) {
       return _TranslationNotice(
         key: const ValueKey('translation-stale-notice'),
-        message: '$pair · 原文改过了，这是按旧版原文翻译的，不能对应到现在的句子回听。',
+        message: '$pair，原文改过了，这是按旧版原文翻译的，不能对应到现在的句子回听。',
         actionLabel: '重新翻译',
         onAction: retranslate,
       );
@@ -940,18 +922,18 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     if (playable) {
       return _TranslationNotice(
         key: const ValueKey('translation-aligned-notice'),
-        message: '$pair · 点译文回听对应原声。播放的是原始录音，不是译文朗读。',
+        message: '$pair，点译文回听对应原声。播放的是原始录音，不是译文朗读。',
       );
     }
     if (aligned) {
       return _TranslationNotice(
         key: const ValueKey('translation-no-audio-notice'),
-        message: '$pair · 原录音现在无法逐句定位，译文只能阅读。',
+        message: '$pair，原录音现在无法逐句定位，译文只能阅读。',
       );
     }
     return _TranslationNotice(
       key: const ValueKey('translation-unaligned-notice'),
-      message: '$pair · 这份译文没有和原文句子对齐，只能阅读，不能点译文回听原声。',
+      message: '$pair，这份译文没有和原文句子对齐，只能阅读，不能点译文回听原声。',
       actionLabel: canRealign ? '重新翻译' : null,
       onAction: canRealign ? retranslate : null,
     );
@@ -1002,7 +984,10 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
               padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text(
                 '这段是谁说的？',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  fontSize: AppFontSizes.lg,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             for (final speaker in speakers)
@@ -1171,7 +1156,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       const Text(
                         '资料信息',
                         style: TextStyle(
-                          fontSize: 20,
+                          fontSize: AppFontSizes.lg,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -1223,7 +1208,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         label: '地点',
                         value: place == null
                             ? '未知'
-                            : '${place.label} · ${place.source == RecordingPlaceSource.automatic ? '自动记录' : '手动填写'}',
+                            : '${place.label}，${place.source == RecordingPlaceSource.automatic ? '自动记录' : '手动填写'}',
                       ),
                       if (path != null)
                         Padding(
@@ -1287,7 +1272,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         _InfoRow(
                           label: 'Mac 副本',
                           value: verifiedForCurrent || currentReceipt != null
-                              ? '已校验 · ${size(archiveRecord?.verifiedLength ?? currentReceipt?.length ?? archiveRecord?.length ?? 0)}'
+                              ? '已校验，${size(archiveRecord?.verifiedLength ?? currentReceipt?.length ?? archiveRecord?.length ?? 0)}'
                               : '原件在另一台 Mac',
                         ),
                       if (!recording.originalPresent && !hasRemote)
@@ -1297,7 +1282,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                             '原件已彻底缺失（本机与 Mac 均无副本）。',
                             style: TextStyle(
                               color: AppColors.textSecondary,
-                              fontSize: 12,
+                              fontSize: AppFontSizes.xs,
                             ),
                           ),
                         ),
@@ -1573,7 +1558,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     final wide = RecordingNavigation.of(context)?.wide ?? false;
     final titleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
       color: AppColors.textPrimary,
-      fontSize: wide ? 24 : 18,
+      fontSize: wide ? AppFontSizes.lg : AppFontSizes.md,
       fontWeight: FontWeight.w600,
     );
 
@@ -1628,7 +1613,12 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         child: Semantics(
                           header: true,
                           namesRoute: true,
-                          child: Text(recording.title, style: titleStyle),
+                          child: Text(
+                            recording.title,
+                            maxLines: _maxTitleRowLines,
+                            overflow: TextOverflow.ellipsis,
+                            style: titleStyle,
+                          ),
                         ),
                       ),
                     ),
@@ -1813,8 +1803,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       value: 'trash',
                       enabled: fileReady && !recording.processing,
                       child: const Text(
-                        '删除资料…',
-                        style: TextStyle(color: AppColors.coral),
+                        '移到回收站',
+                        style: TextStyle(color: AppColors.textSecondary),
                       ),
                     ),
                     const PopupMenuItem(value: 'info', child: Text('资料信息')),
@@ -2743,7 +2733,7 @@ class _RecordingTextReaderState extends State<RecordingTextReader> {
                                         Text(
                                           _paragraphs[paragraphIndex],
                                           style: const TextStyle(
-                                            fontSize: 17,
+                                            fontSize: AppFontSizes.md,
                                             height: 1.85,
                                             color: AppColors.textPrimary,
                                           ),
@@ -3455,7 +3445,7 @@ class _TranslationDialogState extends State<_TranslationDialog> {
           Text(
             _needsPreparation ? '下载所选语言后，在设备端翻译。' : '使用已下载的语言在设备端翻译。',
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
               color: AppColors.textSecondary,
             ),
           ),
@@ -3616,14 +3606,17 @@ class _OrganizeBanner extends StatelessWidget {
           children: [
             Text(
               needsCheck ? '自动整理暂停：结果待核实' : '自动整理没有完成',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                fontSize: AppFontSizes.sm,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             if (status.message != null) ...[
               const SizedBox(height: 4),
               Text(
                 status.message!,
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: AppFontSizes.sm,
                   color: AppColors.textSecondary,
                   height: 1.4,
                 ),
@@ -3699,7 +3692,10 @@ class _PendingTranscriptBanner extends StatelessWidget {
               edited
                   ? '有新版本正文（重新转写或导入的资料包），未覆盖你的校订。'
                   : '导入的资料包带来另一个版本的正文，未覆盖当前正文。',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                fontSize: AppFontSizes.sm,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 4),
             Wrap(
@@ -3745,7 +3741,10 @@ class _SpeakerMergeRiskBanner extends StatelessWidget {
           children: [
             const Text(
               '发言人可能分得不够细：不同的人可能被并成同一位。人多、嘈杂或远距收音时常发生，指定「大约几个人」重新区分会更准。',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 4),
             Wrap(
@@ -3795,12 +3794,18 @@ class _RediarizeSpeakersDialogState extends State<_RediarizeSpeakersDialog> {
           children: [
             const Text(
               '只重新分辨谁在说话，逐字稿的文字不会变，手动改过归属的段落也会保留。',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                color: AppColors.textSecondary,
+              ),
             ),
             const SizedBox(height: 12),
             const Text(
               '大约几个人',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 8),
             ExpectedSpeakersChips(
@@ -3853,10 +3858,16 @@ class _MergeSpeakersDialogState extends State<_MergeSpeakersDialog> {
           children: [
             const Text(
               '将被合并发言人的所有段落归入目标发言人。若目标尚未自定义姓名，会保留被合并者的自定义姓名。',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                color: AppColors.textSecondary,
+              ),
             ),
             const SizedBox(height: 12),
-            const Text('把哪位发言人：', style: TextStyle(fontSize: 13)),
+            const Text(
+              '把哪位发言人：',
+              style: TextStyle(fontSize: AppFontSizes.sm),
+            ),
             Wrap(
               spacing: 6,
               children: [
@@ -3877,7 +3888,10 @@ class _MergeSpeakersDialogState extends State<_MergeSpeakersDialog> {
               ],
             ),
             const SizedBox(height: 12),
-            const Text('合并到：', style: TextStyle(fontSize: 13)),
+            const Text(
+              '合并到：',
+              style: TextStyle(fontSize: AppFontSizes.sm),
+            ),
             Wrap(
               spacing: 6,
               children: [
@@ -4292,7 +4306,7 @@ class _BookmarkListSheet extends StatelessWidget {
                                         ),
                                         style: const TextStyle(
                                           color: AppColors.coral,
-                                          fontSize: 13,
+                                          fontSize: AppFontSizes.sm,
                                           height: 1.4,
                                         ),
                                       ),
@@ -4325,6 +4339,7 @@ class _BookmarkListSheet extends StatelessWidget {
 
 const _titleRowInset = NavigationToolbar.kMiddleSpacing;
 const _titleRowBottom = 12.0;
+const _maxTitleRowLines = 2;
 
 /// Height of the detail title's own row under the toolbar, or null when the
 /// title fits on one line between the leading button and the three actions.
@@ -4355,7 +4370,7 @@ double? _ownTitleRowHeight(
   try {
     if (!painter.didExceedMaxLines) return null;
     painter
-      ..maxLines = null
+      ..maxLines = _maxTitleRowLines
       ..layout(maxWidth: width - 2 * _titleRowInset);
     return painter.height + _titleRowBottom;
   } finally {

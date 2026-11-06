@@ -67,7 +67,10 @@ class _MorningBriefCardState extends State<MorningBriefCard> {
     final brief = c.morningBrief(now);
     final points = brief.keyPoints?.current;
     final busy = c.briefGenerating(now);
-    final small = const TextStyle(fontSize: 13, color: AppColors.textSecondary);
+    final small = const TextStyle(
+      fontSize: AppFontSizes.sm,
+      color: AppColors.textSecondary,
+    );
     return SurfaceCard(
       key: const ValueKey('morning-brief'),
       padding: const EdgeInsets.fromLTRB(16, 14, 12, 8),
@@ -75,8 +78,11 @@ class _MorningBriefCardState extends State<MorningBriefCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '晨报 · ${now.month}月${now.day}日',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            '晨报  ${now.month}月${now.day}日',
+            style: const TextStyle(
+              fontSize: AppFontSizes.md,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
@@ -91,7 +97,7 @@ class _MorningBriefCardState extends State<MorningBriefCard> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text(
-                  '· ${todo.title}（${todoDueLabel(todo)}）',
+                  '${todo.title}（${todoDueLabel(todo)}）',
                   style: small,
                 ),
               ),
@@ -106,7 +112,7 @@ class _MorningBriefCardState extends State<MorningBriefCard> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Text(
-                    '· ${todo.owner ?? '对方'}答应「${todo.title}」，${todoDueLabel(todo)}到期',
+                    '${todo.owner ?? '对方'}答应「${todo.title}」，${todoDueLabel(todo)}到期',
                     style: small,
                   ),
                 ),
@@ -122,7 +128,10 @@ class _MorningBriefCardState extends State<MorningBriefCard> {
                   child: CitedText(
                     text: diaryLineTag(line.trim()).$2,
                     sources: points.sources,
-                    style: const TextStyle(fontSize: 13, height: 1.45),
+                    style: const TextStyle(
+                      fontSize: AppFontSizes.sm,
+                      height: 1.45,
+                    ),
                   ),
                 ),
           ] else if (brief.yesterday.sources.isEmpty)
@@ -134,7 +143,7 @@ class _MorningBriefCardState extends State<MorningBriefCard> {
             Text(
               _error!,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: AppFontSizes.xs,
                 color: Theme.of(context).colorScheme.error,
               ),
             ),

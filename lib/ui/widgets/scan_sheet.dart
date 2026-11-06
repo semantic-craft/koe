@@ -145,10 +145,10 @@ class _ScanDevicesSheetState extends State<ScanDevicesSheet> {
               ),
             ),
             const Text(
-              '扫描设备',
+              '连接录音豆',
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 20,
+                fontSize: AppFontSizes.lg,
                 fontWeight: FontWeight.w700,
                 color: AppColors.textPrimary,
               ),
@@ -309,7 +309,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
             '将麦克风放入充电仓',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 16,
+              fontSize: AppFontSizes.md,
               fontWeight: FontWeight.w600,
               color: AppColors.textPrimary,
               height: 1.4,
@@ -320,7 +320,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
             '短按充电仓下方按钮完成连接',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 15,
+              fontSize: AppFontSizes.sm,
               color: AppColors.textSecondary,
               height: 1.4,
             ),
@@ -342,7 +342,7 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
                 Text(
                   widget.connecting ? '正在连接设备…' : '正在等待设备广播…',
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: AppFontSizes.sm,
                     color: widget.connecting
                         ? AppColors.accent
                         : AppColors.textMuted,
@@ -364,7 +364,10 @@ class _ConnectGuidePanelState extends State<_ConnectGuidePanel>
             const SizedBox(height: 10),
             Text(
               '已见 ${widget.adsSeen} 条 BLE 广播',
-              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+              style: const TextStyle(
+                fontSize: AppFontSizes.xs,
+                color: AppColors.textMuted,
+              ),
             ),
           ],
           if (widget.error != null) ...[
@@ -513,7 +516,9 @@ class _SheetDeviceTile extends StatelessWidget {
               color: match
                   ? AppColors.accent.withValues(alpha: 0.12)
                   : AppColors.bg,
-              borderRadius: BorderRadius.circular(AppRadii.card),
+              borderRadius: BorderRadius.circular(
+                AppRadii.concentric(AppRadii.card, 4),
+              ),
             ),
             clipBehavior: Clip.antiAlias,
             child: connecting
@@ -547,7 +552,7 @@ class _SheetDeviceTile extends StatelessWidget {
                   device.displayName,
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 15,
+                    fontSize: AppFontSizes.md,
                   ),
                 ),
                 const SizedBox(height: 3),
@@ -556,7 +561,7 @@ class _SheetDeviceTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: AppFontSizes.xs,
                     color: connecting ? AppColors.accent : AppColors.textMuted,
                   ),
                 ),

@@ -410,7 +410,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                         key: const ValueKey('phone-recording-title'),
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                          fontSize: 18,
+                          fontSize: AppFontSizes.md,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -460,7 +460,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                             ),
                           if (state.text.isNotEmpty) ...[
                             const SizedBox(height: 12),
-                            const Text('本机实时识别 · 未校对'),
+                            const Text('本机实时识别（未校对）'),
                             SizedBox(
                               height: 160,
                               child: SingleChildScrollView(
@@ -479,7 +479,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                       textAlign: TextAlign.center,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 12,
+                        fontSize: AppFontSizes.xs,
                         color: AppColors.textSecondary,
                       ),
                     ),
@@ -491,7 +491,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                       key: const ValueKey('phone-recording-mic-notice'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                        fontSize: 13,
+                        fontSize: AppFontSizes.sm,
                         color: AppColors.amber,
                       ),
                     ),
@@ -503,7 +503,7 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                       key: const ValueKey('phone-recording-space-notice'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                        fontSize: 13,
+                        fontSize: AppFontSizes.sm,
                         color: AppColors.amber,
                       ),
                     ),
@@ -571,13 +571,13 @@ class _PhoneRecordingPanelState extends State<PhoneRecordingPanel> {
                         if (highlights.isNotEmpty)
                           Expanded(
                             child: Text(
-                              '已标 ${highlights.length} 处 · 最近 '
+                              '已标 ${highlights.length} 处，最近 '
                               '${recordingTimeLabel(highlights.last)}',
                               key: const ValueKey('phone-recording-highlights'),
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 color: AppColors.textSecondary,
-                                fontSize: 13,
+                                fontSize: AppFontSizes.sm,
                               ),
                             ),
                           ),
@@ -682,8 +682,8 @@ class _RecordingClockState extends State<_RecordingClock> {
       key: const ValueKey('phone-recording-elapsed'),
       textAlign: TextAlign.center,
       style: const TextStyle(
-        fontSize: 40,
-        fontWeight: FontWeight.w300,
+        fontSize: AppFontSizes.lg,
+        fontWeight: FontWeight.w600,
         fontFeatures: [FontFeature.tabularFigures()],
       ),
     );
@@ -761,7 +761,7 @@ class _LevelHintNotice extends StatelessWidget {
               child: Text(
                 text,
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: AppFontSizes.sm,
                   color: AppColors.textPrimary,
                 ),
               ),
@@ -881,14 +881,17 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
           children: [
             const Text(
               '新记录',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                fontSize: AppFontSizes.lg,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               runsOnMac ? '原件先保存到本机，再决定是否转写或整理。' : '原件先保存到手机，再决定是否转写或整理。',
               style: const TextStyle(
                 color: AppColors.textSecondary,
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
               ),
             ),
             const SizedBox(height: 16),
@@ -947,7 +950,7 @@ class _NewRecordingPanelState extends State<_NewRecordingPanel> {
                 key: const ValueKey('new-record-voice-error'),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: AppFontSizes.sm,
                   color: AppColors.textSecondary,
                 ),
               ),
@@ -1043,16 +1046,16 @@ class _SavedNote extends StatelessWidget {
     if (view == null) {
       status = line!;
     } else if (view.text.trim().isNotEmpty) {
-      status = '已保存为原件 · 已转写';
+      status = '已保存为原件，已转写';
       text = view.text.trim();
     } else if (view.error != null) {
-      status = '已保存为原件 · ${view.error}';
+      status = '已保存为原件，${view.error}';
     } else if (view.processing) {
-      status = '已保存为原件 · 正在转写';
+      status = '已保存为原件，正在转写';
     } else if (view.speechReady) {
-      status = '已保存为原件 · 等待转写';
+      status = '已保存为原件，等待转写';
     } else {
-      status = '已保存为原件 · 配置语音服务后可转写';
+      status = '已保存为原件，配置语音服务后可转写';
     }
     return Container(
       key: const ValueKey('new-record-saved'),

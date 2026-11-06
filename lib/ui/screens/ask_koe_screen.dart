@@ -274,10 +274,10 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
                   if (scope.processing > 0) '${scope.processing} 条处理中',
                   if (scope.withoutText - scope.processing > 0)
                     '${scope.withoutText - scope.processing} 条还没有文字',
-                ].join(' · '),
+                ].join('，'),
                 key: const ValueKey('ask-scope'),
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: AppFontSizes.xs,
                   color: AppColors.textSecondary,
                 ),
               ),
@@ -327,7 +327,7 @@ class _AskKoeScreenState extends State<AskKoeScreen> {
                   voiceError,
                   key: const ValueKey('ask-voice-error'),
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: AppFontSizes.sm,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -465,7 +465,7 @@ class _VoiceClipCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadii.card),
       ),
       child: DefaultTextStyle.merge(
-        style: const TextStyle(fontSize: 13),
+        style: const TextStyle(fontSize: AppFontSizes.sm),
         child: body,
       ),
     );
@@ -495,7 +495,10 @@ class _SpeakingBar extends StatelessWidget {
             child: Text(
               '合成语音朗读中，不是录音原声',
               key: ValueKey('ask-speaking'),
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: AppFontSizes.xs,
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
           TextButton(
@@ -543,9 +546,9 @@ class _Bubble extends StatelessWidget {
                     ),
                     SizedBox(width: 2),
                     Text(
-                      '语音识别 · 已发送',
+                      '语音识别，已发送',
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: AppFontSizes.xs,
                         color: AppColors.textSecondary,
                       ),
                     ),
@@ -589,7 +592,7 @@ class _Bubble extends StatelessWidget {
               child: Text(
                 message.notice ? '未执行' : '无依据',
                 style: const TextStyle(
-                  fontSize: 11,
+                  fontSize: AppFontSizes.xs,
                   color: AppColors.textMuted,
                 ),
               ),
@@ -603,7 +606,7 @@ class _Bubble extends StatelessWidget {
                 tilePadding: EdgeInsets.zero,
                 title: Text(
                   '出处 ${message.sources.length}',
-                  style: const TextStyle(fontSize: 12),
+                  style: const TextStyle(fontSize: AppFontSizes.xs),
                 ),
                 children: [SourceList(sources: message.sources)],
               ),

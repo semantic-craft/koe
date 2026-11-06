@@ -353,7 +353,7 @@ void main() {
     });
     await tester.pumpAndSettle();
     expect(system.items, hasLength(1));
-    expect(find.text('提醒事项 · 已关联'), findsOneWidget);
+    expect(find.text('提醒事项，已关联'), findsOneWidget);
   });
 
   testWidgets(
@@ -380,7 +380,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('confirm-export')));
       await tester.pumpAndSettle();
-      expect(find.text('提醒事项 · 等待系统授权'), findsOneWidget);
+      expect(find.text('提醒事项，等待系统授权'), findsOneWidget);
       expect(
         tester
             .widget<TextButton>(find.byKey(const ValueKey('export-reminder')))
@@ -391,7 +391,7 @@ void main() {
 
       system.permission!.complete(false);
       await tester.pumpAndSettle();
-      expect(find.text('提醒事项 · 未导出'), findsOneWidget);
+      expect(find.text('提醒事项，未导出'), findsOneWidget);
       expect(
         tester
             .widget<TextButton>(find.byKey(const ValueKey('export-reminder')))
@@ -408,7 +408,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       });
       await tester.pumpAndSettle();
-      expect(find.text('提醒事项 · 已关联'), findsOneWidget);
+      expect(find.text('提醒事项，已关联'), findsOneWidget);
       expect(system.items, hasLength(1));
     },
   );
@@ -456,7 +456,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('export-reminder')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('confirm-export')));
-    final linked = find.text('提醒事项 · 已关联');
+    final linked = find.text('提醒事项，已关联');
     for (var i = 0; i < 50 && linked.evaluate().isEmpty; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),

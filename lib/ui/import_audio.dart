@@ -86,12 +86,18 @@ class _ImportAudioDialogState extends State<_ImportAudioDialog> {
           children: [
             const Text(
               '大约几个人',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 4),
             const Text(
               '分发言人时按这个人数分；不确定就选自动判断。',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                color: AppColors.textSecondary,
+              ),
             ),
             const SizedBox(height: 8),
             ExpectedSpeakersChips(

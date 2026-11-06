@@ -49,7 +49,7 @@ class TrashScreen extends StatelessWidget {
                     Text(
                       '回收站为空',
                       style: TextStyle(
-                        fontSize: 18,
+                        fontSize: AppFontSizes.md,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -102,11 +102,11 @@ class TrashScreen extends StatelessWidget {
                             Text(
                               days > 0
                                   ? asset.deletedAt == null
-                                        ? '在回收站中 · 还可恢复 $days 天'
-                                        : '删除于 ${FilesBody.formatDateTime(asset.deletedAt!)} · 还可恢复 $days 天'
+                                        ? '在回收站中，还可恢复 $days 天'
+                                        : '删除于 ${FilesBody.formatDateTime(asset.deletedAt!)}，还可恢复 $days 天'
                                   : '已超过 30 天保留期，等待清理',
                               style: const TextStyle(
-                                fontSize: 12,
+                                fontSize: AppFontSizes.xs,
                                 color: AppColors.textSecondary,
                               ),
                             ),

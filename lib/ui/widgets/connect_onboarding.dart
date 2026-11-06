@@ -144,10 +144,10 @@ class _SuccessStep extends StatelessWidget {
             ),
           ),
           const Text(
-            '🎉  连接成功',
+            '连接成功',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 22,
+              fontSize: AppFontSizes.lg,
               fontWeight: FontWeight.w700,
               color: AppColors.textPrimary,
             ),
@@ -233,9 +233,10 @@ class _BatteryProductCard extends StatelessWidget {
         Text(
           '$p%',
           style: const TextStyle(
-            fontSize: 18,
+            fontSize: AppFontSizes.md,
             fontWeight: FontWeight.w700,
             color: AppColors.textPrimary,
+            fontFeatures: [FontFeature.tabularFigures()],
           ),
         ),
         const SizedBox(height: 8),
@@ -251,7 +252,10 @@ class _BatteryProductCard extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           label,
-          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+          style: const TextStyle(
+            fontSize: AppFontSizes.xs,
+            color: AppColors.textMuted,
+          ),
         ),
       ],
     );
@@ -338,7 +342,7 @@ class _TipStep extends StatelessWidget {
                   page.title,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    fontSize: 20,
+                    fontSize: AppFontSizes.lg,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
                   ),
@@ -348,7 +352,7 @@ class _TipStep extends StatelessWidget {
                   page.body,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    fontSize: 14,
+                    fontSize: AppFontSizes.sm,
                     height: 1.5,
                     color: AppColors.textSecondary,
                   ),

@@ -156,8 +156,8 @@ void main() {
     expect(find.byKey(ValueKey('recording-row-$untimed')), findsOneWidget);
     expect(find.byKey(ValueKey('search-hit-$timed')), findsOneWidget);
     expect(find.byKey(ValueKey('search-hit-$untimed')), findsOneWidget);
-    expect(find.text('正文命中 · 00:12 可回听'), findsOneWidget);
-    expect(find.text('正文命中 · 无可用时码，打开可阅读原文'), findsOneWidget);
+    expect(find.text('正文命中，00:12 可回听'), findsOneWidget);
+    expect(find.text('正文命中，无可用时码，打开可阅读原文'), findsOneWidget);
 
     await tester.ensureVisible(find.byKey(ValueKey('recording-row-$untimed')));
     await tester.pumpAndSettle();
@@ -221,7 +221,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(ValueKey('recording-row-$path')), findsOneWidget);
-    expect(find.text('正文命中 · 00:12 可回听'), findsOneWidget);
+    expect(find.text('正文命中，00:12 可回听'), findsOneWidget);
 
     await tester.tap(find.byKey(ValueKey('recording-row-$path')));
     await tester.pumpAndSettle();
@@ -375,8 +375,6 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('更多操作'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('删除资料…'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('移到回收站'));
     await tester.pumpAndSettle();

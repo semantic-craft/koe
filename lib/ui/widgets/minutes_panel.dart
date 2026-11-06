@@ -423,7 +423,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
           : r.editedAt != null
           ? '手动编辑'
           : '正式生成';
-      return '版本 ${index + 1} · $tag · ${r.createdAt.toIso8601String()}';
+      return '版本 ${index + 1}，$tag，${r.createdAt.toIso8601String()}';
     }
 
     final selectedIndex = await showDialog<int>(
@@ -941,7 +941,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
                   children: [
                     SelectableText(item.text),
                     if (item.owner != null)
-                      Text('负责人：${item.owner} · 期限：${item.due}'),
+                      Text('负责人：${item.owner}，期限：${item.due}'),
                     sources(item.sources),
                   ],
                 ),
@@ -972,7 +972,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
             children: [
               Text(view.title, style: Theme.of(context).textTheme.titleLarge),
               Text(
-                '${widget.controller.analysisBackendSummary} · '
+                '${widget.controller.analysisBackendSummary}，'
                 '${meetingTemplateById(selectedTemplateId).labelForLanguage(selectedLanguage)}',
               ),
               const SizedBox(height: 12),
@@ -1085,7 +1085,7 @@ class _MinutesPanelState extends State<MinutesPanel> {
                 ),
                 SelectableText(minutes.overview),
                 Text(
-                  '${result.model} · '
+                  '${result.model}，'
                   '${result.isDraft ? '草稿纪要（实时识别生成）' : (result.editedAt == null ? '已生成' : '已手动编辑')}',
                 ),
                 SingleChildScrollView(

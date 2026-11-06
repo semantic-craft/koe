@@ -203,7 +203,7 @@ void main() {
     // The translation opens, says which languages and that taps play the
     // original recording, not a reading of the translation.
     expect(find.byTooltip('复制译文'), findsOneWidget);
-    expect(find.textContaining('English → 简体中文 · 点译文回听对应原声'), findsOneWidget);
+    expect(find.textContaining('English → 简体中文，点译文回听对应原声'), findsOneWidget);
     expect(find.textContaining('不是译文朗读'), findsOneWidget);
     expect(
       inReader(
@@ -249,7 +249,7 @@ void main() {
     await showDetail(tester, restarted);
     await tester.tap(find.text('译文'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('English → 简体中文 · 点译文回听对应原声'), findsOneWidget);
+    expect(find.textContaining('English → 简体中文，点译文回听对应原声'), findsOneWidget);
     await tapTranslated(tester, 3);
     expect(restarted.playbackRequests, [
       (path, const Duration(seconds: 12), 147100),

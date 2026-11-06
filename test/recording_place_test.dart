@@ -259,7 +259,7 @@ void main() {
     );
     await tester.tap(find.widgetWithText(FilledButton, '保存'));
     await settle();
-    expect(find.text('上海 徐汇 · 手动填写'), findsOneWidget);
+    expect(find.text('上海 徐汇，手动填写'), findsOneWidget);
 
     await tester.tap(find.text('修改地点'));
     await settle();
@@ -269,11 +269,11 @@ void main() {
     );
     await tester.tap(find.widgetWithText(FilledButton, '保存'));
     await settle();
-    expect(find.text('上海 浦东 · 手动填写'), findsOneWidget);
+    expect(find.text('上海 浦东，手动填写'), findsOneWidget);
 
     await tester.tap(find.text('清除地点'));
     await settle();
-    expect(find.text('上海 浦东 · 手动填写'), findsNothing);
+    expect(find.text('上海 浦东，手动填写'), findsNothing);
     expect(find.text('未知'), findsWidgets);
   });
 
