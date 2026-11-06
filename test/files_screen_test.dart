@@ -98,9 +98,7 @@ void main() async {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('删除所选'));
     await tester.pumpAndSettle();
-    expect(find.text('移到回收站？'), findsOneWidget);
-    await tester.tap(find.widgetWithText(TextButton, '移到回收站'));
-    await tester.pumpAndSettle();
+    expect(find.text('移到回收站？'), findsNothing);
 
     expect(await tester.runAsync(() => audio.exists()), isTrue);
     expect(controller.exportedPaths, isNot(contains(audio.path)));

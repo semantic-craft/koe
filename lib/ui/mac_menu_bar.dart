@@ -266,7 +266,7 @@ class MacMenuBar {
       SttFileStage.fetching => '获取结果',
       SttFileStage.processing || null => '处理中',
     };
-    return '正在转写「$_title」· $stage';
+    return '正在转写「$_title」，$stage';
   }
 
   void _run(String action) {

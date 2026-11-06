@@ -93,9 +93,9 @@ class TodoRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    details.join(' · '),
+                    details.join('，'),
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -208,7 +208,7 @@ class _ClarificationCard extends StatelessWidget {
               child: Text(
                 '「${item.quote}」 ${sourcePositionLabel(item.source)}',
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: AppFontSizes.sm,
                   color: AppColors.textSecondary,
                 ),
               ),
@@ -306,7 +306,10 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
         children: [
           Text(
             todo.title,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+            style: const TextStyle(
+              fontSize: AppFontSizes.lg,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 12),
           for (final (label, value) in info)
@@ -330,7 +333,7 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
                 Text(
                   sourcePositionLabel(todo.source),
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -387,7 +390,7 @@ class _TodoDetailScreenState extends State<TodoDetailScreen> {
               child: Text(
                 c.systemTasksNotice!,
                 style: const TextStyle(
-                  fontSize: 12,
+                  fontSize: AppFontSizes.xs,
                   color: AppColors.textSecondary,
                 ),
               ),
@@ -584,7 +587,7 @@ class _LinkCard extends StatelessWidget {
                 color: AppColors.textSecondary,
               ),
               const SizedBox(width: 10),
-              Expanded(child: Text('$name · $status')),
+              Expanded(child: Text('$name，$status')),
               if (link == null && supported)
                 TextButton(
                   key: ValueKey('export-${target.name}'),

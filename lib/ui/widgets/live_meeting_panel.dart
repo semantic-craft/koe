@@ -39,7 +39,7 @@ class LiveMeetingPanel extends StatelessWidget {
                       ),
                       TextButton(
                         onPressed: () => c.setLiveDisplayMode('hidden'),
-                        child: const Text('立即隐藏'),
+                        child: const Text('隐藏'),
                       ),
                     ],
                   ),
@@ -57,7 +57,7 @@ class LiveMeetingPanel extends StatelessWidget {
                 SwitchListTile(
                   title: const Text('双语字幕'),
                   subtitle: Text(
-                    '目标语种：${c.translationTargetLanguage} · 其它语种在设置中选择',
+                    '目标语种：${c.translationTargetLanguage}，其它语种在设置中选择',
                   ),
                   value: c.liveCaptionsEnabled,
                   onChanged: c.liveMeetingAvailable && !c.liveMeetingClosing
@@ -77,7 +77,7 @@ class LiveMeetingPanel extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${entry.sourceLanguage} · ${entry.provider.isEmpty ? '所选语种' : entry.provider}',
+                          '${entry.sourceLanguage}，${entry.provider.isEmpty ? '所选语种' : entry.provider}',
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
                         SelectableText(entry.text),
@@ -121,7 +121,7 @@ class LiveMeetingPanel extends StatelessWidget {
                         ? '速记更新中…'
                         : m.paused
                         ? '实时整理已暂停'
-                        : '实时速记 · 未校对',
+                        : '实时速记，未校对',
                   ),
                   if (m.error != null) Text(m.error!),
                   if (m.result case final result?)

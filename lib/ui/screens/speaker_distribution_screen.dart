@@ -259,7 +259,7 @@ class _Shares extends StatelessWidget {
       children: [
         Text(
           '有人声 ${_clock(d.voiced)}'
-          ' · 录音 ${total == null ? '时长未知' : _clock(total)}',
+          '，录音 ${total == null ? '时长未知' : _clock(total)}',
           key: const ValueKey('speaker-denominator'),
           style: Theme.of(
             context,
@@ -703,7 +703,7 @@ class _Notice extends StatelessWidget {
         child: Text(
           message,
           style: TextStyle(
-            fontSize: 13,
+            fontSize: AppFontSizes.sm,
             height: 1.4,
             color: error ? AppColors.coral : AppColors.textSecondary,
           ),

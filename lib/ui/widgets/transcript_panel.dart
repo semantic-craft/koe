@@ -45,7 +45,10 @@ class TranscriptPanel extends StatelessWidget {
             if (!c.sttConfigured)
               Text(
                 '请在设置中配置语音服务',
-                style: const TextStyle(color: AppColors.amber, fontSize: 12),
+                style: const TextStyle(
+                  color: AppColors.amber,
+                  fontSize: AppFontSizes.xs,
+                ),
               )
             else if (hasText)
               Row(
@@ -56,7 +59,7 @@ class TranscriptPanel extends StatelessWidget {
                       '转写',
                       style: const TextStyle(
                         color: AppColors.textMuted,
-                        fontSize: 12,
+                        fontSize: AppFontSizes.xs,
                       ),
                     ),
                   ),
@@ -100,7 +103,7 @@ class TranscriptPanel extends StatelessWidget {
                       : '转写',
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                    fontSize: AppFontSizes.sm,
                   ),
                 ),
               ),
@@ -126,7 +129,7 @@ class TranscriptPanel extends StatelessWidget {
               '请在设置中配置语音服务',
               style: const TextStyle(
                 color: AppColors.amber,
-                fontSize: 12,
+                fontSize: AppFontSizes.xs,
                 height: 1.35,
               ),
             ),
@@ -137,7 +140,7 @@ class TranscriptPanel extends StatelessWidget {
               c.transcriptError!,
               style: const TextStyle(
                 color: AppColors.coral,
-                fontSize: 11,
+                fontSize: AppFontSizes.xs,
                 height: 1.35,
               ),
             ),
@@ -156,7 +159,7 @@ class TranscriptPanel extends StatelessWidget {
                 child: Text(
                   draft,
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: AppFontSizes.sm,
                     height: 1.45,
                     color: AppColors.textPrimary,
                   ),
@@ -192,7 +195,7 @@ class TranscriptPanel extends StatelessWidget {
                   : '等待语音',
               style: const TextStyle(
                 color: AppColors.textMuted,
-                fontSize: 12,
+                fontSize: AppFontSizes.xs,
                 height: 1.35,
               ),
             ),

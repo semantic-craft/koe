@@ -989,7 +989,7 @@ mixin _RecorderDevice on ChangeNotifier {
       // New take: re-enable PCM stream STT (may have fallen back last session).
       _preferStreamStt = true;
       pcmFramesDecoded = 0;
-      statusMessage = fileId != null && fileId > 0 ? '录音中 · 文件 $fileId' : '录音中';
+      statusMessage = fileId != null && fileId > 0 ? '录音中，文件 $fileId' : '录音中';
       // The current recording always streams live over BLE — transcription
       // depends on it. `autoRealtime` ("自动传输") only gates catching up on
       // already-finished, un-exported recordings (see _autoTransferMissingFiles).
@@ -1136,7 +1136,7 @@ mixin _RecorderDevice on ChangeNotifier {
         if (activeDevice != null) lastKnownDevice = activeDevice;
         unawaited(_persistDevice());
         statusMessage =
-            '麦克风 ${info?.battery ?? "—"}% · 充电盒 ${info?.boxBattery ?? "—"}%';
+            '麦克风 ${info?.battery ?? "—"}%，充电盒 ${info?.boxBattery ?? "—"}%';
         final hex = info?.rawHex ?? '';
         if (hex.isNotEmpty) {
           logs = [
@@ -1155,7 +1155,7 @@ mixin _RecorderDevice on ChangeNotifier {
           boxBattery: box,
         );
         lastKnownInfo = info;
-        statusMessage = '麦克风 $mic% · 充电盒 $box%';
+        statusMessage = '麦克风 $mic%，充电盒 $box%';
         logs = [
           'BATT mic=$mic% (raw $micRaw) box=$box% (raw $boxRaw)',
           ...logs,

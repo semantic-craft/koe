@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../state/mac_interpreting.dart';
+import '../../theme/app_theme.dart';
 
 class MacInterpretingPanel extends StatefulWidget {
   const MacInterpretingPanel({
@@ -143,7 +144,10 @@ class _MacInterpretingPanelState extends State<MacInterpretingPanel> {
           children: [
             const Text(
               'Mac 同声传译',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: AppFontSizes.lg,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const Text(
               '在会议软件中选择 BlackHole 2ch 作为麦克风。按住说一句，松开后翻译；忙时不接下一句。快捷键 ⌃⌥⌘T。',
@@ -227,7 +231,7 @@ class _MacInterpretingPanelState extends State<MacInterpretingPanel> {
                 child: Container(
                   padding: const EdgeInsets.all(20),
                   color: Theme.of(context).colorScheme.secondaryContainer,
-                  child: const Text('按住说话 · 松开发送', textAlign: TextAlign.center),
+                  child: const Text('按住说话，松开发送', textAlign: TextAlign.center),
                 ),
               ),
             Text(switch (m.phase) {

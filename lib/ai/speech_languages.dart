@@ -4,7 +4,7 @@ class SpeechLanguage {
   final String code;
   final String name;
 
-  String get label => '$name · $code';
+  String get label => '$name（$code）';
 }
 
 /// Language names retained for displaying historical translation settings.

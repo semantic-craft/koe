@@ -45,7 +45,7 @@ class KoeMobileHeader extends StatelessWidget {
               child: const Text(
                 '${AppIdentity.name}.',
                 style: TextStyle(
-                  fontSize: 24,
+                  fontSize: AppFontSizes.lg,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -0.8,
                   color: AppColors.textPrimary,

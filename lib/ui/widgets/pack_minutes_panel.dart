@@ -19,7 +19,7 @@ class PackMinutesPanel extends StatelessWidget {
     final decisions = [
       for (final term in minutes.terms)
         if (term.adoption case final adoption?)
-          '${term.name}：${adoption.kind == 'vocabulary' ? '已加入词表' : '已订正本场原文'} · ${adoption.at.toIso8601String()}',
+          '${term.name}：${adoption.kind == 'vocabulary' ? '已加入词表' : '已订正本场原文'}，${adoption.at.toIso8601String()}',
     ];
     return [
       minutes.export(result),

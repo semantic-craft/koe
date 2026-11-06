@@ -136,7 +136,7 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
         Text(
           document.warning!,
           style: const TextStyle(
-            fontSize: 13,
+            fontSize: AppFontSizes.sm,
             color: AppColors.textSecondary,
             height: 1.4,
           ),
@@ -147,7 +147,10 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
         Text(
           _notice!,
           key: const ValueKey('minutes-attach-result'),
-          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          style: const TextStyle(
+            fontSize: AppFontSizes.sm,
+            color: AppColors.textSecondary,
+          ),
         ),
       ],
       if (focusValid) ...[
@@ -160,8 +163,8 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
-            '出处 · 第 ${focus + 1} 句\n${document.segments[focus].text}',
-            style: const TextStyle(fontSize: 14, height: 1.5),
+            '出处：第 ${focus + 1} 句\n${document.segments[focus].text}',
+            style: const TextStyle(fontSize: AppFontSizes.sm, height: 1.5),
           ),
         ),
       ],
@@ -173,7 +176,10 @@ class _MinutesDocumentScreenState extends State<MinutesDocumentScreen> {
                 document.restore?['minutes'] != null
             ? '纪要原文快照'
             : '正文',
-        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        style: const TextStyle(
+          fontSize: AppFontSizes.md,
+          fontWeight: FontWeight.w700,
+        ),
       ),
       const SizedBox(height: 8),
     ];
@@ -260,7 +266,7 @@ class _SegmentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const base = TextStyle(fontSize: 15, height: 1.55);
+    const base = TextStyle(fontSize: AppFontSizes.md, height: 1.55);
     final textStyle = segment.highlighted
         ? base.merge(highlightTextStyle(context))
         : base;
@@ -281,11 +287,12 @@ class _SegmentRow extends StatelessWidget {
                 if (segment.highlighted) '★ 重点',
                 if (showTime) _formatDuration(segment.start),
                 if (segment.speaker != null) segment.speaker!,
-              ].join(' · '),
+              ].join('  '),
               style: const TextStyle(
-                fontSize: 12,
+                fontSize: AppFontSizes.xs,
                 fontWeight: FontWeight.w600,
                 color: AppColors.textSecondary,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
           const SizedBox(height: 3),
@@ -332,7 +339,7 @@ class _StatusCard extends StatelessWidget {
           Text(
             message,
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
               height: 1.45,
               color: AppColors.textSecondary,
             ),
@@ -362,7 +369,7 @@ class _MetaRow extends StatelessWidget {
             child: Text(
               label,
               style: const TextStyle(
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
                 color: AppColors.textSecondary,
               ),
             ),
@@ -370,7 +377,7 @@ class _MetaRow extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(fontSize: 13, height: 1.4),
+              style: const TextStyle(fontSize: AppFontSizes.sm, height: 1.4),
             ),
           ),
         ],

@@ -178,10 +178,13 @@ class _FilesBodyState extends State<FilesBody>
               unselectedLabelColor: AppColors.textSecondary,
               labelStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
                 fontWeight: FontWeight.w700,
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
               ),
               unselectedLabelStyle: Theme.of(context).textTheme.labelLarge
-                  ?.copyWith(fontWeight: FontWeight.w500, fontSize: 13),
+                  ?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    fontSize: AppFontSizes.sm,
+                  ),
               tabs: [
                 Tab(text: localCount > 0 ? '本地 ($localCount)' : '本地'),
                 Tab(text: deviceCount > 0 ? '设备端 ($deviceCount)' : '设备端'),
@@ -295,25 +298,6 @@ class _LocalExportsTabState extends State<_LocalExportsTab> {
 
   Future<void> _deleteSelected(BuildContext context) async {
     if (_selected.isEmpty || _saving || _deleting) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('移到回收站？'),
-        content: Text('所选 ${_selected.length} 个录音会移到回收站，原件保留 30 天，期间可恢复。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('移到回收站'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !context.mounted) return;
-
     setState(() => _deleting = true);
     final result = await context.read<RecorderController>().trashLocalExports(
       _selected,
@@ -878,14 +862,14 @@ class _LocalExportCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
-                          fontSize: 15,
+                          fontSize: AppFontSizes.md,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         '${recordedAt == null ? '发生时间未知' : '发生 ${FilesBody.formatDateTime(recordedAt)}'}'
-                        ' · $duration · ${recordingSourceLabel(source)}'
-                        ' · ${!originalPresent
+                        '，$duration，${recordingSourceLabel(source)}'
+                        '，${!originalPresent
                             ? '原件缺失'
                             : !recording.originalComplete
                             ? '原件不完整'
@@ -894,7 +878,8 @@ class _LocalExportCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: AppFontSizes.xs,
+                          fontFeatures: const [FontFeature.tabularFigures()],
                           color: recording.error != null
                               ? AppColors.coral
                               : AppColors.textSecondary,
@@ -905,7 +890,7 @@ class _LocalExportCard extends StatelessWidget {
                         Text(
                           status,
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: AppFontSizes.xs,
                             color: recording.error != null
                                 ? AppColors.coral
                                 : AppColors.textMuted,
@@ -920,7 +905,7 @@ class _LocalExportCard extends StatelessWidget {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 11,
+                            fontSize: AppFontSizes.xs,
                             color: AppColors.textMuted,
                           ),
                         ),
@@ -935,7 +920,7 @@ class _LocalExportCard extends StatelessWidget {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 14,
+                            fontSize: AppFontSizes.sm,
                             height: 1.45,
                             color: AppColors.textSecondary,
                           ),
@@ -949,7 +934,7 @@ class _LocalExportCard extends StatelessWidget {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 13,
+                            fontSize: AppFontSizes.sm,
                             height: 1.45,
                             color: AppColors.textPrimary,
                           ),
@@ -957,11 +942,12 @@ class _LocalExportCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           searchHit!.timecode == null || !originalPresent
-                              ? '正文命中 · ${originalPresent ? '无可用时码' : '原件缺失'}，打开可阅读原文'
-                              : '正文命中 · ${FilesBody.formatDuration(searchHit!.timecode)} 可回听',
+                              ? '正文命中，${originalPresent ? '无可用时码' : '原件缺失'}，打开可阅读原文'
+                              : '正文命中，${FilesBody.formatDuration(searchHit!.timecode)} 可回听',
                           key: ValueKey('search-hit-time-$path'),
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: AppFontSizes.xs,
+                            fontFeatures: const [FontFeature.tabularFigures()],
                             color:
                                 searchHit!.timecode == null || !originalPresent
                                 ? AppColors.textSecondary
@@ -1070,10 +1056,10 @@ class _ExportBanner extends StatelessWidget {
               Expanded(
                 child: Text(
                   p.message.isNotEmpty ? p.message : p.phase.name,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontWeight: FontWeight.w600,
-                    fontSize: 13,
+                    fontSize: AppFontSizes.sm,
                   ),
                 ),
               ),
@@ -1109,11 +1095,12 @@ class _ExportBanner extends StatelessWidget {
             Text(
               p.totalFiles > 0
                   ? '文件 ${p.currentFileIndex.clamp(0, p.totalFiles) + (p.phase == ExportPhase.transferring && p.currentFileIndex < p.totalFiles ? 1 : 0)} / ${p.totalFiles}'
-                        '${p.bytesExpected > 0 ? ' · ${(p.bytesReceived / 1024).toStringAsFixed(1)} / ${(p.bytesExpected / 1024).toStringAsFixed(1)} KB' : ''}'
+                        '${p.bytesExpected > 0 ? '，${(p.bytesReceived / 1024).toStringAsFixed(1)} / ${(p.bytesExpected / 1024).toStringAsFixed(1)} KB' : ''}'
                   : '',
               style: const TextStyle(
                 color: AppColors.textSecondary,
-                fontSize: 11,
+                fontSize: AppFontSizes.xs,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
           ],
@@ -1124,7 +1111,7 @@ class _ExportBanner extends StatelessWidget {
               '${p.savedPaths.map((e) => e.split('/').last).join(', ')}',
               style: const TextStyle(
                 color: AppColors.textSecondary,
-                fontSize: 11,
+                fontSize: AppFontSizes.xs,
               ),
             ),
           ],
@@ -1132,7 +1119,10 @@ class _ExportBanner extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               p.error!,
-              style: const TextStyle(color: AppColors.coral, fontSize: 12),
+              style: const TextStyle(
+                color: AppColors.coral,
+                fontSize: AppFontSizes.xs,
+              ),
             ),
           ],
         ],
@@ -1224,7 +1214,6 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(c.exportProgress.error ?? c.errorMessage ?? '导出失败'),
-          backgroundColor: AppColors.coral,
           duration: const Duration(seconds: 4),
         ),
       );
@@ -1442,7 +1431,10 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
               const Text(
                 '加入成功后会自动开始导出；也可手动点下方按钮。'
                 '检测仅检查本机网络，不会提前占用设备的 WebSocket 端口。',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: AppFontSizes.xs,
+                ),
               ),
             ],
             // Only shown before the first (automatic) attempt — once that's
@@ -1463,7 +1455,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                     '已检测到设备网络，正在开始导出…',
                     style: TextStyle(
                       color: AppColors.textSecondary,
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                     ),
                   ),
                 ],
@@ -1486,10 +1478,11 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                 const SizedBox(height: 6),
                 Text(
                   '文件 ${p.currentFileIndex.clamp(0, p.totalFiles) + (p.phase == ExportPhase.transferring && p.currentFileIndex < p.totalFiles ? 1 : 0)} / ${p.totalFiles}'
-                  '${p.bytesExpected > 0 ? ' · ${(p.bytesReceived / 1024).toStringAsFixed(1)} / ${(p.bytesExpected / 1024).toStringAsFixed(1)} KB' : ''}',
+                  '${p.bytesExpected > 0 ? '，${(p.bytesReceived / 1024).toStringAsFixed(1)} / ${(p.bytesExpected / 1024).toStringAsFixed(1)} KB' : ''}',
                   style: const TextStyle(
                     color: AppColors.textMuted,
-                    fontSize: 11,
+                    fontSize: AppFontSizes.xs,
+                    fontFeatures: [FontFeature.tabularFigures()],
                   ),
                 ),
               ],
@@ -1498,7 +1491,10 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
               const SizedBox(height: 8),
               Text(
                 p.error!,
-                style: const TextStyle(color: AppColors.coral, fontSize: 12),
+                style: const TextStyle(
+                  color: AppColors.coral,
+                  fontSize: AppFontSizes.xs,
+                ),
               ),
             ],
             const SizedBox(height: 16),
@@ -1507,7 +1503,7 @@ class _WifiJoinSheetState extends State<_WifiJoinSheet> {
                   ? '导出中…'
                   : _reachable || joinsItself
                   ? '开始导出'
-                  : '我已加入 Wi‑Fi — 继续',
+                  : '我已加入 Wi‑Fi，继续',
               icon: Icons.download_done_rounded,
               color: AppColors.accent,
               onPressed: transferring ? null : _continueExport,
@@ -1577,7 +1573,7 @@ class _ExportStep extends StatelessWidget {
                 : Text(
                     '$index',
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: AppFontSizes.xs,
                       fontWeight: FontWeight.w700,
                       color: color,
                     ),
@@ -1588,7 +1584,7 @@ class _ExportStep extends StatelessWidget {
             child: Text(
               title,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
                 fontWeight: active || done ? FontWeight.w600 : FontWeight.w500,
                 color: done || active
                     ? AppColors.textPrimary
@@ -1632,7 +1628,7 @@ class _CredRow extends StatelessWidget {
             label,
             style: const TextStyle(
               color: AppColors.textSecondary,
-              fontSize: 12,
+              fontSize: AppFontSizes.xs,
             ),
           ),
         ),
@@ -1643,7 +1639,7 @@ class _CredRow extends StatelessWidget {
               color: AppColors.textPrimary,
               fontWeight: FontWeight.w600,
               fontFeatures: [FontFeature.tabularFigures()],
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
             ),
           ),
         ),
@@ -1754,15 +1750,15 @@ class _DeviceFileTile extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${file.durationLabel} · ${file.sizeLabel}${complete
-                            ? ' · 已下载'
+                        '${file.durationLabel}，${file.sizeLabel}${complete
+                            ? '，已下载'
                             : unfinished
-                            ? ' · 录音豆上未结束'
+                            ? '，录音豆上未结束'
                             : hasLocal
-                            ? ' · 未完整'
+                            ? '，未完整'
                             : ''}',
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: AppFontSizes.xs,
                           color: AppColors.textSecondary,
                           fontFeatures: [FontFeature.tabularFigures()],
                         ),
@@ -1868,7 +1864,7 @@ class _Hint extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(
               color: AppColors.textSecondary,
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
             ),
           ),
         ],

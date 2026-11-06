@@ -166,7 +166,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   _period.label,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    fontSize: 18,
+                    fontSize: AppFontSizes.md,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -183,10 +183,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
               '纳入 ${material.items.length} 条资料',
               if (material.withoutText > 0) '${material.withoutText} 条还没有文字',
               if (entry?.edited == true) '已手动修改',
-            ].join(' · '),
+            ].join('，'),
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontSize: 12,
+              fontSize: AppFontSizes.xs,
               color: AppColors.textSecondary,
             ),
           ),
@@ -272,13 +272,16 @@ class _DiaryLine extends StatelessWidget {
                 border: Border.all(color: color),
                 borderRadius: BorderRadius.circular(AppRadii.xs),
               ),
-              child: Text(tag, style: TextStyle(fontSize: 11, color: color)),
+              child: Text(
+                tag,
+                style: TextStyle(fontSize: AppFontSizes.xs, color: color),
+              ),
             ),
           Expanded(
             child: CitedText(
               text: body,
               sources: sources,
-              style: const TextStyle(fontSize: 15, height: 1.5),
+              style: const TextStyle(fontSize: AppFontSizes.sm, height: 1.5),
             ),
           ),
         ],

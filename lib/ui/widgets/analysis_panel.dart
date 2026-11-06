@@ -245,7 +245,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                           children: [
                             Expanded(
                               child: Text(
-                                '${activeTemplate.name} · '
+                                '${activeTemplate.name}，'
                                 '${activeTemplate.builtIn ? '内置模板' : '自定义模板'} '
                                 'v${activeTemplate.version}',
                                 style: Theme.of(context).textTheme.labelLarge,
@@ -398,7 +398,7 @@ class _AnalysisPanelState extends State<AnalysisPanel> {
                     style: const TextStyle(color: AppColors.amber),
                   ),
                 Text(
-                  '${result.model} · ${result.createdAt.toLocal().toString().split('.').first}',
+                  '${result.model}，${result.createdAt.toLocal().toString().split('.').first}',
                 ),
                 const SizedBox(height: 12),
                 if (custom || result.templateId != summaryTemplateId)

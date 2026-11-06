@@ -49,7 +49,7 @@ class _SavedLiveMeetingPanelState extends State<SavedLiveMeetingPanel> {
           if (records.isEmpty) return const SizedBox.shrink();
           return ExpansionTile(
             title: const Text('本场实时速记与字幕'),
-            subtitle: const Text('当时的原文快照 · 只读，不据此推断回听时间'),
+            subtitle: const Text('当时的原文快照，只读，不据此推断回听时间'),
             children: [
               for (final j in records)
                 Padding(

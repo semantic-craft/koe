@@ -895,7 +895,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
         String progressMessage([String progress = '']) {
           final deviceIds = files.map((file) => file.fileId).toSet();
           final completed = deviceIds.intersection(completeIds).length;
-          return '自动传输 $completed/${deviceIds.length}$progress · ${file.title}';
+          return '自动传输 $completed/${deviceIds.length}$progress，${file.title}';
         }
 
         var lastProgressAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -1047,7 +1047,7 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
             final progress = expected > 0
                 ? ' ${(received * 100 / expected).clamp(0, 100).floor()}%'
                 : '';
-            statusMessage = '正在下载$progress · ${file.title}';
+            statusMessage = '正在下载$progress，${file.title}';
             notifyListeners();
           },
         );

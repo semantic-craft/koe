@@ -165,11 +165,7 @@ class BatteryRing extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = KoeTokens.of(context);
     final p = percent.clamp(0, 100) / 100.0;
-    final color = percent > 50
-        ? tokens.textSecondary
-        : percent > 20
-        ? tokens.amber
-        : tokens.coral;
+    final color = percent <= 20 ? tokens.accent : tokens.textSecondary;
 
     return SizedBox(
       width: size,
@@ -188,11 +184,11 @@ class BatteryRing extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (charging)
-                  Icon(Icons.bolt_rounded, color: tokens.amber, size: 14),
+                  Icon(Icons.bolt_rounded, color: tokens.accent, size: 14),
                 Text(
                   '$percent%',
                   style: TextStyle(
-                    fontSize: size * 0.21,
+                    fontSize: AppFontSizes.sm,
                     height: 1,
                     fontWeight: FontWeight.w700,
                     color: tokens.textPrimary,
@@ -203,7 +199,7 @@ class BatteryRing extends StatelessWidget {
                 Text(
                   charging ? '充电中' : '电量',
                   style: TextStyle(
-                    fontSize: size * 0.1,
+                    fontSize: AppFontSizes.xs,
                     height: 1,
                     color: tokens.textMuted,
                     fontWeight: FontWeight.w500,
@@ -328,7 +324,7 @@ class InfoRow extends StatelessWidget {
               label,
               style: TextStyle(
                 color: tokens.textMuted,
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -339,7 +335,7 @@ class InfoRow extends StatelessWidget {
               textAlign: TextAlign.right,
               style: TextStyle(
                 color: tokens.textPrimary,
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
@@ -361,12 +357,12 @@ class SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = KoeTokens.of(context);
     final label = Text(
-      text.toUpperCase(),
+      text,
       style: TextStyle(
         color: tokens.textMuted,
         fontSize: 12,
         fontWeight: FontWeight.w600,
-        letterSpacing: 1.2,
+        letterSpacing: 0,
       ),
     );
     return Padding(
@@ -467,9 +463,9 @@ class BannerNotice extends StatelessWidget {
               message,
               style: TextStyle(
                 color: fg,
-                fontSize: 12.5,
+                fontSize: 12,
                 fontWeight: FontWeight.w500,
-                height: 1.35,
+                height: 1.4,
               ),
             ),
           ),

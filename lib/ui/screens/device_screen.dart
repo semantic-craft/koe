@@ -355,7 +355,7 @@ class _DeviceInfoRow extends StatelessWidget {
               label,
               style: const TextStyle(
                 color: AppColors.textMuted,
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -367,8 +367,9 @@ class _DeviceInfoRow extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: AppColors.textPrimary,
-                fontSize: 13,
+                fontSize: AppFontSizes.sm,
                 fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -434,7 +435,7 @@ class _OfflineDeviceView extends StatelessWidget {
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: AppColors.textMuted,
-                          fontSize: 12,
+                          fontSize: AppFontSizes.xs,
                           fontFeatures: [FontFeature.tabularFigures()],
                         ),
                       ),
@@ -447,7 +448,7 @@ class _OfflineDeviceView extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: AppColors.textSecondary,
-                        fontSize: 13,
+                        fontSize: AppFontSizes.sm,
                         height: 1.35,
                       ),
                     ),
@@ -496,7 +497,7 @@ class _OfflineDeviceView extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: AppColors.textMuted,
-                        fontSize: 13,
+                        fontSize: AppFontSizes.sm,
                       ),
                     ),
                     const SizedBox(height: 16),

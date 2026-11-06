@@ -40,7 +40,7 @@ class MacArchiveSettings extends StatelessWidget {
                           '这台 Mac 接收原件',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            fontSize: 14,
+                            fontSize: AppFontSizes.sm,
                           ),
                         ),
                         SizedBox(height: 3),
@@ -48,7 +48,7 @@ class MacArchiveSettings extends StatelessWidget {
                           '只在同一局域网直连；需要手机配对后才能传输',
                           style: TextStyle(
                             color: AppColors.textSecondary,
-                            fontSize: 12,
+                            fontSize: AppFontSizes.xs,
                             height: 1.3,
                           ),
                         ),
@@ -78,7 +78,10 @@ class MacArchiveSettings extends StatelessWidget {
         const _SettingsGroup(
           child: Text(
             '手机原件归档',
-            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: AppFontSizes.sm,
+            ),
           ),
         ),
         const SizedBox(height: 4),
@@ -195,7 +198,10 @@ class MacArchiveSettings extends StatelessWidget {
           ),
           const Text(
             '取消配对仅清除本机保存的连接。要撤销旧设备，请在 Mac 重置配对凭据。',
-            style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: AppFontSizes.xs,
+            ),
           ),
         ],
         if (archive.phoneError != null) ...[
@@ -203,7 +209,10 @@ class MacArchiveSettings extends StatelessWidget {
           Text(
             archive.phoneError!,
             key: const ValueKey('phone-archive-error'),
-            style: const TextStyle(color: AppColors.coral, fontSize: 12),
+            style: const TextStyle(
+              color: AppColors.coral,
+              fontSize: AppFontSizes.xs,
+            ),
           ),
         ],
         if (archive.records.any(
@@ -261,7 +270,10 @@ class _MacReceiveStatus extends StatelessWidget {
         children: [
           const Text(
             '接收已关闭。打开后手机才能配对和归档；重置配对凭据后，开启接收才会显示新信息。',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: AppFontSizes.xs,
+            ),
           ),
           _ResetPairingButton(controller: controller),
         ],
@@ -274,20 +286,29 @@ class _MacReceiveStatus extends StatelessWidget {
       children: [
         Text(
           archive.deskRunning
-              ? '接收服务已开启 · 端口 ${archive.deskPort ?? '--'}'
+              ? '接收服务已开启，端口 ${archive.deskPort ?? '--'}'
               : '接收服务正在启动',
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          style: const TextStyle(
+            fontSize: AppFontSizes.xs,
+            color: AppColors.textSecondary,
+          ),
         ),
         if (archive.deskError != null)
           Text(
             archive.deskError!,
             key: const ValueKey('mac-receive-error'),
-            style: const TextStyle(color: AppColors.coral, fontSize: 12),
+            style: const TextStyle(
+              color: AppColors.coral,
+              fontSize: AppFontSizes.xs,
+            ),
           ),
         Text(
           '已接收 ${archive.receivedCount} 条资料'
-          '${archive.lastReceivedAt == null ? '' : ' · 最近 ${_format(archive.lastReceivedAt!)}'}',
-          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          '${archive.lastReceivedAt == null ? '' : '，最近 ${_format(archive.lastReceivedAt!)}'}',
+          style: const TextStyle(
+            fontSize: AppFontSizes.xs,
+            color: AppColors.textSecondary,
+          ),
         ),
         if (pairing != null) ...[
           const SizedBox(height: 6),
@@ -297,11 +318,17 @@ class _MacReceiveStatus extends StatelessWidget {
             childrenPadding: const EdgeInsets.only(bottom: 8),
             title: const Text(
               '显示配对信息（含密钥）',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             subtitle: const Text(
               '在手机上粘贴这串信息即可配对。不要截图公开分享。',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: AppFontSizes.xs,
+                color: AppColors.textSecondary,
+              ),
             ),
             children: [
               SurfaceCard(
@@ -312,7 +339,10 @@ class _MacReceiveStatus extends StatelessWidget {
                     SelectableText(
                       pairing.encode(),
                       key: const ValueKey('mac-pair-code'),
-                      style: const TextStyle(fontSize: 11, height: 1.35),
+                      style: const TextStyle(
+                        fontSize: AppFontSizes.xs,
+                        height: 1.35,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Align(
@@ -340,7 +370,7 @@ class _MacReceiveStatus extends StatelessWidget {
           Text(
             '手机与 Mac 需在同一局域网；只接受持有这串配对信息的设备。',
             style: const TextStyle(
-              fontSize: 12,
+              fontSize: AppFontSizes.xs,
               height: 1.35,
               color: AppColors.textSecondary,
             ),
@@ -471,7 +501,7 @@ class _PairingDialogState extends State<_PairingDialog> {
         children: [
           const Text(
             '在 Mac 的“设置 → Mac 原件归档”里展开配对信息，然后把整串内容粘贴到这里。',
-            style: TextStyle(fontSize: 13, height: 1.4),
+            style: TextStyle(fontSize: AppFontSizes.sm, height: 1.4),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -491,7 +521,10 @@ class _PairingDialogState extends State<_PairingDialog> {
             Text(
               _error!,
               key: const ValueKey('phone-archive-pair-error'),
-              style: const TextStyle(color: AppColors.coral, fontSize: 12),
+              style: const TextStyle(
+                color: AppColors.coral,
+                fontSize: AppFontSizes.xs,
+              ),
             ),
           ],
         ],

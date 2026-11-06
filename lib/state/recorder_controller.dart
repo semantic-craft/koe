@@ -342,10 +342,10 @@ class RecorderController extends ChangeNotifier
 
   String get analysisBackendSummary => switch (analysisBackend) {
     AnalysisBackendKind.qwen =>
-      '千问 ${_formatQwenModelLabel(analysis.model)} · 使用已配置的千问 Key',
+      '千问 ${_formatQwenModelLabel(analysis.model)}，使用已配置的千问 Key',
     AnalysisBackendKind.openaiCompatible =>
-      'OpenAI 兼容 · ${analysisOpenAiConfig.model ?? '未设置模型'}（${analysisOpenAiConfig.baseUrl ?? '未设置地址'}）',
-    AnalysisBackendKind.none => '已设为“不整理” · 不调用分析模型',
+      'OpenAI 兼容，${analysisOpenAiConfig.model ?? '未设置模型'}（${analysisOpenAiConfig.baseUrl ?? '未设置地址'}）',
+    AnalysisBackendKind.none => '已设为“不整理”，不调用分析模型',
   };
 
   static String _formatQwenModelLabel(String? model) {

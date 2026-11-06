@@ -225,7 +225,10 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
         children: [
           const Text(
             '导出资料',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              fontSize: AppFontSizes.lg,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -233,7 +236,7 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
               color: AppColors.textSecondary,
             ),
           ),
@@ -265,7 +268,7 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
                 ? '.koepack 文件，可导入另一台设备或重装后的 Koe，恢复时间码、发言人、校订、书签及包内纪要。'
                 : 'Markdown 文字，给人阅读或粘贴到别处；不能重新导入 Koe。',
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
               color: AppColors.textSecondary,
             ),
           ),
@@ -308,7 +311,7 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
                           child: Text(
                             label,
                             style: const TextStyle(
-                              fontSize: 13,
+                              fontSize: AppFontSizes.sm,
                               color: AppColors.textMuted,
                             ),
                           ),
@@ -316,7 +319,7 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
                         Expanded(
                           child: Text(
                             value,
-                            style: const TextStyle(fontSize: 13),
+                            style: const TextStyle(fontSize: AppFontSizes.sm),
                           ),
                         ),
                       ],
@@ -328,7 +331,7 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
                     child: Text(
                       '不含 API Key、录音豆配对信息和本机文件路径。',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: AppFontSizes.xs,
                         color: AppColors.textMuted,
                       ),
                     ),
@@ -341,7 +344,10 @@ class _MaterialExportPanelState extends State<MaterialExportPanel> {
             Text(
               _error ?? packBlocked!,
               key: const ValueKey('material-export-error'),
-              style: const TextStyle(fontSize: 13, color: AppColors.coral),
+              style: const TextStyle(
+                fontSize: AppFontSizes.sm,
+                color: AppColors.coral,
+              ),
             ),
           ],
           const SizedBox(height: 12),

@@ -8,11 +8,12 @@
 
 | 规则 | Koe 的做法 | 原因 |
 | --- | --- | --- |
-| 表面分层 Surface 0–3 | `surface0` #F5F5F3 画布、`surface1` #FCFCFB 栏和面板、`surface2` #FFFFFF 卡片、`surface3` #FFFFFF 输入框和浮层。旧名 `bg` / `bgElevated` / `bgCard` 是同值别名 | 层级靠微小明度差建立，不靠粗边框和重阴影 |
-| 发丝细边 | 卡片、分隔线、导航栏顶线用宽度 0 的 `BorderSide`（一个物理像素）；输入框保持 1px | Retina 屏上 1px 显粗；输入框需要可辨认的边界 |
-| 单闭合边框 | 一条视线最多穿过一层闭合边框。卡片里的按钮、chips、分段控件不带边框，只靠底色（`bgPanel` / `accentSoft`）表达可点和选中 | 套娃边框让界面沉重 |
-| 文字三级 | `textPrimary` / `textSecondary` / `textMuted`，删掉 `textBody` 和 `textFaint`。`textMuted` 调深到 #6F6F67，在 surface 0–3 上 ≥4.6:1 | 原来五级区分不出用途，`textFaint` 在白底上只有 2.77:1 |
-| 单一强调色 | 品牌砖红 `accent` #A4472B；按下 `accentPressed` #8A3B23；浅底 `accentSoft` #F6E9E2。错误 `coral`、警告 `amber` 只在真有错误、警告时出现 | 不用 Claude 的陶土色 #D97757：白字在 #A4472B 上 5.97:1，在 #D97757 上只有 3.12:1，小字不过 AA；也不让 Koe 像仿品 |
+| 表面分层 Surface 0–3 | `surface0` #F5F4F0 宣纸画布、`surface1` #FAF9F6 栏和面板、`surface2` #FFFFFF 卡片、`surface3` #FFFFFF 输入框和浮层。所有中性灰保持暖灰（R ≥ G ≥ B），不用冷蓝灰 | 层级靠暖灰明度差与发丝细边建立；页面默认纯平，卡片不叠阴影、不发光、不套卡片，阴影只给浮起的弹窗 |
+| 发丝细边与同心圆角 | 卡片、分隔线、导航栏顶线用宽度 0 的 `BorderSide`（一个物理像素）；嵌套圆角用 `AppRadii.concentric(outer, gap)`（内圆角 = 外圆角 - 间距） | 避免双重粗框与生硬的同半径嵌套 |
+| 单一强调色（中国传统色） | 采用中国传统色「竹青」`accent` #2E5E4E（白字对比度 7.42:1）；按下 `accentPressed` #23493C；浅底 `accentSoft` #E8F0EC。备选传统色为「靛青」#2B4C65 与「松烟墨」#2C2B29 | 不用橙色、陶土色或老式后台亮蓝色；单页只留一个强调色，不在同一页面混排五颜六色的状态块 |
+| 四级字号阶梯 | 全站统一 `AppFontSizes` 四档：`xs` 12、`sm` 14、`md` 16、`lg` 22；单页最多 4 种字号，配合阅读行高（正文 1.4） | 字号克制才有清晰的阅读节奏与无障碍对比度，且在 320pt 宽 × 2.0x 大字号下不溢出 |
+| 字体、标点与动词克制 | 说明文案不用斜体；按钮与分组标题（`SectionLabel`）不用全大写；等宽字体只用于代码、路径与数字指标；不用中间点 `·` 拼接文案；同一动作全产品只用一个动词（如统一用「连接录音豆」「开始录音」），不用「立即…」催促词 | 符合母语直觉，界面能自己表达的不再堆砌冗余说明 |
+| 确认克制与非惊悚危险态 | 常规或可恢复操作（如移入回收站、断开重连）直接执行，仅在不可逆操作（如永久清空、解绑）二次确认；危险操作不用大片红底实心按钮 | 尊重用户直觉，避免满屏确认框与刺眼红色 |
 | 圆角矩阵 | `AppRadii.button` 8、`panel` 10、`card` 12、`sheet` 16（主视觉卡、对话框、底部面板）、`pill` 999 | 全 App 只用这几档，同类元素同圆角 |
 | 弹簧动效 | `AppMotion.snappy`（按钮、Tab、分段切换）、`gentle`（面板、对话框、底部面板打开）、`heavySnap`（底部面板关闭、吸附）；时长只有 `micro` 70 / `snap` 120 / `sheet` 300ms | 去掉默认 ease 和 linear；弹簧有落定感 |
 | 减少动态效果 | iOS「减少动态效果」打开时，`AppMotion.duration` 归零、底部面板无动画出现、呼吸点和思考三点静止 | 前庭敏感的用户；有回归测试 [reduced_motion_test.dart](../../test/reduced_motion_test.dart) |

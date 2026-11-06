@@ -23,6 +23,15 @@ class AppSpacing {
   static const double s48 = 48;
 }
 
+class AppFontSizes {
+  AppFontSizes._();
+
+  static const double xs = 12;
+  static const double sm = 14;
+  static const double md = 16;
+  static const double lg = 22;
+}
+
 /// Corner radius scale (docs/design/ui-guidelines.md「圆角」).
 class AppRadii {
   AppRadii._();
@@ -45,6 +54,9 @@ class AppRadii {
 
   /// Hero cards, dialogs and bottom sheets.
   static const double sheet = xl;
+
+  static double concentric(double outer, double padding) =>
+      (outer - padding) < xs ? xs : (outer - padding);
 }
 
 /// Motion durations and spring curves (docs/design/ui-guidelines.md「动效」).
@@ -145,11 +157,11 @@ class AppColors {
   AppColors._();
 
   // Surface 0–3, from the canvas up (docs/design/ui-guidelines.md「表面」).
-  /// Surface 0: page canvas behind everything.
-  static const surface0 = Color(0xFFF5F5F3);
+  /// Surface 0: warm paper canvas behind everything.
+  static const surface0 = Color(0xFFF5F4F0);
 
   /// Surface 1: bars, sheets and the area a page scrolls on.
-  static const surface1 = Color(0xFFFCFCFB);
+  static const surface1 = Color(0xFFFAF9F6);
 
   /// Surface 2: cards and list groups.
   static const surface2 = Color(0xFFFFFFFF);
@@ -161,71 +173,54 @@ class AppColors {
   static const bg = surface0;
   static const bgElevated = surface1;
   static const bgCard = surface2;
-  static const bgCardHover = Color(0xFFECEBE6);
-  static const bgPanel = Color(0xFFECEBE6);
-  static const bgSubtle = Color(0xFFE7E5DE);
-  static const bgMuted = Color(0xFFD9D6CD);
+  static const bgCardHover = Color(0xFFECEAE4);
+  static const bgPanel = Color(0xFFECEAE4);
+  static const bgSubtle = Color(0xFFE5E2DA);
+  static const bgMuted = Color(0xFFD8D5CC);
 
-  // Crisp 1px borders.
-  static const borderSoft = Color(0xFFECEBE6);
-  static const border = Color(0xFFE4E3DD);
-  static const borderStrong = Color(0xFFC9C6BC);
-  static const borderSelected = Color(0xFFB5AFA5);
-  static const borderFocus = Color(0xFFA4472B);
+  // Crisp 1px warm borders.
+  static const borderSoft = Color(0xFFECEAE4);
+  static const border = Color(0xFFE2DFD7);
+  static const borderStrong = Color(0xFFC7C4BA);
+  static const borderSelected = Color(0xFFB3AFA4);
+  static const borderFocus = Color(0xFF2E5E4E);
 
-  // Three text levels. Muted still meets WCAG AA (4.5:1) on surfaces 0–3;
-  // on bgPanel/bgSubtle use secondary for small text.
-  static const textPrimary = Color(0xFF252521);
-  static const textSecondary = Color(0xFF686860);
-  static const textMuted = Color(0xFF6F6F67);
+  // Three warm text levels. Muted meets WCAG AA (>= 4.6:1) on surfaces 0–3.
+  static const textPrimary = Color(0xFF242320);
+  static const textSecondary = Color(0xFF5C5A54);
+  static const textMuted = Color(0xFF6E6C65);
 
-  // Primary ink & semantic status colors.
-  static const inkAccent = Color(0xFFA4472B);
+  static const inkAccent = Color(0xFF2E5E4E);
   static const onInkAccent = Colors.white;
-  static const accent = Color(0xFFA4472B);
+  static const accent = Color(0xFF2E5E4E);
+  static const accentPressed = Color(0xFF23493C);
+  static const accentSoft = Color(0xFFE8F0EC);
+  static const accentBorder = Color(0xFFB8CEC4);
 
-  /// Pressed state of a filled accent control (white text 7.7:1).
-  static const accentPressed = Color(0xFF8A3B23);
-  static const accentSoft = Color(0xFFF6E9E2);
-  static const accentBorder = Color(0xFFD8B7A8);
+  static const amber = Color(0xFF8C6223);
+  static const amberSoft = Color(0xFFF5ECE0);
+  static const amberBorder = Color(0xFFDCC5A3);
 
-  static const amber = Color(0xFF966018);
-  static const amberSoft = Color(0xFFF7ECDD);
-  static const amberBorder = Color(0xFFDFC49E);
+  static const coral = Color(0xFF9E3E32);
+  static const coralSoft = Color(0xFFF6E8E5);
+  static const coralBorder = Color(0xFFDDB8B2);
 
-  static const coral = Color(0xFFB73333);
-  static const coralSoft = Color(0xFFF8E7E4);
-  static const coralBorder = Color(0xFFE4B7B1);
+  static const violet = Color(0xFF5C5A54);
+  static const violetSoft = Color(0xFFECEAE4);
 
-  static const violet = Color(0xFF686860);
-  static const violetSoft = Color(0xFFECEBE6);
-
-  static const gradientTop = Color(0xFFF5F5F3);
+  static const gradientTop = Color(0xFFF5F4F0);
   static const gradientBottom = bg;
 
-  /// Soft drop shadow for cards on light surfaces.
-  static List<BoxShadow> get cardShadow => [
-    BoxShadow(
-      color: const Color(0xFF0B0D12).withValues(alpha: 0.06),
-      blurRadius: 16,
-      offset: const Offset(0, 4),
-    ),
-    BoxShadow(
-      color: const Color(0xFF0B0D12).withValues(alpha: 0.03),
-      blurRadius: 4,
-      offset: const Offset(0, 1),
-    ),
-  ];
+  static List<BoxShadow> get cardShadow => const [];
 
-  /// Elevated floating surface shadow.
   static List<BoxShadow> get floatingShadow => [
     BoxShadow(
-      color: const Color(0xFF0B0D12).withValues(alpha: 0.10),
+      color: const Color(0xFF141311).withValues(alpha: 0.10),
       blurRadius: 24,
       offset: const Offset(0, 6),
     ),
     BoxShadow(
-      color: const Color(0xFF0B0D12).withValues(alpha: 0.04),
+      color: const Color(0xFF141311).withValues(alpha: 0.04),
       blurRadius: 6,
       offset: const Offset(0, 2),
     ),
@@ -352,26 +347,20 @@ class KoeTokens extends ThemeExtension<KoeTokens> {
     textMuted: const Color(0xFF9C948A),
     inkAccent: const Color(0xFFF5F1EC),
     onInkAccent: const Color(0xFF221E1B),
-    accent: const Color(0xFFC97B54),
-    accentPressed: const Color(0xFFB0683F),
-    accentSoft: const Color(0xFF3D2B22),
-    accentBorder: const Color(0xFF5A3B2C),
+    accent: const Color(0xFF6FA894),
+    accentPressed: const Color(0xFF5B917E),
+    accentSoft: const Color(0xFF21362F),
+    accentBorder: const Color(0xFF335247),
     amber: const Color(0xFFD9A05B),
     amberSoft: const Color(0xFF33281C),
     amberBorder: const Color(0xFF57432B),
     coral: const Color(0xFFE08A85),
     coralSoft: const Color(0xFF36201E),
     coralBorder: const Color(0xFF5A302C),
-    violet: const Color(0xFFB9A8D9),
+    violet: const Color(0xFFC9C2B9),
     gradientTop: const Color(0xFF221E1B),
     gradientBottom: const Color(0xFF1B1815),
-    cardShadow: [
-      BoxShadow(
-        color: Colors.black.withValues(alpha: 0.24),
-        blurRadius: 10,
-        offset: const Offset(0, 2),
-      ),
-    ],
+    cardShadow: const [],
     floatingShadow: [
       BoxShadow(
         color: Colors.black.withValues(alpha: 0.38),
@@ -508,7 +497,7 @@ class AppTheme {
             surface: t.bgElevated,
             primary: t.accent,
             // Koe has one accent: Material's secondary roles (selected
-            // chips, progress tracks, switches) resolve to the same brick red.
+            // chips, progress tracks, switches) resolve to the same bamboo green.
             secondary: t.accent,
             secondaryContainer: t.accentSoft,
             onSecondaryContainer: t.accent,
@@ -521,7 +510,7 @@ class AppTheme {
             surface: t.bgElevated,
             primary: t.accent,
             // Koe has one accent: Material's secondary roles (selected
-            // chips, progress tracks, switches) resolve to the same brick red.
+            // chips, progress tracks, switches) resolve to the same bamboo green.
             secondary: t.accent,
             secondaryContainer: t.accentSoft,
             onSecondaryContainer: t.accent,
@@ -732,10 +721,10 @@ class AppTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: TextStyle(
-          fontSize: 20,
+          fontSize: 16,
           fontWeight: FontWeight.w600,
           color: t.textPrimary,
-          letterSpacing: -0.3,
+          letterSpacing: -0.2,
         ),
         iconTheme: IconThemeData(color: t.textPrimary),
       ),
@@ -745,40 +734,89 @@ class AppTheme {
       textTheme: _tabular(
         base.textTheme.copyWith(
           displayLarge: TextStyle(
-            fontSize: 34,
+            fontSize: AppFontSizes.lg,
             fontWeight: FontWeight.w700,
             color: t.textPrimary,
-            letterSpacing: -1,
-            height: 1.1,
+            letterSpacing: -0.3,
+            height: 1.2,
           ),
-          headlineMedium: TextStyle(
-            fontSize: 22,
+          displayMedium: TextStyle(
+            fontSize: AppFontSizes.lg,
+            fontWeight: FontWeight.w700,
+            color: t.textPrimary,
+            letterSpacing: -0.3,
+          ),
+          displaySmall: TextStyle(
+            fontSize: AppFontSizes.lg,
             fontWeight: FontWeight.w600,
             color: t.textPrimary,
-            letterSpacing: -0.4,
+            letterSpacing: -0.3,
+          ),
+          headlineLarge: TextStyle(
+            fontSize: AppFontSizes.lg,
+            fontWeight: FontWeight.w600,
+            color: t.textPrimary,
+            letterSpacing: -0.3,
+          ),
+          headlineMedium: TextStyle(
+            fontSize: AppFontSizes.lg,
+            fontWeight: FontWeight.w600,
+            color: t.textPrimary,
+            letterSpacing: -0.3,
+          ),
+          headlineSmall: TextStyle(
+            fontSize: AppFontSizes.md,
+            fontWeight: FontWeight.w600,
+            color: t.textPrimary,
+          ),
+          titleLarge: TextStyle(
+            fontSize: AppFontSizes.lg,
+            fontWeight: FontWeight.w600,
+            color: t.textPrimary,
           ),
           titleMedium: TextStyle(
-            fontSize: 16,
+            fontSize: AppFontSizes.md,
+            fontWeight: FontWeight.w600,
+            color: t.textPrimary,
+          ),
+          titleSmall: TextStyle(
+            fontSize: AppFontSizes.sm,
             fontWeight: FontWeight.w600,
             color: t.textPrimary,
           ),
           bodyLarge: TextStyle(
-            fontSize: 15,
+            fontSize: AppFontSizes.sm,
             fontWeight: FontWeight.w400,
             color: t.textPrimary,
             height: 1.4,
           ),
           bodyMedium: TextStyle(
-            fontSize: 14,
+            fontSize: AppFontSizes.sm,
+            fontWeight: FontWeight.w400,
+            color: t.textSecondary,
+            height: 1.4,
+          ),
+          bodySmall: TextStyle(
+            fontSize: AppFontSizes.xs,
             fontWeight: FontWeight.w400,
             color: t.textSecondary,
             height: 1.4,
           ),
           labelLarge: TextStyle(
-            fontSize: 14,
+            fontSize: AppFontSizes.sm,
             fontWeight: FontWeight.w600,
-            letterSpacing: 0.2,
+            letterSpacing: 0,
             color: t.textPrimary,
+          ),
+          labelMedium: TextStyle(
+            fontSize: AppFontSizes.xs,
+            fontWeight: FontWeight.w500,
+            color: t.textSecondary,
+          ),
+          labelSmall: TextStyle(
+            fontSize: AppFontSizes.xs,
+            fontWeight: FontWeight.w500,
+            color: t.textMuted,
           ),
         ),
       ),

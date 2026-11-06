@@ -643,7 +643,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('产品周会（已修订）'), findsOneWidget);
-      expect(find.text('负责人：张工 · 期限：周五'), findsOneWidget);
+      expect(find.text('负责人：张工，期限：周五'), findsOneWidget);
 
       // Open version history and restore the initial version.
       await tester.ensureVisible(

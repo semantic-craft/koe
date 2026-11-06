@@ -71,7 +71,7 @@ class TodayScreen extends StatelessWidget {
                   Text(
                     _dateLine(now),
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                       letterSpacing: 0.4,
                       color: AppColors.textSecondary,
                     ),
@@ -80,10 +80,10 @@ class TodayScreen extends StatelessWidget {
                   const Text(
                     '把心力留给\n重要的事。',
                     style: TextStyle(
-                      fontSize: 30,
-                      height: 1.15,
+                      fontSize: AppFontSizes.lg,
+                      height: 1.2,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: -0.6,
+                      letterSpacing: -0.4,
                     ),
                   ),
                   const SizedBox(height: 18),
@@ -116,7 +116,7 @@ class TodayScreen extends StatelessWidget {
                     onScan: c.canReconnectBoundDevice
                         ? c.reconnectBoundDevice
                         : () => showScanDevicesSheet(context),
-                    scanLabel: c.canReconnectBoundDevice ? '连接' : '扫描',
+                    scanLabel: c.canReconnectBoundDevice ? '连接' : '连接录音豆',
                     onDisconnect: c.disconnect,
                   ),
                   if (c.organizeStore.queued.isNotEmpty) ...[
@@ -244,7 +244,7 @@ class TodayScreen extends StatelessWidget {
 
 String _dateLine(DateTime now) {
   const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
-  return '${now.month} 月 ${now.day} 日 · 星期${weekdays[now.weekday - 1]}';
+  return '${now.month} 月 ${now.day} 日 星期${weekdays[now.weekday - 1]}';
 }
 
 class _FocusCard extends StatelessWidget {
@@ -269,11 +269,11 @@ class _FocusCard extends StatelessWidget {
     final String title;
     final String body;
     if (project != null) {
-      eyebrow = '正在推进 · 最近有进展的项目';
+      eyebrow = '正在推进，最近有进展的项目';
       title = project!.title;
       body = projectNextLabel(progress!);
     } else if (hasTopic) {
-      eyebrow = '正在推进 · 当前主题';
+      eyebrow = '正在推进，当前主题';
       title = topicTitle!;
       body = '录音归入主题后，可以在主题里继续找回原声。';
     } else {
@@ -294,7 +294,7 @@ class _FocusCard extends StatelessWidget {
           Text(
             eyebrow,
             style: const TextStyle(
-              fontSize: 12,
+              fontSize: AppFontSizes.xs,
               letterSpacing: 0.4,
               color: AppColors.accentSoft,
             ),
@@ -303,7 +303,7 @@ class _FocusCard extends StatelessWidget {
           Text(
             title,
             style: const TextStyle(
-              fontSize: 22,
+              fontSize: AppFontSizes.lg,
               height: 1.25,
               fontWeight: FontWeight.w600,
               color: Colors.white,
@@ -313,7 +313,7 @@ class _FocusCard extends StatelessWidget {
           Text(
             body,
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
               height: 1.4,
               color: AppColors.accentSoft,
             ),
@@ -395,8 +395,8 @@ class _OrganizeProgressCard extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      '自动整理：${parts.isEmpty ? '处理中' : parts.join(' · ')}',
-                      style: const TextStyle(fontSize: 14),
+                      '自动整理：${parts.isEmpty ? '处理中' : parts.join('，')}',
+                      style: const TextStyle(fontSize: AppFontSizes.sm),
                     ),
                   ),
                   const Icon(Icons.chevron_right_rounded),
@@ -458,7 +458,7 @@ class _DeviceStatusCard extends StatelessWidget {
                   connected
                       ? name
                       : handedOff
-                      ? '$name · 已断开'
+                      ? '$name（已断开）'
                       : '未连接设备',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
@@ -474,7 +474,7 @@ class _DeviceStatusCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -588,7 +588,10 @@ class _ActionsSectionState extends State<_ActionsSection> {
             padding: EdgeInsets.fromLTRB(14, 12, 14, 12),
             child: Text(
               '还没有待办。转写后点「提取待办」，Koe 只会记下你明确答应要做的事。',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: AppFontSizes.sm,
+                color: AppColors.textSecondary,
+              ),
             ),
           )
         else
@@ -741,8 +744,8 @@ class _ContinueListeningCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: const TextStyle(
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textSecondary,
                   ),
                 ),
@@ -772,12 +775,18 @@ class _TodayEmpty extends StatelessWidget {
         children: [
           const Text(
             '今天还没有记录',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: AppFontSizes.md,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 4),
           const Text(
             '录一段、导入一个文件，或从录音豆取回今天的录音。',
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: TextStyle(
+              fontSize: AppFontSizes.sm,
+              color: AppColors.textSecondary,
+            ),
           ),
           const SizedBox(height: 10),
           Wrap(

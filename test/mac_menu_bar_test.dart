@@ -671,7 +671,7 @@ void main() {
     await stt.uploading.future;
     await pumpEventQueue();
     expect(shown()['state'], 'working');
-    expect(shown()['lines'], ['正在转写「周会」· 上传 25%']);
+    expect(shown()['lines'], ['正在转写「周会」，上传 25%']);
     expect(shown()['keepAwake'], 'Koe is transcribing');
     expect(shown()['quitMessage'], 'Koe 还在处理录音，要退出吗？');
     expect(shown()['quitInfo'], contains('进行中的转写会中断'));

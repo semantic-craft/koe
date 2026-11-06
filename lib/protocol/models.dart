@@ -482,7 +482,7 @@ class ScannedDevice {
       parts.add(_shortId(id));
     }
     if (isBoundAdvertised) parts.add('已绑定');
-    return parts.join(' · ');
+    return parts.join('，');
   }
 
   bool get looksLikeSoundcore =>

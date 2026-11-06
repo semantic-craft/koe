@@ -216,7 +216,7 @@ mixin _RecorderPlayback on ChangeNotifier {
   String get continueDetail {
     final point = latestPlayback;
     if (point == null || playingPath != null) return '原声保存在手机';
-    if (point.completed) return '已听完 · 可重新回听';
+    if (point.completed) return '已听完，可重新回听';
     if (point.duration > Duration.zero) {
       return '已听 ${_clock(point.position)} / ${_clock(point.duration)}';
     }
@@ -1004,7 +1004,7 @@ mixin _RecorderPlayback on ChangeNotifier {
         statusMessage = resume > Duration.zero
             ? '已从 ${_clock(resume)} 继续回听'
             : duration > Duration.zero
-            ? '正在播放 · ${sec.toStringAsFixed(1)}s'
+            ? '正在播放，${sec.toStringAsFixed(1)}s'
             : '正在播放 ${path.split('/').last}';
         if (generation != _playbackIntent) return;
         _startPlayback();
@@ -1107,7 +1107,7 @@ mixin _RecorderPlayback on ChangeNotifier {
         _startPlayback();
         final sec = duration.inMilliseconds / 1000.0;
         statusMessage = duration > Duration.zero
-            ? '正在播放 · ${sec.toStringAsFixed(1)}s'
+            ? '正在播放，${sec.toStringAsFixed(1)}s'
             : '正在播放';
       }
       notifyListeners();

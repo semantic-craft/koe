@@ -39,7 +39,7 @@ class MinutesTerms extends StatelessWidget {
                   SelectableText('原文中的识别写法：${term.heard.join('、')}'),
                 if (term.adoption case final decision?)
                   Text(
-                    '${decision.kind == 'vocabulary' ? '已加入词表' : '已订正原文'} · ${decision.at.toLocal().toIso8601String().split('T').first}',
+                    '${decision.kind == 'vocabulary' ? '已加入词表' : '已订正原文'}，${decision.at.toLocal().toIso8601String().split('T').first}',
                   ),
                 sources(term.sources),
                 Wrap(

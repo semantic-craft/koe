@@ -60,7 +60,7 @@ class SettingsScreen extends StatelessWidget {
                     child: Text(
                       '处理与偏好',
                       style: TextStyle(
-                        fontSize: 26,
+                        fontSize: AppFontSizes.lg,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -192,7 +192,7 @@ class SettingsScreen extends StatelessWidget {
                             '更改将用于下一段录音',
                             style: TextStyle(
                               color: AppColors.textSecondary,
-                              fontSize: 13,
+                              fontSize: AppFontSizes.sm,
                             ),
                           ),
                         ],
@@ -240,8 +240,8 @@ class SettingsScreen extends StatelessWidget {
                       title: const Text('安克录音豆'),
                       subtitle: Text(
                         c.connected
-                            ? '已连接 · ${c.displayDeviceName}'
-                            : '未连接设备 · 打开后扫描',
+                            ? '已连接，${c.displayDeviceName}'
+                            : '未连接设备，打开后扫描',
                       ),
                       trailing: const Icon(Icons.chevron_right_rounded),
                       onTap: () => Navigator.of(context).push(
@@ -273,12 +273,12 @@ class SettingsScreen extends StatelessWidget {
                       subtitle: Text(
                         c.mcpSyncConfig == null
                             ? '复制提示词交给 AI 即可自动配置 VPS 或本机同步'
-                            : '${c.mcpSyncConfig!.redactedLabel} · 已同步 ${c.mcpSyncState.syncedCount} 条',
+                            : '${c.mcpSyncConfig!.redactedLabel}，已同步 ${c.mcpSyncState.syncedCount} 条',
                       ),
                       trailing: Text(
                         c.mcpSyncConfig == null ? '一键接入' : '已连接',
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: AppFontSizes.xs,
                           color: AppColors.textSecondary,
                         ),
                       ),
@@ -482,7 +482,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                             children: [
                               const Icon(
                                 Icons.check_circle_rounded,
-                                color: Colors.green,
+                                color: AppColors.accent,
                                 size: 18,
                               ),
                               const SizedBox(width: 8),
@@ -500,7 +500,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                           Text(
                             'MCP 地址：${config.mcpEndpoint}',
                             style: const TextStyle(
-                              fontSize: 12,
+                              fontSize: AppFontSizes.xs,
                               color: AppColors.textSecondary,
                             ),
                           ),
@@ -509,7 +509,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                                 ? '正在同步中...'
                                 : '已同步 ${state.syncedCount} 条记录',
                             style: const TextStyle(
-                              fontSize: 12,
+                              fontSize: AppFontSizes.xs,
                               color: AppColors.textSecondary,
                             ),
                           ),
@@ -522,7 +522,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                                     ? null
                                     : () => widget.controller.syncMcpNow(),
                                 icon: const Icon(Icons.sync_rounded, size: 16),
-                                label: const Text('立即同步'),
+                                label: const Text('现在同步'),
                               ),
                               const SizedBox(width: 8),
                               TextButton.icon(
@@ -545,7 +545,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                   const Text(
                     '无需手动填写密钥。复制提示词交给 AI Agent 自动部署配置，或输入自建 VPS 地址与邮箱接收验证码直接绑定；未绑定前不会发起连接。',
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -626,13 +626,16 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                   const Divider(height: 24),
                   const Text(
                     '邮箱验证码安全配对（推荐，零剪贴板）',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      fontSize: AppFontSizes.sm,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   const Text(
                     '输入你的自建 VPS 地址与所有者邮箱，接收 6 位验证码直接握手绑定；设备专用令牌由 VPS 直接签发，全程不暴露密钥。',
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -719,14 +722,20 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                     const SizedBox(height: 4),
                     Text(
                       _statusNotice!,
-                      style: const TextStyle(fontSize: 12, color: Colors.green),
+                      style: const TextStyle(
+                        fontSize: AppFontSizes.xs,
+                        color: AppColors.accent,
+                      ),
                     ),
                   ],
                   if (_errorMessage != null) ...[
                     const SizedBox(height: 4),
                     Text(
                       _errorMessage!,
-                      style: const TextStyle(fontSize: 12, color: Colors.red),
+                      style: const TextStyle(
+                        fontSize: AppFontSizes.xs,
+                        color: AppColors.coral,
+                      ),
                     ),
                   ],
                 ],
@@ -964,7 +973,7 @@ class _EngineOptionCard extends StatelessWidget {
                               Text(
                                 provider.label,
                                 style: TextStyle(
-                                  fontSize: 13.5,
+                                  fontSize: AppFontSizes.sm,
                                   fontWeight: FontWeight.w600,
                                   color: tokens.textPrimary,
                                 ),
@@ -985,7 +994,7 @@ class _EngineOptionCard extends StatelessWidget {
                                 child: Text(
                                   meta.statusLabel,
                                   style: TextStyle(
-                                    fontSize: 10.5,
+                                    fontSize: AppFontSizes.xs,
                                     fontWeight: FontWeight.w600,
                                     color: meta.statusColor,
                                     height: 1.2,
@@ -1009,7 +1018,7 @@ class _EngineOptionCard extends StatelessWidget {
                                   child: Text(
                                     '会议录音已关闭：会上传音频',
                                     style: TextStyle(
-                                      fontSize: 10.5,
+                                      fontSize: AppFontSizes.xs,
                                       fontWeight: FontWeight.w600,
                                       color: tokens.textSecondary,
                                       height: 1.2,
@@ -1022,7 +1031,7 @@ class _EngineOptionCard extends StatelessWidget {
                           Text(
                             meta.description,
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: AppFontSizes.xs,
                               color: tokens.textSecondary,
                               height: 1.35,
                             ),
@@ -1123,7 +1132,7 @@ class _AppleLanguageSettings extends StatelessWidget {
               : '转写和翻译语言已就绪',
           style: const TextStyle(
             color: AppColors.textSecondary,
-            fontSize: 13,
+            fontSize: AppFontSizes.sm,
             height: 1.4,
           ),
         ),
@@ -1133,7 +1142,7 @@ class _AppleLanguageSettings extends StatelessWidget {
             c.appleSetupError!,
             style: const TextStyle(
               color: AppColors.coral,
-              fontSize: 13,
+              fontSize: AppFontSizes.sm,
               height: 1.4,
             ),
           ),
@@ -1686,14 +1695,20 @@ Future<void> showOrganizeHistorySheet(BuildContext context) async {
               padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text(
                 '整理以前的录音',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  fontSize: AppFontSizes.md,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text(
                 '只处理你选的范围：缺文字的先转写，再写摘要、提取待办。已完成的步骤不会重复调用模型。',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: AppFontSizes.sm,
+                ),
               ),
             ),
             option(OrganizeRange.lastWeek, '最近 7 天'),
@@ -1999,9 +2014,9 @@ class _DiarizationModelSettings extends StatelessWidget {
     final percent = (store.progress * 100).round().clamp(0, 100);
     final subtitle = switch (status) {
       DiarizationModelStatus.ready =>
-        '已就绪 · pyannote 分段 + 3D-Speaker 嵌入（约 33 MB）',
-      DiarizationModelStatus.downloading => '正在下载（$percent%）· 仅在 Wi-Fi 下下载',
-      DiarizationModelStatus.paused => '已暂停 · 可继续下载或删除已缓存文件',
+        '已就绪，pyannote 分段 + 3D-Speaker 嵌入（约 33 MB）',
+      DiarizationModelStatus.downloading => '正在下载（$percent%），仅在 Wi-Fi 下下载',
+      DiarizationModelStatus.paused => '已暂停，可继续下载或删除已缓存文件',
       DiarizationModelStatus.wifiRequired ||
       DiarizationModelStatus.failed => store.errorMessage ?? '本机发言人模型尚未就绪',
       DiarizationModelStatus.notInstalled => '首次本机区分发言人时在 Wi-Fi 下自动下载（约 33 MB）',
@@ -2028,7 +2043,7 @@ class _DiarizationModelSettings extends StatelessWidget {
                   '本机发言人区分模型',
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 13.5,
+                    fontSize: AppFontSizes.sm,
                     color: AppColors.textPrimary,
                   ),
                 ),

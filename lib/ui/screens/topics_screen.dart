@@ -50,7 +50,7 @@ class TopicsEntry extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    current == null ? '主题 · 今天未设当前主题' : '当前主题：${current.title}',
+                    current == null ? '主题，今天未设当前主题' : '当前主题：${current.title}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -59,7 +59,7 @@ class TopicsEntry extends StatelessWidget {
                   Text(
                     '待归类 $pending',
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -130,7 +130,7 @@ class TopicsScreen extends StatelessWidget {
                           const Text(
                             '当前主题（仅今天有效）',
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: AppFontSizes.xs,
                               color: AppColors.textSecondary,
                             ),
                           ),
@@ -652,7 +652,7 @@ class _SectionTitle extends StatelessWidget {
     child: Text(
       text,
       style: const TextStyle(
-        fontSize: 13,
+        fontSize: AppFontSizes.sm,
         fontWeight: FontWeight.w600,
         color: AppColors.textSecondary,
       ),
@@ -666,7 +666,7 @@ String _subtitle(Topic topic) => [
   _kindLabel(topic),
   if (topic.kind == TopicKind.book && topic.author.isNotEmpty) topic.author,
   if (topic.closed) '已${topic.closedLabel}',
-].join(' · ');
+].join('，');
 
 class _TopicTile extends StatelessWidget {
   const _TopicTile({required this.topic, required this.current});
@@ -684,7 +684,7 @@ class _TopicTile extends StatelessWidget {
             : Icons.lightbulb_outline_rounded,
       ),
       title: Text(topic.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(current ? '${_subtitle(topic)} · 当前' : _subtitle(topic)),
+      subtitle: Text(current ? '${_subtitle(topic)}，当前' : _subtitle(topic)),
       trailing: Text('$count'),
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -966,7 +966,7 @@ class _RecommendationBanner extends StatelessWidget {
       final author =
           recommendation.suggestedKind == TopicKind.book &&
               recommendation.suggestedAuthor.isNotEmpty
-          ? ' · ${recommendation.suggestedAuthor}'
+          ? '，${recommendation.suggestedAuthor}'
           : '';
       label = '建议新建主题《${recommendation.suggestedTitle}》$author';
     }
@@ -977,7 +977,10 @@ class _RecommendationBanner extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          style: const TextStyle(
+            fontSize: AppFontSizes.sm,
+            color: AppColors.textSecondary,
+          ),
         ),
         TextButton(
           key: ValueKey('confirm-recommend-$recordingKey'),
@@ -1028,7 +1031,10 @@ class _DriftBanner extends StatelessWidget {
       children: [
         Text(
           prompt,
-          style: const TextStyle(fontSize: 13, color: AppColors.coral),
+          style: const TextStyle(
+            fontSize: AppFontSizes.sm,
+            color: AppColors.coral,
+          ),
         ),
         TextButton(
           key: ValueKey('drift-move-$recordingKey'),
@@ -1302,7 +1308,7 @@ class TopicDetailScreen extends StatelessWidget {
                   child: isCurrent
                       ? OutlinedButton(
                           onPressed: () => store.setCurrentTopic(null),
-                          child: const Text('今天的当前主题 · 点按清除'),
+                          child: const Text('今天的当前主题，点按清除'),
                         )
                       : FilledButton(
                           onPressed: () => store.setCurrentTopic(topicId),

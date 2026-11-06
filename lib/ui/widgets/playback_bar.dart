@@ -63,7 +63,7 @@ class PlaybackBar extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 13,
+                    fontSize: AppFontSizes.sm,
                     color: AppColors.textPrimary,
                   ),
                 ),
@@ -115,7 +115,7 @@ class PlaybackBar extends StatelessWidget {
                 Text(
                   _fmt(position),
                   style: const TextStyle(
-                    fontSize: 11,
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textMuted,
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),
@@ -124,7 +124,7 @@ class PlaybackBar extends StatelessWidget {
                 Text(
                   _fmt(c.duration),
                   style: const TextStyle(
-                    fontSize: 11,
+                    fontSize: AppFontSizes.xs,
                     color: AppColors.textMuted,
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),
@@ -160,7 +160,7 @@ class PlaybackBar extends StatelessWidget {
                     ),
                     style: const TextStyle(
                       color: AppColors.textPrimary,
-                      fontSize: 13,
+                      fontSize: AppFontSizes.sm,
                       fontWeight: FontWeight.w600,
                     ),
                     items: [
