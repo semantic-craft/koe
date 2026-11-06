@@ -137,7 +137,7 @@ B1 使用“确定句段”快照，不把会反复修订的半句话送入整�
 
 Mac 字幕有纪要窗口、字幕条、隐藏三个状态；鼠标经过字幕区域降低不透明度并确保不截获底下操作。Apple 官方将 NSWindow.SharingType.none 标为系统不再使用的旧常量；不据此承诺所有共享和截图不可见。保留 best-effort 属性、一键隐藏与按具体会议软件窗口分享排除；真机分别核对窗口分享和全屏分享。快捷键冲突复用现有报告方式。
 
-启用新自动收尾的绑定会话由 meeting_end_watch 唯一负责结束提示与停止，旧 MeetingAppWatch 仅保留开录提示及未启用新收尾时的原行为；共用三态检测，不运行两套结束计时器。自动结束默认关闭，仅适用于用户启用且绑定单一会议应用的当前 Mac 会议，不用于手机或普通录音豆会话。麦克风检测协议扩展为 active/inactive/unavailable，查询失败必须为 unavailable；连续 30 秒 inactive 才触发 60 秒可取消倒计时，设备切换期间重置观察，多个会议应用不推断归属。输入使用结束仅作为结束提示信号，不能宣称精确知道会议已挂断。静默触发器仅在可靠音频活动检测可用时启用：取麦克风与系统路两者人声活动的并集；检测不可用则禁用该触发器，不用无转写结果替代静默。连续十分钟无检测人声触发同样倒计时；用户取消本次倒计时后需新的人声活动再允许静默触发。检测来源不可用时关闭自动结束，不将“没有识别结果”当作“没有声音”。自动结束调用正常停止保存流程，不删除原件尾部；导出可用逻辑结束位置裁掉展示空白。普通录音豆录音不因电脑会议应用状态停止。
+启用新自动收尾的绑定会话由 meeting_end_watch 唯一负责结束提示与停止，旧 MeetingAppWatch 仅保留开录提示及未启用新收尾时的原行为；共用三态检测，不运行两套结束计时器。自动结束默认关闭，仅适用于用户启用且绑定单一会议应用的当前 Mac 会议，不用于手机或普通录音豆会话。麦克风检测协议扩展为 active/inactive/unavailable，查询失败必须为 unavailable；连续 30 秒 inactive 才触发 60 秒可取消倒计时，设备切换期间重置观察，多个会议应用不推断归属。输入使用结束仅作为结束提示信号，不能宣称精确知道会议已挂断。静默触发器原规划取麦克风与系统路两者人声活动并集并在连续十分钟无检测人声触发倒计时；由于跨路可靠 VAD 暂不可用，代码（`lib/state/meeting_end_watch.dart`）明确提示静默检测不可用，不拿无转写冒充静默。用户取消本次倒计时后需新的人声活动再允许重新武装。检测来源不可用时关闭自动结束，不将“没有识别结果”当作“没有声音”。自动结束调用正常停止保存流程，不删除原件尾部；导出可用逻辑结束位置裁掉展示空白。普通录音豆录音不因电脑会议应用状态停止。
 
 ### 同传隔离与服务
 
@@ -145,7 +145,7 @@ Mac 字幕有纪要窗口、字幕条、隐藏三个状态；鼠标经过字幕�
 
 C1 默认复用本机/已有授权识别与文字翻译；系统 TTS 使用 AVSpeechSynthesizer.write(_:toBufferCallback:) 取得 PCM，交 AVAudioEngine/AVAudioPlayerNode，输出 AudioUnit 定向到用户选择的虚拟设备，不改默认扬声器。该 API 有官方证据，真实路由仍需签名安装版验证。默认沿用 Carbon 组合键并补 pressed/released 成对事件，不强求右 Option 或 Input Monitoring。按住会话有唯一 generation，松开只完成当前会话，取消使所有迟到结果失效。本批按住同传一次只处理一句，忙时拒绝新句；详细实现以[Mac 同传设计](mac-interpreting.md)为准。
 
-C2 选择可选 Ming 无状态 reference TTS，不新增 voice ID/训练任务。POST /v1/audio/speech，模型 Ming-3.0-tts-0.5B，PCM 24000 Hz；普通声传 voice，克隆传 references（WAV data URI 与参考文本，编码音频不超过 10 MB）。SSE speech.audio.delta 的 Base64 音频必须跨网络块缓冲解析，speech.audio.done 才完成；奇数字节 PCM 留待后块。用户本人 8–30 秒样本明确启用后上传，每次请求前落盘状态；未知付费请求不重发。样本不进资料包、归档、日志或备份，删除立即停用。云合成尚未播放字节时可退回系统 TTS，播放一半失败只提示不从头重读；未配置云服务不阻塞普通声音。
+> C2 历史调查记录（已于 2026-11-04 随 #513 取消，未实施）：原规划选择可选 Ming 无状态 reference TTS，不新增 voice ID/训练任务。POST /v1/audio/speech，模型 Ming-3.0-tts-0.5B，PCM 24000 Hz；普通声传 voice，克隆传 references（WAV data URI 与参考文本，编码音频不超过 10 MB）。SSE speech.audio.delta 的 Base64 音频必须跨网络块缓冲解析，speech.audio.done 才完成；奇数字节 PCM 留待后块。用户本人 8–30 秒样本明确启用后上传，每次请求前落盘状态；未知付费请求不重发。样本不进资料包、归档、日志或备份，删除立即停用。云合成尚未播放字节时可退回系统 TTS，播放一半失败只提示不从头重读；未配置云服务不阻塞普通声音。
 
 ## Alternatives Considered
 
@@ -223,15 +223,15 @@ A1 完成条件：旧纪要阅读和编辑不丢原字段；新结果读取、�
 
 ### A2：术语候选采纳与来源检索
 
-依赖 A1。修改 `lib/state/meeting_minutes.dart` 加候选状态和来源定位规则；`lib/state/recorder_controller.dart` 接入现有 `replaceTermInRecording`，仅通过用户动作采纳；`lib/ui/widgets/minutes_terms.dart` 加查看影响、仅入词表与采纳动作；`lib/ui/transcript_layout.dart` 为 TranscriptSearchHit 增加命中类别和术语来源目标，`lib/ui/screens/files_screen.dart` 使用类别显示“术语关联命中”，`lib/ui/screens/recording_detail_screen.dart` 接对应来源跳转。新增 `test/minutes_terms_test.dart`，扩展 `test/search_and_global_replace_test.dart` 和 `test/minutes_quality_and_glossary_test.dart`：正确名称找到未采纳错写原句，采纳后旧词不重新命中普通搜索，撤销和重启保留状态，来源变更禁用旧定位。
+依赖 A1。修改 `lib/state/meeting_minutes.dart` 加候选状态和来源定位规则；`lib/state/recorder_controller.dart` 接入现有 `replaceTermInRecording`，仅通过用户动作采纳；`lib/ui/widgets/minutes_terms.dart` 加查看影响、仅入词表与采纳动作；正文未直接命中而匹配候选时，`lib/state/recorder_controller.dart` 为 `TranscriptSearchHit.snippet` 补充“术语关联”前缀提示（`术语关联（名称 ← 误识别）：...`），保留现有 `TranscriptSearchHit` 紧凑契约；`lib/ui/screens/recording_detail_screen.dart` 与文件搜索直接承载跳转。新增 `test/minutes_term_adoption_test.dart`，扩展 `test/search_and_global_replace_test.dart` 和 `test/minutes_quality_and_glossary_test.dart`：正确名称找到未采纳错写原句，采纳后旧词不重新命中普通搜索，撤销和重启保留状态，来源变更禁用旧定位。
 
 ### B1：有界实时纪要
 
-新增 `lib/state/live_minutes.dart`（调度、修订与状态机）和 `lib/state/recorder/live_minutes.dart`（控制器 mixin）；新增 `lib/state/live_minutes_store.dart` 用现有 atomic_file 写会话 revision/watermark/付费请求状态，不复制原件；修改 `lib/state/recorder_controller.dart` 的 part/构造/清理接线、`lib/state/recorder/live_transcription.dart` 与 `lib/state/recorder/phone_recording.dart` 的确定句段/停止事件；修改 `lib/state/recording_analysis.dart` 增加上述 runLiveRevision 有界请求入口并复用提供方调用，不复用整 sourceHash 的清理决策；`lib/state/app_settings_store.dart`、`lib/state/recorder/settings.dart`、`lib/ui/screens/settings_screen.dart` 加实时整理开关。新增 `test/live_minutes_test.dart`，用可控时钟和 Completer 验证有界队列、迟到结果、手改保护、重启未知请求不重发；扩展既有 recording_analysis_recovery 与 phone_recording 用例。新增实时显示组件 `lib/ui/widgets/live_minutes_panel.dart`，在现有录音界面接线。Mac 当前 `MacDualRecorder` 丢弃 native final 标志且只输出扁平 text：修改 `macos/Runner/DualRecordingBridge.swift` 为事件带 session/lane/requestId/offset/final，修改 `lib/platform/mac_dual_recorder.dart` 和 `lib/platform/dual_recording_text.dart` 保留确定段集合并暴露只读流，部分结果只显示不进入整理。稳定键为会话+lane+requestId，不以文本哈希或单独 offset 识别同一句。新增 `test/dual_recording_final_segments_test.dart` 验证部分到最终、迟到旧会话、双路顺序和 final 修订，已有 `.dual.txt` 仍是可读导出，实时恢复状态使用独立上述 store。
+新增 `lib/state/live_minutes.dart`（调度、修订与状态机）和 `lib/state/recorder/live_meeting.dart`（控制器 mixin，统筹实时纪要与字幕会话）；新增 `lib/state/live_minutes_store.dart` 用现有 atomic_file 写会话 revision/watermark/付费请求状态，不复制原件；修改 `lib/state/recorder_controller.dart` 的 part/构造/清理接线、`lib/state/recorder/live_transcription.dart` 与 `lib/state/recorder/phone_recording.dart` 的确定句段/停止事件；修改 `lib/state/recording_analysis.dart` 增加上述 runLiveRevision 有界请求入口并复用提供方调用，不复用整 sourceHash 的清理决策；`lib/state/app_settings_store.dart`、`lib/state/recorder/settings.dart`、`lib/ui/screens/settings_screen.dart` 加实时整理开关。新增 `test/live_minutes_test.dart`，用可控时钟和 Completer 验证有界队列、迟到结果、手改保护、重启未知请求不重发；扩展既有 recording_analysis_recovery 与 phone_recording 用例。新增实时会议界面组件 `lib/ui/widgets/live_meeting_panel.dart` 与已存速记面板 `lib/ui/widgets/saved_live_meeting_panel.dart`，在录音及资料页接线。Mac 当前 `MacDualRecorder` 丢弃 native final 标志且只输出扁平 text：修改 `macos/Runner/DualRecordingBridge.swift` 为事件带 session/lane/requestId/offset/final，修改 `lib/platform/mac_dual_recorder.dart` 和 `lib/platform/dual_recording_text.dart` 保留确定段集合并暴露只读流，部分结果只显示不进入整理。稳定键为会话+lane+requestId，不以文本哈希或单独 offset 识别同一句。在 `test/mac_dual_recorder_test.dart` 验证部分到最终、迟到旧会话、双路顺序和 final 修订，已有 `.dual.txt` 仍是可读导出，实时恢复状态使用独立上述 store。
 
 ### B2：字幕与收尾
 
-新增 `lib/state/live_captions.dart`（确定句段翻译、语言能力与修订）、`lib/ui/widgets/live_captions_panel.dart`（三端应用内列表）、`lib/platform/mac_captions.dart`（Mac 方法通道）、`macos/Runner/CaptionsPanel.swift`（原生浮窗）；修改 `lib/ui/mac_menu_bar.dart`、`macos/Runner/AppDelegate.swift`、`macos/Runner/GlobalHotKeys.swift`、`macos/Runner.xcodeproj/project.pbxproj` 以注册窗口和快捷键。修改 `macos/Runner/MicrophoneUsers.swift` 区分 unavailable 和 inactive，`lib/state/meeting_apps.dart` 与 `lib/platform/mac_app.dart` 的 microphoneUsers 通道解码承载三态检测、绑定应用和 30 秒观察窗；新增 `lib/state/meeting_end_watch.dart` 明确人声活动、倒计时、取消和正常停止；收尾接 `lib/state/recorder/phone_recording.dart`，不触碰录音豆实体录制。翻译调用复用 `lib/ai/apple_speech.dart` 和现有分析服务；需新能力时先做平台能力调查并更新工单，不猜测 API。新增 captions/end_watch 行为测试，扩展 mac_menu_bar 测试。系统版本能力、真实分享隐藏和麦克风冲突单独设备工单。
+新增 `lib/state/live_captions.dart`（确定句段翻译、语言能力与修订）、字幕列表收敛在 `lib/ui/widgets/live_meeting_panel.dart`、`lib/platform/mac_captions.dart`（Mac 方法通道）、`macos/Runner/CaptionsPanel.swift`（原生浮窗）；修改 `lib/ui/mac_menu_bar.dart`、`macos/Runner/AppDelegate.swift`、`macos/Runner/GlobalHotKeys.swift`、`macos/Runner.xcodeproj/project.pbxproj` 以注册窗口和快捷键。修改 `macos/Runner/MicrophoneUsers.swift` 区分 unavailable 和 inactive，`lib/state/meeting_apps.dart` 与 `lib/platform/mac_app.dart` 的 microphoneUsers 通道解码承载三态检测、绑定应用和 30 秒观察窗；新增 `lib/state/meeting_end_watch.dart` 明确人声活动、倒计时、取消和正常停止；收尾接 `lib/state/recorder/phone_recording.dart`，不触碰录音豆实体录制。翻译调用复用 `lib/ai/apple_speech.dart` 和现有分析服务；需新能力时先做平台能力调查并更新工单，不猜测 API。新增 captions/end_watch 行为测试，扩展 mac_menu_bar 测试。系统版本能力、真实分享隐藏和麦克风冲突单独设备工单。
 
 ### C1/C2：按已核实接口实施，真实路由独立验收
 
@@ -243,7 +243,7 @@ C0 的官方文档调查已形成平台证据；剩下可重放隔离实验：�
 
 C1 的文件、通道、采集/TTS格式、单句策略与测试由[Mac 同传详细设计](mac-interpreting.md)替代本段旧契约。采集复用16kHz Float32，系统TTS在原生侧保留实际格式，Dart不传PCM。C2云TTS的24kHz契约不改变。
 
-C2 新增 `lib/ai/ming_tts.dart`（请求与 SSE）、`lib/state/voice_sample_store.dart`（样本元数据与独立文件）、`lib/ui/widgets/voice_sample_settings.dart`、`test/ming_tts_test.dart`、`test/voice_sample_store_test.dart`；修改 `lib/state/app_settings_store.dart` 仅存非秘密选择，密钥用既有 credential_store 入口，settings_screen 接线。样本存应用私人目录下 voice-samples，平台标记不备份，资料包/归档白名单不得包含；删样本前先停止当前克隆并取消关联队列，文件删除失败显示原因且不重新启用。测试覆盖切片 SSE、超限请求、取消迟到音频、零字节回退、部分播音不重读、删除/重启和秘密不进设置。真实服务与设备工单独立。
+C2（已于 2026-11-04 取消实施，保留历史调查）：原规划新增 `lib/ai/ming_tts.dart`（请求与 SSE）、`lib/state/voice_sample_store.dart`（样本元数据与独立文件）、`lib/ui/widgets/voice_sample_settings.dart`、`test/ming_tts_test.dart`、`test/voice_sample_store_test.dart` 等。随 #513 取消，未进入实施，全仓专注 C1 系统声音同传与 #516 设备验收。
 
 ### Verification and Delivery
 
