@@ -108,9 +108,11 @@ void main() {
 
       final vpsPrompt = controller.buildAgentMcpSetupPrompt(hasVps: true);
       final lanPrompt = controller.buildAgentMcpSetupPrompt(hasVps: false);
+      expect(vpsPrompt, contains('tools/koe-mcp/README.md'));
+      expect(vpsPrompt, contains('tools/koe-mcp/server.py'));
       expect(vpsPrompt, contains('--print-pairing'));
       expect(vpsPrompt, contains('KOEMCP1.'));
-      expect(vpsPrompt, contains('/mcp'));
+      expect(lanPrompt, contains('tools/koe-mcp/README.md'));
       expect(lanPrompt, contains('--mode lan'));
       expect(lanPrompt, contains('KOEMCP1.'));
 
@@ -118,6 +120,7 @@ void main() {
         baseUrl: 'https://minutes.example.com',
         token: 'secret-token-0123456789abcdef0123456789',
         mode: McpSyncMode.vps,
+        email: 'owner@example.com',
       );
       final code = original.encodePairingCode();
       final prose = '''
@@ -132,7 +135,9 @@ $code
       expect(parsed.baseUrl, 'https://minutes.example.com');
       expect(parsed.token, original.token);
       expect(parsed.mode, McpSyncMode.vps);
-      expect(parsed.redactedLabel, 'VPS 云端 · minutes.example.com');
+      expect(parsed.redactedLabel, 'VPS 云端已连接');
+      expect(parsed.redactedLabel, isNot(contains('minutes.example.com')));
+      expect(parsed.redactedLabel, isNot(contains('owner@example.com')));
       expect(parsed.redactedLabel, isNot(contains(original.token)));
 
       const settings = AppSettings(
@@ -419,10 +424,8 @@ $code
 
       expect(controller.mcpSyncConfig, isNotNull);
       expect(controller.mcpSyncConfig!.baseUrl, 'https://koe-vps.example.com');
-      expect(
-        find.textContaining('VPS 云端 · koe-vps.example.com'),
-        findsWidgets,
-      );
+      expect(find.textContaining('VPS 云端已连接'), findsWidgets);
+      expect(find.textContaining('koe-vps.example.com'), findsNothing);
     },
   );
 
@@ -448,7 +451,7 @@ $code
         '--token-file',
         tokenFile.path,
         '--owner-email',
-        'gakalone@gmail.com',
+        'owner@example.com',
         '--mode',
         'lan',
       ]);
@@ -498,7 +501,7 @@ $code
       // 2. Matching email should succeed and return payload with dev_code
       final reqResult = await controller.requestMcpOtpPairing(
         baseUrl: baseUrl,
-        email: 'gakalone@gmail.com',
+        email: 'owner@example.com',
       );
       expect(reqResult['ok'], isTrue);
       final devCode = reqResult['dev_code'] as String;
@@ -508,7 +511,7 @@ $code
       expect(
         () => controller.verifyMcpOtpPairing(
           baseUrl: baseUrl,
-          email: 'gakalone@gmail.com',
+          email: 'owner@example.com',
           code: '000000',
         ),
         throwsA(isA<HttpException>()),
@@ -517,22 +520,40 @@ $code
       // 4. Valid code completes handshake, issues token, and binds
       final config = await controller.verifyMcpOtpPairing(
         baseUrl: baseUrl,
-        email: 'gakalone@gmail.com',
+        email: 'owner@example.com',
         code: devCode,
       );
       expect(config.baseUrl, baseUrl);
       expect(config.token.length, greaterThanOrEqualTo(24));
-      expect(config.email, 'gakalone@gmail.com');
+      expect(config.email, 'owner@example.com');
       expect(controller.mcpSyncConfig?.token, config.token);
-      expect(controller.mcpSyncEmail, 'gakalone@gmail.com');
+      expect(controller.mcpSyncEmail, 'owner@example.com');
     },
   );
 
   testWidgets(
-    'SettingsScreen external-ai-entry validates input fields and renders OTP pairing interface',
+    'SettingsScreen external-ai-entry renders zero input fields, hides URL and email in UI, and auto-binds from Agent drop file',
     (tester) async {
+      late final Directory root;
+      late final Directory libDir;
+      late final File dropFile;
+      await tester.runAsync(() async {
+        root = await Directory.systemTemp.createTemp('koe-drop-bind-');
+        libDir = Directory('${root.path}/lib')..createSync();
+        dropFile = File('${libDir.path}/mcp_pairing.txt');
+        const dropConfig = McpSyncConfig(
+          baseUrl: 'https://private-vps.example.com',
+          token: 'token-01234567890123456789012345',
+          mode: McpSyncMode.vps,
+          email: 'private-owner@example.com',
+        );
+        dropFile.writeAsStringSync(dropConfig.encodePairingCode());
+      });
+      addTearDown(() => tester.runAsync(() => root.delete(recursive: true)));
+
       final controller = RecorderController(
         loadPersistedState: false,
+        libraryDirectory: libDir,
         analysisController: RecordingAnalysis(inMemory: true),
       );
       addTearDown(controller.dispose);
@@ -554,52 +575,27 @@ $code
       await tester.tap(entry);
       await tester.pumpAndSettle();
 
-      final urlField = find.byKey(const ValueKey('mcp-server-url-field'));
-      final emailField = find.byKey(const ValueKey('mcp-email-field'));
-      final reqButton = find.byKey(const ValueKey('mcp-request-otp-button'));
-      final codeField = find.byKey(const ValueKey('mcp-otp-code-field'));
-      final verifyButton = find.byKey(const ValueKey('mcp-verify-otp-button'));
-
-      expect(urlField, findsOneWidget);
-      expect(emailField, findsOneWidget);
-      expect(reqButton, findsOneWidget);
-      expect(codeField, findsOneWidget);
-      expect(verifyButton, findsOneWidget);
-
-      // 1. Validation: Empty URL triggers error notice
-      await tester.ensureVisible(reqButton);
-      await tester.tap(reqButton);
-      await tester.pumpAndSettle();
-      expect(find.text('请填写 VPS 服务器地址'), findsOneWidget);
-
-      // 2. Validation: Empty or bad email triggers error notice
-      await tester.enterText(urlField, 'https://anet.sonori.dev');
-      await tester.enterText(emailField, 'notanemail');
-      await tester.ensureVisible(reqButton);
-      await tester.tap(reqButton);
-      await tester.pumpAndSettle();
-      expect(find.text('请填写有效的 Owner 邮箱'), findsOneWidget);
-
-      // 3. Validation: Invalid code length triggers error notice
-      await tester.enterText(emailField, 'gakalone@gmail.com');
-      await tester.enterText(codeField, '123');
-      await tester.ensureVisible(verifyButton);
-      await tester.tap(verifyButton);
-      await tester.pumpAndSettle();
-      expect(find.text('请输入 6 位数字验证码'), findsOneWidget);
-
-      // 4. When config is applied, dialog displays active connection card and disconnect button
-      controller.applySavedMcpSyncConfig(
-        const McpSyncConfig(
-          baseUrl: 'https://anet.sonori.dev',
-          token: 'token-01234567890123456789012345',
-          mode: McpSyncMode.vps,
-          email: 'gakalone@gmail.com',
+      // Zero manual input boxes inside the external AI dialog
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
         ),
+        findsNothing,
       );
-      await tester.pumpAndSettle();
 
-      expect(find.textContaining('gakalone@gmail.com'), findsWidgets);
+      // Opening the dialog automatically consumed the Agent drop-in file
+      expect(controller.mcpSyncConfig, isNotNull);
+      expect(
+        controller.mcpSyncConfig!.baseUrl,
+        'https://private-vps.example.com',
+      );
+      expect(dropFile.existsSync(), isFalse);
+
+      // UI shows connected status without leaking URL or email
+      expect(find.textContaining('VPS 云端已连接'), findsWidgets);
+      expect(find.textContaining('private-vps.example.com'), findsNothing);
+      expect(find.textContaining('private-owner@example.com'), findsNothing);
       expect(find.byKey(const ValueKey('mcp-sync-now')), findsOneWidget);
       expect(find.byKey(const ValueKey('mcp-disconnect')), findsOneWidget);
 

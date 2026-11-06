@@ -40,7 +40,28 @@ python3 tools/koe-mcp/server.py \
   --token-file ~/.koe/mcp-token
 ```
 
-- 在 Koe「设置 → 外部 AI 与云同步（MCP）」中，用户只需点击复制「我有 VPS」或「我没有 VPS（使用本机 Mac）」的 Agent 自动配置提示词发给 AI Agent；Agent 部署服务并回复 `KOEMCP1.<base64url>` 连接码后，回到 Koe 点「从剪贴板一键接入」即可完成绑定（Bearer 令牌单独存入系统 Keychain）。
+- 在 Koe「设置 → 外部 AI 连接」中，界面不设任何地址、邮箱或密钥输入框，也不会在界面回显用户的服务器域名或私人邮箱。
+- **方式一（插着电脑 / 本机 Agent 直接操作，零复制粘贴）**：
+  - Agent 在电脑上生成 `KOEMCP1.` 连接码后，可直接写入系统剪贴板（`pbcopy`，支持 Apple 通用剪贴板同步至 iPhone），或对插在电脑上的 iPhone 直接通过 `xcrun devicectl` 推入配对文件（Koe 打开「外部 AI 连接」或点击「一键接入」时会自动读取并销毁该文件）：
+    ```sh
+    # 生成 KOEMCP1. 连接码并直接推入已连接 iPhone 的 Koe 容器
+    python3 tools/koe-mcp/server.py \
+      --directory ~/.koe/mcp-sync \
+      --token-file ~/.koe/mcp-token \
+      --public-url https://<自动发现的VPS域名>/mcp \
+      --mode vps \
+      --print-pairing | python3 -c "import sys,json; print(json.load(sys.stdin)['pairingCode'])" > /tmp/mcp_pairing.txt
+    xcrun devicectl device copy to \
+      --device <iPhone_UDID_or_Name> \
+      --domain-type appDataContainer \
+      --domain-identifier com.semanticcraft.soundcore \
+      --source /tmp/mcp_pairing.txt \
+      --destination Documents/AnkerRecorder/mcp_pairing.txt
+    rm -f /tmp/mcp_pairing.txt
+    ```
+  - 若只需在插着电脑时由 Agent 直接读取 iPhone 上的纪要、转写或待办，也可直接用 `xcrun devicectl device copy from --domain-type appDataContainer --domain-identifier com.semanticcraft.soundcore --source Documents/AnkerRecorder/minutes_documents.json`（或 `transcripts.json`、`analysis.json`）读取。
+- **方式二（复制提示词 + 剪贴板一键接入，零手动填写）**：
+  - 用户点击复制「复制 VPS 配置提示词」或「复制本机 Mac 配置提示词」发给 AI Agent；Agent 读取本文件自动部署服务并回复 `KOEMCP1.<base64url>` 连接码后，回到 Koe 点「从剪贴板一键接入」即可完成绑定（Bearer 令牌单独存入系统 Keychain）。
 - 手机录制或纯文字记录生成逐字稿与纪要后，自动将不含原音频的 `.koepack` v2 推送至 `PUT /sync/packs/<contentHash>`；Mac 打开 Koe 自动从 `GET /sync/packs` 拉取合并；任何配置了 `POST /mcp`（请求头 `Authorization: Bearer <token>`）的 Agent 均可随时调用 `list_recordings`（支持可选 `query` 关键词过滤）、`get_transcript`、`get_minutes`。
 
 ## 手动导出模式

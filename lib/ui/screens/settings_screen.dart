@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:async';
 import '../widgets/mac_interpreting_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -339,116 +339,10 @@ class _ExternalAiDialog extends StatefulWidget {
 }
 
 class _ExternalAiDialogState extends State<_ExternalAiDialog> {
-  late final TextEditingController _urlController;
-  late final TextEditingController _emailController;
-  late final TextEditingController _codeController;
-
-  bool _isRequesting = false;
-  bool _isVerifying = false;
-  String? _statusNotice;
-  String? _errorMessage;
-
   @override
   void initState() {
     super.initState();
-    final c = widget.controller;
-    _urlController = TextEditingController(
-      text: c.mcpSyncConfig?.baseUrl ?? c.mcpSyncUrl ?? '',
-    );
-    _emailController = TextEditingController(
-      text: c.mcpSyncConfig?.email ?? c.mcpSyncEmail ?? '',
-    );
-    _codeController = TextEditingController();
-  }
-
-  @override
-  void dispose() {
-    _urlController.dispose();
-    _emailController.dispose();
-    _codeController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _requestOtp() async {
-    final url = _urlController.text.trim();
-    final email = _emailController.text.trim();
-    if (url.isEmpty) {
-      setState(() => _errorMessage = '请填写 VPS 服务器地址');
-      return;
-    }
-    if (email.isEmpty || !email.contains('@')) {
-      setState(() => _errorMessage = '请填写有效的 Owner 邮箱');
-      return;
-    }
-    setState(() {
-      _isRequesting = true;
-      _errorMessage = null;
-      _statusNotice = null;
-    });
-    try {
-      final res = await widget.controller.requestMcpOtpPairing(
-        baseUrl: url,
-        email: email,
-      );
-      if (!mounted) return;
-      setState(() {
-        _isRequesting = false;
-        _statusNotice = '验证码已发送至 $email，请查收并填入下方';
-      });
-      if (res['dev_code'] is String) {
-        _codeController.text = res['dev_code'] as String;
-      }
-    } catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _isRequesting = false;
-        _errorMessage = err is HttpException
-            ? err.message
-            : err is FormatException
-            ? err.message
-            : '$err';
-      });
-    }
-  }
-
-  Future<void> _verifyOtp() async {
-    final url = _urlController.text.trim();
-    final email = _emailController.text.trim();
-    final code = _codeController.text.trim();
-    if (code.length != 6) {
-      setState(() => _errorMessage = '请输入 6 位数字验证码');
-      return;
-    }
-    setState(() {
-      _isVerifying = true;
-      _errorMessage = null;
-      _statusNotice = null;
-    });
-    try {
-      await widget.controller.verifyMcpOtpPairing(
-        baseUrl: url,
-        email: email,
-        code: code,
-      );
-      if (!mounted) return;
-      setState(() {
-        _isVerifying = false;
-        _statusNotice = '接入成功！已连接并开启云同步';
-      });
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('已成功绑定 VPS 并开启同步')),
-      );
-    } catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _isVerifying = false;
-        _errorMessage = err is HttpException
-            ? err.message
-            : err is FormatException
-            ? err.message
-            : '$err';
-      });
-    }
+    unawaited(widget.controller.tryBindMcpFromDropFile());
   }
 
   @override
@@ -498,13 +392,6 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'MCP 地址：${config.mcpEndpoint}',
-                            style: const TextStyle(
-                              fontSize: AppFontSizes.xs,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                          Text(
                             state.phase == McpSyncPhase.syncing
                                 ? '正在同步中...'
                                 : '已同步 ${state.syncedCount} 条记录',
@@ -543,7 +430,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                     const Divider(height: 24),
                   ],
                   const Text(
-                    '无需手动填写密钥。复制提示词交给 AI Agent 自动部署配置，或输入自建 VPS 地址与邮箱接收验证码直接绑定；未绑定前不会发起连接。',
+                    '无需手动填写任何地址、邮箱或密钥。插着电脑时可由 AI Agent 直接读取仓库并自动写入绑定，或复制下方提示词发给 AI 后点「从剪贴板一键接入」；未绑定前不会发起连接。',
                     style: TextStyle(
                       fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
@@ -585,9 +472,6 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                             ClipboardData(
                               text: widget.controller.buildAgentMcpSetupPrompt(
                                 hasVps: true,
-                                ownerEmail: _emailController.text.trim().isNotEmpty
-                                    ? _emailController.text.trim()
-                                    : null,
                               ),
                             ),
                           );
@@ -623,121 +507,6 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                       ),
                     ],
                   ),
-                  const Divider(height: 24),
-                  const Text(
-                    '邮箱验证码安全配对（推荐，零剪贴板）',
-                    style: TextStyle(
-                      fontSize: AppFontSizes.sm,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    '输入你的自建 VPS 地址与所有者邮箱，接收 6 位验证码直接握手绑定；设备专用令牌由 VPS 直接签发，全程不暴露密钥。',
-                    style: TextStyle(
-                      fontSize: AppFontSizes.xs,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const ValueKey('mcp-server-url-field'),
-                    controller: _urlController,
-                    decoration: const InputDecoration(
-                      labelText: 'VPS 服务器地址',
-                      hintText: 'https://anet.sonori.dev',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType: TextInputType.url,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          key: const ValueKey('mcp-email-field'),
-                          controller: _emailController,
-                          decoration: const InputDecoration(
-                            labelText: 'Owner 邮箱',
-                            hintText: 'gakalone@gmail.com',
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          keyboardType: TextInputType.emailAddress,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.tonal(
-                        key: const ValueKey('mcp-request-otp-button'),
-                        onPressed: _isRequesting ? null : _requestOtp,
-                        child: _isRequesting
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('获取验证码'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          key: const ValueKey('mcp-otp-code-field'),
-                          controller: _codeController,
-                          decoration: const InputDecoration(
-                            labelText: '6 位数字验证码',
-                            hintText: '123456',
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          keyboardType: TextInputType.number,
-                          maxLength: 6,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        key: const ValueKey('mcp-verify-otp-button'),
-                        onPressed: _isVerifying ? null : _verifyOtp,
-                        child: _isVerifying
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('验证并连接'),
-                      ),
-                    ],
-                  ),
-                  if (_statusNotice != null) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      _statusNotice!,
-                      style: const TextStyle(
-                        fontSize: AppFontSizes.xs,
-                        color: AppColors.accent,
-                      ),
-                    ),
-                  ],
-                  if (_errorMessage != null) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      _errorMessage!,
-                      style: const TextStyle(
-                        fontSize: AppFontSizes.xs,
-                        color: AppColors.coral,
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),

@@ -172,8 +172,15 @@
 
 - 出处：2026-11-06 阿里云 VPS 部署 `koe-mcp.service` 发送 OTP 邮件；直接读取宿主共享 `/etc/vpsops-monitoring/msmtprc` 时，msmtp 因属主非当前进程用户退出码 78 并拒绝发信，且 `koe@localhost` 默认发件人被 QQ SMTP 拒绝。
 - 修复：将发信配置部署为专属属主文件 `/etc/koe-mcp/msmtprc`（0600 `koe-mcp:koe-mcp`），发信时自动提取真实发件人并通过 `--read-envelope-from --read-recipients` 投递；本地测试与无公共 URL 场景下保留 `dev_code` 供自动化验收。
-- 验证点：公网 `POST https://anet.sonori.dev/pair/request` 实际投递至 `gakalone@gmail.com` 返回 `delivered: true`，且 `flutter test test/koe_mcp_export_test.dart test/mcp_sync_test.dart` 全绿。
+- 验证点：公网 `POST https://<vps-domain>/pair/request` 实际投递至授权邮箱返回 `delivered: true`，且 `flutter test test/koe_mcp_export_test.dart test/mcp_sync_test.dart` 全绿。
 - Seen 1x (2026-11-06)。
+
+### 外部 AI 接入界面严禁写死或回显个人 VPS 域名与邮箱，且不设人工输入框
+
+- 出处：2026-11-07 用户在准备桌面端与 iPhone 端实机验收时发现，「设置 → 外部 AI 连接」弹窗中不仅要求手动填写 VPS 地址、邮箱与验证码，还直接在 `hintText` 和已连接卡片上显示了用户的真实个人 VPS 域名与私人邮箱，造成隐私泄露风险与多余填写负担。
+- 修复：移除 `_ExternalAiDialog` 中全部 `TextField` 手动输入框及所有写死域名/邮箱，`McpSyncConfig.redactedLabel` 仅显示脱敏连接模式（`VPS 云端已连接` / `Mac 局域网已连接`），绝不在界面回显 URL 或邮箱；新增 `mcp_pairing.txt` 自动投递绑定机制与面向仓库 `tools/koe-mcp/README.md` 的通用 Agent 提示词，支持插电脑 AI 直读/直写或一键剪贴板粘贴。
+- 验证点：全仓检索无个人真实域名与私人邮箱字面量；`flutter test test/mcp_sync_test.dart --reporter expanded` 断言弹窗内 `find.byType(TextField)` 为 0 且不显示 `baseUrl`/`email`。
+- Seen 1x (2026-11-07)。
 
 
 ### iOS 验收必须保留截图元数据并驱动真实页面入口

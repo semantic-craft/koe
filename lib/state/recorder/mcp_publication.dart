@@ -37,14 +37,7 @@ class McpSyncConfig {
   static Uri pairVerifyUri(String baseUrl) =>
       Uri.parse('${_normalizeBaseUrl(baseUrl)}/pair/verify');
 
-  String get redactedLabel {
-    final uri = Uri.tryParse(baseUrl);
-    final hostPort = uri == null || uri.host.isEmpty
-        ? baseUrl
-        : (uri.hasPort ? '${uri.host}:${uri.port}' : uri.host);
-    final emailSuffix = email != null && email!.isNotEmpty ? ' ($email)' : '';
-    return '${mode.label} · $hostPort$emailSuffix';
-  }
+  String get redactedLabel => '${mode.label}已连接';
 
   String encodePairingCode() {
     final payload = jsonEncode({
@@ -137,6 +130,7 @@ class _McpGrant {
 
 mixin _RecorderMcpPublication on ChangeNotifier {
   // Provided by RecorderController and the recording stores.
+  Directory? get _libraryDirectoryOverride;
   RecordingAnalysis get analysis;
   RecordingLibraryStore get library;
   MinutesDocumentStore get minutes;
@@ -199,6 +193,8 @@ mixin _RecorderMcpPublication on ChangeNotifier {
           );
     if (config != null && !_mcpClosed) {
       unawaited(syncMcpNow());
+    } else if (config == null && !_mcpClosed) {
+      unawaited(tryBindMcpFromDropFile());
     }
   }
 
@@ -326,39 +322,51 @@ mixin _RecorderMcpPublication on ChangeNotifier {
 
   String buildAgentMcpSetupPrompt({required bool hasVps, String? ownerEmail}) {
     if (hasVps) {
-      final emailFlag = ownerEmail != null && ownerEmail.trim().isNotEmpty
-          ? ' --owner-email ${ownerEmail.trim()}'
-          : '';
       return '''
-请帮我在我的 VPS 上部署 Koe 的轻量同步与远程 HTTP MCP 服务（零第三方依赖，仅用 Python 3.10+ 标准库），并把它配置进我的 MCP 客户端（如 Magpie / Codex / Claude Code / Antigravity）：
+请直接阅读当前 Koe 仓库中的 `tools/koe-mcp/README.md` 与 `tools/koe-mcp/server.py`，从我电脑的 SSH 配置与环境信息中自动定位我的 VPS，完成 Koe 远程 HTTP MCP 与双端同步部署（全程无需我手动填写任何地址或邮箱）：
 
-1. 将当前仓库下的 `tools/koe-mcp/server.py` 上传到我的 VPS（例如 `/opt/koe-mcp/server.py`），并创建数据目录 `~/.koe/mcp-sync`。
-2. 用 systemd 或后台常驻方式启动 HTTP 服务（并通过 Caddy / Nginx 反代到该端口，支持邮箱 OTP 验证码绑定与 Bearer Token 鉴权）：
-   python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 127.0.0.1:8787 --token-file ~/.koe/mcp-token$emailFlag
-3. 在本机的 Magpie 或 MCP 配置中添加 HTTP MCP 服务器：
-   - 名称：`koe-minutes`
-   - 运行方式：`HTTP`
-   - URL：`https://<你的域名或公网地址>/mcp`
-   - 请求头：`Authorization: Bearer <~/.koe/mcp-token 中的令牌>`
-4. 部署完成后，请告诉我你的 VPS 访问地址（例如 `https://<你的域名或公网地址>`）。我在 Koe App 的设置中输入该地址和邮箱，即可接收验证码一键绑定；也可以执行以下命令直接生成 KOEMCP1. 开头的连接码发给我从剪贴板接入：
-   python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url https://<你的域名或公网地址>/mcp --mode vps --print-pairing
+1. 将仓库下的 `tools/koe-mcp/server.py` 部署到我的 VPS（例如 `/opt/koe-mcp/server.py`），创建数据目录 `~/.koe/mcp-sync`，并以常驻服务启动 HTTP MCP 与同步接口（`--directory ~/.koe/mcp-sync --http-listen 127.0.0.1:8787 --token-file ~/.koe/mcp-token`，经反代暴露 HTTPS `/mcp` 与 `/sync/packs`）。
+2. 将该 HTTP MCP 地址与 Bearer 令牌自动写入我电脑上的 MCP 客户端（Magpie / Claude Code / Codex / Antigravity）。
+3. 执行 `python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url https://<自动发现的VPS域名>/mcp --mode vps --print-pairing` 生成 `KOEMCP1.` 连接码：
+   - 若我的 iPhone 正插在电脑上，请直接用 `xcrun devicectl` 将连接码写入 iPhone Koe 容器的 `Documents/AnkerRecorder/mcp_pairing.txt`；
+   - 同时将 `KOEMCP1.` 连接码写入系统剪贴板（`pbcopy`）并回复给我，我在 Koe 点一下「一键接入」即可完成绑定。
 '''.trim();
     }
     return '''
-我没有单独的 VPS，请帮我在当前这台 Mac 上启动 Koe 的本地/局域网 HTTP MCP 与同步服务，并配置好我的 MCP 客户端（如 Magpie / Codex / Claude Code / Antigravity）：
+请直接阅读当前 Koe 仓库中的 `tools/koe-mcp/README.md` 与 `tools/koe-mcp/server.py`，直接在这台 Mac 上完成 Koe 本地读取或局域网同步配置（全程无需我手动填写任何内容）：
 
-1. 创建数据目录 `~/.koe/mcp-sync`，并查看这台 Mac 的局域网或 Tailscale IP（例如 `192.168.x.x`）。
-2. 在 Koe 仓库根目录运行以下命令，生成安全令牌与 Koe App 一键配对码：
-   python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url http://<Mac局域网IP>:8787/mcp --mode lan --print-pairing
-3. 将以下命令配置为 macOS 后台常驻服务（LaunchAgent 或后台进程）：
-   python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 0.0.0.0:8787 --token-file ~/.koe/mcp-token
-4. 在本机的 Magpie 或 MCP 配置中添加 HTTP MCP 服务器：
-   - 名称：`koe-minutes`
-   - 运行方式：`HTTP`
-   - URL：`http://127.0.0.1:8787/mcp`
-   - 请求头：`Authorization: Bearer <~/.koe/mcp-token 中的令牌>`
-5. 最后，请把第 2 步输出的 `KOEMCP1.` 开头的一整串连接码直接发给我。我复制后在手机或 Mac 的 Koe App 点击「从剪贴板一键接入」即可自动完成配置。
+1. 若只需在本机让 AI 直接读取 Koe 纪要与转写：直接按 `tools/koe-mcp/README.md` 挂载本机 `tools/koe-mcp/server.py`（或若 iPhone 插着电脑，用 `xcrun devicectl` 直接读取 `com.semanticcraft.soundcore` 容器内的 `Documents/AnkerRecorder`）。
+2. 若需开启手机与 Mac 局域网同步：创建 `~/.koe/mcp-sync`，自动获取这台 Mac 的局域网/Tailscale IP，后台常驻启动 `python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 0.0.0.0:8787 --token-file ~/.koe/mcp-token`，并配置好本机 MCP 客户端。
+3. 运行 `python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url http://<Mac局域网IP>:8787/mcp --mode lan --print-pairing` 生成 `KOEMCP1.` 连接码，直接写入系统剪贴板（`pbcopy`）或通过 `xcrun devicectl` 写入 iPhone 的 `Documents/AnkerRecorder/mcp_pairing.txt`，我在 Koe 点一下「一键接入」即可。
 '''.trim();
+  }
+
+  Future<File?> _mcpPairingDropFile() async {
+    final override = _libraryDirectoryOverride;
+    if (override != null) {
+      return File(p.join(override.path, 'mcp_pairing.txt'));
+    }
+    if (library.inMemory) return null;
+    try {
+      final base = await getApplicationDocumentsDirectory();
+      return File(p.join(base.path, 'AnkerRecorder', 'mcp_pairing.txt'));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<McpSyncConfig?> tryBindMcpFromDropFile() async {
+    try {
+      final dropFile = await _mcpPairingDropFile();
+      if (dropFile == null || !dropFile.existsSync()) return null;
+      final raw = dropFile.readAsStringSync();
+      try {
+        dropFile.deleteSync();
+      } catch (_) {}
+      return await bindMcpSyncFromText(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<McpSyncConfig> bindMcpSyncFromText(String rawText) async {
@@ -373,6 +381,8 @@ mixin _RecorderMcpPublication on ChangeNotifier {
   }
 
   Future<McpSyncConfig> bindMcpSyncFromClipboard() async {
+    final fromDrop = await tryBindMcpFromDropFile();
+    if (fromDrop != null) return fromDrop;
     final data = await Clipboard.getData('text/plain');
     final raw = data?.text ?? '';
     return bindMcpSyncFromText(raw);
