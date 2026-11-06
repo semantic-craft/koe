@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-06T22:33:34.451361Z</p>
-<p>Main: <code>main: 118383d1333509c3e71e6a325422225588dc683d</code></p>
+<p>Observed: 2026-11-06T23:48:00.558998Z</p>
+<p>Main: <code>main: 28b147d980e670f48ca9cccc094388eee660d177</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -303,13 +303,16 @@
 </ul><p>Next: 在授权的客户端读取用户指定的真实无音频资料包。</p></article>
 </section>
 <section id="minutes-relay"><h2>录音豆纪要与 MCP 全自动接力</h2>
-<article id="minutes-relay-bootstrap"><h3>全自动验收与接力切片</h3><span class="badge">in_progress</span><p>Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板一键接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并通过 scripts/check（Python 22 项 + Flutter 1127 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与公网 VPS 实机验收如实记为 unverified。</p><ul>
+<article id="minutes-relay-bootstrap"><h3>全自动验收与接力切片</h3><span class="badge">done</span><p>Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板与 mcp_pairing.txt 自动接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并合并（PR #548、#552、#553、#554、#555）；外部 AI 接入界面已移除手动输入框与个人域名/邮箱回显。D3200 实体按键与日常长时体验保留独立验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: 全景切片 A–E 队列、版本/安装/合并/实际验收四项分列记录</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/verify-minutes-flow">file scripts/verify-minutes-flow: 五层无人值守门禁（offline/ios/provider/device/mcp/all）全部 exit 0；实体按键无机械驱动如实记为 unverified</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/integration_test/device_minutes_flow_test.dart">file integration_test/device_minutes_flow_test.dart: macOS CoreBluetooth 直连真实 soundcore Work (D3200) 实时流式 ASR、阶段摘要、停录落盘与进程重启读回</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/mcp_live_publication_test.dart">file test/mcp_live_publication_test.dart: 生产控制器自动发布与实际持续stdio客户端；Mac授权菜单及关闭竞态。合成内容不替代安装或跨端验收。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/test/mcp_sync_test.dart">file test/mcp_sync_test.dart: 轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板一键接入</a></li>
-</ul><p>Next: 草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）与真实公网 VPS / 手机移动网络验收（#528）保留独立验收。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/test/mcp_sync_test.dart">file test/mcp_sync_test.dart: 轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板及文件自动接入，界面零输入框且不回显 URL/邮箱</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/548">pull 548: 自动分层纪要、录音豆阶段收尾、HTTP MCP 与跨端无感同步（545c1ed），已合并。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/554">pull 554: macOS 与 iOS 全仓界面 11 项设计原则重构（332fcee），已合并。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/555">pull 555: 移除外部 AI 接入的个人 VPS/邮箱回显与手动输入框，支持 Agent 直写 mcp_pairing.txt 与提示词零填写接入（28b147d），已合并。</a></li>
+</ul><p>Next: D3200 实体按键（#515）与日常真实使用验收按场景逐项确认。</p></article>
 <article id="ui-redesign-11-principles"><h3>macOS 与 iOS 界面 11 原则重构（Slice A–E）</h3><span class="badge">done</span><p>完成 macOS 与 iOS 全仓 62 个 UI/主题文件的 11 项原则重构（Slice A–E）：统一「连接录音豆」动词与新手指引，去除冗余解释文案与常规可逆操作确认弹窗，移除大片红底危险按钮，落地中国传统色竹青（#2E5E4E）单强调色与暖纸灰层级（WCAG AA &gt;= 4.5:1），全仓收敛至 12/14/16/22 四级字号且清零中间点「·」、斜体与全大写标签，内联卡片默认纯平无阴影并统一同心圆角，通过 verify-ui-principles.py --mode all（62 文件 0 违规）、perf-check 与全量测试，并构建签名安装 1.2.3+6 至 /Applications/Koe.app 与 iPhone 真机 Hermes。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: macOS 与 iOS 11 项 UI 原则重构切片 A–E 队列与验收门禁定义</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/verify-ui-principles.py">file scripts/verify-ui-principles.py: 62 个主题与界面文件的确定性门禁脚本（单强调色竹青 #2E5E4E、暖纸灰、四级字号 12/14/16/22、清零中间点 · 与斜体/全大写、纯平卡片与同心圆角、无大片红底按钮）及 6 项负向控制单测</a></li>

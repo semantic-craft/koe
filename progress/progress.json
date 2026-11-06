@@ -541,9 +541,21 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-04T02:51:43Z"
+      },
+      {
+        "number": 549,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-05T00:25:43Z"
+      },
+      {
+        "number": 550,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-05T00:32:23Z"
       }
     ],
-    "main": "118383d1333509c3e71e6a325422225588dc683d",
+    "main": "28b147d980e670f48ca9cccc094388eee660d177",
     "open_pulls": [
       {
         "head": "e8676498b47a73d1588f329834bbef22a11048c3",
@@ -1054,12 +1066,60 @@
         "merged": true,
         "number": 542,
         "state": "closed"
+      },
+      {
+        "base": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
+        "head": "a981b6e6fd0407ef7b1815bafb946eec060cc6fb",
+        "merge_commit": "545c1ed4529d0c46fa630730767bb697bf17ffeb",
+        "merged": true,
+        "number": 548,
+        "state": "closed"
+      },
+      {
+        "base": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
+        "head": "e8676498b47a73d1588f329834bbef22a11048c3",
+        "merge_commit": "223bf4635cc574fd07eeb22f2000b2d2886a3d7f",
+        "merged": false,
+        "number": 551,
+        "state": "open"
+      },
+      {
+        "base": "545c1ed4529d0c46fa630730767bb697bf17ffeb",
+        "head": "f8c22dcf2b50d1aa1410ecca4972714799e05163",
+        "merge_commit": "79ddfafa0978b0f9acfa24d8faa2c819cf22772b",
+        "merged": true,
+        "number": 552,
+        "state": "closed"
+      },
+      {
+        "base": "79ddfafa0978b0f9acfa24d8faa2c819cf22772b",
+        "head": "c907b861a6754693877c35d85691457af214a678",
+        "merge_commit": "118383d1333509c3e71e6a325422225588dc683d",
+        "merged": true,
+        "number": 553,
+        "state": "closed"
+      },
+      {
+        "base": "118383d1333509c3e71e6a325422225588dc683d",
+        "head": "bd5575ca9908d5fc557fb251e9e3e2be245db920",
+        "merge_commit": "332fcee028ee2ebf64857932d7db3395c54749bb",
+        "merged": true,
+        "number": 554,
+        "state": "closed"
+      },
+      {
+        "base": "332fcee028ee2ebf64857932d7db3395c54749bb",
+        "head": "c78731975a42335a17975fea5edf3ea6af3abea5",
+        "merge_commit": "28b147d980e670f48ca9cccc094388eee660d177",
+        "merged": true,
+        "number": 555,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-06T22:33:34.451361Z",
+  "observed_at": "2026-11-06T23:48:00.558998Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2508,14 +2568,29 @@
             },
             {
               "kind": "file",
-              "note": "轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板一键接入",
+              "note": "轻量 VPS / Mac 局域网 HTTP MCP（POST /mcp + Bearer 鉴权）与 .koepack v2 无音频双端自动推拉同步、Agent 提示词与 KOEMCP1. 剪贴板及文件自动接入，界面零输入框且不回显 URL/邮箱",
               "ref": "test/mcp_sync_test.dart"
+            },
+            {
+              "kind": "pull",
+              "note": "自动分层纪要、录音豆阶段收尾、HTTP MCP 与跨端无感同步（545c1ed），已合并。",
+              "ref": 548
+            },
+            {
+              "kind": "pull",
+              "note": "macOS 与 iOS 全仓界面 11 项设计原则重构（332fcee），已合并。",
+              "ref": 554
+            },
+            {
+              "kind": "pull",
+              "note": "移除外部 AI 接入的个人 VPS/邮箱回显与手动输入框，支持 Agent 直写 mcp_pairing.txt 与提示词零填写接入（28b147d），已合并。",
+              "ref": 555
             }
           ],
           "id": "minutes-relay-bootstrap",
-          "next": "草稿 PR #548 待审阅（按 #543 不自动合并、不发布）；D3200 实体按键（#515）与真实公网 VPS / 手机移动网络验收（#528）保留独立验收。",
-          "status": "in_progress",
-          "summary": "Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板一键接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并通过 scripts/check（Python 22 项 + Flutter 1127 项通过）。版本 1.2.2+5，草稿 PR #548 未合并、未发布；D3200 实体按键与公网 VPS 实机验收如实记为 unverified。",
+          "next": "D3200 实体按键（#515）与日常真实使用验收按场景逐项确认。",
+          "status": "done",
+          "summary": "Slice A/B/D/C/E 及远程 HTTP MCP + 跨端自动同步（tools/koe-mcp/server.py --http-listen、KOEMCP1. 剪贴板与 mcp_pairing.txt 自动接入、手机至 VPS/Mac 局域网自动推拉 .koepack v2 纪要）全部完成并合并（PR #548、#552、#553、#554、#555）；外部 AI 接入界面已移除手动输入框与个人域名/邮箱回显。D3200 实体按键与日常长时体验保留独立验收。",
           "title": "全自动验收与接力切片"
         },
         {
@@ -2643,7 +2718,9 @@
       528,
       533,
       536,
-      537
+      537,
+      549,
+      550
     ],
     "pulls": [
       62,
@@ -2708,7 +2785,13 @@
       534,
       538,
       540,
-      542
+      542,
+      548,
+      551,
+      552,
+      553,
+      554,
+      555
     ]
   }
 }
