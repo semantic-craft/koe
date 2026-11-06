@@ -716,7 +716,7 @@ class HttpServerTest(unittest.TestCase):
                     self.wfile.write(body)
                     return
                 if self.path == '/hub/identity':
-                    body = b'{"hub":"anet.sonori.dev","wire":3}'
+                    body = b'{"hub":"hub.example.com","wire":3}'
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.send_header('Content-Length', str(len(body)))
@@ -806,7 +806,7 @@ class HttpServerTest(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             self.assertEqual(
                 json.loads(resp.read().decode('utf-8')),
-                {'hub': 'anet.sonori.dev', 'wire': 3},
+                {'hub': 'hub.example.com', 'wire': 3},
             )
 
         relay_req = urllib.request.Request(
