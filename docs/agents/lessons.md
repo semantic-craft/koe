@@ -161,6 +161,20 @@
 - 证据：`test/todos_test.dart` 的 pending system authorization 行为测试改前失败、改后通过；TCC 的 AUTHREQ_PROMPTING 只证明系统发起提示，不证明用户可见或已授权。
 - 验证点：先核对安装版、系统请求结果与用户可见界面；remindctl 的权限归属与 Koe 分开，不把 CLI 诊断或模拟通道通过写成真实导出验收。首次记录 2026-10-24，独立复发次数 1。
 
+### MCP 工具发现不等于内容读写和多宿主授权验收
+
+- 出处：2026-11-03 QwenNote 接入会话；Magpie / 本机 Codex OAuth 登录后列出 27 个工具，但授权页包含读写且当次未能选择只读，新会话及其他 agent 尚需验证。记录来自会话交接，本文未重新调用服务。
+- 修复方向：未来 Koe MCP 先按指定记录只读，分开核对上游授权、下游客户端身份和宿主权限；不复制令牌，持久连接不等于逐次操作同意，工具发现与内容读取、写入后读回、新会话、撤销分别验收。当前只落文档，未实现权限控制。
+- 验证点：按 [复盘与规划验收矩阵](../design/qwennote-mcp-lessons-and-plan.md#开发时使用的验收矩阵) 使用授权测试记录核对；每个客户端有独立结果，过期/撤销和越权明确失败，不将工具数量视为数据操作通过。
+- Seen 1x (2026-11-03)。
+
+### msmtp 要求含密码配置文件的属主必须为当前运行用户且发信需显式指定发件人
+
+- 出处：2026-11-06 阿里云 VPS 部署 `koe-mcp.service` 发送 OTP 邮件；直接读取宿主共享 `/etc/vpsops-monitoring/msmtprc` 时，msmtp 因属主非当前进程用户退出码 78 并拒绝发信，且 `koe@localhost` 默认发件人被 QQ SMTP 拒绝。
+- 修复：将发信配置部署为专属属主文件 `/etc/koe-mcp/msmtprc`（0600 `koe-mcp:koe-mcp`），发信时自动提取真实发件人并通过 `--read-envelope-from --read-recipients` 投递；本地测试与无公共 URL 场景下保留 `dev_code` 供自动化验收。
+- 验证点：公网 `POST https://anet.sonori.dev/pair/request` 实际投递至 `gakalone@gmail.com` 返回 `delivered: true`，且 `flutter test test/koe_mcp_export_test.dart test/mcp_sync_test.dart` 全绿。
+- Seen 1x (2026-11-06)。
+
 
 ### iOS 验收必须保留截图元数据并驱动真实页面入口
 

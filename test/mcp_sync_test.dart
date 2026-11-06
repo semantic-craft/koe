@@ -449,6 +449,8 @@ $code
         tokenFile.path,
         '--owner-email',
         'gakalone@gmail.com',
+        '--mode',
+        'lan',
       ]);
 
       final controller = RecorderController(

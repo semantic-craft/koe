@@ -19,6 +19,7 @@ import select
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -651,6 +652,40 @@ def send_otp_email(owner_email, code, smtp_url=None):
         except Exception:
             return False
 
+    koe_msmtprc = Path('/etc/koe-mcp/msmtprc')
+    vpsops_msmtprc = Path('/etc/vpsops-monitoring/msmtprc')
+    sender_addr_file = Path('/etc/koe-mcp/sender-address')
+    if not sender_addr_file.exists():
+        sender_addr_file = Path('/etc/vpsops-monitoring/sender-address')
+    active_msmtprc = koe_msmtprc if koe_msmtprc.exists() else vpsops_msmtprc
+    msmtp_bin = shutil.which('msmtp') or '/usr/bin/msmtp'
+    if os.path.exists(msmtp_bin) and active_msmtprc.exists():
+        try:
+            sender = 'koe@localhost'
+            if sender_addr_file.exists():
+                sender = sender_addr_file.read_text(encoding='utf-8').strip()
+            elif active_msmtprc.exists():
+                for line in active_msmtprc.read_text(encoding='utf-8').splitlines():
+                    if line.strip().startswith('from '):
+                        sender = line.strip().split(None, 1)[1].strip()
+                        break
+            from email.message import EmailMessage
+            msg = EmailMessage()
+            msg['Subject'] = subject
+            msg['From'] = sender
+            msg['To'] = owner_email
+            msg.set_content(content)
+            proc = subprocess.run(
+                [msmtp_bin, '--file', str(active_msmtprc), '--read-envelope-from', '--read-recipients'],
+                input=msg.as_bytes(),
+                capture_output=True,
+                timeout=10,
+            )
+            if proc.returncode == 0:
+                return True
+        except Exception:
+            pass
+
     sendmail = shutil.which('sendmail') or shutil.which('msmtp') or '/usr/sbin/sendmail'
     if os.path.exists(sendmail):
         try:
@@ -663,7 +698,7 @@ def send_otp_email(owner_email, code, smtp_url=None):
     return False
 
 
-def serve_http(directory, listen_addr, token, fallback_upstream=None, owner_email=None, smtp_url=None):
+def serve_http(directory, listen_addr, token, fallback_upstream=None, owner_email=None, smtp_url=None, mode='vps', public_url=None):
     host, port_text = listen_addr.rsplit(':', 1)
     port = int(port_text)
     expected_auth = f'Bearer {token}'
@@ -911,8 +946,8 @@ def serve_http(directory, listen_addr, token, fallback_upstream=None, owner_emai
                     'delivered': delivered,
                     'expires_in_seconds': 600,
                 }
-                if not delivered:
-                    # In test/dev mode or unconfigured mail, expose code in response for local automation
+                if not delivered or mode == 'lan' or not public_url:
+                    # In LAN/dev/test mode or when email delivery is unconfigured, expose code for automated testing
                     resp_payload['dev_code'] = code
                 self.send_json(200, resp_payload)
                 return
@@ -1039,6 +1074,8 @@ def main():
                 fallback_upstream=args.fallback_upstream,
                 owner_email=args.owner_email,
                 smtp_url=args.smtp_url,
+                mode=args.mode,
+                public_url=args.public_url,
             )
             return 0
         serve(directory)
