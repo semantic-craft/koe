@@ -76,11 +76,11 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: 0e9f09c;rust/koe_core/src/session.rs;rust/koe_core/src/transport.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeNativeTransport.swift;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
-### [ ] Slice H: Wi-Fi SoftAP 高速批量同步（1A/05 配网 + WSS 控制流 + UDP :32003 切片拉流）下沉至 Rust
+### [x] Slice H: Wi-Fi SoftAP 高速批量同步（1A/05 配网 + WSS 控制流 + UDP :32003 切片拉流）下沉至 Rust
 - **Playbook**: `Feature`
 - **Outcome**: 将 D3200 Wi-Fi 快传模式（`0x1A/0x05` 热点开启应答解析、`wss://<bean_ip>:32002/` 控制帧编解码与 `UDP :32003` 高吞吐 `0x1A/0x08` 切片流重组解密）收进 `rust/koe_core`，通过 C-ABI / Swift / Kotlin JNI 统一暴露给三端宿主。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: 10f6d8f;rust/koe_core/src/wifi.rs;rust/koe_core/src/commands.rs;rust/koe_core/src/session.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeNativeTransport.swift;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
 ### [ ] Slice I: 三端原生生产宿主接线（iOS SwiftUI + Android Compose JNI + 桌面 GPUI 共享 koe_core）与最终收口
 - **Playbook**: `Shipping`
