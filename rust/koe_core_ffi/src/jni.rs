@@ -12,8 +12,10 @@ use crate::{
     koe_protocol_checksum, koe_protocol_encode, koe_protocol_verify_checksum,
     koe_reassembler_free, koe_reassembler_ingest, koe_reassembler_new, koe_reassembler_pop_packet,
     koe_reassembler_reset, koe_session_accept_ecdh_reply, koe_session_begin_offline_pull,
-    koe_session_free, koe_session_ingest_ble_chunk, koe_session_new, koe_session_pop_outbound_tx,
-    koe_session_simulate_realtime_pipeline, koe_session_take_live_pcm16, session_map,
+    koe_session_free, koe_session_ingest_ble_chunk, koe_session_new,
+    koe_session_on_transport_interrupted, koe_session_poll_timers, koe_session_pop_outbound_tx,
+    koe_session_resume_offline_pull, koe_session_simulate_realtime_pipeline,
+    koe_session_stop_realtime_recording, koe_session_take_live_pcm16, session_map,
     KoeLibrarySnapshot, KoeRecordingEntry, KoeSessionStepResult,
 };
 use koe_core::crypto::DeviceCrypto;
@@ -124,7 +126,34 @@ unsafe fn jni_new_longs(env: JniEnv, values: &[i64]) -> JLongArray {
     arr
 }
 
-fn step_to_longs(step: &KoeSessionStepResult) -> [i64; 15] {
+fn empty_step_result() -> KoeSessionStepResult {
+    KoeSessionStepResult {
+        frames_decoded: 0,
+        connection_phase: 0,
+        telemetry_updated: 0,
+        session_key_established: 0,
+        catalog_updated: 0,
+        transfer_updated: 0,
+        has_finalized_recording: 0,
+        reserved: [0; 2],
+        slices_unpacked_count: 0,
+        new_marks_count: 0,
+        outbound_tx_count: 0,
+        live_pcm16_bytes_available: 0,
+        transfer: crate::KoeTransferProgress {
+            phase: 0,
+            error_code: 0,
+            retry_count: 0,
+            quiet_draining: 0,
+            file_id: 0,
+            received_wire_bytes: 0,
+            expected_wire_bytes: 0,
+            mark_count: 0,
+        },
+    }
+}
+
+fn step_to_longs(step: &KoeSessionStepResult) -> [i64; 18] {
     [
         i64::from(step.frames_decoded),
         i64::from(step.connection_phase),
@@ -141,6 +170,9 @@ fn step_to_longs(step: &KoeSessionStepResult) -> [i64; 15] {
         i64::from(step.transfer.received_wire_bytes),
         i64::from(step.transfer.expected_wire_bytes),
         i64::from(step.live_pcm16_bytes_available),
+        i64::from(step.transfer.error_code),
+        i64::from(step.transfer.retry_count),
+        i64::from(step.transfer.quiet_draining),
     ]
 }
 
@@ -424,6 +456,61 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionBeg
 }
 
 #[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionOnTransportInterrupted(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) {
+    koe_session_on_transport_interrupted(handle as u64);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionResumeOfflinePull(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JByteArray {
+    let mut tx = [0u8; 32];
+    let n = unsafe {
+        koe_session_resume_offline_pull(handle as u64, tx.as_mut_ptr(), tx.len())
+    };
+    unsafe { jni_new_bytes(env, &tx[..n]) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionStopRealtimeRecording(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JLongArray {
+    let mut step = empty_step_result();
+    unsafe {
+        koe_session_stop_realtime_recording(handle as u64, &mut step);
+        jni_new_longs(env, &step_to_longs(&step))
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionPollTimers(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    elapsed_ms: JLong,
+    now_epoch_sec: JLong,
+) -> JLongArray {
+    let mut step = empty_step_result();
+    unsafe {
+        koe_session_poll_timers(
+            handle as u64,
+            elapsed_ms.max(0) as u64,
+            now_epoch_sec.max(0) as u64,
+            &mut step,
+        );
+        jni_new_longs(env, &step_to_longs(&step))
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionIngestBleChunk(
     env: JniEnv,
     _cls: JClass,
@@ -432,29 +519,7 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionIng
     now_epoch_sec: JLong,
 ) -> JLongArray {
     let bytes = unsafe { jni_read_bytes(env, chunk) };
-    let mut step = KoeSessionStepResult {
-        frames_decoded: 0,
-        connection_phase: 0,
-        telemetry_updated: 0,
-        session_key_established: 0,
-        catalog_updated: 0,
-        transfer_updated: 0,
-        has_finalized_recording: 0,
-        reserved: [0; 2],
-        slices_unpacked_count: 0,
-        new_marks_count: 0,
-        outbound_tx_count: 0,
-        live_pcm16_bytes_available: 0,
-        transfer: crate::KoeTransferProgress {
-            phase: 0,
-            error_code: 0,
-            reserved: [0; 2],
-            file_id: 0,
-            received_wire_bytes: 0,
-            expected_wire_bytes: 0,
-            mark_count: 0,
-        },
-    };
+    let mut step = empty_step_result();
     unsafe {
         koe_session_ingest_ble_chunk(
             handle as u64,
@@ -488,29 +553,7 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionSim
     handle: JLong,
     now_epoch_sec: JLong,
 ) -> JLongArray {
-    let mut step = KoeSessionStepResult {
-        frames_decoded: 0,
-        connection_phase: 0,
-        telemetry_updated: 0,
-        session_key_established: 0,
-        catalog_updated: 0,
-        transfer_updated: 0,
-        has_finalized_recording: 0,
-        reserved: [0; 2],
-        slices_unpacked_count: 0,
-        new_marks_count: 0,
-        outbound_tx_count: 0,
-        live_pcm16_bytes_available: 0,
-        transfer: crate::KoeTransferProgress {
-            phase: 0,
-            error_code: 0,
-            reserved: [0; 2],
-            file_id: 0,
-            received_wire_bytes: 0,
-            expected_wire_bytes: 0,
-            mark_count: 0,
-        },
-    };
+    let mut step = empty_step_result();
     unsafe {
         koe_session_simulate_realtime_pipeline(
             handle as u64,

@@ -78,7 +78,8 @@ typedef struct KoeRecordingEntry {
 typedef struct KoeTransferProgress {
   uint8_t phase;
   uint8_t error_code;
-  uint8_t reserved[2];
+  uint8_t retry_count;
+  uint8_t quiet_draining;
   uint32_t file_id;
   uint32_t received_wire_bytes;
   uint32_t expected_wire_bytes;
@@ -143,6 +144,10 @@ uint64_t koe_session_new(void);
 void koe_session_free(uint64_t handle);
 void koe_session_reset_active_transfer(uint64_t handle);
 void koe_session_on_disconnected(uint64_t handle);
+void koe_session_on_transport_interrupted(uint64_t handle);
+size_t koe_session_resume_offline_pull(uint64_t handle, uint8_t* out_tx_ptr, size_t out_tx_cap);
+int32_t koe_session_stop_realtime_recording(uint64_t handle, KoeSessionStepResult* out_step_ptr);
+int32_t koe_session_poll_timers(uint64_t handle, uint64_t elapsed_ms, uint64_t now_epoch_sec, KoeSessionStepResult* out_step_ptr);
 uint8_t koe_session_accept_ecdh_reply(uint64_t handle, const uint8_t* reply_ptr, size_t reply_len, const uint8_t* secret_ptr, size_t secret_len);
 size_t koe_session_begin_offline_pull(uint64_t handle, uint32_t file_id, uint32_t duration_ms, uint8_t* out_tx_ptr, size_t out_tx_cap);
 int32_t koe_session_ingest_ble_chunk(uint64_t handle, const uint8_t* chunk_ptr, size_t chunk_len, uint64_t now_epoch_sec, KoeSessionStepResult* out_step_ptr);

@@ -92,6 +92,17 @@ impl TransportSliceProcessor {
         frame: &[u8],
         decryptor: Option<&AesCtrStreamDecrypt>,
     ) -> UnpackedSliceBatch {
+        Self::unpack_frame_from(frame, decryptor, 0)
+    }
+
+    /// Unpacks all 166-byte slice records starting at packet offset 9 whose sequence number is
+    /// strictly monotonic and `>= min_sequence`, skipping retransmitted or duplicate records.
+    #[must_use]
+    pub fn unpack_frame_from(
+        frame: &[u8],
+        decryptor: Option<&AesCtrStreamDecrypt>,
+        min_sequence: u32,
+    ) -> UnpackedSliceBatch {
         if frame.len() < 9 + 165 {
             return UnpackedSliceBatch::default();
         }
@@ -99,6 +110,7 @@ impl TransportSliceProcessor {
         let mut opus_bytes = Vec::with_capacity(max_slices * OPUS_FRAME_BYTES);
         let mut marked_sequences = Vec::new();
         let mut slice_count = 0usize;
+        let mut next_min_seq = min_sequence;
 
         let mut i = 9usize;
         while frame.len().saturating_sub(i) >= 165 {
@@ -110,13 +122,24 @@ impl TransportSliceProcessor {
             if data_end > frame.len() {
                 break;
             }
+            if seq < next_min_seq {
+                i = data_end;
+                if i < frame.len() {
+                    i += 1;
+                }
+                continue;
+            }
+            next_min_seq = seq.saturating_add(1);
             if SliceMark::is_mark(flags) {
                 marked_sequences.push(seq);
             }
             let start_out = opus_bytes.len();
             opus_bytes.extend_from_slice(&frame[i..data_end]);
             if let Some(dec) = decryptor {
-                dec.decrypt_contiguous_in_place(&mut opus_bytes[start_out..start_out + OPUS_FRAME_BYTES], seq);
+                dec.decrypt_contiguous_in_place(
+                    &mut opus_bytes[start_out..start_out + OPUS_FRAME_BYTES],
+                    seq,
+                );
             }
             slice_count += 1;
             i = data_end;
@@ -197,5 +220,41 @@ mod tests {
         assert_eq!(batch.marked_sequences, vec![10]);
         assert_eq!(&batch.opus_bytes[0..160], slice0_plain.as_slice());
         assert_eq!(&batch.opus_bytes[160..320], slice1_plain.as_slice());
+    }
+
+    #[test]
+    fn unpack_frame_from_skips_retransmitted_and_duplicate_sequences() {
+        let mut rng = SplitMix64::new(2027);
+        let file_key = rng.next_bytes(32);
+        let nonce = rng.next_bytes(16);
+        let dec = AesCtrStreamDecrypt::new(&file_key, &nonce).unwrap();
+
+        let slice9_plain = rng.next_bytes(OPUS_FRAME_BYTES);
+        let slice10_plain = rng.next_bytes(OPUS_FRAME_BYTES);
+        let slice11_plain = rng.next_bytes(OPUS_FRAME_BYTES);
+        let slice9_enc = dec.decrypt_chunk(&slice9_plain, 9);
+        let slice10_enc = dec.decrypt_chunk(&slice10_plain, 10);
+        let slice11_enc = dec.decrypt_chunk(&slice11_plain, 11);
+
+        let mut frame = vec![0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x08, 0x00, 0x00];
+        for (seq, flags, enc) in [
+            (9u32, 0x01u8, &slice9_enc),
+            (10u32, 0x01u8, &slice10_enc),
+            (10u32, 0x01u8, &slice10_enc),
+            (11u32, 0x00u8, &slice11_enc),
+        ] {
+            frame.extend_from_slice(&seq.to_le_bytes());
+            frame.push(flags);
+            frame.extend_from_slice(enc);
+            frame.push(0x00);
+        }
+        frame.push(0x00);
+
+        let batch = TransportSliceProcessor::unpack_frame_from(&frame, Some(&dec), 10);
+        assert_eq!(batch.slice_count, 2);
+        assert_eq!(batch.wire_record_bytes(), 332);
+        assert_eq!(batch.marked_sequences, vec![10]);
+        assert_eq!(&batch.opus_bytes[0..160], slice10_plain.as_slice());
+        assert_eq!(&batch.opus_bytes[160..320], slice11_plain.as_slice());
     }
 }

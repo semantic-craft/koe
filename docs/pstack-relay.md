@@ -70,11 +70,11 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift`、`./scripts/build-swiftui-macos.sh --install`、`/Applications/KoeSwiftUI.app/Contents/MacOS/KoeSwiftUI --verify-self` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: 5a569a9;rust/koe_core/src/wav.rs;rust/koe_core/src/session.rs;rust/koe_core_ffi/src/opus_ffi.rs;rust/koe_core_ffi/build.rs;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
-### [ ] Slice G: BLE 字节级断点续传、超时重试看门狗、2 秒静默收尾与后台恢复
+### [x] Slice G: BLE 字节级断点续传、超时重试看门狗、2 秒静默收尾与后台恢复
 - **Playbook**: `Feature`
 - **Outcome**: 将 D3200 离线拉流的 `already_transferred`（`received_slices * 166`）字节级断点续传、看门狗超时重试状态机（每文件最多重试 2 次、单帧 5 秒超时）与实时流停止后的 2 秒静默排空窗口收进 `rust/koe_core::session::TransportSession`，并在 `darwin/KoeNativeTransport.swift` 补齐 `CBCentralManagerOptionRestoreIdentifierKey` 与外设自动重连。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: 0e9f09c;rust/koe_core/src/session.rs;rust/koe_core/src/transport.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeNativeTransport.swift;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
 ### [ ] Slice H: Wi-Fi SoftAP 高速批量同步（1A/05 配网 + WSS 控制流 + UDP :32003 切片拉流）下沉至 Rust
 - **Playbook**: `Feature`

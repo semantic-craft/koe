@@ -344,10 +344,10 @@ public enum KoeCore {{
     realtimeFlag: UInt8 = 0
   ) -> Data {{
     var payload = Data(capacity: 9)
-    var fid = fileId.littleEndian
     var offset = alreadyTransferred.littleEndian
-    withUnsafeBytes(of: &fid) {{ payload.append(contentsOf: $0) }}
+    var fid = fileId.littleEndian
     withUnsafeBytes(of: &offset) {{ payload.append(contentsOf: $0) }}
+    withUnsafeBytes(of: &fid) {{ payload.append(contentsOf: $0) }}
     payload.append(realtimeFlag)
     return encodeFrame(cmdType: 0x1A, cmdId: 0x07, payload: payload)
   }}
@@ -762,6 +762,9 @@ public struct KoeSessionStepOutcome: Equatable, Sendable {{
   public let newMarksCount: UInt32
   public let livePcm16BytesAvailable: UInt32
   public let transferPhase: UInt8
+  public let transferErrorCode: UInt8
+  public let transferRetryCount: UInt8
+  public let isRealtimeQuietDraining: Bool
   public let transferFileId: UInt32
   public let receivedWireBytes: UInt32
   public let expectedWireBytes: UInt32
@@ -786,6 +789,31 @@ public final class KoeTransportSession: @unchecked Sendable {{
 
   public func onDisconnected() {{
     koe_session_on_disconnected(handle)
+  }}
+
+  public func onTransportInterrupted() {{
+    koe_session_on_transport_interrupted(handle)
+  }}
+
+  public func resumeOfflinePull() -> Data {{
+    var out = Data(count: 32)
+    let len = out.withUnsafeMutableBytes {{ raw -> Int in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return Int(koe_session_resume_offline_pull(handle, base, 32))
+    }}
+    return out.prefix(len)
+  }}
+
+  public func stopRealtimeRecording() -> KoeSessionStepOutcome {{
+    var step = KoeSessionStepResult()
+    _ = koe_session_stop_realtime_recording(handle, &step)
+    return decodeStep(step)
+  }}
+
+  public func pollTimers(elapsedMs: UInt64, nowEpochSec: UInt64) -> KoeSessionStepOutcome {{
+    var step = KoeSessionStepResult()
+    _ = koe_session_poll_timers(handle, elapsedMs, nowEpochSec, &step)
+    return decodeStep(step)
   }}
 
   public func acceptEcdhReply(replyPayload: Data, sharedSecret: Data) -> Bool {{
@@ -919,6 +947,9 @@ public final class KoeTransportSession: @unchecked Sendable {{
       newMarksCount: step.new_marks_count,
       livePcm16BytesAvailable: step.live_pcm16_bytes_available,
       transferPhase: step.transfer.phase,
+      transferErrorCode: step.transfer.error_code,
+      transferRetryCount: step.transfer.retry_count,
+      isRealtimeQuietDraining: step.transfer.quiet_draining != 0,
       transferFileId: step.transfer.file_id,
       receivedWireBytes: step.transfer.received_wire_bytes,
       expectedWireBytes: step.transfer.expected_wire_bytes,
@@ -1109,6 +1140,10 @@ object KoeCoreNative {{
     @JvmStatic external fun sessionFree(handle: Long)
     @JvmStatic external fun sessionAcceptEcdhReply(handle: Long, replyPayload: ByteArray, sharedSecret: ByteArray): Boolean
     @JvmStatic external fun sessionBeginOfflinePull(handle: Long, fileId: Int, durationMs: Int): ByteArray
+    @JvmStatic external fun sessionOnTransportInterrupted(handle: Long)
+    @JvmStatic external fun sessionResumeOfflinePull(handle: Long): ByteArray
+    @JvmStatic external fun sessionStopRealtimeRecording(handle: Long): LongArray
+    @JvmStatic external fun sessionPollTimers(handle: Long, elapsedMs: Long, nowEpochSec: Long): LongArray
     @JvmStatic external fun sessionIngestBleChunk(handle: Long, chunk: ByteArray, nowEpochSec: Long): LongArray
     @JvmStatic external fun sessionPopOutboundTx(handle: Long): ByteArray?
     @JvmStatic external fun sessionSimulateRealtimePipeline(handle: Long, nowEpochSec: Long): LongArray
@@ -1171,6 +1206,19 @@ class KoeTransportSession : AutoCloseable {{
 
     fun beginOfflinePull(fileId: Int, durationMs: Int): ByteArray =
         if (handle == 0L) ByteArray(0) else KoeCoreNative.sessionBeginOfflinePull(handle, fileId, durationMs)
+
+    fun onTransportInterrupted() {{
+        if (handle != 0L) KoeCoreNative.sessionOnTransportInterrupted(handle)
+    }}
+
+    fun resumeOfflinePull(): ByteArray =
+        if (handle == 0L) ByteArray(0) else KoeCoreNative.sessionResumeOfflinePull(handle)
+
+    fun stopRealtimeRecording(): LongArray =
+        if (handle == 0L) LongArray(0) else KoeCoreNative.sessionStopRealtimeRecording(handle)
+
+    fun pollTimers(elapsedMs: Long, nowEpochSec: Long): LongArray =
+        if (handle == 0L) LongArray(0) else KoeCoreNative.sessionPollTimers(handle, elapsedMs, nowEpochSec)
 
     fun ingestBleChunk(chunk: ByteArray, nowEpochSec: Long): LongArray =
         if (handle == 0L) LongArray(0) else KoeCoreNative.sessionIngestBleChunk(handle, chunk, nowEpochSec)
