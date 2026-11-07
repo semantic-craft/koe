@@ -343,34 +343,21 @@ pub unsafe extern "C" fn koe_slice_mark_inspect_transitions(
     }
     let raw = unsafe { slice::from_raw_parts(raw_ptr, raw_len) };
     let pkt = DecodedPacket::from_bytes(raw);
-    let mut last_cmd = unsafe { *io_last_cmd_id };
-    let mut last_flags = unsafe { *io_last_flags };
-
-    let mut transitions = Vec::new();
-    let mut i = 9usize;
-    while raw.len().saturating_sub(i) >= 165 {
-        let sequence = koe_core::frame::read_u32_le(raw, i);
-        let flags = raw[i + 4];
-        if (pkt.cmd_id, flags) != (last_cmd, last_flags) {
-            last_cmd = pkt.cmd_id;
-            last_flags = flags;
-            transitions.push(KoeSliceMarkTransition {
-                cmd_id: pkt.cmd_id,
-                flags,
-                reserved: [0u8; 2],
-                sequence,
-            });
-        }
-        i += 165;
-        if i < raw.len() {
-            i += 1;
-        }
-    }
-    let _ = SliceMarkProbe::new();
-
+    let mut probe = unsafe { SliceMarkProbe::from_state(*io_last_cmd_id, *io_last_flags) };
+    let transitions: Vec<KoeSliceMarkTransition> = probe
+        .inspect_transitions(&pkt)
+        .into_iter()
+        .map(|t| KoeSliceMarkTransition {
+            cmd_id: t.cmd_id,
+            flags: t.flags,
+            reserved: [0u8; 2],
+            sequence: t.sequence,
+        })
+        .collect();
+    let (next_cmd, next_flags) = probe.state();
     unsafe {
-        *io_last_cmd_id = last_cmd;
-        *io_last_flags = last_flags;
+        *io_last_cmd_id = next_cmd;
+        *io_last_flags = next_flags;
     }
     if !out_transitions_ptr.is_null() && out_cap > 0 {
         let count = transitions.len().min(out_cap);

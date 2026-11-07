@@ -20,18 +20,18 @@ struct KoeCoreSwiftTest {
     check(KoeCore.batteryRemaining(75) == 75, "literal 75% must stay 75%")
 
     var rxPacket = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00])
-    rxPacket.append(1) // connectStatus = 1
-    rxPacket.append(4) // battery bucket 4 -> 50%
-    rxPacket.append(1) // charging = true
+    rxPacket.append(1)
+    rxPacket.append(4)
+    rxPacket.append(1)
     rxPacket.append(contentsOf: Array("1.2.3".utf8))
     rxPacket.append(contentsOf: Array("D3200ABCDEF12345".utf8))
     var totalMem: UInt32 = (64 * 1024 * 1024).littleEndian
     var freeMem: UInt32 = (60 * 1024 * 1024).littleEndian
     withUnsafeBytes(of: &totalMem) { rxPacket.append(contentsOf: $0) }
     withUnsafeBytes(of: &freeMem) { rxPacket.append(contentsOf: $0) }
-    rxPacket.append(0) // boxCharging = false
+    rxPacket.append(0)
     rxPacket.append(contentsOf: Array("2.0.1".utf8))
-    rxPacket.append(8) // boxBattery bucket 8 -> 90%
+    rxPacket.append(8)
     rxPacket.append(contentsOf: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01])
     let totalLen = UInt16(rxPacket.count + 1)
     rxPacket[7] = UInt8(totalLen & 0xFF)

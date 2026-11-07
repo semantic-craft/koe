@@ -59,6 +59,20 @@ impl SliceMarkProbe {
         }
     }
 
+    /// Creates a probe resumed from `(last_cmd_id, last_flags)`.
+    #[must_use]
+    pub const fn from_state(last_cmd_id: u8, last_flags: u8) -> Self {
+        Self {
+            last: (last_cmd_id, last_flags),
+        }
+    }
+
+    /// Returns the current `(last_cmd_id, last_flags)` state tuple.
+    #[must_use]
+    pub const fn state(&self) -> (u8, u8) {
+        self.last
+    }
+
     /// Inspects a decoded RX packet and returns any `(cmd_id, flags)` transitions.
     pub fn inspect_transitions(&mut self, packet: &DecodedPacket) -> Vec<SliceMarkTransition> {
         let raw = &packet.raw;
@@ -106,10 +120,8 @@ mod tests {
     #[test]
     fn slice_mark_probe_detects_flag_transitions() {
         let mut payload = vec![0u8; 166 * 2];
-        // Slice 0: seq = 7, flags = 1
         payload[0..4].copy_from_slice(&7u32.to_le_bytes());
         payload[4] = 0x01;
-        // Slice 1: seq = 8, flags = 0
         payload[166..170].copy_from_slice(&8u32.to_le_bytes());
         payload[170] = 0x00;
 

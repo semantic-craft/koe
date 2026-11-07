@@ -600,12 +600,7 @@ mod tests {
     #[test]
     fn offline_file_list_parses_with_end_time() {
         let payload = [
-            1, 0, // count = 1
-            100, 0, 0, 0, // file_id = 100
-            200, 0, 0, 0, // end_time = 200
-            44, 1, 0, 0, // duration_ms = 300
-            144, 1, 0, 0, // curr_ts = 400
-            244, 1, 0, 0, // curr_dur = 500
+            1, 0, 100, 0, 0, 0, 200, 0, 0, 0, 44, 1, 0, 0, 144, 1, 0, 0, 244, 1, 0, 0,
         ];
         let page = OfflineFileList::parse(&payload, true);
         assert_eq!(page.file_count, 1);

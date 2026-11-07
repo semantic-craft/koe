@@ -467,7 +467,6 @@ fn run_negative_control(src: &str) -> Result<(), String> {
     let baseline_h = render_c_header(&baseline);
     let baseline_swift = render_swift_bindings(&baseline);
 
-    // Control 1: mutate a field type (`u32` -> `u64`) and verify C header diverges.
     let mut mutated_field = baseline.clone();
     mutated_field.structs[0].fields[0].rust_ty = "u64".to_string();
     let mutated_h = render_c_header(&mutated_field);
@@ -475,7 +474,6 @@ fn run_negative_control(src: &str) -> Result<(), String> {
         return Err("negative control 1 failed: mutated field type produced identical header".to_string());
     }
 
-    // Control 2: drop an exported function and verify Swift binding metadata diverges.
     let mut mutated_fn = baseline;
     mutated_fn.functions.pop();
     let mutated_swift = render_swift_bindings(&mutated_fn);
