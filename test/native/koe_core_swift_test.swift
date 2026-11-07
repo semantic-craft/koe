@@ -74,5 +74,38 @@ struct KoeCoreSwiftTest {
 
     let wav = KoeCore.wavHeader(pcmLength: 1920)
     check(wav.count == 44 && String(decoding: wav.prefix(4), as: UTF8.self) == "RIFF", "wavHeader must emit 44-byte RIFF")
+
+    var headFrame = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x07, 0x62, 0x00])
+    var fid: UInt32 = UInt32(888).littleEndian
+    var fsize: UInt32 = UInt32.max.littleEndian
+    withUnsafeBytes(of: &fid) { headFrame.append(contentsOf: $0) }
+    withUnsafeBytes(of: &fsize) { headFrame.append(contentsOf: $0) }
+    headFrame.append(contentsOf: [UInt8](repeating: 0x33, count: 16))
+    headFrame.append(contentsOf: [UInt8](repeating: 0x44, count: 46))
+    headFrame.append(contentsOf: [UInt8](repeating: 0x55, count: 16))
+    headFrame.append(0)
+    headFrame.append(0)
+    let parsedHead = KoeCore.parseFileHead(headFrame)
+    check(parsedHead != nil, "parseFileHead must succeed on >=97B frame")
+    check(parsedHead?.fileId == 888, "parsedHead.fileId must be 888")
+    check(parsedHead?.unfinished == true, "parsedHead.unfinished must be true for 0xFFFFFFFF")
+
+    var sliceFrame = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x08, 0x56, 0x01])
+    var seq0: UInt32 = UInt32(5).littleEndian
+    var seq1: UInt32 = UInt32(6).littleEndian
+    withUnsafeBytes(of: &seq0) { sliceFrame.append(contentsOf: $0) }
+    sliceFrame.append(0x01)
+    sliceFrame.append(contentsOf: [UInt8](repeating: 0x78, count: 160))
+    sliceFrame.append(0x00)
+    withUnsafeBytes(of: &seq1) { sliceFrame.append(contentsOf: $0) }
+    sliceFrame.append(0x00)
+    sliceFrame.append(contentsOf: [UInt8](repeating: 0x79, count: 160))
+    sliceFrame.append(0x00)
+    sliceFrame.append(0x00)
+    let batch = KoeCore.unpackSlices(sliceFrame)
+    check(batch.sliceCount == 2, "unpackSlices must unpack 2 slices")
+    check(batch.wireRecordBytes == 332, "wireRecordBytes must be 332")
+    check(batch.markedSequences == [5], "markedSequences must contain [5]")
+    check(batch.opusBytes.count == 320 && batch.opusBytes[0] == 0x78 && batch.opusBytes[160] == 0x79, "opusBytes must concatenate both 160B frames")
   }
 }
