@@ -891,17 +891,30 @@ public final class KoeNativeHost: ObservableObject {
   public let sidebar: BeanSidebarModel
   public let interpreting: LiveInterpretingModel
   public let playback: RecordingPlaybackModel
+  public let spine: KoeUtteranceSpine
+  public let contextSearch: KoeContextSearchIndex
+  public let mcpAcp: KoeMcpAcpRuntime
+  @Published public private(set) var pairingTicket: String?
+  @Published public private(set) var mcpAcpStatus: KoeMcpAcpStatusModel?
   private var eventObservationTask: Task<Void, Never>?
 
   public init(
     transport: any BeanTransporting = BeanTransportActor(),
-    exportDirectory: URL = BeanTransportActor.defaultExportDirectory()
+    exportDirectory: URL = BeanTransportActor.defaultExportDirectory(),
+    sessionId: String = "darwin-host"
   ) {
     self.transport = transport
     let interpretingModel = LiveInterpretingModel()
     let playbackModel = RecordingPlaybackModel()
+    let spineHandle = KoeUtteranceSpine(sessionId: sessionId)
+    let searchHandle = KoeContextSearchIndex()
+    let mcpAcpHandle = KoeMcpAcpRuntime(sessionId: sessionId)
     self.interpreting = interpretingModel
     self.playback = playbackModel
+    self.spine = spineHandle
+    self.contextSearch = searchHandle
+    self.mcpAcp = mcpAcpHandle
+    self.mcpAcpStatus = mcpAcpHandle.status()
     let sidebarModel = BeanSidebarModel(
       transport: transport,
       exportDirectory: exportDirectory,
@@ -910,6 +923,32 @@ public final class KoeNativeHost: ObservableObject {
       },
       onLiveCaption: { [weak interpretingModel] segment in
         interpretingModel?.ingestSegment(segment)
+        if segment.isFinal && !segment.sourceText.isEmpty {
+          let ord = spineHandle.appendSegment(
+            text: segment.sourceText,
+            startMs: segment.startMs,
+            endMs: segment.endMs,
+            sourceLanguage: "zh",
+            provider: "qwen"
+          )
+          if ord > 0 && !segment.translatedText.isEmpty {
+            spineHandle.setTranslation(
+              ordinal: ord,
+              translation: segment.translatedText,
+              targetLanguage: "en"
+            )
+          }
+          searchHandle.addDoc(segment.sourceText)
+          mcpAcpHandle.ingestUtterance(
+            text: segment.sourceText,
+            translation: segment.translatedText,
+            startMs: segment.startMs,
+            endMs: segment.endMs,
+            sourceLanguage: "zh",
+            targetLanguage: "en",
+            nowEpochSec: segment.endMs / 1000
+          )
+        }
       }
     )
     self.sidebar = sidebarModel
@@ -921,6 +960,104 @@ public final class KoeNativeHost: ObservableObject {
 
   deinit {
     eventObservationTask?.cancel()
+  }
+
+  @discardableResult
+  public func ingestUtterance(
+    text: String,
+    translation: String = "",
+    startMs: UInt64 = 0,
+    endMs: UInt64 = 0,
+    sourceLanguage: String = "zh",
+    targetLanguage: String = "en",
+    nowEpochSec: UInt64 = 0
+  ) -> UInt32 {
+    let ord = spine.appendSegment(
+      text: text,
+      startMs: startMs,
+      endMs: endMs,
+      sourceLanguage: sourceLanguage,
+      provider: "qwen"
+    )
+    if ord > 0 && !translation.isEmpty {
+      spine.setTranslation(ordinal: ord, translation: translation, targetLanguage: targetLanguage)
+    }
+    if ord > 0 {
+      contextSearch.addDoc(text)
+      interpreting.ingestSegment(
+        KoeLiveCaptionSegment(
+          id: UUID(),
+          startMs: startMs,
+          endMs: endMs,
+          sourceText: text,
+          translatedText: translation,
+          isFinal: true
+        )
+      )
+      _ = mcpAcp.ingestUtterance(
+        text: text,
+        translation: translation,
+        startMs: startMs,
+        endMs: endMs,
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage,
+        nowEpochSec: nowEpochSec
+      )
+      mcpAcpStatus = mcpAcp.status()
+    }
+    return ord
+  }
+
+  public func configureMcpPairing(
+    baseUrl: String,
+    token: String,
+    modeIsLan: Bool = true,
+    expiresAtEpochSec: UInt64 = 0
+  ) -> String? {
+    let ticket = mcpAcp.configurePairing(
+      baseUrl: baseUrl,
+      token: token,
+      modeIsLan: modeIsLan,
+      expiresAtEpochSec: expiresAtEpochSec
+    )
+    pairingTicket = ticket
+    mcpAcpStatus = mcpAcp.status()
+    return ticket
+  }
+
+  public func verifyMcpBearer(authHeader: String, nowEpochSec: UInt64) -> Bool {
+    mcpAcp.verifyBearer(authHeader: authHeader, nowEpochSec: nowEpochSec)
+  }
+
+  @discardableResult
+  public func publishMcpLiveLease(
+    generation: UInt64,
+    nowEpochSec: UInt64,
+    ttlSec: UInt32 = 15
+  ) -> Int32 {
+    let rc = mcpAcp.publishLive(generation: generation, nowEpochSec: nowEpochSec, ttlSec: ttlSec)
+    mcpAcpStatus = mcpAcp.status()
+    return rc
+  }
+
+  @discardableResult
+  public func putMcpSyncPack(materialId: String, packBytes: Data) -> Int32 {
+    let rc = mcpAcp.putPack(materialId: materialId, packBytes: packBytes)
+    mcpAcpStatus = mcpAcp.status()
+    return rc
+  }
+
+  public func dispatchMcpAcpJsonRpc(_ requestJson: String, nowEpochSec: UInt64) -> String? {
+    let resp = mcpAcp.dispatchJsonRpc(requestJson, nowEpochSec: nowEpochSec)
+    mcpAcpStatus = mcpAcp.status()
+    return resp
+  }
+
+  @discardableResult
+  public func refreshMcpAcpStatus() -> KoeMcpAcpStatusModel? {
+    let st = mcpAcp.status()
+    mcpAcpStatus = st
+    return st
   }
 }
 

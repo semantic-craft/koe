@@ -1786,6 +1786,166 @@ public final class KoeContextSearchIndex: @unchecked Sendable {{
     )
   }}
 }}
+
+public struct KoeMcpAcpStatusModel: Equatable, Sendable {{
+  public let mcpInitialized: Bool
+  public let mcpReady: Bool
+  public let acpInitialized: Bool
+  public let hasPairingTicket: Bool
+  public let packCount: UInt32
+  public let hotwordCount: UInt32
+  public let acpTaskCount: UInt32
+  public let handledCalls: UInt64
+  public let liveGeneration: UInt64
+  public let liveExpiresAtSec: UInt64
+}}
+
+public final class KoeMcpAcpRuntime: @unchecked Sendable {{
+  private let handle: UInt64
+
+  public init(sessionId: String = "native-mcp-session") {{
+    let bytes = Array(sessionId.utf8)
+    self.handle = bytes.withUnsafeBufferPointer {{ buf in
+      koe_mcp_acp_new(buf.baseAddress, buf.count)
+    }}
+  }}
+
+  deinit {{
+    koe_mcp_acp_free(handle)
+  }}
+
+  public func configurePairing(
+    baseUrl: String,
+    token: String,
+    modeIsLan: Bool = true,
+    expiresAtEpochSec: UInt64 = 0
+  ) -> String? {{
+    let urlBytes = Array(baseUrl.utf8)
+    let tokBytes = Array(token.utf8)
+    var outLen: Int = 0
+    let ptr = urlBytes.withUnsafeBufferPointer {{ uBuf in
+      tokBytes.withUnsafeBufferPointer {{ tBuf in
+        koe_mcp_acp_configure_pairing(
+          handle,
+          uBuf.baseAddress,
+          uBuf.count,
+          tBuf.baseAddress,
+          tBuf.count,
+          modeIsLan ? 1 : 0,
+          expiresAtEpochSec,
+          &outLen
+        )
+      }}
+    }}
+    guard let validPtr = ptr, outLen > 0 else {{ return nil }}
+    defer {{ koe_buffer_free(validPtr, outLen) }}
+    return String(decoding: Data(bytes: validPtr, count: outLen), as: UTF8.self)
+  }}
+
+  public func verifyBearer(authHeader: String, nowEpochSec: UInt64) -> Bool {{
+    let bytes = Array(authHeader.utf8)
+    return bytes.withUnsafeBufferPointer {{ buf in
+      koe_mcp_acp_verify_bearer(handle, buf.baseAddress, buf.count, nowEpochSec) != 0
+    }}
+  }}
+
+  @discardableResult
+  public func publishLive(
+    generation: UInt64,
+    nowEpochSec: UInt64,
+    ttlSec: UInt32 = 15
+  ) -> Int32 {{
+    koe_mcp_acp_publish_live(handle, generation, nowEpochSec, ttlSec)
+  }}
+
+  @discardableResult
+  public func ingestUtterance(
+    text: String,
+    translation: String = "",
+    startMs: UInt64 = 0,
+    endMs: UInt64 = 0,
+    sourceLanguage: String = "zh",
+    targetLanguage: String = "en",
+    nowEpochSec: UInt64 = 0
+  ) -> UInt32 {{
+    let tBytes = Array(text.utf8)
+    let trBytes = Array(translation.utf8)
+    let sBytes = Array(sourceLanguage.utf8)
+    let tlBytes = Array(targetLanguage.utf8)
+    return tBytes.withUnsafeBufferPointer {{ tBuf in
+      trBytes.withUnsafeBufferPointer {{ trBuf in
+        sBytes.withUnsafeBufferPointer {{ sBuf in
+          tlBytes.withUnsafeBufferPointer {{ tlBuf in
+            koe_mcp_acp_ingest_utterance(
+              handle,
+              tBuf.baseAddress,
+              tBuf.count,
+              trBuf.baseAddress,
+              trBuf.count,
+              startMs,
+              endMs,
+              sBuf.baseAddress,
+              sBuf.count,
+              tlBuf.baseAddress,
+              tlBuf.count,
+              nowEpochSec
+            )
+          }}
+        }}
+      }}
+    }}
+  }}
+
+  @discardableResult
+  public func putPack(materialId: String, packBytes: Data) -> Int32 {{
+    let idBytes = Array(materialId.utf8)
+    return idBytes.withUnsafeBufferPointer {{ idBuf in
+      packBytes.withUnsafeBytes {{ pRaw in
+        koe_mcp_acp_put_pack(
+          handle,
+          idBuf.baseAddress,
+          idBuf.count,
+          pRaw.bindMemory(to: UInt8.self).baseAddress,
+          packBytes.count
+        )
+      }}
+    }}
+  }}
+
+  public func dispatchJsonRpc(_ requestJson: String, nowEpochSec: UInt64) -> String? {{
+    let reqBytes = Array(requestJson.utf8)
+    var outLen: Int = 0
+    let ptr = reqBytes.withUnsafeBufferPointer {{ buf in
+      koe_mcp_acp_dispatch_jsonrpc(
+        handle,
+        buf.baseAddress,
+        buf.count,
+        nowEpochSec,
+        &outLen
+      )
+    }}
+    guard let validPtr = ptr, outLen > 0 else {{ return nil }}
+    defer {{ koe_buffer_free(validPtr, outLen) }}
+    return String(decoding: Data(bytes: validPtr, count: outLen), as: UTF8.self)
+  }}
+
+  public func status() -> KoeMcpAcpStatusModel? {{
+    var c = KoeMcpAcpStatus()
+    guard koe_mcp_acp_status(handle, &c) != 0 else {{ return nil }}
+    return KoeMcpAcpStatusModel(
+      mcpInitialized: c.mcp_initialized != 0,
+      mcpReady: c.mcp_ready != 0,
+      acpInitialized: c.acp_initialized != 0,
+      hasPairingTicket: c.has_pairing_ticket != 0,
+      packCount: c.pack_count,
+      hotwordCount: c.hotword_count,
+      acpTaskCount: c.acp_task_count,
+      handledCalls: c.handled_calls,
+      liveGeneration: c.live_generation,
+      liveExpiresAtSec: c.live_expires_at_sec
+    )
+  }}
+}}
 "#,
         struct_count = struct_names.len(),
         structs = struct_names.join(", "),
@@ -2077,6 +2237,75 @@ data class KoeContextSearchStatusModel(
     }}
 }}
 
+data class KoeCicadaRollingTicketModel(
+    val fromIndex: Int,
+    val endIndex: Int,
+    val generation: Long,
+    val payload: String,
+)
+
+data class KoeCicadaRollingStatusModel(
+    val paused: Boolean,
+    val closed: Boolean,
+    val edited: Boolean,
+    val hasCandidate: Boolean,
+    val requestStatus: Int,
+    val watermark: Int,
+    val callsThisHour: Int,
+    val generation: Long,
+) {{
+    companion object {{
+        fun fromJniLongs(raw: LongArray): KoeCicadaRollingStatusModel {{
+            if (raw.size < 8) {{
+                return KoeCicadaRollingStatusModel(false, false, false, false, 0, 0, 0, 0L)
+            }}
+            return KoeCicadaRollingStatusModel(
+                paused = raw[0] != 0L,
+                closed = raw[1] != 0L,
+                edited = raw[2] != 0L,
+                hasCandidate = raw[3] != 0L,
+                requestStatus = raw[4].toInt(),
+                watermark = raw[5].toInt(),
+                callsThisHour = raw[6].toInt(),
+                generation = raw[7],
+            )
+        }}
+    }}
+}}
+
+data class KoeMcpAcpStatusModel(
+    val mcpInitialized: Boolean,
+    val mcpReady: Boolean,
+    val acpInitialized: Boolean,
+    val hasPairingTicket: Boolean,
+    val packCount: Int,
+    val hotwordCount: Int,
+    val acpTaskCount: Int,
+    val handledCalls: Long,
+    val liveGeneration: Long,
+    val liveExpiresAtSec: Long,
+) {{
+    companion object {{
+        fun fromJniLongs(raw: LongArray): KoeMcpAcpStatusModel {{
+            if (raw.size < 10) {{
+                return KoeMcpAcpStatusModel(false, false, false, false, 0, 0, 0, 0L, 0L, 0L)
+            }}
+            return KoeMcpAcpStatusModel(
+                mcpInitialized = raw[0] != 0L,
+                mcpReady = raw[1] != 0L,
+                acpInitialized = raw[2] != 0L,
+                hasPairingTicket = raw[3] != 0L,
+                packCount = raw[4].toInt(),
+                hotwordCount = raw[5].toInt(),
+                acpTaskCount = raw[6].toInt(),
+                handledCalls = raw[7],
+                liveGeneration = raw[8],
+                liveExpiresAtSec = raw[9],
+            )
+        }}
+    }}
+}}
+
 object KoeCoreNative {{
     init {{
         System.loadLibrary("koe_core_ffi")
@@ -2218,6 +2447,68 @@ object KoeCoreNative {{
         sentence: ByteArray,
         title: ByteArray,
     ): Boolean
+    @JvmStatic external fun cicadaRollingNew(sessionId: ByteArray): Long
+    @JvmStatic external fun cicadaRollingFree(handle: Long)
+    @JvmStatic external fun cicadaRollingAddSegment(
+        handle: Long,
+        segId: ByteArray,
+        text: ByteArray,
+        nowMs: Long,
+    ): Boolean
+    @JvmStatic external fun cicadaRollingPollTick(handle: Long, nowMs: Long): ByteArray?
+    @JvmStatic external fun cicadaRollingComplete(
+        handle: Long,
+        generation: Long,
+        fromIndex: Int,
+        endIndex: Int,
+        rawJson: ByteArray,
+    ): Int
+    @JvmStatic external fun cicadaRollingEdit(handle: Long, editedJson: ByteArray): Int
+    @JvmStatic external fun cicadaRollingAcceptCandidate(handle: Long): Boolean
+    @JvmStatic external fun cicadaRollingGetActive(handle: Long): ByteArray?
+    @JvmStatic external fun cicadaRollingStatus(handle: Long): LongArray
+
+    @JvmStatic external fun mcpAcpNew(sessionId: String): Long
+    @JvmStatic external fun mcpAcpFree(handle: Long)
+    @JvmStatic external fun mcpAcpConfigurePairing(
+        handle: Long,
+        baseUrl: String,
+        token: String,
+        modeIsLan: Boolean,
+        expiresAtEpochSec: Long,
+    ): String?
+    @JvmStatic external fun mcpAcpVerifyBearer(
+        handle: Long,
+        authHeader: String,
+        nowEpochSec: Long,
+    ): Boolean
+    @JvmStatic external fun mcpAcpPublishLive(
+        handle: Long,
+        generation: Long,
+        nowEpochSec: Long,
+        ttlSec: Int,
+    ): Int
+    @JvmStatic external fun mcpAcpIngestUtterance(
+        handle: Long,
+        text: String,
+        translation: String,
+        startMs: Long,
+        endMs: Long,
+        sourceLang: String,
+        targetLang: String,
+        nowEpochSec: Long,
+    ): Int
+    @JvmStatic external fun mcpAcpPutPack(
+        handle: Long,
+        materialId: String,
+        packBytes: ByteArray,
+    ): Int
+    @JvmStatic external fun mcpAcpDispatchJsonRpc(
+        handle: Long,
+        requestJson: String,
+        nowEpochSec: Long,
+    ): String?
+    @JvmStatic external fun mcpAcpStatus(handle: Long): LongArray
 }}
 
 class KoeFrameReassembler : AutoCloseable {{
@@ -2516,6 +2807,132 @@ class KoeContextSearchIndex : AutoCloseable {{
     }}
 }}
 
+class KoeCicadaRollingScheduler(sessionId: String = "cicada") : AutoCloseable {{
+    private var handle: Long = KoeCoreNative.cicadaRollingNew(sessionId.toByteArray(Charsets.UTF_8))
+
+    fun addSegment(id: String, text: String, nowMs: Long): Boolean =
+        handle != 0L && KoeCoreNative.cicadaRollingAddSegment(
+            handle,
+            id.toByteArray(Charsets.UTF_8),
+            text.toByteArray(Charsets.UTF_8),
+            nowMs,
+        )
+
+    fun pollTick(nowMs: Long): KoeCicadaRollingTicketModel? {{
+        if (handle == 0L) return null
+        val bytes = KoeCoreNative.cicadaRollingPollTick(handle, nowMs) ?: return null
+        val text = String(bytes, Charsets.UTF_8)
+        val lines = text.split("\n", limit = 4)
+        if (lines.size < 4) return null
+        return KoeCicadaRollingTicketModel(
+            fromIndex = lines[0].toIntOrNull() ?: 0,
+            endIndex = lines[1].toIntOrNull() ?: 0,
+            generation = lines[2].toLongOrNull() ?: 0L,
+            payload = lines[3],
+        )
+    }}
+
+    fun complete(generation: Long, fromIndex: Int, endIndex: Int, rawJson: String): Int =
+        if (handle == 0L) -1
+        else KoeCoreNative.cicadaRollingComplete(
+            handle,
+            generation,
+            fromIndex,
+            endIndex,
+            rawJson.toByteArray(Charsets.UTF_8),
+        )
+
+    fun edit(editedJson: String): Int =
+        if (handle == 0L) -1
+        else KoeCoreNative.cicadaRollingEdit(handle, editedJson.toByteArray(Charsets.UTF_8))
+
+    fun acceptCandidate(): Boolean =
+        handle != 0L && KoeCoreNative.cicadaRollingAcceptCandidate(handle)
+
+    fun activeJson(): String? {{
+        if (handle == 0L) return null
+        val bytes = KoeCoreNative.cicadaRollingGetActive(handle) ?: return null
+        return String(bytes, Charsets.UTF_8)
+    }}
+
+    fun status(): KoeCicadaRollingStatusModel =
+        if (handle == 0L) KoeCicadaRollingStatusModel(false, false, false, false, 0, 0, 0, 0L)
+        else KoeCicadaRollingStatusModel.fromJniLongs(KoeCoreNative.cicadaRollingStatus(handle))
+
+    override fun close() {{
+        if (handle != 0L) {{
+            KoeCoreNative.cicadaRollingFree(handle)
+            handle = 0L
+        }}
+    }}
+}}
+
+class KoeMcpAcpRuntime(sessionId: String = "native-mcp-session") : AutoCloseable {{
+    private var handle: Long = KoeCoreNative.mcpAcpNew(sessionId)
+
+    fun configurePairing(
+        baseUrl: String,
+        token: String,
+        modeIsLan: Boolean = true,
+        expiresAtEpochSec: Long = 0L,
+    ): String? =
+        if (handle == 0L) null
+        else KoeCoreNative.mcpAcpConfigurePairing(
+            handle,
+            baseUrl,
+            token,
+            modeIsLan,
+            expiresAtEpochSec,
+        )
+
+    fun verifyBearer(authHeader: String, nowEpochSec: Long): Boolean =
+        handle != 0L && KoeCoreNative.mcpAcpVerifyBearer(handle, authHeader, nowEpochSec)
+
+    fun publishLive(generation: Long, nowEpochSec: Long, ttlSec: Int = 15): Int =
+        if (handle == 0L) -1
+        else KoeCoreNative.mcpAcpPublishLive(handle, generation, nowEpochSec, ttlSec)
+
+    fun ingestUtterance(
+        text: String,
+        translation: String = "",
+        startMs: Long = 0L,
+        endMs: Long = 0L,
+        sourceLanguage: String = "zh",
+        targetLanguage: String = "en",
+        nowEpochSec: Long = 0L,
+    ): Int =
+        if (handle == 0L) 0
+        else KoeCoreNative.mcpAcpIngestUtterance(
+            handle,
+            text,
+            translation,
+            startMs,
+            endMs,
+            sourceLanguage,
+            targetLanguage,
+            nowEpochSec,
+        )
+
+    fun putPack(materialId: String, packBytes: ByteArray): Int =
+        if (handle == 0L) -1
+        else KoeCoreNative.mcpAcpPutPack(handle, materialId, packBytes)
+
+    fun dispatchJsonRpc(requestJson: String, nowEpochSec: Long): String? =
+        if (handle == 0L) null
+        else KoeCoreNative.mcpAcpDispatchJsonRpc(handle, requestJson, nowEpochSec)
+
+    fun status(): KoeMcpAcpStatusModel =
+        if (handle == 0L) KoeMcpAcpStatusModel(false, false, false, false, 0, 0, 0, 0L, 0L, 0L)
+        else KoeMcpAcpStatusModel.fromJniLongs(KoeCoreNative.mcpAcpStatus(handle))
+
+    override fun close() {{
+        if (handle != 0L) {{
+            KoeCoreNative.mcpAcpFree(handle)
+            handle = 0L
+        }}
+    }}
+}}
+
 object KoeCore {{
     fun checksum(data: ByteArray): Int = KoeCoreNative.checksum(data)
 
@@ -2718,12 +3135,66 @@ object KoeCore {{
             ((buf[offset + 3].toLong() and 0xFFL) shl 24)
 }}
 
-class KoeNativeHostController : AutoCloseable {{
+class KoeNativeHostController(sessionId: String = "android-host") : AutoCloseable {{
     val session: KoeTransportSession = KoeTransportSession()
     val library: KoeRecordingLibrary = KoeRecordingLibrary()
+    val spine: KoeUtteranceSpine = KoeUtteranceSpine(sessionId)
+    val rollingScheduler: KoeCicadaRollingScheduler = KoeCicadaRollingScheduler(sessionId)
+    val contextSearch: KoeContextSearchIndex = KoeContextSearchIndex()
+    val mcpAcp: KoeMcpAcpRuntime = KoeMcpAcpRuntime(sessionId)
     private val finalizedHistory = ArrayList<KoeFinalizedRecordingModel>()
 
     fun finalizedRecordings(): List<KoeFinalizedRecordingModel> = finalizedHistory.toList()
+
+    fun ingestUtteranceAndIndex(
+        text: String,
+        translation: String = "",
+        startMs: Long = 0L,
+        endMs: Long = 0L,
+        sourceLanguage: String = "zh",
+        targetLanguage: String = "en",
+        nowEpochSec: Long = 0L,
+    ): Int {{
+        val ord = spine.appendSegment(text, startMs, endMs, sourceLanguage, "qwen")
+        if (ord > 0 && translation.isNotEmpty()) {{
+            spine.setTranslation(ord, translation, targetLanguage)
+        }}
+        if (ord > 0) {{
+            rollingScheduler.addSegment("S$ord", text, nowEpochSec * 1000L)
+            contextSearch.addDoc(text)
+            mcpAcp.ingestUtterance(
+                text,
+                translation,
+                startMs,
+                endMs,
+                sourceLanguage,
+                targetLanguage,
+                nowEpochSec,
+            )
+        }}
+        return ord
+    }}
+
+    fun configureMcpPairing(
+        baseUrl: String,
+        token: String,
+        modeIsLan: Boolean = true,
+        expiresAtEpochSec: Long = 0L,
+    ): String? = mcpAcp.configurePairing(baseUrl, token, modeIsLan, expiresAtEpochSec)
+
+    fun verifyMcpBearer(authHeader: String, nowEpochSec: Long): Boolean =
+        mcpAcp.verifyBearer(authHeader, nowEpochSec)
+
+    fun publishMcpLiveLease(generation: Long, nowEpochSec: Long, ttlSec: Int = 15): Int =
+        mcpAcp.publishLive(generation, nowEpochSec, ttlSec)
+
+    fun putMcpSyncPack(materialId: String, packBytes: ByteArray): Int =
+        mcpAcp.putPack(materialId, packBytes)
+
+    fun dispatchMcpAcpJsonRpc(requestJson: String, nowEpochSec: Long): String? =
+        mcpAcp.dispatchJsonRpc(requestJson, nowEpochSec)
+
+    fun mcpAcpStatus(): KoeMcpAcpStatusModel = mcpAcp.status()
 
     fun ingestBleChunk(chunk: ByteArray, nowEpochSec: Long): KoeSessionStepOutcome {{
         val step = KoeSessionStepOutcome.fromJniLongs(session.ingestBleChunk(chunk, nowEpochSec))
@@ -2809,6 +3280,10 @@ class KoeNativeHostController : AutoCloseable {{
     override fun close() {{
         session.close()
         library.close()
+        spine.close()
+        rollingScheduler.close()
+        contextSearch.close()
+        mcpAcp.close()
     }}
 }}
 "#,

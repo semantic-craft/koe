@@ -1031,4 +1031,233 @@ void main() {
       ffi.contextSearchFree(benchHandle);
     }
   });
+
+  test('Rust FFI Slice N MCP 2025-11-25, KOEMCP1 pairing, 15s live lease, /sync/packs, and ACP protocol verify across C-ABI', () {
+    final ffi = KoeCoreFfi.instance!;
+    final handle = ffi.mcpAcpNew(sessionId: 'dart-mcp-acp');
+    expect(handle, greaterThan(0));
+    try {
+      final ticket = ffi.mcpAcpConfigurePairing(
+        handle,
+        baseUrl: 'https://koe.example.com',
+        token: 'dart-mcp-secret-token-with-at-least-24-bytes',
+        modeIsLan: true,
+        expiresAtEpochSec: 1900000000,
+      );
+      expect(ticket, isNotNull);
+      expect(ticket, startsWith('KOEMCP1.'));
+      expect(
+        ffi.mcpAcpVerifyBearer(
+          handle,
+          authHeader: 'Bearer dart-mcp-secret-token-with-at-least-24-bytes',
+          nowEpochSec: 1800000000,
+        ),
+        isTrue,
+      );
+      expect(
+        ffi.mcpAcpVerifyBearer(
+          handle,
+          authHeader: 'Bearer wrong-mcp-secret-token-with-at-least-24-bytes',
+          nowEpochSec: 1800000000,
+        ),
+        isFalse,
+      );
+
+      expect(
+        ffi.mcpAcpPublishLive(
+          handle,
+          generation: 11,
+          nowEpochSec: 1800000000,
+          ttlSec: 15,
+        ),
+        equals(1),
+      );
+      expect(
+        ffi.mcpAcpPublishLive(
+          handle,
+          generation: 11,
+          nowEpochSec: 1800000000,
+          ttlSec: 25,
+        ),
+        equals(-1),
+      );
+
+      final ord = ffi.mcpAcpIngestUtterance(
+        handle,
+        text: '下周三前把心力豆海外渠道合同发给法务审阅',
+        translation: 'Send the Koe overseas channel contract to legal by next Wednesday',
+        startMs: 0,
+        endMs: 2500,
+        sourceLang: 'zh',
+        targetLang: 'en',
+        nowEpochSec: 1800000001,
+      );
+      expect(ord, equals(1));
+
+      final initResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}',
+        nowEpochSec: 1800000002,
+      );
+      expect(initResp, contains('2025-11-25'));
+      expect(
+        ffi.mcpAcpDispatchJsonRpc(
+          handle,
+          requestJson: '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+          nowEpochSec: 1800000002,
+        ),
+        isNull,
+      );
+
+      final listResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_recordings","arguments":{}}}',
+        nowEpochSec: 1800000003,
+      );
+      expect(listResp, contains('dart-mcp-acp'));
+
+      final trResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"11"}}}',
+        nowEpochSec: 1800000003,
+      );
+      expect(trResp, contains('心力豆海外渠道合同'));
+
+      final staleResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"99"}}}',
+        nowEpochSec: 1800000003,
+      );
+      expect(staleResp, contains('snapshot_changed'));
+
+      final expiredResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"11"}}}',
+        nowEpochSec: 1800000020,
+      );
+      expect(expiredResp, contains('publication_expired'));
+      expect(
+        ffi.mcpAcpPublishLive(
+          handle,
+          generation: 11,
+          nowEpochSec: 1800000020,
+          ttlSec: 15,
+        ),
+        equals(1),
+      );
+
+      final minResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_minutes","arguments":{}}}',
+        nowEpochSec: 1800000021,
+      );
+      expect(minResp, contains('心力豆海外渠道合同'));
+
+      final searchResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":5}}}',
+        nowEpochSec: 1800000021,
+      );
+      expect(searchResp, contains('"citation":"S1"'));
+
+      final qwenResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"sync_qwennote_hotwords","arguments":{"hotwords":["心力豆","D3200"],"template_id":"fishbone"}}}',
+        nowEpochSec: 1800000021,
+      );
+      expect(qwenResp, contains('fishbone'));
+
+      final exportResp = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"export_koepack_v2","arguments":{"title":"Dart导出包"}}}',
+        nowEpochSec: 1800000021,
+      );
+      expect(exportResp, contains('KOEPACK1'));
+
+      const demoHash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const demoMinutes = '''
+{
+  "schemaVersion": 2,
+  "title": "资料包纪要",
+  "overview": "概述",
+  "topics": [{ "text": "讨论事项", "sources": ["S1"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": []
+}
+''';
+      final demoPack = ffi.koepackEncodeDemoV2(
+        contentHash: demoHash,
+        title: 'Dart资料包',
+        source: '第一段会议记录',
+        minutesJson: demoMinutes,
+      )!;
+      expect(
+        ffi.mcpAcpPutPack(handle, materialId: demoHash, packBytes: demoPack),
+        equals(1),
+      );
+      final badPack = List<int>.from(demoPack);
+      badPack[badPack.length - 1] ^= 0xFF;
+      expect(
+        ffi.mcpAcpPutPack(handle, materialId: demoHash, packBytes: badPack),
+        equals(-1),
+      );
+
+      final acpInit = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":10,"method":"acp/initialize"}',
+        nowEpochSec: 1800000022,
+      );
+      expect(acpInit, contains('aid://koe.local/native-agent'));
+
+      final acpCard = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":11,"method":"acp/agent.card"}',
+        nowEpochSec: 1800000022,
+      );
+      expect(acpCard, contains('Koe Native Agent'));
+
+      final acpSess = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":12,"method":"acp/session.start"}',
+        nowEpochSec: 1800000022,
+      );
+      expect(acpSess, contains('acp-session-1'));
+
+      final acpSend = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":13,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"心力豆海外渠道合同"}}',
+        nowEpochSec: 1800000023,
+      );
+      expect(acpSend, contains('acp-task-1'));
+      expect(acpSend, contains('[S1]'));
+
+      final acpStatus = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":14,"method":"acp/task.status","params":{"taskId":"acp-task-1"}}',
+        nowEpochSec: 1800000024,
+      );
+      expect(acpStatus, contains('"phase":"completed"'));
+
+      final acpCancel = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":15,"method":"acp/task.cancel","params":{"taskId":"acp-task-1"}}',
+        nowEpochSec: 1800000025,
+      );
+      expect(acpCancel, contains('"phase":"canceled"'));
+
+      final status = ffi.mcpAcpStatus(handle)!;
+      expect(status.mcpInitialized, isTrue);
+      expect(status.mcpReady, isTrue);
+      expect(status.acpInitialized, isTrue);
+      expect(status.hasPairingTicket, isTrue);
+      expect(status.packCount, equals(2));
+      expect(status.hotwordCount, equals(2));
+      expect(status.acpTaskCount, equals(1));
+      expect(status.liveGeneration, equals(11));
+      expect(status.liveExpiresAtSec, equals(1800000035));
+    } finally {
+      ffi.mcpAcpFree(handle);
+    }
+  });
 }

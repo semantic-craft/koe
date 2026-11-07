@@ -122,6 +122,37 @@ final class KoeCoreNative {
   static native byte[] contextFormatCoarsePlace(byte[] partsJoined);
   static native boolean contextIsDelegationRequest(byte[] text);
   static native boolean contextNamesTodo(byte[] mention, byte[] sentence, byte[] title);
+  static native long cicadaRollingNew(byte[] sessionId);
+  static native void cicadaRollingFree(long handle);
+  static native boolean cicadaRollingAddSegment(
+      long handle, byte[] segId, byte[] text, long nowMs);
+  static native byte[] cicadaRollingPollTick(long handle, long nowMs);
+  static native int cicadaRollingComplete(
+      long handle, long generation, int fromIndex, int endIndex, byte[] rawJson);
+  static native int cicadaRollingEdit(long handle, byte[] editedJson);
+  static native boolean cicadaRollingAcceptCandidate(long handle);
+  static native byte[] cicadaRollingGetActive(long handle);
+  static native long[] cicadaRollingStatus(long handle);
+
+  static native long mcpAcpNew(String sessionId);
+  static native void mcpAcpFree(long handle);
+  static native String mcpAcpConfigurePairing(
+      long handle, String baseUrl, String token, boolean modeIsLan, long expiresAtEpochSec);
+  static native boolean mcpAcpVerifyBearer(long handle, String authHeader, long nowEpochSec);
+  static native int mcpAcpPublishLive(
+      long handle, long generation, long nowEpochSec, int ttlSec);
+  static native int mcpAcpIngestUtterance(
+      long handle,
+      String text,
+      String translation,
+      long startMs,
+      long endMs,
+      String sourceLang,
+      String targetLang,
+      long nowEpochSec);
+  static native int mcpAcpPutPack(long handle, String materialId, byte[] packBytes);
+  static native String mcpAcpDispatchJsonRpc(long handle, String requestJson, long nowEpochSec);
+  static native long[] mcpAcpStatus(long handle);
 }
 
 public final class KoeCoreJniTest {
@@ -545,5 +576,185 @@ public final class KoeCoreJniTest {
             "昨天说的合同已经发给法务了".getBytes(StandardCharsets.UTF_8),
             "发合同给法务".getBytes(StandardCharsets.UTF_8)),
         "contextNamesTodo accepts named noun");
+
+    long mcpHandle = KoeCoreNative.mcpAcpNew("jni-mcp-acp");
+    check(mcpHandle != 0L, "mcpAcpNew returns non-zero handle");
+    String pairingTicket =
+        KoeCoreNative.mcpAcpConfigurePairing(
+            mcpHandle,
+            "https://koe.example.com",
+            "jni-mcp-secret-token-with-at-least-24-bytes",
+            true,
+            1_900_000_000L);
+    check(
+        pairingTicket != null && pairingTicket.startsWith("KOEMCP1."),
+        "mcpAcpConfigurePairing returns KOEMCP1. ticket");
+    check(
+        KoeCoreNative.mcpAcpVerifyBearer(
+            mcpHandle,
+            "Bearer jni-mcp-secret-token-with-at-least-24-bytes",
+            1_800_000_000L),
+        "mcpAcpVerifyBearer accepts valid token");
+    check(
+        !KoeCoreNative.mcpAcpVerifyBearer(
+            mcpHandle,
+            "Bearer wrong-mcp-secret-token-with-at-least-24-bytes",
+            1_800_000_000L),
+        "mcpAcpVerifyBearer rejects wrong token");
+    check(
+        KoeCoreNative.mcpAcpPublishLive(mcpHandle, 9L, 1_800_000_000L, 15) == 1,
+        "mcpAcpPublishLive accepts 15s TTL");
+    check(
+        KoeCoreNative.mcpAcpPublishLive(mcpHandle, 9L, 1_800_000_000L, 25) < 0,
+        "mcpAcpPublishLive rejects >20s TTL");
+    int mcpOrd =
+        KoeCoreNative.mcpAcpIngestUtterance(
+            mcpHandle,
+            "下周三前把海外渠道财务对账单发给法务审阅",
+            "Send the overseas channel financial statement to legal before next Wednesday",
+            0L,
+            2_500L,
+            "zh",
+            "en",
+            1_800_000_001L);
+    check(mcpOrd == 1, "mcpAcpIngestUtterance returns ordinal 1");
+
+    String mcpInit =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}",
+            1_800_000_002L);
+    check(mcpInit != null && mcpInit.contains("2025-11-25"), "MCP initialize succeeds over JNI");
+    String mcpNotif =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
+            1_800_000_002L);
+    check(mcpNotif == null, "MCP notifications/initialized returns null over JNI");
+
+    String mcpList =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"list_recordings\",\"arguments\":{}}}",
+            1_800_000_003L);
+    check(mcpList != null && mcpList.contains("jni-mcp-acp"), "MCP list_recordings includes session");
+
+    String mcpTr =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_transcript\",\"arguments\":{\"expected_revision\":\"9\"}}}",
+            1_800_000_003L);
+    check(mcpTr != null && mcpTr.contains("海外渠道财务对账单"), "MCP get_transcript returns S1");
+
+    String mcpStale =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_transcript\",\"arguments\":{\"expected_revision\":\"99\"}}}",
+            1_800_000_003L);
+    check(
+        mcpStale != null && mcpStale.contains("snapshot_changed"),
+        "MCP get_transcript reports snapshot_changed");
+
+    String mcpExpired =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"get_transcript\",\"arguments\":{\"expected_revision\":\"9\"}}}",
+            1_800_000_020L);
+    check(
+        mcpExpired != null && mcpExpired.contains("publication_expired"),
+        "MCP get_transcript reports publication_expired");
+    KoeCoreNative.mcpAcpPublishLive(mcpHandle, 9L, 1_800_000_020L, 15);
+
+    String mcpMin =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"get_minutes\",\"arguments\":{}}}",
+            1_800_000_021L);
+    check(mcpMin != null && mcpMin.contains("海外渠道财务对账单"), "MCP get_minutes returns minutes");
+
+    String mcpSearch =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"search_context\",\"arguments\":{\"query\":\"海外渠道\",\"limit\":5}}}",
+            1_800_000_021L);
+    check(mcpSearch != null && mcpSearch.contains("\"citation\":\"S1\""), "MCP search_context hits S1");
+
+    String mcpQwen =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"sync_qwennote_hotwords\",\"arguments\":{\"hotwords\":[\"心力豆\",\"D3200\"],\"template_id\":\"fishbone\"}}}",
+            1_800_000_021L);
+    check(mcpQwen != null && mcpQwen.contains("fishbone"), "MCP sync_qwennote_hotwords updates state");
+
+    String mcpExport =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"export_koepack_v2\",\"arguments\":{\"title\":\"JNI导出包\"}}}",
+            1_800_000_021L);
+    check(mcpExport != null && mcpExport.contains("KOEPACK1"), "MCP export_koepack_v2 emits KOEPACK1");
+
+    check(
+        KoeCoreNative.mcpAcpPutPack(mcpHandle, demoHash, packBytes) == 1,
+        "mcpAcpPutPack accepts valid pack");
+    check(
+        KoeCoreNative.mcpAcpPutPack(mcpHandle, demoHash, tampered) < 0,
+        "mcpAcpPutPack rejects tampered pack");
+
+    String acpInit =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"acp/initialize\"}",
+            1_800_000_022L);
+    check(acpInit != null && acpInit.contains("aid://koe.local/native-agent"), "ACP initialize succeeds");
+
+    String acpCard =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"acp/agent.card\"}",
+            1_800_000_022L);
+    check(acpCard != null && acpCard.contains("Koe Native Agent"), "ACP agent.card succeeds");
+
+    String acpSess =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"acp/session.start\"}",
+            1_800_000_022L);
+    check(acpSess != null && acpSess.contains("acp-session-1"), "ACP session.start succeeds");
+
+    String acpSend =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"acp/task.send\",\"params\":{\"sessionId\":\"acp-session-1\",\"prompt\":\"海外渠道财务对账单\"}}",
+            1_800_000_023L);
+    check(acpSend != null && acpSend.contains("acp-task-1") && acpSend.contains("[S1]"), "ACP task.send cites S1");
+
+    String acpStatus =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"acp/task.status\",\"params\":{\"taskId\":\"acp-task-1\"}}",
+            1_800_000_024L);
+    check(acpStatus != null && acpStatus.contains("\"phase\":\"completed\""), "ACP task.status completed");
+
+    String acpCancel =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"acp/task.cancel\",\"params\":{\"taskId\":\"acp-task-1\"}}",
+            1_800_000_025L);
+    check(acpCancel != null && acpCancel.contains("\"phase\":\"canceled\""), "ACP task.cancel canceled");
+
+    long[] mcpSt = KoeCoreNative.mcpAcpStatus(mcpHandle);
+    check(
+        mcpSt != null
+            && mcpSt.length == 10
+            && mcpSt[0] == 1L
+            && mcpSt[1] == 1L
+            && mcpSt[2] == 1L
+            && mcpSt[3] == 1L
+            && mcpSt[4] == 2L
+            && mcpSt[5] == 2L
+            && mcpSt[6] == 1L
+            && mcpSt[8] == 9L,
+        "mcpAcpStatus reports expected 10-element status array");
+    KoeCoreNative.mcpAcpFree(mcpHandle);
   }
 }
