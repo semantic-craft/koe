@@ -107,5 +107,12 @@ struct KoeCoreSwiftTest {
     check(batch.wireRecordBytes == 332, "wireRecordBytes must be 332")
     check(batch.markedSequences == [5], "markedSequences must contain [5]")
     check(batch.opusBytes.count == 320 && batch.opusBytes[0] == 0x78 && batch.opusBytes[160] == 0x79, "opusBytes must concatenate both 160B frames")
+
+    let startTransport = KoeCore.encodeStartTransportAudioFile(fileId: 42, alreadyTransferred: 166, realtimeFlag: 1)
+    check(startTransport.count == 19 && KoeCore.verifyChecksum(startTransport), "encodeStartTransportAudioFile must emit valid 19B frame")
+    let derivedKey = KoeCore.hkdfSha256(ikm: Data(repeating: 0xAB, count: 32))
+    check(derivedKey.count == 32, "hkdfSha256 must derive 32-byte session key")
+    check(KoeCore.isSliceMark(0x01) && !KoeCore.isSliceMark(0x00), "isSliceMark must check bit 0")
+    check(KoeCore.sliceMarkPositionMs(50) == 1000, "sliceMarkPositionMs(50) must equal 1000ms")
   }
 }
