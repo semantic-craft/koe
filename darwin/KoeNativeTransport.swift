@@ -33,7 +33,8 @@ public struct MarkTimestampMs: Comparable, Hashable, Codable, Sendable, Identifi
 
   public var formattedClock: String {
     let totalSeconds = Int(rawValue / 1000)
-    return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
+    let tenths = Int((rawValue % 1000) / 100)
+    return String(format: "%02d:%02d.%d", totalSeconds / 60, totalSeconds % 60, tenths)
   }
 
   public static func < (lhs: Self, rhs: Self) -> Bool {
@@ -264,6 +265,10 @@ public actor BeanTransportActor: BeanTransporting {
     resetActiveTransfer()
     continuation?.yield(.transferChanged(.idle))
     continuation?.yield(.connectionChanged(.disconnected(reason: nil)))
+  }
+
+  public func finishStream() {
+    continuation?.finish()
   }
 
   public func requestCatalog() async {
@@ -598,6 +603,9 @@ public actor BeanTransportActor: BeanTransporting {
   }
 
   public static func defaultExportDirectory() -> URL {
+    if let custom = ProcessInfo.processInfo.environment["KOE_EXPORT_DIR"], !custom.isEmpty {
+      return URL(fileURLWithPath: custom, isDirectory: true)
+    }
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
       ?? FileManager.default.temporaryDirectory
     return base
@@ -624,7 +632,7 @@ public actor BeanTransportActor: BeanTransporting {
   }
 }
 
-final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
+final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
   static let serviceUUID = CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB")
   static let writeUUID = CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB")
   static let notifyUUID = CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB")
@@ -635,7 +643,6 @@ final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeri
   private var central: CBCentralManager?
   private var peripheral: CBPeripheral?
   private var writeChar: CBCharacteristic?
-  private let queue = DispatchQueue(label: "com.semanticcraft.koe.native.ble")
 
   init(
     onChunk: @escaping @Sendable (Data) async -> Void,
@@ -649,33 +656,25 @@ final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeri
   }
 
   func startScan() {
-    queue.async { [weak self] in
-      guard let self else { return }
-      if self.central == nil {
-        self.central = CBCentralManager(delegate: self, queue: self.queue)
-      } else if self.central?.state == .poweredOn {
-        self.central?.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
-      }
+    if central == nil {
+      central = CBCentralManager(delegate: self, queue: nil)
+    } else if central?.state == .poweredOn {
+      central?.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
     }
   }
 
   func disconnect() {
-    queue.async { [weak self] in
-      guard let self else { return }
-      self.central?.stopScan()
-      if let p = self.peripheral {
-        self.central?.cancelPeripheralConnection(p)
-      }
-      self.peripheral = nil
-      self.writeChar = nil
+    central?.stopScan()
+    if let p = peripheral {
+      central?.cancelPeripheralConnection(p)
     }
+    peripheral = nil
+    writeChar = nil
   }
 
   func send(_ frame: Data) {
-    queue.async { [weak self] in
-      guard let self, let p = self.peripheral, let c = self.writeChar else { return }
-      p.writeValue(frame, for: c, type: .withoutResponse)
-    }
+    guard let p = peripheral, let c = writeChar else { return }
+    p.writeValue(frame, for: c, type: .withoutResponse)
   }
 
   func centralManagerDidUpdateState(_ central: CBCentralManager) {

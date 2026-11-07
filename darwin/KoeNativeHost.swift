@@ -394,6 +394,7 @@ public final class KoeNativeHost: ObservableObject {
   public let sidebar: BeanSidebarModel
   public let interpreting: LiveInterpretingModel
   public let playback: RecordingPlaybackModel
+  private var eventObservationTask: Task<Void, Never>?
 
   public init(
     transport: any BeanTransporting = BeanTransportActor(),
@@ -404,7 +405,7 @@ public final class KoeNativeHost: ObservableObject {
     let playbackModel = RecordingPlaybackModel()
     self.interpreting = interpretingModel
     self.playback = playbackModel
-    self.sidebar = BeanSidebarModel(
+    let sidebarModel = BeanSidebarModel(
       transport: transport,
       exportDirectory: exportDirectory,
       onRecordingSaved: { [weak playbackModel] saved in
@@ -414,7 +415,15 @@ public final class KoeNativeHost: ObservableObject {
         interpretingModel?.ingestSegment(segment)
       }
     )
+    self.sidebar = sidebarModel
     playbackModel.loadExistingExports(from: exportDirectory)
+    self.eventObservationTask = Task { [weak sidebarModel] in
+      await sidebarModel?.observeEvents()
+    }
+  }
+
+  deinit {
+    eventObservationTask?.cancel()
   }
 }
 
@@ -449,9 +458,6 @@ public struct KoeNativeHostView: View {
         playback: host.playback,
         interpreting: host.interpreting
       )
-    }
-    .task {
-      await host.sidebar.observeEvents()
     }
   }
 }

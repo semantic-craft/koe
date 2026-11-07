@@ -165,6 +165,7 @@ struct KoeCoreSwiftTest {
         }
         check(host.interpreting.segments.count == 2, "LiveInterpretingModel must store 2 bilingual segments")
       }
+      await actor.finishStream()
     }
   }
 }
