@@ -6,7 +6,10 @@ use std::ffi::c_void;
 use std::sync::{Mutex, OnceLock};
 
 use crate::{
-    koe_buffer_free, koe_cicada_silence_reduce, koe_koepack_encode_demo_v2, koe_koepack_verify_v2,
+    koe_buffer_free, koe_cicada_silence_reduce, koe_context_format_coarse_place,
+    koe_context_is_delegation_request, koe_context_names_todo, koe_context_search_add_doc,
+    koe_context_search_free, koe_context_search_new, koe_context_search_query,
+    koe_context_search_status, koe_koepack_encode_demo_v2, koe_koepack_verify_v2,
     koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
     koe_library_move_to_trash, koe_library_new, koe_library_seek_ms, koe_library_select,
     koe_library_snapshot, koe_library_undo_trash, koe_minutes_plan_batches_count,
@@ -28,6 +31,7 @@ use crate::{
     koe_spine_set_translation, koe_spine_snapshot, koe_spine_update_segment_text,
     koe_wifi_build_file_request_hex, koe_wifi_build_transfer_complete_hex,
     koe_wifi_keepalive_payload, koe_wifi_parse_config_response, koe_wifi_shares_subnet,
+    KoeContextSearchStatus,
     session_map, KoeLibrarySnapshot, KoeRecordingEntry, KoeSessionStepResult,
     KoeUtteranceSegmentHeader, KoeUtteranceSpineSnapshot, KoeWifiBatchProgress, KoeWifiEndpoint,
 };
@@ -1603,6 +1607,154 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_koepackEnc
             title,
             source,
             minutes_json,
+        )
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextSearchNew(
+    _env: JniEnv,
+    _cls: JClass,
+) -> JLong {
+    koe_context_search_new() as JLong
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextSearchFree(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) {
+    koe_context_search_free(handle as u64);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextSearchAddDoc(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    text: JByteArray,
+) -> JInt {
+    let text_b = unsafe { jni_read_bytes(env, text) };
+    unsafe { koe_context_search_add_doc(handle as u64, text_b.as_ptr(), text_b.len()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextSearchQuery(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    query: JByteArray,
+    limit: JInt,
+) -> JLongArray {
+    let query_b = unsafe { jni_read_bytes(env, query) };
+    let cap = limit.max(0) as usize;
+    if cap == 0 {
+        return unsafe { jni_new_longs(env, &[]) };
+    }
+    let mut indices = vec![0u32; cap];
+    let total = unsafe {
+        koe_context_search_query(
+            handle as u64,
+            query_b.as_ptr(),
+            query_b.len(),
+            cap as u32,
+            indices.as_mut_ptr(),
+            cap,
+        )
+    };
+    let n = total.min(cap);
+    let longs: Vec<i64> = indices[..n].iter().map(|&idx| i64::from(idx)).collect();
+    unsafe { jni_new_longs(env, &longs) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextSearchStatus(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JLongArray {
+    let mut st = KoeContextSearchStatus {
+        doc_count: 0,
+        total_chars: 0,
+        vocab_size: 0,
+        last_hit_count: 0,
+    };
+    let ok = unsafe { koe_context_search_status(handle as u64, &mut st) };
+    if ok == 0 {
+        return unsafe { jni_new_longs(env, &[]) };
+    }
+    let out = [
+        i64::from(st.doc_count),
+        i64::from(st.total_chars),
+        i64::from(st.vocab_size),
+        i64::from(st.last_hit_count),
+    ];
+    unsafe { jni_new_longs(env, &out) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextFormatCoarsePlace(
+    env: JniEnv,
+    _cls: JClass,
+    parts_joined: JByteArray,
+) -> JByteArray {
+    let parts_b = unsafe { jni_read_bytes(env, parts_joined) };
+    let needed = unsafe {
+        koe_context_format_coarse_place(
+            parts_b.as_ptr(),
+            parts_b.len(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if needed <= 0 {
+        return unsafe { jni_new_bytes(env, &[]) };
+    }
+    let mut out = vec![0u8; needed as usize];
+    let written = unsafe {
+        koe_context_format_coarse_place(
+            parts_b.as_ptr(),
+            parts_b.len(),
+            out.as_mut_ptr(),
+            out.len(),
+        )
+    };
+    if written <= 0 {
+        return unsafe { jni_new_bytes(env, &[]) };
+    }
+    unsafe { jni_new_bytes(env, &out[..written as usize]) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextIsDelegationRequest(
+    env: JniEnv,
+    _cls: JClass,
+    text: JByteArray,
+) -> JBoolean {
+    let text_b = unsafe { jni_read_bytes(env, text) };
+    unsafe { koe_context_is_delegation_request(text_b.as_ptr(), text_b.len()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextNamesTodo(
+    env: JniEnv,
+    _cls: JClass,
+    mention: JByteArray,
+    sentence: JByteArray,
+    title: JByteArray,
+) -> JBoolean {
+    let m_b = unsafe { jni_read_bytes(env, mention) };
+    let s_b = unsafe { jni_read_bytes(env, sentence) };
+    let t_b = unsafe { jni_read_bytes(env, title) };
+    unsafe {
+        koe_context_names_todo(
+            m_b.as_ptr(),
+            m_b.len(),
+            s_b.as_ptr(),
+            s_b.len(),
+            t_b.as_ptr(),
+            t_b.len(),
         )
     }
 }

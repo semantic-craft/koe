@@ -12,6 +12,9 @@ use koe_core::cicada::{
     RollingTickDecision,
 };
 use koe_core::commands::DeviceCommands;
+use koe_core::context::{
+    format_coarse_place, is_delegation_request, names_todo, ContextSearchIndex,
+};
 use koe_core::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 use koe_core::domain::{SegmentId, UtteranceSpine};
 use koe_core::frame::{DecodedPacket, FrameReassembler, ProtocolFrame};
@@ -441,6 +444,20 @@ pub struct KoeCicadaRollingStatus {
     pub calls_this_hour: u32,
     /// Monotonically increasing scheduler generation.
     pub generation: u64,
+}
+
+/// C-ABI flat status snapshot of `ContextSearchIndex`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeContextSearchStatus {
+    /// Total number of indexed documents.
+    pub doc_count: u32,
+    /// Total number of Unicode scalar characters across all indexed documents.
+    pub total_chars: u32,
+    /// Total number of distinct CJK bigram and Latin stem terms in the inverted index.
+    pub vocab_size: u32,
+    /// Number of hits returned by the most recent search query.
+    pub last_hit_count: u32,
 }
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
@@ -1103,6 +1120,8 @@ static TRANSPORT_REGISTRY: OnceLock<Mutex<BTreeMap<u64, SessionSlot>>> = OnceLoc
 static LIBRARY_REGISTRY: OnceLock<Mutex<BTreeMap<u64, RecordingLibrary>>> = OnceLock::new();
 static SPINE_REGISTRY: OnceLock<Mutex<BTreeMap<u64, UtteranceSpine>>> = OnceLock::new();
 static ROLLING_REGISTRY: OnceLock<Mutex<BTreeMap<u64, RollingMinutesScheduler>>> = OnceLock::new();
+static CONTEXT_SEARCH_REGISTRY: OnceLock<Mutex<BTreeMap<u64, ContextSearchIndex>>> =
+    OnceLock::new();
 
 fn reassembler_map() -> &'static Mutex<BTreeMap<u64, ReassemblerSlot>> {
     REASSEMBLER_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -1122,6 +1141,10 @@ pub(crate) fn spine_map() -> &'static Mutex<BTreeMap<u64, UtteranceSpine>> {
 
 pub(crate) fn rolling_map() -> &'static Mutex<BTreeMap<u64, RollingMinutesScheduler>> {
     ROLLING_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn context_search_map() -> &'static Mutex<BTreeMap<u64, ContextSearchIndex>> {
+    CONTEXT_SEARCH_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
 pub(crate) fn alloc_handle() -> u64 {
@@ -3352,6 +3375,221 @@ pub unsafe extern "C" fn koe_koepack_encode_demo_v2(
     ptr
 }
 
+/// Allocates a stateful Sweetpea `ContextSearchIndex` handle.
+#[no_mangle]
+pub extern "C" fn koe_context_search_new() -> u64 {
+    let h = alloc_handle();
+    if let Ok(mut map) = context_search_map().lock() {
+        map.insert(h, ContextSearchIndex::new());
+    }
+    h
+}
+
+/// Frees a Sweetpea `ContextSearchIndex` handle.
+#[no_mangle]
+pub extern "C" fn koe_context_search_free(handle: u64) {
+    if let Ok(mut map) = context_search_map().lock() {
+        map.remove(&handle);
+    }
+}
+
+/// Appends a UTF-8 document into `ContextSearchIndex` `handle`, returning its 0-based
+/// document index (`>= 0`) or `-1` on invalid handle or invalid UTF-8.
+///
+/// # Safety
+///
+/// `text_ptr` must be valid for reads of `text_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_context_search_add_doc(
+    handle: u64,
+    text_ptr: *const u8,
+    text_len: usize,
+) -> i32 {
+    if text_ptr.is_null() && text_len > 0 {
+        return -1;
+    }
+    let text = if text_len == 0 {
+        ""
+    } else {
+        let bytes = unsafe { slice::from_raw_parts(text_ptr, text_len) };
+        let Ok(s) = std::str::from_utf8(bytes) else {
+            return -1;
+        };
+        s
+    };
+    if let Ok(mut map) = context_search_map().lock() {
+        if let Some(idx) = map.get_mut(&handle) {
+            return idx.add_document(text) as i32;
+        }
+    }
+    -1
+}
+
+/// Queries `ContextSearchIndex` `handle` for `query_ptr[0..query_len]` with top-`limit` hits.
+/// Writes up to `out_cap` 0-based `u32` document indices into `out_indices_ptr` when non-null,
+/// and returns the total number of matched documents (`0` on empty/no-hit or invalid handle).
+///
+/// # Safety
+///
+/// `query_ptr` must be valid for reads of `query_len` UTF-8 bytes when non-null, and
+/// `out_indices_ptr` must be valid for writes of `out_cap` `u32` elements when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_context_search_query(
+    handle: u64,
+    query_ptr: *const u8,
+    query_len: usize,
+    limit: u32,
+    out_indices_ptr: *mut u32,
+    out_cap: usize,
+) -> usize {
+    if query_ptr.is_null() || query_len == 0 || limit == 0 {
+        return 0;
+    }
+    let q_bytes = unsafe { slice::from_raw_parts(query_ptr, query_len) };
+    let Ok(query) = std::str::from_utf8(q_bytes) else {
+        return 0;
+    };
+    if let Ok(mut map) = context_search_map().lock() {
+        if let Some(idx) = map.get_mut(&handle) {
+            let hits = idx.query_indices(query, limit as usize);
+            if !out_indices_ptr.is_null() && out_cap > 0 {
+                let n = hits.len().min(out_cap);
+                let dst = unsafe { slice::from_raw_parts_mut(out_indices_ptr, n) };
+                for (i, &doc_idx) in hits.iter().take(n).enumerate() {
+                    dst[i] = doc_idx as u32;
+                }
+            }
+            return hits.len();
+        }
+    }
+    0
+}
+
+/// Writes the current `KoeContextSearchStatus` snapshot into `*out_status_ptr` (`1` ok, `0` invalid handle).
+///
+/// # Safety
+///
+/// `out_status_ptr` must be valid for writes of one `KoeContextSearchStatus`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_context_search_status(
+    handle: u64,
+    out_status_ptr: *mut KoeContextSearchStatus,
+) -> u8 {
+    if out_status_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = context_search_map().lock() {
+        if let Some(idx) = map.get(&handle) {
+            unsafe {
+                *out_status_ptr = KoeContextSearchStatus {
+                    doc_count: idx.doc_count() as u32,
+                    total_chars: idx.total_chars().min(u32::MAX as usize) as u32,
+                    vocab_size: idx.vocab_size() as u32,
+                    last_hit_count: idx.last_hit_count() as u32,
+                };
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Formats `\n`-joined reverse-geocoded place parts (`parts_joined_ptr[0..parts_joined_len]`) into
+/// a coarse `"City District"` label (dropping street/house numbers).
+///
+/// Writes up to `out_cap` UTF-8 bytes into `out_ptr` (when non-null) and returns the UTF-8 byte
+/// length (`0` when no coarse place remains, `-1` on invalid UTF-8 or insufficient `out_cap`).
+///
+/// # Safety
+///
+/// `parts_joined_ptr` must be valid for reads of `parts_joined_len` bytes when non-null, and
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_context_format_coarse_place(
+    parts_joined_ptr: *const u8,
+    parts_joined_len: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if parts_joined_ptr.is_null() || parts_joined_len == 0 {
+        return 0;
+    }
+    let bytes = unsafe { slice::from_raw_parts(parts_joined_ptr, parts_joined_len) };
+    let Ok(joined) = std::str::from_utf8(bytes) else {
+        return -1;
+    };
+    let parts: Vec<&str> = joined.split('\n').collect();
+    let Some(formatted) = format_coarse_place(&parts) else {
+        return 0;
+    };
+    let out_bytes = formatted.as_bytes();
+    if out_ptr.is_null() {
+        return out_bytes.len() as i32;
+    }
+    if out_bytes.len() > out_cap {
+        return -1;
+    }
+    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, out_bytes.len()) };
+    dst.copy_from_slice(out_bytes);
+    out_bytes.len() as i32
+}
+
+/// Checks whether `text_ptr[0..text_len]` asks the assistant to execute an external side-effect
+/// delegation after stripping quoted speech (`1` delegation request, `0` ordinary question).
+///
+/// # Safety
+///
+/// `text_ptr` must be valid for reads of `text_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_context_is_delegation_request(
+    text_ptr: *const u8,
+    text_len: usize,
+) -> u8 {
+    if text_ptr.is_null() || text_len == 0 {
+        return 0;
+    }
+    let bytes = unsafe { slice::from_raw_parts(text_ptr, text_len) };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return 0;
+    };
+    u8::from(is_delegation_request(text))
+}
+
+/// Evaluates the `#234` vague-mention gate: returns `1` iff `mention` appears verbatim in
+/// `sentence` and shares at least one substantive character with `title` after stripping
+/// demonstratives, pronouns, date words, and particles.
+///
+/// # Safety
+///
+/// All non-null pointers must be valid for reads of their respective UTF-8 byte lengths.
+#[no_mangle]
+pub unsafe extern "C" fn koe_context_names_todo(
+    mention_ptr: *const u8,
+    mention_len: usize,
+    sentence_ptr: *const u8,
+    sentence_len: usize,
+    title_ptr: *const u8,
+    title_len: usize,
+) -> u8 {
+    if mention_ptr.is_null()
+        || mention_len == 0
+        || sentence_ptr.is_null()
+        || sentence_len == 0
+        || title_ptr.is_null()
+        || title_len == 0
+    {
+        return 0;
+    }
+    let (Ok(mention), Ok(sentence), Ok(title)) = (
+        std::str::from_utf8(unsafe { slice::from_raw_parts(mention_ptr, mention_len) }),
+        std::str::from_utf8(unsafe { slice::from_raw_parts(sentence_ptr, sentence_len) }),
+        std::str::from_utf8(unsafe { slice::from_raw_parts(title_ptr, title_len) }),
+    ) else {
+        return 0;
+    };
+    u8::from(names_todo(mention, sentence, title))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3475,5 +3713,112 @@ mod tests {
             koe_buffer_free(wav_ptr, wav_len);
         }
         koe_session_free(handle);
+    }
+
+    #[test]
+    fn ffi_context_search_coarse_place_delegation_and_names_todo() {
+        let h = koe_context_search_new();
+        let d0 = "今天在静安区喝手冲咖啡";
+        let d1 = "心力豆离线检索使用中文双字切分与BM25排序";
+        let d2 = "周五前把第三季度海外渠道财务对账单发给张总";
+        assert_eq!(
+            unsafe { koe_context_search_add_doc(h, d0.as_ptr(), d0.len()) },
+            0
+        );
+        assert_eq!(
+            unsafe { koe_context_search_add_doc(h, d1.as_ptr(), d1.len()) },
+            1
+        );
+        assert_eq!(
+            unsafe { koe_context_search_add_doc(h, d2.as_ptr(), d2.len()) },
+            2
+        );
+
+        let q = "中文双字切分是谁做的";
+        let mut out_indices = [0u32; 4];
+        let count = unsafe {
+            koe_context_search_query(
+                h,
+                q.as_ptr(),
+                q.len(),
+                4,
+                out_indices.as_mut_ptr(),
+                out_indices.len(),
+            )
+        };
+        assert_eq!(count, 1);
+        assert_eq!(out_indices[0], 1);
+
+        let mut st = KoeContextSearchStatus {
+            doc_count: 0,
+            total_chars: 0,
+            vocab_size: 0,
+            last_hit_count: 0,
+        };
+        assert_eq!(unsafe { koe_context_search_status(h, &mut st) }, 1);
+        assert_eq!(st.doc_count, 3);
+        assert!(st.total_chars >= 40);
+        assert!(st.vocab_size >= 15);
+        assert_eq!(st.last_hit_count, 1);
+        koe_context_search_free(h);
+
+        let parts = "浙江省\n杭州市\n西湖区\n文三路 99 号";
+        let mut place_buf = [0u8; 64];
+        let written = unsafe {
+            koe_context_format_coarse_place(
+                parts.as_ptr(),
+                parts.len(),
+                place_buf.as_mut_ptr(),
+                place_buf.len(),
+            )
+        };
+        assert!(written > 0);
+        assert_eq!(
+            std::str::from_utf8(&place_buf[..written as usize]).unwrap(),
+            "杭州市 西湖区"
+        );
+
+        let quoted = "他说「帮我发个微信给王总」是什么意思？";
+        assert_eq!(
+            unsafe { koe_context_is_delegation_request(quoted.as_ptr(), quoted.len()) },
+            0
+        );
+        let direct = "帮我发个微信给王总";
+        assert_eq!(
+            unsafe { koe_context_is_delegation_request(direct.as_ptr(), direct.len()) },
+            1
+        );
+
+        let vague_m = "这件事";
+        let vague_s = "昨天说的这件事已经搞定了";
+        let title = "发合同给法务";
+        assert_eq!(
+            unsafe {
+                koe_context_names_todo(
+                    vague_m.as_ptr(),
+                    vague_m.len(),
+                    vague_s.as_ptr(),
+                    vague_s.len(),
+                    title.as_ptr(),
+                    title.len(),
+                )
+            },
+            0
+        );
+        let real_m = "合同";
+        let real_s = "昨天说的合同已经发给法务了";
+        assert_eq!(
+            unsafe {
+                koe_context_names_todo(
+                    real_m.as_ptr(),
+                    real_m.len(),
+                    real_s.as_ptr(),
+                    real_s.len(),
+                    title.as_ptr(),
+                    title.len(),
+                )
+            },
+            1
+        );
     }
 }

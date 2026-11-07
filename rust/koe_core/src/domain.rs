@@ -670,7 +670,7 @@ pub enum ContextSource {
     AiSynthesis,
 }
 
-/// A single item in the user's personal context timeline (`lib/state/context`).
+/// A single item in the user's personal context timeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextItem {
     /// Stable unique identifier.
@@ -698,8 +698,43 @@ pub struct ContextItem {
 pub enum TodoKind {
     /// Action item owned by the user (`"我的待办"`).
     Mine,
-    /// Action item delegated to or awaited from another person.
+    /// Wish or desire with no promised owner (`"愿望"`).
+    Wish,
+    /// Action item delegated to or awaited from another person (`"他人承诺"`).
     Delegated,
+}
+
+impl TodoKind {
+    /// Returns the canonical wire token (`"mine"`, `"wish"`, or `"others"`).
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Mine => "mine",
+            Self::Wish => "wish",
+            Self::Delegated => "others",
+        }
+    }
+
+    /// Parses a wire token (`"mine"`, `"wish"`, `"others"`, or `"delegated"`) into [`TodoKind`].
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "mine" => Some(Self::Mine),
+            "wish" => Some(Self::Wish),
+            "others" | "delegated" => Some(Self::Delegated),
+            _ => None,
+        }
+    }
+
+    /// Returns the user-facing Chinese label (`"我的待办"`, `"愿望"`, or `"他人承诺"`).
+    #[must_use]
+    pub const fn label_zh(&self) -> &'static str {
+        match self {
+            Self::Mine => "我的待办",
+            Self::Wish => "愿望",
+            Self::Delegated => "他人承诺",
+        }
+    }
 }
 
 /// Completion state of a [`TodoItem`].

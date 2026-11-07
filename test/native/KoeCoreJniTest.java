@@ -114,6 +114,14 @@ final class KoeCoreNative {
       byte[] title,
       byte[] source,
       byte[] minutesJson);
+  static native long contextSearchNew();
+  static native void contextSearchFree(long handle);
+  static native int contextSearchAddDoc(long handle, byte[] text);
+  static native long[] contextSearchQuery(long handle, byte[] query, int limit);
+  static native long[] contextSearchStatus(long handle);
+  static native byte[] contextFormatCoarsePlace(byte[] partsJoined);
+  static native boolean contextIsDelegationRequest(byte[] text);
+  static native boolean contextNamesTodo(byte[] mention, byte[] sentence, byte[] title);
 }
 
 public final class KoeCoreJniTest {
@@ -483,5 +491,59 @@ public final class KoeCoreJniTest {
     check(
         KoeCoreNative.nativeKoepackVerifyV2(tampered) < 0,
         "nativeKoepackVerifyV2 rejects tampered pack");
+
+    long ctxSearch = KoeCoreNative.contextSearchNew();
+    check(
+        KoeCoreNative.contextSearchAddDoc(
+                ctxSearch, "今天在上海静安区喝手冲咖啡".getBytes(StandardCharsets.UTF_8))
+            == 0,
+        "contextSearchAddDoc doc 0");
+    check(
+        KoeCoreNative.contextSearchAddDoc(
+                ctxSearch, "心力豆离线检索使用中文双字切分与BM25排序".getBytes(StandardCharsets.UTF_8))
+            == 1,
+        "contextSearchAddDoc doc 1");
+    check(
+        KoeCoreNative.contextSearchAddDoc(
+                ctxSearch, "周五前把第三季度海外渠道财务对账单发给张总".getBytes(StandardCharsets.UTF_8))
+            == 2,
+        "contextSearchAddDoc doc 2");
+    long[] ctxHits =
+        KoeCoreNative.contextSearchQuery(
+            ctxSearch, "中文双字切分是谁做的".getBytes(StandardCharsets.UTF_8), 5);
+    check(ctxHits != null && ctxHits.length == 1 && ctxHits[0] == 1L, "contextSearchQuery hits doc 1");
+    long[] ctxStatus = KoeCoreNative.contextSearchStatus(ctxSearch);
+    check(
+        ctxStatus != null && ctxStatus.length == 4 && ctxStatus[0] == 3L && ctxStatus[3] == 1L,
+        "contextSearchStatus reports 3 docs and 1 hit");
+    KoeCoreNative.contextSearchFree(ctxSearch);
+
+    byte[] coarseBytes =
+        KoeCoreNative.contextFormatCoarsePlace(
+            "浙江省\n杭州市\n西湖区\n文三路 99 号".getBytes(StandardCharsets.UTF_8));
+    check(
+        coarseBytes != null
+            && new String(coarseBytes, StandardCharsets.UTF_8).equals("杭州市 西湖区"),
+        "contextFormatCoarsePlace returns 杭州市 西湖区");
+    check(
+        !KoeCoreNative.contextIsDelegationRequest(
+            "他说「帮我发个微信给王总」是什么意思？".getBytes(StandardCharsets.UTF_8)),
+        "contextIsDelegationRequest ignores quoted speech");
+    check(
+        KoeCoreNative.contextIsDelegationRequest(
+            "帮我发个微信给王总".getBytes(StandardCharsets.UTF_8)),
+        "contextIsDelegationRequest detects direct command");
+    check(
+        !KoeCoreNative.contextNamesTodo(
+            "这件事".getBytes(StandardCharsets.UTF_8),
+            "昨天说的这件事已经搞定了".getBytes(StandardCharsets.UTF_8),
+            "发合同给法务".getBytes(StandardCharsets.UTF_8)),
+        "contextNamesTodo rejects vague demonstrative");
+    check(
+        KoeCoreNative.contextNamesTodo(
+            "合同".getBytes(StandardCharsets.UTF_8),
+            "昨天说的合同已经发给法务了".getBytes(StandardCharsets.UTF_8),
+            "发合同给法务".getBytes(StandardCharsets.UTF_8)),
+        "contextNamesTodo accepts named noun");
   }
 }

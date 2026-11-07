@@ -737,6 +737,51 @@ public enum KoeCore {{
     return Data(bytes: validPtr, count: outLen)
   }}
 
+  public static func formatCoarsePlace(_ parts: [String]) -> String? {{
+    let joined = Array(parts.joined(separator: "\n").utf8)
+    guard !joined.isEmpty else {{ return nil }}
+    let needed = joined.withUnsafeBufferPointer {{ buf in
+      koe_context_format_coarse_place(buf.baseAddress, buf.count, nil, 0)
+    }}
+    guard needed > 0 else {{ return nil }}
+    var out = Data(count: Int(needed))
+    let written = out.withUnsafeMutableBytes {{ raw -> Int32 in
+      guard let dst = raw.bindMemory(to: UInt8.self).baseAddress else {{ return -1 }}
+      return joined.withUnsafeBufferPointer {{ buf in
+        koe_context_format_coarse_place(buf.baseAddress, buf.count, dst, Int(needed))
+      }}
+    }}
+    guard written > 0 else {{ return nil }}
+    return String(decoding: out.prefix(Int(written)), as: UTF8.self)
+  }}
+
+  public static func isDelegationRequest(_ text: String) -> Bool {{
+    let utf8 = Array(text.utf8)
+    return utf8.withUnsafeBufferPointer {{ buf in
+      koe_context_is_delegation_request(buf.baseAddress, buf.count) != 0
+    }}
+  }}
+
+  public static func namesTodo(mention: String, sentence: String, title: String) -> Bool {{
+    let mBytes = Array(mention.utf8)
+    let sBytes = Array(sentence.utf8)
+    let tBytes = Array(title.utf8)
+    return mBytes.withUnsafeBufferPointer {{ mBuf in
+      sBytes.withUnsafeBufferPointer {{ sBuf in
+        tBytes.withUnsafeBufferPointer {{ tBuf in
+          koe_context_names_todo(
+            mBuf.baseAddress,
+            mBuf.count,
+            sBuf.baseAddress,
+            sBuf.count,
+            tBuf.baseAddress,
+            tBuf.count
+          ) != 0
+        }}
+      }}
+    }}
+  }}
+
   fileprivate static func decodeDeviceInfo(_ c: KoeDeviceInfo) -> KoeDeviceTelemetry {{
     var copy = c
     let fw = withUnsafeBytes(of: &copy.firmware_version) {{ readCString($0) }}
@@ -1683,6 +1728,64 @@ public final class KoeCicadaRollingScheduler: @unchecked Sendable {{
     )
   }}
 }}
+
+public struct KoeContextSearchStatusModel: Equatable, Sendable {{
+  public let docCount: UInt32
+  public let totalChars: UInt32
+  public let vocabSize: UInt32
+  public let lastHitCount: UInt32
+}}
+
+public final class KoeContextSearchIndex: @unchecked Sendable {{
+  private let handle: UInt64
+
+  public init() {{
+    self.handle = koe_context_search_new()
+  }}
+
+  deinit {{
+    koe_context_search_free(handle)
+  }}
+
+  @discardableResult
+  public func addDoc(_ text: String) -> Int32 {{
+    let utf8 = Array(text.utf8)
+    return utf8.withUnsafeBufferPointer {{ buf in
+      koe_context_search_add_doc(handle, buf.baseAddress, buf.count)
+    }}
+  }}
+
+  public func query(_ queryText: String, limit: UInt32 = 30) -> [UInt32] {{
+    let cap = max(Int(limit), 1)
+    var outIndices = Array(repeating: UInt32(0), count: cap)
+    let utf8 = Array(queryText.utf8)
+    let total = utf8.withUnsafeBufferPointer {{ qBuf in
+      outIndices.withUnsafeMutableBufferPointer {{ outBuf in
+        koe_context_search_query(
+          handle,
+          qBuf.baseAddress,
+          qBuf.count,
+          limit,
+          outBuf.baseAddress,
+          cap
+        )
+      }}
+    }}
+    let count = min(Int(total), cap)
+    return Array(outIndices.prefix(count))
+  }}
+
+  public func status() -> KoeContextSearchStatusModel? {{
+    var c = KoeContextSearchStatus()
+    guard koe_context_search_status(handle, &c) != 0 else {{ return nil }}
+    return KoeContextSearchStatusModel(
+      docCount: c.doc_count,
+      totalChars: c.total_chars,
+      vocabSize: c.vocab_size,
+      lastHitCount: c.last_hit_count
+    )
+  }}
+}}
 "#,
         struct_count = struct_names.len(),
         structs = struct_names.join(", "),
@@ -1953,6 +2056,27 @@ data class KoeUtteranceSegmentModel(
     val citationId: String get() = "S$ordinal"
 }}
 
+data class KoeContextSearchStatusModel(
+    val docCount: Int,
+    val totalChars: Int,
+    val vocabSize: Int,
+    val lastHitCount: Int,
+) {{
+    companion object {{
+        fun fromJniLongs(raw: LongArray): KoeContextSearchStatusModel {{
+            if (raw.size < 4) {{
+                return KoeContextSearchStatusModel(0, 0, 0, 0)
+            }}
+            return KoeContextSearchStatusModel(
+                docCount = raw[0].toInt(),
+                totalChars = raw[1].toInt(),
+                vocabSize = raw[2].toInt(),
+                lastHitCount = raw[3].toInt(),
+            )
+        }}
+    }}
+}}
+
 object KoeCoreNative {{
     init {{
         System.loadLibrary("koe_core_ffi")
@@ -2082,6 +2206,18 @@ object KoeCoreNative {{
         source: ByteArray,
         minutesJson: ByteArray,
     ): ByteArray?
+    @JvmStatic external fun contextSearchNew(): Long
+    @JvmStatic external fun contextSearchFree(handle: Long)
+    @JvmStatic external fun contextSearchAddDoc(handle: Long, text: ByteArray): Int
+    @JvmStatic external fun contextSearchQuery(handle: Long, query: ByteArray, limit: Int): LongArray
+    @JvmStatic external fun contextSearchStatus(handle: Long): LongArray
+    @JvmStatic external fun contextFormatCoarsePlace(partsJoined: ByteArray): ByteArray
+    @JvmStatic external fun contextIsDelegationRequest(text: ByteArray): Boolean
+    @JvmStatic external fun contextNamesTodo(
+        mention: ByteArray,
+        sentence: ByteArray,
+        title: ByteArray,
+    ): Boolean
 }}
 
 class KoeFrameReassembler : AutoCloseable {{
@@ -2357,6 +2493,29 @@ class KoeUtteranceSpine(sessionId: String = "default") : AutoCloseable {{
     }}
 }}
 
+class KoeContextSearchIndex : AutoCloseable {{
+    private var handle: Long = KoeCoreNative.contextSearchNew()
+
+    fun addDoc(text: String): Int =
+        if (handle == 0L) -1
+        else KoeCoreNative.contextSearchAddDoc(handle, text.toByteArray(Charsets.UTF_8))
+
+    fun query(queryText: String, limit: Int = 30): LongArray =
+        if (handle == 0L) LongArray(0)
+        else KoeCoreNative.contextSearchQuery(handle, queryText.toByteArray(Charsets.UTF_8), limit)
+
+    fun status(): KoeContextSearchStatusModel =
+        if (handle == 0L) KoeContextSearchStatusModel(0, 0, 0, 0)
+        else KoeContextSearchStatusModel.fromJniLongs(KoeCoreNative.contextSearchStatus(handle))
+
+    override fun close() {{
+        if (handle != 0L) {{
+            KoeCoreNative.contextSearchFree(handle)
+            handle = 0L
+        }}
+    }}
+}}
+
 object KoeCore {{
     fun checksum(data: ByteArray): Int = KoeCoreNative.checksum(data)
 
@@ -2534,6 +2693,23 @@ object KoeCore {{
         source.toByteArray(Charsets.UTF_8),
         minutesJson.toByteArray(Charsets.UTF_8),
     )
+
+    fun formatCoarsePlace(parts: List<String>): String? {{
+        val bytes = KoeCoreNative.contextFormatCoarsePlace(
+            parts.joinToString("\n").toByteArray(Charsets.UTF_8)
+        )
+        return if (bytes.isEmpty()) null else String(bytes, Charsets.UTF_8)
+    }}
+
+    fun isDelegationRequest(text: String): Boolean =
+        KoeCoreNative.contextIsDelegationRequest(text.toByteArray(Charsets.UTF_8))
+
+    fun namesTodo(mention: String, sentence: String, title: String): Boolean =
+        KoeCoreNative.contextNamesTodo(
+            mention.toByteArray(Charsets.UTF_8),
+            sentence.toByteArray(Charsets.UTF_8),
+            title.toByteArray(Charsets.UTF_8),
+        )
 
     private fun readU32Le(buf: ByteArray, offset: Int): Long =
         (buf[offset].toLong() and 0xFFL) or

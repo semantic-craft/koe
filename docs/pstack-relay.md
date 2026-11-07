@@ -110,11 +110,11 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: f48c2a3;rust/koe_core/src/cicada.rs;rust/koe_core/src/domain.rs;rust/koe_core/src/hash.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;darwin/KoeNativeHost.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
-### [ ] Slice M: 心力豆（Sweetpea）个人上下文时间线、待办/项目/日记沉淀与中文双字 BM25 离线问答检索下沉
+### [x] Slice M: 心力豆（Sweetpea）个人上下文时间线、待办/项目/日记沉淀与中文双字 BM25 离线问答检索下沉
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core/src/context.rs` 完整实现随心随力记录时间线（录音、地点、随手记、承诺提取、待办事项、项目归类、每日晨报与日记聚合）以及零云端向量依赖的中文双字（Bigram）+ 拉丁词根 BM25/TF-IDF 离线问答检索引擎與多轮溯源对话状态机，40 万字语料单次检索延迟 `< 5 ms`。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: 0930e7d;rust/koe_core/src/context.rs;rust/koe_core/src/domain.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
 ### [ ] Slice N: Rust 原生 MCP + ACP 服务端、三端原生宿主全量接线与最终收口
 - **Playbook**: `Shipping`

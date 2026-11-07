@@ -166,6 +166,13 @@ typedef struct KoeCicadaRollingStatus {
   uint64_t generation;
 } KoeCicadaRollingStatus;
 
+typedef struct KoeContextSearchStatus {
+  uint32_t doc_count;
+  uint32_t total_chars;
+  uint32_t vocab_size;
+  uint32_t last_hit_count;
+} KoeContextSearchStatus;
+
 uint8_t koe_protocol_checksum(const uint8_t* data_ptr, size_t data_len);
 uint8_t koe_protocol_verify_checksum(const uint8_t* packet_ptr, size_t packet_len);
 size_t koe_protocol_encode(uint8_t cmd_type, uint8_t cmd_id, const uint8_t* payload_ptr, size_t payload_len, uint8_t* out_ptr, size_t out_cap);
@@ -266,6 +273,14 @@ uint8_t koe_cicada_rolling_status(uint64_t handle, KoeCicadaRollingStatus* out_s
 uint8_t koe_cicada_silence_reduce(uint64_t silence_elapsed_ms, uint64_t delta_ms, uint8_t speech_detected, uint8_t already_auto_stopped, uint64_t* out_next_elapsed_ms_ptr, uint8_t* out_auto_stopped_ptr);
 int32_t koe_koepack_verify_v2(const uint8_t* pack_ptr, size_t pack_len);
 uint8_t* koe_koepack_encode_demo_v2(const uint8_t* content_hash_ptr, size_t content_hash_len, const uint8_t* title_ptr, size_t title_len, const uint8_t* source_ptr, size_t source_len, const uint8_t* minutes_json_ptr, size_t minutes_json_len, size_t* out_len_ptr);
+uint64_t koe_context_search_new(void);
+void koe_context_search_free(uint64_t handle);
+int32_t koe_context_search_add_doc(uint64_t handle, const uint8_t* text_ptr, size_t text_len);
+size_t koe_context_search_query(uint64_t handle, const uint8_t* query_ptr, size_t query_len, uint32_t limit, uint32_t* out_indices_ptr, size_t out_cap);
+uint8_t koe_context_search_status(uint64_t handle, KoeContextSearchStatus* out_status_ptr);
+int32_t koe_context_format_coarse_place(const uint8_t* parts_joined_ptr, size_t parts_joined_len, uint8_t* out_ptr, size_t out_cap);
+uint8_t koe_context_is_delegation_request(const uint8_t* text_ptr, size_t text_len);
+uint8_t koe_context_names_todo(const uint8_t* mention_ptr, size_t mention_len, const uint8_t* sentence_ptr, size_t sentence_len, const uint8_t* title_ptr, size_t title_len);
 
 #ifdef __cplusplus
 }

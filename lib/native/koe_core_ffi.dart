@@ -333,6 +333,34 @@ class KoeCicadaRollingTicket {
   final String payload;
 }
 
+final class _KoeContextSearchStatusNative extends Struct {
+  @Uint32()
+  external int docCount;
+
+  @Uint32()
+  external int totalChars;
+
+  @Uint32()
+  external int vocabSize;
+
+  @Uint32()
+  external int lastHitCount;
+}
+
+class KoeContextSearchStatus {
+  const KoeContextSearchStatus({
+    required this.docCount,
+    required this.totalChars,
+    required this.vocabSize,
+    required this.lastHitCount,
+  });
+
+  final int docCount;
+  final int totalChars;
+  final int vocabSize;
+  final int lastHitCount;
+}
+
 typedef _ChecksumNative = Uint8 Function(Pointer<Uint8>, Size);
 typedef _ChecksumDart = int Function(Pointer<Uint8>, int);
 
@@ -912,6 +940,88 @@ typedef _KoepackEncodeDemoV2Dart = Pointer<Uint8> Function(
   Pointer<Size>,
 );
 
+typedef _ContextSearchNewNative = Uint64 Function();
+typedef _ContextSearchNewDart = int Function();
+
+typedef _ContextSearchFreeNative = Void Function(Uint64);
+typedef _ContextSearchFreeDart = void Function(int);
+
+typedef _ContextSearchAddDocNative = Int32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _ContextSearchAddDocDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _ContextSearchQueryNative = Size Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Uint32,
+  Pointer<Uint32>,
+  Size,
+);
+typedef _ContextSearchQueryDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+  Pointer<Uint32>,
+  int,
+);
+
+typedef _ContextSearchStatusNative = Uint8 Function(
+  Uint64,
+  Pointer<_KoeContextSearchStatusNative>,
+);
+typedef _ContextSearchStatusDart = int Function(
+  int,
+  Pointer<_KoeContextSearchStatusNative>,
+);
+
+typedef _ContextFormatCoarsePlaceNative = Int32 Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _ContextFormatCoarsePlaceDart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _ContextIsDelegationRequestNative = Uint8 Function(
+  Pointer<Uint8>,
+  Size,
+);
+typedef _ContextIsDelegationRequestDart = int Function(
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _ContextNamesTodoNative = Uint8 Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _ContextNamesTodoDart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -1156,7 +1266,47 @@ final class KoeCoreFfi {
           lib.lookupFunction<
             _KoepackEncodeDemoV2Native,
             _KoepackEncodeDemoV2Dart
-          >('koe_koepack_encode_demo_v2', isLeaf: true);
+          >('koe_koepack_encode_demo_v2', isLeaf: true),
+      _contextSearchNew =
+          lib.lookupFunction<_ContextSearchNewNative, _ContextSearchNewDart>(
+            'koe_context_search_new',
+            isLeaf: true,
+          ),
+      _contextSearchFree =
+          lib.lookupFunction<_ContextSearchFreeNative, _ContextSearchFreeDart>(
+            'koe_context_search_free',
+            isLeaf: true,
+          ),
+      _contextSearchAddDoc =
+          lib.lookupFunction<
+            _ContextSearchAddDocNative,
+            _ContextSearchAddDocDart
+          >('koe_context_search_add_doc', isLeaf: true),
+      _contextSearchQuery =
+          lib.lookupFunction<
+            _ContextSearchQueryNative,
+            _ContextSearchQueryDart
+          >('koe_context_search_query', isLeaf: true),
+      _contextSearchStatus =
+          lib.lookupFunction<
+            _ContextSearchStatusNative,
+            _ContextSearchStatusDart
+          >('koe_context_search_status', isLeaf: true),
+      _contextFormatCoarsePlace =
+          lib.lookupFunction<
+            _ContextFormatCoarsePlaceNative,
+            _ContextFormatCoarsePlaceDart
+          >('koe_context_format_coarse_place', isLeaf: true),
+      _contextIsDelegationRequest =
+          lib.lookupFunction<
+            _ContextIsDelegationRequestNative,
+            _ContextIsDelegationRequestDart
+          >('koe_context_is_delegation_request', isLeaf: true),
+      _contextNamesTodo =
+          lib.lookupFunction<_ContextNamesTodoNative, _ContextNamesTodoDart>(
+            'koe_context_names_todo',
+            isLeaf: true,
+          );
 
   static final KoeCoreFfi? instance = _load();
 
@@ -1258,6 +1408,14 @@ final class KoeCoreFfi {
   final _CicadaSilenceReduceDart _cicadaSilenceReduce;
   final _KoepackVerifyV2Dart _koepackVerifyV2;
   final _KoepackEncodeDemoV2Dart _koepackEncodeDemoV2;
+  final _ContextSearchNewDart _contextSearchNew;
+  final _ContextSearchFreeDart _contextSearchFree;
+  final _ContextSearchAddDocDart _contextSearchAddDoc;
+  final _ContextSearchQueryDart _contextSearchQuery;
+  final _ContextSearchStatusDart _contextSearchStatus;
+  final _ContextFormatCoarsePlaceDart _contextFormatCoarsePlace;
+  final _ContextIsDelegationRequestDart _contextIsDelegationRequest;
+  final _ContextNamesTodoDart _contextNamesTodo;
 
   int protocolChecksum(List<int> data) {
     if (data.isEmpty) return 0;
@@ -2436,6 +2594,140 @@ final class KoeCoreFfi {
       malloc.free(srcPtr);
       malloc.free(minPtr);
       calloc.free(lenPtr);
+    }
+  }
+
+  int contextSearchNew() => _contextSearchNew();
+
+  void contextSearchFree(int handle) => _contextSearchFree(handle);
+
+  int contextSearchAddDoc(int handle, String text) {
+    final bytes = utf8.encode(text);
+    final ptr = malloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
+    try {
+      if (bytes.isNotEmpty) {
+        ptr.asTypedList(bytes.length).setAll(0, bytes);
+      }
+      return _contextSearchAddDoc(handle, ptr, bytes.length);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  List<int> contextSearchQuery(
+    int handle,
+    String query, {
+    int limit = 30,
+  }) {
+    if (query.isEmpty || limit <= 0) return const [];
+    final qBytes = utf8.encode(query);
+    final qPtr = malloc<Uint8>(qBytes.length);
+    final outPtr = calloc<Uint32>(limit);
+    try {
+      qPtr.asTypedList(qBytes.length).setAll(0, qBytes);
+      final total = _contextSearchQuery(
+        handle,
+        qPtr,
+        qBytes.length,
+        limit,
+        outPtr,
+        limit,
+      );
+      final count = total < limit ? total : limit;
+      return List<int>.generate(count, (i) => (outPtr + i).value);
+    } finally {
+      malloc.free(qPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  KoeContextSearchStatus? contextSearchStatus(int handle) {
+    final ptr = calloc<_KoeContextSearchStatusNative>();
+    try {
+      if (_contextSearchStatus(handle, ptr) == 0) return null;
+      final c = ptr.ref;
+      return KoeContextSearchStatus(
+        docCount: c.docCount,
+        totalChars: c.totalChars,
+        vocabSize: c.vocabSize,
+        lastHitCount: c.lastHitCount,
+      );
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  String? contextFormatCoarsePlace(List<String> parts) {
+    if (parts.isEmpty) return null;
+    final joined = utf8.encode(parts.join('\n'));
+    if (joined.isEmpty) return null;
+    final inPtr = malloc<Uint8>(joined.length);
+    Pointer<Uint8> outPtr = nullptr;
+    try {
+      inPtr.asTypedList(joined.length).setAll(0, joined);
+      final needed = _contextFormatCoarsePlace(
+        inPtr,
+        joined.length,
+        nullptr,
+        0,
+      );
+      if (needed <= 0) return null;
+      outPtr = malloc<Uint8>(needed);
+      final written = _contextFormatCoarsePlace(
+        inPtr,
+        joined.length,
+        outPtr,
+        needed,
+      );
+      if (written <= 0) return null;
+      return utf8.decode(outPtr.asTypedList(written));
+    } finally {
+      malloc.free(inPtr);
+      if (outPtr != nullptr) malloc.free(outPtr);
+    }
+  }
+
+  bool contextIsDelegationRequest(String text) {
+    if (text.isEmpty) return false;
+    final bytes = utf8.encode(text);
+    final ptr = malloc<Uint8>(bytes.length);
+    try {
+      ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _contextIsDelegationRequest(ptr, bytes.length) != 0;
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  bool contextNamesTodo({
+    required String mention,
+    required String sentence,
+    required String title,
+  }) {
+    if (mention.isEmpty || sentence.isEmpty || title.isEmpty) return false;
+    final mBytes = utf8.encode(mention);
+    final sBytes = utf8.encode(sentence);
+    final tBytes = utf8.encode(title);
+    final mPtr = malloc<Uint8>(mBytes.length);
+    final sPtr = malloc<Uint8>(sBytes.length);
+    final tPtr = malloc<Uint8>(tBytes.length);
+    try {
+      mPtr.asTypedList(mBytes.length).setAll(0, mBytes);
+      sPtr.asTypedList(sBytes.length).setAll(0, sBytes);
+      tPtr.asTypedList(tBytes.length).setAll(0, tBytes);
+      return _contextNamesTodo(
+            mPtr,
+            mBytes.length,
+            sPtr,
+            sBytes.length,
+            tPtr,
+            tBytes.length,
+          ) !=
+          0;
+    } finally {
+      malloc.free(mPtr);
+      malloc.free(sPtr);
+      malloc.free(tPtr);
     }
   }
 
