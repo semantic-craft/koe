@@ -16,17 +16,26 @@
 //! assert!(finalized.preview_wav_bytes.starts_with(b"RIFF"));
 //! ```
 
+use std::collections::VecDeque;
+
 use crate::commands::DeviceCommands;
-use crate::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
-use crate::frame::{FrameReassembler, ProtocolFrame, RX_MAGIC};
+use crate::crypto::{AesCtrStreamDecrypt, AudioFileSecretKey, DeviceCrypto};
+use crate::frame::{read_u32_le, FrameReassembler, ProtocolFrame, RX_MAGIC};
 use crate::library::RecordingEntry;
 use crate::models::{DeviceInfoModel, OfflineFileEntry, OfflineFileList};
 use crate::ogg_opus::OggOpus;
 use crate::slice_marks::SliceMark;
-use crate::transport::{TransportSliceProcessor, OPUS_FRAME_BYTES, SLICE_RECORD_BYTES};
+use crate::transport::{
+    OpenedFileHead, TransportSliceProcessor, OPUS_FRAME_BYTES, SLICE_RECORD_BYTES,
+    UNFINISHED_FILE_SIZE,
+};
 use crate::wav::{
     default_opus_decoder_factory, OpusDecoderFactory, OpusStreamDecoder, OpusWave,
     ASR_SAMPLE_RATE, WAV_SAMPLE_RATE,
+};
+use crate::wifi::{
+    normalize_wifi_chunk, WifiBatchPhase, WifiBatchProgress, WifiEndpoint, WIFI_KEEPALIVE_INTERVAL_MS,
+    WIFI_KEEPALIVE_PAYLOAD, WIFI_WS_FINISH_TEXT,
 };
 
 /// Canonical 20 ms mono Opus packet (`libopus` 1.5.2, 440 Hz sine, 24 kbps VoIP, 94 bytes).
@@ -220,8 +229,30 @@ pub struct TransportSession {
     pub marks_ms: Vec<u64>,
     /// Most recently finalized recording artifact ready for FFI retrieval.
     pub last_finalized: Option<FinalizedRecording>,
+    /// FIFO queue of finalized recordings produced during multi-file batches.
+    pub finalized_queue: VecDeque<FinalizedRecording>,
     /// Accumulated 16 kHz mono PCM16 LE bytes ready to drain via `take_live_pcm16`.
     pub live_pcm16_16khz: Vec<u8>,
+    /// Latest parsed `1A/05` Wi-Fi SoftAP endpoint (`ip:port`).
+    pub wifi_endpoint: Option<WifiEndpoint>,
+    /// Ordered queue of D3200 file IDs scheduled for Wi-Fi SoftAP batch export.
+    pub wifi_queue: Vec<u32>,
+    /// Zero-based index of the active file inside `wifi_queue`.
+    pub wifi_current_index: usize,
+    /// Current Wi-Fi SoftAP batch lifecycle phase.
+    pub wifi_batch_phase: WifiBatchPhase,
+    /// Number of files completed normally during the current Wi-Fi batch.
+    pub wifi_finalized_count: u32,
+    /// Number of files (`>= 95%` wire bytes) salvaged upon Wi-Fi interruption.
+    pub wifi_salvaged_count: u32,
+    /// Number of files skipped due to `1A/07` error code `1` or `3`.
+    pub wifi_skipped_count: u32,
+    /// Outbound WebSocket text frames (`1A/07` 36-char hex, `"FINISH"`, `1A/0A` 22-char hex).
+    pub wifi_outbound_ws: VecDeque<String>,
+    /// Outbound UDP `:32003` keepalive datagrams (`"soundcore-keep-alive-unicast"`).
+    pub wifi_outbound_udp: VecDeque<Vec<u8>>,
+    /// Elapsed milliseconds since the last UDP `:32003` keepalive datagram was queued.
+    pub wifi_keepalive_elapsed_ms: u64,
     decoder_factory: Option<OpusDecoderFactory>,
     live_decoder_16k: Option<Box<dyn OpusStreamDecoder>>,
 }
@@ -249,7 +280,18 @@ impl Clone for TransportSession {
             opus_buffer: self.opus_buffer.clone(),
             marks_ms: self.marks_ms.clone(),
             last_finalized: self.last_finalized.clone(),
+            finalized_queue: self.finalized_queue.clone(),
             live_pcm16_16khz: self.live_pcm16_16khz.clone(),
+            wifi_endpoint: self.wifi_endpoint,
+            wifi_queue: self.wifi_queue.clone(),
+            wifi_current_index: self.wifi_current_index,
+            wifi_batch_phase: self.wifi_batch_phase,
+            wifi_finalized_count: self.wifi_finalized_count,
+            wifi_salvaged_count: self.wifi_salvaged_count,
+            wifi_skipped_count: self.wifi_skipped_count,
+            wifi_outbound_ws: self.wifi_outbound_ws.clone(),
+            wifi_outbound_udp: self.wifi_outbound_udp.clone(),
+            wifi_keepalive_elapsed_ms: self.wifi_keepalive_elapsed_ms,
             decoder_factory: self.decoder_factory,
             live_decoder_16k: None,
         }
@@ -273,7 +315,12 @@ impl core::fmt::Debug for TransportSession {
             .field("opus_buffer_len", &self.opus_buffer.len())
             .field("marks_ms", &self.marks_ms)
             .field("last_finalized", &self.last_finalized)
+            .field("finalized_queue_len", &self.finalized_queue.len())
             .field("live_pcm16_16khz_len", &self.live_pcm16_16khz.len())
+            .field("wifi_endpoint", &self.wifi_endpoint)
+            .field("wifi_batch_phase", &self.wifi_batch_phase)
+            .field("wifi_current_index", &self.wifi_current_index)
+            .field("wifi_queue_len", &self.wifi_queue.len())
             .field("has_decoder_factory", &self.decoder_factory.is_some())
             .field("has_live_decoder_16k", &self.live_decoder_16k.is_some())
             .finish()
@@ -305,10 +352,37 @@ impl TransportSession {
             opus_buffer: Vec::new(),
             marks_ms: Vec::new(),
             last_finalized: None,
+            finalized_queue: VecDeque::new(),
             live_pcm16_16khz: Vec::new(),
+            wifi_endpoint: None,
+            wifi_queue: Vec::new(),
+            wifi_current_index: 0,
+            wifi_batch_phase: WifiBatchPhase::Idle,
+            wifi_finalized_count: 0,
+            wifi_salvaged_count: 0,
+            wifi_skipped_count: 0,
+            wifi_outbound_ws: VecDeque::new(),
+            wifi_outbound_udp: VecDeque::new(),
+            wifi_keepalive_elapsed_ms: 0,
             decoder_factory: factory,
             live_decoder_16k: None,
         }
+    }
+
+    /// Pops and returns the next finalized recording from the FIFO queue, updating `last_finalized`.
+    pub fn take_next_finalized(&mut self) -> Option<FinalizedRecording> {
+        if let Some(next) = self.finalized_queue.pop_front() {
+            self.last_finalized = self.finalized_queue.front().cloned();
+            Some(next)
+        } else {
+            self.last_finalized.take()
+        }
+    }
+
+    /// Returns `true` when at least one finalized recording is available to drain.
+    #[must_use]
+    pub fn has_finalized_recording(&self) -> bool {
+        !self.finalized_queue.is_empty() || self.last_finalized.is_some()
     }
 
     /// Drains and returns all buffered 16 kHz mono PCM16 LE bytes decoded during `ingest_ble_chunk`.
@@ -473,10 +547,22 @@ impl TransportSession {
         outcome
     }
 
-    /// Advances the 5,000 ms offline pull watchdog (up to 2 retries per file) and the 2,000 ms
-    /// realtime post-stop quiet-drain timer by `elapsed_ms`.
+    /// Advances the 5,000 ms offline pull watchdog (up to 2 retries per file), the 2,000 ms
+    /// realtime post-stop quiet-drain timer, and the 2,000 ms Wi-Fi SoftAP UDP `:32003` keepalive
+    /// timer by `elapsed_ms`.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now_epoch_sec: u64) -> SessionIngestOutcome {
         let mut outcome = SessionIngestOutcome::default();
+        if self.wifi_batch_phase == WifiBatchPhase::Transferring {
+            self.wifi_keepalive_elapsed_ms =
+                self.wifi_keepalive_elapsed_ms.saturating_add(elapsed_ms);
+            while self.wifi_keepalive_elapsed_ms >= WIFI_KEEPALIVE_INTERVAL_MS {
+                self.wifi_keepalive_elapsed_ms -= WIFI_KEEPALIVE_INTERVAL_MS;
+                self.wifi_outbound_udp
+                    .push_back(WIFI_KEEPALIVE_PAYLOAD.to_vec());
+                outcome.transfer_updated = true;
+            }
+            return outcome;
+        }
         let offset = self
             .received_slice_count()
             .saturating_mul(SLICE_RECORD_BYTES as u32);
@@ -528,6 +614,217 @@ impl TransportSession {
             _ => {}
         }
         outcome
+    }
+
+    /// Starts a Wi-Fi SoftAP high-speed batch transfer for `file_ids`, queuing the initial
+    /// 36-char hex `1A/07` WebSocket request and 28-byte UDP `:32003` keepalive datagram.
+    pub fn begin_wifi_batch(&mut self, file_ids: &[u32]) {
+        self.wifi_outbound_ws.clear();
+        self.wifi_outbound_udp.clear();
+        self.finalized_queue.clear();
+        self.last_finalized = None;
+        self.reset_active_transfer();
+        self.wifi_queue = file_ids.to_vec();
+        self.wifi_current_index = 0;
+        self.wifi_finalized_count = 0;
+        self.wifi_salvaged_count = 0;
+        self.wifi_skipped_count = 0;
+        self.wifi_keepalive_elapsed_ms = 0;
+
+        if file_ids.is_empty() {
+            self.wifi_batch_phase = WifiBatchPhase::Completed;
+            return;
+        }
+
+        self.wifi_batch_phase = WifiBatchPhase::Transferring;
+        self.start_wifi_file(file_ids[0], 0);
+        self.wifi_outbound_udp
+            .push_back(WIFI_KEEPALIVE_PAYLOAD.to_vec());
+    }
+
+    /// Resumes an interrupted Wi-Fi SoftAP batch from the remaining queue and current slice offset.
+    pub fn resume_wifi_batch(&mut self) -> bool {
+        if self.wifi_batch_phase != WifiBatchPhase::Interrupted
+            || self.wifi_current_index >= self.wifi_queue.len()
+        {
+            return false;
+        }
+        let fid = self.wifi_queue[self.wifi_current_index];
+        let offset = self
+            .received_slice_count()
+            .saturating_mul(SLICE_RECORD_BYTES as u32);
+        self.wifi_batch_phase = WifiBatchPhase::Transferring;
+        self.wifi_keepalive_elapsed_ms = 0;
+        self.start_wifi_file(fid, offset);
+        self.wifi_outbound_udp
+            .push_back(WIFI_KEEPALIVE_PAYLOAD.to_vec());
+        true
+    }
+
+    /// Cancels any active or interrupted Wi-Fi SoftAP batch and clears outbound queues.
+    pub fn cancel_wifi_batch(&mut self) {
+        self.wifi_queue.clear();
+        self.wifi_current_index = 0;
+        self.wifi_outbound_ws.clear();
+        self.wifi_outbound_udp.clear();
+        self.wifi_keepalive_elapsed_ms = 0;
+        self.wifi_batch_phase = WifiBatchPhase::Idle;
+        self.reset_active_transfer();
+    }
+
+    /// Pops the next outbound WebSocket text message (`1A/07` hex, `"FINISH"`, or `1A/0A` hex).
+    pub fn pop_outbound_wifi_ws(&mut self) -> Option<String> {
+        self.wifi_outbound_ws.pop_front()
+    }
+
+    /// Pops the next outbound UDP `:32003` datagram (`"soundcore-keep-alive-unicast"`).
+    pub fn pop_outbound_wifi_udp(&mut self) -> Option<Vec<u8>> {
+        self.wifi_outbound_udp.pop_front()
+    }
+
+    /// Returns a snapshot of the current Wi-Fi SoftAP batch transfer progress.
+    #[must_use]
+    pub fn wifi_batch_progress(&self) -> WifiBatchProgress {
+        let total_files = self.wifi_queue.len() as u32;
+        let current_file_index = (self.wifi_current_index as u32).min(total_files);
+        let remaining_count = self
+            .wifi_queue
+            .len()
+            .saturating_sub(self.wifi_current_index) as u32;
+        let active_file_id = match self.wifi_batch_phase {
+            WifiBatchPhase::Idle | WifiBatchPhase::Completed => 0,
+            _ => self
+                .active_file_id
+                .or_else(|| self.wifi_queue.get(self.wifi_current_index).copied())
+                .unwrap_or(0),
+        };
+        WifiBatchProgress {
+            phase: self.wifi_batch_phase,
+            error_code: self.transfer.error_code,
+            current_file_index,
+            total_files,
+            active_file_id,
+            received_wire_bytes: self.transfer.received_wire_bytes,
+            expected_wire_bytes: self.transfer.expected_wire_bytes,
+            finalized_count: self.wifi_finalized_count,
+            salvaged_count: self.wifi_salvaged_count,
+            skipped_count: self.wifi_skipped_count,
+            remaining_count,
+        }
+    }
+
+    /// Handles a sudden SoftAP hotspot / WebSocket disconnect mid-batch.
+    ///
+    /// If the active file has received at least `95%` of its announced `expected_wire_bytes`,
+    /// it is salvaged into `finalized_queue`, `wifi_salvaged_count` is incremented, and
+    /// `wifi_current_index` advances to the next file (returning `true`). Otherwise partial
+    /// buffers for the active file are cleared and `wifi_current_index` stays on the interrupted
+    /// file (returning `false`).
+    pub fn on_wifi_interrupted(&mut self, now_epoch_sec: u64) -> bool {
+        self.reassembler.reset();
+        if self.wifi_batch_phase != WifiBatchPhase::Transferring {
+            return false;
+        }
+        let expected = self.transfer.expected_wire_bytes;
+        let received = self.transfer.received_wire_bytes;
+        let can_salvage =
+            expected > 0 && received >= (expected.saturating_mul(95)) / 100 && !self.opus_buffer.is_empty();
+        if can_salvage && self.finalize_active_transfer(now_epoch_sec).is_some() {
+            self.wifi_salvaged_count = self.wifi_salvaged_count.saturating_add(1);
+            self.wifi_current_index = self.wifi_current_index.saturating_add(1);
+            self.wifi_batch_phase = WifiBatchPhase::Interrupted;
+            return true;
+        }
+        self.reset_active_transfer();
+        self.wifi_batch_phase = WifiBatchPhase::Interrupted;
+        false
+    }
+
+    /// Normalizes a WebSocket message or UDP `:32003` datagram and ingests it into the session.
+    pub fn ingest_wifi_chunk(
+        &mut self,
+        chunk: &[u8],
+        now_epoch_sec: u64,
+    ) -> SessionIngestOutcome {
+        let Some(normalized) = normalize_wifi_chunk(chunk) else {
+            return SessionIngestOutcome::default();
+        };
+        self.ingest_ble_chunk(&normalized, now_epoch_sec)
+    }
+
+    fn start_wifi_file(&mut self, fid: u32, offset_wire_bytes: u32) {
+        if offset_wire_bytes == 0 {
+            self.reset_active_transfer();
+        }
+        let expected = self.transfer.expected_wire_bytes.max(offset_wire_bytes);
+        self.active_file_id = Some(fid);
+        self.active_is_realtime = false;
+        self.runtime_state = TransferRuntimeState::PullingOffline {
+            file_id: fid,
+            expected_wire_bytes: expected,
+            inactivity_ms: 0,
+            retries_used: 0,
+        };
+        self.transfer = TransferProgress {
+            phase: TransferPhaseTag::PullingOffline,
+            file_id: fid,
+            received_wire_bytes: offset_wire_bytes,
+            expected_wire_bytes: expected,
+            mark_count: self.marks_ms.len() as u32,
+            error_code: 0,
+            retry_count: 0,
+            quiet_draining: false,
+        };
+        self.wifi_outbound_ws
+            .push_back(DeviceCommands::build_wifi_file_request_hex(
+                fid,
+                offset_wire_bytes,
+            ));
+    }
+
+    fn advance_wifi_batch(&mut self) {
+        self.wifi_current_index = self.wifi_current_index.saturating_add(1);
+        if self.wifi_current_index < self.wifi_queue.len() {
+            let next_fid = self.wifi_queue[self.wifi_current_index];
+            self.start_wifi_file(next_fid, 0);
+        } else {
+            self.wifi_batch_phase = WifiBatchPhase::Completed;
+            self.wifi_outbound_ws
+                .push_back(WIFI_WS_FINISH_TEXT.to_string());
+            self.wifi_outbound_ws
+                .push_back(DeviceCommands::wifi_transfer_complete_hex());
+        }
+    }
+
+    fn parse_any_file_head(&self, raw: &[u8]) -> Option<OpenedFileHead> {
+        let sk_slice = self.session_key.as_ref().map(|k| k.as_slice());
+        if let Some(head) = TransportSliceProcessor::open_file_head(raw, sk_slice) {
+            return Some(head);
+        }
+        if raw.len() < 18 {
+            return None;
+        }
+        let file_id = read_u32_le(raw, 9);
+        let file_size = read_u32_le(raw, 13);
+        let error_code = if raw.len() > 95 {
+            raw[95]
+        } else if raw.len() >= 19 {
+            raw[17]
+        } else {
+            0
+        };
+        Some(OpenedFileHead {
+            secret: AudioFileSecretKey {
+                file_id,
+                file_size,
+                nonce: [0u8; 16],
+                encrypted_file_key: Vec::new(),
+                session_nonce: [0u8; 16],
+                error_code,
+            },
+            unfinished: file_size == UNFINISHED_FILE_SIZE,
+            file_key: None,
+        })
     }
 
     /// Verifies the device's `2E/01` ECDH reply (`payload[65..97] == computed_shared_secret`)
@@ -584,7 +881,7 @@ impl TransportSession {
     }
 
     /// Ingests a raw BLE notification chunk, reassembles verified frames, and advances
-    /// the `01/01`, `1A/01`–`1B/0E`, `1A/06`, `1A/07`, `1A/08`, and `1A/0A` state machines.
+    /// the `01/01`, `1A/01`–`1B/0E`, `1A/05`, `1A/06`, `1A/07`, `1A/08`, and `1A/0A` state machines.
     pub fn ingest_ble_chunk(&mut self, chunk: &[u8], now_epoch_sec: u64) -> SessionIngestOutcome {
         let packets = self.reassembler.ingest(chunk);
         let mut outcome = SessionIngestOutcome {
@@ -619,6 +916,12 @@ impl TransportSession {
                         self.transfer.phase = TransferPhaseTag::Idle;
                     }
                 }
+                (0x1A, 0x05) => {
+                    if let Some(ep) = WifiEndpoint::parse_config_response(&pkt.raw) {
+                        self.wifi_endpoint = Some(ep);
+                        outcome.transfer_updated = true;
+                    }
+                }
                 (0x1A, 0x06) => {
                     if pkt.payload.len() >= 5
                         && (pkt.payload[4] == 0 || pkt.payload[4] == 2)
@@ -635,9 +938,39 @@ impl TransportSession {
                     }
                 }
                 (0x1A, 0x07) | (0x1B, 0x07) => {
-                    let sk_slice = self.session_key.as_ref().map(|k| k.as_slice());
-                    if let Some(head) = TransportSliceProcessor::open_file_head(&pkt.raw, sk_slice)
-                    {
+                    if let Some(head) = self.parse_any_file_head(&pkt.raw) {
+                        let err = head.secret.error_code;
+                        if err == 1 || err == 3 {
+                            if self.wifi_batch_phase == WifiBatchPhase::Transferring {
+                                self.wifi_skipped_count = self.wifi_skipped_count.saturating_add(1);
+                                self.advance_wifi_batch();
+                                self.transfer.error_code = err;
+                                outcome.transfer_updated = true;
+                                continue;
+                            }
+                            self.runtime_state = TransferRuntimeState::Failed {
+                                file_id: head.secret.file_id,
+                                error_code: err,
+                            };
+                            self.transfer.phase = TransferPhaseTag::Failed;
+                            self.transfer.error_code = err;
+                            outcome.transfer_updated = true;
+                            continue;
+                        }
+                        if err != 0 && err != 0xFF {
+                            self.runtime_state = TransferRuntimeState::Failed {
+                                file_id: head.secret.file_id,
+                                error_code: err,
+                            };
+                            self.transfer.phase = TransferPhaseTag::Failed;
+                            self.transfer.error_code = err;
+                            if self.wifi_batch_phase == WifiBatchPhase::Transferring {
+                                self.wifi_batch_phase = WifiBatchPhase::Failed;
+                            }
+                            outcome.transfer_updated = true;
+                            continue;
+                        }
+
                         let is_resuming_same_file = !head.unfinished
                             && self.active_file_id == Some(head.secret.file_id)
                             && !self.opus_buffer.is_empty();
@@ -662,7 +995,11 @@ impl TransportSession {
                         }
                         self.active_file_id = Some(head.secret.file_id);
                         self.active_file_key = head.file_key;
-                        self.active_nonce = Some(head.secret.nonce);
+                        self.active_nonce = if head.file_key.is_some() {
+                            Some(head.secret.nonce)
+                        } else {
+                            None
+                        };
                         self.active_is_realtime = head.unfinished;
                         let received_wire = self
                             .received_slice_count()
@@ -782,7 +1119,8 @@ impl TransportSession {
                                 quiet_draining: drain.is_some(),
                             };
                         } else {
-                            let expected = self.transfer.expected_wire_bytes.max(new_received);
+                            let prev_expected = self.transfer.expected_wire_bytes;
+                            let expected = prev_expected.max(new_received);
                             self.runtime_state = TransferRuntimeState::PullingOffline {
                                 file_id: fid,
                                 expected_wire_bytes: expected,
@@ -799,6 +1137,17 @@ impl TransportSession {
                                 retry_count: 0,
                                 quiet_draining: false,
                             };
+                            if self.wifi_batch_phase == WifiBatchPhase::Transferring
+                                && prev_expected > 0
+                                && new_received >= prev_expected
+                            {
+                                if let Some(fin) = self.finalize_active_transfer(now_epoch_sec) {
+                                    self.wifi_finalized_count =
+                                        self.wifi_finalized_count.saturating_add(1);
+                                    outcome.finalized = Some(fin);
+                                    self.advance_wifi_batch();
+                                }
+                            }
                         }
                         outcome.slices_unpacked_count = outcome
                             .slices_unpacked_count
@@ -807,9 +1156,25 @@ impl TransportSession {
                     }
                 }
                 (0x1A, 0x0A) | (0x1B, 0x0A) => {
+                    if self.wifi_batch_phase == WifiBatchPhase::Transferring
+                        && self.opus_buffer.is_empty()
+                    {
+                        continue;
+                    }
+                    if !self.active_is_realtime
+                        && self.transfer.expected_wire_bytes > 0
+                        && self.transfer.received_wire_bytes < self.transfer.expected_wire_bytes
+                    {
+                        continue;
+                    }
                     if let Some(fin) = self.finalize_active_transfer(now_epoch_sec) {
                         outcome.finalized = Some(fin);
                         outcome.transfer_updated = true;
+                        if self.wifi_batch_phase == WifiBatchPhase::Transferring {
+                            self.wifi_finalized_count =
+                                self.wifi_finalized_count.saturating_add(1);
+                            self.advance_wifi_batch();
+                        }
                     }
                 }
                 _ => {}
@@ -820,8 +1185,8 @@ impl TransportSession {
     }
 
     /// Finalizes the active Opus stream into an Ogg Opus container and 48 kHz mono
-    /// preview WAV with 880 Hz mark chimes, stores it in `last_finalized`, and resets
-    /// the active transfer state to `Idle`.
+    /// preview WAV with 880 Hz mark chimes, appends it to `finalized_queue` and
+    /// `last_finalized`, and resets the active transfer state to `Idle`.
     pub fn finalize_active_transfer(&mut self, now_epoch_sec: u64) -> Option<FinalizedRecording> {
         let fid = self.active_file_id?;
         if self.opus_buffer.is_empty() {
@@ -853,6 +1218,7 @@ impl TransportSession {
             ogg_opus_bytes,
             preview_wav_bytes,
         };
+        self.finalized_queue.push_back(finalized.clone());
         self.last_finalized = Some(finalized.clone());
         let retained_live_pcm = std::mem::take(&mut self.live_pcm16_16khz);
         self.reset_active_transfer();
@@ -1217,5 +1583,177 @@ mod tests {
         assert_eq!(&resume_tx[9..13], &(3u32 * 166).to_le_bytes());
         assert_eq!(&resume_tx[13..17], &321u32.to_le_bytes());
         assert!(!session.is_offline_pull_suspended());
+    }
+
+    fn build_test_head_frame_with_err(
+        session_key: &[u8; 32],
+        file_id: u32,
+        file_size: u32,
+        file_key: &[u8; 32],
+        file_nonce: &[u8; 16],
+        error_code: u8,
+    ) -> Vec<u8> {
+        let mut plain_key_mat = Vec::with_capacity(46);
+        plain_key_mat.extend_from_slice(b"soundcored3200");
+        plain_key_mat.extend_from_slice(file_key);
+        let session_nonce = [0x33u8; 16];
+        let enc_file_key =
+            DeviceCrypto::aes_ctr_decrypt(&plain_key_mat, session_key, &session_nonce).unwrap();
+        let mut head_payload = Vec::with_capacity(87);
+        head_payload.extend_from_slice(&file_id.to_le_bytes());
+        head_payload.extend_from_slice(&file_size.to_le_bytes());
+        head_payload.extend_from_slice(file_nonce);
+        head_payload.extend_from_slice(&enc_file_key);
+        head_payload.extend_from_slice(&session_nonce);
+        head_payload.push(error_code);
+        TransportSession::build_rx_frame(0x1A, 0x07, &head_payload)
+    }
+
+    #[test]
+    fn wifi_batch_completes_on_byte_target_ignores_stale_done_skips_missing_and_sends_finish() {
+        let mut session = TransportSession::new();
+        let sk = [0x42u8; 32];
+        let fk = [0x53u8; 32];
+        let fn_iv = [0x64u8; 16];
+        session.set_session_key(sk);
+
+        let wifi_cfg = TransportSession::build_rx_frame(
+            0x1A,
+            0x05,
+            &[0x01, 0x2B, 0xA8, 0xC0, 0x02, 0x7D],
+        );
+        let cfg_out = session.ingest_ble_chunk(&wifi_cfg, 1_700_000_400);
+        assert!(cfg_out.transfer_updated);
+        assert_eq!(
+            session.wifi_endpoint,
+            Some(WifiEndpoint {
+                ip: [192, 168, 43, 1],
+                port: 32002
+            })
+        );
+
+        session.begin_wifi_batch(&[1001, 1002, 1003]);
+        assert_eq!(
+            session.pop_outbound_wifi_ws().as_deref(),
+            Some(DeviceCommands::build_wifi_file_request_hex(1001, 0).as_str())
+        );
+        assert_eq!(
+            session.pop_outbound_wifi_udp().as_deref(),
+            Some(WIFI_KEEPALIVE_PAYLOAD.as_slice())
+        );
+
+        let head1 = build_test_head_frame(&sk, 1001, 2 * 166, &fk, &fn_iv);
+        let slices1 = build_test_slice_frame(&fk, &fn_iv, &[(0, 0x00), (1, 0x01)]);
+        let _ = session.ingest_wifi_chunk(&head1, 1_700_000_401);
+        let out1 = session.ingest_wifi_chunk(&slices1, 1_700_000_401);
+        assert!(out1.finalized.is_some());
+        assert_eq!(session.wifi_batch_progress().finalized_count, 1);
+        assert_eq!(session.wifi_batch_progress().current_file_index, 1);
+        assert_eq!(
+            session.pop_outbound_wifi_ws().as_deref(),
+            Some(DeviceCommands::build_wifi_file_request_hex(1002, 0).as_str())
+        );
+
+        let head2 = build_test_head_frame(&sk, 1002, 4 * 166, &fk, &fn_iv);
+        let slices2_part1 = build_test_slice_frame(&fk, &fn_iv, &[(0, 0x00), (1, 0x00)]);
+        let stale_done = TransportSession::build_rx_frame(0x1A, 0x0A, &[0x01]);
+        let _ = session.ingest_wifi_chunk(&head2, 1_700_000_402);
+        let _ = session.ingest_wifi_chunk(&slices2_part1, 1_700_000_402);
+        let stale_out = session.ingest_wifi_chunk(&stale_done, 1_700_000_402);
+        assert!(stale_out.finalized.is_none());
+        assert_eq!(session.wifi_batch_progress().current_file_index, 1);
+        assert_eq!(session.wifi_batch_progress().received_wire_bytes, 2 * 166);
+
+        let slices2_part2 = build_test_slice_frame(&fk, &fn_iv, &[(2, 0x01), (3, 0x00)]);
+        let out2 = session.ingest_wifi_chunk(&slices2_part2, 1_700_000_403);
+        assert!(out2.finalized.is_some());
+        assert_eq!(session.wifi_batch_progress().finalized_count, 2);
+        assert_eq!(
+            session.pop_outbound_wifi_ws().as_deref(),
+            Some(DeviceCommands::build_wifi_file_request_hex(1003, 0).as_str())
+        );
+
+        let head3_missing = build_test_head_frame_with_err(&sk, 1003, 0, &fk, &fn_iv, 1);
+        let _ = session.ingest_wifi_chunk(&head3_missing, 1_700_000_404);
+        let prog = session.wifi_batch_progress();
+        assert_eq!(prog.phase, WifiBatchPhase::Completed);
+        assert_eq!(prog.skipped_count, 1);
+        assert_eq!(prog.remaining_count, 0);
+        assert_eq!(
+            session.pop_outbound_wifi_ws().as_deref(),
+            Some(WIFI_WS_FINISH_TEXT)
+        );
+        assert_eq!(
+            session.pop_outbound_wifi_ws().as_deref(),
+            Some(DeviceCommands::wifi_transfer_complete_hex().as_str())
+        );
+
+        let f1 = session.take_next_finalized().unwrap();
+        let f2 = session.take_next_finalized().unwrap();
+        assert_eq!(f1.entry.id, 1001);
+        assert_eq!(f2.entry.id, 1002);
+        assert!(session.take_next_finalized().is_none());
+    }
+
+    #[test]
+    fn wifi_interrupted_salvages_95_percent_file_and_resumes_remaining_queue() {
+        let mut session = TransportSession::new();
+        let sk = [0x31u8; 32];
+        let fk = [0x32u8; 32];
+        let fn_iv = [0x33u8; 16];
+        session.set_session_key(sk);
+
+        session.begin_wifi_batch(&[2001, 2002]);
+        let _ = session.pop_outbound_wifi_ws();
+        let _ = session.pop_outbound_wifi_udp();
+
+        let head1 = build_test_head_frame(&sk, 2001, 20 * 166, &fk, &fn_iv);
+        let _ = session.ingest_wifi_chunk(&head1, 1_700_000_500);
+        let seqs_19: Vec<(u32, u8)> = (0..19u32).map(|s| (s, 0x00)).collect();
+        let slices_19 = build_test_slice_frame(&fk, &fn_iv, &seqs_19);
+        let _ = session.ingest_wifi_chunk(&slices_19, 1_700_000_501);
+
+        assert!(session.on_wifi_interrupted(1_700_000_502));
+        let prog = session.wifi_batch_progress();
+        assert_eq!(prog.phase, WifiBatchPhase::Interrupted);
+        assert_eq!(prog.salvaged_count, 1);
+        assert_eq!(prog.remaining_count, 1);
+        assert_eq!(prog.current_file_index, 1);
+        assert_eq!(session.take_next_finalized().unwrap().entry.id, 2001);
+
+        assert!(session.resume_wifi_batch());
+        assert_eq!(
+            session.pop_outbound_wifi_ws().as_deref(),
+            Some(DeviceCommands::build_wifi_file_request_hex(2002, 0).as_str())
+        );
+        assert_eq!(
+            session.pop_outbound_wifi_udp().as_deref(),
+            Some(WIFI_KEEPALIVE_PAYLOAD.as_slice())
+        );
+    }
+
+    #[test]
+    fn wifi_poll_timers_queues_2000ms_udp_keepalive_packets() {
+        let mut session = TransportSession::new();
+        session.begin_wifi_batch(&[3001]);
+        assert_eq!(
+            session.pop_outbound_wifi_udp().as_deref(),
+            Some(WIFI_KEEPALIVE_PAYLOAD.as_slice())
+        );
+        assert!(session.pop_outbound_wifi_udp().is_none());
+
+        let _ = session.poll_timers(1_999, 1_700_000_600);
+        assert!(session.pop_outbound_wifi_udp().is_none());
+
+        let _ = session.poll_timers(2_001, 1_700_000_604);
+        assert_eq!(
+            session.pop_outbound_wifi_udp().as_deref(),
+            Some(WIFI_KEEPALIVE_PAYLOAD.as_slice())
+        );
+        assert_eq!(
+            session.pop_outbound_wifi_udp().as_deref(),
+            Some(WIFI_KEEPALIVE_PAYLOAD.as_slice())
+        );
+        assert!(session.pop_outbound_wifi_udp().is_none());
     }
 }
