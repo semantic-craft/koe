@@ -419,7 +419,7 @@ pub struct KoeUtteranceSegmentHeader {
     pub target_language: [u8; 16],
 }
 
-/// C-ABI flat status snapshot of `RollingMinutesScheduler` (`wquguru/cicada`).
+/// C-ABI flat status snapshot of `RollingMinutesScheduler`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KoeCicadaRollingStatus {
