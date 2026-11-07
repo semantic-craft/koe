@@ -347,6 +347,36 @@ typedef _BufferFreeDart = void Function(Pointer<Uint8>, int);
 typedef _WavHeaderNative = Int32 Function(Uint32, Pointer<Uint8>);
 typedef _WavHeaderDart = int Function(int, Pointer<Uint8>);
 
+typedef _OpusDecodePcm16Native = Pointer<Uint8> Function(
+  Pointer<Uint8>,
+  Size,
+  Uint32,
+  Pointer<Size>,
+);
+typedef _OpusDecodePcm16Dart = Pointer<Uint8> Function(
+  Pointer<Uint8>,
+  int,
+  int,
+  Pointer<Size>,
+);
+
+typedef _OpusDecodeWavNative = Pointer<Uint8> Function(
+  Pointer<Uint8>,
+  Size,
+  Uint32,
+  Pointer<Uint64>,
+  Size,
+  Pointer<Size>,
+);
+typedef _OpusDecodeWavDart = Pointer<Uint8> Function(
+  Pointer<Uint8>,
+  int,
+  int,
+  Pointer<Uint64>,
+  int,
+  Pointer<Size>,
+);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -422,7 +452,17 @@ final class KoeCoreFfi {
       _wavHeader = lib.lookupFunction<_WavHeaderNative, _WavHeaderDart>(
         'koe_wav_header',
         isLeaf: true,
-      );
+      ),
+      _opusDecodePcm16 =
+          lib.lookupFunction<_OpusDecodePcm16Native, _OpusDecodePcm16Dart>(
+            'koe_opus_decode_pcm16',
+            isLeaf: true,
+          ),
+      _opusDecodeWav =
+          lib.lookupFunction<_OpusDecodeWavNative, _OpusDecodeWavDart>(
+            'koe_opus_decode_wav',
+            isLeaf: true,
+          );
 
   static final KoeCoreFfi? instance = _load();
 
@@ -490,6 +530,8 @@ final class KoeCoreFfi {
   final _OggMuxDart _oggMux;
   final _BufferFreeDart _bufferFree;
   final _WavHeaderDart _wavHeader;
+  final _OpusDecodePcm16Dart _opusDecodePcm16;
+  final _OpusDecodeWavDart _opusDecodeWav;
 
   int protocolChecksum(List<int> data) {
     if (data.isEmpty) return 0;
@@ -908,6 +950,66 @@ final class KoeCoreFfi {
       return Uint8List.fromList(outPtr.asTypedList(44));
     } finally {
       malloc.free(outPtr);
+    }
+  }
+
+  Uint8List? decodeOpusPcm16(Uint8List rawOpus, {int sampleRate = 16000}) {
+    if (rawOpus.isEmpty) return null;
+    final rawPtr = malloc<Uint8>(rawOpus.length);
+    final outLenPtr = calloc<Size>(1);
+    Pointer<Uint8> pcmPtr = nullptr;
+    var pcmLen = 0;
+    try {
+      rawPtr.asTypedList(rawOpus.length).setAll(0, rawOpus);
+      pcmPtr = _opusDecodePcm16(rawPtr, rawOpus.length, sampleRate, outLenPtr);
+      pcmLen = outLenPtr.value;
+      if (pcmPtr == nullptr || pcmLen == 0) return null;
+      return Uint8List.fromList(pcmPtr.asTypedList(pcmLen));
+    } finally {
+      if (pcmPtr != nullptr && pcmLen > 0) {
+        _bufferFree(pcmPtr, pcmLen);
+      }
+      malloc.free(rawPtr);
+      calloc.free(outLenPtr);
+    }
+  }
+
+  Uint8List? decodeOpusWav(
+    Uint8List rawOpus, {
+    int sampleRate = 48000,
+    List<int> marksMs = const [],
+  }) {
+    if (rawOpus.isEmpty) return null;
+    final rawPtr = malloc<Uint8>(rawOpus.length);
+    final marksPtr = marksMs.isEmpty
+        ? nullptr
+        : calloc<Uint64>(marksMs.length);
+    final outLenPtr = calloc<Size>(1);
+    Pointer<Uint8> wavPtr = nullptr;
+    var wavLen = 0;
+    try {
+      rawPtr.asTypedList(rawOpus.length).setAll(0, rawOpus);
+      for (var i = 0; i < marksMs.length; i++) {
+        (marksPtr + i).value = marksMs[i];
+      }
+      wavPtr = _opusDecodeWav(
+        rawPtr,
+        rawOpus.length,
+        sampleRate,
+        marksPtr,
+        marksMs.length,
+        outLenPtr,
+      );
+      wavLen = outLenPtr.value;
+      if (wavPtr == nullptr || wavLen == 0) return null;
+      return Uint8List.fromList(wavPtr.asTypedList(wavLen));
+    } finally {
+      if (wavPtr != nullptr && wavLen > 0) {
+        _bufferFree(wavPtr, wavLen);
+      }
+      malloc.free(rawPtr);
+      if (marksPtr != nullptr) calloc.free(marksPtr);
+      calloc.free(outLenPtr);
     }
   }
 
