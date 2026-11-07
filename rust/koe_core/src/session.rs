@@ -42,6 +42,18 @@ pub const REAL_OPUS_20MS_440HZ_PACKET: [u8; 94] = [
     0x63, 0x85, 0x53, 0xa2, 0x71, 0x65, 0xe7, 0x91, 0x29, 0x01, 0x80, 0x53, 0x15, 0x04,
 ];
 
+/// Per-frame inactivity timeout in milliseconds before the offline pull watchdog retries.
+pub const OFFLINE_WATCHDOG_TIMEOUT_MS: u64 = 5_000;
+
+/// Maximum number of watchdog retries allowed per offline file transfer.
+pub const OFFLINE_MAX_RETRIES: u8 = 2;
+
+/// Post-stop quiet-drain window in milliseconds before finalizing a realtime stream.
+pub const REALTIME_QUIET_DRAIN_MS: u64 = 2_000;
+
+/// Synthetic error code reported when an offline pull exhausts its watchdog retries.
+pub const TRANSFER_ERR_WATCHDOG_TIMEOUT: u8 = 0xFE;
+
 /// Connection phase of the D3200 transport session.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -76,6 +88,50 @@ pub enum TransferPhaseTag {
     Failed = 4,
 }
 
+/// Algebraic internal state machine governing transfer timers, retries, and suspension.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum TransferRuntimeState {
+    /// No transfer in flight.
+    #[default]
+    Idle,
+    /// Waiting for an offline catalog response (`1A/01`–`1B/0E`).
+    QueryingCatalog,
+    /// Actively pulling an offline recording with watchdog supervision.
+    PullingOffline {
+        /// Active D3200 file identifier.
+        file_id: u32,
+        /// Expected wire bytes (`slices * 166`).
+        expected_wire_bytes: u32,
+        /// Elapsed milliseconds since the last received slice packet.
+        inactivity_ms: u64,
+        /// Number of watchdog retries used (`0..=2`).
+        retries_used: u8,
+    },
+    /// Offline pull paused across a transient BLE link drop, preserving partial slices.
+    Suspended {
+        /// Active D3200 file identifier.
+        file_id: u32,
+        /// Expected wire bytes (`slices * 166`).
+        expected_wire_bytes: u32,
+        /// Number of watchdog retries used prior to suspension.
+        retries_used: u8,
+    },
+    /// Receiving a live recording stream (`file_size == 0xFFFFFFFF`).
+    StreamingRealtime {
+        /// Active D3200 file identifier.
+        file_id: u32,
+        /// `Some(elapsed_ms)` once stop/pause enters the 2,000 ms quiet-drain window.
+        quiet_drain_elapsed_ms: Option<u64>,
+    },
+    /// Transfer failed with a device or watchdog error code.
+    Failed {
+        /// D3200 file identifier that failed.
+        file_id: u32,
+        /// Device or watchdog error code (`0xFE` on timeout).
+        error_code: u8,
+    },
+}
+
 /// Snapshot of active transfer progress.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TransferProgress {
@@ -91,6 +147,10 @@ pub struct TransferProgress {
     pub mark_count: u32,
     /// Device error code when `phase == Failed`.
     pub error_code: u8,
+    /// Number of watchdog retries used (`0..=2`) for the active offline file.
+    pub retry_count: u8,
+    /// Whether the realtime stream is in its 2,000 ms post-stop quiet-drain window.
+    pub quiet_draining: bool,
 }
 
 /// Complete finalized recording artifacts produced when `1A/0A` or explicit
@@ -144,6 +204,8 @@ pub struct TransportSession {
     pub catalog: Vec<OfflineFileEntry>,
     /// Current transfer progress snapshot.
     pub transfer: TransferProgress,
+    /// Algebraic runtime state governing transfer supervision, retries, and suspension.
+    pub runtime_state: TransferRuntimeState,
     /// Active file ID being transferred or streamed.
     pub active_file_id: Option<u32>,
     /// Unwrapped 32-byte per-file AES-256 key (`1A/07`).
@@ -179,6 +241,7 @@ impl Clone for TransportSession {
             session_key: self.session_key,
             catalog: self.catalog.clone(),
             transfer: self.transfer,
+            runtime_state: self.runtime_state.clone(),
             active_file_id: self.active_file_id,
             active_file_key: self.active_file_key,
             active_nonce: self.active_nonce,
@@ -202,6 +265,7 @@ impl core::fmt::Debug for TransportSession {
             .field("session_key", &self.session_key)
             .field("catalog", &self.catalog)
             .field("transfer", &self.transfer)
+            .field("runtime_state", &self.runtime_state)
             .field("active_file_id", &self.active_file_id)
             .field("active_file_key", &self.active_file_key)
             .field("active_nonce", &self.active_nonce)
@@ -233,6 +297,7 @@ impl TransportSession {
             session_key: None,
             catalog: Vec::new(),
             transfer: TransferProgress::default(),
+            runtime_state: TransferRuntimeState::Idle,
             active_file_id: None,
             active_file_key: None,
             active_nonce: None,
@@ -249,6 +314,30 @@ impl TransportSession {
     /// Drains and returns all buffered 16 kHz mono PCM16 LE bytes decoded during `ingest_ble_chunk`.
     pub fn take_live_pcm16(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.live_pcm16_16khz)
+    }
+
+    /// Returns the number of complete 160-byte Opus slices currently buffered for the active file.
+    #[must_use]
+    pub fn received_slice_count(&self) -> u32 {
+        (self.opus_buffer.len() / OPUS_FRAME_BYTES) as u32
+    }
+
+    /// Returns `true` when the active realtime stream is in its post-stop 2-second quiet-drain window.
+    #[must_use]
+    pub fn is_realtime_quiet_draining(&self) -> bool {
+        matches!(
+            self.runtime_state,
+            TransferRuntimeState::StreamingRealtime {
+                quiet_drain_elapsed_ms: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Returns `true` when an offline file pull is suspended across a BLE disconnect and ready to resume.
+    #[must_use]
+    pub fn is_offline_pull_suspended(&self) -> bool {
+        matches!(self.runtime_state, TransferRuntimeState::Suspended { .. })
     }
 
     /// Sets the 32-byte session key explicitly.
@@ -268,14 +357,177 @@ impl TransportSession {
         if let Some(dec) = self.live_decoder_16k.as_mut() {
             dec.reset();
         }
+        self.runtime_state = TransferRuntimeState::Idle;
         self.transfer = TransferProgress::default();
     }
 
-    /// Handles GATT disconnection by resetting transfer state and entering `Disconnected`.
+    /// Handles explicit GATT disconnection by resetting transfer state and entering `Disconnected`.
     pub fn on_disconnected(&mut self) {
         self.reassembler.reset();
+        self.session_key = None;
         self.reset_active_transfer();
         self.connection_phase = ConnectionPhaseTag::Disconnected;
+    }
+
+    /// Handles an unexpected BLE link interruption: suspends an in-flight offline pull so it can
+    /// resume from `received_slice_count() * 166` upon reconnect, or salvages buffered realtime
+    /// Opus slices into `last_finalized`.
+    pub fn on_transport_interrupted(&mut self) {
+        self.reassembler.reset();
+        self.session_key = None;
+        self.connection_phase = ConnectionPhaseTag::Disconnected;
+        match self.runtime_state {
+            TransferRuntimeState::PullingOffline {
+                file_id,
+                expected_wire_bytes,
+                retries_used,
+                ..
+            }
+            | TransferRuntimeState::Suspended {
+                file_id,
+                expected_wire_bytes,
+                retries_used,
+            } => {
+                self.runtime_state = TransferRuntimeState::Suspended {
+                    file_id,
+                    expected_wire_bytes,
+                    retries_used,
+                };
+                self.transfer.received_wire_bytes =
+                    self.received_slice_count().saturating_mul(SLICE_RECORD_BYTES as u32);
+                self.transfer.quiet_draining = false;
+            }
+            _ if self.active_is_realtime && !self.opus_buffer.is_empty() => {
+                let _ = self.finalize_active_transfer(0);
+            }
+            _ => {
+                self.reset_active_transfer();
+            }
+        }
+    }
+
+    /// Resumes a suspended or active offline pull from `received_slice_count() * 166` wire bytes,
+    /// returning the `1A/07` TX frame when an offline file is active.
+    pub fn resume_offline_pull(&mut self) -> Option<Vec<u8>> {
+        if self.active_is_realtime {
+            return None;
+        }
+        let (file_id, expected_wire_bytes, retries_used) = match self.runtime_state {
+            TransferRuntimeState::Suspended {
+                file_id,
+                expected_wire_bytes,
+                retries_used,
+            }
+            | TransferRuntimeState::PullingOffline {
+                file_id,
+                expected_wire_bytes,
+                retries_used,
+                ..
+            } => (file_id, expected_wire_bytes, retries_used),
+            _ => {
+                let fid = self.active_file_id?;
+                (fid, self.transfer.expected_wire_bytes, self.transfer.retry_count)
+            }
+        };
+        let offset = self
+            .received_slice_count()
+            .saturating_mul(SLICE_RECORD_BYTES as u32);
+        let expected = expected_wire_bytes.max(offset);
+        self.active_file_id = Some(file_id);
+        self.runtime_state = TransferRuntimeState::PullingOffline {
+            file_id,
+            expected_wire_bytes: expected,
+            inactivity_ms: 0,
+            retries_used,
+        };
+        self.transfer = TransferProgress {
+            phase: TransferPhaseTag::PullingOffline,
+            file_id,
+            received_wire_bytes: offset,
+            expected_wire_bytes: expected,
+            mark_count: self.marks_ms.len() as u32,
+            error_code: 0,
+            retry_count: retries_used,
+            quiet_draining: false,
+        };
+        Some(DeviceCommands::start_transport_audio_file(file_id, offset, 0))
+    }
+
+    /// Stops/pauses an active realtime bean recording (`0x18 0x82 [0x02]`) and enters the
+    /// 2,000 ms quiet-drain window before finalization.
+    pub fn stop_realtime_recording(&mut self) -> SessionIngestOutcome {
+        let mut outcome = SessionIngestOutcome::default();
+        outcome
+            .outbound_tx_frames
+            .push(DeviceCommands::pause_record());
+        if self.active_is_realtime {
+            if let Some(fid) = self.active_file_id {
+                self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                    file_id: fid,
+                    quiet_drain_elapsed_ms: Some(0),
+                };
+                self.transfer.quiet_draining = true;
+                outcome.transfer_updated = true;
+            }
+        }
+        outcome
+    }
+
+    /// Advances the 5,000 ms offline pull watchdog (up to 2 retries per file) and the 2,000 ms
+    /// realtime post-stop quiet-drain timer by `elapsed_ms`.
+    pub fn poll_timers(&mut self, elapsed_ms: u64, now_epoch_sec: u64) -> SessionIngestOutcome {
+        let mut outcome = SessionIngestOutcome::default();
+        let offset = self
+            .received_slice_count()
+            .saturating_mul(SLICE_RECORD_BYTES as u32);
+        match &mut self.runtime_state {
+            TransferRuntimeState::PullingOffline {
+                file_id,
+                inactivity_ms,
+                retries_used,
+                ..
+            } => {
+                *inactivity_ms = inactivity_ms.saturating_add(elapsed_ms);
+                if *inactivity_ms >= OFFLINE_WATCHDOG_TIMEOUT_MS {
+                    let fid = *file_id;
+                    if *retries_used < OFFLINE_MAX_RETRIES {
+                        *retries_used += 1;
+                        *inactivity_ms = 0;
+                        let retries = *retries_used;
+                        self.transfer.received_wire_bytes = offset;
+                        self.transfer.retry_count = retries;
+                        outcome
+                            .outbound_tx_frames
+                            .push(DeviceCommands::start_transport_audio_file(fid, offset, 0));
+                        outcome.transfer_updated = true;
+                    } else {
+                        let retries = *retries_used;
+                        self.runtime_state = TransferRuntimeState::Failed {
+                            file_id: fid,
+                            error_code: TRANSFER_ERR_WATCHDOG_TIMEOUT,
+                        };
+                        self.transfer.phase = TransferPhaseTag::Failed;
+                        self.transfer.error_code = TRANSFER_ERR_WATCHDOG_TIMEOUT;
+                        self.transfer.retry_count = retries;
+                        outcome.transfer_updated = true;
+                    }
+                }
+            }
+            TransferRuntimeState::StreamingRealtime {
+                quiet_drain_elapsed_ms: Some(waited),
+                ..
+            } => {
+                *waited = waited.saturating_add(elapsed_ms);
+                if *waited >= REALTIME_QUIET_DRAIN_MS {
+                    if let Some(fin) = self.finalize_active_transfer(now_epoch_sec) {
+                        outcome.finalized = Some(fin);
+                        outcome.transfer_updated = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        outcome
     }
 
     /// Verifies the device's `2E/01` ECDH reply (`payload[65..97] == computed_shared_secret`)
@@ -312,6 +564,12 @@ impl TransportSession {
         if let Some(dec) = self.live_decoder_16k.as_mut() {
             dec.reset();
         }
+        self.runtime_state = TransferRuntimeState::PullingOffline {
+            file_id,
+            expected_wire_bytes: estimated_wire,
+            inactivity_ms: 0,
+            retries_used: 0,
+        };
         self.transfer = TransferProgress {
             phase: TransferPhaseTag::PullingOffline,
             file_id,
@@ -319,12 +577,14 @@ impl TransportSession {
             expected_wire_bytes: estimated_wire,
             mark_count: 0,
             error_code: 0,
+            retry_count: 0,
+            quiet_draining: false,
         };
         DeviceCommands::start_transport_audio_file(file_id, 0, 0)
     }
 
     /// Ingests a raw BLE notification chunk, reassembles verified frames, and advances
-    /// the `01/01`, `1A/01`–`1B/0E`, `1A/07`, `1A/08`, and `1A/0A` state machines.
+    /// the `01/01`, `1A/01`–`1B/0E`, `1A/06`, `1A/07`, `1A/08`, and `1A/0A` state machines.
     pub fn ingest_ble_chunk(&mut self, chunk: &[u8], now_epoch_sec: u64) -> SessionIngestOutcome {
         let packets = self.reassembler.ingest(chunk);
         let mut outcome = SessionIngestOutcome {
@@ -342,6 +602,12 @@ impl TransportSession {
                     outcome
                         .outbound_tx_frames
                         .push(DeviceCommands::list_files_with_end_time(0));
+                    if self.is_offline_pull_suspended() && self.session_key.is_some() {
+                        if let Some(resume_tx) = self.resume_offline_pull() {
+                            outcome.outbound_tx_frames.push(resume_tx);
+                            outcome.transfer_updated = true;
+                        }
+                    }
                 }
                 (0x1A, 0x01) | (0x1A, 0x0D) | (0x1A, 0x0E) | (0x1B, 0x0E) => {
                     let with_end_time = pkt.cmd_id == 0x0D || (pkt.cmd_type == 0x1B && pkt.cmd_id == 0x0E);
@@ -349,51 +615,116 @@ impl TransportSession {
                     self.catalog = page.files;
                     outcome.catalog_updated = true;
                     if self.active_file_id.is_none() {
+                        self.runtime_state = TransferRuntimeState::Idle;
                         self.transfer.phase = TransferPhaseTag::Idle;
+                    }
+                }
+                (0x1A, 0x06) => {
+                    if pkt.payload.len() >= 5
+                        && (pkt.payload[4] == 0 || pkt.payload[4] == 2)
+                        && self.active_is_realtime
+                    {
+                        if let Some(fid) = self.active_file_id {
+                            self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                                file_id: fid,
+                                quiet_drain_elapsed_ms: Some(0),
+                            };
+                            self.transfer.quiet_draining = true;
+                            outcome.transfer_updated = true;
+                        }
                     }
                 }
                 (0x1A, 0x07) | (0x1B, 0x07) => {
                     let sk_slice = self.session_key.as_ref().map(|k| k.as_slice());
                     if let Some(head) = TransportSliceProcessor::open_file_head(&pkt.raw, sk_slice)
                     {
+                        let is_resuming_same_file = !head.unfinished
+                            && self.active_file_id == Some(head.secret.file_id)
+                            && !self.opus_buffer.is_empty();
+                        let retries_used = if is_resuming_same_file {
+                            match self.runtime_state {
+                                TransferRuntimeState::PullingOffline { retries_used, .. }
+                                | TransferRuntimeState::Suspended { retries_used, .. } => {
+                                    retries_used
+                                }
+                                _ => self.transfer.retry_count,
+                            }
+                        } else {
+                            0
+                        };
+                        if !is_resuming_same_file {
+                            self.opus_buffer.clear();
+                            self.marks_ms.clear();
+                            self.live_pcm16_16khz.clear();
+                            if let Some(dec) = self.live_decoder_16k.as_mut() {
+                                dec.reset();
+                            }
+                        }
                         self.active_file_id = Some(head.secret.file_id);
                         self.active_file_key = head.file_key;
                         self.active_nonce = Some(head.secret.nonce);
                         self.active_is_realtime = head.unfinished;
-                        self.opus_buffer.clear();
-                        self.marks_ms.clear();
-                        self.live_pcm16_16khz.clear();
-                        if let Some(dec) = self.live_decoder_16k.as_mut() {
-                            dec.reset();
+                        let received_wire = self
+                            .received_slice_count()
+                            .saturating_mul(SLICE_RECORD_BYTES as u32);
+                        if head.unfinished {
+                            self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                                file_id: head.secret.file_id,
+                                quiet_drain_elapsed_ms: None,
+                            };
+                            self.transfer = TransferProgress {
+                                phase: TransferPhaseTag::StreamingRealtime,
+                                file_id: head.secret.file_id,
+                                received_wire_bytes: received_wire,
+                                expected_wire_bytes: 0,
+                                mark_count: self.marks_ms.len() as u32,
+                                error_code: 0,
+                                retry_count: 0,
+                                quiet_draining: false,
+                            };
+                        } else {
+                            let expected = head.secret.file_size.max(received_wire);
+                            self.runtime_state = TransferRuntimeState::PullingOffline {
+                                file_id: head.secret.file_id,
+                                expected_wire_bytes: expected,
+                                inactivity_ms: 0,
+                                retries_used,
+                            };
+                            self.transfer = TransferProgress {
+                                phase: TransferPhaseTag::PullingOffline,
+                                file_id: head.secret.file_id,
+                                received_wire_bytes: received_wire,
+                                expected_wire_bytes: expected,
+                                mark_count: self.marks_ms.len() as u32,
+                                error_code: 0,
+                                retry_count: retries_used,
+                                quiet_draining: false,
+                            };
                         }
-                        let phase = if head.unfinished {
-                            TransferPhaseTag::StreamingRealtime
-                        } else {
-                            TransferPhaseTag::PullingOffline
-                        };
-                        let expected = if head.unfinished {
-                            0
-                        } else {
-                            head.secret.file_size
-                        };
-                        self.transfer = TransferProgress {
-                            phase,
-                            file_id: head.secret.file_id,
-                            received_wire_bytes: 0,
-                            expected_wire_bytes: expected,
-                            mark_count: 0,
-                            error_code: 0,
-                        };
                         outcome.transfer_updated = true;
                     }
                 }
                 (0x1A, 0x08) | (0x1A, 0x12) | (0x1B, 0x08) | (0x1B, 0x12) => {
+                    if let TransferRuntimeState::PullingOffline { inactivity_ms, .. } =
+                        &mut self.runtime_state
+                    {
+                        *inactivity_ms = 0;
+                    }
+                    if let TransferRuntimeState::StreamingRealtime {
+                        quiet_drain_elapsed_ms: Some(waited),
+                        ..
+                    } = &mut self.runtime_state
+                    {
+                        *waited = 0;
+                    }
                     let dec = self
                         .active_file_key
                         .as_ref()
                         .zip(self.active_nonce.as_ref())
                         .and_then(|(fk, n)| AesCtrStreamDecrypt::new(fk, n));
-                    let batch = TransportSliceProcessor::unpack_frame(&pkt.raw, dec.as_ref());
+                    let min_seq = self.received_slice_count();
+                    let batch =
+                        TransportSliceProcessor::unpack_frame_from(&pkt.raw, dec.as_ref(), min_seq);
                     if batch.slice_count > 0 {
                         let fid = self.active_file_id.unwrap_or(1);
                         self.active_file_id = Some(fid);
@@ -420,9 +751,8 @@ impl TransportSession {
                             }
                         }
                         let new_received = self
-                            .transfer
-                            .received_wire_bytes
-                            .saturating_add(batch.wire_record_bytes() as u32);
+                            .received_slice_count()
+                            .saturating_mul(SLICE_RECORD_BYTES as u32);
                         for seq in batch.marked_sequences {
                             let ms = SliceMark::position_ms(seq);
                             if !self.marks_ms.contains(&ms) {
@@ -431,24 +761,45 @@ impl TransportSession {
                             }
                         }
                         self.marks_ms.sort_unstable();
-                        let phase = if self.active_is_realtime {
-                            TransferPhaseTag::StreamingRealtime
+                        if self.active_is_realtime {
+                            let drain = if self.is_realtime_quiet_draining() {
+                                Some(0)
+                            } else {
+                                None
+                            };
+                            self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                                file_id: fid,
+                                quiet_drain_elapsed_ms: drain,
+                            };
+                            self.transfer = TransferProgress {
+                                phase: TransferPhaseTag::StreamingRealtime,
+                                file_id: fid,
+                                received_wire_bytes: new_received,
+                                expected_wire_bytes: 0,
+                                mark_count: self.marks_ms.len() as u32,
+                                error_code: 0,
+                                retry_count: 0,
+                                quiet_draining: drain.is_some(),
+                            };
                         } else {
-                            TransferPhaseTag::PullingOffline
-                        };
-                        let expected = if self.active_is_realtime {
-                            0
-                        } else {
-                            self.transfer.expected_wire_bytes.max(new_received)
-                        };
-                        self.transfer = TransferProgress {
-                            phase,
-                            file_id: fid,
-                            received_wire_bytes: new_received,
-                            expected_wire_bytes: expected,
-                            mark_count: self.marks_ms.len() as u32,
-                            error_code: 0,
-                        };
+                            let expected = self.transfer.expected_wire_bytes.max(new_received);
+                            self.runtime_state = TransferRuntimeState::PullingOffline {
+                                file_id: fid,
+                                expected_wire_bytes: expected,
+                                inactivity_ms: 0,
+                                retries_used: 0,
+                            };
+                            self.transfer = TransferProgress {
+                                phase: TransferPhaseTag::PullingOffline,
+                                file_id: fid,
+                                received_wire_bytes: new_received,
+                                expected_wire_bytes: expected,
+                                mark_count: self.marks_ms.len() as u32,
+                                error_code: 0,
+                                retry_count: 0,
+                                quiet_draining: false,
+                            };
+                        }
                         outcome.slices_unpacked_count = outcome
                             .slices_unpacked_count
                             .saturating_add(batch.slice_count as u32);
@@ -672,5 +1023,199 @@ mod tests {
         let live_pcm = session.take_live_pcm16();
         assert_eq!(live_pcm.len(), 60 * 320 * 2);
         assert!(session.take_live_pcm16().is_empty());
+    }
+
+    fn build_test_head_frame(
+        session_key: &[u8; 32],
+        file_id: u32,
+        file_size: u32,
+        file_key: &[u8; 32],
+        file_nonce: &[u8; 16],
+    ) -> Vec<u8> {
+        let mut plain_key_mat = Vec::with_capacity(46);
+        plain_key_mat.extend_from_slice(b"soundcored3200");
+        plain_key_mat.extend_from_slice(file_key);
+        let session_nonce = [0x33u8; 16];
+        let enc_file_key =
+            DeviceCrypto::aes_ctr_decrypt(&plain_key_mat, session_key, &session_nonce).unwrap();
+        let mut head_payload = Vec::with_capacity(87);
+        head_payload.extend_from_slice(&file_id.to_le_bytes());
+        head_payload.extend_from_slice(&file_size.to_le_bytes());
+        head_payload.extend_from_slice(file_nonce);
+        head_payload.extend_from_slice(&enc_file_key);
+        head_payload.extend_from_slice(&session_nonce);
+        head_payload.push(0);
+        TransportSession::build_rx_frame(0x1A, 0x07, &head_payload)
+    }
+
+    fn build_test_slice_frame(
+        file_key: &[u8; 32],
+        file_nonce: &[u8; 16],
+        sequences: &[(u32, u8)],
+    ) -> Vec<u8> {
+        let decryptor = AesCtrStreamDecrypt::new(file_key, file_nonce).unwrap();
+        let mut payload = Vec::with_capacity(sequences.len() * SLICE_RECORD_BYTES);
+        for &(seq, flags) in sequences {
+            payload.extend_from_slice(&seq.to_le_bytes());
+            payload.push(flags);
+            let mut chunk = [0u8; OPUS_FRAME_BYTES];
+            chunk[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+                .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+            decryptor.decrypt_contiguous_in_place(&mut chunk, seq);
+            payload.extend_from_slice(&chunk);
+            payload.push(0x00);
+        }
+        TransportSession::build_rx_frame(0x1A, 0x08, &payload)
+    }
+
+    #[test]
+    fn offline_pull_watchdog_retries_with_byte_offset_and_deduplicates_overlapping_slices() {
+        let mut session = TransportSession::new();
+        let sk = [0x77u8; 32];
+        let fk = [0x88u8; 32];
+        let fn_iv = [0x99u8; 16];
+        session.set_session_key(sk);
+
+        let start_tx = session.begin_offline_pull(555, 80);
+        assert_eq!(&start_tx[9..13], &0u32.to_le_bytes());
+        assert_eq!(&start_tx[13..17], &555u32.to_le_bytes());
+
+        let head = build_test_head_frame(&sk, 555, 4 * 166, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_700_000_100);
+
+        let batch1 = build_test_slice_frame(&fk, &fn_iv, &[(0, 0x00), (1, 0x01)]);
+        let step1 = session.ingest_ble_chunk(&batch1, 1_700_000_100);
+        assert_eq!(step1.slices_unpacked_count, 2);
+        assert_eq!(session.transfer.received_wire_bytes, 332);
+
+        let w1 = session.poll_timers(4_999, 1_700_000_104);
+        assert!(w1.outbound_tx_frames.is_empty());
+        assert_eq!(session.transfer.retry_count, 0);
+
+        let w2 = session.poll_timers(1, 1_700_000_105);
+        assert_eq!(w2.outbound_tx_frames.len(), 1);
+        assert_eq!(session.transfer.retry_count, 1);
+        let retry_tx = &w2.outbound_tx_frames[0];
+        assert_eq!(&retry_tx[9..13], &332u32.to_le_bytes());
+        assert_eq!(&retry_tx[13..17], &555u32.to_le_bytes());
+
+        let _ = session.ingest_ble_chunk(&head, 1_700_000_106);
+        assert_eq!(session.received_slice_count(), 2);
+        assert_eq!(session.transfer.retry_count, 1);
+
+        let batch2 = build_test_slice_frame(&fk, &fn_iv, &[(1, 0x01), (2, 0x00), (3, 0x01)]);
+        let step2 = session.ingest_ble_chunk(&batch2, 1_700_000_106);
+        assert_eq!(step2.slices_unpacked_count, 2);
+        assert_eq!(session.received_slice_count(), 4);
+        assert_eq!(session.transfer.received_wire_bytes, 664);
+        assert_eq!(session.transfer.retry_count, 0);
+
+        let done = TransportSession::build_rx_frame(0x1A, 0x0A, &555u32.to_le_bytes());
+        let fin_step = session.ingest_ble_chunk(&done, 1_700_000_107);
+        let fin = fin_step.finalized.expect("offline pull must finalize on 1A/0A");
+        assert_eq!(fin.entry.id, 555);
+        assert_eq!(fin.entry.marks_ms, vec![20, 60]);
+    }
+
+    #[test]
+    fn offline_pull_watchdog_fails_after_two_retries() {
+        let mut session = TransportSession::new();
+        let _ = session.begin_offline_pull(777, 1_000);
+
+        let r1 = session.poll_timers(OFFLINE_WATCHDOG_TIMEOUT_MS, 10);
+        assert_eq!(r1.outbound_tx_frames.len(), 1);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::PullingOffline);
+        assert_eq!(session.transfer.retry_count, 1);
+
+        let r2 = session.poll_timers(OFFLINE_WATCHDOG_TIMEOUT_MS, 15);
+        assert_eq!(r2.outbound_tx_frames.len(), 1);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::PullingOffline);
+        assert_eq!(session.transfer.retry_count, 2);
+
+        let r3 = session.poll_timers(OFFLINE_WATCHDOG_TIMEOUT_MS, 20);
+        assert!(r3.outbound_tx_frames.is_empty());
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Failed);
+        assert_eq!(session.transfer.error_code, TRANSFER_ERR_WATCHDOG_TIMEOUT);
+        assert_eq!(session.transfer.retry_count, 2);
+    }
+
+    #[test]
+    fn realtime_stop_enters_2s_quiet_drain_and_late_slices_extend_deadline() {
+        let mut session = TransportSession::new();
+        let sk = [0x12u8; 32];
+        let fk = [0x34u8; 32];
+        let fn_iv = [0x56u8; 16];
+        session.set_session_key(sk);
+
+        let head = build_test_head_frame(&sk, 9001, u32::MAX, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_700_000_200);
+        let slice0 = build_test_slice_frame(&fk, &fn_iv, &[(0, 0x00), (1, 0x01)]);
+        let _ = session.ingest_ble_chunk(&slice0, 1_700_000_200);
+
+        let stop_out = session.stop_realtime_recording();
+        assert_eq!(stop_out.outbound_tx_frames, vec![DeviceCommands::pause_record()]);
+        assert!(session.is_realtime_quiet_draining());
+        assert!(session.transfer.quiet_draining);
+
+        let t1 = session.poll_timers(1_500, 1_700_000_201);
+        assert!(t1.finalized.is_none());
+
+        let late_slice = build_test_slice_frame(&fk, &fn_iv, &[(2, 0x01)]);
+        let _ = session.ingest_ble_chunk(&late_slice, 1_700_000_201);
+        assert!(session.is_realtime_quiet_draining());
+
+        let t2 = session.poll_timers(1_500, 1_700_000_203);
+        assert!(t2.finalized.is_none());
+
+        let t3 = session.poll_timers(500, 1_700_000_204);
+        let fin = t3.finalized.expect("2,000 ms quiet drain after late slice must finalize");
+        assert_eq!(fin.entry.id, 9001);
+        assert_eq!(fin.entry.marks_ms, vec![20, 40]);
+        assert!(!session.is_realtime_quiet_draining());
+    }
+
+    #[test]
+    fn transport_interrupted_suspends_offline_pull_and_resumes_on_reconnect() {
+        let mut session = TransportSession::new();
+        let sk = [0x44u8; 32];
+        let fk = [0x55u8; 32];
+        let fn_iv = [0x66u8; 16];
+        session.set_session_key(sk);
+
+        let _ = session.begin_offline_pull(321, 100);
+        let head = build_test_head_frame(&sk, 321, 5 * 166, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_700_000_300);
+        let first_three = build_test_slice_frame(&fk, &fn_iv, &[(0, 0x00), (1, 0x01), (2, 0x00)]);
+        let _ = session.ingest_ble_chunk(&first_three, 1_700_000_300);
+        assert_eq!(session.received_slice_count(), 3);
+
+        session.on_transport_interrupted();
+        assert!(session.is_offline_pull_suspended());
+        assert_eq!(session.connection_phase, ConnectionPhaseTag::Disconnected);
+        assert_eq!(session.received_slice_count(), 3);
+
+        let idle_poll = session.poll_timers(10_000, 1_700_000_310);
+        assert!(idle_poll.outbound_tx_frames.is_empty());
+        assert!(session.is_offline_pull_suspended());
+
+        session.set_session_key(sk);
+        let mut tel_pkt = Vec::from(RX_MAGIC);
+        tel_pkt.extend_from_slice(&[0x01, 0x01, 0x01, 0x00, 0x00, 1, 7, 0]);
+        tel_pkt.extend_from_slice(b"1.4.8");
+        tel_pkt.extend_from_slice(b"D3200NATIVE639D0");
+        tel_pkt.extend_from_slice(&1024u32.to_le_bytes());
+        tel_pkt.extend_from_slice(&512u32.to_le_bytes());
+        let tel_len = (tel_pkt.len() + 1) as u16;
+        tel_pkt[7] = (tel_len & 0xFF) as u8;
+        tel_pkt[8] = ((tel_len >> 8) & 0xFF) as u8;
+        let csum = ProtocolFrame::checksum(&tel_pkt);
+        tel_pkt.push(csum);
+
+        let reconn_out = session.ingest_ble_chunk(&tel_pkt, 1_700_000_311);
+        assert_eq!(reconn_out.outbound_tx_frames.len(), 2);
+        let resume_tx = &reconn_out.outbound_tx_frames[1];
+        assert_eq!(&resume_tx[9..13], &(3u32 * 166).to_le_bytes());
+        assert_eq!(&resume_tx[13..17], &321u32.to_le_bytes());
+        assert!(!session.is_offline_pull_suspended());
     }
 }
