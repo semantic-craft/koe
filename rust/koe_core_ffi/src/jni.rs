@@ -6,13 +6,19 @@ use std::ffi::c_void;
 use std::sync::{Mutex, OnceLock};
 
 use crate::{
-    koe_buffer_free, koe_cicada_silence_reduce, koe_context_format_coarse_place,
+    koe_buffer_free, koe_cicada_rolling_accept_candidate, koe_cicada_rolling_add_segment,
+    koe_cicada_rolling_complete, koe_cicada_rolling_edit, koe_cicada_rolling_free,
+    koe_cicada_rolling_get_active, koe_cicada_rolling_new, koe_cicada_rolling_poll_tick,
+    koe_cicada_rolling_status, koe_cicada_silence_reduce, koe_context_format_coarse_place,
     koe_context_is_delegation_request, koe_context_names_todo, koe_context_search_add_doc,
     koe_context_search_free, koe_context_search_new, koe_context_search_query,
     koe_context_search_status, koe_koepack_encode_demo_v2, koe_koepack_verify_v2,
     koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
     koe_library_move_to_trash, koe_library_new, koe_library_seek_ms, koe_library_select,
-    koe_library_snapshot, koe_library_undo_trash, koe_minutes_plan_batches_count,
+    koe_library_snapshot, koe_library_undo_trash, koe_mcp_acp_configure_pairing,
+    koe_mcp_acp_dispatch_jsonrpc, koe_mcp_acp_free, koe_mcp_acp_ingest_recording,
+    koe_mcp_acp_ingest_utterance, koe_mcp_acp_new, koe_mcp_acp_publish_live,
+    koe_mcp_acp_put_pack, koe_mcp_acp_status, koe_mcp_acp_verify_bearer, koe_minutes_plan_batches_count,
     koe_minutes_replace_terms_utf8, koe_minutes_validate_claim_grounding,
     koe_minutes_validate_json, koe_opus_decode_pcm16, koe_opus_decode_wav, koe_protocol_checksum,
     koe_protocol_encode, koe_protocol_verify_checksum, koe_qwen_parse_transcript_into_spine,
@@ -31,9 +37,9 @@ use crate::{
     koe_spine_set_translation, koe_spine_snapshot, koe_spine_update_segment_text,
     koe_wifi_build_file_request_hex, koe_wifi_build_transfer_complete_hex,
     koe_wifi_keepalive_payload, koe_wifi_parse_config_response, koe_wifi_shares_subnet,
-    KoeContextSearchStatus,
-    session_map, KoeLibrarySnapshot, KoeRecordingEntry, KoeSessionStepResult,
-    KoeUtteranceSegmentHeader, KoeUtteranceSpineSnapshot, KoeWifiBatchProgress, KoeWifiEndpoint,
+    session_map, KoeCicadaRollingStatus, KoeContextSearchStatus, KoeLibrarySnapshot,
+    KoeMcpAcpStatus, KoeRecordingEntry, KoeSessionStepResult, KoeUtteranceSegmentHeader,
+    KoeUtteranceSpineSnapshot, KoeWifiBatchProgress, KoeWifiEndpoint,
 };
 use koe_core::crypto::DeviceCrypto;
 use koe_core::ogg_opus::OggOpus;
@@ -41,6 +47,7 @@ use koe_core::wav::OpusWave;
 
 type JniEnv = *mut *const *const c_void;
 type JClass = *mut c_void;
+type JString = *mut c_void;
 type JArray = *mut c_void;
 type JByteArray = *mut c_void;
 type JLongArray = *mut c_void;
@@ -49,6 +56,10 @@ type JBoolean = u8;
 type JInt = i32;
 type JLong = i64;
 
+const SLOT_NEW_STRING_UTF: usize = 167;
+const SLOT_GET_STRING_UTF_LENGTH: usize = 168;
+const SLOT_GET_STRING_UTF_CHARS: usize = 169;
+const SLOT_RELEASE_STRING_UTF_CHARS: usize = 170;
 const SLOT_GET_ARRAY_LENGTH: usize = 171;
 const SLOT_NEW_BYTE_ARRAY: usize = 176;
 const SLOT_NEW_LONG_ARRAY: usize = 180;
@@ -57,6 +68,10 @@ const SLOT_GET_LONG_ARRAY_REGION: usize = 204;
 const SLOT_SET_BYTE_ARRAY_REGION: usize = 208;
 const SLOT_SET_LONG_ARRAY_REGION: usize = 212;
 
+type FnNewStringUtf = unsafe extern "C" fn(JniEnv, *const u8) -> JString;
+type FnGetStringUtfLength = unsafe extern "C" fn(JniEnv, JString) -> JSize;
+type FnGetStringUtfChars = unsafe extern "C" fn(JniEnv, JString, *mut JBoolean) -> *const u8;
+type FnReleaseStringUtfChars = unsafe extern "C" fn(JniEnv, JString, *const u8);
 type FnGetArrayLength = unsafe extern "C" fn(JniEnv, JArray) -> JSize;
 type FnNewByteArray = unsafe extern "C" fn(JniEnv, JSize) -> JByteArray;
 type FnNewLongArray = unsafe extern "C" fn(JniEnv, JSize) -> JLongArray;
@@ -64,6 +79,50 @@ type FnGetByteArrayRegion = unsafe extern "C" fn(JniEnv, JByteArray, JSize, JSiz
 type FnGetLongArrayRegion = unsafe extern "C" fn(JniEnv, JLongArray, JSize, JSize, *mut i64);
 type FnSetByteArrayRegion = unsafe extern "C" fn(JniEnv, JByteArray, JSize, JSize, *const i8);
 type FnSetLongArrayRegion = unsafe extern "C" fn(JniEnv, JLongArray, JSize, JSize, *const i64);
+
+unsafe fn jni_read_string(env: JniEnv, s: JString) -> String {
+    if env.is_null() || s.is_null() {
+        return String::new();
+    }
+    let vtable = unsafe { *env };
+    let get_len: FnGetStringUtfLength =
+        unsafe { std::mem::transmute(*vtable.add(SLOT_GET_STRING_UTF_LENGTH)) };
+    let len = unsafe { get_len(env, s) };
+    if len <= 0 {
+        return String::new();
+    }
+    let get_chars: FnGetStringUtfChars =
+        unsafe { std::mem::transmute(*vtable.add(SLOT_GET_STRING_UTF_CHARS)) };
+    let chars = unsafe { get_chars(env, s, std::ptr::null_mut()) };
+    if chars.is_null() {
+        return String::new();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(chars, len as usize) };
+    let out = String::from_utf8_lossy(slice).into_owned();
+    let release_chars: FnReleaseStringUtfChars =
+        unsafe { std::mem::transmute(*vtable.add(SLOT_RELEASE_STRING_UTF_CHARS)) };
+    unsafe {
+        release_chars(env, s, chars);
+    }
+    out
+}
+
+unsafe fn jni_new_string(env: JniEnv, text: &str) -> JString {
+    if env.is_null() {
+        return std::ptr::null_mut();
+    }
+    let vtable = unsafe { *env };
+    let new_str: FnNewStringUtf =
+        unsafe { std::mem::transmute(*vtable.add(SLOT_NEW_STRING_UTF)) };
+    let mut c_bytes = Vec::with_capacity(text.len() + 1);
+    for &b in text.as_bytes() {
+        if b != 0 {
+            c_bytes.push(b);
+        }
+    }
+    c_bytes.push(0);
+    unsafe { new_str(env, c_bytes.as_ptr()) }
+}
 
 unsafe fn jni_read_bytes(env: JniEnv, arr: JByteArray) -> Vec<u8> {
     if env.is_null() || arr.is_null() {
@@ -1757,4 +1816,403 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_contextNam
             t_b.len(),
         )
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingNew(
+    env: JniEnv,
+    _cls: JClass,
+    session_id: JByteArray,
+) -> JLong {
+    let sid = unsafe { jni_read_bytes(env, session_id) };
+    unsafe { koe_cicada_rolling_new(sid.as_ptr(), sid.len()) as JLong }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingFree(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) {
+    koe_cicada_rolling_free(handle as u64);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingAddSegment(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    seg_id: JByteArray,
+    text: JByteArray,
+    now_ms: JLong,
+) -> JBoolean {
+    let id_b = unsafe { jni_read_bytes(env, seg_id) };
+    let text_b = unsafe { jni_read_bytes(env, text) };
+    unsafe {
+        koe_cicada_rolling_add_segment(
+            handle as u64,
+            id_b.as_ptr(),
+            id_b.len(),
+            text_b.as_ptr(),
+            text_b.len(),
+            now_ms.max(0) as u64,
+        )
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingPollTick(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    now_ms: JLong,
+) -> JByteArray {
+    let mut from_idx = 0u32;
+    let mut end_idx = 0u32;
+    let mut generation = 0u64;
+    let mut out_len = 0usize;
+    let ptr = unsafe {
+        koe_cicada_rolling_poll_tick(
+            handle as u64,
+            now_ms.max(0) as u64,
+            &mut from_idx,
+            &mut end_idx,
+            &mut generation,
+            &mut out_len,
+        )
+    };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let payload = unsafe {
+        std::str::from_utf8(std::slice::from_raw_parts(ptr, out_len))
+            .unwrap_or("")
+            .to_string()
+    };
+    unsafe { koe_buffer_free(ptr, out_len) };
+    let combined = format!("{from_idx}\n{end_idx}\n{generation}\n{payload}");
+    unsafe { jni_new_bytes(env, combined.as_bytes()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingComplete(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    generation: JLong,
+    from_index: JInt,
+    end_index: JInt,
+    raw_json: JByteArray,
+) -> JInt {
+    let json_b = unsafe { jni_read_bytes(env, raw_json) };
+    unsafe {
+        koe_cicada_rolling_complete(
+            handle as u64,
+            generation.max(0) as u64,
+            from_index.max(0) as u32,
+            end_index.max(0) as u32,
+            json_b.as_ptr(),
+            json_b.len(),
+        )
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingEdit(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    edited_json: JByteArray,
+) -> JInt {
+    let json_b = unsafe { jni_read_bytes(env, edited_json) };
+    unsafe { koe_cicada_rolling_edit(handle as u64, json_b.as_ptr(), json_b.len()) }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingAcceptCandidate(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JBoolean {
+    koe_cicada_rolling_accept_candidate(handle as u64)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingGetActive(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JByteArray {
+    let mut out_len = 0usize;
+    let ptr = unsafe { koe_cicada_rolling_get_active(handle as u64, &mut out_len) };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let arr = unsafe { jni_new_bytes(env, slice) };
+    unsafe { koe_buffer_free(ptr, out_len) };
+    arr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaRollingStatus(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JLongArray {
+    let mut st = KoeCicadaRollingStatus {
+        paused: 0,
+        closed: 0,
+        edited: 0,
+        has_candidate: 0,
+        request_status: 0,
+        reserved: [0; 3],
+        watermark: 0,
+        calls_this_hour: 0,
+        generation: 0,
+    };
+    let ok = unsafe { koe_cicada_rolling_status(handle as u64, &mut st) };
+    if ok == 0 {
+        return unsafe { jni_new_longs(env, &[]) };
+    }
+    let out = [
+        i64::from(st.paused),
+        i64::from(st.closed),
+        i64::from(st.edited),
+        i64::from(st.has_candidate),
+        i64::from(st.request_status),
+        i64::from(st.watermark),
+        i64::from(st.calls_this_hour),
+        st.generation as i64,
+    ];
+    unsafe { jni_new_longs(env, &out) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpNew(
+    env: JniEnv,
+    _cls: JClass,
+    session_id: JString,
+) -> JLong {
+    let sid = unsafe { jni_read_string(env, session_id) };
+    unsafe { koe_mcp_acp_new(sid.as_ptr(), sid.len()) as JLong }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpFree(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) {
+    koe_mcp_acp_free(handle as u64);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpConfigurePairing(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    base_url: JString,
+    token: JString,
+    mode_is_lan: JBoolean,
+    expires_at_epoch_sec: JLong,
+) -> JString {
+    let url_s = unsafe { jni_read_string(env, base_url) };
+    let tok_s = unsafe { jni_read_string(env, token) };
+    let mut out_len = 0usize;
+    let ptr = unsafe {
+        koe_mcp_acp_configure_pairing(
+            handle as u64,
+            url_s.as_ptr(),
+            url_s.len(),
+            tok_s.as_ptr(),
+            tok_s.len(),
+            mode_is_lan,
+            expires_at_epoch_sec.max(0) as u64,
+            &mut out_len,
+        )
+    };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let ticket = String::from_utf8_lossy(slice).into_owned();
+    unsafe { koe_buffer_free(ptr, out_len) };
+    unsafe { jni_new_string(env, &ticket) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpVerifyBearer(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    auth_header: JString,
+    now_epoch_sec: JLong,
+) -> JBoolean {
+    let hdr = unsafe { jni_read_string(env, auth_header) };
+    unsafe {
+        koe_mcp_acp_verify_bearer(
+            handle as u64,
+            hdr.as_ptr(),
+            hdr.len(),
+            now_epoch_sec.max(0) as u64,
+        )
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpPublishLive(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    generation: JLong,
+    now_epoch_sec: JLong,
+    ttl_sec: JInt,
+) -> JInt {
+    koe_mcp_acp_publish_live(
+        handle as u64,
+        generation.max(0) as u64,
+        now_epoch_sec.max(0) as u64,
+        ttl_sec.max(0) as u32,
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpIngestUtterance(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    text: JString,
+    translation: JString,
+    start_ms: JLong,
+    end_ms: JLong,
+    source_lang: JString,
+    target_lang: JString,
+    now_epoch_sec: JLong,
+) -> JInt {
+    let text_s = unsafe { jni_read_string(env, text) };
+    let tr_s = unsafe { jni_read_string(env, translation) };
+    let src_s = unsafe { jni_read_string(env, source_lang) };
+    let tgt_s = unsafe { jni_read_string(env, target_lang) };
+    unsafe {
+        koe_mcp_acp_ingest_utterance(
+            handle as u64,
+            text_s.as_ptr(),
+            text_s.len(),
+            tr_s.as_ptr(),
+            tr_s.len(),
+            start_ms.max(0) as u64,
+            end_ms.max(0) as u64,
+            src_s.as_ptr(),
+            src_s.len(),
+            tgt_s.as_ptr(),
+            tgt_s.len(),
+            now_epoch_sec.max(0) as u64,
+        ) as JInt
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpIngestRecording(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    id: JInt,
+    duration_ms: JLong,
+    byte_count: JInt,
+    created_at_epoch_sec: JLong,
+) -> JBoolean {
+    koe_mcp_acp_ingest_recording(
+        handle as u64,
+        id.max(0) as u32,
+        duration_ms.max(0) as u64,
+        byte_count.max(0) as u32,
+        created_at_epoch_sec.max(0) as u64,
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpPutPack(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    material_id: JString,
+    pack_bytes: JByteArray,
+) -> JInt {
+    let mat_id = unsafe { jni_read_string(env, material_id) };
+    let pack = unsafe { jni_read_bytes(env, pack_bytes) };
+    unsafe {
+        koe_mcp_acp_put_pack(
+            handle as u64,
+            mat_id.as_ptr(),
+            mat_id.len(),
+            pack.as_ptr(),
+            pack.len(),
+        )
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpDispatchJsonRpc(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    request_json: JString,
+    now_epoch_sec: JLong,
+) -> JString {
+    let req = unsafe { jni_read_string(env, request_json) };
+    let mut out_len = 0usize;
+    let ptr = unsafe {
+        koe_mcp_acp_dispatch_jsonrpc(
+            handle as u64,
+            req.as_ptr(),
+            req.len(),
+            now_epoch_sec.max(0) as u64,
+            &mut out_len,
+        )
+    };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let resp = String::from_utf8_lossy(slice).into_owned();
+    unsafe { koe_buffer_free(ptr, out_len) };
+    unsafe { jni_new_string(env, &resp) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpStatus(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JLongArray {
+    let mut st = KoeMcpAcpStatus {
+        mcp_initialized: 0,
+        mcp_ready: 0,
+        acp_initialized: 0,
+        has_pairing_ticket: 0,
+        pack_count: 0,
+        hotword_count: 0,
+        acp_task_count: 0,
+        handled_calls: 0,
+        live_generation: 0,
+        live_expires_at_sec: 0,
+    };
+    let ok = unsafe { koe_mcp_acp_status(handle as u64, &mut st) };
+    if ok == 0 {
+        return unsafe { jni_new_longs(env, &[]) };
+    }
+    let out = [
+        i64::from(st.mcp_initialized),
+        i64::from(st.mcp_ready),
+        i64::from(st.acp_initialized),
+        i64::from(st.has_pairing_ticket),
+        i64::from(st.pack_count),
+        i64::from(st.hotword_count),
+        i64::from(st.acp_task_count),
+        st.handled_calls as i64,
+        st.live_generation as i64,
+        st.live_expires_at_sec as i64,
+    ];
+    unsafe { jni_new_longs(env, &out) }
 }

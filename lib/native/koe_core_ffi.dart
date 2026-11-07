@@ -361,6 +361,64 @@ class KoeContextSearchStatus {
   final int lastHitCount;
 }
 
+final class _KoeMcpAcpStatusNative extends Struct {
+  @Uint8()
+  external int mcpInitialized;
+
+  @Uint8()
+  external int mcpReady;
+
+  @Uint8()
+  external int acpInitialized;
+
+  @Uint8()
+  external int hasPairingTicket;
+
+  @Uint32()
+  external int packCount;
+
+  @Uint32()
+  external int hotwordCount;
+
+  @Uint32()
+  external int acpTaskCount;
+
+  @Uint64()
+  external int handledCalls;
+
+  @Uint64()
+  external int liveGeneration;
+
+  @Uint64()
+  external int liveExpiresAtSec;
+}
+
+class KoeMcpAcpStatusResult {
+  const KoeMcpAcpStatusResult({
+    required this.mcpInitialized,
+    required this.mcpReady,
+    required this.acpInitialized,
+    required this.hasPairingTicket,
+    required this.packCount,
+    required this.hotwordCount,
+    required this.acpTaskCount,
+    required this.handledCalls,
+    required this.liveGeneration,
+    required this.liveExpiresAtSec,
+  });
+
+  final bool mcpInitialized;
+  final bool mcpReady;
+  final bool acpInitialized;
+  final bool hasPairingTicket;
+  final int packCount;
+  final int hotwordCount;
+  final int acpTaskCount;
+  final int handledCalls;
+  final int liveGeneration;
+  final int liveExpiresAtSec;
+}
+
 typedef _ChecksumNative = Uint8 Function(Pointer<Uint8>, Size);
 typedef _ChecksumDart = int Function(Pointer<Uint8>, int);
 
@@ -1022,6 +1080,131 @@ typedef _ContextNamesTodoDart = int Function(
   int,
 );
 
+typedef _McpAcpNewNative = Uint64 Function(Pointer<Uint8>, Size);
+typedef _McpAcpNewDart = int Function(Pointer<Uint8>, int);
+
+typedef _McpAcpFreeNative = Void Function(Uint64);
+typedef _McpAcpFreeDart = void Function(int);
+
+typedef _McpAcpConfigurePairingNative = Pointer<Uint8> Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Uint8,
+  Uint64,
+  Pointer<Size>,
+);
+typedef _McpAcpConfigurePairingDart = Pointer<Uint8> Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+  int,
+  Pointer<Size>,
+);
+
+typedef _McpAcpVerifyBearerNative = Uint8 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Uint64,
+);
+typedef _McpAcpVerifyBearerDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+);
+
+typedef _McpAcpPublishLiveNative = Int32 Function(
+  Uint64,
+  Uint64,
+  Uint64,
+  Uint32,
+);
+typedef _McpAcpPublishLiveDart = int Function(int, int, int, int);
+
+typedef _McpAcpIngestUtteranceNative = Uint32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Uint64,
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Uint64,
+);
+typedef _McpAcpIngestUtteranceDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+);
+
+typedef _McpAcpPutPackNative = Int32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _McpAcpPutPackDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _McpAcpDispatchJsonRpcNative = Pointer<Uint8> Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Uint64,
+  Pointer<Size>,
+);
+typedef _McpAcpDispatchJsonRpcDart = Pointer<Uint8> Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+  Pointer<Size>,
+);
+
+typedef _McpAcpStatusNative = Uint8 Function(
+  Uint64,
+  Pointer<_KoeMcpAcpStatusNative>,
+);
+typedef _McpAcpStatusDart = int Function(
+  int,
+  Pointer<_KoeMcpAcpStatusNative>,
+);
+
+typedef _McpAcpIngestRecordingNative = Uint8 Function(
+  Uint64,
+  Uint32,
+  Uint64,
+  Uint32,
+  Uint64,
+);
+typedef _McpAcpIngestRecordingDart = int Function(int, int, int, int, int);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -1306,6 +1489,54 @@ final class KoeCoreFfi {
           lib.lookupFunction<_ContextNamesTodoNative, _ContextNamesTodoDart>(
             'koe_context_names_todo',
             isLeaf: true,
+          ),
+      _mcpAcpNew = lib.lookupFunction<_McpAcpNewNative, _McpAcpNewDart>(
+        'koe_mcp_acp_new',
+        isLeaf: true,
+      ),
+      _mcpAcpFree = lib.lookupFunction<_McpAcpFreeNative, _McpAcpFreeDart>(
+        'koe_mcp_acp_free',
+        isLeaf: true,
+      ),
+      _mcpAcpConfigurePairing =
+          lib.lookupFunction<
+            _McpAcpConfigurePairingNative,
+            _McpAcpConfigurePairingDart
+          >('koe_mcp_acp_configure_pairing', isLeaf: true),
+      _mcpAcpVerifyBearer =
+          lib.lookupFunction<_McpAcpVerifyBearerNative, _McpAcpVerifyBearerDart>(
+            'koe_mcp_acp_verify_bearer',
+            isLeaf: true,
+          ),
+      _mcpAcpPublishLive =
+          lib.lookupFunction<_McpAcpPublishLiveNative, _McpAcpPublishLiveDart>(
+            'koe_mcp_acp_publish_live',
+            isLeaf: true,
+          ),
+      _mcpAcpIngestUtterance =
+          lib.lookupFunction<
+            _McpAcpIngestUtteranceNative,
+            _McpAcpIngestUtteranceDart
+          >('koe_mcp_acp_ingest_utterance', isLeaf: true),
+      _mcpAcpIngestRecording =
+          lib.lookupFunction<
+            _McpAcpIngestRecordingNative,
+            _McpAcpIngestRecordingDart
+          >('koe_mcp_acp_ingest_recording', isLeaf: true),
+      _mcpAcpPutPack =
+          lib.lookupFunction<_McpAcpPutPackNative, _McpAcpPutPackDart>(
+            'koe_mcp_acp_put_pack',
+            isLeaf: true,
+          ),
+      _mcpAcpDispatchJsonRpc =
+          lib.lookupFunction<
+            _McpAcpDispatchJsonRpcNative,
+            _McpAcpDispatchJsonRpcDart
+          >('koe_mcp_acp_dispatch_jsonrpc', isLeaf: true),
+      _mcpAcpStatus =
+          lib.lookupFunction<_McpAcpStatusNative, _McpAcpStatusDart>(
+            'koe_mcp_acp_status',
+            isLeaf: true,
           );
 
   static final KoeCoreFfi? instance = _load();
@@ -1416,6 +1647,16 @@ final class KoeCoreFfi {
   final _ContextFormatCoarsePlaceDart _contextFormatCoarsePlace;
   final _ContextIsDelegationRequestDart _contextIsDelegationRequest;
   final _ContextNamesTodoDart _contextNamesTodo;
+  final _McpAcpNewDart _mcpAcpNew;
+  final _McpAcpFreeDart _mcpAcpFree;
+  final _McpAcpConfigurePairingDart _mcpAcpConfigurePairing;
+  final _McpAcpVerifyBearerDart _mcpAcpVerifyBearer;
+  final _McpAcpPublishLiveDart _mcpAcpPublishLive;
+  final _McpAcpIngestUtteranceDart _mcpAcpIngestUtterance;
+  final _McpAcpIngestRecordingDart _mcpAcpIngestRecording;
+  final _McpAcpPutPackDart _mcpAcpPutPack;
+  final _McpAcpDispatchJsonRpcDart _mcpAcpDispatchJsonRpc;
+  final _McpAcpStatusDart _mcpAcpStatus;
 
   int protocolChecksum(List<int> data) {
     if (data.isEmpty) return 0;
@@ -2728,6 +2969,233 @@ final class KoeCoreFfi {
       malloc.free(mPtr);
       malloc.free(sPtr);
       malloc.free(tPtr);
+    }
+  }
+
+  int mcpAcpNew({String sessionId = 'native-mcp-session'}) {
+    final bytes = utf8.encode(sessionId);
+    final ptr = malloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
+    try {
+      if (bytes.isNotEmpty) {
+        ptr.asTypedList(bytes.length).setAll(0, bytes);
+      }
+      return _mcpAcpNew(ptr, bytes.length);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  void mcpAcpFree(int handle) => _mcpAcpFree(handle);
+
+  String? mcpAcpConfigurePairing(
+    int handle, {
+    required String baseUrl,
+    required String token,
+    bool modeIsLan = true,
+    int expiresAtEpochSec = 0,
+  }) {
+    final urlBytes = utf8.encode(baseUrl);
+    final tokBytes = utf8.encode(token);
+    final urlPtr = malloc<Uint8>(urlBytes.isEmpty ? 1 : urlBytes.length);
+    final tokPtr = malloc<Uint8>(tokBytes.isEmpty ? 1 : tokBytes.length);
+    final lenPtr = calloc<Size>();
+    Pointer<Uint8> outPtr = nullptr;
+    try {
+      if (urlBytes.isNotEmpty) {
+        urlPtr.asTypedList(urlBytes.length).setAll(0, urlBytes);
+      }
+      if (tokBytes.isNotEmpty) {
+        tokPtr.asTypedList(tokBytes.length).setAll(0, tokBytes);
+      }
+      outPtr = _mcpAcpConfigurePairing(
+        handle,
+        urlPtr,
+        urlBytes.length,
+        tokPtr,
+        tokBytes.length,
+        modeIsLan ? 1 : 0,
+        expiresAtEpochSec,
+        lenPtr,
+      );
+      final len = lenPtr.value;
+      if (outPtr == nullptr || len <= 0) return null;
+      return utf8.decode(outPtr.asTypedList(len), allowMalformed: true);
+    } finally {
+      if (outPtr != nullptr) {
+        _bufferFree(outPtr, lenPtr.value);
+      }
+      malloc.free(urlPtr);
+      malloc.free(tokPtr);
+      calloc.free(lenPtr);
+    }
+  }
+
+  bool mcpAcpVerifyBearer(
+    int handle, {
+    required String authHeader,
+    required int nowEpochSec,
+  }) {
+    if (authHeader.isEmpty) return false;
+    final bytes = utf8.encode(authHeader);
+    final ptr = malloc<Uint8>(bytes.length);
+    try {
+      ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _mcpAcpVerifyBearer(handle, ptr, bytes.length, nowEpochSec) != 0;
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  int mcpAcpPublishLive(
+    int handle, {
+    required int generation,
+    required int nowEpochSec,
+    int ttlSec = 15,
+  }) => _mcpAcpPublishLive(handle, generation, nowEpochSec, ttlSec);
+
+  int mcpAcpIngestUtterance(
+    int handle, {
+    required String text,
+    String translation = '',
+    int startMs = 0,
+    int endMs = 0,
+    String sourceLang = 'zh',
+    String targetLang = 'en',
+    int nowEpochSec = 0,
+  }) {
+    if (text.isEmpty) return 0;
+    final tBytes = utf8.encode(text);
+    final trBytes = utf8.encode(translation);
+    final sBytes = utf8.encode(sourceLang);
+    final tlBytes = utf8.encode(targetLang);
+    final tPtr = malloc<Uint8>(tBytes.length);
+    final trPtr = malloc<Uint8>(trBytes.isEmpty ? 1 : trBytes.length);
+    final sPtr = malloc<Uint8>(sBytes.isEmpty ? 1 : sBytes.length);
+    final tlPtr = malloc<Uint8>(tlBytes.isEmpty ? 1 : tlBytes.length);
+    try {
+      tPtr.asTypedList(tBytes.length).setAll(0, tBytes);
+      if (trBytes.isNotEmpty) {
+        trPtr.asTypedList(trBytes.length).setAll(0, trBytes);
+      }
+      if (sBytes.isNotEmpty) {
+        sPtr.asTypedList(sBytes.length).setAll(0, sBytes);
+      }
+      if (tlBytes.isNotEmpty) {
+        tlPtr.asTypedList(tlBytes.length).setAll(0, tlBytes);
+      }
+      return _mcpAcpIngestUtterance(
+        handle,
+        tPtr,
+        tBytes.length,
+        trPtr,
+        trBytes.length,
+        startMs,
+        endMs,
+        sPtr,
+        sBytes.length,
+        tlPtr,
+        tlBytes.length,
+        nowEpochSec,
+      );
+    } finally {
+      malloc.free(tPtr);
+      malloc.free(trPtr);
+      malloc.free(sPtr);
+      malloc.free(tlPtr);
+    }
+  }
+
+  bool mcpAcpIngestRecording(
+    int handle, {
+    required int id,
+    required int durationMs,
+    required int byteCount,
+    required int createdAtEpochSec,
+  }) =>
+      _mcpAcpIngestRecording(
+        handle,
+        id,
+        durationMs,
+        byteCount,
+        createdAtEpochSec,
+      ) !=
+      0;
+
+  int mcpAcpPutPack(
+    int handle, {
+    required String materialId,
+    required List<int> packBytes,
+  }) {
+    if (materialId.isEmpty || packBytes.isEmpty) return -1;
+    final idBytes = utf8.encode(materialId);
+    final idPtr = malloc<Uint8>(idBytes.length);
+    final packPtr = malloc<Uint8>(packBytes.length);
+    try {
+      idPtr.asTypedList(idBytes.length).setAll(0, idBytes);
+      packPtr.asTypedList(packBytes.length).setAll(0, packBytes);
+      return _mcpAcpPutPack(
+        handle,
+        idPtr,
+        idBytes.length,
+        packPtr,
+        packBytes.length,
+      );
+    } finally {
+      malloc.free(idPtr);
+      malloc.free(packPtr);
+    }
+  }
+
+  String? mcpAcpDispatchJsonRpc(
+    int handle, {
+    required String requestJson,
+    required int nowEpochSec,
+  }) {
+    if (requestJson.isEmpty) return null;
+    final reqBytes = utf8.encode(requestJson);
+    final reqPtr = malloc<Uint8>(reqBytes.length);
+    final lenPtr = calloc<Size>();
+    Pointer<Uint8> outPtr = nullptr;
+    try {
+      reqPtr.asTypedList(reqBytes.length).setAll(0, reqBytes);
+      outPtr = _mcpAcpDispatchJsonRpc(
+        handle,
+        reqPtr,
+        reqBytes.length,
+        nowEpochSec,
+        lenPtr,
+      );
+      final len = lenPtr.value;
+      if (outPtr == nullptr || len <= 0) return null;
+      return utf8.decode(outPtr.asTypedList(len), allowMalformed: true);
+    } finally {
+      if (outPtr != nullptr) {
+        _bufferFree(outPtr, lenPtr.value);
+      }
+      malloc.free(reqPtr);
+      calloc.free(lenPtr);
+    }
+  }
+
+  KoeMcpAcpStatusResult? mcpAcpStatus(int handle) {
+    final ptr = calloc<_KoeMcpAcpStatusNative>();
+    try {
+      if (_mcpAcpStatus(handle, ptr) == 0) return null;
+      final c = ptr.ref;
+      return KoeMcpAcpStatusResult(
+        mcpInitialized: c.mcpInitialized != 0,
+        mcpReady: c.mcpReady != 0,
+        acpInitialized: c.acpInitialized != 0,
+        hasPairingTicket: c.hasPairingTicket != 0,
+        packCount: c.packCount,
+        hotwordCount: c.hotwordCount,
+        acpTaskCount: c.acpTaskCount,
+        handledCalls: c.handledCalls,
+        liveGeneration: c.liveGeneration,
+        liveExpiresAtSec: c.liveExpiresAtSec,
+      );
+    } finally {
+      calloc.free(ptr);
     }
   }
 

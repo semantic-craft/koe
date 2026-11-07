@@ -20,6 +20,7 @@ use koe_core::domain::{SegmentId, UtteranceSpine};
 use koe_core::frame::{DecodedPacket, FrameReassembler, ProtocolFrame};
 use koe_core::hash::sha256_hex;
 use koe_core::library::{RecordingEntry, RecordingLibrary};
+use koe_core::mcp_acp::{McpAcpOwnedRuntime, McpPairingMode};
 use koe_core::minutes::{
     build_minutes_batches, parse_meeting_minutes_json, parse_qwen_transcript_json,
     replace_minute_terms, validate_calculation_grounding, MinutesValidationError,
@@ -458,6 +459,32 @@ pub struct KoeContextSearchStatus {
     pub vocab_size: u32,
     /// Number of hits returned by the most recent search query.
     pub last_hit_count: u32,
+}
+
+/// C-ABI flat status snapshot of `McpAcpOwnedRuntime`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeMcpAcpStatus {
+    /// `1` when MCP `initialize` has succeeded.
+    pub mcp_initialized: u8,
+    /// `1` when `notifications/initialized` has been received.
+    pub mcp_ready: u8,
+    /// `1` when `acp/initialize` has succeeded.
+    pub acp_initialized: u8,
+    /// `1` when a `KOEMCP1.` pairing ticket is configured.
+    pub has_pairing_ticket: u8,
+    /// Number of `.koepack v2` bundles stored via `/sync/packs`.
+    pub pack_count: u32,
+    /// Number of QwenNote personal hotwords synced.
+    pub hotword_count: u32,
+    /// Number of ACP tasks tracked in this runtime.
+    pub acp_task_count: u32,
+    /// Total JSON-RPC 2.0 requests handled.
+    pub handled_calls: u64,
+    /// Generation of the active 15-second live publication lease (`0` when none).
+    pub live_generation: u64,
+    /// Expiry epoch second of the active live publication lease (`0` when none).
+    pub live_expires_at_sec: u64,
 }
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
@@ -1122,6 +1149,7 @@ static SPINE_REGISTRY: OnceLock<Mutex<BTreeMap<u64, UtteranceSpine>>> = OnceLock
 static ROLLING_REGISTRY: OnceLock<Mutex<BTreeMap<u64, RollingMinutesScheduler>>> = OnceLock::new();
 static CONTEXT_SEARCH_REGISTRY: OnceLock<Mutex<BTreeMap<u64, ContextSearchIndex>>> =
     OnceLock::new();
+static MCP_ACP_REGISTRY: OnceLock<Mutex<BTreeMap<u64, McpAcpOwnedRuntime>>> = OnceLock::new();
 
 fn reassembler_map() -> &'static Mutex<BTreeMap<u64, ReassemblerSlot>> {
     REASSEMBLER_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -1145,6 +1173,10 @@ pub(crate) fn rolling_map() -> &'static Mutex<BTreeMap<u64, RollingMinutesSchedu
 
 pub(crate) fn context_search_map() -> &'static Mutex<BTreeMap<u64, ContextSearchIndex>> {
     CONTEXT_SEARCH_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn mcp_acp_map() -> &'static Mutex<BTreeMap<u64, McpAcpOwnedRuntime>> {
+    MCP_ACP_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
 pub(crate) fn alloc_handle() -> u64 {
@@ -3590,6 +3622,359 @@ pub unsafe extern "C" fn koe_context_names_todo(
     u8::from(names_todo(mention, sentence, title))
 }
 
+/// Allocates a stateful `McpAcpOwnedRuntime` handle owning an `UtteranceSpine`,
+/// `RecordingLibrary`, `MinutesState`, `RollingMinutesScheduler`, `ContextState`,
+/// `ContextSearchIndex`, and `McpAcpState`.
+///
+/// # Safety
+///
+/// `session_id_ptr` must be valid for reads of `session_id_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_mcp_acp_new(
+    session_id_ptr: *const u8,
+    session_id_len: usize,
+) -> u64 {
+    let session_id = if session_id_ptr.is_null() || session_id_len == 0 {
+        "native-mcp-session"
+    } else {
+        let bytes = unsafe { slice::from_raw_parts(session_id_ptr, session_id_len) };
+        std::str::from_utf8(bytes).unwrap_or("native-mcp-session")
+    };
+    let h = alloc_handle();
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        map.insert(h, McpAcpOwnedRuntime::new(session_id));
+    }
+    h
+}
+
+/// Frees a stateful `McpAcpOwnedRuntime` handle.
+#[no_mangle]
+pub extern "C" fn koe_mcp_acp_free(handle: u64) {
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        map.remove(&handle);
+    }
+}
+
+/// Configures pairing on `McpAcpOwnedRuntime` `handle` and returns a heap-allocated
+/// `KOEMCP1.<base64url>` pairing ticket UTF-8 string (freed via `koe_buffer_free`),
+/// writing its byte length into `*out_len_ptr`, or null on invalid arguments.
+///
+/// # Safety
+///
+/// Non-null input pointers must be valid for reads of their lengths, and `out_len_ptr`
+/// must be valid for writes of one `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_mcp_acp_configure_pairing(
+    handle: u64,
+    base_url_ptr: *const u8,
+    base_url_len: usize,
+    token_ptr: *const u8,
+    token_len: usize,
+    mode_is_lan: u8,
+    expires_at_epoch_sec: u64,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        *out_len_ptr = 0;
+    }
+    if base_url_ptr.is_null() || base_url_len == 0 || token_ptr.is_null() || token_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let (Ok(base_url), Ok(token)) = (
+        std::str::from_utf8(unsafe { slice::from_raw_parts(base_url_ptr, base_url_len) }),
+        std::str::from_utf8(unsafe { slice::from_raw_parts(token_ptr, token_len) }),
+    ) else {
+        return std::ptr::null_mut();
+    };
+    let mode = if mode_is_lan != 0 {
+        McpPairingMode::Lan
+    } else {
+        McpPairingMode::Vps
+    };
+    let expires_opt = if expires_at_epoch_sec == 0 {
+        None
+    } else {
+        Some(expires_at_epoch_sec)
+    };
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get_mut(&handle) {
+            if let Ok(ticket) =
+                rt.mcp_acp
+                    .configure_pairing(base_url, token, mode, None, expires_opt)
+            {
+                let mut boxed = ticket.into_bytes().into_boxed_slice();
+                let len = boxed.len();
+                let ptr = boxed.as_mut_ptr();
+                std::mem::forget(boxed);
+                unsafe {
+                    *out_len_ptr = len;
+                }
+                return ptr;
+            }
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Verifies an HTTP `Authorization: Bearer <token>` header against the active pairing ticket
+/// on `McpAcpOwnedRuntime` `handle` at `now_epoch_sec` (`1` valid, `0` rejected).
+///
+/// # Safety
+///
+/// `auth_header_ptr` must be valid for reads of `auth_header_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_mcp_acp_verify_bearer(
+    handle: u64,
+    auth_header_ptr: *const u8,
+    auth_header_len: usize,
+    now_epoch_sec: u64,
+) -> u8 {
+    if auth_header_ptr.is_null() || auth_header_len == 0 {
+        return 0;
+    }
+    let Ok(header) = std::str::from_utf8(unsafe {
+        slice::from_raw_parts(auth_header_ptr, auth_header_len)
+    }) else {
+        return 0;
+    };
+    if let Ok(map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get(&handle) {
+            return u8::from(rt.mcp_acp.verify_bearer_header(Some(header), now_epoch_sec));
+        }
+    }
+    0
+}
+
+/// Publishes or refreshes a live snapshot lease (`ttl_sec <= 20`, typically `15`) on
+/// `McpAcpOwnedRuntime` `handle`. Returns `1` on success, `-1` on invalid TTL or unknown handle.
+#[no_mangle]
+pub extern "C" fn koe_mcp_acp_publish_live(
+    handle: u64,
+    generation: u64,
+    now_epoch_sec: u64,
+    ttl_sec: u32,
+) -> i32 {
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get_mut(&handle) {
+            return if rt
+                .mcp_acp
+                .publish_live_lease(generation, now_epoch_sec, u64::from(ttl_sec))
+                .is_ok()
+            {
+                1
+            } else {
+                -1
+            };
+        }
+    }
+    -1
+}
+
+/// Ingests a finalized utterance into `McpAcpOwnedRuntime` `handle`, updating its spine,
+/// rolling scheduler, BM25 context index, personal context timeline/todos, and grounded
+/// meeting minutes. Returns the 1-based segment ordinal (`1..=n`) or `0` on failure.
+///
+/// # Safety
+///
+/// All non-null byte pointers must be valid for reads of their respective byte lengths.
+#[no_mangle]
+pub unsafe extern "C" fn koe_mcp_acp_ingest_utterance(
+    handle: u64,
+    text_ptr: *const u8,
+    text_len: usize,
+    translation_ptr: *const u8,
+    translation_len: usize,
+    start_ms: u64,
+    end_ms: u64,
+    source_lang_ptr: *const u8,
+    source_lang_len: usize,
+    target_lang_ptr: *const u8,
+    target_lang_len: usize,
+    now_epoch_sec: u64,
+) -> u32 {
+    if text_ptr.is_null() || text_len == 0 {
+        return 0;
+    }
+    let Ok(text) = std::str::from_utf8(unsafe { slice::from_raw_parts(text_ptr, text_len) }) else {
+        return 0;
+    };
+    let translation = if translation_ptr.is_null() || translation_len == 0 {
+        ""
+    } else {
+        std::str::from_utf8(unsafe { slice::from_raw_parts(translation_ptr, translation_len) })
+            .unwrap_or("")
+    };
+    let source_lang = if source_lang_ptr.is_null() || source_lang_len == 0 {
+        "zh"
+    } else {
+        std::str::from_utf8(unsafe { slice::from_raw_parts(source_lang_ptr, source_lang_len) })
+            .unwrap_or("zh")
+    };
+    let target_lang = if target_lang_ptr.is_null() || target_lang_len == 0 {
+        "en"
+    } else {
+        std::str::from_utf8(unsafe { slice::from_raw_parts(target_lang_ptr, target_lang_len) })
+            .unwrap_or("en")
+    };
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get_mut(&handle) {
+            let Some(seg_id) =
+                rt.ingest_utterance(text, start_ms, end_ms, source_lang, "qwen", now_epoch_sec)
+            else {
+                return 0;
+            };
+            if !translation.is_empty() {
+                let _ = rt.spine.set_translation(seg_id, translation, target_lang);
+            }
+            let _ = rt.sync_grounded_minutes_from_spine();
+            return seg_id.ordinal();
+        }
+    }
+    0
+}
+
+/// Registers a saved local recording in `McpAcpOwnedRuntime` `handle`'s library (`1` ok, `0` invalid handle).
+#[no_mangle]
+pub extern "C" fn koe_mcp_acp_ingest_recording(
+    handle: u64,
+    id: u32,
+    duration_ms: u64,
+    byte_count: u32,
+    created_at_epoch_sec: u64,
+) -> u8 {
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get_mut(&handle) {
+            rt.ingest_recording(id, duration_ms, byte_count, created_at_epoch_sec);
+            return 1;
+        }
+    }
+    0
+}
+
+/// Validates and stores an audio-less `.koepack v2` bundle under `material_id` on
+/// `McpAcpOwnedRuntime` `handle`. Returns `1` on valid pack, `-1` on invalid pack or handle.
+///
+/// # Safety
+///
+/// `material_id_ptr` and `pack_ptr` must be valid for reads of their respective byte lengths.
+#[no_mangle]
+pub unsafe extern "C" fn koe_mcp_acp_put_pack(
+    handle: u64,
+    material_id_ptr: *const u8,
+    material_id_len: usize,
+    pack_ptr: *const u8,
+    pack_len: usize,
+) -> i32 {
+    if material_id_ptr.is_null() || material_id_len == 0 || pack_ptr.is_null() || pack_len == 0 {
+        return -1;
+    }
+    let Ok(material_id) = std::str::from_utf8(unsafe {
+        slice::from_raw_parts(material_id_ptr, material_id_len)
+    }) else {
+        return -1;
+    };
+    let pack = unsafe { slice::from_raw_parts(pack_ptr, pack_len) };
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get_mut(&handle) {
+            return if rt.mcp_acp.put_sync_pack(material_id, pack).is_ok() {
+                1
+            } else {
+                -1
+            };
+        }
+    }
+    -1
+}
+
+/// Dispatches a JSON-RPC 2.0 MCP or ACP request/notification against `McpAcpOwnedRuntime` `handle`
+/// at `now_epoch_sec`. Returns a heap-allocated UTF-8 JSON response (freed via `koe_buffer_free`)
+/// and writes its byte length to `*out_len_ptr`, or returns null with `*out_len_ptr = 0` for
+/// JSON-RPC notifications (such as `notifications/initialized`).
+///
+/// # Safety
+///
+/// `request_json_ptr` must be valid for reads of `request_json_len` UTF-8 bytes when non-null,
+/// and `out_len_ptr` must be valid for writes of one `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_mcp_acp_dispatch_jsonrpc(
+    handle: u64,
+    request_json_ptr: *const u8,
+    request_json_len: usize,
+    now_epoch_sec: u64,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        *out_len_ptr = 0;
+    }
+    if request_json_ptr.is_null() || request_json_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let Ok(req_str) = std::str::from_utf8(unsafe {
+        slice::from_raw_parts(request_json_ptr, request_json_len)
+    }) else {
+        return std::ptr::null_mut();
+    };
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get_mut(&handle) {
+            if let Some(resp) = rt.dispatch_jsonrpc(req_str, now_epoch_sec) {
+                let mut boxed = resp.into_bytes().into_boxed_slice();
+                let len = boxed.len();
+                let ptr = boxed.as_mut_ptr();
+                std::mem::forget(boxed);
+                unsafe {
+                    *out_len_ptr = len;
+                }
+                return ptr;
+            }
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Writes the current `KoeMcpAcpStatus` snapshot into `*out_status_ptr` (`1` ok, `0` invalid handle).
+///
+/// # Safety
+///
+/// `out_status_ptr` must be valid for writes of one `KoeMcpAcpStatus`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_mcp_acp_status(
+    handle: u64,
+    out_status_ptr: *mut KoeMcpAcpStatus,
+) -> u8 {
+    if out_status_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get(&handle) {
+            unsafe {
+                *out_status_ptr = KoeMcpAcpStatus {
+                    mcp_initialized: u8::from(rt.mcp_acp.mcp_initialized),
+                    mcp_ready: u8::from(rt.mcp_acp.mcp_ready),
+                    acp_initialized: u8::from(rt.mcp_acp.acp_initialized),
+                    has_pairing_ticket: u8::from(rt.mcp_acp.pairing.is_some()),
+                    pack_count: rt.mcp_acp.pack_count() as u32,
+                    hotword_count: rt.mcp_acp.qwennote.hotwords.len() as u32,
+                    acp_task_count: rt.mcp_acp.acp_task_count() as u32,
+                    handled_calls: rt.mcp_acp.handled_calls,
+                    live_generation: rt.mcp_acp.live_lease.map_or(0, |l| l.generation),
+                    live_expires_at_sec: rt
+                        .mcp_acp
+                        .live_lease
+                        .map_or(0, |l| l.expires_at_epoch_sec),
+                };
+            }
+            return 1;
+        }
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3820,5 +4205,164 @@ mod tests {
             },
             1
         );
+    }
+
+    #[test]
+    fn ffi_mcp_acp_runtime_pairing_live_lease_mcp_tools_and_acp_roundtrip() {
+        let session = "ffi-mcp-acp";
+        let h = unsafe { koe_mcp_acp_new(session.as_ptr(), session.len()) };
+        assert_ne!(h, 0);
+
+        let base_url = "https://koe.example.com";
+        let token = "koe-ffi-token-secret-at-least-24-bytes";
+        let mut ticket_len = 0usize;
+        let ticket_ptr = unsafe {
+            koe_mcp_acp_configure_pairing(
+                h,
+                base_url.as_ptr(),
+                base_url.len(),
+                token.as_ptr(),
+                token.len(),
+                1,
+                1_900_000_000,
+                &mut ticket_len,
+            )
+        };
+        assert!(!ticket_ptr.is_null());
+        let ticket = unsafe {
+            std::str::from_utf8(slice::from_raw_parts(ticket_ptr, ticket_len))
+                .unwrap()
+                .to_string()
+        };
+        unsafe { koe_buffer_free(ticket_ptr, ticket_len) };
+        assert!(ticket.starts_with("KOEMCP1."));
+
+        let valid_auth = "Bearer koe-ffi-token-secret-at-least-24-bytes";
+        let bad_auth = "Bearer wrong-token-secret-at-least-24-bytes";
+        assert_eq!(
+            unsafe {
+                koe_mcp_acp_verify_bearer(h, valid_auth.as_ptr(), valid_auth.len(), 1_800_000_000)
+            },
+            1
+        );
+        assert_eq!(
+            unsafe {
+                koe_mcp_acp_verify_bearer(h, bad_auth.as_ptr(), bad_auth.len(), 1_800_000_000)
+            },
+            0
+        );
+
+        assert_eq!(koe_mcp_acp_publish_live(h, 5, 1_800_000_000, 15), 1);
+        assert_eq!(koe_mcp_acp_publish_live(h, 5, 1_800_000_000, 25), -1);
+
+        let text = "下周五前把心力豆二期固件合同发给法务审阅";
+        let tr = "Send the Koe phase-2 firmware contract to legal by next Friday";
+        let ord = unsafe {
+            koe_mcp_acp_ingest_utterance(
+                h,
+                text.as_ptr(),
+                text.len(),
+                tr.as_ptr(),
+                tr.len(),
+                0,
+                2_400,
+                b"zh".as_ptr(),
+                2,
+                b"en".as_ptr(),
+                2,
+                1_800_000_001,
+            )
+        };
+        assert_eq!(ord, 1);
+
+        let run_rpc = |req: &str, now: u64| -> Option<String> {
+            let mut out_len = 0usize;
+            let ptr = unsafe {
+                koe_mcp_acp_dispatch_jsonrpc(h, req.as_ptr(), req.len(), now, &mut out_len)
+            };
+            if ptr.is_null() {
+                None
+            } else {
+                let s = unsafe {
+                    std::str::from_utf8(slice::from_raw_parts(ptr, out_len))
+                        .unwrap()
+                        .to_string()
+                };
+                unsafe { koe_buffer_free(ptr, out_len) };
+                Some(s)
+            }
+        };
+
+        let init = run_rpc(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+            1_800_000_002,
+        )
+        .unwrap();
+        assert!(init.contains("2025-11-25"));
+        assert!(run_rpc(
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            1_800_000_002
+        )
+        .is_none());
+
+        let tr_resp = run_rpc(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"5"}}}"#,
+            1_800_000_003,
+        )
+        .unwrap();
+        assert!(tr_resp.contains("心力豆二期固件合同"));
+
+        let qwen_resp = run_rpc(
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sync_qwennote_hotwords","arguments":{"hotwords":["心力豆","D3200"]}}}"#,
+            1_800_000_003,
+        )
+        .unwrap();
+        assert!(qwen_resp.contains("心力豆"));
+
+        let export_resp = run_rpc(
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"export_koepack_v2","arguments":{"title":"FFI测试包"}}}"#,
+            1_800_000_003,
+        )
+        .unwrap();
+        assert!(export_resp.contains("KOEPACK1"));
+
+        let acp_init = run_rpc(
+            r#"{"jsonrpc":"2.0","id":5,"method":"acp/initialize"}"#,
+            1_800_000_004,
+        )
+        .unwrap();
+        assert!(acp_init.contains("aid://koe.local/native-agent"));
+
+        let acp_task = run_rpc(
+            r#"{"jsonrpc":"2.0","id":6,"method":"acp/task.send","params":{"prompt":"心力豆二期固件合同"}}"#,
+            1_800_000_005,
+        )
+        .unwrap();
+        assert!(acp_task.contains("[S1]"));
+
+        let mut st = KoeMcpAcpStatus {
+            mcp_initialized: 0,
+            mcp_ready: 0,
+            acp_initialized: 0,
+            has_pairing_ticket: 0,
+            pack_count: 0,
+            hotword_count: 0,
+            acp_task_count: 0,
+            handled_calls: 0,
+            live_generation: 0,
+            live_expires_at_sec: 0,
+        };
+        assert_eq!(unsafe { koe_mcp_acp_status(h, &mut st) }, 1);
+        assert_eq!(st.mcp_initialized, 1);
+        assert_eq!(st.mcp_ready, 1);
+        assert_eq!(st.acp_initialized, 1);
+        assert_eq!(st.has_pairing_ticket, 1);
+        assert_eq!(st.pack_count, 1);
+        assert_eq!(st.hotword_count, 2);
+        assert_eq!(st.acp_task_count, 1);
+        assert_eq!(st.live_generation, 5);
+        assert_eq!(st.live_expires_at_sec, 1_800_000_015);
+
+        koe_mcp_acp_free(h);
     }
 }

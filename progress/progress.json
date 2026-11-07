@@ -2660,6 +2660,35 @@
           "status": "done",
           "summary": "完成 Slice F–I（PR #568、#569、#570 及收口 PR）：将真实 libopus 16 kHz 单声道语音解码、BLE 字节级断点续传（received_slices * 166）、5 秒看门狗最多 2 次超时重试、实时流停止后 2 秒静默排空、CoreBluetooth 状态恢复，以及 Wi-Fi SoftAP（0x1A/05 热点应答、WSS :32002 控制帧、UDP :32003 切片重组解密与 >=95% 尾包抢救）全部下沉至 rust/koe_core（#![forbid(unsafe_code)]），并接入桌面 GPUI（desktop/core DesktopBeanHost）、iOS/macOS SwiftUI（BeanTransportActor + 自适应三栏/三标签）与 Android Kotlin JNI（KoeNativeHostController）。全量 Rust/Desktop 单元与文档测试、macOS Swift 宿主自检、iOS Simulator 类型检查、OpenJDK 21 JNI 测试及 1152 项 Flutter 测试全部通过。",
           "title": "Rust 内核下沉与三端原生宿主收口（Slice F–I）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "Slice J–N 全景接力队列与完成证据：UtteranceSpine S1..Sn 统一状态、录音豆结构化纪要防幻觉门禁、知了（Cicada）同传与 .koepack v2 合并、心力豆（Sweetpea）个人上下文与双字 BM25 离线检索、原生 JSON-RPC 2.0 MCP + ACP 服务端及三端全量接线",
+              "ref": "docs/pstack-relay.md"
+            },
+            {
+              "kind": "file",
+              "note": "Rust 统一话语脊柱（UtteranceSpine S1..Sn）、结构化纪要数值/百分比跨句拼接拦截、知了滚动摘要调度器与 .koepack v2 编解码、心力豆上下文与双字 BM25 索引",
+              "ref": "rust/koe_core/src/lib.rs"
+            },
+            {
+              "kind": "file",
+              "note": "原生 JSON-RPC 2.0 MCP（2025-11-25 六个核心工具、KOEMCP1. 配对票据、15s live.json 租约、/sync/packs 增量同步）与 ACP（2026-01-01 六个方法及 1000 条日志上限）协议栈",
+              "ref": "rust/koe_core/src/mcp_acp.rs"
+            },
+            {
+              "kind": "file",
+              "note": "C-ABI / Swift / Kotlin JNI / Dart FFI 16 个结构体与 118 个导出函数零漂移绑定生成与校验",
+              "ref": "rust/koe_core_ffi/src/bin/gen_bindings.rs"
+            }
+          ],
+          "id": "rust-core-domain-and-mcp-acp-slice-j-to-n",
+          "next": "iPhone/Android 物理真机 BLE 与 LAN/VPS 实网客户端连调留待真机环境独立验证。",
+          "status": "done",
+          "summary": "完成 Slice J–N（PR #572、#573、#574、#575 及 Slice N 收口）：将录音豆（Meeting Minutes）、知了（Cicada）、心力豆（Sweetpea Context & 400k 字 <0.3ms 双字 BM25 检索）及原生 JSON-RPC 2.0 MCP（list_recordings、get_transcript、get_minutes、search_context、sync_qwennote_hotwords、export_koepack_v2）与 ACP（Agent Communication Protocol）协议栈全量下沉至 rust/koe_core（#![forbid(unsafe_code)]），并经 C-ABI / Swift / Kotlin JNI / Dart FFI（16 结构体、118 函数）接入 desktop/core、darwin/ SwiftUI 与 Android KoeCore.kt。58 项 koe_core 单测、31 项文档测试、5 项 desktop/core 单测、Swift+JNI 自检与全量 Flutter 测试全部通过。",
+          "title": "三大核心板块与原生 MCP + ACP 协议栈下沉收口（Slice J–N）"
         }
       ],
       "title": "录音豆纪要与 MCP 全自动接力"

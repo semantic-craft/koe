@@ -173,6 +173,19 @@ typedef struct KoeContextSearchStatus {
   uint32_t last_hit_count;
 } KoeContextSearchStatus;
 
+typedef struct KoeMcpAcpStatus {
+  uint8_t mcp_initialized;
+  uint8_t mcp_ready;
+  uint8_t acp_initialized;
+  uint8_t has_pairing_ticket;
+  uint32_t pack_count;
+  uint32_t hotword_count;
+  uint32_t acp_task_count;
+  uint64_t handled_calls;
+  uint64_t live_generation;
+  uint64_t live_expires_at_sec;
+} KoeMcpAcpStatus;
+
 uint8_t koe_protocol_checksum(const uint8_t* data_ptr, size_t data_len);
 uint8_t koe_protocol_verify_checksum(const uint8_t* packet_ptr, size_t packet_len);
 size_t koe_protocol_encode(uint8_t cmd_type, uint8_t cmd_id, const uint8_t* payload_ptr, size_t payload_len, uint8_t* out_ptr, size_t out_cap);
@@ -281,6 +294,16 @@ uint8_t koe_context_search_status(uint64_t handle, KoeContextSearchStatus* out_s
 int32_t koe_context_format_coarse_place(const uint8_t* parts_joined_ptr, size_t parts_joined_len, uint8_t* out_ptr, size_t out_cap);
 uint8_t koe_context_is_delegation_request(const uint8_t* text_ptr, size_t text_len);
 uint8_t koe_context_names_todo(const uint8_t* mention_ptr, size_t mention_len, const uint8_t* sentence_ptr, size_t sentence_len, const uint8_t* title_ptr, size_t title_len);
+uint64_t koe_mcp_acp_new(const uint8_t* session_id_ptr, size_t session_id_len);
+void koe_mcp_acp_free(uint64_t handle);
+uint8_t* koe_mcp_acp_configure_pairing(uint64_t handle, const uint8_t* base_url_ptr, size_t base_url_len, const uint8_t* token_ptr, size_t token_len, uint8_t mode_is_lan, uint64_t expires_at_epoch_sec, size_t* out_len_ptr);
+uint8_t koe_mcp_acp_verify_bearer(uint64_t handle, const uint8_t* auth_header_ptr, size_t auth_header_len, uint64_t now_epoch_sec);
+int32_t koe_mcp_acp_publish_live(uint64_t handle, uint64_t generation, uint64_t now_epoch_sec, uint32_t ttl_sec);
+uint32_t koe_mcp_acp_ingest_utterance(uint64_t handle, const uint8_t* text_ptr, size_t text_len, const uint8_t* translation_ptr, size_t translation_len, uint64_t start_ms, uint64_t end_ms, const uint8_t* source_lang_ptr, size_t source_lang_len, const uint8_t* target_lang_ptr, size_t target_lang_len, uint64_t now_epoch_sec);
+uint8_t koe_mcp_acp_ingest_recording(uint64_t handle, uint32_t id, uint64_t duration_ms, uint32_t byte_count, uint64_t created_at_epoch_sec);
+int32_t koe_mcp_acp_put_pack(uint64_t handle, const uint8_t* material_id_ptr, size_t material_id_len, const uint8_t* pack_ptr, size_t pack_len);
+uint8_t* koe_mcp_acp_dispatch_jsonrpc(uint64_t handle, const uint8_t* request_json_ptr, size_t request_json_len, uint64_t now_epoch_sec, size_t* out_len_ptr);
+uint8_t koe_mcp_acp_status(uint64_t handle, KoeMcpAcpStatus* out_status_ptr);
 
 #ifdef __cplusplus
 }
