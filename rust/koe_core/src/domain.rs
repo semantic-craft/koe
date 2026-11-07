@@ -507,7 +507,7 @@ impl UtteranceSpine {
 /// Structured meeting minutes (`v2`) grounded in [`UtteranceSpine`] citations (`S1..Sn`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeetingMinutesV2 {
-    /// Schema version (`2`).
+    /// Schema version (`1` or `2`).
     pub version: u32,
     /// Spine revision at the moment these minutes were generated.
     pub spine_revision: u64,
@@ -517,12 +517,20 @@ pub struct MeetingMinutesV2 {
     pub overview: String,
     /// Ordered discussion topics with `S1..Sn` cited points.
     pub topics: Vec<MinuteTopic>,
+    /// Key decisions made during the meeting.
+    pub decisions: Vec<MinutePoint>,
+    /// Action items with optional owner and due date.
+    pub actions: Vec<MinutePoint>,
+    /// Open questions raised during the meeting.
+    pub questions: Vec<MinutePoint>,
     /// Root-cause fishbone diagrams for issues raised in the meeting.
     pub fishbones: Vec<MinuteFishbone>,
     /// Domain terminology and jargon table extracted from the meeting.
     pub terms: Vec<MinuteTerm>,
     /// User-defined or template-driven custom sections.
     pub custom_sections: Vec<MinuteCustomSection>,
+    /// Grounding review warnings or flagged items (`reviewItems`).
+    pub review_items: Vec<String>,
 }
 
 /// A thematic section in [`MeetingMinutesV2`].
@@ -532,17 +540,25 @@ pub struct MinuteTopic {
     pub title: String,
     /// Summary of the topic discussion.
     pub summary: String,
+    /// Topic-level [`SegmentId`] citations.
+    pub citations: Vec<SegmentId>,
     /// Bullet points backed by [`SegmentId`] citations.
     pub points: Vec<MinutePoint>,
+    /// Optional fishbone root-cause analysis attached to this topic.
+    pub fishbone: Option<MinuteFishbone>,
 }
 
-/// A single factual claim or decision point backed by `S1..Sn` citations.
+/// A single factual claim, decision, or action point backed by `S1..Sn` citations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinutePoint {
     /// Factual claim text.
     pub claim: String,
     /// Optional speaker who made the point.
     pub speaker: Option<String>,
+    /// Optional action item owner.
+    pub owner: Option<String>,
+    /// Optional action item due date or deadline text.
+    pub due: Option<String>,
     /// Non-empty list of [`SegmentId`] citations supporting `claim`.
     pub citations: Vec<SegmentId>,
 }
@@ -585,6 +601,8 @@ pub struct MinuteTerm {
     pub term: String,
     /// Plain-language definition in context.
     pub definition: String,
+    /// Misheard ASR variants that appear verbatim in cited segments.
+    pub heard: Vec<String>,
     /// Current glossary adoption status.
     pub adoption: MinuteTermAdoption,
     /// Supporting [`SegmentId`] citations where the term was used.
