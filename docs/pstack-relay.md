@@ -64,11 +64,11 @@
 
 ## 全景切片队列（F → I：Rust + SwiftUI + Compose/GPUI 三端高性能录音豆内核收口）
 
-### [ ] Slice F: 真实 Opus 语音解码器下沉至 Rust 内核并替换谐波合成预览
+### [x] Slice F: 真实 Opus 语音解码器下沉至 Rust 内核并替换谐波合成预览
 - **Playbook**: `Feature`
 - **Outcome**: 将 160 字节定长 Opus 帧尾部零填充裁剪（`trim_opus_packet`）与真实 `libopus` 16 kHz / 48 kHz 单声道 PCM16 LE 解码能力接入 `rust/koe_core` 与 `rust/koe_core_ffi`（保持 `rust/koe_core` 100% `#![forbid(unsafe_code)]`，通过回调或 FFI 桥接静态链接 `libopus`），使 `TransportSession::finalize_active_transfer` 与新增的 C-ABI / Swift / Kotlin JNI 接口直接产出真实人声 PCM16 与 WAV，并在包含真实 `libopus` 1.5.2 编码帧（样本 130 为 `-4130`）时解码出精确语音波形。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift`、`./scripts/build-swiftui-macos.sh --install`、`/Applications/KoeSwiftUI.app/Contents/MacOS/KoeSwiftUI --verify-self` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: 5a569a9;rust/koe_core/src/wav.rs;rust/koe_core/src/session.rs;rust/koe_core_ffi/src/opus_ffi.rs;rust/koe_core_ffi/build.rs;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
 ### [ ] Slice G: BLE 字节级断点续传、超时重试看门狗、2 秒静默收尾与后台恢复
 - **Playbook**: `Feature`
