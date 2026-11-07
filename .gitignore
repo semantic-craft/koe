@@ -34,6 +34,7 @@ migrate_working_dir/
 /dist/
 /coverage/
 /rust/target/
+/desktop/target/
 
 # Symbolication related
 app.*.symbols
