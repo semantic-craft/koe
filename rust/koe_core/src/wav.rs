@@ -82,6 +82,46 @@ impl OpusWave {
         let complete_len = (data.len() / FRAME_SIZE) * FRAME_SIZE;
         (&data[..complete_len], &data[complete_len..])
     }
+
+    /// Synthesizes a 48 kHz mono PCM16 RIFF/WAVE preview file of `duration_ms`
+    /// with a 440 Hz carrier tone and 880 Hz chime within 50 ms of each mark in `mark_positions_ms`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use koe_core::ogg_opus::OggOpus;
+    /// use koe_core::wav::OpusWave;
+    ///
+    /// let wav = OpusWave::build_audible_preview_wav(400, &[300]);
+    /// assert!(OggOpus::is_wav(&wav));
+    /// assert!(wav.len() > 44);
+    /// ```
+    #[must_use]
+    pub fn build_audible_preview_wav(duration_ms: u64, mark_positions_ms: &[u64]) -> Vec<u8> {
+        let clamped_ms = duration_ms.clamp(100, 60_000);
+        let sample_rate = WAV_SAMPLE_RATE as usize;
+        let total_samples = ((clamped_ms as usize) * sample_rate / 1000).max(1600);
+        let pcm_byte_len = (total_samples * 2) as u32;
+        let hdr = Self::wav_header(pcm_byte_len);
+        let mut out = Vec::with_capacity(44 + pcm_byte_len as usize);
+        out.extend_from_slice(&hdr);
+
+        let mark_samples: Vec<usize> = mark_positions_ms
+            .iter()
+            .map(|&ms| (ms as usize).saturating_mul(sample_rate) / 1000)
+            .collect();
+        let half_window = sample_rate / 20;
+
+        for i in 0..total_samples {
+            let near_mark = mark_samples.iter().any(|&m| i.abs_diff(m) < half_window);
+            let freq = if near_mark { 880.0 } else { 440.0 };
+            let amp = if near_mark { 6000.0 } else { 1800.0 };
+            let phase = 2.0 * core::f64::consts::PI * freq * (i as f64) / (sample_rate as f64);
+            let sample = (phase.sin() * amp) as i16;
+            out.extend_from_slice(&sample.to_le_bytes());
+        }
+        out
+    }
 }
 
 #[cfg(test)]
