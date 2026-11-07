@@ -1195,6 +1195,232 @@ public final class KoeRecordingLibrary: @unchecked Sendable {{
     return KoeRecordingEntryModel(c: restored)
   }}
 }}
+
+public struct KoeUtteranceSpineSnapshotModel: Equatable, Sendable {{
+  public let segmentCount: UInt32
+  public let revision: UInt64
+  public let isStale: Bool
+}}
+
+public struct KoeUtteranceSegmentModel: Equatable, Sendable, Identifiable {{
+  public let ordinal: UInt32
+  public let revision: UInt32
+  public let startMs: UInt64
+  public let endMs: UInt64
+  public let isFinal: Bool
+  public let text: String
+  public let translation: String?
+  public let sourceLanguage: String
+  public let targetLanguage: String?
+
+  public var id: String {{ "S\(ordinal)" }}
+}}
+
+public final class KoeUtteranceSpine: @unchecked Sendable {{
+  private let handle: UInt64
+
+  public init(sessionId: String = "default") {{
+    let utf8 = Array(sessionId.utf8)
+    self.handle = utf8.withUnsafeBufferPointer {{ buf in
+      koe_spine_new(buf.baseAddress, buf.count)
+    }}
+  }}
+
+  deinit {{
+    koe_spine_free(handle)
+  }}
+
+  public func snapshot() -> KoeUtteranceSpineSnapshotModel {{
+    var c = KoeUtteranceSpineSnapshot()
+    _ = koe_spine_snapshot(handle, &c)
+    return KoeUtteranceSpineSnapshotModel(
+      segmentCount: c.segment_count,
+      revision: c.revision,
+      isStale: c.is_stale != 0
+    )
+  }}
+
+  public func clearStale() {{
+    koe_spine_clear_stale(handle)
+  }}
+
+  @discardableResult
+  public func appendSegment(
+    text: String,
+    startMs: UInt64 = 0,
+    endMs: UInt64 = 0,
+    sourceLanguage: String = "zh",
+    provider: String = "qwen"
+  ) -> UInt32 {{
+    let textBytes = Array(text.utf8)
+    let langBytes = Array(sourceLanguage.utf8)
+    let provBytes = Array(provider.utf8)
+    return textBytes.withUnsafeBufferPointer {{ tBuf in
+      langBytes.withUnsafeBufferPointer {{ lBuf in
+        provBytes.withUnsafeBufferPointer {{ pBuf in
+          koe_spine_append_segment(
+            handle,
+            tBuf.baseAddress,
+            tBuf.count,
+            startMs,
+            endMs,
+            lBuf.baseAddress,
+            lBuf.count,
+            pBuf.baseAddress,
+            pBuf.count
+          )
+        }}
+      }}
+    }}
+  }}
+
+  @discardableResult
+  public func acceptCumulative(
+    connectionId: String,
+    text: String,
+    sourceLanguage: String = "zh",
+    translation: String? = nil,
+    targetLanguage: String? = nil,
+    provider: String = "qwen"
+  ) -> UInt32 {{
+    let connBytes = Array(connectionId.utf8)
+    let textBytes = Array(text.utf8)
+    let langBytes = Array(sourceLanguage.utf8)
+    let trBytes = Array((translation ?? "").utf8)
+    let tlangBytes = Array((targetLanguage ?? "").utf8)
+    let provBytes = Array(provider.utf8)
+    return connBytes.withUnsafeBufferPointer {{ cBuf in
+      textBytes.withUnsafeBufferPointer {{ tBuf in
+        langBytes.withUnsafeBufferPointer {{ lBuf in
+          trBytes.withUnsafeBufferPointer {{ trBuf in
+            tlangBytes.withUnsafeBufferPointer {{ tlBuf in
+              provBytes.withUnsafeBufferPointer {{ pBuf in
+                koe_spine_accept_cumulative(
+                  handle,
+                  cBuf.baseAddress,
+                  cBuf.count,
+                  tBuf.baseAddress,
+                  tBuf.count,
+                  lBuf.baseAddress,
+                  lBuf.count,
+                  trBuf.baseAddress,
+                  trBuf.count,
+                  tlBuf.baseAddress,
+                  tlBuf.count,
+                  pBuf.baseAddress,
+                  pBuf.count
+                )
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+
+  @discardableResult
+  public func updateSegmentText(ordinal: UInt32, newText: String) -> Bool {{
+    let bytes = Array(newText.utf8)
+    return bytes.withUnsafeBufferPointer {{ buf in
+      koe_spine_update_segment_text(handle, ordinal, buf.baseAddress, buf.count) != 0
+    }}
+  }}
+
+  @discardableResult
+  public func setTranslation(
+    ordinal: UInt32,
+    translation: String,
+    targetLanguage: String = "en"
+  ) -> Bool {{
+    let trBytes = Array(translation.utf8)
+    let tlBytes = Array(targetLanguage.utf8)
+    return trBytes.withUnsafeBufferPointer {{ trBuf in
+      tlBytes.withUnsafeBufferPointer {{ tlBuf in
+        koe_spine_set_translation(
+          handle,
+          ordinal,
+          trBuf.baseAddress,
+          trBuf.count,
+          tlBuf.baseAddress,
+          tlBuf.count
+        ) != 0
+      }}
+    }}
+  }}
+
+  public func segment(ordinal: UInt32) -> KoeUtteranceSegmentModel? {{
+    var hdr = KoeUtteranceSegmentHeader()
+    guard koe_spine_get_segment(handle, ordinal, &hdr, nil, 0, nil, 0) != 0 else {{
+      return nil
+    }}
+    let textCap = max(Int(hdr.text_len), 1)
+    let trCap = max(Int(hdr.translation_len), 1)
+    var textBuf = Data(count: textCap)
+    var trBuf = Data(count: trCap)
+    _ = textBuf.withUnsafeMutableBytes {{ tRaw in
+      trBuf.withUnsafeMutableBytes {{ trRaw in
+        koe_spine_get_segment(
+          handle,
+          ordinal,
+          &hdr,
+          tRaw.bindMemory(to: UInt8.self).baseAddress,
+          Int(hdr.text_len),
+          trRaw.bindMemory(to: UInt8.self).baseAddress,
+          Int(hdr.translation_len)
+        )
+      }}
+    }}
+    let text = String(decoding: textBuf.prefix(Int(hdr.text_len)), as: UTF8.self)
+    let translation = hdr.has_translation != 0
+      ? String(decoding: trBuf.prefix(Int(hdr.translation_len)), as: UTF8.self)
+      : nil
+    let srcLang = withUnsafeBytes(of: &hdr.source_language) {{ raw -> String in
+      let b = raw.bindMemory(to: UInt8.self)
+      let c = b.firstIndex(of: 0) ?? b.count
+      return String(decoding: b.prefix(c), as: UTF8.self)
+    }}
+    let tgtLang = withUnsafeBytes(of: &hdr.target_language) {{ raw -> String in
+      let b = raw.bindMemory(to: UInt8.self)
+      let c = b.firstIndex(of: 0) ?? b.count
+      return String(decoding: b.prefix(c), as: UTF8.self)
+    }}
+    return KoeUtteranceSegmentModel(
+      ordinal: hdr.ordinal,
+      revision: hdr.revision,
+      startMs: hdr.start_ms,
+      endMs: hdr.end_ms,
+      isFinal: hdr.is_final != 0,
+      text: text,
+      translation: translation,
+      sourceLanguage: srcLang,
+      targetLanguage: tgtLang.isEmpty ? nil : tgtLang
+    )
+  }}
+
+  public func formatCitedSources() -> String {{
+    var outLen: Int = 0
+    guard let ptr = koe_spine_format_cited_sources(handle, &outLen), outLen > 0 else {{
+      return ""
+    }}
+    defer {{ koe_buffer_free(ptr, outLen) }}
+    return String(decoding: Data(bytes: ptr, count: outLen), as: UTF8.self)
+  }}
+
+  public func validateClaimGrounding(claim: String, citations: [UInt32]) -> Bool {{
+    let claimBytes = Array(claim.utf8)
+    return claimBytes.withUnsafeBufferPointer {{ cBuf in
+      citations.withUnsafeBufferPointer {{ idBuf in
+        koe_minutes_validate_claim_grounding(
+          handle,
+          cBuf.baseAddress,
+          cBuf.count,
+          idBuf.baseAddress,
+          idBuf.count
+        ) != 0
+      }}
+    }}
+  }}
+}}
 "#,
         struct_count = struct_names.len(),
         structs = struct_names.join(", "),
@@ -1434,6 +1660,37 @@ data class KoeLibrarySnapshotModel(
     }}
 }}
 
+data class KoeUtteranceSpineSnapshotModel(
+    val segmentCount: Int,
+    val revision: Long,
+    val isStale: Boolean,
+) {{
+    companion object {{
+        fun fromJniLongs(raw: LongArray): KoeUtteranceSpineSnapshotModel {{
+            if (raw.size < 3) {{
+                return KoeUtteranceSpineSnapshotModel(0, 0L, false)
+            }}
+            return KoeUtteranceSpineSnapshotModel(
+                segmentCount = raw[0].toInt(),
+                revision = raw[1],
+                isStale = raw[2] != 0L,
+            )
+        }}
+    }}
+}}
+
+data class KoeUtteranceSegmentModel(
+    val ordinal: Int,
+    val revision: Int,
+    val startMs: Long,
+    val endMs: Long,
+    val isFinal: Boolean,
+    val text: String,
+    val translation: String?,
+) {{
+    val citationId: String get() = "S$ordinal"
+}}
+
 object KoeCoreNative {{
     init {{
         System.loadLibrary("koe_core_ffi")
@@ -1504,6 +1761,44 @@ object KoeCoreNative {{
     @JvmStatic external fun libraryMoveToTrash(handle: Long, recordingId: Int): Boolean
     @JvmStatic external fun libraryUndoTrash(handle: Long): Int
     @JvmStatic external fun librarySnapshot(handle: Long): LongArray
+
+    @JvmStatic external fun spineNew(sessionId: ByteArray): Long
+    @JvmStatic external fun spineFree(handle: Long)
+    @JvmStatic external fun spineClearStale(handle: Long)
+    @JvmStatic external fun spineSnapshot(handle: Long): LongArray
+    @JvmStatic external fun spineAppendSegment(
+        handle: Long,
+        text: ByteArray,
+        startMs: Long,
+        endMs: Long,
+        sourceLang: ByteArray,
+        provider: ByteArray,
+    ): Int
+    @JvmStatic external fun spineAcceptCumulative(
+        handle: Long,
+        connId: ByteArray,
+        text: ByteArray,
+        sourceLang: ByteArray,
+        translation: ByteArray,
+        targetLang: ByteArray,
+        provider: ByteArray,
+    ): Int
+    @JvmStatic external fun spineUpdateSegmentText(handle: Long, ordinal: Int, newText: ByteArray): Boolean
+    @JvmStatic external fun spineSetTranslation(
+        handle: Long,
+        ordinal: Int,
+        translation: ByteArray,
+        targetLang: ByteArray,
+    ): Boolean
+    @JvmStatic external fun spineGetSegmentMeta(handle: Long, ordinal: Int): LongArray?
+    @JvmStatic external fun spineGetSegmentText(handle: Long, ordinal: Int): ByteArray?
+    @JvmStatic external fun spineGetSegmentTranslation(handle: Long, ordinal: Int): ByteArray?
+    @JvmStatic external fun spineFormatCitedSources(handle: Long): ByteArray?
+    @JvmStatic external fun minutesValidateClaimGrounding(
+        spineHandle: Long,
+        claim: ByteArray,
+        citations: LongArray,
+    ): Boolean
 }}
 
 class KoeFrameReassembler : AutoCloseable {{
@@ -1651,6 +1946,106 @@ class KoeRecordingLibrary : AutoCloseable {{
     override fun close() {{
         if (handle != 0L) {{
             KoeCoreNative.libraryFree(handle)
+            handle = 0L
+        }}
+    }}
+}}
+
+class KoeUtteranceSpine(sessionId: String = "default") : AutoCloseable {{
+    private var handle: Long = KoeCoreNative.spineNew(sessionId.toByteArray(Charsets.UTF_8))
+
+    fun snapshot(): KoeUtteranceSpineSnapshotModel =
+        if (handle == 0L) KoeUtteranceSpineSnapshotModel(0, 0L, false)
+        else KoeUtteranceSpineSnapshotModel.fromJniLongs(KoeCoreNative.spineSnapshot(handle))
+
+    fun clearStale() {{
+        if (handle != 0L) KoeCoreNative.spineClearStale(handle)
+    }}
+
+    fun appendSegment(
+        text: String,
+        startMs: Long = 0L,
+        endMs: Long = 0L,
+        sourceLanguage: String = "zh",
+        provider: String = "qwen",
+    ): Int =
+        if (handle == 0L) 0
+        else KoeCoreNative.spineAppendSegment(
+            handle,
+            text.toByteArray(Charsets.UTF_8),
+            startMs,
+            endMs,
+            sourceLanguage.toByteArray(Charsets.UTF_8),
+            provider.toByteArray(Charsets.UTF_8),
+        )
+
+    fun acceptCumulative(
+        connectionId: String,
+        text: String,
+        sourceLanguage: String = "zh",
+        translation: String? = null,
+        targetLanguage: String? = null,
+        provider: String = "qwen",
+    ): Int =
+        if (handle == 0L) 0
+        else KoeCoreNative.spineAcceptCumulative(
+            handle,
+            connectionId.toByteArray(Charsets.UTF_8),
+            text.toByteArray(Charsets.UTF_8),
+            sourceLanguage.toByteArray(Charsets.UTF_8),
+            (translation ?: "").toByteArray(Charsets.UTF_8),
+            (targetLanguage ?: "").toByteArray(Charsets.UTF_8),
+            provider.toByteArray(Charsets.UTF_8),
+        )
+
+    fun updateSegmentText(ordinal: Int, newText: String): Boolean =
+        handle != 0L && KoeCoreNative.spineUpdateSegmentText(
+            handle,
+            ordinal,
+            newText.toByteArray(Charsets.UTF_8),
+        )
+
+    fun setTranslation(ordinal: Int, translation: String, targetLanguage: String = "en"): Boolean =
+        handle != 0L && KoeCoreNative.spineSetTranslation(
+            handle,
+            ordinal,
+            translation.toByteArray(Charsets.UTF_8),
+            targetLanguage.toByteArray(Charsets.UTF_8),
+        )
+
+    fun segment(ordinal: Int): KoeUtteranceSegmentModel? {{
+        if (handle == 0L) return null
+        val meta = KoeCoreNative.spineGetSegmentMeta(handle, ordinal) ?: return null
+        if (meta.size < 6) return null
+        val textBytes = KoeCoreNative.spineGetSegmentText(handle, ordinal) ?: return null
+        val trBytes = if (meta[5] != 0L) KoeCoreNative.spineGetSegmentTranslation(handle, ordinal) else null
+        return KoeUtteranceSegmentModel(
+            ordinal = meta[0].toInt(),
+            revision = meta[1].toInt(),
+            startMs = meta[2],
+            endMs = meta[3],
+            isFinal = meta[4] != 0L,
+            text = String(textBytes, Charsets.UTF_8),
+            translation = trBytes?.let {{ String(it, Charsets.UTF_8) }},
+        )
+    }}
+
+    fun formatCitedSources(): String {{
+        if (handle == 0L) return ""
+        val bytes = KoeCoreNative.spineFormatCitedSources(handle) ?: return ""
+        return String(bytes, Charsets.UTF_8)
+    }}
+
+    fun validateClaimGrounding(claim: String, citations: LongArray): Boolean =
+        handle != 0L && KoeCoreNative.minutesValidateClaimGrounding(
+            handle,
+            claim.toByteArray(Charsets.UTF_8),
+            citations,
+        )
+
+    override fun close() {{
+        if (handle != 0L) {{
+            KoeCoreNative.spineFree(handle)
             handle = 0L
         }}
     }}

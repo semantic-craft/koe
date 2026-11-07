@@ -456,4 +456,102 @@ void main() {
       equals('soundcore-keep-alive-unicast'),
     );
   });
+
+  test('Rust FFI UtteranceSpine S1..Sn append, cumulative prefix dedup, edit invalidation, and minutes grounding', () {
+    final ffi = KoeCoreFfi.instance!;
+    final spine = ffi.spineNew(sessionId: 'dart-spine-test');
+    try {
+      final snap0 = ffi.spineSnapshot(spine);
+      expect(snap0.segmentCount, equals(0));
+      expect(snap0.revision, equals(0));
+      expect(snap0.isStale, isFalse);
+
+      final s1 = ffi.spineAppendSegment(
+        handle: spine,
+        text: '基本工资是3910元。',
+        startMs: 0,
+        endMs: 2000,
+      );
+      final s2 = ffi.spineAppendSegment(
+        handle: spine,
+        text: '绩效发放比例按80%计算。',
+        startMs: 2000,
+        endMs: 4000,
+      );
+      expect(s1, equals(1));
+      expect(s2, equals(2));
+
+      expect(
+        ffi.spineSetTranslation(
+          handle: spine,
+          ordinal: 1,
+          translation: 'Base salary is 3910 CNY.',
+          targetLanguage: 'en',
+        ),
+        isTrue,
+      );
+      final seg1Before = ffi.spineGetSegment(handle: spine, ordinal: 1)!;
+      expect(seg1Before.citationId, equals('S1'));
+      expect(seg1Before.revision, equals(1));
+      expect(seg1Before.translation, equals('Base salary is 3910 CNY.'));
+
+      expect(
+        ffi.spineUpdateSegmentText(
+          handle: spine,
+          ordinal: 1,
+          newText: '基本工资调整为4200元。',
+        ),
+        isTrue,
+      );
+      expect(ffi.spineSnapshot(spine).isStale, isTrue);
+      final seg1After = ffi.spineGetSegment(handle: spine, ordinal: 1)!;
+      expect(seg1After.revision, equals(2));
+      expect(seg1After.text, equals('基本工资调整为4200元。'));
+      expect(seg1After.translation, isNull);
+
+      ffi.spineClearStale(spine);
+      expect(ffi.spineSnapshot(spine).isStale, isFalse);
+
+      final s3 = ffi.spineAcceptCumulative(
+        handle: spine,
+        connectionId: 'conn-1',
+        text: '所以实发工资按4200元乘以80%发放。',
+      );
+      final s4 = ffi.spineAcceptCumulative(
+        handle: spine,
+        connectionId: 'conn-1',
+        text: '所以实发工资按4200元乘以80%发放。 下月生效。',
+        translation: 'Effective next month.',
+        targetLanguage: 'en',
+      );
+      expect(s3, equals(3));
+      expect(s4, equals(4));
+      final seg4 = ffi.spineGetSegment(handle: spine, ordinal: 4)!;
+      expect(seg4.text, equals('下月生效。'));
+      expect(seg4.translation, equals('Effective next month.'));
+
+      final cited = ffi.spineFormatCitedSources(spine);
+      expect(cited, contains('[S1] 基本工资调整为4200元。'));
+      expect(cited, contains('[S4] 下月生效。'));
+
+      expect(
+        ffi.minutesValidateClaimGrounding(
+          spineHandle: spine,
+          claim: '实发工资按4200元乘以80%计算',
+          citations: const [1, 2],
+        ),
+        isFalse,
+      );
+      expect(
+        ffi.minutesValidateClaimGrounding(
+          spineHandle: spine,
+          claim: '实发工资按4200元乘以80%计算',
+          citations: const [3],
+        ),
+        isTrue,
+      );
+    } finally {
+      ffi.spineFree(spine);
+    }
+  });
 }
