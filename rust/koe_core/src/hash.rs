@@ -90,6 +90,27 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
+/// Computes the FIPS 180-4 SHA-256 digest of `data` formatted as 64 lowercase hexadecimal chars.
+#[must_use]
+pub fn sha256_hex(data: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = sha256(data);
+    let mut out = String::with_capacity(64);
+    for &byte in &digest {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// Returns `true` when `s` is a 64-character lowercase ASCII hexadecimal SHA-256 digest.
+#[must_use]
+pub fn is_valid_sha256_hex(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Computes RFC 2104 HMAC-SHA256 (`key`, `message`).
 #[must_use]
 pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
