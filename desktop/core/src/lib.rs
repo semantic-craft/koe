@@ -11,13 +11,13 @@ use std::time::UNIX_EPOCH;
 
 pub use koe_protocol_kernel::cicada::{
     pending_translation_segments, CicadaEvent, CicadaOutcome, CicadaReducer, CicadaState,
-    CICADA_MAX_CALLS_PER_HOUR, CICADA_ROLLING_CHAR_THRESHOLD, CICADA_ROLLING_INTERVAL_SEC,
-    CICADA_SILENCE_AUTO_STOP_MS,
+    RollingMinutesScheduler, CICADA_MAX_CALLS_PER_HOUR, CICADA_ROLLING_CHAR_THRESHOLD,
+    CICADA_ROLLING_INTERVAL_SEC, CICADA_SILENCE_AUTO_STOP_MS,
 };
 pub use koe_protocol_kernel::commands::DeviceCommands;
 pub use koe_protocol_kernel::context::{
     filter_open_mine_todos, sort_context_timeline, ContextEvent, ContextOutcome, ContextReducer,
-    ContextState,
+    ContextSearchIndex, ContextState, ScoringMode,
 };
 pub use koe_protocol_kernel::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 pub use koe_protocol_kernel::domain::{
@@ -28,12 +28,18 @@ pub use koe_protocol_kernel::domain::{
 pub use koe_protocol_kernel::frame::{FrameReassembler, ProtocolFrame};
 pub use koe_protocol_kernel::library::{RecordingEntry, RecordingLibrary};
 pub use koe_protocol_kernel::mcp_acp::{
-    is_supported_mcp_tool, McpAcpEvent, McpAcpOutcome, McpAcpReducer, McpAcpState, KOE_MCP_TOOLS,
+    compute_pack_sync_delta, constant_time_eq, is_supported_mcp_tool, AcpAgentCard, AcpTaskPhase,
+    AcpTaskRecord, LiveLeaseValidator, LivePublicationLease, McpAcpEvent, McpAcpOutcome,
+    McpAcpOwnedRuntime, McpAcpReducer, McpAcpState, McpAcpWorkspaceView, McpPairingMode,
+    McpToolError, PackSyncDelta, PairingTicket, QwennoteCatalog, SyncPackSummary,
+    ACP_PROTOCOL_VERSION, KOE_ACP_METHODS, KOE_MCP_TOOLS, LIVE_LEASE_DEFAULT_TTL_SEC,
+    LIVE_LEASE_MAX_REMAINING_SEC, MAX_ACP_TASK_LOGS, MAX_JSONRPC_REQUEST_BYTES,
+    MAX_JSONRPC_RESPONSE_BYTES, MCP_PROTOCOL_VERSION, PAIRING_TICKET_PREFIX,
 };
 pub use koe_protocol_kernel::minutes::{
     contains_calculation_phrase, contains_percentage, validate_calculation_grounding,
-    validate_minutes_grounding, MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState,
-    MinutesValidationError,
+    validate_minutes_grounding, JsonValue, MinutesEvent, MinutesOutcome, MinutesReducer,
+    MinutesState, MinutesValidationError, BUILTIN_MINUTE_TEMPLATES,
 };
 pub use koe_protocol_kernel::models::{DeviceInfoModel, OfflineFileEntry, OfflineFileList};
 pub use koe_protocol_kernel::ogg_opus::OggOpus;
@@ -117,6 +123,14 @@ pub struct DesktopHostSnapshot {
     pub library: LibrarySnapshot,
     /// Total number of `.opus`/`.wav` recording pairs exported to disk by this host.
     pub exported_count: usize,
+    /// Total number of `.koepack v2` archives stored in the host's `/sync/packs` catalog.
+    pub pack_count: usize,
+    /// Total number of indexed documents in the host's [`ContextSearchIndex`].
+    pub indexed_context_docs: usize,
+    /// Total number of MCP tool and ACP task calls handled by this host.
+    pub mcp_handled_calls: u64,
+    /// Active `live.json` publication lease generation (`0` if unpublished).
+    pub live_generation: u64,
 }
 
 /// Stateful desktop host controller combining [`TransportSession`], [`RecordingLibrary`],
@@ -126,6 +140,12 @@ pub struct DesktopBeanHost {
     session: TransportSession,
     library: RecordingLibrary,
     spine: UtteranceSpine,
+    minutes: MinutesState,
+    cicada: CicadaState,
+    rolling_scheduler: RollingMinutesScheduler,
+    context: ContextState,
+    search_index: ContextSearchIndex,
+    mcp_acp: McpAcpState,
     export_dir: PathBuf,
     exported_files: Vec<DesktopExportedRecording>,
 }
@@ -147,6 +167,12 @@ impl DesktopBeanHost {
             session: TransportSession::with_decoder_factory(factory),
             library: RecordingLibrary::new(),
             spine: UtteranceSpine::new("desktop-default"),
+            minutes: MinutesState::default(),
+            cicada: CicadaState::default(),
+            rolling_scheduler: RollingMinutesScheduler::new("desktop-default"),
+            context: ContextState::default(),
+            search_index: ContextSearchIndex::new(),
+            mcp_acp: McpAcpState::new(),
             export_dir: export_dir.into(),
             exported_files: Vec::new(),
         }
@@ -197,6 +223,278 @@ impl DesktopBeanHost {
     ) -> Option<SegmentId> {
         self.spine
             .append_segment(text, start_ms, end_ms, source_language, provider)
+    }
+
+    /// Returns an immutable reference to the host's [`MinutesState`].
+    #[must_use]
+    pub fn minutes(&self) -> &MinutesState {
+        &self.minutes
+    }
+
+    /// Returns a mutable reference to the host's [`MinutesState`].
+    pub fn minutes_mut(&mut self) -> &mut MinutesState {
+        &mut self.minutes
+    }
+
+    /// Returns an immutable reference to the host's [`CicadaState`].
+    #[must_use]
+    pub fn cicada(&self) -> &CicadaState {
+        &self.cicada
+    }
+
+    /// Returns an immutable reference to the host's [`RollingMinutesScheduler`].
+    #[must_use]
+    pub fn rolling_scheduler(&self) -> &RollingMinutesScheduler {
+        &self.rolling_scheduler
+    }
+
+    /// Returns a mutable reference to the host's [`RollingMinutesScheduler`].
+    pub fn rolling_scheduler_mut(&mut self) -> &mut RollingMinutesScheduler {
+        &mut self.rolling_scheduler
+    }
+
+    /// Returns an immutable reference to the host's [`ContextState`].
+    #[must_use]
+    pub fn context(&self) -> &ContextState {
+        &self.context
+    }
+
+    /// Returns an immutable reference to the host's [`ContextSearchIndex`].
+    #[must_use]
+    pub fn search_index(&self) -> &ContextSearchIndex {
+        &self.search_index
+    }
+
+    /// Returns a mutable reference to the host's [`ContextSearchIndex`].
+    pub fn search_index_mut(&mut self) -> &mut ContextSearchIndex {
+        &mut self.search_index
+    }
+
+    /// Returns an immutable reference to the host's [`McpAcpState`].
+    #[must_use]
+    pub fn mcp_acp(&self) -> &McpAcpState {
+        &self.mcp_acp
+    }
+
+    /// Returns a mutable reference to the host's [`McpAcpState`].
+    pub fn mcp_acp_mut(&mut self) -> &mut McpAcpState {
+        &mut self.mcp_acp
+    }
+
+    /// Appends a finalized utterance segment and indexes it across `spine`, `rolling_scheduler`, `context`, and `search_index`.
+    pub fn ingest_utterance_with_context(
+        &mut self,
+        text: impl Into<String>,
+        start_ms: u64,
+        end_ms: u64,
+        source_language: impl Into<String>,
+        provider: impl Into<String>,
+        now_epoch_sec: u64,
+    ) -> Option<SegmentId> {
+        let text_str = text.into();
+        let seg_id = self
+            .spine
+            .append_segment(text_str.clone(), start_ms, end_ms, source_language, provider)?;
+        let _ = self.rolling_scheduler.append_segment(
+            &seg_id.to_string(),
+            &text_str,
+            now_epoch_sec.saturating_mul(1_000),
+        );
+        let _ = self.search_index.add_document(&text_str);
+        let _ = ContextState::reduce(
+            &mut self.context,
+            &self.spine,
+            ContextEvent::IngestContextItem(ContextItem {
+                id: format!("ctx-{seg_id}"),
+                kind: ContextKind::Recording,
+                source: ContextSource::DeviceMic,
+                created_at_epoch_sec: now_epoch_sec,
+                title: seg_id.to_string(),
+                summary: text_str.trim().to_string(),
+                project_id: None,
+                place_label: None,
+                citations: vec![seg_id],
+            }),
+        );
+        if text_str.contains("待办")
+            || text_str.contains("前把")
+            || text_str.contains("提交")
+            || text_str.contains("发给")
+        {
+            let _ = ContextState::reduce(
+                &mut self.context,
+                &self.spine,
+                ContextEvent::IngestTodoItem(TodoItem {
+                    id: format!("todo-{seg_id}"),
+                    title: text_str.trim().to_string(),
+                    kind: TodoKind::Mine,
+                    status: TodoStatus::Open,
+                    created_at_epoch_sec: now_epoch_sec,
+                    due_at_epoch_sec: None,
+                    assignee: None,
+                    citations: vec![seg_id],
+                }),
+            );
+        }
+        Some(seg_id)
+    }
+
+    /// Applies a [`MinutesEvent`] to the host's [`MinutesState`] against `self.spine`.
+    pub fn reduce_minutes(&mut self, event: MinutesEvent) -> MinutesOutcome {
+        MinutesState::reduce(&mut self.minutes, &self.spine, event)
+    }
+
+    /// Applies a [`CicadaEvent`] to the host's [`CicadaState`] against `self.spine`.
+    pub fn reduce_cicada(&mut self, event: CicadaEvent) -> CicadaOutcome {
+        CicadaState::reduce(&mut self.cicada, &self.spine, event)
+    }
+
+    /// Applies a [`ContextEvent`] to the host's [`ContextState`] against `self.spine`.
+    pub fn reduce_context(&mut self, event: ContextEvent) -> ContextOutcome {
+        ContextState::reduce(&mut self.context, &self.spine, event)
+    }
+
+    /// Synchronizes `qwennote-minutes` hotwords and speaker aliases across `mcp_acp`, `minutes`, and `spine`.
+    pub fn sync_qwennote_hotwords(
+        &mut self,
+        hotwords: &[&str],
+        speaker_aliases: &[(&str, &str)],
+    ) -> usize {
+        for &w in hotwords {
+            let _ = MinutesState::reduce(
+                &mut self.minutes,
+                &self.spine,
+                MinutesEvent::AddHotWord(w.to_string()),
+            );
+        }
+        for &(from, to) in speaker_aliases {
+            let _ = self.spine.replace_speaker_name(from, to);
+        }
+        if let Some(ref mut mins) = self.minutes.latest_minutes {
+            mins.replace_terms(speaker_aliases);
+        }
+        self.mcp_acp.sync_qwennote(hotwords, speaker_aliases, None)
+    }
+
+    /// Issues and stores a `KOEMCP1.<base64url>` pairing ticket on this host.
+    pub fn issue_pairing_ticket(
+        &mut self,
+        base_url: &str,
+        token: &str,
+        mode: McpPairingMode,
+        email: Option<&str>,
+        expires_at_epoch_sec: Option<u64>,
+    ) -> Result<String, McpToolError> {
+        self.mcp_acp
+            .configure_pairing(base_url, token, mode, email, expires_at_epoch_sec)
+    }
+
+    /// Verifies an HTTP `Authorization: Bearer <token>` header at `now_epoch_sec`.
+    #[must_use]
+    pub fn verify_bearer_header(&self, auth_header: Option<&str>, now_epoch_sec: u64) -> bool {
+        self.mcp_acp.verify_bearer_header(auth_header, now_epoch_sec)
+    }
+
+    /// Publishes a 15-second live lease and atomically writes `live.json` to `export_dir`.
+    pub fn refresh_live_publication(&mut self, now_epoch_sec: u64) -> Result<u64, McpToolError> {
+        let next_gen = self
+            .mcp_acp
+            .live_lease
+            .map_or(1, |l| l.generation.saturating_add(1))
+            .max(self.spine.revision());
+        let lease = self.mcp_acp.publish_live_lease(
+            next_gen,
+            now_epoch_sec,
+            LIVE_LEASE_DEFAULT_TTL_SEC,
+        )?;
+        let _ = fs::create_dir_all(&self.export_dir);
+        let live_path = self.export_dir.join("live.json");
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("generation".to_string(), JsonValue::Number(lease.generation as f64));
+        map.insert(
+            "expiresAtEpochSec".to_string(),
+            JsonValue::Number(lease.expires_at_epoch_sec as f64),
+        );
+        map.insert(
+            "sessionId".to_string(),
+            JsonValue::String(self.spine.session_id().to_string()),
+        );
+        let json = JsonValue::Object(map).to_json_string();
+        Self::write_atomic(&live_path, json.as_bytes());
+        Ok(lease.generation)
+    }
+
+    /// Encodes the current workspace into a `.koepack v2` archive, registers it in `/sync/packs`, and writes `{id}.koepack` to `export_dir`.
+    pub fn export_koepack_v2_to_disk(
+        &mut self,
+        title: &str,
+        exported_at_iso: &str,
+    ) -> Result<(SyncPackSummary, PathBuf), McpToolError> {
+        let view = McpAcpWorkspaceView {
+            spine: &mut self.spine,
+            library: &self.library,
+            minutes: &mut self.minutes,
+            rolling_scheduler: &mut self.rolling_scheduler,
+            context: &mut self.context,
+            search_index: &mut self.search_index,
+        };
+        let (summary, raw_bytes) = self
+            .mcp_acp
+            .build_and_store_koepack_from_workspace(&view, title, exported_at_iso)?;
+        let _ = fs::create_dir_all(&self.export_dir);
+        let pack_path = self.export_dir.join(format!("{}.koepack", summary.id));
+        Self::write_atomic(&pack_path, &raw_bytes);
+        Ok((summary, pack_path))
+    }
+
+    /// Validates and stores an uploaded `.koepack v2` archive in `/sync/packs` and writes `{material_id}.koepack` to `export_dir`.
+    pub fn put_sync_pack(
+        &mut self,
+        material_id: &str,
+        raw_pack: &[u8],
+    ) -> Result<SyncPackSummary, McpToolError> {
+        let summary = self.mcp_acp.put_sync_pack(material_id, raw_pack)?;
+        let _ = fs::create_dir_all(&self.export_dir);
+        let pack_path = self.export_dir.join(format!("{}.koepack", summary.id));
+        Self::write_atomic(&pack_path, raw_pack);
+        Ok(summary)
+    }
+
+    /// Scans `export_dir` for `*.koepack` files and registers valid archives into `mcp_acp`.
+    pub fn load_existing_packs(&mut self) -> std::io::Result<usize> {
+        if !self.export_dir.exists() {
+            return Ok(0);
+        }
+        let mut loaded = 0usize;
+        for dir_entry in fs::read_dir(&self.export_dir)? {
+            let dir_entry = dir_entry?;
+            let path = dir_entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("koepack") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let bytes = fs::read(&path)?;
+            if self.mcp_acp.put_sync_pack(stem, &bytes).is_ok() {
+                loaded += 1;
+            }
+        }
+        Ok(loaded)
+    }
+
+    /// Dispatches a JSON-RPC 2.0 MCP or ACP request against this host's unified workspace.
+    pub fn dispatch_jsonrpc(&mut self, raw_json: &str, now_epoch_sec: u64) -> Option<String> {
+        let mut view = McpAcpWorkspaceView {
+            spine: &mut self.spine,
+            library: &self.library,
+            minutes: &mut self.minutes,
+            rolling_scheduler: &mut self.rolling_scheduler,
+            context: &mut self.context,
+            search_index: &mut self.search_index,
+        };
+        self.mcp_acp
+            .dispatch_jsonrpc(&mut view, raw_json, now_epoch_sec)
     }
 
     /// Returns all recordings exported or discovered on disk in this host.
@@ -395,6 +693,10 @@ impl DesktopBeanHost {
                 last_trashed_id: self.library.trashed_entry.as_ref().map(|e| e.id),
             },
             exported_count: self.exported_files.len(),
+            pack_count: self.mcp_acp.pack_count(),
+            indexed_context_docs: self.search_index.doc_count(),
+            mcp_handled_calls: self.mcp_acp.handled_calls,
+            live_generation: self.mcp_acp.live_lease.map_or(0, |l| l.generation),
         }
     }
 
@@ -625,6 +927,86 @@ mod tests {
             host.spine()
         )
         .is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn desktop_host_unifies_minutes_cicada_context_koepack_and_mcp_acp_jsonrpc() {
+        let dir = temp_export_dir("unified-slice-n");
+        let mut host = DesktopBeanHost::new(&dir);
+
+        let s1 = host
+            .ingest_utterance_with_context(
+                "下周三前把海外渠道合同发给法务审阅。",
+                0,
+                2_400,
+                "zh",
+                "qwen",
+                1_762_540_000,
+            )
+            .unwrap();
+        assert_eq!(s1.to_string(), "S1");
+        assert_eq!(
+            host.sync_qwennote_hotwords(&["海外渠道", "心力豆"], &[("张总", "张伟")]),
+            2
+        );
+
+        let ticket = host
+            .issue_pairing_ticket(
+                "https://koe.example.com/mcp",
+                "koe-secret-token-32bytes-minimum",
+                McpPairingMode::Vps,
+                Some("owner@example.com"),
+                Some(1_762_543_600),
+            )
+            .unwrap();
+        assert!(ticket.starts_with(PAIRING_TICKET_PREFIX));
+        assert!(host.verify_bearer_header(
+            Some("Bearer koe-secret-token-32bytes-minimum"),
+            1_762_540_001
+        ));
+
+        let gen = host.refresh_live_publication(1_762_540_002).unwrap();
+        assert_eq!(gen, 1);
+        assert!(dir.join("live.json").exists());
+
+        let (pack_summary, pack_path) = host
+            .export_koepack_v2_to_disk("海外渠道合同", "2026-11-07T18:00:00Z")
+            .unwrap();
+        assert!(pack_path.exists());
+
+        let mut fresh_host = DesktopBeanHost::new(&dir);
+        assert_eq!(fresh_host.load_existing_packs().unwrap(), 1);
+        assert_eq!(fresh_host.snapshot().pack_count, 1);
+
+        let _ = host
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+                1_762_540_005,
+            )
+            .unwrap();
+        assert!(host
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                1_762_540_005,
+            )
+            .is_none());
+        let search_resp = host
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":5}}}"#,
+                1_762_540_006,
+            )
+            .unwrap();
+        assert!(search_resp.contains(&pack_summary.id) || search_resp.contains("海外渠道合同"));
+
+        let acp_send = host
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":3,"method":"acp/task.send","params":{"prompt":"海外渠道合同"}}"#,
+                1_762_540_007,
+            )
+            .unwrap();
+        assert!(acp_send.contains("acp-task-1"));
+        assert!(host.snapshot().mcp_handled_calls >= 2);
         let _ = fs::remove_dir_all(&dir);
     }
 }
