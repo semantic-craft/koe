@@ -330,7 +330,7 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_object(&mut self) -> Result<JsonValue, String> {
-        self.pos += 1; // '{'
+        self.pos += 1;
         self.skip_ws();
         let mut map = BTreeMap::new();
         if self.peek() == Some(b'}') {
@@ -366,7 +366,7 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_array(&mut self) -> Result<JsonValue, String> {
-        self.pos += 1; // '['
+        self.pos += 1;
         self.skip_ws();
         let mut items = Vec::new();
         if self.peek() == Some(b']') {
@@ -521,10 +521,6 @@ pub fn extract_json_object(raw: &str) -> &str {
     }
     s
 }
-
-// ============================================================================
-// 1. DashScope Qwen ASR Batch & Streaming Protocol Codec
-// ============================================================================
 
 /// Encodes the DashScope batch file transcription submission JSON payload.
 ///
@@ -1189,10 +1185,6 @@ impl QwenStreamAccumulator {
     }
 }
 
-// ============================================================================
-// 2. Two-Stage Chunked Qwen Minutes State Machine
-// ============================================================================
-
 /// A contiguous batch of `[S{k}] {text}` lines sized within the per-call rune budget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinutesChunkBatch {
@@ -1488,10 +1480,6 @@ impl MinutesChunkJob {
     }
 }
 
-// ============================================================================
-// 3. Full S1..Sn Grounding & Anti-Hallucination Validator
-// ============================================================================
-
 /// Validation failure returned when a [`MeetingMinutesV2`] document or claim violates `S1..Sn` grounding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MinutesValidationError {
@@ -1675,7 +1663,6 @@ pub fn contains_ratio_calculation_pattern(text: &str) -> bool {
         let chars: Vec<char> = clause.chars().collect();
         let n = chars.len();
         for i in 0..n {
-            // 基于.{0,24}计算
             if i + 1 < n && chars[i] == '基' && chars[i + 1] == '于' {
                 let rest: String = chars[i + 2..(i + 2 + 26).min(n)].iter().collect();
                 if let Some(pos) = rest.find("计算") {
@@ -1684,7 +1671,6 @@ pub fn contains_ratio_calculation_pattern(text: &str) -> bool {
                     }
                 }
             }
-            // 按.{0,24}计算 or 按.{0,24}比例.{0,16}(缴纳|计算)
             if chars[i] == '按' {
                 let window: String = chars[i + 1..(i + 1 + 48).min(n)].iter().collect();
                 if let Some(pos) = window.find("计算") {
@@ -2447,10 +2433,6 @@ pub fn encode_meeting_minutes_json(minutes: &MeetingMinutesV2) -> String {
     JsonValue::Object(root).to_json_string()
 }
 
-// ============================================================================
-// 4. qwennote-minutes Hot-Words, Templates, & Single-Pass Longest-Match Replacement
-// ============================================================================
-
 /// Replaces all occurrences of non-empty keys in `replacements` in a single left-to-right pass,
 /// matching the longest key at each position without re-scanning replacement text
 /// (matching `replaceMinuteTerms` in `lib/state/meeting_minutes.dart`).
@@ -2847,7 +2829,6 @@ pub fn extract_vocabulary_suggestions(
         out.len() >= limit
     };
 
-    // 1. Terms inside Chinese quotes/brackets: 《...》「...」『...』【...】“...”
     for (open, close) in [
         ('《', '》'),
         ('「', '」'),
@@ -2870,7 +2851,6 @@ pub fn extract_vocabulary_suggestions(
         }
     }
 
-    // 2. CamelCase, ALLCAPS, or alphanumeric product tokens (e.g. Soundcore, D3200, Qwen3, CloudKit)
     for token in summary_text.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
         let len = token.len();
         if (2..=24).contains(&len)
@@ -2887,10 +2867,6 @@ pub fn extract_vocabulary_suggestions(
 
     out
 }
-
-// ============================================================================
-// 5. Pure Domain State & Reducer
-// ============================================================================
 
 /// Pure state for the structured meeting minutes domain module.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -3167,7 +3143,6 @@ mod tests {
                 "qwen",
             );
         }
-        // Force 4 batches by setting max_runes = 30
         let mut job = MinutesChunkJob::new(&spine, 30, true);
         assert_eq!(job.batches().len(), 4);
 
@@ -3179,7 +3154,6 @@ mod tests {
         assert!(job.next_pending_node(&spine, false).is_err());
         assert!(job.next_pending_node(&spine, true).is_ok());
 
-        // Reject citing S2 in batch 1 (only S1 is allowed in batch 1)
         let bad_leaf = r#"{"schemaVersion":2,"title":"T1","overview":"O1","topics":[{"text":"主題","sources":["S2"]}],"decisions":[],"actions":[],"questions":[]}"#;
         assert_eq!(
             job.complete_node(&node1.node_id, bad_leaf, &node1.allowed_sources, &spine),
@@ -3198,7 +3172,6 @@ mod tests {
                 .unwrap();
         }
 
-        // Next node should be "汇总 1-0" merging leaf 1, 2, 3 (allowed S1, S2, S3)
         let merge1 = job.next_pending_node(&spine, false).unwrap().unwrap();
         assert_eq!(merge1.node_id, "汇总 1-0");
         assert!(merge1.is_merge_node);
@@ -3209,7 +3182,6 @@ mod tests {
         job.complete_node(&merge1.node_id, merge1_json, &merge1.allowed_sources, &spine)
             .unwrap();
 
-        // Final merge "汇总 2-0" merging "汇总 1-0" and leaf 4
         let merge2 = job.next_pending_node(&spine, false).unwrap().unwrap();
         assert_eq!(merge2.node_id, "汇总 2-0");
         let merge2_json = r#"{"schemaVersion":2,"title":"Final","overview":"All","topics":[{"text":"总结","sources":["S1","S4"]}],"decisions":[],"actions":[],"questions":[]}"#;

@@ -629,7 +629,6 @@ void main() {
         equals(1),
       );
 
-      // 1. Out-of-range citation S9 -> both Dart and Rust reject (-1)
       const invalidCiteJson = '''
 {
   "schemaVersion": 2,
@@ -654,7 +653,6 @@ void main() {
         equals(-1),
       );
 
-      // 2. Ungrounded heard variant -> both Dart and Rust reject (-2)
       const ungroundedHeardJson = '''
 {
   "schemaVersion": 2,
@@ -682,7 +680,6 @@ void main() {
         equals(-2),
       );
 
-      // 3. Cross-segment wage + percentage synthesis across S1 and S2 -> both Dart and Rust reject (-3)
       const stitchedWageJson = '''
 {
   "schemaVersion": 2,
@@ -707,7 +704,6 @@ void main() {
         equals(-3),
       );
 
-      // 4. Baseless ratio calculation across S1 and S2 -> both Dart and Rust reject (-3)
       const baselessRatioJson = '''
 {
   "schemaVersion": 2,
@@ -732,7 +728,6 @@ void main() {
         equals(-3),
       );
 
-      // 5. Longest-match single-pass term replacement parity
       const sampleText = '深科与深科Work录音豆以及安克创新';
       const replacements = <String, String>{
         '深科': '声刻',
@@ -748,7 +743,6 @@ void main() {
         equals('声刻与Soundcore Work录音豆以及安克创新'),
       );
 
-      // 6. Batch planning count parity
       expect(
         ffi.minutesPlanBatchesCount(spineHandle: spine, maxRunes: 6000),
         equals(1),

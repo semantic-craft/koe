@@ -98,11 +98,11 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: `d7fab08;cargo test 41 passed;desktop 4 passed;swift+jni+dart parity passed`
 
-### [ ] Slice K: 千问闪记 ASR 协议、分块归并纪要状态机、`S1..Sn` 防幻觉校验与 `qwennote-minutes` 热词模板下沉
+### [x] Slice K: 千问闪记 ASR 协议、分块归并纪要状态机、`S1..Sn` 防幻觉校验与 `qwennote-minutes` 热词模板下沉
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core/src/minutes.rs` 完整实现 DashScope 语音转写任务与流式识别协议编解码、千问大模型二阶段分块归并纪要生成状态机、`S1..Sn` 严格原句证据校验器（拒绝跨句拼接工资与百分比、拒绝无基数比例与未引用数字），以及千问听记 `qwennote-minutes` 热词表、说话人替换与自定义模板注入，通过 Dart vs Rust 纪要校验差分对拍测试。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: 2f1523a;rust/koe_core/src/minutes.rs;rust/koe_core/src/domain.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
 ### [ ] Slice L: Cicada 同步双语翻译、有界实时滚动纪要（120次/时）、`.koepack v2` 资料包与同传路由下沉
 - **Playbook**: `Feature`
