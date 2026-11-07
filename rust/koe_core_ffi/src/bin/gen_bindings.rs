@@ -476,6 +476,41 @@ public enum KoeCore {{
     return Data(bytes: validPtr, count: outLen)
   }}
 
+  public static func decodeOpusPcm16(_ rawOpusFrames: Data, sampleRate: UInt32 = 16_000) -> Data {{
+    var outLen: Int = 0
+    let ptr: UnsafeMutablePointer<UInt8>? = rawOpusFrames.withUnsafeBytes {{ raw in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return nil }}
+      return koe_opus_decode_pcm16(base, rawOpusFrames.count, sampleRate, &outLen)
+    }}
+    guard let validPtr = ptr, outLen > 0 else {{ return Data() }}
+    defer {{ koe_buffer_free(validPtr, outLen) }}
+    return Data(bytes: validPtr, count: outLen)
+  }}
+
+  public static func decodeOpusWav(
+    _ rawOpusFrames: Data,
+    sampleRate: UInt32 = 48_000,
+    marksMs: [UInt64] = []
+  ) -> Data {{
+    var outLen: Int = 0
+    let ptr: UnsafeMutablePointer<UInt8>? = rawOpusFrames.withUnsafeBytes {{ raw in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return nil }}
+      return marksMs.withUnsafeBufferPointer {{ marksBuf in
+        koe_opus_decode_wav(
+          base,
+          rawOpusFrames.count,
+          sampleRate,
+          marksBuf.baseAddress,
+          marksBuf.count,
+          &outLen
+        )
+      }}
+    }}
+    guard let validPtr = ptr, outLen > 0 else {{ return Data() }}
+    defer {{ koe_buffer_free(validPtr, outLen) }}
+    return Data(bytes: validPtr, count: outLen)
+  }}
+
   public static func parseFileHead(_ packet: Data, sessionKey: Data? = nil) -> KoeAudioFileHeadInfo? {{
     var cHead = KoeAudioFileHead()
     let ok = packet.withUnsafeBytes {{ raw -> Int32 in
@@ -725,6 +760,7 @@ public struct KoeSessionStepOutcome: Equatable, Sendable {{
   public let hasFinalizedRecording: Bool
   public let slicesUnpackedCount: UInt32
   public let newMarksCount: UInt32
+  public let livePcm16BytesAvailable: UInt32
   public let transferPhase: UInt8
   public let transferFileId: UInt32
   public let receivedWireBytes: UInt32
@@ -821,6 +857,15 @@ public final class KoeTransportSession: @unchecked Sendable {{
     koe_session_finalize_active_transfer(handle, nowEpochSec) != 0
   }}
 
+  public func takeLivePcm16() -> Data {{
+    var outLen: Int = 0
+    guard let ptr = koe_session_take_live_pcm16(handle, &outLen), outLen > 0 else {{
+      return Data()
+    }}
+    defer {{ koe_buffer_free(ptr, outLen) }}
+    return Data(bytes: ptr, count: outLen)
+  }}
+
   public func takeFinalized() -> KoeFinalizedRecordingModel? {{
     var cEntry = KoeRecordingEntry()
     var oggPtr: UnsafeMutablePointer<UInt8>?
@@ -872,6 +917,7 @@ public final class KoeTransportSession: @unchecked Sendable {{
       hasFinalizedRecording: step.has_finalized_recording != 0,
       slicesUnpackedCount: step.slices_unpacked_count,
       newMarksCount: step.new_marks_count,
+      livePcm16BytesAvailable: step.live_pcm16_bytes_available,
       transferPhase: step.transfer.phase,
       transferFileId: step.transfer.file_id,
       receivedWireBytes: step.transfer.received_wire_bytes,
@@ -1050,6 +1096,8 @@ object KoeCoreNative {{
     @JvmStatic external fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray
     @JvmStatic external fun muxOggOpus(rawOpusFrames: ByteArray): ByteArray
     @JvmStatic external fun buildAudiblePreviewWav(durationMs: Long, marksMs: LongArray): ByteArray
+    @JvmStatic external fun decodeOpusPcm16(rawOpusFrames: ByteArray, sampleRate: Int): ByteArray?
+    @JvmStatic external fun decodeOpusWav(rawOpusFrames: ByteArray, sampleRate: Int, marksMs: LongArray): ByteArray?
 
     @JvmStatic external fun reassemblerNew(): Long
     @JvmStatic external fun reassemblerFree(handle: Long)
@@ -1064,6 +1112,7 @@ object KoeCoreNative {{
     @JvmStatic external fun sessionIngestBleChunk(handle: Long, chunk: ByteArray, nowEpochSec: Long): LongArray
     @JvmStatic external fun sessionPopOutboundTx(handle: Long): ByteArray?
     @JvmStatic external fun sessionSimulateRealtimePipeline(handle: Long, nowEpochSec: Long): LongArray
+    @JvmStatic external fun sessionTakeLivePcm16(handle: Long): ByteArray?
     @JvmStatic external fun sessionTakeFinalizedMeta(handle: Long): LongArray?
     @JvmStatic external fun sessionTakeFinalizedOgg(handle: Long): ByteArray?
     @JvmStatic external fun sessionTakeFinalizedWav(handle: Long): ByteArray?
@@ -1128,6 +1177,9 @@ class KoeTransportSession : AutoCloseable {{
 
     fun simulateRealtimePipeline(nowEpochSec: Long): LongArray =
         if (handle == 0L) LongArray(0) else KoeCoreNative.sessionSimulateRealtimePipeline(handle, nowEpochSec)
+
+    fun takeLivePcm16(): ByteArray? =
+        if (handle == 0L) null else KoeCoreNative.sessionTakeLivePcm16(handle)
 
     fun takeFinalizedMeta(): LongArray? =
         if (handle == 0L) null else KoeCoreNative.sessionTakeFinalizedMeta(handle)

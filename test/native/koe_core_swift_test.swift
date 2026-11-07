@@ -75,6 +75,27 @@ struct KoeCoreSwiftTest {
     let wav = KoeCore.wavHeader(pcmLength: 1920)
     check(wav.count == 44 && String(decoding: wav.prefix(4), as: UTF8.self) == "RIFF", "wavHeader must emit 44-byte RIFF")
 
+    let opusPacket94 = Data([
+      0x78, 0x81, 0xa7, 0x5d, 0x6c, 0x9e, 0x99, 0xac, 0x00, 0x00, 0x06, 0x7e,
+      0x56, 0x39, 0xf7, 0x3b, 0x1e, 0xa2, 0xdc, 0x31, 0x0f, 0x52, 0x38, 0x39,
+      0x39, 0x3e, 0xa3, 0xd0, 0x84, 0x47, 0xcb, 0xe1, 0xb6, 0xb8, 0xff, 0x44,
+      0x14, 0x3d, 0x76, 0x21, 0xaf, 0x07, 0x34, 0xdd, 0x07, 0x87, 0xec, 0x99,
+      0xfe, 0xc0, 0xf5, 0x44, 0x18, 0x9d, 0x5f, 0x48, 0x29, 0x42, 0xde, 0xd8,
+      0x2f, 0x85, 0xb6, 0x18, 0xf4, 0x3b, 0x64, 0x92, 0xde, 0x94, 0x70, 0x50,
+      0xe0, 0x97, 0x68, 0x7d, 0x6c, 0x10, 0xd0, 0xaf, 0x63, 0x85, 0x53, 0xa2,
+      0x71, 0x65, 0xe7, 0x91, 0x29, 0x01, 0x80, 0x53, 0x15, 0x04,
+    ])
+    var padded160 = Data(count: 160)
+    padded160.replaceSubrange(0..<opusPacket94.count, with: opusPacket94)
+    let pcm16k = KoeCore.decodeOpusPcm16(padded160, sampleRate: 16_000)
+    check(pcm16k.count == 640, "decodeOpusPcm16(16kHz) must decode 320 samples (640 bytes)")
+    let sample130 = Int16(bitPattern: UInt16(pcm16k[130 * 2]) | (UInt16(pcm16k[130 * 2 + 1]) << 8))
+    check(abs(Int(sample130) - (-4130)) <= 16, "decodeOpusPcm16(16kHz) sample 130 must be near -4130")
+    let pcm48k = KoeCore.decodeOpusPcm16(padded160, sampleRate: 48_000)
+    check(pcm48k.count == 1920, "decodeOpusPcm16(48kHz) must decode 960 samples (1920 bytes)")
+    let decodedWav = KoeCore.decodeOpusWav(padded160, sampleRate: 48_000, marksMs: [0])
+    check(decodedWav.count == 44 + 1920 && String(decoding: decodedWav.prefix(4), as: UTF8.self) == "RIFF", "decodeOpusWav must emit 1964-byte RIFF WAV")
+
     var headFrame = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x07, 0x62, 0x00])
     var fid: UInt32 = UInt32(888).littleEndian
     var fsize: UInt32 = UInt32.max.littleEndian
@@ -144,10 +165,19 @@ struct KoeCoreSwiftTest {
       check(opusBytes.count > 64 && String(decoding: opusBytes.prefix(4), as: UTF8.self) == "OggS", "saved .opus file must start with OggS")
       if let wavURL = saved.playableWAVURL {
         let wavBytes = (try? Data(contentsOf: wavURL)) ?? Data()
-        check(wavBytes.count > 44 && String(decoding: wavBytes.prefix(4), as: UTF8.self) == "RIFF", "saved .wav file must start with RIFF")
+        check(
+          wavBytes.count == 44 + 60 * 960 * 2 && String(decoding: wavBytes.prefix(4), as: UTF8.self) == "RIFF",
+          "saved .wav file must be 115,244 bytes of decoded 48 kHz RIFF WAV"
+        )
       } else {
         check(false, "saved recording must include playableWAVURL")
       }
+
+      let liveSession = KoeTransportSession()
+      let liveStep = liveSession.simulateRealtimePipeline(nowEpochSec: 1_700_000_000)
+      check(liveStep.livePcm16BytesAvailable == 38_400, "simulateRealtimePipeline must report 38,400 bytes of 16 kHz live PCM16")
+      let livePcm = liveSession.takeLivePcm16()
+      check(livePcm.count == 38_400, "takeLivePcm16 must drain 38,400 bytes")
 
       await MainActor.run {
         let host = KoeNativeHost(transport: actor, exportDirectory: tempDir)

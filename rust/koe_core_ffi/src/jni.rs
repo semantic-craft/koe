@@ -6,15 +6,15 @@ use std::ffi::c_void;
 use std::sync::{Mutex, OnceLock};
 
 use crate::{
-    koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
+    koe_buffer_free, koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
     koe_library_move_to_trash, koe_library_new, koe_library_seek_ms, koe_library_select,
-    koe_library_snapshot, koe_library_undo_trash, koe_protocol_checksum, koe_protocol_encode,
-    koe_protocol_verify_checksum, koe_reassembler_free, koe_reassembler_ingest,
-    koe_reassembler_new, koe_reassembler_pop_packet, koe_reassembler_reset,
-    koe_session_accept_ecdh_reply, koe_session_begin_offline_pull, koe_session_free,
-    koe_session_ingest_ble_chunk, koe_session_new, koe_session_pop_outbound_tx,
-    koe_session_simulate_realtime_pipeline, session_map, KoeLibrarySnapshot, KoeRecordingEntry,
-    KoeSessionStepResult,
+    koe_library_snapshot, koe_library_undo_trash, koe_opus_decode_pcm16, koe_opus_decode_wav,
+    koe_protocol_checksum, koe_protocol_encode, koe_protocol_verify_checksum,
+    koe_reassembler_free, koe_reassembler_ingest, koe_reassembler_new, koe_reassembler_pop_packet,
+    koe_reassembler_reset, koe_session_accept_ecdh_reply, koe_session_begin_offline_pull,
+    koe_session_free, koe_session_ingest_ble_chunk, koe_session_new, koe_session_pop_outbound_tx,
+    koe_session_simulate_realtime_pipeline, koe_session_take_live_pcm16, session_map,
+    KoeLibrarySnapshot, KoeRecordingEntry, KoeSessionStepResult,
 };
 use koe_core::crypto::DeviceCrypto;
 use koe_core::ogg_opus::OggOpus;
@@ -124,7 +124,7 @@ unsafe fn jni_new_longs(env: JniEnv, values: &[i64]) -> JLongArray {
     arr
 }
 
-fn step_to_longs(step: &KoeSessionStepResult) -> [i64; 14] {
+fn step_to_longs(step: &KoeSessionStepResult) -> [i64; 15] {
     [
         i64::from(step.frames_decoded),
         i64::from(step.connection_phase),
@@ -140,6 +140,7 @@ fn step_to_longs(step: &KoeSessionStepResult) -> [i64; 14] {
         i64::from(step.transfer.file_id),
         i64::from(step.transfer.received_wire_bytes),
         i64::from(step.transfer.expected_wire_bytes),
+        i64::from(step.live_pcm16_bytes_available),
     ]
 }
 
@@ -235,6 +236,67 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_buildAudib
     let marks_u64: Vec<u64> = marks_i64.into_iter().map(|v| v.max(0) as u64).collect();
     let wav = OpusWave::build_audible_preview_wav(duration_ms.max(0) as u64, &marks_u64);
     unsafe { jni_new_bytes(env, &wav) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_decodeOpusPcm16(
+    env: JniEnv,
+    _cls: JClass,
+    raw_opus_frames: JByteArray,
+    sample_rate: JInt,
+) -> JByteArray {
+    let raw = unsafe { jni_read_bytes(env, raw_opus_frames) };
+    let mut out_len = 0usize;
+    let ptr = unsafe {
+        koe_opus_decode_pcm16(
+            raw.as_ptr(),
+            raw.len(),
+            sample_rate.max(0) as u32,
+            &mut out_len,
+        )
+    };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let arr = unsafe { jni_new_bytes(env, slice) };
+    unsafe {
+        koe_buffer_free(ptr, out_len);
+    }
+    arr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_decodeOpusWav(
+    env: JniEnv,
+    _cls: JClass,
+    raw_opus_frames: JByteArray,
+    sample_rate: JInt,
+    marks_ms: JLongArray,
+) -> JByteArray {
+    let raw = unsafe { jni_read_bytes(env, raw_opus_frames) };
+    let marks_i64 = unsafe { jni_read_longs(env, marks_ms) };
+    let marks_u64: Vec<u64> = marks_i64.into_iter().map(|v| v.max(0) as u64).collect();
+    let mut out_len = 0usize;
+    let ptr = unsafe {
+        koe_opus_decode_wav(
+            raw.as_ptr(),
+            raw.len(),
+            sample_rate.max(0) as u32,
+            marks_u64.as_ptr(),
+            marks_u64.len(),
+            &mut out_len,
+        )
+    };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let arr = unsafe { jni_new_bytes(env, slice) };
+    unsafe {
+        koe_buffer_free(ptr, out_len);
+    }
+    arr
 }
 
 #[no_mangle]
@@ -382,6 +444,7 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionIng
         slices_unpacked_count: 0,
         new_marks_count: 0,
         outbound_tx_count: 0,
+        live_pcm16_bytes_available: 0,
         transfer: crate::KoeTransferProgress {
             phase: 0,
             error_code: 0,
@@ -437,6 +500,7 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionSim
         slices_unpacked_count: 0,
         new_marks_count: 0,
         outbound_tx_count: 0,
+        live_pcm16_bytes_available: 0,
         transfer: crate::KoeTransferProgress {
             phase: 0,
             error_code: 0,
@@ -527,6 +591,25 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionTak
         return std::ptr::null_mut();
     }
     unsafe { jni_new_bytes(env, &wav) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionTakeLivePcm16(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JByteArray {
+    let mut out_len = 0usize;
+    let ptr = unsafe { koe_session_take_live_pcm16(handle as u64, &mut out_len) };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let arr = unsafe { jni_new_bytes(env, slice) };
+    unsafe {
+        koe_buffer_free(ptr, out_len);
+    }
+    arr
 }
 
 #[no_mangle]

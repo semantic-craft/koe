@@ -59,3 +59,31 @@
 - **Outcome**: 完成剩余次级页面与组件的 11 原则收口，使 `python3 -B scripts/verify-ui-principles.py --mode all` 全仓 62 个文件零违规；在 macOS 与 iOS 模拟器抓取真实界面截图核对视觉、字号、对比度与长文案排布，运行 `interrogate` / `deslop` / `no-comments` 并更新 PR 与进度页。
 - **Done Predicate**: `python3 -B scripts/verify-ui-principles.py --mode all`、`scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
 - **Evidence**: .scratch/pstack-relay/slice-e-ui-after.json;.scratch/pstack-relay/slice-e-full-check.log;.scratch/pstack-relay/screenshots/shell-mac-1280x900.png;.scratch/pstack-relay/screenshots/today-ios-390x844.png;.scratch/pstack-relay/screenshots/library-ios-390x844.png;.scratch/pstack-relay/screenshots/detail-ios-390x844.png;.scratch/pstack-relay/screenshots/detail-ios-320x740-2x.png;.scratch/pstack-relay/screenshots/settings-ios-390x844.png;scripts/verify-ui-principles.py;scripts/test_verify_ui_principles.py;test/ui_principles_slice_e_test.dart;progress/progress.json;progress/index.html
+
+---
+
+## 全景切片队列（F → I：Rust + SwiftUI + Compose/GPUI 三端高性能录音豆内核收口）
+
+### [x] Slice F: 真实 Opus 语音解码器下沉至 Rust 内核并替换谐波合成预览
+- **Playbook**: `Feature`
+- **Outcome**: 将 160 字节定长 Opus 帧尾部零填充裁剪（`trim_opus_packet`）与真实 `libopus` 16 kHz / 48 kHz 单声道 PCM16 LE 解码能力接入 `rust/koe_core` 与 `rust/koe_core_ffi`（保持 `rust/koe_core` 100% `#![forbid(unsafe_code)]`，通过回调或 FFI 桥接静态链接 `libopus`），使 `TransportSession::finalize_active_transfer` 与新增的 C-ABI / Swift / Kotlin JNI 接口直接产出真实人声 PCM16 与 WAV，并在包含真实 `libopus` 1.5.2 编码帧（样本 130 为 `-4130`）时解码出精确语音波形。
+- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift`、`./scripts/build-swiftui-macos.sh --install`、`/Applications/KoeSwiftUI.app/Contents/MacOS/KoeSwiftUI --verify-self` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: 5a569a9;rust/koe_core/src/wav.rs;rust/koe_core/src/session.rs;rust/koe_core_ffi/src/opus_ffi.rs;rust/koe_core_ffi/build.rs;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
+
+### [ ] Slice G: BLE 字节级断点续传、超时重试看门狗、2 秒静默收尾与后台恢复
+- **Playbook**: `Feature`
+- **Outcome**: 将 D3200 离线拉流的 `already_transferred`（`received_slices * 166`）字节级断点续传、看门狗超时重试状态机（每文件最多重试 2 次、单帧 5 秒超时）与实时流停止后的 2 秒静默排空窗口收进 `rust/koe_core::session::TransportSession`，并在 `darwin/KoeNativeTransport.swift` 补齐 `CBCentralManagerOptionRestoreIdentifierKey` 与外设自动重连。
+- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `PENDING`
+
+### [ ] Slice H: Wi-Fi SoftAP 高速批量同步（1A/05 配网 + WSS 控制流 + UDP :32003 切片拉流）下沉至 Rust
+- **Playbook**: `Feature`
+- **Outcome**: 将 D3200 Wi-Fi 快传模式（`0x1A/0x05` 热点开启应答解析、`wss://<bean_ip>:32002/` 控制帧编解码与 `UDP :32003` 高吞吐 `0x1A/0x08` 切片流重组解密）收进 `rust/koe_core`，通过 C-ABI / Swift / Kotlin JNI 统一暴露给三端宿主。
+- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `PENDING`
+
+### [ ] Slice I: 三端原生生产宿主接线（iOS SwiftUI + Android Compose JNI + 桌面 GPUI 共享 koe_core）与最终收口
+- **Playbook**: `Shipping`
+- **Outcome**: 将 `rust/koe_core` 接入桌面端 `desktop/core`、补齐 iOS/macOS SwiftUI 与 Android `KoeCore.kt` 全链路接线，完成对抗审查（`interrogate`）、代码精简（`deslop` / `no-comments`）、性能基准（`scripts/perf-check`）与晨间审计（`show-me-your-work` + `ketchup`）。
+- **Done Predicate**: `./scripts/test-koe-core-swift`、`./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
+- **Evidence**: `PENDING`

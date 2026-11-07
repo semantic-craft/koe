@@ -17,6 +17,7 @@ use koe_core::transport::{TransportSliceProcessor, OPUS_FRAME_BYTES};
 use koe_core::wav::OpusWave;
 
 pub mod jni;
+pub mod opus_ffi;
 
 /// C-ABI flat representation of `DeviceInfoModel` for stack-allocated FFI reads.
 #[repr(C)]
@@ -273,6 +274,8 @@ pub struct KoeSessionStepResult {
     pub new_marks_count: u32,
     /// Number of queued outbound TX frames awaiting `koe_session_pop_outbound_tx`.
     pub outbound_tx_count: u32,
+    /// Total buffered 16 kHz mono PCM16 LE bytes ready to drain via `koe_session_take_live_pcm16`.
+    pub live_pcm16_bytes_available: u32,
     /// Current transfer progress snapshot.
     pub transfer: KoeTransferProgress,
 }
@@ -858,6 +861,89 @@ pub unsafe extern "C" fn koe_wav_build_audible_preview(
     ptr
 }
 
+/// Decodes concatenated 160-byte D3200 Opus frames (`raw_ptr[0..raw_len]`) into
+/// mono PCM16 LE bytes at `sample_rate` (`8000 | 12000 | 16000 | 24000 | 48000`)
+/// using `libopus`. Stores the output byte length in `*out_len_ptr` and returns a
+/// heap buffer (freed via `koe_buffer_free`), or null if decoding fails.
+///
+/// # Safety
+///
+/// `raw_ptr` must be valid for reads of `raw_len` bytes, and `out_len_ptr` must be
+/// valid for writes of a `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_opus_decode_pcm16(
+    raw_ptr: *const u8,
+    raw_len: usize,
+    sample_rate: u32,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    opus_ffi::ensure_opus_factory_registered();
+    if raw_ptr.is_null() || raw_len == 0 || out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let raw = unsafe { slice::from_raw_parts(raw_ptr, raw_len) };
+    let Some(decoded) = OpusWave::decode_raw_frames_to_pcm16(raw, sample_rate, None) else {
+        unsafe {
+            *out_len_ptr = 0;
+        }
+        return std::ptr::null_mut();
+    };
+    let mut boxed = decoded.into_boxed_slice();
+    let len = boxed.len();
+    let ptr = boxed.as_mut_ptr();
+    std::mem::forget(boxed);
+    unsafe {
+        *out_len_ptr = len;
+    }
+    ptr
+}
+
+/// Decodes concatenated 160-byte D3200 Opus frames (`raw_ptr[0..raw_len]`) into a
+/// complete 44-byte RIFF/WAVE header + mono PCM16 LE payload at `sample_rate`
+/// using `libopus`, overlaying 880 Hz mark chimes at `marks_ptr[0..marks_len]`.
+/// Stores the output byte length in `*out_len_ptr` and returns a heap buffer
+/// (freed via `koe_buffer_free`), or null if decoding fails.
+///
+/// # Safety
+///
+/// `raw_ptr` must be valid for reads of `raw_len` bytes, `marks_ptr` must be valid
+/// for reads of `marks_len` `u64` items when non-null, and `out_len_ptr` must be
+/// valid for writes of a `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_opus_decode_wav(
+    raw_ptr: *const u8,
+    raw_len: usize,
+    sample_rate: u32,
+    marks_ptr: *const u64,
+    marks_len: usize,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    opus_ffi::ensure_opus_factory_registered();
+    if raw_ptr.is_null() || raw_len == 0 || out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let raw = unsafe { slice::from_raw_parts(raw_ptr, raw_len) };
+    let marks = if marks_ptr.is_null() || marks_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(marks_ptr, marks_len) }
+    };
+    let Some(wav_vec) = OpusWave::decode_raw_frames_to_wav(raw, sample_rate, marks, None) else {
+        unsafe {
+            *out_len_ptr = 0;
+        }
+        return std::ptr::null_mut();
+    };
+    let mut boxed = wav_vec.into_boxed_slice();
+    let len = boxed.len();
+    let ptr = boxed.as_mut_ptr();
+    std::mem::forget(boxed);
+    unsafe {
+        *out_len_ptr = len;
+    }
+    ptr
+}
+
 struct ReassemblerSlot {
     inner: FrameReassembler,
     queued: VecDeque<DecodedPacket>,
@@ -1005,6 +1091,7 @@ pub unsafe extern "C" fn koe_reassembler_pop_packet(
 /// Allocates a stateful `TransportSession` handle.
 #[no_mangle]
 pub extern "C" fn koe_session_new() -> u64 {
+    opus_ffi::ensure_opus_factory_registered();
     let h = alloc_handle();
     if let Ok(mut map) = session_map().lock() {
         map.insert(
@@ -1114,6 +1201,7 @@ fn fill_step_result(slot: &SessionSlot, outcome: &SessionIngestOutcome) -> KoeSe
         slices_unpacked_count: outcome.slices_unpacked_count,
         new_marks_count: outcome.new_marks_ms.len() as u32,
         outbound_tx_count: slot.outbound_tx.len() as u32,
+        live_pcm16_bytes_available: slot.inner.live_pcm16_16khz.len() as u32,
         transfer: KoeTransferProgress::from_domain(&slot.inner.transfer),
     }
 }
@@ -1299,6 +1387,7 @@ pub unsafe extern "C" fn koe_session_simulate_realtime_pipeline(
                 transfer_updated: true,
                 slices_unpacked_count: 60,
                 new_marks_ms: fin.entry.marks_ms.clone(),
+                live_pcm16_16khz: slot.inner.live_pcm16_16khz.clone(),
                 finalized: Some(fin),
                 outbound_tx_frames: Vec::new(),
             };
@@ -1311,6 +1400,43 @@ pub unsafe extern "C" fn koe_session_simulate_realtime_pipeline(
         }
     }
     0
+}
+
+/// Drains buffered 16 kHz mono PCM16 LE bytes decoded incrementally during
+/// `koe_session_ingest_ble_chunk` or `koe_session_simulate_realtime_pipeline`,
+/// storing the byte length in `*out_len_ptr` and returning a heap buffer
+/// (freed via `koe_buffer_free`), or null if empty.
+///
+/// # Safety
+///
+/// `out_len_ptr` must be valid for writes of a `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_take_live_pcm16(
+    handle: u64,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let pcm = slot.inner.take_live_pcm16();
+            if !pcm.is_empty() {
+                let mut boxed = pcm.into_boxed_slice();
+                let len = boxed.len();
+                let ptr = boxed.as_mut_ptr();
+                std::mem::forget(boxed);
+                unsafe {
+                    *out_len_ptr = len;
+                }
+                return ptr;
+            }
+        }
+    }
+    unsafe {
+        *out_len_ptr = 0;
+    }
+    std::ptr::null_mut()
 }
 
 /// Takes the most recently finalized recording from `TransportSession`, writing metadata into
@@ -1677,4 +1803,129 @@ pub unsafe extern "C" fn koe_library_undo_trash(
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koe_core::session::REAL_OPUS_20MS_440HZ_PACKET;
+
+    #[test]
+    fn ffi_decodes_real_opus_20ms_packet_to_16khz_and_48khz_pcm16_and_wav() {
+        let mut padded = [0u8; 160];
+        padded[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+
+        let mut len_16k = 0usize;
+        let ptr_16k = unsafe {
+            koe_opus_decode_pcm16(padded.as_ptr(), padded.len(), 16_000, &mut len_16k)
+        };
+        assert!(!ptr_16k.is_null());
+        assert_eq!(len_16k, 640);
+        let pcm_16k = unsafe { slice::from_raw_parts(ptr_16k, len_16k) };
+        let sample_130 = i16::from_le_bytes([pcm_16k[130 * 2], pcm_16k[130 * 2 + 1]]);
+        assert!(
+            (sample_130 - (-4130)).abs() <= 16,
+            "expected sample 130 near -4130, got {sample_130}"
+        );
+        unsafe { koe_buffer_free(ptr_16k, len_16k) };
+
+        let mut len_48k = 0usize;
+        let ptr_48k = unsafe {
+            koe_opus_decode_pcm16(padded.as_ptr(), padded.len(), 48_000, &mut len_48k)
+        };
+        assert!(!ptr_48k.is_null());
+        assert_eq!(len_48k, 1920);
+        unsafe { koe_buffer_free(ptr_48k, len_48k) };
+
+        let marks = [0u64];
+        let mut wav_len = 0usize;
+        let wav_ptr = unsafe {
+            koe_opus_decode_wav(
+                padded.as_ptr(),
+                padded.len(),
+                48_000,
+                marks.as_ptr(),
+                marks.len(),
+                &mut wav_len,
+            )
+        };
+        assert!(!wav_ptr.is_null());
+        assert_eq!(wav_len, 44 + 1920);
+        let wav_slice = unsafe { slice::from_raw_parts(wav_ptr, wav_len) };
+        assert_eq!(&wav_slice[0..4], b"RIFF");
+        unsafe { koe_buffer_free(wav_ptr, wav_len) };
+    }
+
+    #[test]
+    fn ffi_session_simulate_realtime_pipeline_decodes_real_opus_wav_and_live_16khz_pcm() {
+        let handle = koe_session_new();
+        let mut step = KoeSessionStepResult {
+            frames_decoded: 0,
+            connection_phase: 0,
+            telemetry_updated: 0,
+            session_key_established: 0,
+            catalog_updated: 0,
+            transfer_updated: 0,
+            has_finalized_recording: 0,
+            reserved: [0; 2],
+            slices_unpacked_count: 0,
+            new_marks_count: 0,
+            outbound_tx_count: 0,
+            live_pcm16_bytes_available: 0,
+            transfer: KoeTransferProgress {
+                phase: 0,
+                error_code: 0,
+                reserved: [0; 2],
+                file_id: 0,
+                received_wire_bytes: 0,
+                expected_wire_bytes: 0,
+                mark_count: 0,
+            },
+        };
+        let ok = unsafe { koe_session_simulate_realtime_pipeline(handle, 1_700_000_000, &mut step) };
+        assert_eq!(ok, 1);
+        assert_eq!(step.has_finalized_recording, 1);
+        assert_eq!(step.slices_unpacked_count, 60);
+        assert_eq!(step.live_pcm16_bytes_available, 60 * 320 * 2);
+
+        let mut live_len = 0usize;
+        let live_ptr = unsafe { koe_session_take_live_pcm16(handle, &mut live_len) };
+        assert!(!live_ptr.is_null());
+        assert_eq!(live_len, 60 * 320 * 2);
+        let live_pcm = unsafe { slice::from_raw_parts(live_ptr, live_len) };
+        let sample_130 = i16::from_le_bytes([live_pcm[130 * 2], live_pcm[130 * 2 + 1]]);
+        assert!((sample_130 - (-4130)).abs() <= 16);
+        unsafe { koe_buffer_free(live_ptr, live_len) };
+
+        let mut entry = KoeRecordingEntry {
+            id: 0,
+            bean_file_id: 0,
+            created_at_epoch_sec: 0,
+            duration_ms: 0,
+            byte_count: 0,
+            mark_count: 0,
+            marks_ms: [0; 32],
+        };
+        let mut ogg_ptr = std::ptr::null_mut();
+        let mut ogg_len = 0usize;
+        let mut wav_ptr = std::ptr::null_mut();
+        let mut wav_len = 0usize;
+        let taken = unsafe {
+            koe_session_take_finalized(
+                handle,
+                &mut entry,
+                &mut ogg_ptr,
+                &mut ogg_len,
+                &mut wav_ptr,
+                &mut wav_len,
+            )
+        };
+        assert_eq!(taken, 1);
+        assert_eq!(wav_len, 44 + 60 * 960 * 2);
+        unsafe {
+            koe_buffer_free(ogg_ptr, ogg_len);
+            koe_buffer_free(wav_ptr, wav_len);
+        }
+        koe_session_free(handle);
+    }
 }

@@ -356,4 +356,32 @@ void main() {
       );
     }
   });
+
+  test('Rust FFI decodes real 20ms 440Hz Opus packet to 16kHz/48kHz PCM16 and WAV', () {
+    final ffi = KoeCoreFfi.instance!;
+    const opusHex =
+        '7881a75d6c9e99ac0000067e5639f73b1ea2dc310f523839'
+        '393ea3d08447cbe1b6b8ff44143d7621af0734dd0787ec99'
+        'fec0f544189d5f482942ded82f85b618f43b6492de947050'
+        'e097687d6c10d0af638553a27165e791290180531504';
+    final padded = Uint8List(160);
+    for (var i = 0; i < opusHex.length; i += 2) {
+      padded[i ~/ 2] = int.parse(opusHex.substring(i, i + 2), radix: 16);
+    }
+
+    final pcm16k = ffi.decodeOpusPcm16(padded, sampleRate: 16000);
+    expect(pcm16k, isNotNull);
+    expect(pcm16k!.length, equals(640));
+    final sample130 = ByteData.sublistView(pcm16k).getInt16(130 * 2, Endian.little);
+    expect(sample130, closeTo(-4130, 16));
+
+    final pcm48k = ffi.decodeOpusPcm16(padded, sampleRate: 48000);
+    expect(pcm48k, isNotNull);
+    expect(pcm48k!.length, equals(1920));
+
+    final wav48k = ffi.decodeOpusWav(padded, sampleRate: 48000, marksMs: const [0]);
+    expect(wav48k, isNotNull);
+    expect(wav48k!.length, equals(44 + 1920));
+    expect(OggOpus.isWav(wav48k), isTrue);
+  });
 }

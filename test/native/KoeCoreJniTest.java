@@ -10,6 +10,8 @@ final class KoeCoreNative {
   static native byte[] hkdfSha256(byte[] ikm, byte[] salt, byte[] info, int length);
   static native byte[] muxOggOpus(byte[] rawOpusFrames);
   static native byte[] buildAudiblePreviewWav(long durationMs, long[] marksMs);
+  static native byte[] decodeOpusPcm16(byte[] rawOpusFrames, int sampleRate);
+  static native byte[] decodeOpusWav(byte[] rawOpusFrames, int sampleRate, long[] marksMs);
 
   static native long reassemblerNew();
   static native void reassemblerFree(long handle);
@@ -24,6 +26,7 @@ final class KoeCoreNative {
   static native long[] sessionIngestBleChunk(long handle, byte[] chunk, long nowEpochSec);
   static native byte[] sessionPopOutboundTx(long handle);
   static native long[] sessionSimulateRealtimePipeline(long handle, long nowEpochSec);
+  static native byte[] sessionTakeLivePcm16(long handle);
   static native long[] sessionTakeFinalizedMeta(long handle);
   static native byte[] sessionTakeFinalizedOgg(long handle);
   static native byte[] sessionTakeFinalizedWav(long handle);
@@ -84,7 +87,13 @@ public final class KoeCoreJniTest {
 
     long session = KoeCoreNative.sessionNew();
     long[] step = KoeCoreNative.sessionSimulateRealtimePipeline(session, 1_700_000_000L);
-    check(step.length == 14 && step[6] == 1L && step[7] == 60L, "sessionSimulateRealtimePipeline 60 slices");
+    check(
+        step.length == 15 && step[6] == 1L && step[7] == 60L && step[14] == 38400L,
+        "sessionSimulateRealtimePipeline 60 slices + 38400B live PCM16");
+    byte[] livePcm = KoeCoreNative.sessionTakeLivePcm16(session);
+    check(livePcm != null && livePcm.length == 38400, "sessionTakeLivePcm16 length 38400");
+    short sample130 = (short) ((livePcm[130 * 2] & 0xFF) | (livePcm[130 * 2 + 1] << 8));
+    check(Math.abs(sample130 - (-4130)) <= 16, "livePcm sample 130 near -4130");
     long[] meta = KoeCoreNative.sessionTakeFinalizedMeta(session);
     check(meta != null && meta[0] == 20261107L && meta[3] == 1200L && meta[5] == 2L, "finalized meta");
     check(meta[6] == 300L && meta[7] == 900L, "finalized marks [300, 900]");
@@ -96,8 +105,9 @@ public final class KoeCoreJniTest {
         "finalized OggS");
     check(
         wavBytes != null
+            && wavBytes.length == 115244
             && new String(wavBytes, 0, 4, StandardCharsets.US_ASCII).equals("RIFF"),
-        "finalized RIFF WAV");
+        "finalized 115244-byte RIFF WAV");
     KoeCoreNative.sessionFree(session);
 
     long library = KoeCoreNative.libraryNew();

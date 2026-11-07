@@ -24,7 +24,23 @@ use crate::models::{DeviceInfoModel, OfflineFileEntry, OfflineFileList};
 use crate::ogg_opus::OggOpus;
 use crate::slice_marks::SliceMark;
 use crate::transport::{TransportSliceProcessor, OPUS_FRAME_BYTES, SLICE_RECORD_BYTES};
-use crate::wav::OpusWave;
+use crate::wav::{
+    default_opus_decoder_factory, OpusDecoderFactory, OpusStreamDecoder, OpusWave,
+    ASR_SAMPLE_RATE, WAV_SAMPLE_RATE,
+};
+
+/// Canonical 20 ms mono Opus packet (`libopus` 1.5.2, 440 Hz sine, 24 kbps VoIP, 94 bytes).
+///
+/// Decodes to 320 samples (640 bytes) at 16 kHz with sample 130 equal to `-4130` (`±16`),
+/// and 960 samples (1920 bytes) at 48 kHz.
+pub const REAL_OPUS_20MS_440HZ_PACKET: [u8; 94] = [
+    0x78, 0x81, 0xa7, 0x5d, 0x6c, 0x9e, 0x99, 0xac, 0x00, 0x00, 0x06, 0x7e, 0x56, 0x39, 0xf7, 0x3b,
+    0x1e, 0xa2, 0xdc, 0x31, 0x0f, 0x52, 0x38, 0x39, 0x39, 0x3e, 0xa3, 0xd0, 0x84, 0x47, 0xcb, 0xe1,
+    0xb6, 0xb8, 0xff, 0x44, 0x14, 0x3d, 0x76, 0x21, 0xaf, 0x07, 0x34, 0xdd, 0x07, 0x87, 0xec, 0x99,
+    0xfe, 0xc0, 0xf5, 0x44, 0x18, 0x9d, 0x5f, 0x48, 0x29, 0x42, 0xde, 0xd8, 0x2f, 0x85, 0xb6, 0x18,
+    0xf4, 0x3b, 0x64, 0x92, 0xde, 0x94, 0x70, 0x50, 0xe0, 0x97, 0x68, 0x7d, 0x6c, 0x10, 0xd0, 0xaf,
+    0x63, 0x85, 0x53, 0xa2, 0x71, 0x65, 0xe7, 0x91, 0x29, 0x01, 0x80, 0x53, 0x15, 0x04,
+];
 
 /// Connection phase of the D3200 transport session.
 #[repr(u8)]
@@ -106,6 +122,8 @@ pub struct SessionIngestOutcome {
     pub slices_unpacked_count: u32,
     /// Newly observed mark positions in milliseconds during this step.
     pub new_marks_ms: Vec<u64>,
+    /// Newly decoded 16 kHz mono PCM16 LE bytes produced during this step.
+    pub live_pcm16_16khz: Vec<u8>,
     /// Finalized recording if `1A/0A` completed during this step.
     pub finalized: Option<FinalizedRecording>,
     /// Outbound TX command frames queued by protocol transitions.
@@ -113,7 +131,6 @@ pub struct SessionIngestOutcome {
 }
 
 /// Stateful D3200 transport session engine.
-#[derive(Debug, Clone, Default)]
 pub struct TransportSession {
     /// Streaming packet reassembler.
     pub reassembler: FrameReassembler,
@@ -141,6 +158,62 @@ pub struct TransportSession {
     pub marks_ms: Vec<u64>,
     /// Most recently finalized recording artifact ready for FFI retrieval.
     pub last_finalized: Option<FinalizedRecording>,
+    /// Accumulated 16 kHz mono PCM16 LE bytes ready to drain via `take_live_pcm16`.
+    pub live_pcm16_16khz: Vec<u8>,
+    decoder_factory: Option<OpusDecoderFactory>,
+    live_decoder_16k: Option<Box<dyn OpusStreamDecoder>>,
+}
+
+impl Default for TransportSession {
+    fn default() -> Self {
+        Self::with_decoder_factory(None)
+    }
+}
+
+impl Clone for TransportSession {
+    fn clone(&self) -> Self {
+        Self {
+            reassembler: self.reassembler.clone(),
+            connection_phase: self.connection_phase,
+            telemetry: self.telemetry.clone(),
+            session_key: self.session_key,
+            catalog: self.catalog.clone(),
+            transfer: self.transfer,
+            active_file_id: self.active_file_id,
+            active_file_key: self.active_file_key,
+            active_nonce: self.active_nonce,
+            active_is_realtime: self.active_is_realtime,
+            opus_buffer: self.opus_buffer.clone(),
+            marks_ms: self.marks_ms.clone(),
+            last_finalized: self.last_finalized.clone(),
+            live_pcm16_16khz: self.live_pcm16_16khz.clone(),
+            decoder_factory: self.decoder_factory,
+            live_decoder_16k: None,
+        }
+    }
+}
+
+impl core::fmt::Debug for TransportSession {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TransportSession")
+            .field("reassembler", &self.reassembler)
+            .field("connection_phase", &self.connection_phase)
+            .field("telemetry", &self.telemetry)
+            .field("session_key", &self.session_key)
+            .field("catalog", &self.catalog)
+            .field("transfer", &self.transfer)
+            .field("active_file_id", &self.active_file_id)
+            .field("active_file_key", &self.active_file_key)
+            .field("active_nonce", &self.active_nonce)
+            .field("active_is_realtime", &self.active_is_realtime)
+            .field("opus_buffer_len", &self.opus_buffer.len())
+            .field("marks_ms", &self.marks_ms)
+            .field("last_finalized", &self.last_finalized)
+            .field("live_pcm16_16khz_len", &self.live_pcm16_16khz.len())
+            .field("has_decoder_factory", &self.decoder_factory.is_some())
+            .field("has_live_decoder_16k", &self.live_decoder_16k.is_some())
+            .finish()
+    }
 }
 
 impl TransportSession {
@@ -148,6 +221,34 @@ impl TransportSession {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates an idle transport session with an explicit `OpusDecoderFactory`.
+    #[must_use]
+    pub fn with_decoder_factory(factory: Option<OpusDecoderFactory>) -> Self {
+        Self {
+            reassembler: FrameReassembler::default(),
+            connection_phase: ConnectionPhaseTag::Disconnected,
+            telemetry: None,
+            session_key: None,
+            catalog: Vec::new(),
+            transfer: TransferProgress::default(),
+            active_file_id: None,
+            active_file_key: None,
+            active_nonce: None,
+            active_is_realtime: false,
+            opus_buffer: Vec::new(),
+            marks_ms: Vec::new(),
+            last_finalized: None,
+            live_pcm16_16khz: Vec::new(),
+            decoder_factory: factory,
+            live_decoder_16k: None,
+        }
+    }
+
+    /// Drains and returns all buffered 16 kHz mono PCM16 LE bytes decoded during `ingest_ble_chunk`.
+    pub fn take_live_pcm16(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.live_pcm16_16khz)
     }
 
     /// Sets the 32-byte session key explicitly.
@@ -163,6 +264,10 @@ impl TransportSession {
         self.active_is_realtime = false;
         self.opus_buffer.clear();
         self.marks_ms.clear();
+        self.live_pcm16_16khz.clear();
+        if let Some(dec) = self.live_decoder_16k.as_mut() {
+            dec.reset();
+        }
         self.transfer = TransferProgress::default();
     }
 
@@ -203,6 +308,10 @@ impl TransportSession {
         self.active_is_realtime = false;
         self.opus_buffer.clear();
         self.marks_ms.clear();
+        self.live_pcm16_16khz.clear();
+        if let Some(dec) = self.live_decoder_16k.as_mut() {
+            dec.reset();
+        }
         self.transfer = TransferProgress {
             phase: TransferPhaseTag::PullingOffline,
             file_id,
@@ -253,6 +362,10 @@ impl TransportSession {
                         self.active_is_realtime = head.unfinished;
                         self.opus_buffer.clear();
                         self.marks_ms.clear();
+                        self.live_pcm16_16khz.clear();
+                        if let Some(dec) = self.live_decoder_16k.as_mut() {
+                            dec.reset();
+                        }
                         let phase = if head.unfinished {
                             TransferPhaseTag::StreamingRealtime
                         } else {
@@ -285,6 +398,27 @@ impl TransportSession {
                         let fid = self.active_file_id.unwrap_or(1);
                         self.active_file_id = Some(fid);
                         self.opus_buffer.extend_from_slice(&batch.opus_bytes);
+                        if self.live_decoder_16k.is_none() {
+                            if let Some(factory) =
+                                self.decoder_factory.or_else(default_opus_decoder_factory)
+                            {
+                                self.live_decoder_16k = factory(ASR_SAMPLE_RATE);
+                            }
+                        }
+                        if let Some(live_dec) = self.live_decoder_16k.as_mut() {
+                            let start_len = outcome.live_pcm16_16khz.len();
+                            for frame in batch.opus_bytes.chunks_exact(OPUS_FRAME_BYTES) {
+                                let _ = OpusWave::decode_frame_into(
+                                    live_dec.as_mut(),
+                                    frame,
+                                    &mut outcome.live_pcm16_16khz,
+                                );
+                            }
+                            if outcome.live_pcm16_16khz.len() > start_len {
+                                self.live_pcm16_16khz
+                                    .extend_from_slice(&outcome.live_pcm16_16khz[start_len..]);
+                            }
+                        }
                         let new_received = self
                             .transfer
                             .received_wire_bytes
@@ -347,7 +481,13 @@ impl TransportSession {
         let slice_count = (self.opus_buffer.len() / OPUS_FRAME_BYTES) as u64;
         let duration_ms = (slice_count * 20).max(400);
         let marks_ms = self.marks_ms.clone();
-        let preview_wav_bytes = OpusWave::build_audible_preview_wav(duration_ms, &marks_ms);
+        let preview_wav_bytes = OpusWave::decode_raw_frames_to_wav(
+            &self.opus_buffer,
+            WAV_SAMPLE_RATE,
+            &marks_ms,
+            self.decoder_factory,
+        )
+        .unwrap_or_else(|| OpusWave::build_audible_preview_wav(duration_ms, &marks_ms));
 
         let entry = RecordingEntry {
             id: fid,
@@ -363,7 +503,9 @@ impl TransportSession {
             preview_wav_bytes,
         };
         self.last_finalized = Some(finalized.clone());
+        let retained_live_pcm = std::mem::take(&mut self.live_pcm16_16khz);
         self.reset_active_transfer();
+        self.live_pcm16_16khz = retained_live_pcm;
         Some(finalized)
     }
 
@@ -433,8 +575,9 @@ impl TransportSession {
             slice_payload.extend_from_slice(&seq.to_le_bytes());
             let flags = if seq == 15 || seq == 45 { 0x01u8 } else { 0x00u8 };
             slice_payload.push(flags);
-            let mut chunk = [0x78u8; OPUS_FRAME_BYTES];
-            chunk[1] = (seq & 0xFF) as u8;
+            let mut chunk = [0u8; OPUS_FRAME_BYTES];
+            chunk[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+                .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
             decryptor.decrypt_contiguous_in_place(&mut chunk, seq);
             slice_payload.extend_from_slice(&chunk);
             slice_payload.push(0x00);
@@ -466,6 +609,45 @@ impl TransportSession {
 mod tests {
     use super::*;
 
+    struct DeterministicTestDecoder {
+        sample_rate: u32,
+        frames_seen: i16,
+    }
+
+    impl OpusStreamDecoder for DeterministicTestDecoder {
+        fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+
+        fn decode_trimmed_packet(&mut self, packet: &[u8], out_pcm16_le: &mut Vec<u8>) -> bool {
+            if packet != REAL_OPUS_20MS_440HZ_PACKET {
+                return false;
+            }
+            self.frames_seen = self.frames_seen.saturating_add(1);
+            let samples_20ms = (self.sample_rate as usize) / 50;
+            out_pcm16_le.reserve(samples_20ms * 2);
+            for i in 0..samples_20ms {
+                let sample = self.frames_seen.saturating_mul(10).saturating_add((i % 64) as i16);
+                out_pcm16_le.extend_from_slice(&sample.to_le_bytes());
+            }
+            true
+        }
+
+        fn reset(&mut self) {
+            self.frames_seen = 0;
+        }
+    }
+
+    fn test_decoder_factory(sample_rate: u32) -> Option<Box<dyn OpusStreamDecoder>> {
+        if !OpusWave::is_valid_sample_rate(sample_rate) {
+            return None;
+        }
+        Some(Box::new(DeterministicTestDecoder {
+            sample_rate,
+            frames_seen: 0,
+        }))
+    }
+
     #[test]
     fn simulated_realtime_pipeline_decodes_telemetry_head_and_60_slices() {
         let mut session = TransportSession::new();
@@ -480,5 +662,15 @@ mod tests {
         assert_eq!(fin.entry.marks_ms, vec![300, 900]);
         assert!(fin.ogg_opus_bytes.starts_with(b"OggS"));
         assert!(fin.preview_wav_bytes.starts_with(b"RIFF"));
+    }
+
+    #[test]
+    fn session_with_decoder_factory_streams_16khz_pcm_and_finalizes_48khz_wav() {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let fin = session.simulate_realtime_pipeline(1_700_000_000);
+        assert_eq!(fin.preview_wav_bytes.len(), 44 + 60 * 960 * 2);
+        let live_pcm = session.take_live_pcm16();
+        assert_eq!(live_pcm.len(), 60 * 320 * 2);
+        assert!(session.take_live_pcm16().is_empty());
     }
 }

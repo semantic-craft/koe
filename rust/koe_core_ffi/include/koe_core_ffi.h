@@ -97,6 +97,7 @@ typedef struct KoeSessionStepResult {
   uint32_t slices_unpacked_count;
   uint32_t new_marks_count;
   uint32_t outbound_tx_count;
+  uint32_t live_pcm16_bytes_available;
   KoeTransferProgress transfer;
 } KoeSessionStepResult;
 
@@ -130,6 +131,8 @@ uint8_t* koe_ogg_opus_mux_raw_frames(const uint8_t* raw_ptr, size_t raw_len, siz
 void koe_buffer_free(uint8_t* ptr, size_t len);
 int32_t koe_wav_header(uint32_t pcm_length, uint8_t* out_ptr);
 uint8_t* koe_wav_build_audible_preview(uint64_t duration_ms, const uint64_t* marks_ptr, size_t marks_len, size_t* out_len_ptr);
+uint8_t* koe_opus_decode_pcm16(const uint8_t* raw_ptr, size_t raw_len, uint32_t sample_rate, size_t* out_len_ptr);
+uint8_t* koe_opus_decode_wav(const uint8_t* raw_ptr, size_t raw_len, uint32_t sample_rate, const uint64_t* marks_ptr, size_t marks_len, size_t* out_len_ptr);
 uint64_t koe_reassembler_new(void);
 void koe_reassembler_free(uint64_t handle);
 void koe_reassembler_reset(uint64_t handle);
@@ -149,6 +152,7 @@ size_t koe_session_get_catalog(uint64_t handle, KoeOfflineFileEntry* out_entries
 int32_t koe_session_get_transfer(uint64_t handle, KoeTransferProgress* out_ptr);
 uint8_t koe_session_finalize_active_transfer(uint64_t handle, uint64_t now_epoch_sec);
 uint8_t koe_session_simulate_realtime_pipeline(uint64_t handle, uint64_t now_epoch_sec, KoeSessionStepResult* out_step_ptr);
+uint8_t* koe_session_take_live_pcm16(uint64_t handle, size_t* out_len_ptr);
 uint8_t koe_session_take_finalized(uint64_t handle, KoeRecordingEntry* out_entry_ptr, uint8_t** out_ogg_ptr, size_t* out_ogg_len_ptr, uint8_t** out_wav_ptr, size_t* out_wav_len_ptr);
 uint64_t koe_library_new(void);
 void koe_library_free(uint64_t handle);
