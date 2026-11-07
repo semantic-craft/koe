@@ -122,6 +122,14 @@ struct KoeCoreSwiftTest {
     let reassembled = reassembler.ingest(Data(splitB))
     check(reassembled.count == 1 && reassembled[0].cmdType == 0x01 && reassembled[0].cmdId == 0x01, "reassembler must emit verified 0x01/0x01 frame")
 
+    let sessionHandle = KoeTransportSession()
+    let badReply = Data(repeating: 0xAA, count: 97)
+    let mismatchSecret = Data(repeating: 0xBB, count: 32)
+    check(!sessionHandle.acceptEcdhReply(replyPayload: badReply, sharedSecret: mismatchSecret), "acceptEcdhReply must reject mismatched shared secret")
+    var goodReply = Data(repeating: 0x11, count: 65)
+    goodReply.append(mismatchSecret)
+    check(sessionHandle.acceptEcdhReply(replyPayload: goodReply, sharedSecret: mismatchSecret), "acceptEcdhReply must accept matching shared secret")
+
     let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-native-host-test-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
 

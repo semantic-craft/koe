@@ -145,6 +145,60 @@ impl ProtocolFrame {
     }
 }
 
+/// Stateful streaming RX frame reassembler for arbitrary BLE and Wi-Fi byte chunks.
+///
+/// # Examples
+///
+/// ```
+/// use koe_core::frame::{FrameReassembler, ProtocolFrame};
+///
+/// let body = [0x09u8, 0xFF, 0x00, 0x00, 0x01, 0x01, 0x01, 0x0A, 0x00];
+/// let csum = ProtocolFrame::checksum(&body);
+/// let mut pkt = vec![0xDE, 0xAD];
+/// pkt.extend_from_slice(&body);
+/// pkt.push(csum);
+///
+/// let mut reassembler = FrameReassembler::new();
+/// assert!(reassembler.ingest(&pkt[..6]).is_empty());
+/// let decoded = reassembler.ingest(&pkt[6..]);
+/// assert_eq!(decoded.len(), 1);
+/// assert_eq!(decoded[0].cmd_type, 0x01);
+/// assert_eq!(decoded[0].cmd_id, 0x01);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FrameReassembler {
+    buffer: Vec<u8>,
+}
+
+impl FrameReassembler {
+    /// Creates an empty reassembler.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { buffer: Vec::new() }
+    }
+
+    /// Appends `chunk` to the internal stream buffer, extracts all complete
+    /// checksum-verified `09 FF 00 00` packets in arrival order, and compacts
+    /// consumed prefix bytes.
+    pub fn ingest(&mut self, chunk: &[u8]) -> Vec<DecodedPacket> {
+        if !chunk.is_empty() {
+            self.buffer.extend_from_slice(chunk);
+        }
+        ProtocolFrame::process_buffer(&mut self.buffer)
+    }
+
+    /// Returns the number of unconsumed partial bytes currently buffered.
+    #[must_use]
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Clears any partial trailing bytes.
+    pub fn reset(&mut self) {
+        self.buffer.clear();
+    }
+}
+
 /// Decoded inbound RX packet from the D3200 device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedPacket {

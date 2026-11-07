@@ -138,6 +138,13 @@ fn c_type_for_field(field: &CField) -> String {
     {
         return format!("uint8_t {}[{}]", field.name, inner);
     }
+    if let Some(inner) = field
+        .rust_ty
+        .strip_prefix("[u64; ")
+        .and_then(|s| s.strip_suffix(']'))
+    {
+        return format!("uint64_t {}[{}]", field.name, inner);
+    }
     format!("{} {}", c_scalar_type(&field.rust_ty), field.name)
 }
 
@@ -150,8 +157,11 @@ fn c_scalar_type(rust_ty: &str) -> String {
         "i32" => "int32_t".to_string(),
         "usize" => "size_t".to_string(),
         "*const u8" => "const uint8_t*".to_string(),
+        "*const u64" => "const uint64_t*".to_string(),
         "*mut u8" => "uint8_t*".to_string(),
+        "*mut *mut u8" => "uint8_t**".to_string(),
         "*mut u32" => "uint32_t*".to_string(),
+        "*mut u64" => "uint64_t*".to_string(),
         "*mut usize" => "size_t*".to_string(),
         _ if rust_ty.starts_with("*mut ") => {
             format!("{}*", rust_ty.trim_start_matches("*mut ").trim())
@@ -456,6 +466,16 @@ public enum KoeCore {{
     return out
   }}
 
+  public static func buildAudiblePreviewWav(durationMs: UInt64, marksMs: [UInt64]) -> Data {{
+    var outLen: Int = 0
+    let ptr: UnsafeMutablePointer<UInt8>? = marksMs.withUnsafeBufferPointer {{ marksBuf in
+      koe_wav_build_audible_preview(durationMs, marksBuf.baseAddress, marksBuf.count, &outLen)
+    }}
+    guard let validPtr = ptr, outLen > 0 else {{ return Data() }}
+    defer {{ koe_buffer_free(validPtr, outLen) }}
+    return Data(bytes: validPtr, count: outLen)
+  }}
+
   public static func parseFileHead(_ packet: Data, sessionKey: Data? = nil) -> KoeAudioFileHeadInfo? {{
     var cHead = KoeAudioFileHead()
     let ok = packet.withUnsafeBytes {{ raw -> Int32 in
@@ -549,7 +569,7 @@ public enum KoeCore {{
     )
   }}
 
-  private static func decodeDeviceInfo(_ c: KoeDeviceInfo) -> KoeDeviceTelemetry {{
+  fileprivate static func decodeDeviceInfo(_ c: KoeDeviceInfo) -> KoeDeviceTelemetry {{
     var copy = c
     let fw = withUnsafeBytes(of: &copy.firmware_version) {{ readCString($0) }}
     let sn = withUnsafeBytes(of: &copy.serial_number) {{ readCString($0) }}
@@ -577,6 +597,373 @@ public enum KoeCore {{
     let bytes = raw.bindMemory(to: UInt8.self)
     let count = bytes.firstIndex(of: 0) ?? bytes.count
     return String(decoding: bytes.prefix(count), as: UTF8.self)
+  }}
+}}
+
+public struct KoeDecodedPacket: Equatable, Sendable {{
+  public let cmdType: UInt8
+  public let cmdId: UInt8
+  public let raw: Data
+  public var payload: Data {{
+    guard raw.count >= 10 else {{ return Data() }}
+    return Data(raw[9..<(raw.count - 1)])
+  }}
+}}
+
+public final class KoeFrameReassembler: @unchecked Sendable {{
+  private let handle: UInt64
+
+  public init() {{
+    self.handle = koe_reassembler_new()
+  }}
+
+  deinit {{
+    koe_reassembler_free(handle)
+  }}
+
+  public var bufferedCount: Int {{
+    Int(koe_reassembler_buffered_len(handle))
+  }}
+
+  public func reset() {{
+    koe_reassembler_reset(handle)
+  }}
+
+  public func ingest(_ chunk: Data) -> [KoeDecodedPacket] {{
+    let queued = chunk.withUnsafeBytes {{ raw -> UInt32 in
+      koe_reassembler_ingest(handle, raw.bindMemory(to: UInt8.self).baseAddress, chunk.count)
+    }}
+    guard queued > 0 else {{ return [] }}
+    var packets: [KoeDecodedPacket] = []
+    packets.reserveCapacity(Int(queued))
+    var scratch = Data(count: 65536)
+    while true {{
+      var cmdType: UInt8 = 0
+      var cmdId: UInt8 = 0
+      let len = scratch.withUnsafeMutableBytes {{ raw -> Int in
+        guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+        return Int(koe_reassembler_pop_packet(handle, base, 65536, &cmdType, &cmdId))
+      }}
+      if len == 0 {{ break }}
+      packets.append(KoeDecodedPacket(cmdType: cmdType, cmdId: cmdId, raw: Data(scratch.prefix(len))))
+    }}
+    return packets
+  }}
+}}
+
+public struct KoeRecordingEntryModel: Equatable, Sendable, Identifiable {{
+  public let id: UInt32
+  public let beanFileId: UInt32
+  public let createdAtEpochSec: UInt64
+  public let durationMs: UInt64
+  public let byteCount: UInt32
+  public let marksMs: [UInt64]
+
+  public init(
+    id: UInt32,
+    beanFileId: UInt32,
+    createdAtEpochSec: UInt64,
+    durationMs: UInt64,
+    byteCount: UInt32,
+    marksMs: [UInt64]
+  ) {{
+    self.id = id
+    self.beanFileId = beanFileId
+    self.createdAtEpochSec = createdAtEpochSec
+    self.durationMs = durationMs
+    self.byteCount = byteCount
+    self.marksMs = marksMs
+  }}
+
+  fileprivate init(c: KoeRecordingEntry) {{
+    var copy = c
+    let count = min(Int(c.mark_count), 32)
+    let marks: [UInt64] = withUnsafeBytes(of: &copy.marks_ms) {{ raw in
+      let buf = raw.bindMemory(to: UInt64.self)
+      return Array(buf.prefix(count))
+    }}
+    self.id = c.id
+    self.beanFileId = c.bean_file_id
+    self.createdAtEpochSec = c.created_at_epoch_sec
+    self.durationMs = c.duration_ms
+    self.byteCount = c.byte_count
+    self.marksMs = marks
+  }}
+
+  fileprivate func toCStruct() -> KoeRecordingEntry {{
+    var c = KoeRecordingEntry()
+    c.id = id
+    c.bean_file_id = beanFileId
+    c.created_at_epoch_sec = createdAtEpochSec
+    c.duration_ms = durationMs
+    c.byte_count = byteCount
+    let count = min(marksMs.count, 32)
+    c.mark_count = UInt32(count)
+    withUnsafeMutableBytes(of: &c.marks_ms) {{ raw in
+      let dst = raw.bindMemory(to: UInt64.self)
+      for i in 0..<count {{
+        dst[i] = marksMs[i]
+      }}
+    }}
+    return c
+  }}
+}}
+
+public struct KoeFinalizedRecordingModel: Equatable, Sendable {{
+  public let entry: KoeRecordingEntryModel
+  public let oggOpusBytes: Data
+  public let previewWavBytes: Data
+}}
+
+public struct KoeSessionStepOutcome: Equatable, Sendable {{
+  public let framesDecoded: UInt32
+  public let connectionPhase: UInt8
+  public let telemetryUpdated: Bool
+  public let sessionKeyEstablished: Bool
+  public let catalogUpdated: Bool
+  public let transferUpdated: Bool
+  public let hasFinalizedRecording: Bool
+  public let slicesUnpackedCount: UInt32
+  public let newMarksCount: UInt32
+  public let transferPhase: UInt8
+  public let transferFileId: UInt32
+  public let receivedWireBytes: UInt32
+  public let expectedWireBytes: UInt32
+  public let transferMarkCount: UInt32
+  public let outboundTxFrames: [Data]
+}}
+
+public final class KoeTransportSession: @unchecked Sendable {{
+  private let handle: UInt64
+
+  public init() {{
+    self.handle = koe_session_new()
+  }}
+
+  deinit {{
+    koe_session_free(handle)
+  }}
+
+  public func resetActiveTransfer() {{
+    koe_session_reset_active_transfer(handle)
+  }}
+
+  public func onDisconnected() {{
+    koe_session_on_disconnected(handle)
+  }}
+
+  public func acceptEcdhReply(replyPayload: Data, sharedSecret: Data) -> Bool {{
+    replyPayload.withUnsafeBytes {{ repRaw in
+      sharedSecret.withUnsafeBytes {{ secRaw in
+        koe_session_accept_ecdh_reply(
+          handle,
+          repRaw.bindMemory(to: UInt8.self).baseAddress,
+          replyPayload.count,
+          secRaw.bindMemory(to: UInt8.self).baseAddress,
+          sharedSecret.count
+        ) != 0
+      }}
+    }}
+  }}
+
+  public func beginOfflinePull(fileId: UInt32, durationMs: UInt32) -> Data {{
+    var out = Data(count: 32)
+    let len = out.withUnsafeMutableBytes {{ raw -> Int in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return Int(koe_session_begin_offline_pull(handle, fileId, durationMs, base, 32))
+    }}
+    return out.prefix(len)
+  }}
+
+  public func ingestBleChunk(_ chunk: Data, nowEpochSec: UInt64) -> KoeSessionStepOutcome {{
+    var step = KoeSessionStepResult()
+    _ = chunk.withUnsafeBytes {{ raw in
+      koe_session_ingest_ble_chunk(
+        handle,
+        raw.bindMemory(to: UInt8.self).baseAddress,
+        chunk.count,
+        nowEpochSec,
+        &step
+      )
+    }}
+    return decodeStep(step)
+  }}
+
+  public func simulateRealtimePipeline(nowEpochSec: UInt64) -> KoeSessionStepOutcome {{
+    var step = KoeSessionStepResult()
+    _ = koe_session_simulate_realtime_pipeline(handle, nowEpochSec, &step)
+    return decodeStep(step)
+  }}
+
+  public func currentTelemetry() -> KoeDeviceTelemetry? {{
+    var cInfo = KoeDeviceInfo()
+    guard koe_session_get_telemetry(handle, &cInfo) != 0 else {{ return nil }}
+    return KoeCore.decodeDeviceInfo(cInfo)
+  }}
+
+  public func currentCatalog() -> [KoeOfflineFileItem] {{
+    let total = Int(koe_session_get_catalog(handle, nil, 0))
+    guard total > 0 else {{ return [] }}
+    var entries = Array(repeating: KoeOfflineFileEntry(), count: total)
+    _ = entries.withUnsafeMutableBufferPointer {{ buf in
+      koe_session_get_catalog(handle, buf.baseAddress, total)
+    }}
+    return entries.map {{ item in
+      KoeOfflineFileItem(
+        fileId: item.file_id,
+        durationMs: item.duration_ms,
+        endTime: item.has_end_time != 0 ? item.end_time : nil
+      )
+    }}
+  }}
+
+  public func finalizeActiveTransfer(nowEpochSec: UInt64) -> Bool {{
+    koe_session_finalize_active_transfer(handle, nowEpochSec) != 0
+  }}
+
+  public func takeFinalized() -> KoeFinalizedRecordingModel? {{
+    var cEntry = KoeRecordingEntry()
+    var oggPtr: UnsafeMutablePointer<UInt8>?
+    var oggLen: Int = 0
+    var wavPtr: UnsafeMutablePointer<UInt8>?
+    var wavLen: Int = 0
+    guard koe_session_take_finalized(handle, &cEntry, &oggPtr, &oggLen, &wavPtr, &wavLen) != 0 else {{
+      return nil
+    }}
+    let oggData: Data
+    if let p = oggPtr, oggLen > 0 {{
+      oggData = Data(bytes: p, count: oggLen)
+      koe_buffer_free(p, oggLen)
+    }} else {{
+      oggData = Data()
+    }}
+    let wavData: Data
+    if let p = wavPtr, wavLen > 0 {{
+      wavData = Data(bytes: p, count: wavLen)
+      koe_buffer_free(p, wavLen)
+    }} else {{
+      wavData = Data()
+    }}
+    return KoeFinalizedRecordingModel(
+      entry: KoeRecordingEntryModel(c: cEntry),
+      oggOpusBytes: oggData,
+      previewWavBytes: wavData
+    )
+  }}
+
+  private func decodeStep(_ step: KoeSessionStepResult) -> KoeSessionStepOutcome {{
+    var txFrames: [Data] = []
+    var buf = Data(count: 512)
+    while true {{
+      let n = buf.withUnsafeMutableBytes {{ raw -> Int in
+        guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+        return Int(koe_session_pop_outbound_tx(handle, base, 512))
+      }}
+      if n == 0 {{ break }}
+      txFrames.append(Data(buf.prefix(n)))
+    }}
+    return KoeSessionStepOutcome(
+      framesDecoded: step.frames_decoded,
+      connectionPhase: step.connection_phase,
+      telemetryUpdated: step.telemetry_updated != 0,
+      sessionKeyEstablished: step.session_key_established != 0,
+      catalogUpdated: step.catalog_updated != 0,
+      transferUpdated: step.transfer_updated != 0,
+      hasFinalizedRecording: step.has_finalized_recording != 0,
+      slicesUnpackedCount: step.slices_unpacked_count,
+      newMarksCount: step.new_marks_count,
+      transferPhase: step.transfer.phase,
+      transferFileId: step.transfer.file_id,
+      receivedWireBytes: step.transfer.received_wire_bytes,
+      expectedWireBytes: step.transfer.expected_wire_bytes,
+      transferMarkCount: step.transfer.mark_count,
+      outboundTxFrames: txFrames
+    )
+  }}
+}}
+
+public final class KoeRecordingLibrary: @unchecked Sendable {{
+  private let handle: UInt64
+
+  public init() {{
+    self.handle = koe_library_new()
+  }}
+
+  deinit {{
+    koe_library_free(handle)
+  }}
+
+  public func entries() -> [KoeRecordingEntryModel] {{
+    let total = Int(koe_library_get_entries(handle, nil, 0))
+    guard total > 0 else {{ return [] }}
+    var raw = Array(repeating: KoeRecordingEntry(), count: total)
+    _ = raw.withUnsafeMutableBufferPointer {{ buf in
+      koe_library_get_entries(handle, buf.baseAddress, total)
+    }}
+    return raw.map {{ KoeRecordingEntryModel(c: $0) }}
+  }}
+
+  public func selectedEntry() -> KoeRecordingEntryModel? {{
+    var c = KoeRecordingEntry()
+    guard koe_library_get_selected(handle, &c) != 0 else {{ return nil }}
+    return KoeRecordingEntryModel(c: c)
+  }}
+
+  public func ingest(_ entry: KoeRecordingEntryModel) {{
+    var c = entry.toCStruct()
+    _ = koe_library_ingest_entry(handle, &c)
+  }}
+
+  public func ingestDiskFile(
+    filename: String,
+    byteCount: UInt32,
+    createdAtEpochSec: UInt64
+  ) -> KoeRecordingEntryModel? {{
+    var c = KoeRecordingEntry()
+    let utf8 = Array(filename.utf8)
+    let ok = utf8.withUnsafeBufferPointer {{ buf in
+      koe_library_ingest_disk_file(
+        handle,
+        buf.baseAddress,
+        buf.count,
+        byteCount,
+        createdAtEpochSec,
+        &c
+      )
+    }}
+    guard ok != 0 else {{ return nil }}
+    return KoeRecordingEntryModel(c: c)
+  }}
+
+  @discardableResult
+  public func select(_ recordingId: UInt32) -> Bool {{
+    var playhead: UInt64 = 0
+    return koe_library_select(handle, recordingId, &playhead) != 0
+  }}
+
+  @discardableResult
+  public func seekMs(_ positionMs: UInt64) -> UInt64 {{
+    koe_library_seek_ms(handle, positionMs)
+  }}
+
+  public func jumpToMark(currentMs: UInt64, direction: Int) -> UInt64? {{
+    var target: UInt64 = 0
+    guard koe_library_jump_to_mark(handle, currentMs, Int32(direction), &target) != 0 else {{
+      return nil
+    }}
+    return target
+  }}
+
+  public func moveToTrash(_ recordingId: UInt32) -> KoeRecordingEntryModel? {{
+    var trashed = KoeRecordingEntry()
+    guard koe_library_move_to_trash(handle, recordingId, &trashed) != 0 else {{ return nil }}
+    return KoeRecordingEntryModel(c: trashed)
+  }}
+
+  public func undoTrash() -> KoeRecordingEntryModel? {{
+    var restored = KoeRecordingEntry()
+    guard koe_library_undo_trash(handle, &restored) != 0 else {{ return nil }}
+    return KoeRecordingEntryModel(c: restored)
   }}
 }}
 "#,
@@ -656,6 +1043,151 @@ object KoeCoreNative {{
 
     const val BOUND_STRUCT_COUNT: Int = {struct_count}
     const val BOUND_FUNCTION_COUNT: Int = {fn_count}
+
+    @JvmStatic external fun checksum(data: ByteArray): Int
+    @JvmStatic external fun verifyChecksum(packet: ByteArray): Boolean
+    @JvmStatic external fun encodeFrame(cmdType: Int, cmdId: Int, payload: ByteArray): ByteArray
+    @JvmStatic external fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray
+    @JvmStatic external fun muxOggOpus(rawOpusFrames: ByteArray): ByteArray
+    @JvmStatic external fun buildAudiblePreviewWav(durationMs: Long, marksMs: LongArray): ByteArray
+
+    @JvmStatic external fun reassemblerNew(): Long
+    @JvmStatic external fun reassemblerFree(handle: Long)
+    @JvmStatic external fun reassemblerReset(handle: Long)
+    @JvmStatic external fun reassemblerIngest(handle: Long, chunk: ByteArray): Int
+    @JvmStatic external fun reassemblerPopPacket(handle: Long): ByteArray?
+
+    @JvmStatic external fun sessionNew(): Long
+    @JvmStatic external fun sessionFree(handle: Long)
+    @JvmStatic external fun sessionAcceptEcdhReply(handle: Long, replyPayload: ByteArray, sharedSecret: ByteArray): Boolean
+    @JvmStatic external fun sessionBeginOfflinePull(handle: Long, fileId: Int, durationMs: Int): ByteArray
+    @JvmStatic external fun sessionIngestBleChunk(handle: Long, chunk: ByteArray, nowEpochSec: Long): LongArray
+    @JvmStatic external fun sessionPopOutboundTx(handle: Long): ByteArray?
+    @JvmStatic external fun sessionSimulateRealtimePipeline(handle: Long, nowEpochSec: Long): LongArray
+    @JvmStatic external fun sessionTakeFinalizedMeta(handle: Long): LongArray?
+    @JvmStatic external fun sessionTakeFinalizedOgg(handle: Long): ByteArray?
+    @JvmStatic external fun sessionTakeFinalizedWav(handle: Long): ByteArray?
+
+    @JvmStatic external fun libraryNew(): Long
+    @JvmStatic external fun libraryFree(handle: Long)
+    @JvmStatic external fun libraryIngestEntry(
+        handle: Long,
+        id: Int,
+        beanFileId: Int,
+        createdAtEpochSec: Long,
+        durationMs: Long,
+        byteCount: Int,
+        marksMs: LongArray,
+    ): Boolean
+    @JvmStatic external fun librarySelect(handle: Long, recordingId: Int): Boolean
+    @JvmStatic external fun librarySeekMs(handle: Long, positionMs: Long): Long
+    @JvmStatic external fun libraryJumpToMark(handle: Long, currentMs: Long, direction: Int): Long
+    @JvmStatic external fun libraryMoveToTrash(handle: Long, recordingId: Int): Boolean
+    @JvmStatic external fun libraryUndoTrash(handle: Long): Int
+    @JvmStatic external fun librarySnapshot(handle: Long): LongArray
+}}
+
+class KoeFrameReassembler : AutoCloseable {{
+    private var handle: Long = KoeCoreNative.reassemblerNew()
+
+    fun reset() {{
+        if (handle != 0L) KoeCoreNative.reassemblerReset(handle)
+    }}
+
+    fun ingest(chunk: ByteArray): List<ByteArray> {{
+        if (handle == 0L) return emptyList()
+        val count = KoeCoreNative.reassemblerIngest(handle, chunk)
+        if (count <= 0) return emptyList()
+        val out = ArrayList<ByteArray>(count)
+        while (true) {{
+            val pkt = KoeCoreNative.reassemblerPopPacket(handle) ?: break
+            out.add(pkt)
+        }}
+        return out
+    }}
+
+    override fun close() {{
+        if (handle != 0L) {{
+            KoeCoreNative.reassemblerFree(handle)
+            handle = 0L
+        }}
+    }}
+}}
+
+class KoeTransportSession : AutoCloseable {{
+    private var handle: Long = KoeCoreNative.sessionNew()
+
+    fun acceptEcdhReply(replyPayload: ByteArray, sharedSecret: ByteArray): Boolean =
+        handle != 0L && KoeCoreNative.sessionAcceptEcdhReply(handle, replyPayload, sharedSecret)
+
+    fun beginOfflinePull(fileId: Int, durationMs: Int): ByteArray =
+        if (handle == 0L) ByteArray(0) else KoeCoreNative.sessionBeginOfflinePull(handle, fileId, durationMs)
+
+    fun ingestBleChunk(chunk: ByteArray, nowEpochSec: Long): LongArray =
+        if (handle == 0L) LongArray(0) else KoeCoreNative.sessionIngestBleChunk(handle, chunk, nowEpochSec)
+
+    fun simulateRealtimePipeline(nowEpochSec: Long): LongArray =
+        if (handle == 0L) LongArray(0) else KoeCoreNative.sessionSimulateRealtimePipeline(handle, nowEpochSec)
+
+    fun takeFinalizedMeta(): LongArray? =
+        if (handle == 0L) null else KoeCoreNative.sessionTakeFinalizedMeta(handle)
+
+    fun takeFinalizedOgg(): ByteArray? =
+        if (handle == 0L) null else KoeCoreNative.sessionTakeFinalizedOgg(handle)
+
+    fun takeFinalizedWav(): ByteArray? =
+        if (handle == 0L) null else KoeCoreNative.sessionTakeFinalizedWav(handle)
+
+    override fun close() {{
+        if (handle != 0L) {{
+            KoeCoreNative.sessionFree(handle)
+            handle = 0L
+        }}
+    }}
+}}
+
+class KoeRecordingLibrary : AutoCloseable {{
+    private var handle: Long = KoeCoreNative.libraryNew()
+
+    fun ingestEntry(
+        id: Int,
+        beanFileId: Int,
+        createdAtEpochSec: Long,
+        durationMs: Long,
+        byteCount: Int,
+        marksMs: LongArray,
+    ): Boolean =
+        handle != 0L && KoeCoreNative.libraryIngestEntry(
+            handle, id, beanFileId, createdAtEpochSec, durationMs, byteCount, marksMs
+        )
+
+    fun select(recordingId: Int): Boolean =
+        handle != 0L && KoeCoreNative.librarySelect(handle, recordingId)
+
+    fun seekMs(positionMs: Long): Long =
+        if (handle == 0L) 0L else KoeCoreNative.librarySeekMs(handle, positionMs)
+
+    fun jumpToMark(currentMs: Long, direction: Int): Long? {{
+        if (handle == 0L) return null
+        val target = KoeCoreNative.libraryJumpToMark(handle, currentMs, direction)
+        return if (target < 0L) null else target
+    }}
+
+    fun moveToTrash(recordingId: Int): Boolean =
+        handle != 0L && KoeCoreNative.libraryMoveToTrash(handle, recordingId)
+
+    fun undoTrash(): Int =
+        if (handle == 0L) 0 else KoeCoreNative.libraryUndoTrash(handle)
+
+    fun snapshot(): LongArray =
+        if (handle == 0L) LongArray(0) else KoeCoreNative.librarySnapshot(handle)
+
+    override fun close() {{
+        if (handle != 0L) {{
+            KoeCoreNative.libraryFree(handle)
+            handle = 0L
+        }}
+    }}
 }}
 "#,
         struct_count = struct_names.len(),

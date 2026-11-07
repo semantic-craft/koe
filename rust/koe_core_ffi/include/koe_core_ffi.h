@@ -65,6 +65,51 @@ typedef struct KoeAudioFileHead {
   uint8_t file_key[32];
 } KoeAudioFileHead;
 
+typedef struct KoeRecordingEntry {
+  uint32_t id;
+  uint32_t bean_file_id;
+  uint64_t created_at_epoch_sec;
+  uint64_t duration_ms;
+  uint32_t byte_count;
+  uint32_t mark_count;
+  uint64_t marks_ms[32];
+} KoeRecordingEntry;
+
+typedef struct KoeTransferProgress {
+  uint8_t phase;
+  uint8_t error_code;
+  uint8_t reserved[2];
+  uint32_t file_id;
+  uint32_t received_wire_bytes;
+  uint32_t expected_wire_bytes;
+  uint32_t mark_count;
+} KoeTransferProgress;
+
+typedef struct KoeSessionStepResult {
+  uint32_t frames_decoded;
+  uint8_t connection_phase;
+  uint8_t telemetry_updated;
+  uint8_t session_key_established;
+  uint8_t catalog_updated;
+  uint8_t transfer_updated;
+  uint8_t has_finalized_recording;
+  uint8_t reserved[2];
+  uint32_t slices_unpacked_count;
+  uint32_t new_marks_count;
+  uint32_t outbound_tx_count;
+  KoeTransferProgress transfer;
+} KoeSessionStepResult;
+
+typedef struct KoeLibrarySnapshot {
+  uint32_t entry_count;
+  uint32_t selected_recording_id;
+  uint64_t playhead_ms;
+  uint8_t has_last_trashed;
+  uint8_t reserved[7];
+  uint32_t last_trashed_id;
+  uint32_t pad_tail;
+} KoeLibrarySnapshot;
+
 uint8_t koe_protocol_checksum(const uint8_t* data_ptr, size_t data_len);
 uint8_t koe_protocol_verify_checksum(const uint8_t* packet_ptr, size_t packet_len);
 size_t koe_protocol_encode(uint8_t cmd_type, uint8_t cmd_id, const uint8_t* payload_ptr, size_t payload_len, uint8_t* out_ptr, size_t out_cap);
@@ -84,6 +129,39 @@ uint32_t koe_ogg_crc32(const uint8_t* data_ptr, size_t data_len);
 uint8_t* koe_ogg_opus_mux_raw_frames(const uint8_t* raw_ptr, size_t raw_len, size_t* out_len_ptr);
 void koe_buffer_free(uint8_t* ptr, size_t len);
 int32_t koe_wav_header(uint32_t pcm_length, uint8_t* out_ptr);
+uint8_t* koe_wav_build_audible_preview(uint64_t duration_ms, const uint64_t* marks_ptr, size_t marks_len, size_t* out_len_ptr);
+uint64_t koe_reassembler_new(void);
+void koe_reassembler_free(uint64_t handle);
+void koe_reassembler_reset(uint64_t handle);
+size_t koe_reassembler_buffered_len(uint64_t handle);
+uint32_t koe_reassembler_ingest(uint64_t handle, const uint8_t* chunk_ptr, size_t chunk_len);
+size_t koe_reassembler_pop_packet(uint64_t handle, uint8_t* out_ptr, size_t out_cap, uint8_t* out_cmd_type, uint8_t* out_cmd_id);
+uint64_t koe_session_new(void);
+void koe_session_free(uint64_t handle);
+void koe_session_reset_active_transfer(uint64_t handle);
+void koe_session_on_disconnected(uint64_t handle);
+uint8_t koe_session_accept_ecdh_reply(uint64_t handle, const uint8_t* reply_ptr, size_t reply_len, const uint8_t* secret_ptr, size_t secret_len);
+size_t koe_session_begin_offline_pull(uint64_t handle, uint32_t file_id, uint32_t duration_ms, uint8_t* out_tx_ptr, size_t out_tx_cap);
+int32_t koe_session_ingest_ble_chunk(uint64_t handle, const uint8_t* chunk_ptr, size_t chunk_len, uint64_t now_epoch_sec, KoeSessionStepResult* out_step_ptr);
+size_t koe_session_pop_outbound_tx(uint64_t handle, uint8_t* out_ptr, size_t out_cap);
+uint8_t koe_session_get_telemetry(uint64_t handle, KoeDeviceInfo* out_ptr);
+size_t koe_session_get_catalog(uint64_t handle, KoeOfflineFileEntry* out_entries_ptr, size_t out_entries_cap);
+int32_t koe_session_get_transfer(uint64_t handle, KoeTransferProgress* out_ptr);
+uint8_t koe_session_finalize_active_transfer(uint64_t handle, uint64_t now_epoch_sec);
+uint8_t koe_session_simulate_realtime_pipeline(uint64_t handle, uint64_t now_epoch_sec, KoeSessionStepResult* out_step_ptr);
+uint8_t koe_session_take_finalized(uint64_t handle, KoeRecordingEntry* out_entry_ptr, uint8_t** out_ogg_ptr, size_t* out_ogg_len_ptr, uint8_t** out_wav_ptr, size_t* out_wav_len_ptr);
+uint64_t koe_library_new(void);
+void koe_library_free(uint64_t handle);
+int32_t koe_library_snapshot(uint64_t handle, KoeLibrarySnapshot* out_snapshot_ptr);
+size_t koe_library_get_entries(uint64_t handle, KoeRecordingEntry* out_entries_ptr, size_t out_entries_cap);
+uint8_t koe_library_get_selected(uint64_t handle, KoeRecordingEntry* out_entry_ptr);
+int32_t koe_library_ingest_entry(uint64_t handle, const KoeRecordingEntry* entry_ptr);
+uint8_t koe_library_ingest_disk_file(uint64_t handle, const uint8_t* filename_ptr, size_t filename_len, uint32_t byte_count, uint64_t created_at_epoch_sec, KoeRecordingEntry* out_entry_ptr);
+uint8_t koe_library_select(uint64_t handle, uint32_t recording_id, uint64_t* out_playhead_ms_ptr);
+uint64_t koe_library_seek_ms(uint64_t handle, uint64_t position_ms);
+uint8_t koe_library_jump_to_mark(uint64_t handle, uint64_t current_ms, int32_t direction, uint64_t* out_target_ms_ptr);
+uint8_t koe_library_move_to_trash(uint64_t handle, uint32_t recording_id, KoeRecordingEntry* out_trashed_ptr);
+uint8_t koe_library_undo_trash(uint64_t handle, KoeRecordingEntry* out_restored_ptr);
 
 #ifdef __cplusplus
 }

@@ -1,15 +1,22 @@
 //! Thin C-ABI boundary wrapping the `#![forbid(unsafe_code)]` `koe_core` crate
 //! for `dart:ffi`, Swift (`darwin/KoeCore.swift`), and Kotlin (`KoeCore.kt`) callers.
 
+use std::collections::{BTreeMap, VecDeque};
 use std::slice;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use koe_core::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
-use koe_core::frame::{DecodedPacket, ProtocolFrame};
+use koe_core::frame::{DecodedPacket, FrameReassembler, ProtocolFrame};
+use koe_core::library::{RecordingEntry, RecordingLibrary};
 use koe_core::models::{DeviceInfoModel, OfflineFileList};
 use koe_core::ogg_opus::OggOpus;
+use koe_core::session::{SessionIngestOutcome, TransferProgress, TransportSession};
 use koe_core::slice_marks::{SliceMark, SliceMarkProbe};
 use koe_core::transport::{TransportSliceProcessor, OPUS_FRAME_BYTES};
 use koe_core::wav::OpusWave;
+
+pub mod jni;
 
 /// C-ABI flat representation of `DeviceInfoModel` for stack-allocated FFI reads.
 #[repr(C)]
@@ -154,6 +161,140 @@ pub struct KoeAudioFileHead {
     pub session_nonce: [u8; 16],
     /// Unwrapped 32-byte AES-256 file key when `has_file_key == 1`.
     pub file_key: [u8; 32],
+}
+
+/// C-ABI flat representation of `RecordingEntry` (up to 32 sorted mark timestamps).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeRecordingEntry {
+    /// Recording identifier.
+    pub id: u32,
+    /// Originating D3200 file ID.
+    pub bean_file_id: u32,
+    /// UTC creation timestamp in Unix seconds.
+    pub created_at_epoch_sec: u64,
+    /// Total duration in milliseconds.
+    pub duration_ms: u64,
+    /// File size on disk in bytes.
+    pub byte_count: u32,
+    /// Number of valid entries in `marks_ms` (`0..=32`).
+    pub mark_count: u32,
+    /// Sorted mark positions in milliseconds.
+    pub marks_ms: [u64; 32],
+}
+
+impl KoeRecordingEntry {
+    pub(crate) fn from_domain(entry: &RecordingEntry) -> Self {
+        let mut marks_ms = [0u64; 32];
+        let count = entry.marks_ms.len().min(32);
+        marks_ms[..count].copy_from_slice(&entry.marks_ms[..count]);
+        Self {
+            id: entry.id,
+            bean_file_id: entry.bean_file_id,
+            created_at_epoch_sec: entry.created_at_epoch_sec,
+            duration_ms: entry.duration_ms,
+            byte_count: entry.byte_count,
+            mark_count: count as u32,
+            marks_ms,
+        }
+    }
+
+    pub(crate) fn to_domain(&self) -> RecordingEntry {
+        let count = (self.mark_count as usize).min(32);
+        RecordingEntry {
+            id: self.id,
+            bean_file_id: self.bean_file_id,
+            created_at_epoch_sec: self.created_at_epoch_sec,
+            duration_ms: self.duration_ms,
+            byte_count: self.byte_count,
+            marks_ms: self.marks_ms[..count].to_vec(),
+        }
+    }
+}
+
+/// C-ABI flat representation of `TransferProgress`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeTransferProgress {
+    /// `TransferPhaseTag` value (`0..=4`).
+    pub phase: u8,
+    /// Device error code when `phase == 4`.
+    pub error_code: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 2],
+    /// Active D3200 file ID (`0` when idle).
+    pub file_id: u32,
+    /// Wire record bytes received (`slices * 166`).
+    pub received_wire_bytes: u32,
+    /// Expected wire bytes (`0` for live stream).
+    pub expected_wire_bytes: u32,
+    /// Number of unique hardware double-tap marks accumulated.
+    pub mark_count: u32,
+}
+
+impl KoeTransferProgress {
+    pub(crate) fn from_domain(t: &TransferProgress) -> Self {
+        Self {
+            phase: t.phase as u8,
+            error_code: t.error_code,
+            reserved: [0u8; 2],
+            file_id: t.file_id,
+            received_wire_bytes: t.received_wire_bytes,
+            expected_wire_bytes: t.expected_wire_bytes,
+            mark_count: t.mark_count,
+        }
+    }
+}
+
+/// C-ABI coarse step result returned by `koe_session_ingest_ble_chunk` and
+/// `koe_session_simulate_realtime_pipeline`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeSessionStepResult {
+    /// Number of complete checksum-verified RX frames decoded.
+    pub frames_decoded: u32,
+    /// `ConnectionPhaseTag` value (`0..=4`).
+    pub connection_phase: u8,
+    /// `1` when `01/01` telemetry was updated.
+    pub telemetry_updated: u8,
+    /// `1` when `2E/01` session key was established.
+    pub session_key_established: u8,
+    /// `1` when offline file catalog was updated.
+    pub catalog_updated: u8,
+    /// `1` when transfer progress changed.
+    pub transfer_updated: u8,
+    /// `1` when a recording finalized and is ready via `koe_session_take_finalized`.
+    pub has_finalized_recording: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 2],
+    /// Number of 160-byte Opus slices unpacked during this step.
+    pub slices_unpacked_count: u32,
+    /// Number of new mark timestamps observed during this step.
+    pub new_marks_count: u32,
+    /// Number of queued outbound TX frames awaiting `koe_session_pop_outbound_tx`.
+    pub outbound_tx_count: u32,
+    /// Current transfer progress snapshot.
+    pub transfer: KoeTransferProgress,
+}
+
+/// C-ABI summary snapshot of `RecordingLibrary`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeLibrarySnapshot {
+    /// Total number of recordings in the library.
+    pub entry_count: u32,
+    /// Currently selected recording ID (`0` when `None`).
+    pub selected_recording_id: u32,
+    /// Current playhead position in milliseconds.
+    pub playhead_ms: u64,
+    /// `1` when an undoable trashed recording exists, else `0`.
+    pub has_last_trashed: u8,
+    /// Padding for 8-byte alignment.
+    pub reserved: [u8; 7],
+    /// ID of the most recently trashed recording when `has_last_trashed == 1`.
+    pub last_trashed_id: u32,
+    /// Trailing alignment padding.
+    pub pad_tail: u32,
 }
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
@@ -682,4 +823,858 @@ pub unsafe extern "C" fn koe_wav_header(pcm_length: u32, out_ptr: *mut u8) -> i3
     let out = unsafe { slice::from_raw_parts_mut(out_ptr, 44) };
     out.copy_from_slice(&hdr);
     1
+}
+
+/// Synthesizes a 48 kHz mono PCM16 preview WAV (`RIFF...`) with 880 Hz double-tap mark chimes
+/// on the Rust heap. Stores the output byte length in `*out_len_ptr` and returns the buffer
+/// pointer (freed via `koe_buffer_free`).
+///
+/// # Safety
+///
+/// `marks_ptr` must be valid for reads of `marks_len` `u64` items when non-null, and
+/// `out_len_ptr` must be valid for writes of a `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_wav_build_audible_preview(
+    duration_ms: u64,
+    marks_ptr: *const u64,
+    marks_len: usize,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let marks = if marks_ptr.is_null() || marks_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(marks_ptr, marks_len) }
+    };
+    let mut wav = OpusWave::build_audible_preview_wav(duration_ms, marks).into_boxed_slice();
+    let len = wav.len();
+    let ptr = wav.as_mut_ptr();
+    std::mem::forget(wav);
+    unsafe {
+        *out_len_ptr = len;
+    }
+    ptr
+}
+
+struct ReassemblerSlot {
+    inner: FrameReassembler,
+    queued: VecDeque<DecodedPacket>,
+}
+
+struct SessionSlot {
+    inner: TransportSession,
+    outbound_tx: VecDeque<Vec<u8>>,
+}
+
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
+static REASSEMBLER_REGISTRY: OnceLock<Mutex<BTreeMap<u64, ReassemblerSlot>>> = OnceLock::new();
+static TRANSPORT_REGISTRY: OnceLock<Mutex<BTreeMap<u64, SessionSlot>>> = OnceLock::new();
+static LIBRARY_REGISTRY: OnceLock<Mutex<BTreeMap<u64, RecordingLibrary>>> = OnceLock::new();
+
+fn reassembler_map() -> &'static Mutex<BTreeMap<u64, ReassemblerSlot>> {
+    REASSEMBLER_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn session_map() -> &'static Mutex<BTreeMap<u64, SessionSlot>> {
+    TRANSPORT_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn library_map() -> &'static Mutex<BTreeMap<u64, RecordingLibrary>> {
+    LIBRARY_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn alloc_handle() -> u64 {
+    NEXT_HANDLE.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Allocates a stateful `FrameReassembler` handle.
+#[no_mangle]
+pub extern "C" fn koe_reassembler_new() -> u64 {
+    let h = alloc_handle();
+    if let Ok(mut map) = reassembler_map().lock() {
+        map.insert(
+            h,
+            ReassemblerSlot {
+                inner: FrameReassembler::new(),
+                queued: VecDeque::new(),
+            },
+        );
+    }
+    h
+}
+
+/// Frees a `FrameReassembler` handle.
+#[no_mangle]
+pub extern "C" fn koe_reassembler_free(handle: u64) {
+    if let Ok(mut map) = reassembler_map().lock() {
+        map.remove(&handle);
+    }
+}
+
+/// Clears buffered bytes and queued packets in `FrameReassembler`.
+#[no_mangle]
+pub extern "C" fn koe_reassembler_reset(handle: u64) {
+    if let Ok(mut map) = reassembler_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            slot.inner.reset();
+            slot.queued.clear();
+        }
+    }
+}
+
+/// Returns the number of unconsumed tail bytes in `FrameReassembler`.
+#[no_mangle]
+pub extern "C" fn koe_reassembler_buffered_len(handle: u64) -> usize {
+    if let Ok(map) = reassembler_map().lock() {
+        if let Some(slot) = map.get(&handle) {
+            return slot.inner.buffered_len();
+        }
+    }
+    0
+}
+
+/// Feeds `chunk_ptr[0..chunk_len]` into `FrameReassembler` and returns the total number
+/// of complete verified packets currently queued for `koe_reassembler_pop_packet`.
+///
+/// # Safety
+///
+/// `chunk_ptr` must be valid for reads of `chunk_len` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_reassembler_ingest(
+    handle: u64,
+    chunk_ptr: *const u8,
+    chunk_len: usize,
+) -> u32 {
+    let chunk = if chunk_ptr.is_null() || chunk_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(chunk_ptr, chunk_len) }
+    };
+    if let Ok(mut map) = reassembler_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let pkts = slot.inner.ingest(chunk);
+            slot.queued.extend(pkts);
+            return slot.queued.len() as u32;
+        }
+    }
+    0
+}
+
+/// Pops the next verified RX packet from `FrameReassembler`, writing its raw bytes into
+/// `out_ptr[0..out_cap]`, its command type into `*out_cmd_type`, and its command ID into
+/// `*out_cmd_id`. Returns the packet byte length (`0` if empty).
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null, and `out_cmd_type` /
+/// `out_cmd_id` must be valid mutable pointers when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_reassembler_pop_packet(
+    handle: u64,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_cmd_type: *mut u8,
+    out_cmd_id: *mut u8,
+) -> usize {
+    if let Ok(mut map) = reassembler_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            if let Some(pkt) = slot.queued.pop_front() {
+                if !out_cmd_type.is_null() {
+                    unsafe {
+                        *out_cmd_type = pkt.cmd_type;
+                    }
+                }
+                if !out_cmd_id.is_null() {
+                    unsafe {
+                        *out_cmd_id = pkt.cmd_id;
+                    }
+                }
+                if !out_ptr.is_null() && out_cap >= pkt.raw.len() {
+                    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, pkt.raw.len()) };
+                    dst.copy_from_slice(&pkt.raw);
+                }
+                return pkt.raw.len();
+            }
+        }
+    }
+    0
+}
+
+/// Allocates a stateful `TransportSession` handle.
+#[no_mangle]
+pub extern "C" fn koe_session_new() -> u64 {
+    let h = alloc_handle();
+    if let Ok(mut map) = session_map().lock() {
+        map.insert(
+            h,
+            SessionSlot {
+                inner: TransportSession::new(),
+                outbound_tx: VecDeque::new(),
+            },
+        );
+    }
+    h
+}
+
+/// Frees a `TransportSession` handle.
+#[no_mangle]
+pub extern "C" fn koe_session_free(handle: u64) {
+    if let Ok(mut map) = session_map().lock() {
+        map.remove(&handle);
+    }
+}
+
+/// Resets active transfer buffers on `TransportSession`.
+#[no_mangle]
+pub extern "C" fn koe_session_reset_active_transfer(handle: u64) {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            slot.inner.reset_active_transfer();
+        }
+    }
+}
+
+/// Resets `TransportSession` on BLE disconnect.
+#[no_mangle]
+pub extern "C" fn koe_session_on_disconnected(handle: u64) {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            slot.inner.on_disconnected();
+            slot.outbound_tx.clear();
+        }
+    }
+}
+
+/// Verifies the `2E/01` ECDH reply payload against `secret_ptr[0..secret_len]` and derives
+/// the 32-byte HKDF session key. Returns `1` on match, `0` on mismatch.
+///
+/// # Safety
+///
+/// `reply_ptr` and `secret_ptr` must be valid for reads of `reply_len` and `secret_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_accept_ecdh_reply(
+    handle: u64,
+    reply_ptr: *const u8,
+    reply_len: usize,
+    secret_ptr: *const u8,
+    secret_len: usize,
+) -> u8 {
+    if reply_ptr.is_null() || secret_ptr.is_null() {
+        return 0;
+    }
+    let reply = unsafe { slice::from_raw_parts(reply_ptr, reply_len) };
+    let secret = unsafe { slice::from_raw_parts(secret_ptr, secret_len) };
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            return u8::from(slot.inner.accept_ecdh_reply(reply, secret));
+        }
+    }
+    0
+}
+
+/// Prepares an offline file pull for `file_id` and writes the encoded `1A/07` TX frame into
+/// `out_tx_ptr[0..out_tx_cap]`, returning the encoded frame byte length.
+///
+/// # Safety
+///
+/// `out_tx_ptr` must be valid for writes of `out_tx_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_begin_offline_pull(
+    handle: u64,
+    file_id: u32,
+    duration_ms: u32,
+    out_tx_ptr: *mut u8,
+    out_tx_cap: usize,
+) -> usize {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let tx = slot.inner.begin_offline_pull(file_id, duration_ms);
+            if !out_tx_ptr.is_null() && out_tx_cap >= tx.len() {
+                let dst = unsafe { slice::from_raw_parts_mut(out_tx_ptr, tx.len()) };
+                dst.copy_from_slice(&tx);
+            }
+            return tx.len();
+        }
+    }
+    0
+}
+
+fn fill_step_result(slot: &SessionSlot, outcome: &SessionIngestOutcome) -> KoeSessionStepResult {
+    KoeSessionStepResult {
+        frames_decoded: outcome.frames_decoded,
+        connection_phase: slot.inner.connection_phase as u8,
+        telemetry_updated: u8::from(outcome.telemetry_updated),
+        session_key_established: u8::from(outcome.session_key_established),
+        catalog_updated: u8::from(outcome.catalog_updated),
+        transfer_updated: u8::from(outcome.transfer_updated),
+        has_finalized_recording: u8::from(slot.inner.last_finalized.is_some()),
+        reserved: [0u8; 2],
+        slices_unpacked_count: outcome.slices_unpacked_count,
+        new_marks_count: outcome.new_marks_ms.len() as u32,
+        outbound_tx_count: slot.outbound_tx.len() as u32,
+        transfer: KoeTransferProgress::from_domain(&slot.inner.transfer),
+    }
+}
+
+/// Ingests a raw BLE chunk into `TransportSession` and writes the step summary into `*out_step_ptr`.
+///
+/// # Safety
+///
+/// `chunk_ptr` must be valid for reads of `chunk_len` bytes when non-null, and `out_step_ptr`
+/// must be valid for writes of one `KoeSessionStepResult`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_ingest_ble_chunk(
+    handle: u64,
+    chunk_ptr: *const u8,
+    chunk_len: usize,
+    now_epoch_sec: u64,
+    out_step_ptr: *mut KoeSessionStepResult,
+) -> i32 {
+    if out_step_ptr.is_null() {
+        return 0;
+    }
+    let chunk = if chunk_ptr.is_null() || chunk_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(chunk_ptr, chunk_len) }
+    };
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let outcome = slot.inner.ingest_ble_chunk(chunk, now_epoch_sec);
+            slot.outbound_tx.extend(outcome.outbound_tx_frames.iter().cloned());
+            let step = fill_step_result(slot, &outcome);
+            unsafe {
+                *out_step_ptr = step;
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Pops the next queued outbound TX frame from `TransportSession` into `out_ptr[0..out_cap]`.
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_pop_outbound_tx(
+    handle: u64,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> usize {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            if let Some(tx) = slot.outbound_tx.pop_front() {
+                if !out_ptr.is_null() && out_cap >= tx.len() {
+                    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, tx.len()) };
+                    dst.copy_from_slice(&tx);
+                }
+                return tx.len();
+            }
+        }
+    }
+    0
+}
+
+/// Writes the latest `01/01` device telemetry from `TransportSession` into `*out_ptr`.
+/// Returns `1` when telemetry is available, `0` otherwise.
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of one `KoeDeviceInfo`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_get_telemetry(
+    handle: u64,
+    out_ptr: *mut KoeDeviceInfo,
+) -> u8 {
+    if out_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = session_map().lock() {
+        if let Some(slot) = map.get(&handle) {
+            if let Some(tel) = &slot.inner.telemetry {
+                unsafe {
+                    *out_ptr = KoeDeviceInfo::from_model(tel);
+                }
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// Writes up to `out_entries_cap` catalog items from `TransportSession` into `out_entries_ptr`.
+/// Returns the total number of catalog entries.
+///
+/// # Safety
+///
+/// `out_entries_ptr` must be valid for writes of `out_entries_cap` items when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_get_catalog(
+    handle: u64,
+    out_entries_ptr: *mut KoeOfflineFileEntry,
+    out_entries_cap: usize,
+) -> usize {
+    if let Ok(map) = session_map().lock() {
+        if let Some(slot) = map.get(&handle) {
+            let total = slot.inner.catalog.len();
+            if !out_entries_ptr.is_null() && out_entries_cap > 0 {
+                let count = total.min(out_entries_cap);
+                let dst = unsafe { slice::from_raw_parts_mut(out_entries_ptr, count) };
+                for (d, s) in dst.iter_mut().zip(slot.inner.catalog.iter().take(count)) {
+                    *d = KoeOfflineFileEntry {
+                        file_id: s.file_id,
+                        duration_ms: s.duration_ms,
+                        has_end_time: u8::from(s.end_time.is_some()),
+                        reserved: [0u8; 3],
+                        end_time: s.end_time.unwrap_or(0),
+                    };
+                }
+            }
+            return total;
+        }
+    }
+    0
+}
+
+/// Writes the current transfer progress of `TransportSession` into `*out_ptr`.
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of one `KoeTransferProgress`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_get_transfer(
+    handle: u64,
+    out_ptr: *mut KoeTransferProgress,
+) -> i32 {
+    if out_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = session_map().lock() {
+        if let Some(slot) = map.get(&handle) {
+            unsafe {
+                *out_ptr = KoeTransferProgress::from_domain(&slot.inner.transfer);
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Explicitly finalizes the active stream in `TransportSession`. Returns `1` if a recording
+/// was finalized, `0` otherwise.
+#[no_mangle]
+pub extern "C" fn koe_session_finalize_active_transfer(handle: u64, now_epoch_sec: u64) -> u8 {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            return u8::from(slot.inner.finalize_active_transfer(now_epoch_sec).is_some());
+        }
+    }
+    0
+}
+
+/// Runs the deterministic closed-loop `01/01` + `1A/07` + 60-slice `1A/08` simulation on
+/// `TransportSession` and populates `*out_step_ptr`. Returns `1` on success.
+///
+/// # Safety
+///
+/// `out_step_ptr` must be valid for writes of one `KoeSessionStepResult` when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_simulate_realtime_pipeline(
+    handle: u64,
+    now_epoch_sec: u64,
+    out_step_ptr: *mut KoeSessionStepResult,
+) -> u8 {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let fin = slot.inner.simulate_realtime_pipeline(now_epoch_sec);
+            let outcome = SessionIngestOutcome {
+                frames_decoded: 3,
+                telemetry_updated: true,
+                session_key_established: true,
+                catalog_updated: false,
+                transfer_updated: true,
+                slices_unpacked_count: 60,
+                new_marks_ms: fin.entry.marks_ms.clone(),
+                finalized: Some(fin),
+                outbound_tx_frames: Vec::new(),
+            };
+            if !out_step_ptr.is_null() {
+                unsafe {
+                    *out_step_ptr = fill_step_result(slot, &outcome);
+                }
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Takes the most recently finalized recording from `TransportSession`, writing metadata into
+/// `*out_entry_ptr` and allocating Ogg Opus and preview WAV buffers (freed via `koe_buffer_free`).
+/// Returns `1` when a finalized recording was taken, `0` otherwise.
+///
+/// # Safety
+///
+/// Output pointers must be valid mutable pointers when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_take_finalized(
+    handle: u64,
+    out_entry_ptr: *mut KoeRecordingEntry,
+    out_ogg_ptr: *mut *mut u8,
+    out_ogg_len_ptr: *mut usize,
+    out_wav_ptr: *mut *mut u8,
+    out_wav_len_ptr: *mut usize,
+) -> u8 {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            if let Some(fin) = slot.inner.last_finalized.take() {
+                if !out_entry_ptr.is_null() {
+                    unsafe {
+                        *out_entry_ptr = KoeRecordingEntry::from_domain(&fin.entry);
+                    }
+                }
+                if !out_ogg_ptr.is_null() && !out_ogg_len_ptr.is_null() {
+                    let mut ogg = fin.ogg_opus_bytes.into_boxed_slice();
+                    let len = ogg.len();
+                    let ptr = ogg.as_mut_ptr();
+                    std::mem::forget(ogg);
+                    unsafe {
+                        *out_ogg_ptr = ptr;
+                        *out_ogg_len_ptr = len;
+                    }
+                }
+                if !out_wav_ptr.is_null() && !out_wav_len_ptr.is_null() {
+                    let mut wav = fin.preview_wav_bytes.into_boxed_slice();
+                    let len = wav.len();
+                    let ptr = wav.as_mut_ptr();
+                    std::mem::forget(wav);
+                    unsafe {
+                        *out_wav_ptr = ptr;
+                        *out_wav_len_ptr = len;
+                    }
+                }
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// Allocates a stateful `RecordingLibrary` handle.
+#[no_mangle]
+pub extern "C" fn koe_library_new() -> u64 {
+    let h = alloc_handle();
+    if let Ok(mut map) = library_map().lock() {
+        map.insert(h, RecordingLibrary::new());
+    }
+    h
+}
+
+/// Frees a `RecordingLibrary` handle.
+#[no_mangle]
+pub extern "C" fn koe_library_free(handle: u64) {
+    if let Ok(mut map) = library_map().lock() {
+        map.remove(&handle);
+    }
+}
+
+/// Writes the current `KoeLibrarySnapshot` into `*out_snapshot_ptr`.
+///
+/// # Safety
+///
+/// `out_snapshot_ptr` must be valid for writes of one `KoeLibrarySnapshot`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_snapshot(
+    handle: u64,
+    out_snapshot_ptr: *mut KoeLibrarySnapshot,
+) -> i32 {
+    if out_snapshot_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = library_map().lock() {
+        if let Some(lib) = map.get(&handle) {
+            unsafe {
+                *out_snapshot_ptr = KoeLibrarySnapshot {
+                    entry_count: lib.entries.len() as u32,
+                    selected_recording_id: lib.selected_id.unwrap_or(0),
+                    playhead_ms: lib.position_ms,
+                    has_last_trashed: u8::from(lib.trashed_entry.is_some()),
+                    reserved: [0u8; 7],
+                    last_trashed_id: lib.trashed_entry.as_ref().map_or(0, |t| t.id),
+                    pad_tail: 0,
+                };
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Writes up to `out_entries_cap` `KoeRecordingEntry` items from `RecordingLibrary` into `out_entries_ptr`.
+/// Returns the total number of entries in the library.
+///
+/// # Safety
+///
+/// `out_entries_ptr` must be valid for writes of `out_entries_cap` items when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_get_entries(
+    handle: u64,
+    out_entries_ptr: *mut KoeRecordingEntry,
+    out_entries_cap: usize,
+) -> usize {
+    if let Ok(map) = library_map().lock() {
+        if let Some(lib) = map.get(&handle) {
+            let total = lib.entries.len();
+            if !out_entries_ptr.is_null() && out_entries_cap > 0 {
+                let count = total.min(out_entries_cap);
+                let dst = unsafe { slice::from_raw_parts_mut(out_entries_ptr, count) };
+                for (d, s) in dst.iter_mut().zip(lib.entries.iter().take(count)) {
+                    *d = KoeRecordingEntry::from_domain(s);
+                }
+            }
+            return total;
+        }
+    }
+    0
+}
+
+/// Writes the currently selected `KoeRecordingEntry` into `*out_entry_ptr`.
+/// Returns `1` when an entry is selected, `0` otherwise.
+///
+/// # Safety
+///
+/// `out_entry_ptr` must be valid for writes of one `KoeRecordingEntry`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_get_selected(
+    handle: u64,
+    out_entry_ptr: *mut KoeRecordingEntry,
+) -> u8 {
+    if out_entry_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = library_map().lock() {
+        if let Some(lib) = map.get(&handle) {
+            if let Some(sel) = lib.selected_entry() {
+                unsafe {
+                    *out_entry_ptr = KoeRecordingEntry::from_domain(sel);
+                }
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// Ingests `*entry_ptr` into `RecordingLibrary` and selects it.
+///
+/// # Safety
+///
+/// `entry_ptr` must be valid for reads of one `KoeRecordingEntry`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_ingest_entry(
+    handle: u64,
+    entry_ptr: *const KoeRecordingEntry,
+) -> i32 {
+    if entry_ptr.is_null() {
+        return 0;
+    }
+    let entry = unsafe { (*entry_ptr).to_domain() };
+    if let Ok(mut map) = library_map().lock() {
+        if let Some(lib) = map.get_mut(&handle) {
+            lib.ingest(entry);
+            return 1;
+        }
+    }
+    0
+}
+
+/// Ingests a disk audio file by filename into `RecordingLibrary` and writes the resulting
+/// `KoeRecordingEntry` into `*out_entry_ptr` when non-null. Returns `1` if ingested.
+///
+/// # Safety
+///
+/// `filename_ptr` must be valid for reads of `filename_len` UTF-8 bytes, and `out_entry_ptr`
+/// must be valid for writes of one `KoeRecordingEntry` when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_ingest_disk_file(
+    handle: u64,
+    filename_ptr: *const u8,
+    filename_len: usize,
+    byte_count: u32,
+    created_at_epoch_sec: u64,
+    out_entry_ptr: *mut KoeRecordingEntry,
+) -> u8 {
+    if filename_ptr.is_null() || filename_len == 0 {
+        return 0;
+    }
+    let bytes = unsafe { slice::from_raw_parts(filename_ptr, filename_len) };
+    let Ok(filename) = std::str::from_utf8(bytes) else {
+        return 0;
+    };
+    let stem = filename
+        .rsplit('/')
+        .next()
+        .unwrap_or(filename)
+        .strip_suffix(".opus")
+        .or_else(|| filename.strip_suffix(".wav"))
+        .unwrap_or(filename);
+    let digits = stem.strip_prefix("koe_rec_").unwrap_or(stem);
+    let id = digits.parse::<u32>().unwrap_or_else(|_| {
+        let mut h = 2166136261u32;
+        for &b in stem.as_bytes() {
+            h ^= u32::from(b);
+            h = h.wrapping_mul(16777619);
+        }
+        h.max(1)
+    });
+    if let Ok(mut map) = library_map().lock() {
+        if let Some(lib) = map.get_mut(&handle) {
+            if lib.entries.iter().any(|e| e.id == id) {
+                return 0;
+            }
+            lib.ingest_disk_file(id, byte_count, created_at_epoch_sec, &[300, 900]);
+            if !out_entry_ptr.is_null() {
+                if let Some(entry) = lib.entries.iter().find(|e| e.id == id) {
+                    unsafe {
+                        *out_entry_ptr = KoeRecordingEntry::from_domain(entry);
+                    }
+                }
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Selects `recording_id` in `RecordingLibrary`, resets playhead to `0`, and returns `1` if found.
+///
+/// # Safety
+///
+/// `out_playhead_ms_ptr` must be valid for writes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_select(
+    handle: u64,
+    recording_id: u32,
+    out_playhead_ms_ptr: *mut u64,
+) -> u8 {
+    if let Ok(mut map) = library_map().lock() {
+        if let Some(lib) = map.get_mut(&handle) {
+            let ok = lib.select(recording_id);
+            if ok && !out_playhead_ms_ptr.is_null() {
+                unsafe {
+                    *out_playhead_ms_ptr = lib.position_ms;
+                }
+            }
+            return u8::from(ok);
+        }
+    }
+    0
+}
+
+/// Clamps and updates the playhead position in milliseconds for the selected recording.
+#[no_mangle]
+pub extern "C" fn koe_library_seek_ms(handle: u64, position_ms: u64) -> u64 {
+    if let Ok(mut map) = library_map().lock() {
+        if let Some(lib) = map.get_mut(&handle) {
+            return lib.seek_ms(position_ms);
+        }
+    }
+    0
+}
+
+/// Computes the next (`direction >= 0`) or previous (`direction < 0`) mark position with
+/// 50 ms hysteresis and wrap-around, updates `position_ms`, and writes the target into
+/// `*out_target_ms_ptr`. Returns `1` when the selected recording has marks, `0` otherwise.
+///
+/// # Safety
+///
+/// `out_target_ms_ptr` must be valid for writes of one `u64`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_jump_to_mark(
+    handle: u64,
+    current_ms: u64,
+    direction: i32,
+    out_target_ms_ptr: *mut u64,
+) -> u8 {
+    if out_target_ms_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(mut map) = library_map().lock() {
+        if let Some(lib) = map.get_mut(&handle) {
+            let has_marks = lib
+                .selected_entry()
+                .is_some_and(|e| !e.marks_ms.is_empty());
+            if !has_marks {
+                return 0;
+            }
+            lib.position_ms = current_ms;
+            let target = lib.jump_to_mark(direction >= 0);
+            unsafe {
+                *out_target_ms_ptr = target;
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Moves `recording_id` to `trashed_entry` for non-modal Undo and writes the trashed entry
+/// into `*out_trashed_ptr` when non-null. Returns `1` if removed.
+///
+/// # Safety
+///
+/// `out_trashed_ptr` must be valid for writes of one `KoeRecordingEntry` when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_move_to_trash(
+    handle: u64,
+    recording_id: u32,
+    out_trashed_ptr: *mut KoeRecordingEntry,
+) -> u8 {
+    if let Ok(mut map) = library_map().lock() {
+        if let Some(lib) = map.get_mut(&handle) {
+            if lib.move_to_trash(recording_id) {
+                if !out_trashed_ptr.is_null() {
+                    if let Some(removed) = &lib.trashed_entry {
+                        unsafe {
+                            *out_trashed_ptr = KoeRecordingEntry::from_domain(removed);
+                        }
+                    }
+                }
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// Restores `trashed_entry` into `RecordingLibrary`, selects it, and writes the restored entry
+/// into `*out_restored_ptr` when non-null. Returns `1` if restored.
+///
+/// # Safety
+///
+/// `out_restored_ptr` must be valid for writes of one `KoeRecordingEntry` when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_library_undo_trash(
+    handle: u64,
+    out_restored_ptr: *mut KoeRecordingEntry,
+) -> u8 {
+    if let Ok(mut map) = library_map().lock() {
+        if let Some(lib) = map.get_mut(&handle) {
+            if lib.undo_trash() {
+                if !out_restored_ptr.is_null() {
+                    if let Some(restored) = lib.selected_entry() {
+                        unsafe {
+                            *out_restored_ptr = KoeRecordingEntry::from_domain(restored);
+                        }
+                    }
+                }
+                return 1;
+            }
+        }
+    }
+    0
 }

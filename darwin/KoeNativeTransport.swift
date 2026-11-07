@@ -161,38 +161,14 @@ public struct D3200DecodedFrame: Equatable, Sendable {
 }
 
 public struct D3200FrameReassembler: Sendable {
-  private var buffer = Data()
+  private let inner = KoeFrameReassembler()
 
   public init() {}
 
   public mutating func ingest(_ chunk: Data) -> [D3200DecodedFrame] {
-    buffer.append(chunk)
-    var frames = [D3200DecodedFrame]()
-    while buffer.count >= 10 {
-      let b0 = buffer[buffer.startIndex]
-      let b1 = buffer[buffer.index(after: buffer.startIndex)]
-      guard b0 == 0x09 && b1 == 0xFF else {
-        buffer.removeFirst()
-        continue
-      }
-      let lenIdx0 = buffer.index(buffer.startIndex, offsetBy: 7)
-      let lenIdx1 = buffer.index(buffer.startIndex, offsetBy: 8)
-      let length = Int(buffer[lenIdx0]) | (Int(buffer[lenIdx1]) << 8)
-      guard length >= 10 && length <= 65535 else {
-        buffer.removeFirst(2)
-        continue
-      }
-      guard buffer.count >= length else { break }
-      let frameData = Data(buffer.prefix(length))
-      buffer.removeFirst(length)
-      if KoeCore.verifyChecksum(frameData) {
-        let cmdType = frameData[5]
-        let cmdId = frameData[6]
-        let payload = frameData.subdata(in: 9..<(length - 1))
-        frames.append(D3200DecodedFrame(cmdType: cmdType, cmdId: cmdId, payload: payload, raw: frameData))
-      }
+    inner.ingest(chunk).map { pkt in
+      D3200DecodedFrame(cmdType: pkt.cmdType, cmdId: pkt.cmdId, payload: pkt.payload, raw: pkt.raw)
     }
-    return frames
   }
 }
 
@@ -211,18 +187,9 @@ public protocol BeanTransporting: Actor {
 public actor BeanTransportActor: BeanTransporting {
   private var continuation: AsyncStream<BeanEvent>.Continuation?
   private let eventStream: AsyncStream<BeanEvent>
-  private var reassembler = D3200FrameReassembler()
+  private let session = KoeTransportSession()
+  private var ecdhReassembler = KoeFrameReassembler()
   private var appPrivateKey = P256.KeyAgreement.PrivateKey()
-  private var sessionKey: Data?
-  private var activeFileId: BeanFileID?
-  private var activeFileKey: Data?
-  private var activeNonce: Data?
-  private var activeExpectedBytes: Int = 0
-  private var activeReceivedWireBytes: Int = 0
-  private var activeOpusBuffer = Data()
-  private var activeMarks = [MarkTimestampMs]()
-  private var activeIsRealtime = false
-  private var lastTelemetry: KoeDeviceTelemetry?
   private var bleCentralBridge: D3200CoreBluetoothBridge?
 
   public init() {
@@ -235,10 +202,6 @@ public actor BeanTransportActor: BeanTransporting {
 
   public nonisolated func events() -> AsyncStream<BeanEvent> {
     eventStream
-  }
-
-  public func setSessionKeyForTesting(_ key: Data) {
-    self.sessionKey = key
   }
 
   public func startScanAndConnect() async {
@@ -262,7 +225,8 @@ public actor BeanTransportActor: BeanTransporting {
 
   public func disconnect() async {
     bleCentralBridge?.disconnect()
-    resetActiveTransfer()
+    session.onDisconnected()
+    ecdhReassembler.reset()
     continuation?.yield(.transferChanged(.idle))
     continuation?.yield(.connectionChanged(.disconnected(reason: nil)))
   }
@@ -286,26 +250,14 @@ public actor BeanTransportActor: BeanTransporting {
 
   public func pullOfflineFile(_ item: KoeOfflineFileItem, destinationDirectory: URL) async {
     let fid = BeanFileID(rawValue: item.fileId)
-    activeFileId = fid
-    activeFileKey = nil
-    activeNonce = nil
+    let txFrame = session.beginOfflinePull(fileId: item.fileId, durationMs: item.durationMs)
     let estimatedWireBytes = max(166, Int(item.durationMs / 20) * 166)
-    activeExpectedBytes = estimatedWireBytes
-    activeReceivedWireBytes = 0
-    activeOpusBuffer.removeAll(keepingCapacity: true)
-    activeMarks.removeAll()
-    activeIsRealtime = false
     continuation?.yield(
       .transferChanged(
         .pullingOffline(fileId: fid, receivedBytes: 0, totalBytes: estimatedWireBytes, markCount: 0)
       )
     )
-    let frame = KoeCore.encodeStartTransportAudioFile(
-      fileId: item.fileId,
-      alreadyTransferred: 0,
-      realtimeFlag: 0
-    )
-    bleCentralBridge?.send(frame)
+    bleCentralBridge?.send(txFrame)
   }
 
   private func onGattLinkReady(peripheralName: String) async {
@@ -318,120 +270,40 @@ public actor BeanTransportActor: BeanTransporting {
   }
 
   private func onGattDisconnected(reason: String?) async {
-    resetActiveTransfer()
+    session.onDisconnected()
+    ecdhReassembler.reset()
     continuation?.yield(.transferChanged(.idle))
     continuation?.yield(.connectionChanged(.disconnected(reason: reason)))
   }
 
   public func ingestRawBleChunk(_ chunk: Data, destinationDirectory: URL) async {
-    let frames = reassembler.ingest(chunk)
-    for frame in frames {
-      await handleDecodedFrame(frame, destinationDirectory: destinationDirectory)
-    }
-  }
-
-  private func handleDecodedFrame(_ frame: D3200DecodedFrame, destinationDirectory: URL) async {
-    switch (frame.cmdType, frame.cmdId) {
-    case (0x01, 0x01):
-      let telemetry = KoeCore.parseDeviceInfoPacket(frame.raw)
-      lastTelemetry = telemetry
-      continuation?.yield(.connectionChanged(.connected(telemetry)))
-      bleCentralBridge?.send(KoeCore.encodeGetFileList(pageIndex: 0))
-
-    case (0x2E, 0x01):
-      guard frame.payload.count >= 97 else { return }
-      let devPub = frame.payload.subdata(in: 0..<65)
-      let devShared = frame.payload.subdata(in: 65..<97)
-      if let peerKey = try? P256.KeyAgreement.PublicKey(x963Representation: devPub),
+    for pkt in ecdhReassembler.ingest(chunk) where pkt.cmdType == 0x2E && pkt.cmdId == 0x01 {
+      let payload = pkt.payload
+      if payload.count >= 97,
+         let peerKey = try? P256.KeyAgreement.PublicKey(x963Representation: payload.prefix(65)),
          let shared = try? appPrivateKey.sharedSecretFromKeyAgreement(with: peerKey)
       {
         let sharedBytes = shared.withUnsafeBytes { Data($0) }
-        if sharedBytes == devShared {
-          sessionKey = KoeCore.hkdfSha256(ikm: sharedBytes)
-        }
+        _ = session.acceptEcdhReply(replyPayload: payload, sharedSecret: sharedBytes)
       }
+    }
 
-    case (0x1A, 0x01), (0x1A, 0x0D), (0x1B, 0x0E):
-      let withEndTime = (frame.cmdId == 0x0D || frame.cmdId == 0x0E)
-      let page = KoeCore.parseOfflineFileList(frame.payload, withEndTime: withEndTime)
-      continuation?.yield(.catalogUpdated(page.files))
-      if case .none = activeFileId {
-        continuation?.yield(.transferChanged(.idle))
-      }
-
-    case (0x1A, 0x07), (0x1B, 0x07):
-      guard let head = KoeCore.parseFileHead(frame.raw, sessionKey: sessionKey) else { return }
-      let fid = BeanFileID(rawValue: head.fileId)
-      activeFileId = fid
-      activeFileKey = head.fileKey
-      activeNonce = head.nonce
-      activeOpusBuffer.removeAll(keepingCapacity: true)
-      activeMarks.removeAll()
-      activeReceivedWireBytes = 0
-      if head.unfinished {
-        activeIsRealtime = true
-        activeExpectedBytes = 0
-        continuation?.yield(
-          .transferChanged(.streamingRealtime(fileId: fid, receivedBytes: 0, markCount: 0))
-        )
-      } else {
-        activeIsRealtime = false
-        activeExpectedBytes = Int(head.fileSize)
-        continuation?.yield(
-          .transferChanged(
-            .pullingOffline(
-              fileId: fid,
-              receivedBytes: 0,
-              totalBytes: activeExpectedBytes,
-              markCount: 0
-            )
-          )
-        )
-      }
-
-    case (0x1A, 0x08), (0x1A, 0x12), (0x1B, 0x08), (0x1B, 0x12):
-      let unpacked = KoeCore.unpackSlices(frame.raw, fileKey: activeFileKey, nonce: activeNonce)
-      guard unpacked.sliceCount > 0 else { return }
-      let fid = activeFileId ?? BeanFileID(rawValue: 1)
-      activeFileId = fid
-      activeOpusBuffer.append(unpacked.opusBytes)
-      activeReceivedWireBytes += unpacked.wireRecordBytes
-      let newMarks = unpacked.markedSequences.map { MarkTimestampMs(sequence: $0) }
-      for m in newMarks where !activeMarks.contains(m) {
-        activeMarks.append(m)
-      }
-      activeMarks.sort()
-      if activeIsRealtime {
-        continuation?.yield(
-          .transferChanged(
-            .streamingRealtime(
-              fileId: fid,
-              receivedBytes: activeReceivedWireBytes,
-              markCount: activeMarks.count
-            )
-          )
-        )
-      } else {
-        continuation?.yield(
-          .transferChanged(
-            .pullingOffline(
-              fileId: fid,
-              receivedBytes: activeReceivedWireBytes,
-              totalBytes: max(activeExpectedBytes, activeReceivedWireBytes),
-              markCount: activeMarks.count
-            )
-          )
-        )
-      }
-      continuation?.yield(
-        .liveSliceUnpacked(fileId: fid, sliceCount: unpacked.sliceCount, marks: newMarks)
-      )
-
-    case (0x1A, 0x0A), (0x1B, 0x0A):
-      _ = await finalizeActiveRecording(destinationDirectory: destinationDirectory, segments: [])
-
-    default:
-      break
+    let nowSec = UInt64(Date().timeIntervalSince1970)
+    let step = session.ingestBleChunk(chunk, nowEpochSec: nowSec)
+    for tx in step.outboundTxFrames {
+      bleCentralBridge?.send(tx)
+    }
+    if step.telemetryUpdated, let tel = session.currentTelemetry() {
+      continuation?.yield(.connectionChanged(.connected(tel)))
+    }
+    if step.catalogUpdated {
+      continuation?.yield(.catalogUpdated(session.currentCatalog()))
+    }
+    if step.transferUpdated {
+      emitTransferProgress(step)
+    }
+    if step.hasFinalizedRecording {
+      _ = persistFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
     }
   }
 
@@ -439,134 +311,21 @@ public actor BeanTransportActor: BeanTransporting {
     destinationDirectory: URL,
     segments: [KoeLiveCaptionSegment]
   ) async -> KoeSavedRecording? {
-    guard let fid = activeFileId, !activeOpusBuffer.isEmpty else {
-      resetActiveTransfer()
+    let nowSec = UInt64(Date().timeIntervalSince1970)
+    guard session.finalizeActiveTransfer(nowEpochSec: nowSec) else {
+      session.resetActiveTransfer()
       continuation?.yield(.transferChanged(.idle))
       return nil
     }
-    try? FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
-    let opusData = KoeCore.muxOggOpus(activeOpusBuffer)
-    let opusURL = destinationDirectory.appendingPathComponent("\(fid.rawValue).opus")
-    try? opusData.write(to: opusURL, options: .atomic)
-
-    let sliceCount = activeOpusBuffer.count / 160
-    let durationMs = UInt64(sliceCount) * 20
-    let wavURL = destinationDirectory.appendingPathComponent("\(fid.rawValue).wav")
-    let wavData = Self.buildAudiblePreviewWAV(durationMs: max(durationMs, 400), marks: activeMarks)
-    try? wavData.write(to: wavURL, options: .atomic)
-
-    let saved = KoeSavedRecording(
-      id: RecordingID(rawValue: "\(fid.rawValue)"),
-      beanFileId: fid,
-      title: "录音豆 #\(fid.rawValue)",
-      createdAt: Date(),
-      durationMs: max(durationMs, 400),
-      byteCount: opusData.count,
-      opusFileURL: opusURL,
-      playableWAVURL: wavURL,
-      marks: activeMarks,
-      transcriptSegments: segments
-    )
-    resetActiveTransfer()
-    continuation?.yield(.transferChanged(.idle))
-    continuation?.yield(.recordingSaved(saved))
-    return saved
+    return persistFinalizedFromSession(destinationDirectory: destinationDirectory, segments: segments)
   }
 
   public func simulateBeanRealtimePipeline(destinationDirectory: URL) async -> KoeSavedRecording? {
-    let sk = KoeCore.hkdfSha256(ikm: Data(repeating: 0x42, count: 32))
-    sessionKey = sk
-
-    var telemetryPacket = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00])
-    telemetryPacket.append(1)
-    telemetryPacket.append(8)
-    telemetryPacket.append(1)
-    telemetryPacket.append(contentsOf: Array("1.4.8".utf8))
-    telemetryPacket.append(contentsOf: Array("D3200NATIVE639D0".utf8))
-    var totalMem: UInt32 = (64 * 1024 * 1024).littleEndian
-    var freeMem: UInt32 = (58 * 1024 * 1024).littleEndian
-    withUnsafeBytes(of: &totalMem) { telemetryPacket.append(contentsOf: $0) }
-    withUnsafeBytes(of: &freeMem) { telemetryPacket.append(contentsOf: $0) }
-    telemetryPacket.append(0)
-    telemetryPacket.append(contentsOf: Array("2.1.0".utf8))
-    telemetryPacket.append(9)
-    telemetryPacket.append(contentsOf: [0xAA, 0xBB, 0xCC, 0xDD, 0x63, 0x9D])
-    let telLen = UInt16(telemetryPacket.count + 1)
-    telemetryPacket[7] = UInt8(telLen & 0xFF)
-    telemetryPacket[8] = UInt8((telLen >> 8) & 0xFF)
-    telemetryPacket.append(KoeCore.checksum(telemetryPacket))
-    await ingestRawBleChunk(telemetryPacket, destinationDirectory: destinationDirectory)
-
-    var plainFileKeyMaterial = Data("soundcored3200".utf8)
-    let fileKey = Data((0..<32).map { UInt8(($0 * 7 + 13) & 0xFF) })
-    plainFileKeyMaterial.append(fileKey)
-    let sessionNonce = Data((0..<16).map { UInt8(($0 * 3 + 5) & 0xFF) })
-    var encryptedFileKey = plainFileKeyMaterial
-    _ = encryptedFileKey.withUnsafeMutableBytes { buf in
-      sk.withUnsafeBytes { skRaw in
-        sessionNonce.withUnsafeBytes { ivRaw in
-          koe_crypto_aes_ctr_in_place(
-            buf.bindMemory(to: UInt8.self).baseAddress,
-            plainFileKeyMaterial.count,
-            skRaw.bindMemory(to: UInt8.self).baseAddress,
-            sk.count,
-            ivRaw.bindMemory(to: UInt8.self).baseAddress,
-            sessionNonce.count
-          )
-        }
-      }
+    let nowSec = UInt64(Date().timeIntervalSince1970)
+    let step = session.simulateRealtimePipeline(nowEpochSec: nowSec)
+    if step.telemetryUpdated, let tel = session.currentTelemetry() {
+      continuation?.yield(.connectionChanged(.connected(tel)))
     }
-
-    let fileNonce = Data((0..<16).map { UInt8(($0 * 11 + 19) & 0xFF) })
-    let demoFileId: UInt32 = 20261107
-    var headPayload = Data()
-    var fidLe = demoFileId.littleEndian
-    var fsizeLe = UInt32.max.littleEndian
-    withUnsafeBytes(of: &fidLe) { headPayload.append(contentsOf: $0) }
-    withUnsafeBytes(of: &fsizeLe) { headPayload.append(contentsOf: $0) }
-    headPayload.append(fileNonce)
-    headPayload.append(encryptedFileKey)
-    headPayload.append(sessionNonce)
-    headPayload.append(0)
-    let headFrame = KoeCore.encodeFrame(cmdType: 0x1A, cmdId: 0x07, payload: headPayload)
-    var rxHead = headFrame
-    rxHead[0] = 0x09
-    rxHead[1] = 0xFF
-    rxHead[rxHead.count - 1] = KoeCore.checksum(rxHead.prefix(rxHead.count - 1))
-    await ingestRawBleChunk(rxHead, destinationDirectory: destinationDirectory)
-
-    var slicePayload = Data()
-    for seq in UInt32(0)..<UInt32(60) {
-      var seqLe = seq.littleEndian
-      withUnsafeBytes(of: &seqLe) { slicePayload.append(contentsOf: $0) }
-      let flags: UInt8 = (seq == 15 || seq == 45) ? 0x01 : 0x00
-      slicePayload.append(flags)
-      var chunk = Data(repeating: 0x78, count: 160)
-      chunk[1] = UInt8(seq & 0xFF)
-      _ = chunk.withUnsafeMutableBytes { cBuf in
-        fileKey.withUnsafeBytes { fkRaw in
-          fileNonce.withUnsafeBytes { ivRaw in
-            koe_crypto_decrypt_chunks_in_place(
-              cBuf.bindMemory(to: UInt8.self).baseAddress,
-              160,
-              fkRaw.bindMemory(to: UInt8.self).baseAddress,
-              fileKey.count,
-              ivRaw.bindMemory(to: UInt8.self).baseAddress,
-              fileNonce.count,
-              seq
-            )
-          }
-        }
-      }
-      slicePayload.append(chunk)
-      slicePayload.append(0x00)
-    }
-    var rxSlices = KoeCore.encodeFrame(cmdType: 0x1A, cmdId: 0x08, payload: slicePayload)
-    rxSlices[0] = 0x09
-    rxSlices[1] = 0xFF
-    rxSlices[rxSlices.count - 1] = KoeCore.checksum(rxSlices.prefix(rxSlices.count - 1))
-    await ingestRawBleChunk(rxSlices, destinationDirectory: destinationDirectory)
-
     let seg1 = KoeLiveCaptionSegment(
       startMs: 0,
       endMs: 600,
@@ -585,21 +344,72 @@ public actor BeanTransportActor: BeanTransporting {
     )
     continuation?.yield(.liveCaptionProduced(seg1))
     continuation?.yield(.liveCaptionProduced(seg2))
-    return await finalizeActiveRecording(
+    return persistFinalizedFromSession(
       destinationDirectory: destinationDirectory,
       segments: [seg1, seg2]
     )
   }
 
-  private func resetActiveTransfer() {
-    activeFileId = nil
-    activeFileKey = nil
-    activeNonce = nil
-    activeExpectedBytes = 0
-    activeReceivedWireBytes = 0
-    activeOpusBuffer.removeAll(keepingCapacity: false)
-    activeMarks.removeAll()
-    activeIsRealtime = false
+  private func emitTransferProgress(_ step: KoeSessionStepOutcome) {
+    let fid = BeanFileID(rawValue: step.transferFileId)
+    switch step.transferPhase {
+    case 1:
+      continuation?.yield(.transferChanged(.queryingCatalog))
+    case 2:
+      continuation?.yield(
+        .transferChanged(
+          .pullingOffline(
+            fileId: fid,
+            receivedBytes: Int(step.receivedWireBytes),
+            totalBytes: max(Int(step.expectedWireBytes), Int(step.receivedWireBytes)),
+            markCount: Int(step.transferMarkCount)
+          )
+        )
+      )
+    case 3:
+      continuation?.yield(
+        .transferChanged(
+          .streamingRealtime(
+            fileId: fid,
+            receivedBytes: Int(step.receivedWireBytes),
+            markCount: Int(step.transferMarkCount)
+          )
+        )
+      )
+    default:
+      continuation?.yield(.transferChanged(.idle))
+    }
+  }
+
+  private func persistFinalizedFromSession(
+    destinationDirectory: URL,
+    segments: [KoeLiveCaptionSegment]
+  ) -> KoeSavedRecording? {
+    guard let fin = session.takeFinalized() else { return nil }
+    try? FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+    let fid = BeanFileID(rawValue: fin.entry.beanFileId)
+    let opusURL = destinationDirectory.appendingPathComponent("\(fin.entry.id).opus")
+    try? fin.oggOpusBytes.write(to: opusURL, options: .atomic)
+    let wavURL = destinationDirectory.appendingPathComponent("\(fin.entry.id).wav")
+    try? fin.previewWavBytes.write(to: wavURL, options: .atomic)
+    let marks = fin.entry.marksMs.map { ms in
+      MarkTimestampMs(sequence: UInt32(ms / 20), rawValue: ms)
+    }
+    let saved = KoeSavedRecording(
+      id: RecordingID(rawValue: "\(fin.entry.id)"),
+      beanFileId: fid,
+      title: "录音豆 #\(fin.entry.id)",
+      createdAt: Date(timeIntervalSince1970: TimeInterval(fin.entry.createdAtEpochSec)),
+      durationMs: fin.entry.durationMs,
+      byteCount: Int(fin.entry.byteCount),
+      opusFileURL: opusURL,
+      playableWAVURL: wavURL,
+      marks: marks,
+      transcriptSegments: segments
+    )
+    continuation?.yield(.transferChanged(.idle))
+    continuation?.yield(.recordingSaved(saved))
+    return saved
   }
 
   public static func defaultExportDirectory() -> URL {
@@ -611,24 +421,6 @@ public actor BeanTransportActor: BeanTransporting {
     return base
       .appendingPathComponent("AnkerRecorder", isDirectory: true)
       .appendingPathComponent("exports", isDirectory: true)
-  }
-
-  private static func buildAudiblePreviewWAV(durationMs: UInt64, marks: [MarkTimestampMs]) -> Data {
-    let sampleRate = 16000
-    let totalSamples = max(1600, Int(durationMs) * sampleRate / 1000)
-    let pcmByteLength = UInt32(totalSamples * 2)
-    var out = KoeCore.wavHeader(pcmLength: pcmByteLength)
-    out.reserveCapacity(44 + Int(pcmByteLength))
-    let markSamples = Set(marks.map { Int($0.rawValue) * sampleRate / 1000 })
-    for i in 0..<totalSamples {
-      let isNearMark = markSamples.contains { abs(i - $0) < 800 }
-      let freq = isNearMark ? 880.0 : 440.0
-      let amp = isNearMark ? 6000.0 : 1800.0
-      let sample = Int16(sin(2.0 * .pi * freq * Double(i) / Double(sampleRate)) * amp)
-      var le = sample.littleEndian
-      withUnsafeBytes(of: &le) { out.append(contentsOf: $0) }
-    }
-    return out
   }
 }
 
