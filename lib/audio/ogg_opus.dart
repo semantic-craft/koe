@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../native/koe_core_ffi.dart';
 import '../util/off_ui.dart';
 import 'recording_audio.dart';
 
@@ -190,6 +191,10 @@ class OggOpus {
     if (raw.isEmpty) {
       throw StateError('无音频数据');
     }
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.oggOpusMuxRawFrames(raw);
+    }
     // Prefer exact 160-byte framing; otherwise treat whole buffer as one stream
     // of opaque packets of 160 with a possible short tail.
     final frames = <Uint8List>[];
@@ -352,6 +357,10 @@ class OggOpus {
 
   /// Ogg CRC-32 (poly 0x04C11DB7, non-reflected, init 0).
   static int _oggCrc(Uint8List data) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.oggCrc32(data);
+    }
     var crc = 0;
     for (final byte in data) {
       crc ^= (byte & 0xFF) << 24;

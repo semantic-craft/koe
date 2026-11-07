@@ -48,6 +48,10 @@ cleanup_stage() {
 trap cleanup_stage EXIT
 APP="$STAGING/${APP_NAME}.app"
 ditto "$SOURCE" "$APP"
+if command -v cargo >/dev/null 2>&1 && [[ -f "$ROOT/rust/Cargo.toml" ]]; then
+  cargo build --manifest-path "$ROOT/rust/Cargo.toml" --package koe_core_ffi --release --quiet
+  cp "$ROOT/rust/target/release/libkoe_core_ffi.dylib" "$APP/Contents/Frameworks/libkoe_core_ffi.dylib"
+fi
 if [[ -n "$IDENTITY" ]]; then
   "$ROOT/scripts/sign-macos.sh" --identity "$IDENTITY" "$APP"
 else

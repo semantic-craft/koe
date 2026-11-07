@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../native/koe_core_ffi.dart';
+
 /// Binary framing for soundcore Work / D3200 (see PROTOCOL.md §4).
 class ProtocolFrame {
   ProtocolFrame._();
@@ -16,6 +18,14 @@ class ProtocolFrame {
     required int cmdId,
     List<int> payload = const [],
   }) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.protocolEncode(
+        cmdType: cmdType,
+        cmdId: cmdId,
+        payload: payload,
+      );
+    }
     final bodyLen =
         5 + 2 + 2 + payload.length + 1; // magic+type+id + len + payload + csum
     final out = BytesBuilder(copy: false);
@@ -33,6 +43,10 @@ class ProtocolFrame {
   }
 
   static int checksum(List<int> data) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.protocolChecksum(data);
+    }
     var sum = 0;
     for (final b in data) {
       sum = (sum + (b & 0xFF)) & 0xFF;

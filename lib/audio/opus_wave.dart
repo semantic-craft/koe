@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'ogg_opus.dart';
 import 'opus_pcm_decoder.dart';
+import '../native/koe_core_ffi.dart';
 import '../util/off_ui.dart';
 import 'recording_audio.dart';
 
@@ -141,7 +142,13 @@ class OpusWave {
     return wavPath;
   }
 
+  static Uint8List buildWavHeader(int pcmLength) => _wavHeader(pcmLength);
+
   static Uint8List _wavHeader(int pcmLength) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.wavHeader(pcmLength);
+    }
     final byteRate = sampleRate * channels * bitsPerSample ~/ 8;
     final blockAlign = channels * bitsPerSample ~/ 8;
     final header = ByteData(44);
