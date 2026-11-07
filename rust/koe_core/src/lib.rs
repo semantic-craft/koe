@@ -30,4 +30,5 @@ pub mod models;
 pub mod ogg_opus;
 pub mod prng;
 pub mod slice_marks;
+pub mod transport;
 pub mod wav;
