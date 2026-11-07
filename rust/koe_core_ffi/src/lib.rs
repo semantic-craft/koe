@@ -1,12 +1,133 @@
 //! Thin C-ABI boundary wrapping the `#![forbid(unsafe_code)]` `koe_core` crate
-//! for `dart:ffi` callers in `lib/native/koe_core_ffi.dart`.
+//! for `dart:ffi`, Swift (`darwin/KoeCore.swift`), and Kotlin (`KoeCore.kt`) callers.
 
 use std::slice;
 
 use koe_core::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
-use koe_core::frame::ProtocolFrame;
+use koe_core::frame::{DecodedPacket, ProtocolFrame};
+use koe_core::models::{DeviceInfoModel, OfflineFileList};
 use koe_core::ogg_opus::OggOpus;
+use koe_core::slice_marks::{SliceMark, SliceMarkProbe};
 use koe_core::wav::OpusWave;
+
+/// C-ABI flat representation of `DeviceInfoModel` for stack-allocated FFI reads.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeDeviceInfo {
+    /// `-1` when `None`, else `0..=255`.
+    pub connect_status: i32,
+    /// `-1` when `None`, else `0..=100`.
+    pub battery: i32,
+    /// `1` when charging, else `0`.
+    pub charging: u8,
+    /// `-1` when `None`, else `0..=100`.
+    pub box_battery: i32,
+    /// `1` when case charging, else `0`.
+    pub box_charging: u8,
+    /// Wire recording state (`0` stopped, `1` recording, `2` paused).
+    pub recording_status: u8,
+    /// `1` when `total_memory_kb` and `free_memory_kb` are present, else `0`.
+    pub has_memory: u8,
+    /// Total storage capacity in KB when `has_memory == 1`.
+    pub total_memory_kb: u32,
+    /// Free storage capacity in KB when `has_memory == 1`.
+    pub free_memory_kb: u32,
+    /// NUL-terminated UTF-8 firmware version (`<= 15` bytes + NUL).
+    pub firmware_version: [u8; 16],
+    /// NUL-terminated UTF-8 lowercase serial number (`<= 31` bytes + NUL).
+    pub serial_number: [u8; 32],
+    /// NUL-terminated UTF-8 case MAC (`XX:XX:XX:XX:XX:XX`, `<= 23` bytes + NUL).
+    pub box_mac: [u8; 24],
+    /// NUL-terminated UTF-8 case firmware version (`<= 15` bytes + NUL).
+    pub box_firmware: [u8; 16],
+    /// NUL-terminated UTF-8 Wi-Fi firmware version (`<= 15` bytes + NUL).
+    pub wifi_firmware: [u8; 16],
+}
+
+impl KoeDeviceInfo {
+    fn from_model(m: &DeviceInfoModel) -> Self {
+        let mut out = Self {
+            connect_status: m.connect_status.map_or(-1, i32::from),
+            battery: m.battery.map_or(-1, i32::from),
+            charging: u8::from(m.charging),
+            box_battery: m.box_battery.map_or(-1, i32::from),
+            box_charging: u8::from(m.box_charging),
+            recording_status: m.recording_status,
+            has_memory: u8::from(m.total_memory_kb.is_some() && m.free_memory_kb.is_some()),
+            total_memory_kb: m.total_memory_kb.unwrap_or(0),
+            free_memory_kb: m.free_memory_kb.unwrap_or(0),
+            firmware_version: [0u8; 16],
+            serial_number: [0u8; 32],
+            box_mac: [0u8; 24],
+            box_firmware: [0u8; 16],
+            wifi_firmware: [0u8; 16],
+        };
+        copy_c_str(&m.firmware_version, &mut out.firmware_version);
+        copy_c_str(&m.serial_number, &mut out.serial_number);
+        copy_c_str(&m.box_mac, &mut out.box_mac);
+        copy_c_str(&m.box_firmware, &mut out.box_firmware);
+        copy_c_str(&m.wifi_firmware, &mut out.wifi_firmware);
+        out
+    }
+}
+
+fn copy_c_str(src: &str, dst: &mut [u8]) {
+    dst.fill(0);
+    if dst.is_empty() {
+        return;
+    }
+    let bytes = src.as_bytes();
+    let len = bytes.len().min(dst.len() - 1);
+    dst[..len].copy_from_slice(&bytes[..len]);
+}
+
+/// C-ABI flat representation of `OfflineFileEntry`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeOfflineFileEntry {
+    /// Device file identifier.
+    pub file_id: u32,
+    /// Duration in milliseconds.
+    pub duration_ms: u32,
+    /// `1` when `end_time` is present, else `0`.
+    pub has_end_time: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 3],
+    /// End timestamp in seconds when `has_end_time == 1`.
+    pub end_time: u32,
+}
+
+/// C-ABI header summary of `OfflineFileList`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeOfflineFileListHeader {
+    /// Raw 16-bit file count reported at payload offset 0.
+    pub file_count: u16,
+    /// Number of valid non-zero entries parsed from the payload.
+    pub parsed_entries: u16,
+    /// `1` when trailing transport timestamp/duration are present, else `0`.
+    pub has_transport_state: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 3],
+    /// Active transport timestamp when `has_transport_state == 1`.
+    pub current_transport_timestamp: u32,
+    /// Active transport duration when `has_transport_state == 1`.
+    pub current_transport_duration: u32,
+}
+
+/// C-ABI flat representation of `SliceMarkTransition`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeSliceMarkTransition {
+    /// Packet command identifier (such as `0x08`).
+    pub cmd_id: u8,
+    /// Slice flags byte.
+    pub flags: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 2],
+    /// Slice sequence number.
+    pub sequence: u32,
+}
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
 ///
@@ -20,6 +141,23 @@ pub unsafe extern "C" fn koe_protocol_checksum(data_ptr: *const u8, data_len: us
     }
     let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
     ProtocolFrame::checksum(data)
+}
+
+/// Verifies that `packet_ptr[0..packet_len]` has a valid trailing protocol checksum (`1` valid, `0` invalid).
+///
+/// # Safety
+///
+/// `packet_ptr` must be valid for reads of `packet_len` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_protocol_verify_checksum(
+    packet_ptr: *const u8,
+    packet_len: usize,
+) -> u8 {
+    if packet_ptr.is_null() || packet_len < 2 {
+        return 0;
+    }
+    let packet = unsafe { slice::from_raw_parts(packet_ptr, packet_len) };
+    u8::from(ProtocolFrame::verify_checksum(packet))
 }
 
 /// Encodes a D3200 TX command frame into `out_ptr` (capacity `>= payload_len + 10`).
@@ -51,6 +189,195 @@ pub unsafe extern "C" fn koe_protocol_encode(
     let out = unsafe { slice::from_raw_parts_mut(out_ptr, encoded.len()) };
     out.copy_from_slice(&encoded);
     encoded.len()
+}
+
+/// Converts a raw D3200 battery value (`0..=9` bucket or literal percentage) into `0..=100`.
+#[no_mangle]
+pub extern "C" fn koe_battery_remaining(raw: i32) -> i32 {
+    DeviceInfoModel::battery_remaining(Some(raw)).map_or(-1, i32::from)
+}
+
+/// Parses a full D3200 device-info RX packet (`raw_ptr[0..raw_len]`) into `*out_ptr`.
+/// Returns `1` on success, `0` on null pointers.
+///
+/// # Safety
+///
+/// `raw_ptr` must be valid for reads of `raw_len` bytes when non-null, and `out_ptr`
+/// must be valid for writes of one `KoeDeviceInfo`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_device_info_parse_packet(
+    raw_ptr: *const u8,
+    raw_len: usize,
+    out_ptr: *mut KoeDeviceInfo,
+) -> i32 {
+    if out_ptr.is_null() {
+        return 0;
+    }
+    let raw = if raw_ptr.is_null() || raw_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(raw_ptr, raw_len) }
+    };
+    let model = DeviceInfoModel::parse_packet(raw);
+    unsafe {
+        *out_ptr = KoeDeviceInfo::from_model(&model);
+    }
+    1
+}
+
+/// Parses a D3200 device-info payload slice (`payload_ptr[0..payload_len]`) into `*out_ptr`.
+/// Returns `1` on success, `0` on null pointers.
+///
+/// # Safety
+///
+/// `payload_ptr` must be valid for reads of `payload_len` bytes when non-null, and `out_ptr`
+/// must be valid for writes of one `KoeDeviceInfo`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_device_info_parse_payload(
+    payload_ptr: *const u8,
+    payload_len: usize,
+    out_ptr: *mut KoeDeviceInfo,
+) -> i32 {
+    if out_ptr.is_null() {
+        return 0;
+    }
+    let payload = if payload_ptr.is_null() || payload_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(payload_ptr, payload_len) }
+    };
+    let model = DeviceInfoModel::parse_payload(payload);
+    unsafe {
+        *out_ptr = KoeDeviceInfo::from_model(&model);
+    }
+    1
+}
+
+/// Parses an offline file list payload (`0x1A 0x0E` or `0x1B 0x0E`) into `*out_header_ptr`
+/// and writes up to `out_entries_cap` entries into `out_entries_ptr`.
+/// Returns the total number of parsed entries.
+///
+/// # Safety
+///
+/// `payload_ptr` must be valid for reads of `payload_len` bytes when non-null;
+/// `out_header_ptr` must be valid for writes when non-null; and `out_entries_ptr`
+/// must be valid for writes of `out_entries_cap` items when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_offline_file_list_parse(
+    payload_ptr: *const u8,
+    payload_len: usize,
+    with_end_time: u8,
+    out_header_ptr: *mut KoeOfflineFileListHeader,
+    out_entries_ptr: *mut KoeOfflineFileEntry,
+    out_entries_cap: usize,
+) -> usize {
+    let payload = if payload_ptr.is_null() || payload_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(payload_ptr, payload_len) }
+    };
+    let parsed = OfflineFileList::parse(payload, with_end_time != 0);
+    if !out_header_ptr.is_null() {
+        unsafe {
+            *out_header_ptr = KoeOfflineFileListHeader {
+                file_count: parsed.file_count,
+                parsed_entries: parsed.files.len().min(u16::MAX as usize) as u16,
+                has_transport_state: u8::from(
+                    parsed.current_transport_timestamp.is_some()
+                        && parsed.current_transport_duration.is_some(),
+                ),
+                reserved: [0u8; 3],
+                current_transport_timestamp: parsed.current_transport_timestamp.unwrap_or(0),
+                current_transport_duration: parsed.current_transport_duration.unwrap_or(0),
+            };
+        }
+    }
+    if !out_entries_ptr.is_null() && out_entries_cap > 0 {
+        let count = parsed.files.len().min(out_entries_cap);
+        let out_slice = unsafe { slice::from_raw_parts_mut(out_entries_ptr, count) };
+        for (dst, src) in out_slice.iter_mut().zip(parsed.files.iter().take(count)) {
+            *dst = KoeOfflineFileEntry {
+                file_id: src.file_id,
+                duration_ms: src.duration_ms,
+                has_end_time: u8::from(src.end_time.is_some()),
+                reserved: [0u8; 3],
+                end_time: src.end_time.unwrap_or(0),
+            };
+        }
+    }
+    parsed.files.len()
+}
+
+/// Returns `1` when `flags` carries the double-tap mark bit (`0x01`), else `0`.
+#[no_mangle]
+pub extern "C" fn koe_slice_mark_is_mark(flags: u8) -> u8 {
+    u8::from(SliceMark::is_mark(flags))
+}
+
+/// Returns the recording offset in milliseconds for `sequence` (`sequence * 20`).
+#[no_mangle]
+pub extern "C" fn koe_slice_mark_position_ms(sequence: u32) -> u64 {
+    SliceMark::position_ms(sequence)
+}
+
+/// Inspects a full RX packet (`raw_ptr[0..raw_len]`) for `(cmd_id, flags)` slice transitions,
+/// updating `*io_last_cmd_id` and `*io_last_flags` in place and writing up to `out_cap`
+/// transitions into `out_transitions_ptr`. Returns the total number of transitions detected.
+///
+/// # Safety
+///
+/// `raw_ptr` must be valid for reads of `raw_len` bytes; `io_last_cmd_id` and `io_last_flags`
+/// must be valid mutable pointers; and `out_transitions_ptr` must be valid for writes of `out_cap`
+/// items when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_slice_mark_inspect_transitions(
+    raw_ptr: *const u8,
+    raw_len: usize,
+    io_last_cmd_id: *mut u8,
+    io_last_flags: *mut u8,
+    out_transitions_ptr: *mut KoeSliceMarkTransition,
+    out_cap: usize,
+) -> usize {
+    if raw_ptr.is_null() || raw_len < 10 || io_last_cmd_id.is_null() || io_last_flags.is_null() {
+        return 0;
+    }
+    let raw = unsafe { slice::from_raw_parts(raw_ptr, raw_len) };
+    let pkt = DecodedPacket::from_bytes(raw);
+    let mut last_cmd = unsafe { *io_last_cmd_id };
+    let mut last_flags = unsafe { *io_last_flags };
+
+    let mut transitions = Vec::new();
+    let mut i = 9usize;
+    while raw.len().saturating_sub(i) >= 165 {
+        let sequence = koe_core::frame::read_u32_le(raw, i);
+        let flags = raw[i + 4];
+        if (pkt.cmd_id, flags) != (last_cmd, last_flags) {
+            last_cmd = pkt.cmd_id;
+            last_flags = flags;
+            transitions.push(KoeSliceMarkTransition {
+                cmd_id: pkt.cmd_id,
+                flags,
+                reserved: [0u8; 2],
+                sequence,
+            });
+        }
+        i += 165;
+        if i < raw.len() {
+            i += 1;
+        }
+    }
+    let _ = SliceMarkProbe::new();
+
+    unsafe {
+        *io_last_cmd_id = last_cmd;
+        *io_last_flags = last_flags;
+    }
+    if !out_transitions_ptr.is_null() && out_cap > 0 {
+        let count = transitions.len().min(out_cap);
+        let out_slice = unsafe { slice::from_raw_parts_mut(out_transitions_ptr, count) };
+        out_slice.copy_from_slice(&transitions[..count]);
+    }
+    transitions.len()
 }
 
 /// Derives `out_len` bytes via HKDF-SHA256 into `out_ptr`. Returns `1` on success, `0` on failure.
