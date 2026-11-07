@@ -670,7 +670,7 @@ pub enum ContextSource {
     AiSynthesis,
 }
 
-/// A single item in the user's personal context timeline (`lib/state/context`).
+/// A single item in the user's personal context timeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextItem {
     /// Stable unique identifier.
