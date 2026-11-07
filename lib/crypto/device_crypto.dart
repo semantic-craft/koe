@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 
+import '../native/koe_core_ffi.dart';
+
 /// ECDH (secp256r1) + HKDF + AES-CTR decrypt for D3200 offline files.
 ///
 /// Matches Feishu `KeyManager` / `CryptoManager` / `AesCtrStreamDecrypt`:
@@ -170,6 +172,17 @@ class DeviceCrypto {
     return d.decryptChunk(data, sequence);
   }
 
+  /// Decrypts one or more contiguous 160-byte chunks for [fileId] starting at [startSequence].
+  Uint8List? decryptContiguousChunks({
+    required String fileId,
+    required int startSequence,
+    required Uint8List data,
+  }) {
+    final d = _fileDecryptors[fileId];
+    if (d == null) return null;
+    return d.decryptContiguousChunks(data, startSequence);
+  }
+
   bool hasFileDecryptor(String fileId) => _fileDecryptors.containsKey(fileId);
 
   void clearFile(String fileId) => _fileDecryptors.remove(fileId);
@@ -186,6 +199,10 @@ class DeviceCrypto {
     required Uint8List key,
     required Uint8List iv,
   }) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.aesCtrDecrypt(data: data, key: key, iv: iv);
+    }
     try {
       if (key.length != 16 && key.length != 24 && key.length != 32) {
         return null;
@@ -216,6 +233,10 @@ class DeviceCrypto {
     required Uint8List info,
     required int length,
   }) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.hkdfSha256(ikm: ikm, salt: salt, info: info, length: length);
+    }
     // Extract: PRK = HMAC-SHA256(salt, ikm)
     final extract = HMac(SHA256Digest(), 64)..init(KeyParameter(salt));
     final prk = Uint8List(extract.macSize);
@@ -318,10 +339,36 @@ class AesCtrStreamDecrypt {
   }
 
   Uint8List? decryptChunk(Uint8List data, int index) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.decryptChunks(
+        data: data,
+        fileKey: fileKey,
+        nonce: nonce,
+        startSequence: index,
+      );
+    }
     return DeviceCrypto.aesCtrDecrypt(
       data: data,
       key: fileKey,
       iv: buildCounter(index),
+    );
+  }
+
+  Uint8List? decryptContiguousChunks(Uint8List data, int startSequence) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.decryptChunks(
+        data: data,
+        fileKey: fileKey,
+        nonce: nonce,
+        startSequence: startSequence,
+      );
+    }
+    return DeviceCrypto.aesCtrDecrypt(
+      data: data,
+      key: fileKey,
+      iv: buildCounter(startSequence),
     );
   }
 }

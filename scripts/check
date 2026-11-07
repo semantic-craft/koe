@@ -11,5 +11,9 @@ python3 scripts/test_verify_minutes_flow.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
 if [[ "$(uname)" == "Darwin" ]]; then scripts/test-input-device-lease; fi
+if command -v cargo >/dev/null 2>&1 && [[ -f rust/Cargo.toml ]]; then
+  cargo test --manifest-path rust/Cargo.toml --workspace --quiet
+  cargo build --manifest-path rust/Cargo.toml --package koe_core_ffi --release --quiet
+fi
 flutter analyze
 flutter test "$@"

@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+  "koe_core",
+  "koe_core_ffi",
+]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
