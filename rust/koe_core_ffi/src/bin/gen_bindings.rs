@@ -151,6 +151,7 @@ fn c_scalar_type(rust_ty: &str) -> String {
         "usize" => "size_t".to_string(),
         "*const u8" => "const uint8_t*".to_string(),
         "*mut u8" => "uint8_t*".to_string(),
+        "*mut u32" => "uint32_t*".to_string(),
         "*mut usize" => "size_t*".to_string(),
         _ if rust_ty.starts_with("*mut ") => {
             format!("{}*", rust_ty.trim_start_matches("*mut ").trim())
@@ -250,6 +251,25 @@ public struct KoeSliceTransition: Equatable, Sendable {{
   public let cmdId: UInt8
   public let flags: UInt8
   public let sequence: UInt32
+}}
+
+public struct KoeAudioFileHeadInfo: Equatable, Sendable {{
+  public let fileId: UInt32
+  public let fileSize: UInt32
+  public let errorCode: UInt8
+  public let unfinished: Bool
+  public let nonce: Data
+  public let encryptedFileKey: Data
+  public let sessionNonce: Data
+  public let fileKey: Data?
+}}
+
+public struct KoeUnpackedSlices: Equatable, Sendable {{
+  public let opusBytes: Data
+  public let markedSequences: [UInt32]
+  public let sliceCount: Int
+
+  public var wireRecordBytes: Int {{ sliceCount * 166 }}
 }}
 
 public enum KoeCore {{
@@ -356,6 +376,99 @@ public enum KoeCore {{
     return out
   }}
 
+  public static func parseFileHead(_ packet: Data, sessionKey: Data? = nil) -> KoeAudioFileHeadInfo? {{
+    var cHead = KoeAudioFileHead()
+    let ok = packet.withUnsafeBytes {{ raw -> Int32 in
+      guard let rawBase = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      if let sk = sessionKey, !sk.isEmpty {{
+        return sk.withUnsafeBytes {{ skRaw in
+          koe_transport_parse_file_head(
+            rawBase,
+            packet.count,
+            skRaw.bindMemory(to: UInt8.self).baseAddress,
+            sk.count,
+            &cHead
+          )
+        }}
+      }}
+      return koe_transport_parse_file_head(rawBase, packet.count, nil, 0, &cHead)
+    }}
+    guard ok == 1 else {{ return nil }}
+    let nonce = withUnsafeBytes(of: &cHead.nonce) {{ Data($0) }}
+    let encKey = withUnsafeBytes(of: &cHead.encrypted_file_key) {{ Data($0) }}
+    let sessionNonce = withUnsafeBytes(of: &cHead.session_nonce) {{ Data($0) }}
+    let fileKey: Data? = cHead.has_file_key != 0 ? withUnsafeBytes(of: &cHead.file_key) {{ Data($0) }} : nil
+    return KoeAudioFileHeadInfo(
+      fileId: cHead.file_id,
+      fileSize: cHead.file_size,
+      errorCode: cHead.error_code,
+      unfinished: cHead.unfinished != 0,
+      nonce: nonce,
+      encryptedFileKey: encKey,
+      sessionNonce: sessionNonce,
+      fileKey: fileKey
+    )
+  }}
+
+  public static func unpackSlices(_ frame: Data, fileKey: Data? = nil, nonce: Data? = nil) -> KoeUnpackedSlices {{
+    guard frame.count >= 174 else {{
+      return KoeUnpackedSlices(opusBytes: Data(), markedSequences: [], sliceCount: 0)
+    }}
+    let maxSlices = (frame.count - 9) / 165
+    var opusOut = Data(count: maxSlices * 160)
+    var marksOut = Array(repeating: UInt32(0), count: max(maxSlices, 1))
+    var marksCount: Int = 0
+    let sliceCount = frame.withUnsafeBytes {{ frameRaw -> Int in
+      guard let frameBase = frameRaw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return opusOut.withUnsafeMutableBytes {{ opusRaw -> Int in
+        guard let opusBase = opusRaw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+        return marksOut.withUnsafeMutableBufferPointer {{ marksBuf -> Int in
+          if let fk = fileKey, let iv = nonce, !fk.isEmpty, !iv.isEmpty {{
+            return fk.withUnsafeBytes {{ fkRaw in
+              iv.withUnsafeBytes {{ ivRaw in
+                Int(
+                  koe_transport_unpack_slices(
+                    frameBase,
+                    frame.count,
+                    fkRaw.bindMemory(to: UInt8.self).baseAddress,
+                    fk.count,
+                    ivRaw.bindMemory(to: UInt8.self).baseAddress,
+                    iv.count,
+                    opusBase,
+                    maxSlices * 160,
+                    marksBuf.baseAddress,
+                    maxSlices,
+                    &marksCount
+                  )
+                )
+              }}
+            }}
+          }}
+          return Int(
+            koe_transport_unpack_slices(
+              frameBase,
+              frame.count,
+              nil,
+              0,
+              nil,
+              0,
+              opusBase,
+              maxSlices * 160,
+              marksBuf.baseAddress,
+              maxSlices,
+              &marksCount
+            )
+          )
+        }}
+      }}
+    }}
+    return KoeUnpackedSlices(
+      opusBytes: opusOut.prefix(sliceCount * 160),
+      markedSequences: Array(marksOut.prefix(marksCount)),
+      sliceCount: sliceCount
+    )
+  }}
+
   private static func decodeDeviceInfo(_ c: KoeDeviceInfo) -> KoeDeviceTelemetry {{
     var copy = c
     let fw = withUnsafeBytes(of: &copy.firmware_version) {{ readCString($0) }}
@@ -436,6 +549,25 @@ data class KoeOfflineFilePage(
     val currentTransportTimestamp: Long?,
     val currentTransportDuration: Long?,
 )
+
+data class KoeAudioFileHeadInfo(
+    val fileId: Long,
+    val fileSize: Long,
+    val errorCode: Int,
+    val unfinished: Boolean,
+    val nonce: ByteArray,
+    val encryptedFileKey: ByteArray,
+    val sessionNonce: ByteArray,
+    val fileKey: ByteArray?,
+)
+
+data class KoeUnpackedSlices(
+    val opusBytes: ByteArray,
+    val markedSequences: LongArray,
+    val sliceCount: Int,
+) {{
+    val wireRecordBytes: Int get() = sliceCount * 166
+}}
 
 object KoeCoreNative {{
     init {{

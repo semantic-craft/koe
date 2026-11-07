@@ -8,6 +8,7 @@ use koe_core::frame::{DecodedPacket, ProtocolFrame};
 use koe_core::models::{DeviceInfoModel, OfflineFileList};
 use koe_core::ogg_opus::OggOpus;
 use koe_core::slice_marks::{SliceMark, SliceMarkProbe};
+use koe_core::transport::{TransportSliceProcessor, OPUS_FRAME_BYTES};
 use koe_core::wav::OpusWave;
 
 /// C-ABI flat representation of `DeviceInfoModel` for stack-allocated FFI reads.
@@ -127,6 +128,32 @@ pub struct KoeSliceMarkTransition {
     pub reserved: [u8; 2],
     /// Slice sequence number.
     pub sequence: u32,
+}
+
+/// C-ABI flat representation of `OpenedFileHead` (`0x1A / 0x07` header + optional unwrapped key).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeAudioFileHead {
+    /// Numeric file identifier at offset 9.
+    pub file_id: u32,
+    /// Total file size in bytes at offset 13 (`0xFFFFFFFF` when unfinished).
+    pub file_size: u32,
+    /// Device error code at offset 95.
+    pub error_code: u8,
+    /// `1` when `file_size == 0xFFFFFFFF`, else `0`.
+    pub unfinished: u8,
+    /// `1` when `file_key` was unwrapped and verified against `"soundcoreD3200"`, else `0`.
+    pub has_file_key: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: u8,
+    /// 16-byte per-file CTR nonce at offset 17..33.
+    pub nonce: [u8; 16],
+    /// 46-byte encrypted file key material at offset 33..79.
+    pub encrypted_file_key: [u8; 46],
+    /// 16-byte session CTR nonce at offset 79..95.
+    pub session_nonce: [u8; 16],
+    /// Unwrapped 32-byte AES-256 file key when `has_file_key == 1`.
+    pub file_key: [u8; 32],
 }
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
@@ -365,6 +392,125 @@ pub unsafe extern "C" fn koe_slice_mark_inspect_transitions(
         out_slice.copy_from_slice(&transitions[..count]);
     }
     transitions.len()
+}
+
+/// Parses a `0x1A / 0x07` audio file transfer header (`raw_ptr[0..raw_len]`) and, when
+/// `session_key_ptr` is non-null (`session_key_len > 0`), unwraps and verifies the 32-byte
+/// per-file AES key into `out_head_ptr->file_key`. Returns `1` on valid header, `0` if `< 97` bytes.
+///
+/// # Safety
+///
+/// `raw_ptr` must be valid for reads of `raw_len` bytes; `session_key_ptr` must be valid for
+/// reads of `session_key_len` bytes when non-null; and `out_head_ptr` must be valid for writes
+/// of one `KoeAudioFileHead`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_transport_parse_file_head(
+    raw_ptr: *const u8,
+    raw_len: usize,
+    session_key_ptr: *const u8,
+    session_key_len: usize,
+    out_head_ptr: *mut KoeAudioFileHead,
+) -> i32 {
+    if raw_ptr.is_null() || raw_len < 97 || out_head_ptr.is_null() {
+        return 0;
+    }
+    let raw = unsafe { slice::from_raw_parts(raw_ptr, raw_len) };
+    let session_key = if session_key_ptr.is_null() || session_key_len == 0 {
+        None
+    } else {
+        Some(unsafe { slice::from_raw_parts(session_key_ptr, session_key_len) })
+    };
+    let Some(opened) = TransportSliceProcessor::open_file_head(raw, session_key) else {
+        return 0;
+    };
+    let mut encrypted_file_key = [0u8; 46];
+    let copy_len = opened.secret.encrypted_file_key.len().min(46);
+    encrypted_file_key[..copy_len].copy_from_slice(&opened.secret.encrypted_file_key[..copy_len]);
+    unsafe {
+        *out_head_ptr = KoeAudioFileHead {
+            file_id: opened.secret.file_id,
+            file_size: opened.secret.file_size,
+            error_code: opened.secret.error_code,
+            unfinished: u8::from(opened.unfinished),
+            has_file_key: u8::from(opened.file_key.is_some()),
+            reserved: 0,
+            nonce: opened.secret.nonce,
+            encrypted_file_key,
+            session_nonce: opened.secret.session_nonce,
+            file_key: opened.file_key.unwrap_or([0u8; 32]),
+        };
+    }
+    1
+}
+
+/// Unpacks all 166-byte slice records in a `0x1A / 0x08` (`0x12`) packet (`frame_ptr[0..frame_len]`),
+/// optionally decrypts each 160-byte Opus payload when `file_key_ptr` and `nonce_ptr` are non-null,
+/// writes contiguous 160-byte Opus frames into `out_opus_ptr[0..out_opus_cap]`, and writes marked
+/// sequence numbers into `out_marks_ptr[0..out_marks_cap]` (storing the mark count in `*out_marks_count_ptr`).
+/// Returns the number of unpacked 160-byte slices (`slice_count`).
+///
+/// # Safety
+///
+/// `frame_ptr` must be valid for reads of `frame_len` bytes; `file_key_ptr` and `nonce_ptr` must be
+/// valid for reads of `file_key_len` and `nonce_len` bytes when non-null; `out_opus_ptr` must be valid
+/// for writes of `out_opus_cap` bytes when non-null; `out_marks_ptr` must be valid for writes of
+/// `out_marks_cap` `u32` elements when non-null; and `out_marks_count_ptr` must be valid for writes
+/// when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_transport_unpack_slices(
+    frame_ptr: *const u8,
+    frame_len: usize,
+    file_key_ptr: *const u8,
+    file_key_len: usize,
+    nonce_ptr: *const u8,
+    nonce_len: usize,
+    out_opus_ptr: *mut u8,
+    out_opus_cap: usize,
+    out_marks_ptr: *mut u32,
+    out_marks_cap: usize,
+    out_marks_count_ptr: *mut usize,
+) -> usize {
+    if !out_marks_count_ptr.is_null() {
+        unsafe {
+            *out_marks_count_ptr = 0;
+        }
+    }
+    if frame_ptr.is_null() || frame_len < 9 + 165 {
+        return 0;
+    }
+    let frame = unsafe { slice::from_raw_parts(frame_ptr, frame_len) };
+    let decryptor = if !file_key_ptr.is_null()
+        && file_key_len > 0
+        && !nonce_ptr.is_null()
+        && nonce_len > 0
+    {
+        let key = unsafe { slice::from_raw_parts(file_key_ptr, file_key_len) };
+        let nonce = unsafe { slice::from_raw_parts(nonce_ptr, nonce_len) };
+        AesCtrStreamDecrypt::new(key, nonce)
+    } else {
+        None
+    };
+
+    let batch = TransportSliceProcessor::unpack_frame(frame, decryptor.as_ref());
+    if !out_opus_ptr.is_null() && out_opus_cap >= batch.opus_bytes.len() && !batch.opus_bytes.is_empty() {
+        let out_opus = unsafe { slice::from_raw_parts_mut(out_opus_ptr, batch.opus_bytes.len()) };
+        out_opus.copy_from_slice(&batch.opus_bytes);
+    } else if !out_opus_ptr.is_null() && out_opus_cap > 0 && !batch.opus_bytes.is_empty() {
+        let copy_len = (out_opus_cap / OPUS_FRAME_BYTES) * OPUS_FRAME_BYTES;
+        let out_opus = unsafe { slice::from_raw_parts_mut(out_opus_ptr, copy_len) };
+        out_opus.copy_from_slice(&batch.opus_bytes[..copy_len]);
+    }
+    if !out_marks_count_ptr.is_null() {
+        unsafe {
+            *out_marks_count_ptr = batch.marked_sequences.len();
+        }
+    }
+    if !out_marks_ptr.is_null() && out_marks_cap > 0 && !batch.marked_sequences.is_empty() {
+        let count = batch.marked_sequences.len().min(out_marks_cap);
+        let out_marks = unsafe { slice::from_raw_parts_mut(out_marks_ptr, count) };
+        out_marks.copy_from_slice(&batch.marked_sequences[..count]);
+    }
+    batch.slice_count
 }
 
 /// Derives `out_len` bytes via HKDF-SHA256 into `out_ptr`. Returns `1` on success, `0` on failure.

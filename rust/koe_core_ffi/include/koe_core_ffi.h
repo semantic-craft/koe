@@ -52,6 +52,19 @@ typedef struct KoeSliceMarkTransition {
   uint32_t sequence;
 } KoeSliceMarkTransition;
 
+typedef struct KoeAudioFileHead {
+  uint32_t file_id;
+  uint32_t file_size;
+  uint8_t error_code;
+  uint8_t unfinished;
+  uint8_t has_file_key;
+  uint8_t reserved;
+  uint8_t nonce[16];
+  uint8_t encrypted_file_key[46];
+  uint8_t session_nonce[16];
+  uint8_t file_key[32];
+} KoeAudioFileHead;
+
 uint8_t koe_protocol_checksum(const uint8_t* data_ptr, size_t data_len);
 uint8_t koe_protocol_verify_checksum(const uint8_t* packet_ptr, size_t packet_len);
 size_t koe_protocol_encode(uint8_t cmd_type, uint8_t cmd_id, const uint8_t* payload_ptr, size_t payload_len, uint8_t* out_ptr, size_t out_cap);
@@ -62,6 +75,8 @@ size_t koe_offline_file_list_parse(const uint8_t* payload_ptr, size_t payload_le
 uint8_t koe_slice_mark_is_mark(uint8_t flags);
 uint64_t koe_slice_mark_position_ms(uint32_t sequence);
 size_t koe_slice_mark_inspect_transitions(const uint8_t* raw_ptr, size_t raw_len, uint8_t* io_last_cmd_id, uint8_t* io_last_flags, KoeSliceMarkTransition* out_transitions_ptr, size_t out_cap);
+int32_t koe_transport_parse_file_head(const uint8_t* raw_ptr, size_t raw_len, const uint8_t* session_key_ptr, size_t session_key_len, KoeAudioFileHead* out_head_ptr);
+size_t koe_transport_unpack_slices(const uint8_t* frame_ptr, size_t frame_len, const uint8_t* file_key_ptr, size_t file_key_len, const uint8_t* nonce_ptr, size_t nonce_len, uint8_t* out_opus_ptr, size_t out_opus_cap, uint32_t* out_marks_ptr, size_t out_marks_cap, size_t* out_marks_count_ptr);
 int32_t koe_crypto_hkdf_sha256(const uint8_t* ikm_ptr, size_t ikm_len, const uint8_t* salt_ptr, size_t salt_len, const uint8_t* info_ptr, size_t info_len, uint8_t* out_ptr, size_t out_len);
 int32_t koe_crypto_aes_ctr_in_place(uint8_t* buf_ptr, size_t buf_len, const uint8_t* key_ptr, size_t key_len, const uint8_t* iv_ptr, size_t iv_len);
 int32_t koe_crypto_decrypt_chunks_in_place(uint8_t* buf_ptr, size_t buf_len, const uint8_t* file_key_ptr, size_t file_key_len, const uint8_t* nonce_ptr, size_t nonce_len, uint32_t start_sequence);

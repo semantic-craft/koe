@@ -8,7 +8,6 @@ import 'package:path_provider/path_provider.dart';
 import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
-import '../protocol/slice_marks.dart';
 
 /// Live status of Feishu-style realtime BLE transfer (`1A07` realtimeFlag=1).
 class RealtimeStreamState {
@@ -231,33 +230,23 @@ class RealtimeBleStream {
     final sink = _sink;
     final fileId = _fileId;
     if (sink == null || fileId == null) return 0;
-    var written = 0;
-    var i = 9;
-    while (frame.length - i >= 165) {
-      final seq = readU32Le(frame, i);
-      i += 4;
-      final flags = frame[i];
-      i += 1;
-      final dataEnd = i + 160;
-      if (dataEnd > frame.length) break;
-      var chunk = Uint8List.fromList(frame.sublist(i, dataEnd));
-      i = dataEnd;
-      if (i < frame.length) i += 1;
-      if (SliceMark.isMark(flags)) onMark?.call(fileId, seq);
-
-      if (_decryptOn) {
-        final plain = crypto.decryptChunk(
-          fileId: '$fileId',
-          sequence: seq,
-          data: chunk,
-        );
-        if (plain != null) chunk = plain;
-      }
-      sink.add(chunk);
-      written += chunk.length;
-      onDecryptedFrame?.call(Uint8List.fromList(chunk));
+    final batch = crypto.unpackSliceFrame(
+      frame: frame,
+      fileId: '$fileId',
+      decrypt: _decryptOn,
+    );
+    if (batch.sliceCount == 0) return 0;
+    for (final seq in batch.markedSequences) {
+      onMark?.call(fileId, seq);
     }
-    return written;
+    sink.add(batch.opusBytes);
+    final cb = onDecryptedFrame;
+    if (cb != null) {
+      for (var i = 0; i < batch.sliceCount; i++) {
+        cb(Uint8List.fromList(batch.opusBytes.sublist(i * 160, (i + 1) * 160)));
+      }
+    }
+    return batch.opusBytes.length;
   }
 
   /// Call when recording pauses/stops — finalize after a short idle settle.
