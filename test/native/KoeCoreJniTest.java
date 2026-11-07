@@ -99,6 +99,10 @@ final class KoeCoreNative {
       long spineHandle,
       byte[] claim,
       long[] citations);
+  static native int minutesValidateJson(long spineHandle, byte[] json);
+  static native byte[] minutesReplaceTermsUtf8(byte[] text, byte[] fromTerms, byte[] toTerms);
+  static native int minutesPlanBatchesCount(long spineHandle, int maxRunes);
+  static native int qwenParseTranscriptIntoSpine(long spineHandle, byte[] json);
 }
 
 public final class KoeCoreJniTest {
@@ -403,6 +407,42 @@ public final class KoeCoreJniTest {
             "实发工资按4200元乘以80%计算".getBytes(StandardCharsets.UTF_8),
             new long[] {3L}),
         "minutesValidateClaimGrounding accepts single-segment grounded S3");
+    String validJson =
+        "{\"schemaVersion\":2,\"title\":\"周会\",\"overview\":\"讨论安排\",\"topics\":[{\"text\":\"工资确认\",\"sources\":[\"S3\"]}],\"decisions\":[],\"actions\":[],\"questions\":[]}";
+    check(
+        KoeCoreNative.minutesValidateJson(spine, validJson.getBytes(StandardCharsets.UTF_8)) == 1,
+        "minutesValidateJson returns 1 on grounded JSON");
+    String badHeardJson =
+        "{\"schemaVersion\":2,\"title\":\"周会\",\"overview\":\"讨论安排\",\"topics\":[{\"text\":\"工资确认\",\"sources\":[\"S3\"]}],\"decisions\":[],\"actions\":[],\"questions\":[],\"terms\":[{\"name\":\"声刻\",\"note\":\"品牌\",\"heard\":[\"深科\"],\"sources\":[\"S3\"]}]}";
+    check(
+        KoeCoreNative.minutesValidateJson(spine, badHeardJson.getBytes(StandardCharsets.UTF_8)) == -2,
+        "minutesValidateJson returns -2 on ungrounded heard variant");
+    String badCalcJson =
+        "{\"schemaVersion\":2,\"title\":\"周会\",\"overview\":\"讨论安排\",\"topics\":[{\"text\":\"实发工资按4200元乘以80%计算\",\"sources\":[\"S1\",\"S2\"]}],\"decisions\":[],\"actions\":[],\"questions\":[]}";
+    check(
+        KoeCoreNative.minutesValidateJson(spine, badCalcJson.getBytes(StandardCharsets.UTF_8)) == -3,
+        "minutesValidateJson returns -3 on ungrounded cross-segment wage calculation");
+    check(
+        KoeCoreNative.minutesPlanBatchesCount(spine, 6000) == 1,
+        "minutesPlanBatchesCount returns 1 for small spine");
+    byte[] replacedBytes =
+        KoeCoreNative.minutesReplaceTermsUtf8(
+            "深科的深科Work录音豆".getBytes(StandardCharsets.UTF_8),
+            "深科\n深科Work".getBytes(StandardCharsets.UTF_8),
+            "声刻\nSoundcore Work".getBytes(StandardCharsets.UTF_8));
+    check(
+        replacedBytes != null
+            && new String(replacedBytes, StandardCharsets.UTF_8).equals("声刻的Soundcore Work录音豆"),
+        "minutesReplaceTermsUtf8 longest-match single-pass replacement");
+    long qwenSpine = KoeCoreNative.spineNew("qwen-jni".getBytes(StandardCharsets.UTF_8));
+    String qwenRaw =
+        "{\"transcripts\":[{\"sentences\":[{\"text\":\"第一句。\",\"begin_time\":0,\"end_time\":1000,\"speaker_id\":0},{\"text\":\"第二句。\",\"begin_time\":1000,\"end_time\":2000,\"speaker_id\":1}]}]}";
+    check(
+        KoeCoreNative.qwenParseTranscriptIntoSpine(
+                qwenSpine, qwenRaw.getBytes(StandardCharsets.UTF_8))
+            == 2,
+        "qwenParseTranscriptIntoSpine appends 2 segments");
+    KoeCoreNative.spineFree(qwenSpine);
     KoeCoreNative.spineFree(spine);
   }
 }

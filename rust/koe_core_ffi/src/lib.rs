@@ -11,7 +11,10 @@ use koe_core::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 use koe_core::domain::{SegmentId, UtteranceSpine};
 use koe_core::frame::{DecodedPacket, FrameReassembler, ProtocolFrame};
 use koe_core::library::{RecordingEntry, RecordingLibrary};
-use koe_core::minutes::validate_calculation_grounding;
+use koe_core::minutes::{
+    build_minutes_batches, parse_meeting_minutes_json, parse_qwen_transcript_json,
+    replace_minute_terms, validate_calculation_grounding, MinutesValidationError,
+};
 use koe_core::models::{DeviceInfoModel, OfflineFileList};
 use koe_core::ogg_opus::OggOpus;
 use koe_core::session::{SessionIngestOutcome, TransferProgress, TransportSession};
@@ -2735,6 +2738,175 @@ pub unsafe extern "C" fn koe_minutes_validate_claim_grounding(
         }
     }
     0
+}
+
+/// Validates a full meeting minutes JSON document against `UtteranceSpine` `spine_handle`.
+///
+/// Returns:
+/// - `1` when valid and grounded,
+/// - `0` on invalid JSON or unsupported schema version,
+/// - `-1` on invalid/missing `S1..Sn` citation (`InvalidCitation` / `NodeCitedDisallowedSource`),
+/// - `-2` on ungrounded `terms[].heard` variant (`UngroundedHeardVariant`),
+/// - `-3` on ungrounded wage/ratio/percentage calculation (`UngroundedWageCalculation`,
+///   `BaselessRatioCalculation`, or `UncitedPercentageNumber`).
+///
+/// # Safety
+///
+/// `json_ptr` must be valid for reads of `json_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_minutes_validate_json(
+    spine_handle: u64,
+    json_ptr: *const u8,
+    json_len: usize,
+) -> i32 {
+    if json_ptr.is_null() || json_len == 0 {
+        return 0;
+    }
+    let bytes = unsafe { slice::from_raw_parts(json_ptr, json_len) };
+    let Ok(raw) = std::str::from_utf8(bytes) else {
+        return 0;
+    };
+    if let Ok(map) = spine_map().lock() {
+        if let Some(spine) = map.get(&spine_handle) {
+            return match parse_meeting_minutes_json(raw, spine) {
+                Ok(_) => 1,
+                Err(
+                    MinutesValidationError::InvalidJson(_)
+                    | MinutesValidationError::UnsupportedSchemaVersion(_),
+                ) => 0,
+                Err(
+                    MinutesValidationError::InvalidCitation { .. }
+                    | MinutesValidationError::NodeCitedDisallowedSource { .. },
+                ) => -1,
+                Err(MinutesValidationError::UngroundedHeardVariant { .. }) => -2,
+                Err(
+                    MinutesValidationError::UngroundedWageCalculation { .. }
+                    | MinutesValidationError::BaselessRatioCalculation { .. }
+                    | MinutesValidationError::UncitedPercentageNumber { .. },
+                ) => -3,
+            };
+        }
+    }
+    0
+}
+
+/// Performs single-pass longest-match term replacement on `text_ptr[0..text_len]` where
+/// `from_ptr[0..from_len]` and `to_ptr[0..to_len]` are `\n`-separated UTF-8 lists of equal length.
+///
+/// Writes up to `out_cap` UTF-8 bytes into `out_ptr` and returns the number of bytes written
+/// (or `-1` on invalid UTF-8 or buffer overflow).
+///
+/// # Safety
+///
+/// Non-null input pointers must be valid for reads of their lengths, and `out_ptr` must be valid
+/// for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_minutes_replace_terms_utf8(
+    text_ptr: *const u8,
+    text_len: usize,
+    from_ptr: *const u8,
+    from_len: usize,
+    to_ptr: *const u8,
+    to_len: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    let text = if text_ptr.is_null() || text_len == 0 {
+        ""
+    } else {
+        let b = unsafe { slice::from_raw_parts(text_ptr, text_len) };
+        let Ok(s) = std::str::from_utf8(b) else {
+            return -1;
+        };
+        s
+    };
+    let from_str = if from_ptr.is_null() || from_len == 0 {
+        ""
+    } else {
+        let b = unsafe { slice::from_raw_parts(from_ptr, from_len) };
+        let Ok(s) = std::str::from_utf8(b) else {
+            return -1;
+        };
+        s
+    };
+    let to_str = if to_ptr.is_null() || to_len == 0 {
+        ""
+    } else {
+        let b = unsafe { slice::from_raw_parts(to_ptr, to_len) };
+        let Ok(s) = std::str::from_utf8(b) else {
+            return -1;
+        };
+        s
+    };
+
+    let from_lines: Vec<&str> = if from_str.is_empty() {
+        Vec::new()
+    } else {
+        from_str.split('\n').collect()
+    };
+    let to_lines: Vec<&str> = if to_str.is_empty() {
+        Vec::new()
+    } else {
+        to_str.split('\n').collect()
+    };
+    let pair_count = from_lines.len().min(to_lines.len());
+    let pairs: Vec<(&str, &str)> = (0..pair_count)
+        .map(|i| (from_lines[i], to_lines[i]))
+        .collect();
+    let replaced = replace_minute_terms(text, &pairs);
+    let out_bytes = replaced.as_bytes();
+    if out_ptr.is_null() {
+        return out_bytes.len() as i32;
+    }
+    if out_bytes.len() > out_cap {
+        return -1;
+    }
+    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, out_bytes.len()) };
+    dst.copy_from_slice(out_bytes);
+    out_bytes.len() as i32
+}
+
+/// Returns the number of leaf batches planned for `UtteranceSpine` `spine_handle` under
+/// `max_runes` per batch (`<= 6000` default when `0`), or `-1` on invalid handle.
+#[no_mangle]
+pub extern "C" fn koe_minutes_plan_batches_count(spine_handle: u64, max_runes: u32) -> i32 {
+    if let Ok(map) = spine_map().lock() {
+        if let Some(spine) = map.get(&spine_handle) {
+            return build_minutes_batches(spine, max_runes as usize).len() as i32;
+        }
+    }
+    -1
+}
+
+/// Parses a DashScope batch transcription result JSON payload and appends its timed sentences
+/// into `UtteranceSpine` `spine_handle`, returning the number of appended segments (or `-1` on
+/// invalid JSON/handle).
+///
+/// # Safety
+///
+/// `json_ptr` must be valid for reads of `json_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_qwen_parse_transcript_into_spine(
+    spine_handle: u64,
+    json_ptr: *const u8,
+    json_len: usize,
+) -> i32 {
+    if json_ptr.is_null() || json_len == 0 {
+        return -1;
+    }
+    let bytes = unsafe { slice::from_raw_parts(json_ptr, json_len) };
+    let Ok(raw) = std::str::from_utf8(bytes) else {
+        return -1;
+    };
+    if let Ok(mut map) = spine_map().lock() {
+        if let Some(spine) = map.get_mut(&spine_handle) {
+            return match parse_qwen_transcript_json(raw, spine) {
+                Ok(parsed) => parsed.segment_count as i32,
+                Err(_) => -1,
+            };
+        }
+    }
+    -1
 }
 
 #[cfg(test)]

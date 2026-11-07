@@ -96,23 +96,28 @@
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core`（100% `#![forbid(unsafe_code)]`、`#![deny(missing_docs)]`）建立 `domain.rs`（`SegmentId` `S1..Sn`、`UtteranceSegment`、`UtteranceSpine`、`MeetingMinutesV2`、`MinuteTopic`、`MinuteFishbone`、`MinuteTerm`、`ContextItem`、`TodoItem`、`AiProviderCommand`）并预分配 `minutes.rs`、`cicada.rs`、`context.rs` 与 `mcp_acp.rs` 四个零冲突独立模块入口，跑通 `S1..Sn` 不可变追加、修订号递增与原句溯源基线单测，并通过 C-ABI / Swift / Kotlin JNI 暴露 `UtteranceSpine` 基础操作。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `d7fab08;cargo test 41 passed;desktop 4 passed;swift+jni+dart parity passed`
 
-### [ ] Slice K: 千问闪记 ASR 协议、分块归并纪要状态机、`S1..Sn` 防幻觉校验与 `qwennote-minutes` 热词模板下沉
+### [x] Slice K: 千问闪记 ASR 协议、分块归并纪要状态机、`S1..Sn` 防幻觉校验与 `qwennote-minutes` 热词模板下沉
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core/src/minutes.rs` 完整实现 DashScope 语音转写任务与流式识别协议编解码、千问大模型二阶段分块归并纪要生成状态机、`S1..Sn` 严格原句证据校验器（拒绝跨句拼接工资与百分比、拒绝无基数比例与未引用数字），以及千问听记 `qwennote-minutes` 热词表、说话人替换与自定义模板注入，通过 Dart vs Rust 纪要校验差分对拍测试。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: 2f1523a;rust/koe_core/src/minutes.rs;rust/koe_core/src/domain.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
 ### [ ] Slice L: Cicada 同步双语翻译、有界实时滚动纪要（120次/时）、`.koepack v2` 资料包与同传路由下沉
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core/src/cicada.rs` 完整实现对齐 `wquguru/cicada` 的句段增量双语翻译队列、有界实时滚动纪要调度器（每小时最多 120 次、满 200 字或 30 秒触发、手改保留）、30 秒麦克风静默自动收尾检测、无音频 `.koepack v2` 资料包（当前纪要 + 最多 10 版历史 + SHA-256 校验）编解码，并在 `darwin/` 原生 SwiftUI 宿主挂载 CoreAudio + BlackHole 按住同传路由。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `PENDING`
 
 ### [ ] Slice M: 心力豆（Sweetpea）个人上下文时间线、待办/项目/日记沉淀与中文双字 BM25 离线问答检索下沉
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core/src/context.rs` 完整实现随心随力记录时间线（录音、地点、随手记、承诺提取、待办事项、项目归类、每日晨报与日记聚合）以及零云端向量依赖的中文双字（Bigram）+ 拉丁词根 BM25/TF-IDF 离线问答检索引擎與多轮溯源对话状态机，40 万字语料单次检索延迟 `< 5 ms`。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `PENDING`
 
 ### [ ] Slice N: Rust 原生 MCP + ACP 服务端、三端原生宿主全量接线与最终收口
 - **Playbook**: `Shipping`
 - **Outcome**: 在 `rust/koe_core/src/mcp_acp.rs` 与 `desktop/core` 实现原生 JSON-RPC 2.0 MCP（`list_recordings`、`get_transcript`、`get_minutes`、`search_context`、`qwennote` 热词/模板同步与 `.koepack v2` `/sync/packs`）及 ACP（Agent Communication Protocol）协议栈，将 `minutes`、`cicada`、`context`、`mcp_acp` 全链路接入 `desktop/core`、`darwin/` SwiftUI 与 Android `KoeCore.kt`，完成对抗审查（`interrogate`）、代码清理（`deslop` / `no-comments`）、性能基准与早间审计。
 - **Done Predicate**: `./scripts/test-koe-core-swift`、`./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
+- **Evidence**: `PENDING`
