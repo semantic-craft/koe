@@ -249,4 +249,111 @@ void main() {
       expect(lines.last, contains('seq=${seed + 1} flags=0x00'));
     }
   });
+
+  test('Rust FFI batch 1A07 file head and 1A08 slice unpacker match Dart across 20 seeds', () {
+    final ffi = KoeCoreFfi.instance!;
+    final crypto = DeviceCrypto();
+    crypto.sessionKey = Uint8List.fromList(
+      List<int>.generate(32, (i) => (i * 5 + 3) & 0xFF),
+    );
+
+    for (var seed = 0; seed < 20; seed++) {
+      final sessionNonce = Uint8List.fromList(
+        List<int>.generate(16, (i) => (seed + i) & 0xFF),
+      );
+      final fileNonce = Uint8List.fromList(
+        List<int>.generate(16, (i) => (seed * 3 + i + 1) & 0xFF),
+      );
+      final rawFileKey = Uint8List.fromList(
+        List<int>.generate(32, (i) => (seed * 11 + i + 7) & 0xFF),
+      );
+      final plainKeyMaterial = Uint8List.fromList([
+        ...utf8.encode(DeviceCrypto.fileKeyMagic),
+        ...rawFileKey,
+      ]);
+      final encFileKey = DeviceCrypto.aesCtrDecrypt(
+        data: plainKeyMaterial,
+        key: crypto.sessionKey!,
+        iv: sessionNonce,
+      )!;
+
+      final headFrame = Uint8List.fromList([
+        0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x07, 0x62, 0x00,
+        ...u32Le(5000 + seed),
+        ...u32Le(166 * (seed + 2)),
+        ...fileNonce,
+        ...encFileKey,
+        ...sessionNonce,
+        0x00,
+        0x00,
+      ]);
+      final parsedSecret = AudioFileSecretKey.parseFrame(headFrame)!;
+      final ffiHead = ffi.parseFileHead(
+        headFrame,
+        sessionKey: crypto.sessionKey,
+      )!;
+      expect(parsedSecret.fileId, equals(ffiHead.secret.fileId));
+      expect(parsedSecret.fileSize, equals(ffiHead.secret.fileSize));
+      expect(parsedSecret.nonce, equals(ffiHead.secret.nonce));
+      expect(
+        parsedSecret.encryptedFileKey,
+        equals(ffiHead.secret.encryptedFileKey),
+      );
+      expect(parsedSecret.sessionNonce, equals(ffiHead.secret.sessionNonce));
+      expect(ffiHead.fileKey, equals(rawFileKey));
+
+      final fileIdStr = '${5000 + seed}';
+      expect(
+        crypto.initFileDecrypt(
+          fileId: fileIdStr,
+          encryptedFileKey: encFileKey,
+          sessionNonce: sessionNonce,
+          nonce: fileNonce,
+        ),
+        isTrue,
+      );
+
+      final plain0 = Uint8List.fromList(
+        List<int>.generate(160, (i) => (seed + i * 3) & 0xFF),
+      );
+      final plain1 = Uint8List.fromList(
+        List<int>.generate(160, (i) => (seed * 7 + i) & 0xFF),
+      );
+      final enc0 = crypto.decryptChunk(
+        fileId: fileIdStr,
+        sequence: seed * 2,
+        data: plain0,
+      )!;
+      final enc1 = crypto.decryptChunk(
+        fileId: fileIdStr,
+        sequence: seed * 2 + 1,
+        data: plain1,
+      )!;
+
+      final sliceFrame = Uint8List.fromList([
+        0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x08, 0x56, 0x01,
+        ...u32Le(seed * 2),
+        0x01,
+        ...enc0,
+        0x00,
+        ...u32Le(seed * 2 + 1),
+        0x00,
+        ...enc1,
+        0x00,
+        0x00,
+      ]);
+
+      final unpacked = crypto.unpackSliceFrame(
+        frame: sliceFrame,
+        fileId: fileIdStr,
+        decrypt: true,
+      );
+      expect(unpacked.sliceCount, equals(2));
+      expect(unpacked.markedSequences, equals([seed * 2]));
+      expect(
+        unpacked.opusBytes,
+        equals(Uint8List.fromList([...plain0, ...plain1])),
+      );
+    }
+  });
 }

@@ -791,44 +791,24 @@ class WifiExportService {
   }
 
   void _writeSlices(Uint8List frame) {
-    // Slices with no file open are left over from a file already saved.
     if (_fileSink == null) return;
-    // Layout after offset 9: repeated [seq u32 LE][flags u8][160 data][pad u8?]
-    // Feishu processes 166-byte units while length allows.
-    var i = 9;
     final fileId = _activeFileId;
-    while (frame.length - i >= 165) {
-      final seq = readU32Le(frame, i);
-      i += 4;
-      // flags
-      i += 1;
-      final dataEnd = i + 160;
-      if (dataEnd > frame.length) break;
-      final chunk = Uint8List.fromList(frame.sublist(i, dataEnd));
-      i = dataEnd;
-      // optional trailing pad byte in 166-unit stride
-      if (i < frame.length) {
-        i += 1;
+    final shouldDecrypt = _decryptEnabled && fileId != null;
+    final batch = crypto.unpackSliceFrame(
+      frame: frame,
+      fileId: fileId,
+      decrypt: shouldDecrypt,
+    );
+    if (batch.sliceCount == 0) return;
+    if (shouldDecrypt) {
+      if (crypto.hasFileDecryptor(fileId)) {
+        _decryptedChunks += batch.sliceCount;
+      } else {
+        _rawFallbackChunks += batch.sliceCount;
       }
-
-      Uint8List out = chunk;
-      if (_decryptEnabled && fileId != null) {
-        final plain = crypto.decryptChunk(
-          fileId: fileId,
-          sequence: seq,
-          data: chunk,
-        );
-        if (plain != null) {
-          out = plain;
-          _decryptedChunks++;
-        } else {
-          _rawFallbackChunks++;
-        }
-      }
-
-      _pending.add(out);
-      _received += _sliceRecordBytes;
     }
+    _pending.add(batch.opusBytes);
+    _received += batch.sliceCount * _sliceRecordBytes;
     if (_pending.length >= _writeBlockBytes) {
       _fileSink?.add(_pending.takeBytes());
     }

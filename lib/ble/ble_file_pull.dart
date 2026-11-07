@@ -9,7 +9,6 @@ import '../audio/retrieved_audio.dart';
 import '../crypto/device_crypto.dart';
 import '../protocol/commands.dart';
 import '../protocol/frame.dart';
-import '../protocol/slice_marks.dart';
 import '../protocol/models.dart';
 
 class BleFilePullCancelled implements Exception {
@@ -244,32 +243,17 @@ class BleFilePull {
     required bool decrypt,
     void Function(int sequence)? onMark,
   }) {
-    var written = 0;
-    var i = 9;
-    while (frame.length - i >= 165) {
-      final seq = readU32Le(frame, i);
-      i += 4;
-      final flags = frame[i];
-      i += 1;
-      final dataEnd = i + 160;
-      if (dataEnd > frame.length) break;
-      var chunk = Uint8List.fromList(frame.sublist(i, dataEnd));
-      i = dataEnd;
-      if (i < frame.length) i += 1;
-      if (SliceMark.isMark(flags)) onMark?.call(seq);
-
-      if (decrypt) {
-        final plain = crypto.decryptChunk(
-          fileId: fileId,
-          sequence: seq,
-          data: chunk,
-        );
-        if (plain != null) chunk = plain;
-      }
-      sink.add(chunk);
-      written += chunk.length;
+    final batch = crypto.unpackSliceFrame(
+      frame: frame,
+      fileId: fileId,
+      decrypt: decrypt,
+    );
+    if (batch.sliceCount == 0) return 0;
+    for (final seq in batch.markedSequences) {
+      onMark?.call(seq);
     }
-    return written;
+    sink.add(batch.opusBytes);
+    return batch.opusBytes.length;
   }
 
   Future<Directory> _exportDir() async {

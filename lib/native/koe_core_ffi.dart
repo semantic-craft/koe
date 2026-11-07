@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import '../crypto/device_crypto.dart';
 import '../protocol/models.dart';
 
 final class _KoeDeviceInfoNative extends Struct {
@@ -101,6 +102,64 @@ final class _KoeSliceMarkTransitionNative extends Struct {
   external int sequence;
 }
 
+final class _KoeAudioFileHeadNative extends Struct {
+  @Uint32()
+  external int fileId;
+
+  @Uint32()
+  external int fileSize;
+
+  @Uint8()
+  external int errorCode;
+
+  @Uint8()
+  external int unfinished;
+
+  @Uint8()
+  external int hasFileKey;
+
+  @Uint8()
+  external int reserved;
+
+  @Array(16)
+  external Array<Uint8> nonce;
+
+  @Array(46)
+  external Array<Uint8> encryptedFileKey;
+
+  @Array(16)
+  external Array<Uint8> sessionNonce;
+
+  @Array(32)
+  external Array<Uint8> fileKey;
+}
+
+class KoeParsedFileHead {
+  const KoeParsedFileHead({
+    required this.secret,
+    required this.unfinished,
+    this.fileKey,
+  });
+
+  final AudioFileSecretKey secret;
+  final bool unfinished;
+  final Uint8List? fileKey;
+}
+
+class KoeUnpackedSliceBatch {
+  const KoeUnpackedSliceBatch({
+    required this.opusBytes,
+    required this.markedSequences,
+    required this.sliceCount,
+  });
+
+  final Uint8List opusBytes;
+  final List<int> markedSequences;
+  final int sliceCount;
+
+  int get wireRecordBytes => sliceCount * 166;
+}
+
 typedef _ChecksumNative = Uint8 Function(Pointer<Uint8>, Size);
 typedef _ChecksumDart = int Function(Pointer<Uint8>, int);
 
@@ -167,6 +226,48 @@ typedef _SliceMarkInspectDart = int Function(
   Pointer<Uint8>,
   Pointer<_KoeSliceMarkTransitionNative>,
   int,
+);
+
+typedef _ParseFileHeadNative = Int32 Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<_KoeAudioFileHeadNative>,
+);
+typedef _ParseFileHeadDart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<_KoeAudioFileHeadNative>,
+);
+
+typedef _UnpackSlicesNative = Size Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint32>,
+  Size,
+  Pointer<Size>,
+);
+typedef _UnpackSlicesDart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint32>,
+  int,
+  Pointer<Size>,
 );
 
 typedef _HkdfNative = Int32 Function(
@@ -283,6 +384,16 @@ final class KoeCoreFfi {
             'koe_slice_mark_inspect_transitions',
             isLeaf: true,
           ),
+      _parseFileHead =
+          lib.lookupFunction<_ParseFileHeadNative, _ParseFileHeadDart>(
+            'koe_transport_parse_file_head',
+            isLeaf: true,
+          ),
+      _unpackSlices =
+          lib.lookupFunction<_UnpackSlicesNative, _UnpackSlicesDart>(
+            'koe_transport_unpack_slices',
+            isLeaf: true,
+          ),
       _hkdf = lib.lookupFunction<_HkdfNative, _HkdfDart>(
         'koe_crypto_hkdf_sha256',
         isLeaf: true,
@@ -370,6 +481,8 @@ final class KoeCoreFfi {
   final _DeviceInfoParseDart _deviceInfoParsePayload;
   final _OfflineFileListParseDart _offlineFileListParse;
   final _SliceMarkInspectDart _sliceMarkInspect;
+  final _ParseFileHeadDart _parseFileHead;
+  final _UnpackSlicesDart _unpackSlices;
   final _HkdfDart _hkdf;
   final _AesCtrDart _aesCtr;
   final _DecryptChunksDart _decryptChunks;
@@ -552,6 +665,111 @@ final class KoeCoreFfi {
     }
   }
 
+  KoeParsedFileHead? parseFileHead(Uint8List raw, {Uint8List? sessionKey}) {
+    if (raw.length < 97) return null;
+    final rawPtr = malloc<Uint8>(raw.length);
+    final skPtr = (sessionKey != null && sessionKey.isNotEmpty)
+        ? malloc<Uint8>(sessionKey.length)
+        : nullptr;
+    final outPtr = calloc<_KoeAudioFileHeadNative>(1);
+    try {
+      rawPtr.asTypedList(raw.length).setAll(0, raw);
+      if (skPtr != nullptr && sessionKey != null) {
+        skPtr.asTypedList(sessionKey.length).setAll(0, sessionKey);
+      }
+      final ok = _parseFileHead(
+        rawPtr,
+        raw.length,
+        skPtr,
+        sessionKey?.length ?? 0,
+        outPtr,
+      );
+      if (ok != 1) return null;
+      final c = outPtr.ref;
+      final secret = AudioFileSecretKey(
+        fileId: c.fileId,
+        fileSize: c.fileSize,
+        nonce: _readFixedBytes(c.nonce, 16),
+        encryptedFileKey: _readFixedBytes(c.encryptedFileKey, 46),
+        sessionNonce: _readFixedBytes(c.sessionNonce, 16),
+        errorCode: c.errorCode,
+      );
+      return KoeParsedFileHead(
+        secret: secret,
+        unfinished: c.unfinished != 0,
+        fileKey: c.hasFileKey != 0 ? _readFixedBytes(c.fileKey, 32) : null,
+      );
+    } finally {
+      malloc.free(rawPtr);
+      if (skPtr != nullptr) malloc.free(skPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  KoeUnpackedSliceBatch unpackSlices(
+    Uint8List frame, {
+    Uint8List? fileKey,
+    Uint8List? nonce,
+  }) {
+    if (frame.length < 174) {
+      return KoeUnpackedSliceBatch(
+        opusBytes: Uint8List(0),
+        markedSequences: const [],
+        sliceCount: 0,
+      );
+    }
+    final maxSlices = (frame.length - 9) ~/ 165;
+    final framePtr = malloc<Uint8>(frame.length);
+    final fkPtr = (fileKey != null && fileKey.isNotEmpty)
+        ? malloc<Uint8>(fileKey.length)
+        : nullptr;
+    final noncePtr = (nonce != null && nonce.isNotEmpty)
+        ? malloc<Uint8>(nonce.length)
+        : nullptr;
+    final opusCap = maxSlices * 160;
+    final opusPtr = malloc<Uint8>(opusCap);
+    final marksPtr = calloc<Uint32>(maxSlices);
+    final marksCountPtr = calloc<Size>(1);
+    try {
+      framePtr.asTypedList(frame.length).setAll(0, frame);
+      if (fkPtr != nullptr && fileKey != null) {
+        fkPtr.asTypedList(fileKey.length).setAll(0, fileKey);
+      }
+      if (noncePtr != nullptr && nonce != null) {
+        noncePtr.asTypedList(nonce.length).setAll(0, nonce);
+      }
+      final sliceCount = _unpackSlices(
+        framePtr,
+        frame.length,
+        fkPtr,
+        fileKey?.length ?? 0,
+        noncePtr,
+        nonce?.length ?? 0,
+        opusPtr,
+        opusCap,
+        marksPtr,
+        maxSlices,
+        marksCountPtr,
+      );
+      final marksCount = marksCountPtr.value;
+      final marks = <int>[
+        for (var i = 0; i < marksCount; i++) (marksPtr + i).value,
+      ];
+      return KoeUnpackedSliceBatch(
+        opusBytes: Uint8List.fromList(opusPtr.asTypedList(sliceCount * 160)),
+        markedSequences: marks,
+        sliceCount: sliceCount,
+      );
+    } finally {
+      malloc.free(framePtr);
+      if (fkPtr != nullptr) malloc.free(fkPtr);
+      if (noncePtr != nullptr) malloc.free(noncePtr);
+      malloc.free(opusPtr);
+      calloc.free(marksPtr);
+      calloc.free(marksCountPtr);
+    }
+  }
+
   Uint8List hkdfSha256({
     required Uint8List ikm,
     required Uint8List salt,
@@ -723,5 +941,13 @@ final class KoeCoreFfi {
       bytes.add(b);
     }
     return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  static Uint8List _readFixedBytes(Array<Uint8> arr, int len) {
+    final out = Uint8List(len);
+    for (var i = 0; i < len; i++) {
+      out[i] = arr[i];
+    }
+    return out;
   }
 }

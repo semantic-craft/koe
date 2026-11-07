@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 
 import '../native/koe_core_ffi.dart';
+export '../native/koe_core_ffi.dart'
+    show KoeParsedFileHead, KoeUnpackedSliceBatch;
 
 /// ECDH (secp256r1) + HKDF + AES-CTR decrypt for D3200 offline files.
 ///
@@ -184,6 +187,60 @@ class DeviceCrypto {
   }
 
   bool hasFileDecryptor(String fileId) => _fileDecryptors.containsKey(fileId);
+
+  KoeUnpackedSliceBatch unpackSliceFrame({
+    required Uint8List frame,
+    String? fileId,
+    bool decrypt = false,
+  }) {
+    final d = (decrypt && fileId != null) ? _fileDecryptors[fileId] : null;
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.unpackSlices(
+        frame,
+        fileKey: d?.fileKey,
+        nonce: d?.nonce,
+      );
+    }
+    if (frame.length < 174) {
+      return KoeUnpackedSliceBatch(
+        opusBytes: Uint8List(0),
+        markedSequences: const [],
+        sliceCount: 0,
+      );
+    }
+    final builder = BytesBuilder(copy: false);
+    final marks = <int>[];
+    var count = 0;
+    var i = 9;
+    while (frame.length - i >= 165) {
+      final seq =
+          (frame[i] & 0xFF) |
+          ((frame[i + 1] & 0xFF) << 8) |
+          ((frame[i + 2] & 0xFF) << 16) |
+          ((frame[i + 3] & 0xFF) << 24);
+      i += 4;
+      final flags = frame[i];
+      i += 1;
+      final dataEnd = i + 160;
+      if (dataEnd > frame.length) break;
+      var chunk = Uint8List.fromList(frame.sublist(i, dataEnd));
+      i = dataEnd;
+      if (i < frame.length) i += 1;
+      if ((flags & 0x01) != 0) marks.add(seq);
+      if (d != null) {
+        final plain = d.decryptChunk(chunk, seq);
+        if (plain != null) chunk = plain;
+      }
+      builder.add(chunk);
+      count++;
+    }
+    return KoeUnpackedSliceBatch(
+      opusBytes: builder.toBytes(),
+      markedSequences: marks,
+      sliceCount: count,
+    );
+  }
 
   void clearFile(String fileId) => _fileDecryptors.remove(fileId);
 
@@ -393,6 +450,10 @@ class AudioFileSecretKey {
 
   /// Full-frame parse (Feishu `analyzeWifiTransferDataHead`).
   static AudioFileSecretKey? parseFrame(Uint8List raw) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.parseFileHead(raw)?.secret;
+    }
     if (raw.length < 97) return null;
     int u32(int o) =>
         (raw[o] & 0xFF) |
