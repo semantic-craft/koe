@@ -264,7 +264,7 @@ public actor BeanTransportActor: BeanTransporting {
       emitTransferProgress(step)
     }
     if step.hasFinalizedRecording {
-      _ = persistFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
+      _ = drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
     }
   }
 
@@ -293,9 +293,7 @@ public actor BeanTransportActor: BeanTransporting {
     ecdhReassembler.reset()
     if willAutoReconnect {
       session.onTransportInterrupted()
-      if session.takeFinalized() != nil {
-        _ = persistFinalizedFromSession(destinationDirectory: Self.defaultExportDirectory(), segments: [])
-      }
+      _ = drainAllFinalizedFromSession(destinationDirectory: Self.defaultExportDirectory(), segments: [])
       continuation?.yield(.connectionChanged(.disconnected(reason: reason)))
     } else {
       session.onDisconnected()
@@ -336,8 +334,61 @@ public actor BeanTransportActor: BeanTransporting {
       emitTransferProgress(step)
     }
     if step.hasFinalizedRecording {
-      _ = persistFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
+      _ = drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
     }
+  }
+
+  @discardableResult
+  public func beginWifiBatch(fileIds: [UInt32]) -> Bool {
+    session.beginWifiBatch(fileIds: fileIds)
+  }
+
+  @discardableResult
+  public func ingestWifiChunk(_ chunk: Data, destinationDirectory: URL) async -> [KoeSavedRecording] {
+    let nowSec = UInt64(Date().timeIntervalSince1970)
+    let step = session.ingestWifiChunk(chunk, nowEpochSec: nowSec)
+    if step.transferUpdated {
+      emitTransferProgress(step)
+    }
+    if step.hasFinalizedRecording {
+      return drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
+    }
+    return []
+  }
+
+  public func popOutboundWifiWs() -> String? {
+    session.popOutboundWifiWs()
+  }
+
+  public func popOutboundWifiUdp() -> Data? {
+    session.popOutboundWifiUdp()
+  }
+
+  @discardableResult
+  public func onWifiInterrupted(destinationDirectory: URL) async -> [KoeSavedRecording] {
+    let nowSec = UInt64(Date().timeIntervalSince1970)
+    let salvaged = session.onWifiInterrupted(nowEpochSec: nowSec)
+    if salvaged {
+      return drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
+    }
+    return []
+  }
+
+  @discardableResult
+  public func resumeWifiBatch() -> Bool {
+    session.resumeWifiBatch()
+  }
+
+  public func cancelWifiBatch() {
+    session.cancelWifiBatch()
+  }
+
+  public func currentWifiBatchProgress() -> KoeWifiBatchProgressModel {
+    session.currentWifiBatchProgress()
+  }
+
+  public func currentWifiEndpoint() -> KoeWifiEndpointModel? {
+    session.currentWifiEndpoint()
   }
 
   public func finalizeActiveRecording(
@@ -448,6 +499,20 @@ public actor BeanTransportActor: BeanTransporting {
     continuation?.yield(.transferChanged(.idle))
     continuation?.yield(.recordingSaved(saved))
     return saved
+  }
+
+  private func drainAllFinalizedFromSession(
+    destinationDirectory: URL,
+    segments: [KoeLiveCaptionSegment]
+  ) -> [KoeSavedRecording] {
+    var out: [KoeSavedRecording] = []
+    while let saved = persistFinalizedFromSession(
+      destinationDirectory: destinationDirectory,
+      segments: segments
+    ) {
+      out.append(saved)
+    }
+    return out
   }
 
   public static func defaultExportDirectory() -> URL {

@@ -102,6 +102,43 @@ impl DeviceCommands {
         ProtocolFrame::encode(0x1A, 0x02, &[])
     }
 
+    /// Generates Feishu-compatible SoftAP credentials (`("WiFi-{epoch_ms}", "{epoch_ms}")`).
+    #[must_use]
+    pub fn generate_wifi_credentials(epoch_ms: u64) -> (String, String) {
+        (format!("WiFi-{epoch_ms}"), epoch_ms.to_string())
+    }
+
+    /// Builds the fixed 18-byte `0x1A 0x07` WebSocket file header request frame
+    /// (`[08 EE 00 00 00 1A 07 12 00 | already_transferred LE | file_id LE | 1B]`, no additive checksum).
+    #[must_use]
+    pub fn build_wifi_file_request_bytes(file_id: u32, already_transferred: u32) -> [u8; 18] {
+        let t = u32_le(already_transferred);
+        let f = u32_le(file_id);
+        [
+            0x08, 0xEE, 0x00, 0x00, 0x00, 0x1A, 0x07, 0x12, 0x00, t[0], t[1], t[2], t[3], f[0],
+            f[1], f[2], f[3], 0x1B,
+        ]
+    }
+
+    /// Formats `build_wifi_file_request_bytes` as a 36-character lowercase hex string for WebSocket TX.
+    #[must_use]
+    pub fn build_wifi_file_request_hex(file_id: u32, already_transferred: u32) -> String {
+        let raw = Self::build_wifi_file_request_bytes(file_id, already_transferred);
+        let mut out = String::with_capacity(36);
+        for &b in &raw {
+            out.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
+            out.push(char::from_digit(u32::from(b & 0x0F), 16).unwrap_or('0'));
+        }
+        out
+    }
+
+    /// Returns the 22-character lowercase hex `0x1A 0x0A` WebSocket transfer-complete frame
+    /// (`"08ee0000001a0a0b000126"`).
+    #[must_use]
+    pub fn wifi_transfer_complete_hex() -> String {
+        "08ee0000001a0a0b000126".to_string()
+    }
+
     /// Sends the app's uncompressed P-256 ECDH public key (`0x2E 0x01`).
     #[must_use]
     pub fn notify_encrypt_public_key(public_key_bytes: &[u8]) -> Vec<u8> {
@@ -214,5 +251,20 @@ mod tests {
         assert_eq!(wifi[16], 3);
         assert_eq!(&wifi[17..20], b"123");
         assert!(ProtocolFrame::verify_checksum(&wifi));
+
+        let (ssid, pwd) = DeviceCommands::generate_wifi_credentials(1_761_100_000_000);
+        assert_eq!(ssid, "WiFi-1761100000000");
+        assert_eq!(pwd, "1761100000000");
+
+        let req_bytes = DeviceCommands::build_wifi_file_request_bytes(0x0102_0304, 332);
+        assert_eq!(req_bytes.len(), 18);
+        assert_eq!(req_bytes[17], 0x1B);
+        let req_hex = DeviceCommands::build_wifi_file_request_hex(0x0102_0304, 332);
+        assert_eq!(req_hex.len(), 36);
+        assert_eq!(req_hex, "08ee0000001a0712004c010000040302011b");
+        assert_eq!(
+            DeviceCommands::wifi_transfer_complete_hex(),
+            "08ee0000001a0a0b000126"
+        );
     }
 }

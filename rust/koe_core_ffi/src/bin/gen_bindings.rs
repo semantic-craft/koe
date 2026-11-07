@@ -157,6 +157,7 @@ fn c_scalar_type(rust_ty: &str) -> String {
         "i32" => "int32_t".to_string(),
         "usize" => "size_t".to_string(),
         "*const u8" => "const uint8_t*".to_string(),
+        "*const u32" => "const uint32_t*".to_string(),
         "*const u64" => "const uint64_t*".to_string(),
         "*mut u8" => "uint8_t*".to_string(),
         "*mut *mut u8" => "uint8_t**".to_string(),
@@ -280,6 +281,30 @@ public struct KoeUnpackedSlices: Equatable, Sendable {{
   public let sliceCount: Int
 
   public var wireRecordBytes: Int {{ sliceCount * 166 }}
+}}
+
+public struct KoeWifiEndpointModel: Equatable, Sendable {{
+  public let ip: [UInt8]
+  public let port: UInt16
+
+  public var ipString: String {{
+    guard ip.count == 4 else {{ return "0.0.0.0" }}
+    return "\(ip[0]).\(ip[1]).\(ip[2]).\(ip[3])"
+  }}
+}}
+
+public struct KoeWifiBatchProgressModel: Equatable, Sendable {{
+  public let phase: UInt8
+  public let errorCode: UInt8
+  public let currentFileIndex: UInt32
+  public let totalFiles: UInt32
+  public let activeFileId: UInt32
+  public let receivedWireBytes: UInt32
+  public let expectedWireBytes: UInt32
+  public let finalizedCount: UInt32
+  public let salvagedCount: UInt32
+  public let skippedCount: UInt32
+  public let remainingCount: UInt32
 }}
 
 public enum KoeCore {{
@@ -604,6 +629,53 @@ public enum KoeCore {{
     )
   }}
 
+  public static func parseWifiConfigResponse(_ packet: Data) -> KoeWifiEndpointModel? {{
+    var cEp = KoeWifiEndpoint()
+    let ok = packet.withUnsafeBytes {{ raw -> UInt8 in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return koe_wifi_parse_config_response(base, packet.count, &cEp)
+    }}
+    guard ok != 0 else {{ return nil }}
+    let ipBytes = withUnsafeBytes(of: &cEp.ip) {{ Array($0) }}
+    return KoeWifiEndpointModel(ip: ipBytes, port: cEp.port)
+  }}
+
+  public static func sharesIpv4Subnet(deviceIp: [UInt8], localIp: [UInt8]) -> Bool {{
+    guard deviceIp.count >= 4, localIp.count >= 4 else {{ return false }}
+    return deviceIp.withUnsafeBufferPointer {{ devBuf in
+      localIp.withUnsafeBufferPointer {{ locBuf in
+        koe_wifi_shares_subnet(devBuf.baseAddress, locBuf.baseAddress) != 0
+      }}
+    }}
+  }}
+
+  public static func buildWifiFileRequestHex(fileId: UInt32, alreadyTransferred: UInt32 = 0) -> String {{
+    var out = Data(count: 64)
+    let len = out.withUnsafeMutableBytes {{ raw -> Int in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return Int(koe_wifi_build_file_request_hex(fileId, alreadyTransferred, base, 64))
+    }}
+    return String(decoding: out.prefix(len), as: UTF8.self)
+  }}
+
+  public static func wifiTransferCompleteHex() -> String {{
+    var out = Data(count: 64)
+    let len = out.withUnsafeMutableBytes {{ raw -> Int in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return Int(koe_wifi_build_transfer_complete_hex(base, 64))
+    }}
+    return String(decoding: out.prefix(len), as: UTF8.self)
+  }}
+
+  public static func wifiKeepalivePayload() -> Data {{
+    var out = Data(count: 64)
+    let len = out.withUnsafeMutableBytes {{ raw -> Int in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return Int(koe_wifi_keepalive_payload(base, 64))
+    }}
+    return Data(out.prefix(len))
+  }}
+
   fileprivate static func decodeDeviceInfo(_ c: KoeDeviceInfo) -> KoeDeviceTelemetry {{
     var copy = c
     let fw = withUnsafeBytes(of: &copy.firmware_version) {{ readCString($0) }}
@@ -885,6 +957,86 @@ public final class KoeTransportSession: @unchecked Sendable {{
     koe_session_finalize_active_transfer(handle, nowEpochSec) != 0
   }}
 
+  @discardableResult
+  public func beginWifiBatch(fileIds: [UInt32]) -> Bool {{
+    fileIds.withUnsafeBufferPointer {{ buf in
+      koe_session_begin_wifi_batch(handle, buf.baseAddress, buf.count) != 0
+    }}
+  }}
+
+  public func ingestWifiChunk(_ chunk: Data, nowEpochSec: UInt64) -> KoeSessionStepOutcome {{
+    var step = KoeSessionStepResult()
+    _ = chunk.withUnsafeBytes {{ raw in
+      koe_session_ingest_wifi_chunk(
+        handle,
+        raw.bindMemory(to: UInt8.self).baseAddress,
+        chunk.count,
+        nowEpochSec,
+        &step
+      )
+    }}
+    return decodeStep(step)
+  }}
+
+  public func popOutboundWifiWs() -> String? {{
+    var buf = Data(count: 512)
+    let len = buf.withUnsafeMutableBytes {{ raw -> Int in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return Int(koe_session_pop_outbound_wifi_ws(handle, base, 512))
+    }}
+    guard len > 0 else {{ return nil }}
+    return String(decoding: buf.prefix(len), as: UTF8.self)
+  }}
+
+  public func popOutboundWifiUdp() -> Data? {{
+    var buf = Data(count: 512)
+    let len = buf.withUnsafeMutableBytes {{ raw -> Int in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return 0 }}
+      return Int(koe_session_pop_outbound_wifi_udp(handle, base, 512))
+    }}
+    guard len > 0 else {{ return nil }}
+    return Data(buf.prefix(len))
+  }}
+
+  public func currentWifiBatchProgress() -> KoeWifiBatchProgressModel {{
+    var cProg = KoeWifiBatchProgress()
+    _ = koe_session_get_wifi_batch_progress(handle, &cProg)
+    return KoeWifiBatchProgressModel(
+      phase: cProg.phase,
+      errorCode: cProg.error_code,
+      currentFileIndex: cProg.current_file_index,
+      totalFiles: cProg.total_files,
+      activeFileId: cProg.active_file_id,
+      receivedWireBytes: cProg.received_wire_bytes,
+      expectedWireBytes: cProg.expected_wire_bytes,
+      finalizedCount: cProg.finalized_count,
+      salvagedCount: cProg.salvaged_count,
+      skippedCount: cProg.skipped_count,
+      remainingCount: cProg.remaining_count
+    )
+  }}
+
+  public func currentWifiEndpoint() -> KoeWifiEndpointModel? {{
+    var cEp = KoeWifiEndpoint()
+    guard koe_session_get_wifi_endpoint(handle, &cEp) != 0 else {{ return nil }}
+    let ipBytes = withUnsafeBytes(of: &cEp.ip) {{ Array($0) }}
+    return KoeWifiEndpointModel(ip: ipBytes, port: cEp.port)
+  }}
+
+  @discardableResult
+  public func onWifiInterrupted(nowEpochSec: UInt64) -> Bool {{
+    koe_session_on_wifi_interrupted(handle, nowEpochSec) != 0
+  }}
+
+  @discardableResult
+  public func resumeWifiBatch() -> Bool {{
+    koe_session_resume_wifi_batch(handle) != 0
+  }}
+
+  public func cancelWifiBatch() {{
+    koe_session_cancel_wifi_batch(handle)
+  }}
+
   public func takeLivePcm16() -> Data {{
     var outLen: Int = 0
     guard let ptr = koe_session_take_live_pcm16(handle, &outLen), outLen > 0 else {{
@@ -1151,6 +1303,20 @@ object KoeCoreNative {{
     @JvmStatic external fun sessionTakeFinalizedMeta(handle: Long): LongArray?
     @JvmStatic external fun sessionTakeFinalizedOgg(handle: Long): ByteArray?
     @JvmStatic external fun sessionTakeFinalizedWav(handle: Long): ByteArray?
+    @JvmStatic external fun wifiParseConfigResponse(raw: ByteArray): LongArray?
+    @JvmStatic external fun wifiSharesSubnet(deviceIp: ByteArray, localIp: ByteArray): Boolean
+    @JvmStatic external fun wifiBuildFileRequestHex(fileId: Int, alreadyTransferred: Int): ByteArray
+    @JvmStatic external fun wifiBuildTransferCompleteHex(): ByteArray
+    @JvmStatic external fun wifiKeepalivePayload(): ByteArray
+    @JvmStatic external fun sessionBeginWifiBatch(handle: Long, fileIds: LongArray): Boolean
+    @JvmStatic external fun sessionIngestWifiChunk(handle: Long, chunk: ByteArray, nowEpochSec: Long): LongArray
+    @JvmStatic external fun sessionPopOutboundWifiWs(handle: Long): ByteArray?
+    @JvmStatic external fun sessionPopOutboundWifiUdp(handle: Long): ByteArray?
+    @JvmStatic external fun sessionGetWifiBatchProgress(handle: Long): LongArray
+    @JvmStatic external fun sessionGetWifiEndpoint(handle: Long): LongArray?
+    @JvmStatic external fun sessionOnWifiInterrupted(handle: Long, nowEpochSec: Long): Boolean
+    @JvmStatic external fun sessionResumeWifiBatch(handle: Long): Boolean
+    @JvmStatic external fun sessionCancelWifiBatch(handle: Long)
 
     @JvmStatic external fun libraryNew(): Long
     @JvmStatic external fun libraryFree(handle: Long)
@@ -1237,6 +1403,37 @@ class KoeTransportSession : AutoCloseable {{
 
     fun takeFinalizedWav(): ByteArray? =
         if (handle == 0L) null else KoeCoreNative.sessionTakeFinalizedWav(handle)
+
+    fun beginWifiBatch(fileIds: LongArray): Boolean =
+        handle != 0L && KoeCoreNative.sessionBeginWifiBatch(handle, fileIds)
+
+    fun ingestWifiChunk(chunk: ByteArray, nowEpochSec: Long): LongArray =
+        if (handle == 0L) LongArray(0) else KoeCoreNative.sessionIngestWifiChunk(handle, chunk, nowEpochSec)
+
+    fun popOutboundWifiWs(): String? {{
+        if (handle == 0L) return null
+        val bytes = KoeCoreNative.sessionPopOutboundWifiWs(handle) ?: return null
+        return String(bytes, Charsets.UTF_8)
+    }}
+
+    fun popOutboundWifiUdp(): ByteArray? =
+        if (handle == 0L) null else KoeCoreNative.sessionPopOutboundWifiUdp(handle)
+
+    fun wifiBatchProgress(): LongArray =
+        if (handle == 0L) LongArray(0) else KoeCoreNative.sessionGetWifiBatchProgress(handle)
+
+    fun wifiEndpoint(): LongArray? =
+        if (handle == 0L) null else KoeCoreNative.sessionGetWifiEndpoint(handle)
+
+    fun onWifiInterrupted(nowEpochSec: Long): Boolean =
+        handle != 0L && KoeCoreNative.sessionOnWifiInterrupted(handle, nowEpochSec)
+
+    fun resumeWifiBatch(): Boolean =
+        handle != 0L && KoeCoreNative.sessionResumeWifiBatch(handle)
+
+    fun cancelWifiBatch() {{
+        if (handle != 0L) KoeCoreNative.sessionCancelWifiBatch(handle)
+    }}
 
     override fun close() {{
         if (handle != 0L) {{

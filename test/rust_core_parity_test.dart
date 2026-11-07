@@ -411,4 +411,49 @@ void main() {
     expect(unpacked.markedSequences, equals([5]));
     expect(unpacked.opusBytes.length, equals(320));
   });
+
+  test('Rust FFI Wi-Fi SoftAP 1A/05 endpoint parser, subnet check, WS hex commands, and UDP keepalive match Dart', () {
+    final ffi = KoeCoreFfi.instance!;
+    final raw1a05 = <int>[
+      0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x05, 0x10, 0x00,
+      1, 4, 168, 192, 0x02, 0x7D,
+    ];
+    final pkt1a05 = Uint8List.fromList([
+      ...raw1a05,
+      ProtocolFrame.checksum(raw1a05),
+    ]);
+    final ep = ffi.parseWifiConfigResponse(pkt1a05);
+    expect(ep, isNotNull);
+    expect(ep!.ip, equals('192.168.4.1'));
+    expect(ep.port, equals(32002));
+
+    final failed1a05Body = <int>[
+      0x09, 0xFF, 0x00, 0x00, 0x02, 0x1A, 0x05, 0x10, 0x00,
+      1, 4, 168, 192, 0x02, 0x7D,
+    ];
+    final failed1a05 = Uint8List.fromList([
+      ...failed1a05Body,
+      ProtocolFrame.checksum(failed1a05Body),
+    ]);
+    expect(ffi.parseWifiConfigResponse(failed1a05), isNull);
+
+    expect(ffi.sharesIpv4Subnet([192, 168, 4, 1], [192, 168, 4, 2]), isTrue);
+    expect(ffi.sharesIpv4Subnet([192, 168, 4, 1], [192, 168, 4, 1]), isFalse);
+    expect(ffi.sharesIpv4Subnet([192, 168, 4, 1], [192, 168, 5, 2]), isFalse);
+
+    final reqHex = ffi.buildWifiFileRequestHex(
+      fileId: 0x01020304,
+      alreadyTransferred: 332,
+    );
+    expect(reqHex.length, equals(36));
+    expect(reqHex, equals('08ee0000001a0712004c010000040302011b'));
+    expect(
+      ffi.wifiTransferCompleteHex(),
+      equals('08ee0000001a0a0b000126'),
+    );
+    expect(
+      utf8.decode(ffi.wifiKeepalivePayload()),
+      equals('soundcore-keep-alive-unicast'),
+    );
+  });
 }

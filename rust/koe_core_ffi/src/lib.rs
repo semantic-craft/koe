@@ -6,6 +6,7 @@ use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use koe_core::commands::DeviceCommands;
 use koe_core::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 use koe_core::frame::{DecodedPacket, FrameReassembler, ProtocolFrame};
 use koe_core::library::{RecordingEntry, RecordingLibrary};
@@ -15,6 +16,7 @@ use koe_core::session::{SessionIngestOutcome, TransferProgress, TransportSession
 use koe_core::slice_marks::{SliceMark, SliceMarkProbe};
 use koe_core::transport::{TransportSliceProcessor, OPUS_FRAME_BYTES};
 use koe_core::wav::OpusWave;
+use koe_core::wifi::{WifiBatchProgress, WifiEndpoint, WIFI_KEEPALIVE_PAYLOAD};
 
 pub mod jni;
 pub mod opus_ffi;
@@ -301,6 +303,67 @@ pub struct KoeLibrarySnapshot {
     pub last_trashed_id: u32,
     /// Trailing alignment padding.
     pub pad_tail: u32,
+}
+
+/// C-ABI flat representation of `WifiEndpoint` (`0x1A / 0x05` response).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeWifiEndpoint {
+    /// IPv4 address octets `[a, b, c, d]`.
+    pub ip: [u8; 4],
+    /// WebSocket control port (`32002` on D3200 firmware).
+    pub port: u16,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 2],
+}
+
+/// C-ABI flat representation of `WifiBatchProgress`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeWifiBatchProgress {
+    /// `WifiBatchPhase` discriminant (`0..=5`).
+    pub phase: u8,
+    /// Device or transport error code when `phase == 5`.
+    pub error_code: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 2],
+    /// Zero-based index of the active file in the batch queue.
+    pub current_file_index: u32,
+    /// Total files queued in the batch.
+    pub total_files: u32,
+    /// Currently transferring file ID (`0` when none).
+    pub active_file_id: u32,
+    /// Wire record bytes received for the active file (`slices * 166`).
+    pub received_wire_bytes: u32,
+    /// Expected wire bytes for the active file (`0` until `1A/07` header arrives).
+    pub expected_wire_bytes: u32,
+    /// Count of files completed normally in this batch.
+    pub finalized_count: u32,
+    /// Count of files salvaged (`>= 95%`) on hotspot drop.
+    pub salvaged_count: u32,
+    /// Count of files skipped due to `1A/07` error codes `1` or `3`.
+    pub skipped_count: u32,
+    /// Count of files still remaining in the queue.
+    pub remaining_count: u32,
+}
+
+impl KoeWifiBatchProgress {
+    pub(crate) fn from_domain(p: &WifiBatchProgress) -> Self {
+        Self {
+            phase: p.phase as u8,
+            error_code: p.error_code,
+            reserved: [0u8; 2],
+            current_file_index: p.current_file_index,
+            total_files: p.total_files,
+            active_file_id: p.active_file_id,
+            received_wire_bytes: p.received_wire_bytes,
+            expected_wire_bytes: p.expected_wire_bytes,
+            finalized_count: p.finalized_count,
+            salvaged_count: p.salvaged_count,
+            skipped_count: p.skipped_count,
+            remaining_count: p.remaining_count,
+        }
+    }
 }
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
@@ -1298,7 +1361,7 @@ fn fill_step_result(slot: &SessionSlot, outcome: &SessionIngestOutcome) -> KoeSe
         session_key_established: u8::from(outcome.session_key_established),
         catalog_updated: u8::from(outcome.catalog_updated),
         transfer_updated: u8::from(outcome.transfer_updated),
-        has_finalized_recording: u8::from(slot.inner.last_finalized.is_some()),
+        has_finalized_recording: u8::from(slot.inner.has_finalized_recording()),
         reserved: [0u8; 2],
         slices_unpacked_count: outcome.slices_unpacked_count,
         new_marks_count: outcome.new_marks_ms.len() as u32,
@@ -1559,7 +1622,7 @@ pub unsafe extern "C" fn koe_session_take_finalized(
 ) -> u8 {
     if let Ok(mut map) = session_map().lock() {
         if let Some(slot) = map.get_mut(&handle) {
-            if let Some(fin) = slot.inner.last_finalized.take() {
+            if let Some(fin) = slot.inner.take_next_finalized() {
                 if !out_entry_ptr.is_null() {
                     unsafe {
                         *out_entry_ptr = KoeRecordingEntry::from_domain(&fin.entry);
@@ -1590,6 +1653,325 @@ pub unsafe extern "C" fn koe_session_take_finalized(
         }
     }
     0
+}
+
+/// Parses a `0x1A / 0x05` Wi-Fi SoftAP configuration response frame (`raw_ptr[0..raw_len]`)
+/// into `*out_endpoint_ptr`. Returns `1` on valid success response, `0` otherwise.
+///
+/// # Safety
+///
+/// `raw_ptr` must be valid for reads of `raw_len` bytes when non-null, and `out_endpoint_ptr`
+/// must be valid for writes of one `KoeWifiEndpoint`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_wifi_parse_config_response(
+    raw_ptr: *const u8,
+    raw_len: usize,
+    out_endpoint_ptr: *mut KoeWifiEndpoint,
+) -> u8 {
+    if raw_ptr.is_null() || raw_len < 15 || out_endpoint_ptr.is_null() {
+        return 0;
+    }
+    let raw = unsafe { slice::from_raw_parts(raw_ptr, raw_len) };
+    let Some(ep) = WifiEndpoint::parse_config_response(raw) else {
+        return 0;
+    };
+    unsafe {
+        *out_endpoint_ptr = KoeWifiEndpoint {
+            ip: ep.ip,
+            port: ep.port,
+            reserved: [0u8; 2],
+        };
+    }
+    1
+}
+
+/// Returns `1` when `device_ip_ptr[0..4]` and `local_ip_ptr[0..4]` share the same `/24` IPv4
+/// subnet with distinct host octets, `0` otherwise.
+///
+/// # Safety
+///
+/// `device_ip_ptr` and `local_ip_ptr` must be valid for reads of 4 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_wifi_shares_subnet(
+    device_ip_ptr: *const u8,
+    local_ip_ptr: *const u8,
+) -> u8 {
+    if device_ip_ptr.is_null() || local_ip_ptr.is_null() {
+        return 0;
+    }
+    let dev = unsafe { slice::from_raw_parts(device_ip_ptr, 4) };
+    let loc = unsafe { slice::from_raw_parts(local_ip_ptr, 4) };
+    u8::from(WifiEndpoint::shares_ipv4_subnet(
+        [dev[0], dev[1], dev[2], dev[3]],
+        [loc[0], loc[1], loc[2], loc[3]],
+    ))
+}
+
+/// Writes the 36-character lowercase hex string for a Wi-Fi WebSocket `0x1A / 0x07` file
+/// request into `out_ptr[0..out_cap]`. Returns `36` on success, `0` on insufficient capacity.
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_wifi_build_file_request_hex(
+    file_id: u32,
+    already_transferred: u32,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> usize {
+    let hex = DeviceCommands::build_wifi_file_request_hex(file_id, already_transferred);
+    let bytes = hex.as_bytes();
+    if out_ptr.is_null() || out_cap < bytes.len() {
+        return 0;
+    }
+    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, bytes.len()) };
+    dst.copy_from_slice(bytes);
+    bytes.len()
+}
+
+/// Writes the 22-character lowercase hex string for a Wi-Fi WebSocket `0x1A / 0x0A` transfer-complete
+/// command into `out_ptr[0..out_cap]`. Returns `22` on success, `0` on insufficient capacity.
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_wifi_build_transfer_complete_hex(
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> usize {
+    let hex = DeviceCommands::wifi_transfer_complete_hex();
+    let bytes = hex.as_bytes();
+    if out_ptr.is_null() || out_cap < bytes.len() {
+        return 0;
+    }
+    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, bytes.len()) };
+    dst.copy_from_slice(bytes);
+    bytes.len()
+}
+
+/// Writes the 28-byte UDP `:32003` keep-alive payload (`"soundcore-keep-alive-unicast"`) into
+/// `out_ptr[0..out_cap]`. Returns `28` on success, `0` on insufficient capacity.
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_wifi_keepalive_payload(out_ptr: *mut u8, out_cap: usize) -> usize {
+    if out_ptr.is_null() || out_cap < WIFI_KEEPALIVE_PAYLOAD.len() {
+        return 0;
+    }
+    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, WIFI_KEEPALIVE_PAYLOAD.len()) };
+    dst.copy_from_slice(WIFI_KEEPALIVE_PAYLOAD);
+    WIFI_KEEPALIVE_PAYLOAD.len()
+}
+
+/// Starts a Wi-Fi SoftAP batch transfer for `file_ids_ptr[0..file_count]` on `TransportSession`.
+/// Returns `1` on success, `0` on invalid handle.
+///
+/// # Safety
+///
+/// `file_ids_ptr` must be valid for reads of `file_count` `u32` elements when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_begin_wifi_batch(
+    handle: u64,
+    file_ids_ptr: *const u32,
+    file_count: usize,
+) -> u8 {
+    let ids = if file_ids_ptr.is_null() || file_count == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(file_ids_ptr, file_count) }
+    };
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            slot.inner.begin_wifi_batch(ids);
+            return 1;
+        }
+    }
+    0
+}
+
+/// Ingests a raw Wi-Fi SoftAP chunk (WebSocket text/binary frame or UDP `:32003` datagram) into
+/// `TransportSession` and writes the step summary into `*out_step_ptr`.
+///
+/// # Safety
+///
+/// `chunk_ptr` must be valid for reads of `chunk_len` bytes when non-null, and `out_step_ptr`
+/// must be valid for writes of one `KoeSessionStepResult`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_ingest_wifi_chunk(
+    handle: u64,
+    chunk_ptr: *const u8,
+    chunk_len: usize,
+    now_epoch_sec: u64,
+    out_step_ptr: *mut KoeSessionStepResult,
+) -> i32 {
+    if out_step_ptr.is_null() {
+        return 0;
+    }
+    let chunk = if chunk_ptr.is_null() || chunk_len == 0 {
+        &[][..]
+    } else {
+        unsafe { slice::from_raw_parts(chunk_ptr, chunk_len) }
+    };
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let outcome = slot.inner.ingest_wifi_chunk(chunk, now_epoch_sec);
+            slot.outbound_tx
+                .extend(outcome.outbound_tx_frames.iter().cloned());
+            let step = fill_step_result(slot, &outcome);
+            unsafe {
+                *out_step_ptr = step;
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Pops the next queued outbound WebSocket text message from `TransportSession` into
+/// `out_ptr[0..out_cap]`. Returns the UTF-8 byte length (`0` when empty).
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_pop_outbound_wifi_ws(
+    handle: u64,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> usize {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            if let Some(msg) = slot.inner.pop_outbound_wifi_ws() {
+                let bytes = msg.as_bytes();
+                if !out_ptr.is_null() && out_cap >= bytes.len() {
+                    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, bytes.len()) };
+                    dst.copy_from_slice(bytes);
+                }
+                return bytes.len();
+            }
+        }
+    }
+    0
+}
+
+/// Pops the next queued outbound UDP `:32003` datagram from `TransportSession` into
+/// `out_ptr[0..out_cap]`. Returns the datagram byte length (`0` when empty).
+///
+/// # Safety
+///
+/// `out_ptr` must be valid for writes of `out_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_pop_outbound_wifi_udp(
+    handle: u64,
+    out_ptr: *mut u8,
+    out_cap: usize,
+) -> usize {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            if let Some(pkt) = slot.inner.pop_outbound_wifi_udp() {
+                if !out_ptr.is_null() && out_cap >= pkt.len() {
+                    let dst = unsafe { slice::from_raw_parts_mut(out_ptr, pkt.len()) };
+                    dst.copy_from_slice(&pkt);
+                }
+                return pkt.len();
+            }
+        }
+    }
+    0
+}
+
+/// Writes the current `KoeWifiBatchProgress` snapshot of `TransportSession` into `*out_progress_ptr`.
+///
+/// # Safety
+///
+/// `out_progress_ptr` must be valid for writes of one `KoeWifiBatchProgress`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_get_wifi_batch_progress(
+    handle: u64,
+    out_progress_ptr: *mut KoeWifiBatchProgress,
+) -> i32 {
+    if out_progress_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = session_map().lock() {
+        if let Some(slot) = map.get(&handle) {
+            let p = slot.inner.wifi_batch_progress();
+            unsafe {
+                *out_progress_ptr = KoeWifiBatchProgress::from_domain(&p);
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Writes the most recently parsed `0x1A / 0x05` `KoeWifiEndpoint` from `TransportSession`
+/// into `*out_endpoint_ptr`. Returns `1` when an endpoint is available, `0` otherwise.
+///
+/// # Safety
+///
+/// `out_endpoint_ptr` must be valid for writes of one `KoeWifiEndpoint`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_get_wifi_endpoint(
+    handle: u64,
+    out_endpoint_ptr: *mut KoeWifiEndpoint,
+) -> u8 {
+    if out_endpoint_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = session_map().lock() {
+        if let Some(slot) = map.get(&handle) {
+            if let Some(ep) = slot.inner.wifi_endpoint {
+                unsafe {
+                    *out_endpoint_ptr = KoeWifiEndpoint {
+                        ip: ep.ip,
+                        port: ep.port,
+                        reserved: [0u8; 2],
+                    };
+                }
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+/// Handles an unexpected Wi-Fi hotspot drop or socket error on `TransportSession`, salvaging
+/// any active file with `>= 95%` received wire bytes. Returns `1` if a file was salvaged, `0` otherwise.
+#[no_mangle]
+pub extern "C" fn koe_session_on_wifi_interrupted(handle: u64, now_epoch_sec: u64) -> u8 {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            return u8::from(slot.inner.on_wifi_interrupted(now_epoch_sec));
+        }
+    }
+    0
+}
+
+/// Resumes an interrupted Wi-Fi batch from the current unexported file index on `TransportSession`.
+/// Returns `1` if resumed, `0` otherwise.
+#[no_mangle]
+pub extern "C" fn koe_session_resume_wifi_batch(handle: u64) -> u8 {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            return u8::from(slot.inner.resume_wifi_batch());
+        }
+    }
+    0
+}
+
+/// Cancels any active or interrupted Wi-Fi batch on `TransportSession`.
+#[no_mangle]
+pub extern "C" fn koe_session_cancel_wifi_batch(handle: u64) {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            slot.inner.cancel_wifi_batch();
+        }
+    }
 }
 
 /// Allocates a stateful `RecordingLibrary` handle.

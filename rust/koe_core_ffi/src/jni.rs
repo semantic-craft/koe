@@ -12,11 +12,18 @@ use crate::{
     koe_protocol_checksum, koe_protocol_encode, koe_protocol_verify_checksum,
     koe_reassembler_free, koe_reassembler_ingest, koe_reassembler_new, koe_reassembler_pop_packet,
     koe_reassembler_reset, koe_session_accept_ecdh_reply, koe_session_begin_offline_pull,
-    koe_session_free, koe_session_ingest_ble_chunk, koe_session_new,
-    koe_session_on_transport_interrupted, koe_session_poll_timers, koe_session_pop_outbound_tx,
-    koe_session_resume_offline_pull, koe_session_simulate_realtime_pipeline,
-    koe_session_stop_realtime_recording, koe_session_take_live_pcm16, session_map,
-    KoeLibrarySnapshot, KoeRecordingEntry, KoeSessionStepResult,
+    koe_session_begin_wifi_batch, koe_session_cancel_wifi_batch, koe_session_free,
+    koe_session_get_wifi_batch_progress, koe_session_get_wifi_endpoint,
+    koe_session_ingest_ble_chunk, koe_session_ingest_wifi_chunk, koe_session_new,
+    koe_session_on_transport_interrupted, koe_session_on_wifi_interrupted,
+    koe_session_poll_timers, koe_session_pop_outbound_tx, koe_session_pop_outbound_wifi_udp,
+    koe_session_pop_outbound_wifi_ws, koe_session_resume_offline_pull,
+    koe_session_resume_wifi_batch, koe_session_simulate_realtime_pipeline,
+    koe_session_stop_realtime_recording, koe_session_take_live_pcm16,
+    koe_wifi_build_file_request_hex, koe_wifi_build_transfer_complete_hex,
+    koe_wifi_keepalive_payload, koe_wifi_parse_config_response, koe_wifi_shares_subnet,
+    session_map, KoeLibrarySnapshot, KoeRecordingEntry, KoeSessionStepResult,
+    KoeWifiBatchProgress, KoeWifiEndpoint,
 };
 use koe_core::crypto::DeviceCrypto;
 use koe_core::ogg_opus::OggOpus;
@@ -574,7 +581,7 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionTak
     let taken = session_map()
         .lock()
         .ok()
-        .and_then(|mut map| map.get_mut(&h)?.inner.last_finalized.take());
+        .and_then(|mut map| map.get_mut(&h)?.inner.take_next_finalized());
     let Some(fin) = taken else {
         return std::ptr::null_mut();
     };
@@ -806,4 +813,242 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_librarySna
         ];
         jni_new_longs(env, &values)
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_wifiParseConfigResponse(
+    env: JniEnv,
+    _cls: JClass,
+    raw: JByteArray,
+) -> JLongArray {
+    let bytes = unsafe { jni_read_bytes(env, raw) };
+    let mut ep = KoeWifiEndpoint {
+        ip: [0; 4],
+        port: 0,
+        reserved: [0; 2],
+    };
+    let ok = unsafe { koe_wifi_parse_config_response(bytes.as_ptr(), bytes.len(), &mut ep) };
+    if ok == 0 {
+        return std::ptr::null_mut();
+    }
+    let values = [
+        i64::from(ep.ip[0]),
+        i64::from(ep.ip[1]),
+        i64::from(ep.ip[2]),
+        i64::from(ep.ip[3]),
+        i64::from(ep.port),
+    ];
+    unsafe { jni_new_longs(env, &values) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_wifiSharesSubnet(
+    env: JniEnv,
+    _cls: JClass,
+    device_ip: JByteArray,
+    local_ip: JByteArray,
+) -> JBoolean {
+    let dev = unsafe { jni_read_bytes(env, device_ip) };
+    let loc = unsafe { jni_read_bytes(env, local_ip) };
+    if dev.len() < 4 || loc.len() < 4 {
+        return 0;
+    }
+    unsafe { koe_wifi_shares_subnet(dev.as_ptr(), loc.as_ptr()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_wifiBuildFileRequestHex(
+    env: JniEnv,
+    _cls: JClass,
+    file_id: JInt,
+    already_transferred: JInt,
+) -> JByteArray {
+    let mut out = [0u8; 64];
+    let n = unsafe {
+        koe_wifi_build_file_request_hex(
+            file_id as u32,
+            already_transferred.max(0) as u32,
+            out.as_mut_ptr(),
+            out.len(),
+        )
+    };
+    unsafe { jni_new_bytes(env, &out[..n]) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_wifiBuildTransferCompleteHex(
+    env: JniEnv,
+    _cls: JClass,
+) -> JByteArray {
+    let mut out = [0u8; 64];
+    let n = unsafe { koe_wifi_build_transfer_complete_hex(out.as_mut_ptr(), out.len()) };
+    unsafe { jni_new_bytes(env, &out[..n]) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_wifiKeepalivePayload(
+    env: JniEnv,
+    _cls: JClass,
+) -> JByteArray {
+    let mut out = [0u8; 64];
+    let n = unsafe { koe_wifi_keepalive_payload(out.as_mut_ptr(), out.len()) };
+    unsafe { jni_new_bytes(env, &out[..n]) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionBeginWifiBatch(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    file_ids: JLongArray,
+) -> JBoolean {
+    let raw_ids = unsafe { jni_read_longs(env, file_ids) };
+    let ids: Vec<u32> = raw_ids.into_iter().map(|v| v.max(0) as u32).collect();
+    unsafe { koe_session_begin_wifi_batch(handle as u64, ids.as_ptr(), ids.len()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionIngestWifiChunk(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    chunk: JByteArray,
+    now_epoch_sec: JLong,
+) -> JLongArray {
+    let bytes = unsafe { jni_read_bytes(env, chunk) };
+    let mut step = empty_step_result();
+    unsafe {
+        koe_session_ingest_wifi_chunk(
+            handle as u64,
+            bytes.as_ptr(),
+            bytes.len(),
+            now_epoch_sec.max(0) as u64,
+            &mut step,
+        );
+        jni_new_longs(env, &step_to_longs(&step))
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionPopOutboundWifiWs(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JByteArray {
+    let mut buf = [0u8; 512];
+    let n = unsafe {
+        koe_session_pop_outbound_wifi_ws(handle as u64, buf.as_mut_ptr(), buf.len())
+    };
+    if n == 0 {
+        return std::ptr::null_mut();
+    }
+    unsafe { jni_new_bytes(env, &buf[..n]) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionPopOutboundWifiUdp(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JByteArray {
+    let mut buf = [0u8; 512];
+    let n = unsafe {
+        koe_session_pop_outbound_wifi_udp(handle as u64, buf.as_mut_ptr(), buf.len())
+    };
+    if n == 0 {
+        return std::ptr::null_mut();
+    }
+    unsafe { jni_new_bytes(env, &buf[..n]) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionGetWifiBatchProgress(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JLongArray {
+    let mut prog = KoeWifiBatchProgress {
+        phase: 0,
+        error_code: 0,
+        reserved: [0; 2],
+        current_file_index: 0,
+        total_files: 0,
+        active_file_id: 0,
+        received_wire_bytes: 0,
+        expected_wire_bytes: 0,
+        finalized_count: 0,
+        salvaged_count: 0,
+        skipped_count: 0,
+        remaining_count: 0,
+    };
+    unsafe {
+        koe_session_get_wifi_batch_progress(handle as u64, &mut prog);
+        let values = [
+            i64::from(prog.phase),
+            i64::from(prog.error_code),
+            i64::from(prog.current_file_index),
+            i64::from(prog.total_files),
+            i64::from(prog.active_file_id),
+            i64::from(prog.received_wire_bytes),
+            i64::from(prog.expected_wire_bytes),
+            i64::from(prog.finalized_count),
+            i64::from(prog.salvaged_count),
+            i64::from(prog.skipped_count),
+            i64::from(prog.remaining_count),
+        ];
+        jni_new_longs(env, &values)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionGetWifiEndpoint(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JLongArray {
+    let mut ep = KoeWifiEndpoint {
+        ip: [0; 4],
+        port: 0,
+        reserved: [0; 2],
+    };
+    let ok = unsafe { koe_session_get_wifi_endpoint(handle as u64, &mut ep) };
+    if ok == 0 {
+        return std::ptr::null_mut();
+    }
+    let values = [
+        i64::from(ep.ip[0]),
+        i64::from(ep.ip[1]),
+        i64::from(ep.ip[2]),
+        i64::from(ep.ip[3]),
+        i64::from(ep.port),
+    ];
+    unsafe { jni_new_longs(env, &values) }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionOnWifiInterrupted(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    now_epoch_sec: JLong,
+) -> JBoolean {
+    koe_session_on_wifi_interrupted(handle as u64, now_epoch_sec.max(0) as u64)
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionResumeWifiBatch(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JBoolean {
+    koe_session_resume_wifi_batch(handle as u64)
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionCancelWifiBatch(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) {
+    koe_session_cancel_wifi_batch(handle as u64);
 }
