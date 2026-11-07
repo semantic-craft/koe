@@ -430,7 +430,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                     const Divider(height: 24),
                   ],
                   const Text(
-                    '无需手动填写任何地址、邮箱或密钥。插着电脑时可由 AI Agent 直接读取仓库并自动写入绑定，或复制下方提示词发给 AI 后点「从剪贴板一键接入」；未绑定前不会发起连接。',
+                    '第一步：点击下方「复制 AI 配置提示词」发给 AI Agent，由 AI 先问你是否有自己的 VPS，并自动帮你完成远程或本机配置。\n第二步：AI 配置完成后，回来点「粘贴 AI 返回的连接码」即可绑定。',
                     style: TextStyle(
                       fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
@@ -438,6 +438,26 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                   ),
                   const SizedBox(height: 12),
                   FilledButton.icon(
+                    key: const ValueKey('mcp-copy-prompt'),
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(
+                          text: widget.controller.buildAgentMcpSetupPrompt(),
+                        ),
+                      );
+                      if (dialogContext.mounted) {
+                        ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
+                          const SnackBar(
+                            content: Text('已复制 AI 配置提示词，请直接粘贴发给 AI Agent'),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    label: const Text('复制 AI 配置提示词'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
                     key: const ValueKey('mcp-bind-clipboard'),
                     onPressed: () async {
                       try {
@@ -457,55 +477,8 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                         }
                       }
                     },
-                    icon: const Icon(Icons.paste_rounded, size: 18),
-                    label: const Text('从剪贴板一键接入（KOEMCP1. 连接码）'),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        key: const ValueKey('mcp-copy-vps-prompt'),
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(
-                              text: widget.controller.buildAgentMcpSetupPrompt(
-                                hasVps: true,
-                              ),
-                            ),
-                          );
-                          if (dialogContext.mounted) {
-                            ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
-                              const SnackBar(content: Text('已复制「我有 VPS」配置提示词')),
-                            );
-                          }
-                        },
-                        icon: const Icon(Icons.cloud_outlined, size: 16),
-                        label: const Text('复制 VPS 配置提示词'),
-                      ),
-                      OutlinedButton.icon(
-                        key: const ValueKey('mcp-copy-lan-prompt'),
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(
-                              text: widget.controller.buildAgentMcpSetupPrompt(
-                                hasVps: false,
-                              ),
-                            ),
-                          );
-                          if (dialogContext.mounted) {
-                            ScaffoldMessenger.maybeOf(dialogContext)?.showSnackBar(
-                              const SnackBar(
-                                content: Text('已复制「无 VPS（本机 Mac）」配置提示词'),
-                              ),
-                            );
-                          }
-                        },
-                        icon: const Icon(Icons.laptop_mac_outlined, size: 16),
-                        label: const Text('复制本机 Mac 配置提示词'),
-                      ),
-                    ],
+                    icon: const Icon(Icons.paste_rounded, size: 16),
+                    label: const Text('粘贴 AI 返回的连接码'),
                   ),
                 ],
               ),

@@ -98,7 +98,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'McpSyncConfig extracts KOEMCP1 ticket from natural-language Agent reply and generates VPS/LAN prompts',
+    'McpSyncConfig extracts KOEMCP1 ticket from natural-language Agent reply and generates unified Agent prompt',
     () {
       final controller = RecorderController(
         loadPersistedState: false,
@@ -106,15 +106,14 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      final vpsPrompt = controller.buildAgentMcpSetupPrompt(hasVps: true);
-      final lanPrompt = controller.buildAgentMcpSetupPrompt(hasVps: false);
-      expect(vpsPrompt, contains('tools/koe-mcp/README.md'));
-      expect(vpsPrompt, contains('tools/koe-mcp/server.py'));
-      expect(vpsPrompt, contains('--print-pairing'));
-      expect(vpsPrompt, contains('KOEMCP1.'));
-      expect(lanPrompt, contains('tools/koe-mcp/README.md'));
-      expect(lanPrompt, contains('--mode lan'));
-      expect(lanPrompt, contains('KOEMCP1.'));
+      final prompt = controller.buildAgentMcpSetupPrompt();
+      expect(prompt, contains('tools/koe-mcp/README.md'));
+      expect(prompt, contains('tools/koe-mcp/server.py'));
+      expect(prompt, contains('先询问我是否有自己的 VPS'));
+      expect(prompt, contains('--mode vps'));
+      expect(prompt, contains('--mode lan'));
+      expect(prompt, contains('--print-pairing'));
+      expect(prompt, contains('KOEMCP1.'));
 
       const original = McpSyncConfig(
         baseUrl: 'https://minutes.example.com',
@@ -415,9 +414,11 @@ $code
       await tester.tap(entry);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('mcp-copy-vps-prompt')), findsOneWidget);
-      expect(find.byKey(const ValueKey('mcp-copy-lan-prompt')), findsOneWidget);
+      expect(find.byKey(const ValueKey('mcp-copy-prompt')), findsOneWidget);
+      expect(find.byKey(const ValueKey('mcp-copy-vps-prompt')), findsNothing);
+      expect(find.byKey(const ValueKey('mcp-copy-lan-prompt')), findsNothing);
       expect(find.byKey(const ValueKey('mcp-bind-clipboard')), findsOneWidget);
+      expect(find.textContaining('KOEMCP1.'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('mcp-bind-clipboard')));
       await tester.pumpAndSettle();
