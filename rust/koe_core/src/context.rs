@@ -1,5 +1,5 @@
 //! Personal context timeline (`ContextItem`), action items (`TodoItem`), and offline
-//! Q&A retrieval scaffold for Slice M (Sweetpea / 心力豆).
+//! Q&A retrieval reducer.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -32,7 +32,7 @@ pub fn filter_open_mine_todos(todos: &[TodoItem]) -> Vec<TodoItem> {
         .collect()
 }
 
-/// Pure state for the personal context timeline and action-item subsystem (Slice M).
+/// Pure state for the personal context timeline and action-item subsystem.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ContextState {
     /// Reverse-chronological context timeline items.

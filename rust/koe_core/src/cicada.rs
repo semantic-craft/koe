@@ -1,6 +1,5 @@
 //! Cicada synchronous bilingual interpreting queue, bounded rolling minutes budget
-//! (`120` calls/hour, `200` chars or `30` s trigger), and `30` s silence auto-stop
-//! scaffold for Slice L.
+//! (`120` calls/hour, `200` chars or `30` s trigger), and `30` s silence auto-stop reducer.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -56,7 +55,7 @@ pub fn pending_translation_segments(
         .collect()
 }
 
-/// Pure state for the Cicada live bilingual interpreting and rolling minutes module (Slice L).
+/// Pure state for the Cicada live bilingual interpreting and rolling minutes module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CicadaState {
     /// Target translation language code (such as `"en"` or `"zh"`).

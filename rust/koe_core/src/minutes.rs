@@ -1,5 +1,5 @@
 //! Structured meeting minutes grounding validator (`S1..Sn` evidence checks) and pure
-//! reducer scaffold for Slice K (`qwennote-minutes` ASR + chunked merge state machine).
+//! reducer for `qwennote-minutes` ASR and chunked merge state.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -148,7 +148,7 @@ fn validate_point(
     validate_calculation_grounding(&point.claim, &point.citations, spine)
 }
 
-/// Pure state for the structured meeting minutes domain module (Slice K).
+/// Pure state for the structured meeting minutes domain module.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MinutesState {
     /// Latest validated meeting minutes document, if any.

@@ -1,12 +1,11 @@
-//! Native JSON-RPC 2.0 MCP tool registry and ACP (Agent Communication Protocol)
-//! reducer scaffold for Slice N.
+//! Native JSON-RPC 2.0 MCP tool registry and ACP (Agent Communication Protocol) reducer.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 use crate::domain::UtteranceSpine;
 
-/// Canonical MCP tools exposed by Koe's local agent bridge (`Slice N`).
+/// Canonical MCP tools exposed by Koe's local agent bridge.
 pub const KOE_MCP_TOOLS: [&str; 6] = [
     "list_recordings",
     "get_transcript",
@@ -22,7 +21,7 @@ pub fn is_supported_mcp_tool(tool_name: &str) -> bool {
     KOE_MCP_TOOLS.contains(&tool_name.trim())
 }
 
-/// Pure state for the MCP + ACP protocol subsystem (Slice N).
+/// Pure state for the MCP + ACP protocol subsystem.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct McpAcpState {
     /// Total JSON-RPC 2.0 tool invocations handled.

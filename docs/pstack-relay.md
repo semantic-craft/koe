@@ -92,7 +92,7 @@
 
 ## 全景切片队列（J → N：千问闪记 + Cicada 同步翻译 + 心力豆个人图谱 + Rust 原生 MCP/ACP 全量下沉）
 
-### [ ] Slice J: 统一句子主干 `UtteranceSpine`（`S1..Sn`）与四模块纯 Rust 领域骨架
+### [x] Slice J: 统一句子主干 `UtteranceSpine`（`S1..Sn`）与四模块纯 Rust 领域骨架
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core`（100% `#![forbid(unsafe_code)]`、`#![deny(missing_docs)]`）建立 `domain.rs`（`SegmentId` `S1..Sn`、`UtteranceSegment`、`UtteranceSpine`、`MeetingMinutesV2`、`MinuteTopic`、`MinuteFishbone`、`MinuteTerm`、`ContextItem`、`TodoItem`、`AiProviderCommand`）并预分配 `minutes.rs`、`cicada.rs`、`context.rs` 与 `mcp_acp.rs` 四个零冲突独立模块入口，跑通 `S1..Sn` 不可变追加、修订号递增与原句溯源基线单测，并通过 C-ABI / Swift / Kotlin JNI 暴露 `UtteranceSpine` 基础操作。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
