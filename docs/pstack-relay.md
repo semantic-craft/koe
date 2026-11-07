@@ -82,8 +82,8 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: 10f6d8f;rust/koe_core/src/wifi.rs;rust/koe_core/src/commands.rs;rust/koe_core/src/session.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeNativeTransport.swift;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
-### [ ] Slice I: 三端原生生产宿主接线（iOS SwiftUI + Android Compose JNI + 桌面 GPUI 共享 koe_core）与最终收口
+### [x] Slice I: 三端原生生产宿主接线（iOS SwiftUI + Android Compose JNI + 桌面 GPUI 共享 koe_core）与最终收口
 - **Playbook**: `Shipping`
 - **Outcome**: 将 `rust/koe_core` 接入桌面端 `desktop/core`、补齐 iOS/macOS SwiftUI 与 Android `KoeCore.kt` 全链路接线，完成对抗审查（`interrogate`）、代码精简（`deslop` / `no-comments`）、性能基准（`scripts/perf-check`）与晨间审计（`show-me-your-work` + `ketchup`）。
 - **Done Predicate**: `./scripts/test-koe-core-swift`、`./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: ca50e76;desktop/core/src/lib.rs;darwin/KoeNativeTransport.swift;darwin/KoeNativeHost.swift;darwin/KoeNativeAppMain.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;scripts/test-koe-core-swift;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;progress/progress.json;progress/index.html
