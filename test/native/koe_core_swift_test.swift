@@ -475,6 +475,22 @@ struct KoeCoreSwiftTest {
       check(KoeCore.verifyKoepackV2(tamperedPack) < 0, "verifyKoepackV2 must reject tampered payload")
     }
 
+    let searchIdx = KoeContextSearchIndex()
+    check(searchIdx.addDoc("今天在上海静安区喝手冲咖啡") == 0, "first addDoc must return index 0")
+    check(searchIdx.addDoc("心力豆离线检索使用中文双字切分与BM25排序") == 1, "second addDoc must return index 1")
+    check(searchIdx.addDoc("周五前把第三季度海外渠道财务对账单发给张总") == 2, "third addDoc must return index 2")
+    let searchHits = searchIdx.query("中文双字切分是谁做的", limit: 5)
+    check(searchHits == [1], "KoeContextSearchIndex.query must rank doc 1 first")
+    let searchStatus = searchIdx.status()
+    check(searchStatus?.docCount == 3 && searchStatus?.lastHitCount == 1, "KoeContextSearchIndex.status must report 3 docs and 1 hit")
+
+    let coarsePlace = KoeCore.formatCoarsePlace(["浙江省", "杭州市", "西湖区", "文三路 99 号"])
+    check(coarsePlace == "杭州市 西湖区", "formatCoarsePlace must drop street and keep city + district")
+    check(!KoeCore.isDelegationRequest("他说「帮我发个微信给王总」是什么意思？"), "quoted speech must not trigger delegation guard")
+    check(KoeCore.isDelegationRequest("帮我发个微信给王总"), "direct side-effect command must trigger delegation guard")
+    check(!KoeCore.namesTodo(mention: "这件事", sentence: "昨天说的这件事已经搞定了", title: "发合同给法务"), "vague demonstrative must fail #234 namesTodo gate")
+    check(KoeCore.namesTodo(mention: "合同", sentence: "昨天说的合同已经发给法务了", title: "发合同给法务"), "named noun must pass #234 namesTodo gate")
+
     let leaseDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-lease-test-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: leaseDir) }
     await MainActor.run {

@@ -11,7 +11,10 @@ import 'package:koe/protocol/commands.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/protocol/slice_marks.dart';
+import 'package:koe/state/context/ask_retrieval.dart';
+import 'package:koe/state/context/commitments.dart';
 import 'package:koe/state/meeting_minutes.dart';
+import 'package:koe/state/recorder_controller.dart';
 
 void main() {
   test('Rust FFI kernel is loaded and matches protocol, crypto, Ogg, and WAV outputs across 20 seeds', () {
@@ -909,5 +912,123 @@ void main() {
     final tampered = Uint8List.fromList(packBytes);
     tampered[tampered.length - 1] ^= 0xFF;
     expect(ffi.koepackVerifyV2(tampered), lessThan(0));
+  });
+
+  test('Rust FFI Sweetpea personal context search index, coarse place, delegation guard, and #234 namesTodo match Dart and query 400k chars under 5 ms', () {
+    final ffi = KoeCoreFfi.instance!;
+
+    final placeCases = <(List<String>, String?)>[
+      (['浙江省', '杭州市', '西湖区', '文三路 99 号'], '杭州市 西湖区'),
+      (['上海市', '上海市', '静安区', '南京西路 1266 号'], '上海市 静安区'),
+      (['文三路 99 号', '弄堂 3 号'], null),
+      (['广东省', '深圳市', '南山区'], '深圳市 南山区'),
+    ];
+    for (final (parts, expected) in placeCases) {
+      expect(
+        ffi.contextFormatCoarsePlace(parts),
+        equals(expected),
+      );
+    }
+
+    final delegationCases = <String>[
+      '他说「帮我发个微信给王总」是什么意思？',
+      '录音里提到“帮我订机票”是谁说的？',
+      '帮我发个微信给王总',
+      '交给代理去处理一下',
+      '帮我去订一张机票',
+      '上周五我们讨论了哪些待办？',
+    ];
+    for (final text in delegationCases) {
+      expect(
+        ffi.contextIsDelegationRequest(text),
+        equals(isDelegationRequest(text)),
+      );
+    }
+
+    final todoMentionCases = <(String, String, String)>[
+      ('这件事', '昨天说的这件事已经搞定了', '发合同给法务'),
+      ('那个', '今天早上那个弄好了', '交房租'),
+      ('那件事', '上周那件事算了吧', '买猫粮'),
+      ('合同', '昨天说的合同已经发给法务了', '发合同给法务'),
+      ('房租', '我已经把房租转给房东了', '交房租'),
+    ];
+    for (final (mention, sentence, title) in todoMentionCases) {
+      expect(
+        ffi.contextNamesTodo(
+          mention: mention,
+          sentence: sentence,
+          title: title,
+        ),
+        equals(namesTodo(mention, sentence, title)),
+      );
+    }
+
+    final handle = ffi.contextSearchNew();
+    try {
+      const sampleDocs = <String>[
+        '今天上午在静安区和供应商确认包装盒打样尺寸',
+        '心力豆离线检索模块采用中文双字切分与BM25加权算法',
+        '周五下午前把第三季度海外渠道的财务对账单寄给审计团队',
+        'Rust FFI bindings accelerate opus decoding and retrieval rankings',
+      ];
+      for (var i = 0; i < sampleDocs.length; i++) {
+        expect(ffi.contextSearchAddDoc(handle, sampleDocs[i]), equals(i));
+      }
+
+      const q1 = '中文双字切分与离线检索';
+      final rustHits1 = ffi.contextSearchQuery(handle, q1, limit: 3);
+      final dartHits1 = rankTexts(q1, sampleDocs, limit: 3);
+      expect(rustHits1.first, equals(1));
+      expect(rustHits1.first, equals(dartHits1.first));
+
+      const q2 = 'decoding rankings';
+      final rustHits2 = ffi.contextSearchQuery(handle, q2, limit: 3);
+      final dartHits2 = rankTexts(q2, sampleDocs, limit: 3);
+      expect(rustHits2.first, equals(3));
+      expect(rustHits2.first, equals(dartHits2.first));
+
+      final statusSmall = ffi.contextSearchStatus(handle)!;
+      expect(statusSmall.docCount, equals(4));
+      expect(statusSmall.lastHitCount, equals(1));
+    } finally {
+      ffi.contextSearchFree(handle);
+    }
+
+    final benchHandle = ffi.contextSearchNew();
+    try {
+      const templates = <String>[
+        '上午产品评审会议讨论了录音豆蓝牙连接稳定性与固件传输协议细节，确认下周发布补丁版本。',
+        '客户回访记录显示日常通勤场景下的风噪抑制效果良好，但地铁换乘站的自动定位偶发漂移。',
+        '研发周报汇总了音频切片缓冲池、密钥协商状态机以及本地存储目录的清理策略与回归测试。',
+        '设计走查确认了时间线卡片行高、待办事项左滑归档手势以及夜间模式下的对比度细节。',
+      ];
+      var totalChars = 0;
+      var idx = 0;
+      while (totalChars < 400000) {
+        final doc = idx == 4200
+            ? '我们在杭州西湖区确认了心力豆离线检索使用中文双字切分与BM25倒排索引架构。'
+            : '${templates[idx % templates.length]}（片段编号$idx）';
+        totalChars += doc.runes.length;
+        ffi.contextSearchAddDoc(benchHandle, doc);
+        idx++;
+      }
+
+      final sw = Stopwatch()..start();
+      final hits = ffi.contextSearchQuery(
+        benchHandle,
+        '心力豆离线检索的中文双字切分是谁确认的？',
+        limit: 30,
+      );
+      sw.stop();
+      expect(hits, isNotEmpty);
+      expect(hits.first, equals(4200));
+      expect(
+        sw.elapsedMicroseconds,
+        lessThan(5000),
+        reason: '400k-char corpus single query must finish under 5 ms (5000 us), got ${sw.elapsedMicroseconds} us',
+      );
+    } finally {
+      ffi.contextSearchFree(benchHandle);
+    }
   });
 }
