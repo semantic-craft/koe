@@ -13,6 +13,7 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
   String get appleSourceLanguage;
   QwenSttService get _qwenStt;
   PhoneRecorder get _phoneRecorder;
+  AnswerSpeaker get answerSpeaker;
   String analysisKey(RecordingReference ref);
   bool get phoneRecordingPaused;
   Future<String?> stopPhoneRecording();
@@ -33,8 +34,10 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
   String? liveMeetingId, liveMeetingKey, liveMeetingNotice;
   bool liveMinutesEnabled = false,
       liveCaptionsEnabled = false,
+      liveCaptionSpeechEnabled = false,
       liveMeetingAvailable = false,
       liveMeetingClosing = false;
+  final Set<String> _spokenLiveCaptionKeys = {};
   String _liveLanguage = 'zh';
   bool _liveDiscarded = false;
   bool _automaticLiveMinutes = false;
@@ -206,6 +209,9 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
     liveMeetingClosing = false;
     liveMinutesEnabled = false;
     liveCaptionsEnabled = false;
+    liveCaptionSpeechEnabled = false;
+    _spokenLiveCaptionKeys.clear();
+    unawaited(answerSpeaker.stop());
     liveMeetingNotice = available
         ? null
         : '此入口没有实时确定句段，请用千问/Apple纯文字记录、Mac双路录音或会后整理';
@@ -390,6 +396,8 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
     }
     liveCaptionsEnabled = enabled;
     if (!enabled) {
+      liveCaptionSpeechEnabled = false;
+      unawaited(answerSpeaker.stop());
       if (liveCaptions != null) liveCaptions!.paused = true;
       notifyListeners();
       return;
@@ -406,6 +414,7 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
         recordingKey: liveMeetingKey,
         configurationCurrent: () =>
             liveMeetingId == id && _liveTextConfiguration == fingerprint,
+        onTranslated: _onLiveCaptionTranslated,
         translate: (s, target) {
           if (analysisBackend == AnalysisBackendKind.none ||
               analysisApiKey.isEmpty) {
@@ -433,6 +442,36 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
       await liveCaptions!.resume();
     }
     _feedLiveMeeting();
+  }
+
+  Future<void> setLiveCaptionSpeechEnabled(bool enabled) async {
+    if (liveMeetingId == null || !liveMeetingAvailable || liveMeetingClosing) {
+      return;
+    }
+    liveCaptionSpeechEnabled = enabled;
+    if (!enabled) {
+      await answerSpeaker.stop();
+      notifyListeners();
+      return;
+    }
+    if (!liveCaptionsEnabled) {
+      await setLiveCaptionsEnabled(true);
+    } else {
+      notifyListeners();
+    }
+  }
+
+  void _onLiveCaptionTranslated(LiveSegment segment) {
+    if (!liveCaptionSpeechEnabled ||
+        liveMeetingClosing ||
+        !answerSpeaker.available) {
+      return;
+    }
+    final translated = speakableAnswer(segment.translation ?? '');
+    if (translated.isEmpty) return;
+    final key = '${segment.id}/${segment.revision}/${segment.targetLanguage}';
+    if (!_spokenLiveCaptionKeys.add(key)) return;
+    unawaited(answerSpeaker.speak(translated));
   }
 
   void livePrivacyChanged() {
@@ -473,6 +512,8 @@ mixin _RecorderLiveMeeting on ChangeNotifier {
   void closeLiveMeetingInput(String id) {
     if (liveMeetingId != id) return;
     liveMeetingClosing = true;
+    liveCaptionSpeechEnabled = false;
+    unawaited(answerSpeaker.stop());
     liveDisplayMode = 'hidden';
     liveMinutes?.beginClosing();
     liveCaptions?.beginClosing();

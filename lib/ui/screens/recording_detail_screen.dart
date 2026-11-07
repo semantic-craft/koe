@@ -1,3 +1,4 @@
+import '../widgets/live_meeting_panel.dart';
 import '../widgets/saved_live_meeting_panel.dart';
 import 'dart:async';
 
@@ -1256,7 +1257,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                         label: '回收站状态',
                         value: recording.archived ? '回收站' : '资料库',
                       ),
-                      if (runsOnApple)
+                      if (runsOnApple && !archive.isDesk)
                         _InfoRow(
                           label: 'Mac 归档',
                           value: path == null
@@ -2001,6 +2002,20 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 ),
               ),
               if (path != null) _OrganizeBanner(path: path),
+              if (recording.live)
+                Align(
+                  alignment: Alignment.center,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 4,
+                      ),
+                      child: LiveMeetingPanel(),
+                    ),
+                  ),
+                ),
               if (_translating)
                 const _TranslationNotice(
                   key: ValueKey('translation-progress-notice'),

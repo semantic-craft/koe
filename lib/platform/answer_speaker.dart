@@ -15,9 +15,9 @@ abstract class AnswerSpeaker {
   Future<void> stop();
 }
 
-/// The phone's own synthetic voice: AVSpeechSynthesizer through
-/// `koe/answer_speech` (ios/Runner) on iPhone, [TtsAnswerSpeaker] on Android.
-/// The Mac app does not register the channel and reads nothing.
+/// Apple's own synthetic voice: AVSpeechSynthesizer through
+/// `koe/answer_speech` (darwin/AppleSpeechBridge.swift) on iPhone and Mac,
+/// [TtsAnswerSpeaker] on Android.
 class SystemAnswerSpeaker implements AnswerSpeaker {
   SystemAnswerSpeaker({MethodChannel? channel, AnswerSpeaker? android})
     : _channel = channel ?? const MethodChannel('koe/answer_speech'),
@@ -26,14 +26,17 @@ class SystemAnswerSpeaker implements AnswerSpeaker {
   final MethodChannel _channel;
   final AnswerSpeaker _android;
 
-  bool get _onIPhone => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  bool get _onApple =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
 
   @override
-  bool get available => _onIPhone || _android.available;
+  bool get available => _onApple || _android.available;
 
   @override
   Future<void> speak(String text) async {
-    if (!_onIPhone) return _android.speak(text);
+    if (!_onApple) return _android.speak(text);
     try {
       await _channel.invokeMethod<void>('speak', {
         'text': text,
@@ -46,7 +49,7 @@ class SystemAnswerSpeaker implements AnswerSpeaker {
 
   @override
   Future<void> stop() async {
-    if (!_onIPhone) return _android.stop();
+    if (!_onApple) return _android.stop();
     try {
       await _channel.invokeMethod<void>('stop');
     } on MissingPluginException {

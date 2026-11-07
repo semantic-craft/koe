@@ -897,7 +897,7 @@ class _LocalExportCard extends StatelessWidget {
                           ),
                         ),
                       ],
-                      if (runsOnApple) ...[
+                      if (runsOnApple && !c.archive.isDesk) ...[
                         const SizedBox(height: 3),
                         Text(
                           'Mac：${c.archive.statusForPath(path)}',

@@ -10,6 +10,7 @@ import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/ble/ble_service.dart';
 import 'package:koe/ble/realtime_stream.dart';
+import 'package:koe/platform/answer_speaker.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/state/live_minutes_store.dart';
@@ -17,6 +18,7 @@ import 'package:koe/state/live_minutes.dart';
 import 'package:koe/state/recorder_controller.dart';
 import 'package:koe/state/recording_analysis.dart';
 import 'package:koe/ui/screens/recording_detail_screen.dart';
+import 'package:koe/ui/widgets/live_meeting_panel.dart';
 import 'package:koe/ui/widgets/minutes_panel.dart';
 import 'package:provider/provider.dart';
 
@@ -170,6 +172,24 @@ class _Model implements AnalysisService {
 
   @override
   void dispose() {}
+}
+
+class _Speaker implements AnswerSpeaker {
+  final spoken = <String>[];
+  int stopped = 0;
+
+  @override
+  bool get available => true;
+
+  @override
+  Future<void> speak(String text) async {
+    spoken.add(text);
+  }
+
+  @override
+  Future<void> stop() async {
+    stopped++;
+  }
 }
 
 Future<void> _until(bool Function() ready) async {
@@ -655,6 +675,107 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('包含最后补充'), findsWidgets);
       expect(find.text('阶段摘要'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'realtime BLE stream auto-starts cloud WebSocket STT and beginLiveMeeting, '
+    'shows LiveMeetingPanel in RecordingDetailScreen, and reads translated captions aloud',
+    (tester) async {
+      late Directory tempDir;
+      late _Ble testBle;
+      late _Speech wsSpeech;
+      late _Model testModel;
+      late _Speaker speaker;
+      late RecorderController controller;
+      late File clip;
+
+      await tester.runAsync(() async {
+        tempDir = await Directory.systemTemp.createTemp('koe-bean-live-');
+        testBle = _Ble();
+        wsSpeech = _Speech();
+        testModel = _Model();
+        speaker = _Speaker();
+        clip = File('${tempDir.path}/305.wav');
+        await clip.writeAsBytes(wavBytes(List.filled(3200, 0)));
+        controller = RecorderController(
+          loadPersistedState: false,
+          meetingLocalOnly: false,
+          ble: testBle,
+          qwenSpeech: _Qwen()..apiKeyOverride = 'test-key',
+          appleSpeech: _Apple(),
+          speechStream: (_) => wsSpeech,
+          answerSpeaker: speaker,
+          analysisController: RecordingAnalysis(
+            service: testModel,
+            file: File('${tempDir.path}/analysis.json'),
+          ),
+          contextAnalysisService: testModel,
+          liveMeetingStore: LiveMinutesStore(
+            file: File('${tempDir.path}/live.json'),
+          ),
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${tempDir.path}/imports'),
+        )..speechProvider = SttProvider.qwen;
+        await controller.setAutoOrganize(true);
+        // Simulate RealtimeBleStream becoming active directly without manual attachSttStreamForTesting.
+        controller.recording = true;
+        controller.handleRealtimeStateForTesting(
+          RealtimeStreamState(
+            active: true,
+            fileId: 305,
+            path: clip.path,
+            bytesReceived: 1600,
+          ),
+        );
+        await _until(
+          () =>
+              controller.streamingSttActive &&
+              controller.liveMeetingId != null &&
+              controller.liveMeetingAvailable,
+        );
+      });
+      addTearDown(() async {
+        if (!wsSpeech.finished.isCompleted) wsSpeech.finished.complete(null);
+        controller.dispose();
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
+        });
+      });
+
+      final ref = controller.currentRecordingReference!;
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RecorderController>.value(
+          value: controller,
+          child: MaterialApp(home: RecordingDetailScreen(reference: ref)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LiveMeetingPanel), findsOneWidget);
+      expect(find.text('实时纪要与双语字幕'), findsOneWidget);
+
+      await tester.tap(find.text('实时纪要与双语字幕'));
+      await tester.pumpAndSettle();
+
+      final speechSwitch = find.byKey(
+        const ValueKey('live-caption-speech-switch'),
+      );
+      expect(speechSwitch, findsOneWidget);
+      await tester.tap(speechSwitch);
+      await tester.pumpAndSettle();
+
+      expect(controller.liveCaptionsEnabled, isTrue);
+
+      await tester.runAsync(() async {
+        wsSpeech.emit('Hello everyone, let us begin.');
+        await _until(() => speaker.spoken.isNotEmpty);
+      });
+      await tester.pumpAndSettle();
+
+      expect(speaker.spoken, ['录音摘要']);
       await tester.pumpWidget(const SizedBox());
     },
   );

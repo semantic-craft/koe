@@ -8,6 +8,7 @@ part of '../recorder_controller.dart';
 /// are declared abstract at the top so this part compiles on its own terms.
 mixin _RecorderLiveTranscription on ChangeNotifier {
   // Provided by _RecorderLiveMeeting.
+  String? get liveMeetingId;
   void beginLiveMeeting(
     String id, {
     String? recordingKey,
@@ -272,7 +273,42 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     }
     final wasActive = realtimeState.active;
     realtimeState = s;
+    if (!wasActive && s.active && !textCaptureFromDevice) {
+      if (_currentRecording == null || !_currentRecording!.active) {
+        final textOnly = allDayListening;
+        final config = textOnly
+            ? _settingsConfiguration.withoutTranscription()
+            : _meetingConfiguration;
+        _currentSessionId =
+            '${DateTime.now().microsecondsSinceEpoch}-${++liveSessionRevision}';
+        _recordingSessions[_currentSessionId!] = _RecordingSession(
+          _currentSessionId!,
+          config,
+        )..textOnly = textOnly;
+        _liveConfiguration = config;
+        _preferStreamStt = true;
+      }
+      final current = _currentRecording;
+      if (current != null &&
+          !current.textOnly &&
+          liveMeetingId != current.id) {
+        beginLiveMeeting(
+          current.id,
+          recordingKey: s.path == null ? null : 'audio:${s.path}',
+          available: !current.configuration.provider.retired,
+          language: current.configuration.sourceLanguage,
+          automaticMinutes: true,
+        );
+      }
+    }
     _bindCurrentRecording(fileId: s.fileId, path: s.path);
+    if (!wasActive &&
+        s.active &&
+        !textCaptureFromDevice &&
+        _sttStream == null &&
+        (_speechStreamOverride != null || _opusPcm.ensureStarted())) {
+      unawaited(_ensureStreamStt());
+    }
     if (s.path != null && s.bytesReceived > 0) {
       final path = s.path!;
       _registerExportedPaths([path]);
@@ -389,7 +425,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       notifyListeners();
       // Recognition remains useful even if translation resources are missing.
     }
-    if (!_opusPcm.ensureStarted()) {
+    if (_speechStreamOverride == null && !_opusPcm.ensureStarted()) {
       _preferStreamStt = false;
       if (cloudTranslationModeActive) {
         transcriptError = '$_activeTranslationModeLabel无法启动实时音频解码';
@@ -880,7 +916,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
     if (!textOnly) {
       beginLiveMeeting(
         _currentSessionId!,
-        available: config.provider != SttProvider.doubao,
+        available: !config.provider.retired,
         language: config.sourceLanguage,
         automaticMinutes: true,
       );
