@@ -217,6 +217,7 @@ public final class RecordingPlaybackModel: ObservableObject {
   @Published public var playbackRate: Float = 1.0
   @Published public private(set) var recentlyTrashed: KoeSavedRecording?
 
+  private let rustLibrary = KoeRecordingLibrary()
   private var audioPlayer: AVAudioPlayer?
   private var progressTimer: Timer?
 
@@ -228,6 +229,9 @@ public final class RecordingPlaybackModel: ObservableObject {
   }
 
   public init(initialRecordings: [KoeSavedRecording] = []) {
+    for rec in initialRecordings.reversed() {
+      ingestIntoRustLibrary(rec)
+    }
     self.recordings = initialRecordings
     self.selectedRecordingId = initialRecordings.first?.id
   }
@@ -246,20 +250,23 @@ public final class RecordingPlaybackModel: ObservableObject {
       let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
       let size = (attrs?[.size] as? Int) ?? 0
       let created = (attrs?[.creationDate] as? Date) ?? Date()
+      guard let entry = rustLibrary.ingestDiskFile(
+        filename: url.lastPathComponent,
+        byteCount: UInt32(max(0, size)),
+        createdAtEpochSec: UInt64(max(0, created.timeIntervalSince1970))
+      ) else { continue }
       let wavCandidate = directory.appendingPathComponent("\(stem).wav")
       let wavURL = FileManager.default.fileExists(atPath: wavCandidate.path) ? wavCandidate : nil
-      let estimatedSlices = max(1, size / 80)
-      let durationMs = UInt64(estimatedSlices * 20)
       let rec = KoeSavedRecording(
         id: recId,
-        beanFileId: UInt32(stem).map(BeanFileID.init(rawValue:)),
+        beanFileId: BeanFileID(rawValue: entry.beanFileId),
         title: "录音豆 #\(stem)",
         createdAt: created,
-        durationMs: durationMs,
+        durationMs: entry.durationMs,
         byteCount: size,
         opusFileURL: url,
         playableWAVURL: wavURL,
-        marks: [MarkTimestampMs(sequence: 15), MarkTimestampMs(sequence: 45)],
+        marks: entry.marksMs.map { MarkTimestampMs(sequence: UInt32($0 / 20), rawValue: $0) },
         transcriptSegments: []
       )
       recordings.append(rec)
@@ -271,6 +278,7 @@ public final class RecordingPlaybackModel: ObservableObject {
   }
 
   public func ingestRecording(_ recording: KoeSavedRecording) {
+    ingestIntoRustLibrary(recording)
     recordings.removeAll { $0.id == recording.id }
     recordings.insert(recording, at: 0)
     selectedRecordingId = recording.id
@@ -278,6 +286,7 @@ public final class RecordingPlaybackModel: ObservableObject {
 
   public func selectRecording(_ id: RecordingID) {
     stopPlayback()
+    _ = rustLibrary.select(numericRecordingId(id))
     selectedRecordingId = id
   }
 
@@ -339,7 +348,7 @@ public final class RecordingPlaybackModel: ObservableObject {
 
   public func seek(toMs targetMs: UInt64) {
     guard let rec = selectedRecording else { return }
-    let clamped = min(targetMs, rec.durationMs)
+    let clamped = rustLibrary.seekMs(targetMs)
     audioPlayer?.currentTime = TimeInterval(clamped) / 1000.0
     if playbackState.isPlaying {
       playbackState = .playing(recordingId: rec.id, positionMs: clamped, durationMs: rec.durationMs)
@@ -353,27 +362,17 @@ public final class RecordingPlaybackModel: ObservableObject {
   }
 
   public func jumpToMark(direction: MarkJumpDirection) {
-    guard let rec = selectedRecording, !rec.marks.isEmpty else { return }
-    let sorted = rec.marks.sorted()
-    let current = playbackState.positionMs
-    switch direction {
-    case .next:
-      if let target = sorted.first(where: { $0.rawValue > current + 50 }) {
-        seek(toMs: target.rawValue)
-      } else if let first = sorted.first {
-        seek(toMs: first.rawValue)
-      }
-    case .previous:
-      if let target = sorted.last(where: { $0.rawValue + 50 < current }) {
-        seek(toMs: target.rawValue)
-      } else if let last = sorted.last {
-        seek(toMs: last.rawValue)
-      }
+    let dirCode = direction == .next ? 1 : -1
+    guard let target = rustLibrary.jumpToMark(currentMs: playbackState.positionMs, direction: dirCode) else {
+      return
     }
+    seek(toMs: target)
   }
 
   public func moveToTrash(_ id: RecordingID) {
-    guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
+    guard rustLibrary.moveToTrash(numericRecordingId(id)) != nil,
+          let idx = recordings.firstIndex(where: { $0.id == id })
+    else { return }
     let removed = recordings.remove(at: idx)
     recentlyTrashed = removed
     if selectedRecordingId == id {
@@ -382,9 +381,36 @@ public final class RecordingPlaybackModel: ObservableObject {
   }
 
   public func undoTrash() {
-    guard let restored = recentlyTrashed else { return }
+    guard rustLibrary.undoTrash() != nil, let restored = recentlyTrashed else { return }
     recentlyTrashed = nil
-    ingestRecording(restored)
+    recordings.removeAll { $0.id == restored.id }
+    recordings.insert(restored, at: 0)
+    selectedRecordingId = restored.id
+  }
+
+  private func ingestIntoRustLibrary(_ recording: KoeSavedRecording) {
+    let numId = numericRecordingId(recording.id)
+    let entry = KoeRecordingEntryModel(
+      id: numId,
+      beanFileId: recording.beanFileId?.rawValue ?? numId,
+      createdAtEpochSec: UInt64(max(0, recording.createdAt.timeIntervalSince1970)),
+      durationMs: recording.durationMs,
+      byteCount: UInt32(max(0, recording.byteCount)),
+      marksMs: recording.marks.map(\.rawValue)
+    )
+    rustLibrary.ingest(entry)
+  }
+
+  private func numericRecordingId(_ id: RecordingID) -> UInt32 {
+    if let parsed = UInt32(id.rawValue) {
+      return parsed
+    }
+    var h: UInt32 = 2_166_136_261
+    for b in id.rawValue.utf8 {
+      h ^= UInt32(b)
+      h = h &* 16_777_619
+    }
+    return max(1, h)
   }
 }
 

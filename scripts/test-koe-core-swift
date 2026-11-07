@@ -18,3 +18,18 @@ swiftc \
   test/native/koe_core_swift_test.swift \
   -o "$work/koe-core-swift-test"
 "$work/koe-core-swift-test"
+
+JAVAC_BIN=""
+JAVA_BIN=""
+if [[ -x "/opt/homebrew/opt/openjdk@21/bin/javac" ]]; then
+  JAVAC_BIN="/opt/homebrew/opt/openjdk@21/bin/javac"
+  JAVA_BIN="/opt/homebrew/opt/openjdk@21/bin/java"
+elif command -v javac >/dev/null 2>&1 && javac -version >/dev/null 2>&1; then
+  JAVAC_BIN="$(command -v javac)"
+  JAVA_BIN="$(command -v java)"
+fi
+
+if [[ -n "$JAVAC_BIN" ]]; then
+  "$JAVAC_BIN" -d "$work" test/native/KoeCoreJniTest.java
+  "$JAVA_BIN" -cp "$work" com.anker.anker_recorder.KoeCoreJniTest "$PWD/rust/target/release/libkoe_core_ffi.dylib"
+fi
