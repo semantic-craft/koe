@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:koe/ai/qwen_stt.dart';
 import 'package:koe/audio/ogg_opus.dart';
 import 'package:koe/audio/opus_wave.dart';
 import 'package:koe/crypto/device_crypto.dart';
@@ -10,6 +11,7 @@ import 'package:koe/protocol/commands.dart';
 import 'package:koe/protocol/frame.dart';
 import 'package:koe/protocol/models.dart';
 import 'package:koe/protocol/slice_marks.dart';
+import 'package:koe/state/meeting_minutes.dart';
 
 void main() {
   test('Rust FFI kernel is loaded and matches protocol, crypto, Ogg, and WAV outputs across 20 seeds', () {
@@ -549,6 +551,211 @@ void main() {
           citations: const [3],
         ),
         isTrue,
+      );
+    } finally {
+      ffi.spineFree(spine);
+    }
+  });
+
+  test('Rust FFI Slice K Qwen ASR transcript parsing, S1..Sn minutes validation, batch planning, and longest-match term replacement match Dart', () {
+    final ffi = KoeCoreFfi.instance!;
+    final spine = ffi.spineNew(sessionId: 'slice-k-parity');
+    try {
+      const qwenRaw = '''
+{
+  "properties": { "original_duration_in_milliseconds": 4500 },
+  "transcripts": [{
+    "sentences": [
+      { "text": "合同约定基本工资为3910元，深科录音豆记录。", "begin_time": 0, "end_time": 1500, "speaker_id": 0 },
+      { "text": "本月出勤率是80%。", "begin_time": 1500, "end_time": 3000, "speaker_id": 1 },
+      { "text": "所以实发工资按3910元乘以80%折算。", "begin_time": 3000, "end_time": 4500, "speaker_id": 0 }
+    ]
+  }]
+}
+''';
+      final dartParsed = parseQwenTranscript(
+        jsonDecode(qwenRaw) as Map<String, Object?>,
+      );
+      expect(dartParsed.segments, hasLength(3));
+      final rustCount = ffi.qwenParseTranscriptIntoSpine(
+        spineHandle: spine,
+        json: qwenRaw,
+      );
+      expect(rustCount, equals(dartParsed.segments.length));
+      for (var i = 0; i < dartParsed.segments.length; i++) {
+        final rSeg = ffi.spineGetSegment(handle: spine, ordinal: i + 1)!;
+        expect(rSeg.text, equals(dartParsed.segments[i].text));
+        expect(rSeg.startMs, equals(dartParsed.segments[i].startMs));
+        expect(rSeg.endMs, equals(dartParsed.segments[i].endMs));
+      }
+
+      final sourceTexts = [
+        for (final s in dartParsed.segments) s.text,
+      ];
+
+      const validMinutesJson = '''
+{
+  "schemaVersion": 2,
+  "title": "薪资与深科测试",
+  "overview": "确认基本工资与出勤折算。",
+  "topics": [
+    {
+      "text": "实发工资按3910元乘以80%折算",
+      "summary": "单句依据充分",
+      "sources": ["S3"],
+      "points": [
+        { "text": "基本工资为3910元", "sources": ["S1"] }
+      ]
+    }
+  ],
+  "decisions": [],
+  "actions": [],
+  "questions": [],
+  "terms": [
+    { "name": "声刻", "note": "硬件品牌", "heard": ["深科"], "sources": ["S1"] }
+  ]
+}
+''';
+      expect(
+        MeetingMinutes.parse(
+          validMinutesJson,
+          sourceTexts.length,
+          sourceTexts: sourceTexts,
+        ).title,
+        equals('薪资与深科测试'),
+      );
+      expect(
+        ffi.minutesValidateJson(spineHandle: spine, json: validMinutesJson),
+        equals(1),
+      );
+
+      // 1. Out-of-range citation S9 -> both Dart and Rust reject (-1)
+      const invalidCiteJson = '''
+{
+  "schemaVersion": 2,
+  "title": "测试",
+  "overview": "概述",
+  "topics": [{ "text": "越界引用", "sources": ["S9"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": []
+}
+''';
+      expect(
+        () => MeetingMinutes.parse(
+          invalidCiteJson,
+          sourceTexts.length,
+          sourceTexts: sourceTexts,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        ffi.minutesValidateJson(spineHandle: spine, json: invalidCiteJson),
+        equals(-1),
+      );
+
+      // 2. Ungrounded heard variant -> both Dart and Rust reject (-2)
+      const ungroundedHeardJson = '''
+{
+  "schemaVersion": 2,
+  "title": "测试",
+  "overview": "概述",
+  "topics": [{ "text": "正常主题", "sources": ["S1"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": [],
+  "terms": [
+    { "name": "声刻", "note": "品牌", "heard": ["不存在的错词"], "sources": ["S1"] }
+  ]
+}
+''';
+      expect(
+        () => MeetingMinutes.parse(
+          ungroundedHeardJson,
+          sourceTexts.length,
+          sourceTexts: sourceTexts,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        ffi.minutesValidateJson(spineHandle: spine, json: ungroundedHeardJson),
+        equals(-2),
+      );
+
+      // 3. Cross-segment wage + percentage synthesis across S1 and S2 -> both Dart and Rust reject (-3)
+      const stitchedWageJson = '''
+{
+  "schemaVersion": 2,
+  "title": "测试",
+  "overview": "概述",
+  "topics": [{ "text": "员工实发工资按3910元乘以80%计算", "sources": ["S1", "S2"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": []
+}
+''';
+      expect(
+        () => MeetingMinutes.parse(
+          stitchedWageJson,
+          sourceTexts.length,
+          sourceTexts: sourceTexts,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        ffi.minutesValidateJson(spineHandle: spine, json: stitchedWageJson),
+        equals(-3),
+      );
+
+      // 4. Baseless ratio calculation across S1 and S2 -> both Dart and Rust reject (-3)
+      const baselessRatioJson = '''
+{
+  "schemaVersion": 2,
+  "title": "测试",
+  "overview": "概述",
+  "topics": [{ "text": "社保缴费基数按80%计算", "sources": ["S1", "S2"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": []
+}
+''';
+      expect(
+        () => MeetingMinutes.parse(
+          baselessRatioJson,
+          sourceTexts.length,
+          sourceTexts: sourceTexts,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        ffi.minutesValidateJson(spineHandle: spine, json: baselessRatioJson),
+        equals(-3),
+      );
+
+      // 5. Longest-match single-pass term replacement parity
+      const sampleText = '深科与深科Work录音豆以及安克创新';
+      const replacements = <String, String>{
+        '深科': '声刻',
+        '深科Work': 'Soundcore Work',
+        '声刻': '被二次替换则错',
+      };
+      expect(
+        ffi.minutesReplaceTerms(text: sampleText, replacements: replacements),
+        equals(replaceMinuteTerms(sampleText, replacements)),
+      );
+      expect(
+        ffi.minutesReplaceTerms(text: sampleText, replacements: replacements),
+        equals('声刻与Soundcore Work录音豆以及安克创新'),
+      );
+
+      // 6. Batch planning count parity
+      expect(
+        ffi.minutesPlanBatchesCount(spineHandle: spine, maxRunes: 6000),
+        equals(1),
+      );
+      expect(
+        ffi.minutesPlanBatchesCount(spineHandle: spine, maxRunes: 30),
+        equals(3),
       );
     } finally {
       ffi.spineFree(spine);

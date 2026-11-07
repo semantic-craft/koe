@@ -1420,6 +1420,74 @@ public final class KoeUtteranceSpine: @unchecked Sendable {{
       }}
     }}
   }}
+
+  public func validateMinutesJson(_ json: String) -> Int32 {{
+    let utf8 = Array(json.utf8)
+    return utf8.withUnsafeBufferPointer {{ buf in
+      koe_minutes_validate_json(handle, buf.baseAddress, buf.count)
+    }}
+  }}
+
+  public func planBatchesCount(maxRunes: UInt32 = 6000) -> Int32 {{
+    koe_minutes_plan_batches_count(handle, maxRunes)
+  }}
+
+  @discardableResult
+  public func parseQwenTranscript(_ json: String) -> Int32 {{
+    let utf8 = Array(json.utf8)
+    return utf8.withUnsafeBufferPointer {{ buf in
+      koe_qwen_parse_transcript_into_spine(handle, buf.baseAddress, buf.count)
+    }}
+  }}
+
+  public static func replaceTerms(
+    text: String,
+    fromTerms: [String],
+    toTerms: [String]
+  ) -> String {{
+    let textBytes = Array(text.utf8)
+    let fromJoined = Array(fromTerms.joined(separator: "\n").utf8)
+    let toJoined = Array(toTerms.joined(separator: "\n").utf8)
+    let needed = textBytes.withUnsafeBufferPointer {{ tBuf in
+      fromJoined.withUnsafeBufferPointer {{ fBuf in
+        toJoined.withUnsafeBufferPointer {{ toBuf in
+          koe_minutes_replace_terms_utf8(
+            tBuf.baseAddress,
+            tBuf.count,
+            fBuf.baseAddress,
+            fBuf.count,
+            toBuf.baseAddress,
+            toBuf.count,
+            nil,
+            0
+          )
+        }}
+      }}
+    }}
+    guard needed > 0 else {{ return needed == 0 ? "" : text }}
+    var out = Data(count: Int(needed))
+    let written = out.withUnsafeMutableBytes {{ raw -> Int32 in
+      guard let dst = raw.bindMemory(to: UInt8.self).baseAddress else {{ return -1 }}
+      return textBytes.withUnsafeBufferPointer {{ tBuf in
+        fromJoined.withUnsafeBufferPointer {{ fBuf in
+          toJoined.withUnsafeBufferPointer {{ toBuf in
+            koe_minutes_replace_terms_utf8(
+              tBuf.baseAddress,
+              tBuf.count,
+              fBuf.baseAddress,
+              fBuf.count,
+              toBuf.baseAddress,
+              toBuf.count,
+              dst,
+              Int(needed)
+            )
+          }}
+        }}
+      }}
+    }}
+    guard written >= 0 else {{ return text }}
+    return String(decoding: out.prefix(Int(written)), as: UTF8.self)
+  }}
 }}
 "#,
         struct_count = struct_names.len(),
@@ -1799,6 +1867,14 @@ object KoeCoreNative {{
         claim: ByteArray,
         citations: LongArray,
     ): Boolean
+    @JvmStatic external fun minutesValidateJson(spineHandle: Long, json: ByteArray): Int
+    @JvmStatic external fun minutesReplaceTermsUtf8(
+        text: ByteArray,
+        fromTerms: ByteArray,
+        toTerms: ByteArray,
+    ): ByteArray?
+    @JvmStatic external fun minutesPlanBatchesCount(spineHandle: Long, maxRunes: Int): Int
+    @JvmStatic external fun qwenParseTranscriptIntoSpine(spineHandle: Long, json: ByteArray): Int
 }}
 
 class KoeFrameReassembler : AutoCloseable {{
@@ -2042,6 +2118,29 @@ class KoeUtteranceSpine(sessionId: String = "default") : AutoCloseable {{
             claim.toByteArray(Charsets.UTF_8),
             citations,
         )
+
+    fun validateMinutesJson(json: String): Int =
+        if (handle == 0L) 0
+        else KoeCoreNative.minutesValidateJson(handle, json.toByteArray(Charsets.UTF_8))
+
+    fun planBatchesCount(maxRunes: Int = 6000): Int =
+        if (handle == 0L) -1
+        else KoeCoreNative.minutesPlanBatchesCount(handle, maxRunes)
+
+    fun parseQwenTranscript(json: String): Int =
+        if (handle == 0L) -1
+        else KoeCoreNative.qwenParseTranscriptIntoSpine(handle, json.toByteArray(Charsets.UTF_8))
+
+    companion object {{
+        fun replaceTerms(text: String, fromTerms: List<String>, toTerms: List<String>): String {{
+            val out = KoeCoreNative.minutesReplaceTermsUtf8(
+                text.toByteArray(Charsets.UTF_8),
+                fromTerms.joinToString("\n").toByteArray(Charsets.UTF_8),
+                toTerms.joinToString("\n").toByteArray(Charsets.UTF_8),
+            ) ?: return text
+            return String(out, Charsets.UTF_8)
+        }}
+    }}
 
     override fun close() {{
         if (handle != 0L) {{

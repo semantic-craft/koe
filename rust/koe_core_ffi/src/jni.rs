@@ -8,9 +8,11 @@ use std::sync::{Mutex, OnceLock};
 use crate::{
     koe_buffer_free, koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
     koe_library_move_to_trash, koe_library_new, koe_library_seek_ms, koe_library_select,
-    koe_library_snapshot, koe_library_undo_trash, koe_minutes_validate_claim_grounding,
-    koe_opus_decode_pcm16, koe_opus_decode_wav, koe_protocol_checksum, koe_protocol_encode,
-    koe_protocol_verify_checksum, koe_reassembler_free, koe_reassembler_ingest,
+    koe_library_snapshot, koe_library_undo_trash, koe_minutes_plan_batches_count,
+    koe_minutes_replace_terms_utf8, koe_minutes_validate_claim_grounding,
+    koe_minutes_validate_json, koe_opus_decode_pcm16, koe_opus_decode_wav, koe_protocol_checksum,
+    koe_protocol_encode, koe_protocol_verify_checksum, koe_qwen_parse_transcript_into_spine,
+    koe_reassembler_free, koe_reassembler_ingest,
     koe_reassembler_new, koe_reassembler_pop_packet, koe_reassembler_reset,
     koe_session_accept_ecdh_reply, koe_session_begin_offline_pull, koe_session_begin_wifi_batch,
     koe_session_cancel_wifi_batch, koe_session_free, koe_session_get_wifi_batch_progress,
@@ -1396,5 +1398,84 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_minutesVal
             cites_u32.as_ptr(),
             cites_u32.len(),
         )
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_minutesValidateJson(
+    env: JniEnv,
+    _cls: JClass,
+    spine_handle: JLong,
+    json: JByteArray,
+) -> JInt {
+    let json_b = unsafe { jni_read_bytes(env, json) };
+    unsafe { koe_minutes_validate_json(spine_handle as u64, json_b.as_ptr(), json_b.len()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_minutesReplaceTermsUtf8(
+    env: JniEnv,
+    _cls: JClass,
+    text: JByteArray,
+    from_terms: JByteArray,
+    to_terms: JByteArray,
+) -> JByteArray {
+    let text_b = unsafe { jni_read_bytes(env, text) };
+    let from_b = unsafe { jni_read_bytes(env, from_terms) };
+    let to_b = unsafe { jni_read_bytes(env, to_terms) };
+    let needed = unsafe {
+        koe_minutes_replace_terms_utf8(
+            text_b.as_ptr(),
+            text_b.len(),
+            from_b.as_ptr(),
+            from_b.len(),
+            to_b.as_ptr(),
+            to_b.len(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if needed < 0 {
+        return std::ptr::null_mut();
+    }
+    let mut out = vec![0u8; needed as usize];
+    let written = unsafe {
+        koe_minutes_replace_terms_utf8(
+            text_b.as_ptr(),
+            text_b.len(),
+            from_b.as_ptr(),
+            from_b.len(),
+            to_b.as_ptr(),
+            to_b.len(),
+            out.as_mut_ptr(),
+            out.len(),
+        )
+    };
+    if written < 0 {
+        return std::ptr::null_mut();
+    }
+    unsafe { jni_new_bytes(env, &out[..written as usize]) }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_minutesPlanBatchesCount(
+    _env: JniEnv,
+    _cls: JClass,
+    spine_handle: JLong,
+    max_runes: JInt,
+) -> JInt {
+    koe_minutes_plan_batches_count(spine_handle as u64, max_runes.max(0) as u32)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_qwenParseTranscriptIntoSpine(
+    env: JniEnv,
+    _cls: JClass,
+    spine_handle: JLong,
+    json: JByteArray,
+) -> JInt {
+    let json_b = unsafe { jni_read_bytes(env, json) };
+    unsafe {
+        koe_qwen_parse_transcript_into_spine(spine_handle as u64, json_b.as_ptr(), json_b.len())
     }
 }

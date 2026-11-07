@@ -238,6 +238,10 @@ uint8_t koe_spine_set_translation(uint64_t handle, uint32_t ordinal, const uint8
 uint8_t koe_spine_get_segment(uint64_t handle, uint32_t ordinal, KoeUtteranceSegmentHeader* out_header_ptr, uint8_t* out_text_ptr, size_t out_text_cap, uint8_t* out_translation_ptr, size_t out_translation_cap);
 uint8_t* koe_spine_format_cited_sources(uint64_t handle, size_t* out_len_ptr);
 uint8_t koe_minutes_validate_claim_grounding(uint64_t handle, const uint8_t* claim_ptr, size_t claim_len, const uint32_t* citations_ptr, size_t citations_len);
+int32_t koe_minutes_validate_json(uint64_t spine_handle, const uint8_t* json_ptr, size_t json_len);
+int32_t koe_minutes_replace_terms_utf8(const uint8_t* text_ptr, size_t text_len, const uint8_t* from_ptr, size_t from_len, const uint8_t* to_ptr, size_t to_len, uint8_t* out_ptr, size_t out_cap);
+int32_t koe_minutes_plan_batches_count(uint64_t spine_handle, uint32_t max_runes);
+int32_t koe_qwen_parse_transcript_into_spine(uint64_t spine_handle, const uint8_t* json_ptr, size_t json_len);
 
 #ifdef __cplusplus
 }

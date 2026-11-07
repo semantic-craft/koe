@@ -402,5 +402,24 @@ struct KoeCoreSwiftTest {
     check(spine.formatCitedSources().contains("[S1] 基本工资调整为4200元。") && spine.formatCitedSources().contains("[S4] 下月生效。"), "formatCitedSources must format [S1]..[S4] lines")
     check(!spine.validateClaimGrounding(claim: "实发工资按4200元乘以80%计算", citations: [1, 2]), "validateClaimGrounding must reject cross-segment wage+percentage stitching across S1 and S2")
     check(spine.validateClaimGrounding(claim: "实发工资按4200元乘以80%计算", citations: [3]), "validateClaimGrounding must accept single-segment grounded calculation on S3")
+
+    let validJson = #"{"schemaVersion":2,"title":"周会","overview":"讨论安排","topics":[{"text":"工资确认","sources":["S3"]}],"decisions":[],"actions":[],"questions":[],"terms":[{"name":"声刻","note":"品牌","heard":["实发"],"sources":["S3"]}]}"#
+    check(spine.validateMinutesJson(validJson) == 1, "validateMinutesJson must return 1 on grounded v2 JSON")
+    let ungroundedHeardJson = #"{"schemaVersion":2,"title":"周会","overview":"讨论安排","topics":[{"text":"工资确认","sources":["S3"]}],"decisions":[],"actions":[],"questions":[],"terms":[{"name":"声刻","note":"品牌","heard":["深科"],"sources":["S3"]}]}"#
+    check(spine.validateMinutesJson(ungroundedHeardJson) == -2, "validateMinutesJson must return -2 on ungrounded heard variant")
+    let stitchedCalcJson = #"{"schemaVersion":2,"title":"周会","overview":"讨论安排","topics":[{"text":"实发工资按4200元乘以80%计算","sources":["S1","S2"]}],"decisions":[],"actions":[],"questions":[]}"#
+    check(spine.validateMinutesJson(stitchedCalcJson) == -3, "validateMinutesJson must return -3 on stitched cross-segment wage calculation")
+    check(spine.planBatchesCount(maxRunes: 6000) == 1, "planBatchesCount(6000) must fit in 1 batch")
+    check(
+      KoeUtteranceSpine.replaceTerms(
+        text: "深科的深科Work录音豆",
+        fromTerms: ["深科", "深科Work"],
+        toTerms: ["声刻", "Soundcore Work"]
+      ) == "声刻的Soundcore Work录音豆",
+      "KoeUtteranceSpine.replaceTerms must perform single-pass longest-match replacement"
+    )
+    let qwenSpine = KoeUtteranceSpine(sessionId: "qwen-swift")
+    let qwenJson = #"{"transcripts":[{"sentences":[{"text":"第一句。","begin_time":0,"end_time":1000,"speaker_id":0},{"text":"第二句。","begin_time":1000,"end_time":2000,"speaker_id":1}]}]}"#
+    check(qwenSpine.parseQwenTranscript(qwenJson) == 2 && qwenSpine.snapshot().segmentCount == 2, "parseQwenTranscript must append 2 timed segments into spine")
   }
 }

@@ -669,6 +669,52 @@ typedef _MinutesValidateClaimGroundingDart = int Function(
   int,
 );
 
+typedef _MinutesValidateJsonNative = Int32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _MinutesValidateJsonDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _MinutesReplaceTermsUtf8Native = Int32 Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _MinutesReplaceTermsUtf8Dart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _MinutesPlanBatchesCountNative = Int32 Function(Uint64, Uint32);
+typedef _MinutesPlanBatchesCountDart = int Function(int, int);
+
+typedef _QwenParseTranscriptNative = Int32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _QwenParseTranscriptDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -833,7 +879,27 @@ final class KoeCoreFfi {
           lib.lookupFunction<
             _MinutesValidateClaimGroundingNative,
             _MinutesValidateClaimGroundingDart
-          >('koe_minutes_validate_claim_grounding', isLeaf: true);
+          >('koe_minutes_validate_claim_grounding', isLeaf: true),
+      _minutesValidateJson =
+          lib.lookupFunction<
+            _MinutesValidateJsonNative,
+            _MinutesValidateJsonDart
+          >('koe_minutes_validate_json', isLeaf: true),
+      _minutesReplaceTermsUtf8 =
+          lib.lookupFunction<
+            _MinutesReplaceTermsUtf8Native,
+            _MinutesReplaceTermsUtf8Dart
+          >('koe_minutes_replace_terms_utf8', isLeaf: true),
+      _minutesPlanBatchesCount =
+          lib.lookupFunction<
+            _MinutesPlanBatchesCountNative,
+            _MinutesPlanBatchesCountDart
+          >('koe_minutes_plan_batches_count', isLeaf: true),
+      _qwenParseTranscript =
+          lib.lookupFunction<
+            _QwenParseTranscriptNative,
+            _QwenParseTranscriptDart
+          >('koe_qwen_parse_transcript_into_spine', isLeaf: true);
 
   static final KoeCoreFfi? instance = _load();
 
@@ -919,6 +985,10 @@ final class KoeCoreFfi {
   final _SpineGetSegmentDart _spineGetSegment;
   final _SpineFormatCitedSourcesDart _spineFormatCitedSources;
   final _MinutesValidateClaimGroundingDart _minutesValidateClaimGrounding;
+  final _MinutesValidateJsonDart _minutesValidateJson;
+  final _MinutesReplaceTermsUtf8Dart _minutesReplaceTermsUtf8;
+  final _MinutesPlanBatchesCountDart _minutesPlanBatchesCount;
+  final _QwenParseTranscriptDart _qwenParseTranscript;
 
   int protocolChecksum(List<int> data) {
     if (data.isEmpty) return 0;
@@ -1748,6 +1818,97 @@ final class KoeCoreFfi {
     } finally {
       malloc.free(claimPtr);
       calloc.free(citesPtr);
+    }
+  }
+
+  int minutesValidateJson({
+    required int spineHandle,
+    required String json,
+  }) {
+    if (json.isEmpty) return 0;
+    final bytes = utf8.encode(json);
+    final ptr = malloc<Uint8>(bytes.length);
+    try {
+      ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _minutesValidateJson(spineHandle, ptr, bytes.length);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  String minutesReplaceTerms({
+    required String text,
+    required Map<String, String> replacements,
+  }) {
+    if (text.isEmpty || replacements.isEmpty) return text;
+    final fromJoined = utf8.encode(replacements.keys.join('\n'));
+    final toJoined = utf8.encode(replacements.values.join('\n'));
+    final textBytes = utf8.encode(text);
+    final textPtr = malloc<Uint8>(textBytes.isEmpty ? 1 : textBytes.length);
+    final fromPtr = malloc<Uint8>(fromJoined.isEmpty ? 1 : fromJoined.length);
+    final toPtr = malloc<Uint8>(toJoined.isEmpty ? 1 : toJoined.length);
+    Pointer<Uint8> outPtr = nullptr;
+    try {
+      if (textBytes.isNotEmpty) {
+        textPtr.asTypedList(textBytes.length).setAll(0, textBytes);
+      }
+      if (fromJoined.isNotEmpty) {
+        fromPtr.asTypedList(fromJoined.length).setAll(0, fromJoined);
+      }
+      if (toJoined.isNotEmpty) {
+        toPtr.asTypedList(toJoined.length).setAll(0, toJoined);
+      }
+      final needed = _minutesReplaceTermsUtf8(
+        textPtr,
+        textBytes.length,
+        fromPtr,
+        fromJoined.length,
+        toPtr,
+        toJoined.length,
+        nullptr,
+        0,
+      );
+      if (needed <= 0) return needed == 0 ? '' : text;
+      outPtr = malloc<Uint8>(needed);
+      final written = _minutesReplaceTermsUtf8(
+        textPtr,
+        textBytes.length,
+        fromPtr,
+        fromJoined.length,
+        toPtr,
+        toJoined.length,
+        outPtr,
+        needed,
+      );
+      if (written < 0) return text;
+      return utf8.decode(outPtr.asTypedList(written));
+    } finally {
+      malloc.free(textPtr);
+      malloc.free(fromPtr);
+      malloc.free(toPtr);
+      if (outPtr != nullptr) malloc.free(outPtr);
+    }
+  }
+
+  int minutesPlanBatchesCount({
+    required int spineHandle,
+    int maxRunes = 6000,
+  }) {
+    return _minutesPlanBatchesCount(spineHandle, maxRunes);
+  }
+
+  int qwenParseTranscriptIntoSpine({
+    required int spineHandle,
+    required String json,
+  }) {
+    if (json.isEmpty) return -1;
+    final bytes = utf8.encode(json);
+    final ptr = malloc<Uint8>(bytes.length);
+    try {
+      ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _qwenParseTranscript(spineHandle, ptr, bytes.length);
+    } finally {
+      malloc.free(ptr);
     }
   }
 
