@@ -219,10 +219,12 @@ impl KoeRecordingEntry {
 pub struct KoeTransferProgress {
     /// `TransferPhaseTag` value (`0..=4`).
     pub phase: u8,
-    /// Device error code when `phase == 4`.
+    /// Device or watchdog error code when `phase == 4`.
     pub error_code: u8,
-    /// Padding for 4-byte alignment.
-    pub reserved: [u8; 2],
+    /// Number of watchdog retries used (`0..=2`).
+    pub retry_count: u8,
+    /// `1` when realtime stream is in the 2-second quiet-drain window, else `0`.
+    pub quiet_draining: u8,
     /// Active D3200 file ID (`0` when idle).
     pub file_id: u32,
     /// Wire record bytes received (`slices * 166`).
@@ -238,7 +240,8 @@ impl KoeTransferProgress {
         Self {
             phase: t.phase as u8,
             error_code: t.error_code,
-            reserved: [0u8; 2],
+            retry_count: t.retry_count,
+            quiet_draining: u8::from(t.quiet_draining),
             file_id: t.file_id,
             received_wire_bytes: t.received_wire_bytes,
             expected_wire_bytes: t.expected_wire_bytes,
@@ -1134,6 +1137,105 @@ pub extern "C" fn koe_session_on_disconnected(handle: u64) {
     }
 }
 
+/// Suspends an in-flight offline pull (preserving buffered slices for byte-offset resume)
+/// or salvages buffered realtime slices when the BLE link drops unexpectedly.
+#[no_mangle]
+pub extern "C" fn koe_session_on_transport_interrupted(handle: u64) {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            slot.inner.on_transport_interrupted();
+            slot.outbound_tx.clear();
+        }
+    }
+}
+
+/// Resumes a suspended or active offline pull from `received_slice_count() * 166` wire bytes
+/// and writes the encoded `1A/07` TX frame into `out_tx_ptr[0..out_tx_cap]`, returning the
+/// encoded frame byte length (`0` when no offline pull is resumable).
+///
+/// # Safety
+///
+/// `out_tx_ptr` must be valid for writes of `out_tx_cap` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_resume_offline_pull(
+    handle: u64,
+    out_tx_ptr: *mut u8,
+    out_tx_cap: usize,
+) -> usize {
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            if let Some(tx) = slot.inner.resume_offline_pull() {
+                if !out_tx_ptr.is_null() && out_tx_cap >= tx.len() {
+                    let dst = unsafe { slice::from_raw_parts_mut(out_tx_ptr, tx.len()) };
+                    dst.copy_from_slice(&tx);
+                }
+                return tx.len();
+            }
+        }
+    }
+    0
+}
+
+/// Stops/pauses an active realtime bean recording (`0x18 0x82 [0x02]`), enters the 2,000 ms
+/// quiet-drain window, queues outbound TX frames, and writes the step summary into `*out_step_ptr`.
+///
+/// # Safety
+///
+/// `out_step_ptr` must be valid for writes of one `KoeSessionStepResult`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_stop_realtime_recording(
+    handle: u64,
+    out_step_ptr: *mut KoeSessionStepResult,
+) -> i32 {
+    if out_step_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let outcome = slot.inner.stop_realtime_recording();
+            slot.outbound_tx
+                .extend(outcome.outbound_tx_frames.iter().cloned());
+            let step = fill_step_result(slot, &outcome);
+            unsafe {
+                *out_step_ptr = step;
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Advances the 5,000 ms offline pull watchdog (up to 2 retries) and the 2,000 ms realtime
+/// quiet-drain timer by `elapsed_ms`, writing the step summary into `*out_step_ptr`.
+///
+/// # Safety
+///
+/// `out_step_ptr` must be valid for writes of one `KoeSessionStepResult`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_session_poll_timers(
+    handle: u64,
+    elapsed_ms: u64,
+    now_epoch_sec: u64,
+    out_step_ptr: *mut KoeSessionStepResult,
+) -> i32 {
+    if out_step_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(mut map) = session_map().lock() {
+        if let Some(slot) = map.get_mut(&handle) {
+            let outcome = slot.inner.poll_timers(elapsed_ms, now_epoch_sec);
+            slot.outbound_tx
+                .extend(outcome.outbound_tx_frames.iter().cloned());
+            let step = fill_step_result(slot, &outcome);
+            unsafe {
+                *out_step_ptr = step;
+            }
+            return 1;
+        }
+    }
+    0
+}
+
 /// Verifies the `2E/01` ECDH reply payload against `secret_ptr[0..secret_len]` and derives
 /// the 32-byte HKDF session key. Returns `1` on match, `0` on mismatch.
 ///
@@ -1875,7 +1977,8 @@ mod tests {
             transfer: KoeTransferProgress {
                 phase: 0,
                 error_code: 0,
-                reserved: [0; 2],
+                retry_count: 0,
+                quiet_draining: 0,
                 file_id: 0,
                 received_wire_bytes: 0,
                 expected_wire_bytes: 0,

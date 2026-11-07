@@ -384,4 +384,31 @@ void main() {
     expect(wav48k!.length, equals(44 + 1920));
     expect(OggOpus.isWav(wav48k), isTrue);
   });
+
+  test('Rust FFI unpackSlices skips duplicate sequences and startTransportAudioFile encodes byte offset', () {
+    final ffi = KoeCoreFfi.instance!;
+    final tx = DeviceCommands.startTransportAudioFile(
+      fileId: 42,
+      alreadyTransferred: 3320,
+      realtimeFlag: 0,
+    );
+    expect(tx.length, equals(19));
+    expect(tx.sublist(9, 13), equals([0xF8, 0x0C, 0x00, 0x00]));
+    expect(tx.sublist(13, 17), equals([0x2A, 0x00, 0x00, 0x00]));
+
+    final slice0 = List<int>.filled(160, 0x78);
+    final slice1 = List<int>.filled(160, 0x79);
+    final dupFrame = Uint8List.fromList([
+      0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x08, 0x00, 0x00,
+      ...u32Le(5), 0x01, ...slice0, 0x00,
+      ...u32Le(5), 0x01, ...slice0, 0x00,
+      ...u32Le(6), 0x00, ...slice1, 0x00,
+      0x00,
+    ]);
+    final unpacked = ffi.unpackSlices(dupFrame);
+    expect(unpacked.sliceCount, equals(2));
+    expect(unpacked.wireRecordBytes, equals(332));
+    expect(unpacked.markedSequences, equals([5]));
+    expect(unpacked.opusBytes.length, equals(320));
+  });
 }

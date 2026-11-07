@@ -23,6 +23,10 @@ final class KoeCoreNative {
   static native void sessionFree(long handle);
   static native boolean sessionAcceptEcdhReply(long handle, byte[] replyPayload, byte[] sharedSecret);
   static native byte[] sessionBeginOfflinePull(long handle, int fileId, int durationMs);
+  static native void sessionOnTransportInterrupted(long handle);
+  static native byte[] sessionResumeOfflinePull(long handle);
+  static native long[] sessionStopRealtimeRecording(long handle);
+  static native long[] sessionPollTimers(long handle, long elapsedMs, long nowEpochSec);
   static native long[] sessionIngestBleChunk(long handle, byte[] chunk, long nowEpochSec);
   static native byte[] sessionPopOutboundTx(long handle);
   static native long[] sessionSimulateRealtimePipeline(long handle, long nowEpochSec);
@@ -86,9 +90,23 @@ public final class KoeCoreJniTest {
     KoeCoreNative.reassemblerFree(reassembler);
 
     long session = KoeCoreNative.sessionNew();
+    byte[] pullTx = KoeCoreNative.sessionBeginOfflinePull(session, 501, 2000);
+    check(pullTx != null && pullTx.length == 19, "sessionBeginOfflinePull 19B TX");
+    long[] w1 = KoeCoreNative.sessionPollTimers(session, 5000L, 1_700_000_010L);
+    check(w1.length == 18 && w1[10] == 2L && w1[16] == 1L, "sessionPollTimers retry 1");
+    byte[] retryTx = KoeCoreNative.sessionPopOutboundTx(session);
+    check(retryTx != null && retryTx.length == 19, "sessionPopOutboundTx retry TX");
+    KoeCoreNative.sessionOnTransportInterrupted(session);
+    byte[] resumeTx = KoeCoreNative.sessionResumeOfflinePull(session);
+    check(resumeTx != null && resumeTx.length == 19, "sessionResumeOfflinePull 19B TX");
+    long[] stopOut = KoeCoreNative.sessionStopRealtimeRecording(session);
+    check(stopOut != null && stopOut.length == 18 && stopOut[9] == 1L, "sessionStopRealtimeRecording queues pause TX");
+    byte[] pauseTx = KoeCoreNative.sessionPopOutboundTx(session);
+    check(pauseTx != null && pauseTx.length == 11, "pauseRecord TX length 11");
+
     long[] step = KoeCoreNative.sessionSimulateRealtimePipeline(session, 1_700_000_000L);
     check(
-        step.length == 15 && step[6] == 1L && step[7] == 60L && step[14] == 38400L,
+        step.length == 18 && step[6] == 1L && step[7] == 60L && step[14] == 38400L,
         "sessionSimulateRealtimePipeline 60 slices + 38400B live PCM16");
     byte[] livePcm = KoeCoreNative.sessionTakeLivePcm16(session);
     check(livePcm != null && livePcm.length == 38400, "sessionTakeLivePcm16 length 38400");

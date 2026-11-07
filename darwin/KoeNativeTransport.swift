@@ -214,9 +214,9 @@ public actor BeanTransportActor: BeanTransporting {
       } onReady: { [weak self] peripheralName in
         guard let self else { return }
         await self.onGattLinkReady(peripheralName: peripheralName)
-      } onDisconnected: { [weak self] reason in
+      } onDisconnected: { [weak self] reason, willAutoReconnect in
         guard let self else { return }
-        await self.onGattDisconnected(reason: reason)
+        await self.onGattDisconnected(reason: reason, willAutoReconnect: willAutoReconnect)
       }
       bleCentralBridge = bridge
     }
@@ -245,7 +245,27 @@ public actor BeanTransportActor: BeanTransporting {
   }
 
   public func stopBeanRecording() async {
-    bleCentralBridge?.send(KoeCore.encodeStopRecord())
+    let step = session.stopRealtimeRecording()
+    for tx in step.outboundTxFrames {
+      bleCentralBridge?.send(tx)
+    }
+    if step.transferUpdated {
+      emitTransferProgress(step)
+    }
+  }
+
+  public func tickSessionTimers(elapsedMs: UInt64, destinationDirectory: URL) async {
+    let nowSec = UInt64(Date().timeIntervalSince1970)
+    let step = session.pollTimers(elapsedMs: elapsedMs, nowEpochSec: nowSec)
+    for tx in step.outboundTxFrames {
+      bleCentralBridge?.send(tx)
+    }
+    if step.transferUpdated {
+      emitTransferProgress(step)
+    }
+    if step.hasFinalizedRecording {
+      _ = persistFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
+    }
   }
 
   public func pullOfflineFile(_ item: KoeOfflineFileItem, destinationDirectory: URL) async {
@@ -269,11 +289,19 @@ public actor BeanTransportActor: BeanTransporting {
     bleCentralBridge?.send(KoeCore.encodeGetDeviceInfo())
   }
 
-  private func onGattDisconnected(reason: String?) async {
-    session.onDisconnected()
+  private func onGattDisconnected(reason: String?, willAutoReconnect: Bool = false) async {
     ecdhReassembler.reset()
-    continuation?.yield(.transferChanged(.idle))
-    continuation?.yield(.connectionChanged(.disconnected(reason: reason)))
+    if willAutoReconnect {
+      session.onTransportInterrupted()
+      if session.takeFinalized() != nil {
+        _ = persistFinalizedFromSession(destinationDirectory: Self.defaultExportDirectory(), segments: [])
+      }
+      continuation?.yield(.connectionChanged(.disconnected(reason: reason)))
+    } else {
+      session.onDisconnected()
+      continuation?.yield(.transferChanged(.idle))
+      continuation?.yield(.connectionChanged(.disconnected(reason: reason)))
+    }
   }
 
   public func ingestRawBleChunk(_ chunk: Data, destinationDirectory: URL) async {
@@ -284,7 +312,12 @@ public actor BeanTransportActor: BeanTransporting {
          let shared = try? appPrivateKey.sharedSecretFromKeyAgreement(with: peerKey)
       {
         let sharedBytes = shared.withUnsafeBytes { Data($0) }
-        _ = session.acceptEcdhReply(replyPayload: payload, sharedSecret: sharedBytes)
+        if session.acceptEcdhReply(replyPayload: payload, sharedSecret: sharedBytes) {
+          let resumeTx = session.resumeOfflinePull()
+          if !resumeTx.isEmpty {
+            bleCentralBridge?.send(resumeTx)
+          }
+        }
       }
     }
 
@@ -376,6 +409,11 @@ public actor BeanTransportActor: BeanTransporting {
           )
         )
       )
+    case 4:
+      let reason = step.transferErrorCode == 0xFE
+        ? "同步超时（已重试 \(step.transferRetryCount) 次）"
+        : "同步失败 (0x\(String(format: "%02X", step.transferErrorCode)))"
+      continuation?.yield(.transferChanged(.failed(reason: reason)))
     default:
       continuation?.yield(.transferChanged(.idle))
     }
@@ -424,22 +462,56 @@ public actor BeanTransportActor: BeanTransporting {
   }
 }
 
-final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+public final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+  public static let restoreIdentifier = "com.anker.koe.d3200.central"
+  public static let lastPeripheralUUIDDefaultsKey = "koe.ble.last_peripheral_uuid"
   static let serviceUUID = CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB")
   static let writeUUID = CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB")
   static let notifyUUID = CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB")
 
+  public static func supportsStateRestoration(bundle: Bundle = .main) -> Bool {
+    guard let bundleId = bundle.bundleIdentifier, !bundleId.isEmpty else {
+      return false
+    }
+    let modes = (bundle.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String]) ?? []
+    return modes.contains("bluetooth-central")
+  }
+
+  public static func makeCentralOptions(bundle: Bundle = .main) -> [String: Any]? {
+    guard supportsStateRestoration(bundle: bundle) else {
+      return nil
+    }
+    return [
+      CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier,
+      CBCentralManagerOptionShowPowerAlertKey: true,
+    ]
+  }
+
+  public static func restoredPeripheralIdentifiers(from dict: [String: Any]) -> [UUID] {
+    if let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] {
+      return peripherals.map(\.identifier)
+    }
+    if let uuids = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [UUID] {
+      return uuids
+    }
+    if let strings = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [String] {
+      return strings.compactMap(UUID.init(uuidString:))
+    }
+    return []
+  }
+
   private let onChunk: @Sendable (Data) async -> Void
   private let onReady: @Sendable (String) async -> Void
-  private let onDisconnected: @Sendable (String?) async -> Void
+  private let onDisconnected: @Sendable (String?, Bool) async -> Void
   private var central: CBCentralManager?
   private var peripheral: CBPeripheral?
   private var writeChar: CBCharacteristic?
+  private var userDisconnected = false
 
   init(
     onChunk: @escaping @Sendable (Data) async -> Void,
     onReady: @escaping @Sendable (String) async -> Void,
-    onDisconnected: @escaping @Sendable (String?) async -> Void
+    onDisconnected: @escaping @Sendable (String?, Bool) async -> Void
   ) {
     self.onChunk = onChunk
     self.onReady = onReady
@@ -448,14 +520,16 @@ final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeri
   }
 
   func startScan() {
+    userDisconnected = false
     if central == nil {
-      central = CBCentralManager(delegate: self, queue: nil)
-    } else if central?.state == .poweredOn {
-      central?.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+      central = CBCentralManager(delegate: self, queue: nil, options: Self.makeCentralOptions())
+    } else if let central, central.state == .poweredOn {
+      reconnectKnownOrScan(central)
     }
   }
 
   func disconnect() {
+    userDisconnected = true
     central?.stopScan()
     if let p = peripheral {
       central?.cancelPeripheralConnection(p)
@@ -469,16 +543,54 @@ final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeri
     p.writeValue(frame, for: c, type: .withoutResponse)
   }
 
-  func centralManagerDidUpdateState(_ central: CBCentralManager) {
-    if central.state == .poweredOn {
-      central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
-    } else if central.state == .unauthorized || central.state == .poweredOff {
-      let msg = central.state == .unauthorized ? "蓝牙权限未开启" : "系统蓝牙已关闭"
-      Task { await onDisconnected(msg) }
+  private func reconnectKnownOrScan(_ central: CBCentralManager) {
+    if let existing = peripheral {
+      existing.delegate = self
+      if existing.state == .connected {
+        existing.discoverServices(nil)
+      } else {
+        central.connect(existing, options: nil)
+      }
+      return
+    }
+    if let saved = UserDefaults.standard.string(forKey: Self.lastPeripheralUUIDDefaultsKey),
+       let uuid = UUID(uuidString: saved),
+       let known = central.retrievePeripherals(withIdentifiers: [uuid]).first
+    {
+      self.peripheral = known
+      known.delegate = self
+      central.connect(known, options: nil)
+      return
+    }
+    central.scanForPeripherals(
+      withServices: nil,
+      options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+    )
+  }
+
+  public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+    if let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first {
+      self.peripheral = restored
+      restored.delegate = self
+      UserDefaults.standard.set(
+        restored.identifier.uuidString,
+        forKey: Self.lastPeripheralUUIDDefaultsKey
+      )
+    } else if let firstId = Self.restoredPeripheralIdentifiers(from: dict).first {
+      UserDefaults.standard.set(firstId.uuidString, forKey: Self.lastPeripheralUUIDDefaultsKey)
     }
   }
 
-  func centralManager(
+  public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+    if central.state == .poweredOn {
+      reconnectKnownOrScan(central)
+    } else if central.state == .unauthorized || central.state == .poweredOff {
+      let msg = central.state == .unauthorized ? "蓝牙权限未开启" : "系统蓝牙已关闭"
+      Task { await onDisconnected(msg, false) }
+    }
+  }
+
+  public func centralManager(
     _ central: CBCentralManager,
     didDiscover peripheral: CBPeripheral,
     advertisementData: [String: Any],
@@ -490,28 +602,42 @@ final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeri
     let matchesName = advName.lowercased().contains("soundcore") || advName.lowercased().contains("work") || advName.lowercased().contains("d3200")
     guard matchesService || matchesName else { return }
     central.stopScan()
+    UserDefaults.standard.set(
+      peripheral.identifier.uuidString,
+      forKey: Self.lastPeripheralUUIDDefaultsKey
+    )
     self.peripheral = peripheral
     peripheral.delegate = self
     central.connect(peripheral, options: nil)
   }
 
-  func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+  public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    UserDefaults.standard.set(
+      peripheral.identifier.uuidString,
+      forKey: Self.lastPeripheralUUIDDefaultsKey
+    )
     peripheral.discoverServices(nil)
   }
 
-  func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+  public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
     self.writeChar = nil
-    Task { await onDisconnected(error?.localizedDescription) }
+    let shouldReconnect = !userDisconnected
+    if shouldReconnect {
+      self.peripheral = peripheral
+      peripheral.delegate = self
+      central.connect(peripheral, options: nil)
+    }
+    Task { await onDisconnected(error?.localizedDescription, shouldReconnect) }
   }
 
-  func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+  public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
     guard let services = peripheral.services else { return }
     for svc in services {
       peripheral.discoverCharacteristics([Self.writeUUID, Self.notifyUUID], for: svc)
     }
   }
 
-  func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+  public func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
     guard let chars = service.characteristics else { return }
     var notifyReady = false
     for c in chars {
@@ -529,7 +655,7 @@ final class D3200CoreBluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeri
     }
   }
 
-  func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+  public func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
     guard let data = characteristic.value, !data.isEmpty else { return }
     Task { await onChunk(data) }
   }

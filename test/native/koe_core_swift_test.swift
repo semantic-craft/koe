@@ -129,8 +129,10 @@ struct KoeCoreSwiftTest {
     check(batch.markedSequences == [5], "markedSequences must contain [5]")
     check(batch.opusBytes.count == 320 && batch.opusBytes[0] == 0x78 && batch.opusBytes[160] == 0x79, "opusBytes must concatenate both 160B frames")
 
-    let startTransport = KoeCore.encodeStartTransportAudioFile(fileId: 42, alreadyTransferred: 166, realtimeFlag: 1)
+    let startTransport = KoeCore.encodeStartTransportAudioFile(fileId: 42, alreadyTransferred: 3320, realtimeFlag: 0)
     check(startTransport.count == 19 && KoeCore.verifyChecksum(startTransport), "encodeStartTransportAudioFile must emit valid 19B frame")
+    check(Array(startTransport[9..<13]) == [0xF8, 0x0C, 0x00, 0x00], "alreadyTransferred 3320 must be encoded at payload offset 0..4")
+    check(Array(startTransport[13..<17]) == [0x2A, 0x00, 0x00, 0x00], "fileId 42 must be encoded at payload offset 4..8")
     let derivedKey = KoeCore.hkdfSha256(ikm: Data(repeating: 0xAB, count: 32))
     check(derivedKey.count == 32, "hkdfSha256 must derive 32-byte session key")
     check(KoeCore.isSliceMark(0x01) && !KoeCore.isSliceMark(0x00), "isSliceMark must check bit 0")
@@ -150,6 +152,64 @@ struct KoeCoreSwiftTest {
     var goodReply = Data(repeating: 0x11, count: 65)
     goodReply.append(mismatchSecret)
     check(sessionHandle.acceptEcdhReply(replyPayload: goodReply, sharedSecret: mismatchSecret), "acceptEcdhReply must accept matching shared secret")
+
+    let pullTx = sessionHandle.beginOfflinePull(fileId: 500, durationMs: 2_000)
+    check(pullTx.count == 19, "beginOfflinePull must return 19-byte 1A/07 TX frame")
+    let w1 = sessionHandle.pollTimers(elapsedMs: 5_000, nowEpochSec: 1_700_000_010)
+    check(w1.transferPhase == 2 && w1.transferRetryCount == 1 && w1.outboundTxFrames.count == 1, "first 5s watchdog timeout must retry once")
+    let w2 = sessionHandle.pollTimers(elapsedMs: 5_000, nowEpochSec: 1_700_000_015)
+    check(w2.transferPhase == 2 && w2.transferRetryCount == 2 && w2.outboundTxFrames.count == 1, "second 5s watchdog timeout must retry twice")
+    let w3 = sessionHandle.pollTimers(elapsedMs: 5_000, nowEpochSec: 1_700_000_020)
+    check(w3.transferPhase == 4 && w3.transferErrorCode == 0xFE && w3.transferRetryCount == 2, "third 5s watchdog timeout must fail with 0xFE")
+
+    let drainSession = KoeTransportSession()
+    var liveHeadPayload = Data()
+    var liveFid: UInt32 = UInt32(9002).littleEndian
+    var liveSize: UInt32 = UInt32.max.littleEndian
+    withUnsafeBytes(of: &liveFid) { liveHeadPayload.append(contentsOf: $0) }
+    withUnsafeBytes(of: &liveSize) { liveHeadPayload.append(contentsOf: $0) }
+    liveHeadPayload.append(contentsOf: [UInt8](repeating: 0x11, count: 16))
+    liveHeadPayload.append(contentsOf: [UInt8](repeating: 0x22, count: 46))
+    liveHeadPayload.append(contentsOf: [UInt8](repeating: 0x33, count: 16))
+    liveHeadPayload.append(0)
+    var liveHeadRx = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x07, UInt8((10 + liveHeadPayload.count) & 0xFF), 0x00])
+    liveHeadRx.append(liveHeadPayload)
+    liveHeadRx.append(KoeCore.checksum(liveHeadRx))
+    _ = drainSession.ingestBleChunk(liveHeadRx, nowEpochSec: 1_700_000_100)
+
+    var liveSlicePayload = Data()
+    var liveSeq0: UInt32 = UInt32(0).littleEndian
+    withUnsafeBytes(of: &liveSeq0) { liveSlicePayload.append(contentsOf: $0) }
+    liveSlicePayload.append(0x01)
+    liveSlicePayload.append(padded160)
+    liveSlicePayload.append(0x00)
+    let liveSliceTotalLen = UInt16(10 + liveSlicePayload.count)
+    var liveSliceRx = Data([
+      0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x08,
+      UInt8(liveSliceTotalLen & 0xFF), UInt8((liveSliceTotalLen >> 8) & 0xFF),
+    ])
+    liveSliceRx.append(liveSlicePayload)
+    liveSliceRx.append(KoeCore.checksum(liveSliceRx))
+    _ = drainSession.ingestBleChunk(liveSliceRx, nowEpochSec: 1_700_000_100)
+
+    let stopStep = drainSession.stopRealtimeRecording()
+    check(stopStep.isRealtimeQuietDraining && stopStep.outboundTxFrames.count == 1, "stopRealtimeRecording must enter 2s quiet-drain window and emit pauseRecord")
+    let drainMid = drainSession.pollTimers(elapsedMs: 1_200, nowEpochSec: 1_700_000_101)
+    check(!drainMid.hasFinalizedRecording && drainMid.isRealtimeQuietDraining, "1200ms into quiet drain must not finalize early")
+    let drainEnd = drainSession.pollTimers(elapsedMs: 800, nowEpochSec: 1_700_000_102)
+    check(drainEnd.hasFinalizedRecording && !drainEnd.isRealtimeQuietDraining, "2000ms total quiet drain must finalize recording")
+    let drainedModel = drainSession.takeFinalized()
+    check(drainedModel?.entry.id == 9002 && drainedModel?.entry.marksMs == [0], "finalized quiet-drained recording must preserve id and mark")
+
+    check(D3200CoreBluetoothBridge.restoreIdentifier == "com.anker.koe.d3200.central", "CoreBluetooth restoreIdentifier must match")
+    check(D3200CoreBluetoothBridge.lastPeripheralUUIDDefaultsKey == "koe.ble.last_peripheral_uuid", "lastPeripheralUUIDDefaultsKey must match")
+    check(!D3200CoreBluetoothBridge.supportsStateRestoration(), "unbundled test binary must disable CoreBluetooth state restoration")
+    check(D3200CoreBluetoothBridge.makeCentralOptions() == nil, "makeCentralOptions must return nil in unbundled CLI")
+    let sampleUUID = UUID()
+    let restoredIds = D3200CoreBluetoothBridge.restoredPeripheralIdentifiers(
+      from: ["kCBRestoredPeripherals": [sampleUUID]]
+    )
+    check(restoredIds == [sampleUUID], "restoredPeripheralIdentifiers must extract restored UUIDs")
 
     let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-native-host-test-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
