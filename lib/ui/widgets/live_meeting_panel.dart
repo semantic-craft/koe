@@ -64,6 +64,15 @@ class LiveMeetingPanel extends StatelessWidget {
                       ? (v) => c.setLiveCaptionsEnabled(v)
                       : null,
                 ),
+                SwitchListTile(
+                  key: const ValueKey('live-caption-speech-switch'),
+                  title: const Text('同声传译语音播报'),
+                  subtitle: const Text('双语字幕产出译文时自动用合成语音朗读'),
+                  value: c.liveCaptionSpeechEnabled,
+                  onChanged: c.liveMeetingAvailable && !c.liveMeetingClosing
+                      ? (v) => c.setLiveCaptionSpeechEnabled(v)
+                      : null,
+                ),
                 if (captions?.error != null) Text(captions!.error!),
                 if (captions?.paused == true && !c.liveMeetingClosing)
                   TextButton(

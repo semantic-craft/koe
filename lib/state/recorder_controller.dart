@@ -777,6 +777,7 @@ class RecorderController extends ChangeNotifier
   _speechStreamOverride;
 
   /// Reads Ask Koe answers aloud when the user turns it on.
+  @override
   final AnswerSpeaker answerSpeaker;
 
   /// Phone microphone takes are an iPhone feature; the Mac reads and archives.

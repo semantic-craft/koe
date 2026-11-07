@@ -12,6 +12,7 @@ class LiveCaptions extends ChangeNotifier {
     DateTime Function()? clock,
     bool Function()? configurationCurrent,
     this.recordingKey,
+    this.onTranslated,
   }) : clock = clock ?? DateTime.now,
        configurationCurrent = configurationCurrent ?? (() => true);
   final String sessionId;
@@ -19,6 +20,7 @@ class LiveCaptions extends ChangeNotifier {
   final Future<String> Function(LiveSegment, String) translate;
   final DateTime Function() clock;
   final bool Function() configurationCurrent;
+  final void Function(LiveSegment)? onTranslated;
   String target;
   String? recordingKey, error;
   final _entries = <String, LiveSegment>{};
@@ -98,7 +100,7 @@ class LiveCaptions extends ChangeNotifier {
         continue;
       }
       changed = true;
-      _entries[s.id] = LiveSegment(
+      final updated = LiveSegment(
         id: s.id,
         text: s.text,
         revision: s.revision,
@@ -107,6 +109,8 @@ class LiveCaptions extends ChangeNotifier {
         targetLanguage: target,
         provider: s.provider,
       );
+      _entries[s.id] = updated;
+      if (supplied) onTranslated?.call(updated);
     }
     try {
       if (changed) await persist();
@@ -225,6 +229,8 @@ class LiveCaptions extends ChangeNotifier {
           if (!published) {
             _journal[key] = 'cancelled';
             await persist();
+          } else {
+            onTranslated?.call(translatedEntry);
           }
         } catch (_) {
           _journal[key] = 'unknown';

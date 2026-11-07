@@ -366,7 +366,7 @@ mixin _RecorderTextCapture on ChangeNotifier {
         beginLiveMeeting(
           'text:$id',
           recordingKey: 'document:$id',
-          available: config.provider != SttProvider.doubao,
+          available: !config.provider.retired,
           language: config.sourceLanguage,
         );
       }

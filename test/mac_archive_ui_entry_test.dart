@@ -105,4 +105,31 @@ void main() {
     expect(find.byKey(const ValueKey('mac-receive-switch')), findsOneWidget);
     expect(find.text('这台 Mac 接收原件'), findsOneWidget);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('macOS local recording row does not show phone-only Mac pairing status', (
+    tester,
+  ) async {
+    final controller = newController();
+    final audio = File('${directory.path}/100.wav');
+    await tester.runAsync(() => audio.writeAsBytes(<int>[1, 2, 3, 4]));
+    controller.exportedPaths = <String>[audio.path];
+
+    tester.view.physicalSize = const Size(1240, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RecorderController>.value(
+        value: controller,
+        child: const MaterialApp(home: Scaffold(body: FilesBody())),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(ValueKey('recording-mac-archive-${audio.path}')),
+      findsNothing,
+    );
+    expect(find.textContaining('Mac：未配对'), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }
