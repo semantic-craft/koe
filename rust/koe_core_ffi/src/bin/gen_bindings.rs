@@ -300,6 +300,86 @@ public enum KoeCore {{
     return out.prefix(written)
   }}
 
+  public static func encodeGetDeviceInfo() -> Data {{
+    encodeFrame(cmdType: 0x01, cmdId: 0x01)
+  }}
+
+  public static func encodeGetFileList(pageIndex: UInt8 = 0) -> Data {{
+    encodeFrame(cmdType: 0x1A, cmdId: 0x01, payload: Data([pageIndex]))
+  }}
+
+  public static func encodeStartRecord() -> Data {{
+    encodeFrame(cmdType: 0x01, cmdId: 0x03)
+  }}
+
+  public static func encodeStopRecord() -> Data {{
+    encodeFrame(cmdType: 0x01, cmdId: 0x04)
+  }}
+
+  public static func encodePauseRecord() -> Data {{
+    encodeFrame(cmdType: 0x01, cmdId: 0x05)
+  }}
+
+  public static func encodeResumeRecord() -> Data {{
+    encodeFrame(cmdType: 0x01, cmdId: 0x06)
+  }}
+
+  public static func encodeHandshakeKey(_ publicKey65: Data) -> Data {{
+    encodeFrame(cmdType: 0x2E, cmdId: 0x01, payload: publicKey65)
+  }}
+
+  public static func encodeStartTransportAudioFile(
+    fileId: UInt32,
+    alreadyTransferred: UInt32 = 0,
+    realtimeFlag: UInt8 = 0
+  ) -> Data {{
+    var payload = Data(capacity: 9)
+    var fid = fileId.littleEndian
+    var offset = alreadyTransferred.littleEndian
+    withUnsafeBytes(of: &fid) {{ payload.append(contentsOf: $0) }}
+    withUnsafeBytes(of: &offset) {{ payload.append(contentsOf: $0) }}
+    payload.append(realtimeFlag)
+    return encodeFrame(cmdType: 0x1A, cmdId: 0x07, payload: payload)
+  }}
+
+  public static func hkdfSha256(
+    ikm: Data,
+    salt: Data = Data([1, 2, 3]),
+    info: Data = Data([1, 2, 3]),
+    length: Int = 32
+  ) -> Data {{
+    guard length > 0 else {{ return Data() }}
+    var out = Data(count: length)
+    out.withUnsafeMutableBytes {{ (outRaw: UnsafeMutableRawBufferPointer) -> Void in
+      guard let outPtr = outRaw.bindMemory(to: UInt8.self).baseAddress else {{ return }}
+      ikm.withUnsafeBytes {{ (ikmRaw: UnsafeRawBufferPointer) -> Void in
+        salt.withUnsafeBytes {{ (saltRaw: UnsafeRawBufferPointer) -> Void in
+          info.withUnsafeBytes {{ (infoRaw: UnsafeRawBufferPointer) -> Void in
+            koe_crypto_hkdf_sha256(
+              ikmRaw.bindMemory(to: UInt8.self).baseAddress,
+              ikm.count,
+              saltRaw.bindMemory(to: UInt8.self).baseAddress,
+              salt.count,
+              infoRaw.bindMemory(to: UInt8.self).baseAddress,
+              info.count,
+              outPtr,
+              length
+            )
+          }}
+        }}
+      }}
+    }}
+    return out
+  }}
+
+  public static func isSliceMark(_ flags: UInt8) -> Bool {{
+    koe_slice_mark_is_mark(flags) != 0
+  }}
+
+  public static func sliceMarkPositionMs(_ sequence: UInt32) -> UInt64 {{
+    koe_slice_mark_position_ms(sequence)
+  }}
+
   public static func batteryRemaining(_ raw: Int) -> Int? {{
     let pct = koe_battery_remaining(Int32(raw))
     return pct < 0 ? nil : Int(pct)

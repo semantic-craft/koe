@@ -9,7 +9,7 @@ struct KoeCoreSwiftTest {
     }
   }
 
-  static func main() {
+  static func main() async {
     let encoded = KoeCore.encodeFrame(cmdType: 0x01, cmdId: 0x01)
     check(encoded.count == 10, "encoded getDeviceInfo length must be 10")
     check(encoded[0] == 0x08 && encoded[1] == 0xEE, "TX magic must be 08 EE")
@@ -107,5 +107,65 @@ struct KoeCoreSwiftTest {
     check(batch.wireRecordBytes == 332, "wireRecordBytes must be 332")
     check(batch.markedSequences == [5], "markedSequences must contain [5]")
     check(batch.opusBytes.count == 320 && batch.opusBytes[0] == 0x78 && batch.opusBytes[160] == 0x79, "opusBytes must concatenate both 160B frames")
+
+    let startTransport = KoeCore.encodeStartTransportAudioFile(fileId: 42, alreadyTransferred: 166, realtimeFlag: 1)
+    check(startTransport.count == 19 && KoeCore.verifyChecksum(startTransport), "encodeStartTransportAudioFile must emit valid 19B frame")
+    let derivedKey = KoeCore.hkdfSha256(ikm: Data(repeating: 0xAB, count: 32))
+    check(derivedKey.count == 32, "hkdfSha256 must derive 32-byte session key")
+    check(KoeCore.isSliceMark(0x01) && !KoeCore.isSliceMark(0x00), "isSliceMark must check bit 0")
+    check(KoeCore.sliceMarkPositionMs(50) == 1000, "sliceMarkPositionMs(50) must equal 1000ms")
+
+    var reassembler = D3200FrameReassembler()
+    let splitA = Data([0xDE, 0xAD]) + rxPacket.prefix(12)
+    let splitB = rxPacket.dropFirst(12)
+    check(reassembler.ingest(splitA).isEmpty, "partial BLE notification must wait for remainder")
+    let reassembled = reassembler.ingest(Data(splitB))
+    check(reassembled.count == 1 && reassembled[0].cmdType == 0x01 && reassembled[0].cmdId == 0x01, "reassembler must emit verified 0x01/0x01 frame")
+
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-native-host-test-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let actor = BeanTransportActor()
+    let saved = await actor.simulateBeanRealtimePipeline(destinationDirectory: tempDir)
+    check(saved != nil, "simulateBeanRealtimePipeline must produce a KoeSavedRecording")
+    if let saved {
+      check(saved.id.rawValue == "20261107", "saved recording id must match simulated fileId")
+      check(saved.marks.map(\.sequence) == [15, 45], "saved recording marks must extract sequences [15, 45]")
+      check(saved.marks.map(\.rawValue) == [300, 900], "saved recording mark timestamps must be [300, 900] ms")
+      let opusBytes = (try? Data(contentsOf: saved.opusFileURL)) ?? Data()
+      check(opusBytes.count > 64 && String(decoding: opusBytes.prefix(4), as: UTF8.self) == "OggS", "saved .opus file must start with OggS")
+      if let wavURL = saved.playableWAVURL {
+        let wavBytes = (try? Data(contentsOf: wavURL)) ?? Data()
+        check(wavBytes.count > 44 && String(decoding: wavBytes.prefix(4), as: UTF8.self) == "RIFF", "saved .wav file must start with RIFF")
+      } else {
+        check(false, "saved recording must include playableWAVURL")
+      }
+
+      await MainActor.run {
+        let host = KoeNativeHost(transport: actor, exportDirectory: tempDir)
+        host.interpreting.ttsEnabled = false
+        host.playback.ingestRecording(saved)
+        check(host.playback.selectedRecordingId == saved.id, "ingestRecording must select the new recording")
+
+        host.playback.jumpToMark(direction: .next)
+        check(host.playback.playbackState.positionMs == 300, "first jumpToMark(.next) must land on 300ms")
+        host.playback.jumpToMark(direction: .next)
+        check(host.playback.playbackState.positionMs == 900, "second jumpToMark(.next) must land on 900ms")
+        host.playback.jumpToMark(direction: .previous)
+        check(host.playback.playbackState.positionMs == 300, "jumpToMark(.previous) must return to 300ms")
+
+        host.playback.moveToTrash(saved.id)
+        check(host.playback.recordings.isEmpty, "moveToTrash must remove recording immediately without modal")
+        check(host.playback.recentlyTrashed?.id == saved.id, "recentlyTrashed must hold removed recording")
+        host.playback.undoTrash()
+        check(host.playback.recordings.count == 1 && host.playback.recordings[0].id == saved.id, "undoTrash must restore recording")
+
+        for seg in saved.transcriptSegments {
+          host.interpreting.ingestSegment(seg)
+        }
+        check(host.interpreting.segments.count == 2, "LiveInterpretingModel must store 2 bilingual segments")
+      }
+      await actor.finishStream()
+    }
   }
 }
