@@ -1,5 +1,8 @@
 import AVFoundation
 import Combine
+#if os(macOS)
+import CoreAudio
+#endif
 import Foundation
 import Speech
 import SwiftUI
@@ -125,6 +128,313 @@ public final class BeanSidebarModel: ObservableObject {
   }
 }
 
+public struct KoeAudioDeviceItem: Equatable, Sendable, Identifiable {
+  public var id: String { uid }
+  public let uid: String
+  public let name: String
+  public let isPhysicalInput: Bool
+  public let isBlackHole2ch: Bool
+
+  public init(uid: String, name: String, isPhysicalInput: Bool, isBlackHole2ch: Bool) {
+    self.uid = uid
+    self.name = name
+    self.isPhysicalInput = isPhysicalInput
+    self.isBlackHole2ch = isBlackHole2ch
+  }
+}
+
+public final class KoeInputDeviceLease: @unchecked Sendable {
+  public let fileURL: URL
+
+  public init(directory: URL = BeanTransportActor.defaultExportDirectory()) {
+    self.fileURL = directory.appendingPathComponent("interpreting-input.json")
+  }
+
+  @discardableResult
+  public func acquire(
+    session: String,
+    target: String,
+    currentDefaultInput: () -> String? = KoeInputDeviceLease.systemDefaultInputUID,
+    setDefaultInput: (String) -> Bool = KoeInputDeviceLease.setSystemDefaultInputUID
+  ) -> Bool {
+    guard let current = currentDefaultInput(), !current.isEmpty else {
+      return false
+    }
+    var original = current
+    if let existingData = try? Data(contentsOf: fileURL),
+       let existing = (try? JSONSerialization.jsonObject(with: existingData)) as? [String: String],
+       let prevOriginal = existing["original"],
+       !prevOriginal.isEmpty
+    {
+      original = prevOriginal
+    }
+    let payload: [String: String] = [
+      "session": session,
+      "original": original,
+      "target": target,
+    ]
+    guard let encoded = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+      return false
+    }
+    do {
+      try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try encoded.write(to: fileURL, options: .atomic)
+    } catch {
+      return false
+    }
+    if current == target {
+      return true
+    }
+    if setDefaultInput(target) {
+      return true
+    }
+    try? FileManager.default.removeItem(at: fileURL)
+    return false
+  }
+
+  @discardableResult
+  public func release(
+    currentDefaultInput: () -> String? = KoeInputDeviceLease.systemDefaultInputUID,
+    setDefaultInput: (String) -> Bool = KoeInputDeviceLease.setSystemDefaultInputUID
+  ) -> String {
+    guard let data = try? Data(contentsOf: fileURL),
+          let lease = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
+          let original = lease["original"],
+          let target = lease["target"]
+    else {
+      return "kept"
+    }
+    let current = currentDefaultInput()
+    if current != nil && current != target && current != original {
+      try? FileManager.default.removeItem(at: fileURL)
+      return "kept"
+    }
+    if current == original || setDefaultInput(original) {
+      try? FileManager.default.removeItem(at: fileURL)
+      return "restored"
+    }
+    return "failed"
+  }
+
+  public func relinquish() {
+    try? FileManager.default.removeItem(at: fileURL)
+  }
+
+  public static func systemDefaultInputUID() -> String? {
+    #if os(macOS)
+    return KoeCoreAudioRoute.currentDefaultInputUID()
+    #else
+    return nil
+    #endif
+  }
+
+  public static func setSystemDefaultInputUID(_ uid: String) -> Bool {
+    #if os(macOS)
+    return KoeCoreAudioRoute.setDefaultInputUID(uid)
+    #else
+    return false
+    #endif
+  }
+}
+
+#if os(macOS)
+public enum KoeCoreAudioRoute {
+  public static let blackHoleUID = "BlackHole2ch_UID"
+
+  public static func physicalInputs() -> [KoeAudioDeviceItem] {
+    allDeviceIDs().compactMap { id in
+      guard let uid = deviceUID(id),
+            let name = deviceName(id),
+            channelCount(id, scope: kAudioDevicePropertyScopeInput) > 0,
+            isPhysicalTransport(id),
+            !name.localizedCaseInsensitiveContains("BlackHole"),
+            uid != blackHoleUID
+      else {
+        return nil
+      }
+      return KoeAudioDeviceItem(
+        uid: uid,
+        name: name,
+        isPhysicalInput: true,
+        isBlackHole2ch: false
+      )
+    }
+  }
+
+  public static func blackHoleOutputs() -> [KoeAudioDeviceItem] {
+    allDeviceIDs().compactMap { id in
+      guard let uid = deviceUID(id),
+            let name = deviceName(id),
+            uid == blackHoleUID,
+            channelCount(id, scope: kAudioDevicePropertyScopeOutput) == 2
+      else {
+        return nil
+      }
+      return KoeAudioDeviceItem(
+        uid: uid,
+        name: name,
+        isPhysicalInput: false,
+        isBlackHole2ch: true
+      )
+    }
+  }
+
+  public static func isPhysicalInput(_ uid: String) -> Bool {
+    physicalInputs().contains { $0.uid == uid }
+  }
+
+  public static func isBlackHole2ch(_ uid: String) -> Bool {
+    blackHoleOutputs().contains { $0.uid == uid }
+  }
+
+  public static func currentDefaultInputUID() -> String? {
+    var addr = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDefaultInputDevice,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var deviceID = AudioDeviceID(0)
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    guard AudioObjectGetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &addr,
+      0,
+      nil,
+      &size,
+      &deviceID
+    ) == noErr, deviceID != 0 else {
+      return nil
+    }
+    return deviceUID(deviceID)
+  }
+
+  @discardableResult
+  public static func setDefaultInputUID(_ uid: String) -> Bool {
+    guard let targetID = allDeviceIDs().first(where: { deviceUID($0) == uid }) else {
+      return false
+    }
+    var deviceID = targetID
+    var addr = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDefaultInputDevice,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    guard AudioObjectSetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &addr,
+      0,
+      nil,
+      size,
+      &deviceID
+    ) == noErr else {
+      return false
+    }
+    return currentDefaultInputUID() == uid
+  }
+
+  private static func allDeviceIDs() -> [AudioDeviceID] {
+    var addr = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDevices,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(
+      AudioObjectID(kAudioObjectSystemObject),
+      &addr,
+      0,
+      nil,
+      &size
+    ) == noErr, size > 0 else {
+      return []
+    }
+    let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+    var ids = [AudioDeviceID](repeating: 0, count: count)
+    guard AudioObjectGetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &addr,
+      0,
+      nil,
+      &size,
+      &ids
+    ) == noErr else {
+      return []
+    }
+    return ids
+  }
+
+  private static func deviceUID(_ id: AudioDeviceID) -> String? {
+    stringProperty(id, selector: kAudioDevicePropertyDeviceUID)
+  }
+
+  private static func deviceName(_ id: AudioDeviceID) -> String? {
+    stringProperty(id, selector: kAudioObjectPropertyName)
+  }
+
+  private static func stringProperty(
+    _ id: AudioDeviceID,
+    selector: AudioObjectPropertySelector
+  ) -> String? {
+    var addr = AudioObjectPropertyAddress(
+      mSelector: selector,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var value: Unmanaged<CFString>?
+    var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+    guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr,
+          let unwrapped = value?.takeUnretainedValue()
+    else {
+      return nil
+    }
+    return unwrapped as String
+  }
+
+  private static func isPhysicalTransport(_ id: AudioDeviceID) -> Bool {
+    var addr = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyTransportType,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var transport: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &transport) == noErr else {
+      return true
+    }
+    return transport != kAudioDeviceTransportTypeVirtual
+      && transport != kAudioDeviceTransportTypeAggregate
+  }
+
+  private static func channelCount(_ id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
+    var addr = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyStreamConfiguration,
+      mScope: scope,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr,
+          size >= UInt32(MemoryLayout<AudioBufferList>.size)
+    else {
+      return 0
+    }
+    let raw = UnsafeMutableRawPointer.allocate(
+      byteCount: Int(size),
+      alignment: MemoryLayout<AudioBufferList>.alignment
+    )
+    defer { raw.deallocate() }
+    guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, raw) == noErr else {
+      return 0
+    }
+    let listPtr = raw.assumingMemoryBound(to: AudioBufferList.self)
+    return UnsafeMutableAudioBufferListPointer(listPtr).reduce(0) { $0 + Int($1.mNumberChannels) }
+  }
+}
+#endif
+
 @MainActor
 public final class LiveInterpretingModel: ObservableObject {
   @Published public private(set) var segments: [KoeLiveCaptionSegment] = []
@@ -134,19 +444,124 @@ public final class LiveInterpretingModel: ObservableObject {
   @Published public var sourceLanguage = "zh-CN"
   @Published public var targetLanguage = "en-US"
   @Published public private(set) var statusBanner = "等待录音豆实时流或麦克风输入"
+  @Published public private(set) var physicalInputs: [KoeAudioDeviceItem] = []
+  @Published public private(set) var blackHoleOutputs: [KoeAudioDeviceItem] = []
+  @Published public var selectedInputUID: String = ""
+  @Published public var selectedOutputUID: String = "BlackHole2ch_UID"
+  @Published public private(set) var isHoldingToInterpret: Bool = false
+  @Published public private(set) var silenceElapsedMs: UInt64 = 0
+  @Published public private(set) var rollingMinutesJson: String?
+
+  public let rollingScheduler = KoeCicadaRollingScheduler(sessionId: "live-interpreting")
+  public let inputLease: KoeInputDeviceLease
 
   private let synthesizer = AVSpeechSynthesizer()
   private var audioEngine: AVAudioEngine?
   private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
   private var recognitionTask: SFSpeechRecognitionTask?
+  private var holdToken: String?
+  private var holdTimeoutTask: Task<Void, Never>?
+  private var autoStoppedBySilence: Bool = false
 
-  public init() {}
+  public init(leaseDirectory: URL = BeanTransportActor.defaultExportDirectory()) {
+    self.inputLease = KoeInputDeviceLease(directory: leaseDirectory)
+    refreshAudioDevices()
+  }
+
+  public func refreshAudioDevices() {
+    #if os(macOS)
+    physicalInputs = KoeCoreAudioRoute.physicalInputs()
+    blackHoleOutputs = KoeCoreAudioRoute.blackHoleOutputs()
+    if selectedInputUID.isEmpty, let first = physicalInputs.first {
+      selectedInputUID = first.uid
+    }
+    #else
+    physicalInputs = []
+    blackHoleOutputs = []
+    #endif
+  }
+
+  public func beginHoldToInterpret(session: String = "live", token: String = "hold") {
+    holdTimeoutTask?.cancel()
+    holdToken = token
+    isHoldingToInterpret = true
+    silenceElapsedMs = 0
+    autoStoppedBySilence = false
+    #if os(macOS)
+    if !selectedInputUID.isEmpty {
+      _ = inputLease.acquire(session: session, target: selectedInputUID)
+    }
+    if KoeCoreAudioRoute.isBlackHole2ch(selectedOutputUID) || !blackHoleOutputs.isEmpty {
+      statusBanner = "正在按住同传 (\(sourceLanguage) → \(targetLanguage) · BlackHole 2ch)"
+    } else {
+      statusBanner = "正在按住同传 (\(sourceLanguage) → \(targetLanguage))"
+    }
+    #else
+    statusBanner = "正在按住同传 (\(sourceLanguage) → \(targetLanguage))"
+    #endif
+    holdTimeoutTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(nanoseconds: 30_000_000_000)
+      guard let self, !Task.isCancelled else { return }
+      if self.isHoldingToInterpret && self.holdToken == token {
+        _ = self.finishHoldToInterpret(token: token)
+      }
+    }
+  }
+
+  @discardableResult
+  public func finishHoldToInterpret(token: String = "hold") -> String {
+    guard isHoldingToInterpret else { return "noop" }
+    if let active = holdToken, active != token {
+      return "noop"
+    }
+    holdTimeoutTask?.cancel()
+    holdTimeoutTask = nil
+    isHoldingToInterpret = false
+    holdToken = nil
+    if isListeningMicrophone {
+      stopMicrophoneCapture()
+    }
+    let releaseResult = inputLease.release()
+    statusBanner = "已结束按住同传 (\(releaseResult))"
+    return releaseResult
+  }
+
+  @discardableResult
+  public func recordAudioActivity(elapsedMs: UInt64, speechDetected: Bool) -> Bool {
+    let res = KoeCore.reduceSilenceAutoStop(
+      silenceElapsedMs: silenceElapsedMs,
+      deltaMs: elapsedMs,
+      speechDetected: speechDetected,
+      alreadyAutoStopped: autoStoppedBySilence
+    )
+    silenceElapsedMs = res.nextElapsedMs
+    autoStoppedBySilence = res.autoStopped
+    if res.triggered {
+      if isListeningMicrophone {
+        stopMicrophoneCapture()
+      }
+      if isHoldingToInterpret {
+        _ = finishHoldToInterpret(token: holdToken ?? "hold")
+      }
+      statusBanner = "静音满 30 秒，已自动停止同传拾音"
+      return true
+    }
+    return false
+  }
 
   public func ingestSegment(_ segment: KoeLiveCaptionSegment) {
     if let idx = segments.firstIndex(where: { $0.id == segment.id }) {
       segments[idx] = segment
     } else {
       segments.append(segment)
+    }
+    if segment.isFinal && !segment.sourceText.isEmpty {
+      _ = rollingScheduler.addSegment(
+        id: segment.id.uuidString,
+        text: segment.sourceText,
+        nowMs: segment.endMs
+      )
+      rollingMinutesJson = rollingScheduler.activeJson()
     }
     statusBanner = "已接收 \(segments.count) 条双语同传字幕"
     if ttsEnabled && segment.isFinal {

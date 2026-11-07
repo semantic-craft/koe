@@ -268,6 +268,71 @@ class KoeUtteranceSegment {
   String get citationId => 'S$ordinal';
 }
 
+final class _KoeCicadaRollingStatusNative extends Struct {
+  @Uint8()
+  external int paused;
+
+  @Uint8()
+  external int closed;
+
+  @Uint8()
+  external int edited;
+
+  @Uint8()
+  external int hasCandidate;
+
+  @Uint8()
+  external int requestStatus;
+
+  @Array(3)
+  external Array<Uint8> reserved;
+
+  @Uint32()
+  external int watermark;
+
+  @Uint32()
+  external int callsThisHour;
+
+  @Uint64()
+  external int generation;
+}
+
+class KoeCicadaRollingStatus {
+  const KoeCicadaRollingStatus({
+    required this.paused,
+    required this.closed,
+    required this.edited,
+    required this.hasCandidate,
+    required this.requestStatus,
+    required this.watermark,
+    required this.callsThisHour,
+    required this.generation,
+  });
+
+  final bool paused;
+  final bool closed;
+  final bool edited;
+  final bool hasCandidate;
+  final int requestStatus;
+  final int watermark;
+  final int callsThisHour;
+  final int generation;
+}
+
+class KoeCicadaRollingTicket {
+  const KoeCicadaRollingTicket({
+    required this.fromIndex,
+    required this.endIndex,
+    required this.generation,
+    required this.payload,
+  });
+
+  final int fromIndex;
+  final int endIndex;
+  final int generation;
+  final String payload;
+}
+
 typedef _ChecksumNative = Uint8 Function(Pointer<Uint8>, Size);
 typedef _ChecksumDart = int Function(Pointer<Uint8>, int);
 
@@ -715,6 +780,138 @@ typedef _QwenParseTranscriptDart = int Function(
   int,
 );
 
+typedef _CicadaRollingNewNative = Uint64 Function(Pointer<Uint8>, Size);
+typedef _CicadaRollingNewDart = int Function(Pointer<Uint8>, int);
+
+typedef _CicadaRollingFreeNative = Void Function(Uint64);
+typedef _CicadaRollingFreeDart = void Function(int);
+
+typedef _CicadaRollingAddSegmentNative = Uint8 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Uint64,
+);
+typedef _CicadaRollingAddSegmentDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+);
+
+typedef _CicadaRollingPollTickNative = Pointer<Uint8> Function(
+  Uint64,
+  Uint64,
+  Pointer<Uint32>,
+  Pointer<Uint32>,
+  Pointer<Uint64>,
+  Pointer<Size>,
+);
+typedef _CicadaRollingPollTickDart = Pointer<Uint8> Function(
+  int,
+  int,
+  Pointer<Uint32>,
+  Pointer<Uint32>,
+  Pointer<Uint64>,
+  Pointer<Size>,
+);
+
+typedef _CicadaRollingCompleteNative = Int32 Function(
+  Uint64,
+  Uint64,
+  Uint32,
+  Uint32,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _CicadaRollingCompleteDart = int Function(
+  int,
+  int,
+  int,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _CicadaRollingEditNative = Int32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _CicadaRollingEditDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _CicadaRollingAcceptCandidateNative = Uint8 Function(Uint64);
+typedef _CicadaRollingAcceptCandidateDart = int Function(int);
+
+typedef _CicadaRollingGetActiveNative = Pointer<Uint8> Function(
+  Uint64,
+  Pointer<Size>,
+);
+typedef _CicadaRollingGetActiveDart = Pointer<Uint8> Function(
+  int,
+  Pointer<Size>,
+);
+
+typedef _CicadaRollingStatusNative = Uint8 Function(
+  Uint64,
+  Pointer<_KoeCicadaRollingStatusNative>,
+);
+typedef _CicadaRollingStatusDart = int Function(
+  int,
+  Pointer<_KoeCicadaRollingStatusNative>,
+);
+
+typedef _CicadaSilenceReduceNative = Uint8 Function(
+  Uint64,
+  Uint64,
+  Uint8,
+  Uint8,
+  Pointer<Uint64>,
+  Pointer<Uint8>,
+);
+typedef _CicadaSilenceReduceDart = int Function(
+  int,
+  int,
+  int,
+  int,
+  Pointer<Uint64>,
+  Pointer<Uint8>,
+);
+
+typedef _KoepackVerifyV2Native = Int32 Function(Pointer<Uint8>, Size);
+typedef _KoepackVerifyV2Dart = int Function(Pointer<Uint8>, int);
+
+typedef _KoepackEncodeDemoV2Native = Pointer<Uint8> Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Size>,
+);
+typedef _KoepackEncodeDemoV2Dart = Pointer<Uint8> Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Size>,
+);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -899,7 +1096,67 @@ final class KoeCoreFfi {
           lib.lookupFunction<
             _QwenParseTranscriptNative,
             _QwenParseTranscriptDart
-          >('koe_qwen_parse_transcript_into_spine', isLeaf: true);
+          >('koe_qwen_parse_transcript_into_spine', isLeaf: true),
+      _cicadaRollingNew =
+          lib.lookupFunction<_CicadaRollingNewNative, _CicadaRollingNewDart>(
+            'koe_cicada_rolling_new',
+            isLeaf: true,
+          ),
+      _cicadaRollingFree =
+          lib.lookupFunction<_CicadaRollingFreeNative, _CicadaRollingFreeDart>(
+            'koe_cicada_rolling_free',
+            isLeaf: true,
+          ),
+      _cicadaRollingAddSegment =
+          lib.lookupFunction<
+            _CicadaRollingAddSegmentNative,
+            _CicadaRollingAddSegmentDart
+          >('koe_cicada_rolling_add_segment', isLeaf: true),
+      _cicadaRollingPollTick =
+          lib.lookupFunction<
+            _CicadaRollingPollTickNative,
+            _CicadaRollingPollTickDart
+          >('koe_cicada_rolling_poll_tick', isLeaf: true),
+      _cicadaRollingComplete =
+          lib.lookupFunction<
+            _CicadaRollingCompleteNative,
+            _CicadaRollingCompleteDart
+          >('koe_cicada_rolling_complete', isLeaf: true),
+      _cicadaRollingEdit =
+          lib.lookupFunction<_CicadaRollingEditNative, _CicadaRollingEditDart>(
+            'koe_cicada_rolling_edit',
+            isLeaf: true,
+          ),
+      _cicadaRollingAcceptCandidate =
+          lib.lookupFunction<
+            _CicadaRollingAcceptCandidateNative,
+            _CicadaRollingAcceptCandidateDart
+          >('koe_cicada_rolling_accept_candidate', isLeaf: true),
+      _cicadaRollingGetActive =
+          lib.lookupFunction<
+            _CicadaRollingGetActiveNative,
+            _CicadaRollingGetActiveDart
+          >('koe_cicada_rolling_get_active', isLeaf: true),
+      _cicadaRollingStatus =
+          lib.lookupFunction<
+            _CicadaRollingStatusNative,
+            _CicadaRollingStatusDart
+          >('koe_cicada_rolling_status', isLeaf: true),
+      _cicadaSilenceReduce =
+          lib.lookupFunction<
+            _CicadaSilenceReduceNative,
+            _CicadaSilenceReduceDart
+          >('koe_cicada_silence_reduce', isLeaf: true),
+      _koepackVerifyV2 =
+          lib.lookupFunction<_KoepackVerifyV2Native, _KoepackVerifyV2Dart>(
+            'koe_koepack_verify_v2',
+            isLeaf: true,
+          ),
+      _koepackEncodeDemoV2 =
+          lib.lookupFunction<
+            _KoepackEncodeDemoV2Native,
+            _KoepackEncodeDemoV2Dart
+          >('koe_koepack_encode_demo_v2', isLeaf: true);
 
   static final KoeCoreFfi? instance = _load();
 
@@ -989,6 +1246,18 @@ final class KoeCoreFfi {
   final _MinutesReplaceTermsUtf8Dart _minutesReplaceTermsUtf8;
   final _MinutesPlanBatchesCountDart _minutesPlanBatchesCount;
   final _QwenParseTranscriptDart _qwenParseTranscript;
+  final _CicadaRollingNewDart _cicadaRollingNew;
+  final _CicadaRollingFreeDart _cicadaRollingFree;
+  final _CicadaRollingAddSegmentDart _cicadaRollingAddSegment;
+  final _CicadaRollingPollTickDart _cicadaRollingPollTick;
+  final _CicadaRollingCompleteDart _cicadaRollingComplete;
+  final _CicadaRollingEditDart _cicadaRollingEdit;
+  final _CicadaRollingAcceptCandidateDart _cicadaRollingAcceptCandidate;
+  final _CicadaRollingGetActiveDart _cicadaRollingGetActive;
+  final _CicadaRollingStatusDart _cicadaRollingStatus;
+  final _CicadaSilenceReduceDart _cicadaSilenceReduce;
+  final _KoepackVerifyV2Dart _koepackVerifyV2;
+  final _KoepackEncodeDemoV2Dart _koepackEncodeDemoV2;
 
   int protocolChecksum(List<int> data) {
     if (data.isEmpty) return 0;
@@ -1909,6 +2178,264 @@ final class KoeCoreFfi {
       return _qwenParseTranscript(spineHandle, ptr, bytes.length);
     } finally {
       malloc.free(ptr);
+    }
+  }
+
+  int cicadaRollingNew({String sessionId = 'cicada'}) {
+    final bytes = utf8.encode(sessionId);
+    final ptr = malloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
+    try {
+      if (bytes.isNotEmpty) {
+        ptr.asTypedList(bytes.length).setAll(0, bytes);
+      }
+      return _cicadaRollingNew(ptr, bytes.length);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  void cicadaRollingFree(int handle) => _cicadaRollingFree(handle);
+
+  bool cicadaRollingAddSegment({
+    required int handle,
+    required String segId,
+    required String text,
+    required int nowMs,
+  }) {
+    final idBytes = utf8.encode(segId);
+    final textBytes = utf8.encode(text);
+    final idPtr = malloc<Uint8>(idBytes.isEmpty ? 1 : idBytes.length);
+    final textPtr = malloc<Uint8>(textBytes.isEmpty ? 1 : textBytes.length);
+    try {
+      if (idBytes.isNotEmpty) {
+        idPtr.asTypedList(idBytes.length).setAll(0, idBytes);
+      }
+      if (textBytes.isNotEmpty) {
+        textPtr.asTypedList(textBytes.length).setAll(0, textBytes);
+      }
+      return _cicadaRollingAddSegment(
+            handle,
+            idPtr,
+            idBytes.length,
+            textPtr,
+            textBytes.length,
+            nowMs,
+          ) !=
+          0;
+    } finally {
+      malloc.free(idPtr);
+      malloc.free(textPtr);
+    }
+  }
+
+  KoeCicadaRollingTicket? cicadaRollingPollTick({
+    required int handle,
+    required int nowMs,
+  }) {
+    final fromPtr = calloc<Uint32>();
+    final endPtr = calloc<Uint32>();
+    final genPtr = calloc<Uint64>();
+    final lenPtr = calloc<Size>();
+    Pointer<Uint8> bufPtr = nullptr;
+    try {
+      bufPtr = _cicadaRollingPollTick(
+        handle,
+        nowMs,
+        fromPtr,
+        endPtr,
+        genPtr,
+        lenPtr,
+      );
+      final len = lenPtr.value;
+      if (bufPtr == nullptr || len <= 0) return null;
+      final payload = utf8.decode(bufPtr.asTypedList(len));
+      return KoeCicadaRollingTicket(
+        fromIndex: fromPtr.value,
+        endIndex: endPtr.value,
+        generation: genPtr.value,
+        payload: payload,
+      );
+    } finally {
+      if (bufPtr != nullptr) {
+        _bufferFree(bufPtr, lenPtr.value);
+      }
+      calloc.free(fromPtr);
+      calloc.free(endPtr);
+      calloc.free(genPtr);
+      calloc.free(lenPtr);
+    }
+  }
+
+  int cicadaRollingComplete({
+    required int handle,
+    required int generation,
+    required int fromIndex,
+    required int endIndex,
+    required String rawJson,
+  }) {
+    if (rawJson.isEmpty) return -1;
+    final bytes = utf8.encode(rawJson);
+    final ptr = malloc<Uint8>(bytes.length);
+    try {
+      ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _cicadaRollingComplete(
+        handle,
+        generation,
+        fromIndex,
+        endIndex,
+        ptr,
+        bytes.length,
+      );
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  int cicadaRollingEdit({
+    required int handle,
+    required String editedJson,
+  }) {
+    if (editedJson.isEmpty) return -1;
+    final bytes = utf8.encode(editedJson);
+    final ptr = malloc<Uint8>(bytes.length);
+    try {
+      ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _cicadaRollingEdit(handle, ptr, bytes.length);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  bool cicadaRollingAcceptCandidate(int handle) =>
+      _cicadaRollingAcceptCandidate(handle) != 0;
+
+  String? cicadaRollingGetActive(int handle) {
+    final lenPtr = calloc<Size>();
+    Pointer<Uint8> bufPtr = nullptr;
+    try {
+      bufPtr = _cicadaRollingGetActive(handle, lenPtr);
+      final len = lenPtr.value;
+      if (bufPtr == nullptr || len <= 0) return null;
+      return utf8.decode(bufPtr.asTypedList(len));
+    } finally {
+      if (bufPtr != nullptr) {
+        _bufferFree(bufPtr, lenPtr.value);
+      }
+      calloc.free(lenPtr);
+    }
+  }
+
+  KoeCicadaRollingStatus? cicadaRollingStatus(int handle) {
+    final ptr = calloc<_KoeCicadaRollingStatusNative>();
+    try {
+      if (_cicadaRollingStatus(handle, ptr) == 0) return null;
+      final c = ptr.ref;
+      return KoeCicadaRollingStatus(
+        paused: c.paused != 0,
+        closed: c.closed != 0,
+        edited: c.edited != 0,
+        hasCandidate: c.hasCandidate != 0,
+        requestStatus: c.requestStatus,
+        watermark: c.watermark,
+        callsThisHour: c.callsThisHour,
+        generation: c.generation,
+      );
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  ({int nextElapsedMs, bool autoStopped, bool triggered}) cicadaSilenceReduce({
+    required int silenceElapsedMs,
+    required int deltaMs,
+    required bool speechDetected,
+    required bool alreadyAutoStopped,
+  }) {
+    final nextPtr = calloc<Uint64>();
+    final stoppedPtr = calloc<Uint8>();
+    try {
+      final triggered = _cicadaSilenceReduce(
+        silenceElapsedMs,
+        deltaMs,
+        speechDetected ? 1 : 0,
+        alreadyAutoStopped ? 1 : 0,
+        nextPtr,
+        stoppedPtr,
+      );
+      return (
+        nextElapsedMs: nextPtr.value,
+        autoStopped: stoppedPtr.value != 0,
+        triggered: triggered != 0,
+      );
+    } finally {
+      calloc.free(nextPtr);
+      calloc.free(stoppedPtr);
+    }
+  }
+
+  int koepackVerifyV2(Uint8List packBytes) {
+    if (packBytes.isEmpty) return -1;
+    final ptr = malloc<Uint8>(packBytes.length);
+    try {
+      ptr.asTypedList(packBytes.length).setAll(0, packBytes);
+      return _koepackVerifyV2(ptr, packBytes.length);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  Uint8List? koepackEncodeDemoV2({
+    required String contentHash,
+    required String title,
+    required String source,
+    required String minutesJson,
+  }) {
+    final hashBytes = utf8.encode(contentHash);
+    final titleBytes = utf8.encode(title);
+    final srcBytes = utf8.encode(source);
+    final minBytes = utf8.encode(minutesJson);
+    final hashPtr = malloc<Uint8>(hashBytes.isEmpty ? 1 : hashBytes.length);
+    final titlePtr = malloc<Uint8>(titleBytes.isEmpty ? 1 : titleBytes.length);
+    final srcPtr = malloc<Uint8>(srcBytes.isEmpty ? 1 : srcBytes.length);
+    final minPtr = malloc<Uint8>(minBytes.isEmpty ? 1 : minBytes.length);
+    final lenPtr = calloc<Size>();
+    Pointer<Uint8> outPtr = nullptr;
+    try {
+      if (hashBytes.isNotEmpty) {
+        hashPtr.asTypedList(hashBytes.length).setAll(0, hashBytes);
+      }
+      if (titleBytes.isNotEmpty) {
+        titlePtr.asTypedList(titleBytes.length).setAll(0, titleBytes);
+      }
+      if (srcBytes.isNotEmpty) {
+        srcPtr.asTypedList(srcBytes.length).setAll(0, srcBytes);
+      }
+      if (minBytes.isNotEmpty) {
+        minPtr.asTypedList(minBytes.length).setAll(0, minBytes);
+      }
+      outPtr = _koepackEncodeDemoV2(
+        hashPtr,
+        hashBytes.length,
+        titlePtr,
+        titleBytes.length,
+        srcPtr,
+        srcBytes.length,
+        minPtr,
+        minBytes.length,
+        lenPtr,
+      );
+      final len = lenPtr.value;
+      if (outPtr == nullptr || len <= 0) return null;
+      return Uint8List.fromList(outPtr.asTypedList(len));
+    } finally {
+      if (outPtr != nullptr) {
+        _bufferFree(outPtr, lenPtr.value);
+      }
+      malloc.free(hashPtr);
+      malloc.free(titlePtr);
+      malloc.free(srcPtr);
+      malloc.free(minPtr);
+      calloc.free(lenPtr);
     }
   }
 

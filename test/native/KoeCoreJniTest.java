@@ -103,6 +103,17 @@ final class KoeCoreNative {
   static native byte[] minutesReplaceTermsUtf8(byte[] text, byte[] fromTerms, byte[] toTerms);
   static native int minutesPlanBatchesCount(long spineHandle, int maxRunes);
   static native int qwenParseTranscriptIntoSpine(long spineHandle, byte[] json);
+  static native long[] nativeCicadaSilenceReduce(
+      long silenceElapsedMs,
+      long deltaMs,
+      boolean speechDetected,
+      boolean alreadyAutoStopped);
+  static native int nativeKoepackVerifyV2(byte[] packBytes);
+  static native byte[] nativeKoepackEncodeDemoV2(
+      byte[] contentHash,
+      byte[] title,
+      byte[] source,
+      byte[] minutesJson);
 }
 
 public final class KoeCoreJniTest {
@@ -444,5 +455,33 @@ public final class KoeCoreJniTest {
         "qwenParseTranscriptIntoSpine appends 2 segments");
     KoeCoreNative.spineFree(qwenSpine);
     KoeCoreNative.spineFree(spine);
+
+    long[] sil1 = KoeCoreNative.nativeCicadaSilenceReduce(0L, 15_000L, false, false);
+    check(sil1 != null && sil1.length == 3 && sil1[0] == 15_000L && sil1[1] == 0L && sil1[2] == 0L, "15s silence accumulates");
+    long[] sil2 = KoeCoreNative.nativeCicadaSilenceReduce(sil1[0], 15_000L, false, false);
+    check(sil2 != null && sil2[0] == 30_000L && sil2[1] == 1L && sil2[2] == 1L, "30s silence triggers auto-stop");
+
+    String demoHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    String demoMinutes =
+        "{\"schemaVersion\":2,\"title\":\"资料包纪要\",\"overview\":\"概述\",\"topics\":[{\"text\":\"讨论事项\",\"sources\":[\"S1\"]}],\"decisions\":[],\"actions\":[],\"questions\":[]}";
+    byte[] packBytes =
+        KoeCoreNative.nativeKoepackEncodeDemoV2(
+            demoHash.getBytes(StandardCharsets.UTF_8),
+            "周会资料包".getBytes(StandardCharsets.UTF_8),
+            "第一段会议记录".getBytes(StandardCharsets.UTF_8),
+            demoMinutes.getBytes(StandardCharsets.UTF_8));
+    check(
+        packBytes != null
+            && packBytes.length > 16
+            && new String(packBytes, 0, 8, StandardCharsets.US_ASCII).equals("KOEPACK1"),
+        "nativeKoepackEncodeDemoV2 emits KOEPACK1");
+    check(
+        KoeCoreNative.nativeKoepackVerifyV2(packBytes) == 2,
+        "nativeKoepackVerifyV2 returns version 2 on valid pack");
+    byte[] tampered = Arrays.copyOf(packBytes, packBytes.length);
+    tampered[tampered.length - 1] ^= (byte) 0xFF;
+    check(
+        KoeCoreNative.nativeKoepackVerifyV2(tampered) < 0,
+        "nativeKoepackVerifyV2 rejects tampered pack");
   }
 }

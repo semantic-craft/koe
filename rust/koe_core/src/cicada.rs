@@ -967,6 +967,26 @@ impl RollingMinutesScheduler {
         true
     }
 
+    /// Appends a single finalized `(id, text)` segment at `now_ms`, or invalidates the scheduler
+    /// if `id` was already confirmed with different text.
+    pub fn append_segment(&mut self, id: &str, text: &str, now_ms: u64) -> bool {
+        if self.closed || self.closing {
+            return false;
+        }
+        let clean_id = id.trim();
+        let clean_text = text.trim();
+        if let Some((_, existing_text)) = self.segments.iter().find(|(eid, _)| eid == clean_id) {
+            if existing_text != clean_text {
+                self.invalidate("已确认原文被修订，请在会后整理");
+                return false;
+            }
+            return true;
+        }
+        let mut next = self.segments.clone();
+        next.push((clean_id.to_string(), clean_text.to_string()));
+        self.add_segments(&next, now_ms)
+    }
+
     /// Evaluates whether a rolling summary pass should be dispatched at `now_ms`.
     ///
     /// First pass triggers when `added_chars >= 200 || elapsed >= 30_000 ms`;

@@ -6,7 +6,8 @@ use std::ffi::c_void;
 use std::sync::{Mutex, OnceLock};
 
 use crate::{
-    koe_buffer_free, koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
+    koe_buffer_free, koe_cicada_silence_reduce, koe_koepack_encode_demo_v2, koe_koepack_verify_v2,
+    koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
     koe_library_move_to_trash, koe_library_new, koe_library_seek_ms, koe_library_select,
     koe_library_snapshot, koe_library_undo_trash, koe_minutes_plan_batches_count,
     koe_minutes_replace_terms_utf8, koe_minutes_validate_claim_grounding,
@@ -1477,5 +1478,131 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_qwenParseT
     let json_b = unsafe { jni_read_bytes(env, json) };
     unsafe {
         koe_qwen_parse_transcript_into_spine(spine_handle as u64, json_b.as_ptr(), json_b.len())
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_nativeCicadaSilenceReduce(
+    env: JniEnv,
+    _cls: JClass,
+    silence_elapsed_ms: JLong,
+    delta_ms: JLong,
+    speech_detected: JBoolean,
+    already_auto_stopped: JBoolean,
+) -> JLongArray {
+    let mut next_elapsed = 0u64;
+    let mut auto_stopped = 0u8;
+    let triggered = unsafe {
+        koe_cicada_silence_reduce(
+            silence_elapsed_ms.max(0) as u64,
+            delta_ms.max(0) as u64,
+            speech_detected,
+            already_auto_stopped,
+            &mut next_elapsed,
+            &mut auto_stopped,
+        )
+    };
+    let out = [
+        next_elapsed as i64,
+        i64::from(auto_stopped),
+        i64::from(triggered),
+    ];
+    unsafe { jni_new_longs(env, &out) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_cicadaSilenceReduce(
+    env: JniEnv,
+    cls: JClass,
+    silence_elapsed_ms: JLong,
+    delta_ms: JLong,
+    speech_detected: JBoolean,
+    already_auto_stopped: JBoolean,
+) -> JLongArray {
+    unsafe {
+        Java_com_anker_anker_1recorder_KoeCoreNative_nativeCicadaSilenceReduce(
+            env,
+            cls,
+            silence_elapsed_ms,
+            delta_ms,
+            speech_detected,
+            already_auto_stopped,
+        )
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_nativeKoepackVerifyV2(
+    env: JniEnv,
+    _cls: JClass,
+    pack: JByteArray,
+) -> JInt {
+    let pack_b = unsafe { jni_read_bytes(env, pack) };
+    unsafe { koe_koepack_verify_v2(pack_b.as_ptr(), pack_b.len()) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_koepackVerifyV2(
+    env: JniEnv,
+    cls: JClass,
+    pack: JByteArray,
+) -> JInt {
+    unsafe { Java_com_anker_anker_1recorder_KoeCoreNative_nativeKoepackVerifyV2(env, cls, pack) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_nativeKoepackEncodeDemoV2(
+    env: JniEnv,
+    _cls: JClass,
+    content_hash: JByteArray,
+    title: JByteArray,
+    source: JByteArray,
+    minutes_json: JByteArray,
+) -> JByteArray {
+    let hash_b = unsafe { jni_read_bytes(env, content_hash) };
+    let title_b = unsafe { jni_read_bytes(env, title) };
+    let source_b = unsafe { jni_read_bytes(env, source) };
+    let minutes_b = unsafe { jni_read_bytes(env, minutes_json) };
+    let mut out_len = 0usize;
+    let ptr = unsafe {
+        koe_koepack_encode_demo_v2(
+            hash_b.as_ptr(),
+            hash_b.len(),
+            title_b.as_ptr(),
+            title_b.len(),
+            source_b.as_ptr(),
+            source_b.len(),
+            minutes_b.as_ptr(),
+            minutes_b.len(),
+            &mut out_len,
+        )
+    };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let arr = unsafe { jni_new_bytes(env, slice) };
+    unsafe { koe_buffer_free(ptr, out_len) };
+    arr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_koepackEncodeDemoV2(
+    env: JniEnv,
+    cls: JClass,
+    content_hash: JByteArray,
+    title: JByteArray,
+    source: JByteArray,
+    minutes_json: JByteArray,
+) -> JByteArray {
+    unsafe {
+        Java_com_anker_anker_1recorder_KoeCoreNative_nativeKoepackEncodeDemoV2(
+            env,
+            cls,
+            content_hash,
+            title,
+            source,
+            minutes_json,
+        )
     }
 }
