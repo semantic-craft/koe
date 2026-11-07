@@ -9,10 +9,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+pub use koe_protocol_kernel::cicada::{
+    pending_translation_segments, CicadaEvent, CicadaOutcome, CicadaReducer, CicadaState,
+    CICADA_MAX_CALLS_PER_HOUR, CICADA_ROLLING_CHAR_THRESHOLD, CICADA_ROLLING_INTERVAL_SEC,
+    CICADA_SILENCE_AUTO_STOP_MS,
+};
 pub use koe_protocol_kernel::commands::DeviceCommands;
+pub use koe_protocol_kernel::context::{
+    filter_open_mine_todos, sort_context_timeline, ContextEvent, ContextOutcome, ContextReducer,
+    ContextState,
+};
 pub use koe_protocol_kernel::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
+pub use koe_protocol_kernel::domain::{
+    AiProviderCommand, ContextItem, ContextKind, ContextSource, MeetingMinutesV2, MinuteCause,
+    MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm, MinuteTermAdoption, MinuteTopic,
+    SegmentId, TodoItem, TodoKind, TodoStatus, UtteranceSegment, UtteranceSpine,
+};
 pub use koe_protocol_kernel::frame::{FrameReassembler, ProtocolFrame};
 pub use koe_protocol_kernel::library::{RecordingEntry, RecordingLibrary};
+pub use koe_protocol_kernel::mcp_acp::{
+    is_supported_mcp_tool, McpAcpEvent, McpAcpOutcome, McpAcpReducer, McpAcpState, KOE_MCP_TOOLS,
+};
+pub use koe_protocol_kernel::minutes::{
+    contains_calculation_phrase, contains_percentage, validate_calculation_grounding,
+    validate_minutes_grounding, MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState,
+    MinutesValidationError,
+};
 pub use koe_protocol_kernel::models::{DeviceInfoModel, OfflineFileEntry, OfflineFileList};
 pub use koe_protocol_kernel::ogg_opus::OggOpus;
 pub use koe_protocol_kernel::session::{
@@ -27,8 +49,8 @@ pub use koe_protocol_kernel::wifi::{
     WIFI_KEEPALIVE_INTERVAL_MS, WIFI_KEEPALIVE_PAYLOAD, WIFI_UDP_PORT, WIFI_WS_FINISH_TEXT,
 };
 pub use koe_protocol_kernel::{
-    commands, crypto, frame, hash, library, models, ogg_opus, prng, session, slice_marks,
-    transport, wav, wifi,
+    cicada, commands, context, crypto, domain, frame, hash, library, mcp_acp, minutes, models,
+    ogg_opus, prng, session, slice_marks, transport, wav, wifi,
 };
 
 /// Direction for hardware double-tap mark navigation (`Previous` or `Next`).
@@ -103,6 +125,7 @@ pub struct DesktopHostSnapshot {
 pub struct DesktopBeanHost {
     session: TransportSession,
     library: RecordingLibrary,
+    spine: UtteranceSpine,
     export_dir: PathBuf,
     exported_files: Vec<DesktopExportedRecording>,
 }
@@ -123,6 +146,7 @@ impl DesktopBeanHost {
         Self {
             session: TransportSession::with_decoder_factory(factory),
             library: RecordingLibrary::new(),
+            spine: UtteranceSpine::new("desktop-default"),
             export_dir: export_dir.into(),
             exported_files: Vec::new(),
         }
@@ -149,6 +173,30 @@ impl DesktopBeanHost {
     #[must_use]
     pub fn library(&self) -> &RecordingLibrary {
         &self.library
+    }
+
+    /// Returns an immutable reference to the active [`UtteranceSpine`] (`S1..Sn`).
+    #[must_use]
+    pub fn spine(&self) -> &UtteranceSpine {
+        &self.spine
+    }
+
+    /// Returns a mutable reference to the active [`UtteranceSpine`] (`S1..Sn`).
+    pub fn spine_mut(&mut self) -> &mut UtteranceSpine {
+        &mut self.spine
+    }
+
+    /// Appends a finalized utterance segment to the host's [`UtteranceSpine`] and returns its [`SegmentId`].
+    pub fn append_utterance(
+        &mut self,
+        text: impl Into<String>,
+        start_ms: u64,
+        end_ms: u64,
+        source_language: impl Into<String>,
+        provider: impl Into<String>,
+    ) -> Option<SegmentId> {
+        self.spine
+            .append_segment(text, start_ms, end_ms, source_language, provider)
     }
 
     /// Returns all recordings exported or discovered on disk in this host.
@@ -555,6 +603,28 @@ mod tests {
         assert_eq!(host.snapshot().library.selected_id, Some(555));
         assert!(dir.join("555.opus").exists());
         assert!(dir.join("555.wav").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn desktop_host_spine_tracks_s1_citations_and_validates_grounding() {
+        let dir = temp_export_dir("spine-host");
+        let mut host = DesktopBeanHost::new(&dir);
+        let s1 = host
+            .append_utterance("基本工资是3910元。", 0, 2_000, "zh", "qwen")
+            .unwrap();
+        let s2 = host
+            .append_utterance("绩效发放比例为80%。", 2_000, 4_000, "zh", "qwen")
+            .unwrap();
+        assert_eq!(s1.to_string(), "S1");
+        assert_eq!(s2.to_string(), "S2");
+        assert_eq!(host.spine().len(), 2);
+        assert!(validate_calculation_grounding(
+            "基本工资3910元乘以80%发放",
+            &[s1, s2],
+            host.spine()
+        )
+        .is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 }
