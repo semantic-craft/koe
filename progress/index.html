@@ -327,6 +327,12 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/darwin/KoeNativeHost.swift">file darwin/KoeNativeHost.swift: iOS 与 macOS 共享 SwiftUI 宿主（Compact 三标签与 NavigationSplitView 三栏自适应）及 BeanTransportActor 蓝牙/Wi-Fi 协调器</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt">file android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt: Android Kotlin JNI 生产控制器 KoeNativeHostController（StateFlow 响应式状态流、BLE/Wi-Fi 动作分发与本机录音库管理）</a></li>
 </ul><p>Next: D3200 实体硬件在 iOS/Android 真机上的 BLE 后台恢复与 Wi-Fi SoftAP 实网拉流留待连接实体录音豆时按真机清单验证。</p></article>
+<article id="rust-core-domain-and-mcp-acp-slice-j-to-n"><h3>三大核心板块与原生 MCP + ACP 协议栈下沉收口（Slice J–N）</h3><span class="badge">done</span><p>完成 Slice J–N（PR #572、#573、#574、#575 及 Slice N 收口）：将录音豆（Meeting Minutes）、知了（Cicada）、心力豆（Sweetpea Context &amp; 400k 字 &lt;0.3ms 双字 BM25 检索）及原生 JSON-RPC 2.0 MCP（list_recordings、get_transcript、get_minutes、search_context、sync_qwennote_hotwords、export_koepack_v2）与 ACP（Agent Communication Protocol）协议栈全量下沉至 rust/koe_core（#![forbid(unsafe_code)]），并经 C-ABI / Swift / Kotlin JNI / Dart FFI（16 结构体、118 函数）接入 desktop/core、darwin/ SwiftUI 与 Android KoeCore.kt。58 项 koe_core 单测、31 项文档测试、5 项 desktop/core 单测、Swift+JNI 自检与全量 Flutter 测试全部通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: Slice J–N 全景接力队列与完成证据：UtteranceSpine S1..Sn 统一状态、录音豆结构化纪要防幻觉门禁、知了（Cicada）同传与 .koepack v2 合并、心力豆（Sweetpea）个人上下文与双字 BM25 离线检索、原生 JSON-RPC 2.0 MCP + ACP 服务端及三端全量接线</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/rust/koe_core/src/lib.rs">file rust/koe_core/src/lib.rs: Rust 统一话语脊柱（UtteranceSpine S1..Sn）、结构化纪要数值/百分比跨句拼接拦截、知了滚动摘要调度器与 .koepack v2 编解码、心力豆上下文与双字 BM25 索引</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/rust/koe_core/src/mcp_acp.rs">file rust/koe_core/src/mcp_acp.rs: 原生 JSON-RPC 2.0 MCP（2025-11-25 六个核心工具、KOEMCP1. 配对票据、15s live.json 租约、/sync/packs 增量同步）与 ACP（2026-01-01 六个方法及 1000 条日志上限）协议栈</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/rust/koe_core_ffi/src/bin/gen_bindings.rs">file rust/koe_core_ffi/src/bin/gen_bindings.rs: C-ABI / Swift / Kotlin JNI / Dart FFI 16 个结构体与 118 个导出函数零漂移绑定生成与校验</a></li>
+</ul><p>Next: iPhone/Android 物理真机 BLE 与 LAN/VPS 实网客户端连调留待真机环境独立验证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/551">#551</a> <code>e8676498b47a73d1588f329834bbef22a11048c3</code></li>
