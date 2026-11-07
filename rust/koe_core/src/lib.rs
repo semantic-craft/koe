@@ -56,8 +56,22 @@ pub use cicada::{
 };
 pub use hash::{is_valid_sha256_hex, sha256_hex};
 pub use context::{
-    filter_open_mine_todos, sort_context_timeline, ContextEvent, ContextOutcome, ContextReducer,
-    ContextState,
+    apply_place_update, build_morning_brief, cited_labels, commitment_instruction,
+    commitment_source, compare_timeline_entries, compute_project_progress,
+    delete_project_and_unlink, evaluate_diary_export, export_context_markdown,
+    filter_open_mine_todos, format_coarse_place, is_delegation_request, is_followup_question,
+    names_todo, pack_context_source_lines, parse_commitment_response, parse_due_str, query_terms,
+    rank_texts, reconcile_system_todo_sync, relabel_citations, render_source_lines,
+    select_focus_project, sort_context_timeline, sort_todos, stem_latin_token,
+    sync_derived_context_items, AskMessage, AskPromptPlan, AskRole, AskScope, AskSession,
+    AskStatus, AskStepOutcome, CommitmentChanges, ContextEvent, ContextOutcome, ContextReducer,
+    ContextSearchIndex, ContextState, DiaryDraft, DiaryEntry, DiaryError, DiaryExportDecision,
+    DiaryGenerationBlocked, DiaryPeriod, MorningBrief, PlaceCaptureSource, Project,
+    ProjectProgress, ProjectStatus, RecordingOrigin, RecordingPlaceTag, ScoringMode, SearchHit,
+    SourceLine, SourcePointer, SystemSyncOutcome, SystemTaskSnapshot, SystemTodoLink,
+    TimelineEntry, TodoClarification, TodoUpdateAction, ASK_MAX_CORPUS_CHARS, ASK_SYSTEM_PROMPT,
+    ASK_TOP_K_LIMIT, COMMITMENT_SYSTEM_PROMPT, DELEGATION_CLOSED_NOTICE, DIARY_SYSTEM_PROMPT,
+    RANK_BACKGROUND_THRESHOLD_CHARS, STOP_PAIRS,
 };
 pub use domain::{
     AiProviderCommand, ContextItem, ContextKind, ContextSource, MeetingMinutesV2, MinuteCause,
