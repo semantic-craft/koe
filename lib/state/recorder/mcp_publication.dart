@@ -320,24 +320,32 @@ mixin _RecorderMcpPublication on ChangeNotifier {
     }
   }
 
-  String buildAgentMcpSetupPrompt({required bool hasVps, String? ownerEmail}) {
-    if (hasVps) {
+  String buildAgentMcpSetupPrompt({bool? hasVps, String? ownerEmail}) {
+    if (hasVps == true) {
       return '''
-请直接阅读当前 Koe 仓库中的 `tools/koe-mcp/README.md` 与 `tools/koe-mcp/server.py`，从我电脑的 SSH 配置与环境信息中自动定位我的 VPS，完成 Koe 远程 HTTP MCP 与双端同步部署（全程无需我手动填写任何地址或邮箱）：
+请直接阅读当前 Koe 仓库中的 `tools/koe-mcp/README.md` 与 `tools/koe-mcp/server.py`，从我电脑的 SSH 配置与环境信息中自动定位我的 VPS，完成 Koe 远程 HTTP MCP 与双端同步部署：
 
 1. 将仓库下的 `tools/koe-mcp/server.py` 部署到我的 VPS（例如 `/opt/koe-mcp/server.py`），创建数据目录 `~/.koe/mcp-sync`，并以常驻服务启动 HTTP MCP 与同步接口（`--directory ~/.koe/mcp-sync --http-listen 127.0.0.1:8787 --token-file ~/.koe/mcp-token`，经反代暴露 HTTPS `/mcp` 与 `/sync/packs`）。
 2. 将该 HTTP MCP 地址与 Bearer 令牌自动写入我电脑上的 MCP 客户端（Magpie / Claude Code / Codex / Antigravity）。
-3. 执行 `python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url https://<自动发现的VPS域名>/mcp --mode vps --print-pairing` 生成 `KOEMCP1.` 连接码：
-   - 若我的 iPhone 正插在电脑上，请直接用 `xcrun devicectl` 将连接码写入 iPhone Koe 容器的 `Documents/AnkerRecorder/mcp_pairing.txt`；
-   - 同时将 `KOEMCP1.` 连接码写入系统剪贴板（`pbcopy`）并回复给我，我在 Koe 点一下「一键接入」即可完成绑定。
+3. 执行 `python3 /opt/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url https://<自动发现的VPS域名>/mcp --mode vps --print-pairing` 生成 `KOEMCP1.` 连接码，写入系统剪贴板（`pbcopy`）并回复给我。
+'''.trim();
+    }
+    if (hasVps == false) {
+      return '''
+请直接阅读当前 Koe 仓库中的 `tools/koe-mcp/README.md` 与 `tools/koe-mcp/server.py`，直接在这台 Mac 上完成 Koe 本地读取或局域网同步配置：
+
+1. 若只需在本机让 AI 直接读取 Koe 纪要与转写：直接按 `tools/koe-mcp/README.md` 挂载本机 `tools/koe-mcp/server.py`。
+2. 若需开启手机与 Mac 局域网同步：创建 `~/.koe/mcp-sync`，自动获取这台 Mac 的局域网/Tailscale IP，后台常驻启动 `python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 0.0.0.0:8787 --token-file ~/.koe/mcp-token`，并配置好本机 MCP 客户端。
+3. 运行 `python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url http://<Mac局域网IP>:8787/mcp --mode lan --print-pairing` 生成 `KOEMCP1.` 连接码，写入系统剪贴板（`pbcopy`）并回复给我。
 '''.trim();
     }
     return '''
-请直接阅读当前 Koe 仓库中的 `tools/koe-mcp/README.md` 与 `tools/koe-mcp/server.py`，直接在这台 Mac 上完成 Koe 本地读取或局域网同步配置（全程无需我手动填写任何内容）：
+请阅读当前 Koe 仓库中的 `tools/koe-mcp/README.md` 与 `tools/koe-mcp/server.py`，帮我完成 Koe 的外部 AI（MCP）与多端同步配置：
 
-1. 若只需在本机让 AI 直接读取 Koe 纪要与转写：直接按 `tools/koe-mcp/README.md` 挂载本机 `tools/koe-mcp/server.py`（或若 iPhone 插着电脑，用 `xcrun devicectl` 直接读取 `com.semanticcraft.soundcore` 容器内的 `Documents/AnkerRecorder`）。
-2. 若需开启手机与 Mac 局域网同步：创建 `~/.koe/mcp-sync`，自动获取这台 Mac 的局域网/Tailscale IP，后台常驻启动 `python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 0.0.0.0:8787 --token-file ~/.koe/mcp-token`，并配置好本机 MCP 客户端。
-3. 运行 `python3 tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --token-file ~/.koe/mcp-token --public-url http://<Mac局域网IP>:8787/mcp --mode lan --print-pairing` 生成 `KOEMCP1.` 连接码，直接写入系统剪贴板（`pbcopy`）或通过 `xcrun devicectl` 写入 iPhone 的 `Documents/AnkerRecorder/mcp_pairing.txt`，我在 Koe 点一下「一键接入」即可。
+1. 请先询问我是否有自己的 VPS：
+   - 如果我有 VPS：请向我询问或从我的 `~/.ssh/config` 中与我确认 VPS 的连接细节（SSH 主机、公网域名等），然后将 `tools/koe-mcp/server.py` 部署到该 VPS（`--directory ~/.koe/mcp-sync --http-listen 127.0.0.1:8787 --token-file ~/.koe/mcp-token`，经 HTTPS 反代暴露 `/mcp` 与 `/sync/packs`），配置好我电脑上的 MCP 客户端，并运行 `--mode vps --print-pairing` 生成连接码。
+   - 如果我没有 VPS：请直接在这台 Mac 上按 `tools/koe-mcp/README.md` 配置本机 MCP 读取与局域网同步（常驻启动 `tools/koe-mcp/server.py --directory ~/.koe/mcp-sync --http-listen 0.0.0.0:8787 --token-file ~/.koe/mcp-token`），配置好本机 MCP 客户端，并运行 `--mode lan --print-pairing` 生成连接码。
+2. 生成 `KOEMCP1.` 连接码后，请直接写入系统剪贴板（`pbcopy`）并在回复中发给我（若我的 iPhone 正插在电脑上，也可通过 `xcrun devicectl` 写入 iPhone Koe 容器的 `Documents/AnkerRecorder/mcp_pairing.txt`），我回 Koe 点一下「粘贴 AI 返回的连接码」即可完成绑定。
 '''.trim();
   }
 
