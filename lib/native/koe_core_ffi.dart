@@ -160,6 +160,27 @@ class KoeUnpackedSliceBatch {
   int get wireRecordBytes => sliceCount * 166;
 }
 
+final class _KoeWifiEndpointNative extends Struct {
+  @Array(4)
+  external Array<Uint8> ip;
+
+  @Uint16()
+  external int port;
+
+  @Array(2)
+  external Array<Uint8> reserved;
+}
+
+class KoeWifiEndpoint {
+  const KoeWifiEndpoint({
+    required this.ip,
+    required this.port,
+  });
+
+  final String ip;
+  final int port;
+}
+
 typedef _ChecksumNative = Uint8 Function(Pointer<Uint8>, Size);
 typedef _ChecksumDart = int Function(Pointer<Uint8>, int);
 
@@ -377,6 +398,48 @@ typedef _OpusDecodeWavDart = Pointer<Uint8> Function(
   Pointer<Size>,
 );
 
+typedef _WifiParseConfigNative = Uint8 Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<_KoeWifiEndpointNative>,
+);
+typedef _WifiParseConfigDart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<_KoeWifiEndpointNative>,
+);
+
+typedef _WifiSharesSubnetNative = Uint8 Function(
+  Pointer<Uint8>,
+  Pointer<Uint8>,
+);
+typedef _WifiSharesSubnetDart = int Function(
+  Pointer<Uint8>,
+  Pointer<Uint8>,
+);
+
+typedef _WifiBuildFileRequestHexNative = Size Function(
+  Uint32,
+  Uint32,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _WifiBuildFileRequestHexDart = int Function(
+  int,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _WifiOutBufNative = Size Function(
+  Pointer<Uint8>,
+  Size,
+);
+typedef _WifiOutBufDart = int Function(
+  Pointer<Uint8>,
+  int,
+);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -462,6 +525,31 @@ final class KoeCoreFfi {
           lib.lookupFunction<_OpusDecodeWavNative, _OpusDecodeWavDart>(
             'koe_opus_decode_wav',
             isLeaf: true,
+          ),
+      _wifiParseConfig =
+          lib.lookupFunction<_WifiParseConfigNative, _WifiParseConfigDart>(
+            'koe_wifi_parse_config_response',
+            isLeaf: true,
+          ),
+      _wifiSharesSubnet =
+          lib.lookupFunction<_WifiSharesSubnetNative, _WifiSharesSubnetDart>(
+            'koe_wifi_shares_subnet',
+            isLeaf: true,
+          ),
+      _wifiBuildFileRequestHex =
+          lib.lookupFunction<
+            _WifiBuildFileRequestHexNative,
+            _WifiBuildFileRequestHexDart
+          >('koe_wifi_build_file_request_hex', isLeaf: true),
+      _wifiBuildTransferCompleteHex =
+          lib.lookupFunction<_WifiOutBufNative, _WifiOutBufDart>(
+            'koe_wifi_build_transfer_complete_hex',
+            isLeaf: true,
+          ),
+      _wifiKeepalivePayload =
+          lib.lookupFunction<_WifiOutBufNative, _WifiOutBufDart>(
+            'koe_wifi_keepalive_payload',
+            isLeaf: true,
           );
 
   static final KoeCoreFfi? instance = _load();
@@ -532,6 +620,11 @@ final class KoeCoreFfi {
   final _WavHeaderDart _wavHeader;
   final _OpusDecodePcm16Dart _opusDecodePcm16;
   final _OpusDecodeWavDart _opusDecodeWav;
+  final _WifiParseConfigDart _wifiParseConfig;
+  final _WifiSharesSubnetDart _wifiSharesSubnet;
+  final _WifiBuildFileRequestHexDart _wifiBuildFileRequestHex;
+  final _WifiOutBufDart _wifiBuildTransferCompleteHex;
+  final _WifiOutBufDart _wifiKeepalivePayload;
 
   int protocolChecksum(List<int> data) {
     if (data.isEmpty) return 0;
@@ -1010,6 +1103,78 @@ final class KoeCoreFfi {
       malloc.free(rawPtr);
       if (marksPtr != nullptr) calloc.free(marksPtr);
       calloc.free(outLenPtr);
+    }
+  }
+
+  KoeWifiEndpoint? parseWifiConfigResponse(Uint8List raw) {
+    if (raw.length < 15) return null;
+    final rawPtr = malloc<Uint8>(raw.length);
+    final outPtr = calloc<_KoeWifiEndpointNative>(1);
+    try {
+      rawPtr.asTypedList(raw.length).setAll(0, raw);
+      final ok = _wifiParseConfig(rawPtr, raw.length, outPtr);
+      if (ok == 0) return null;
+      final ref = outPtr.ref;
+      final ipStr =
+          '${ref.ip[0]}.${ref.ip[1]}.${ref.ip[2]}.${ref.ip[3]}';
+      return KoeWifiEndpoint(ip: ipStr, port: ref.port);
+    } finally {
+      malloc.free(rawPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  bool sharesIpv4Subnet(List<int> deviceIp, List<int> localIp) {
+    if (deviceIp.length < 4 || localIp.length < 4) return false;
+    final devPtr = malloc<Uint8>(4);
+    final locPtr = malloc<Uint8>(4);
+    try {
+      for (var i = 0; i < 4; i++) {
+        (devPtr + i).value = deviceIp[i] & 0xFF;
+        (locPtr + i).value = localIp[i] & 0xFF;
+      }
+      return _wifiSharesSubnet(devPtr, locPtr) != 0;
+    } finally {
+      malloc.free(devPtr);
+      malloc.free(locPtr);
+    }
+  }
+
+  String buildWifiFileRequestHex({
+    required int fileId,
+    int alreadyTransferred = 0,
+  }) {
+    final outPtr = malloc<Uint8>(64);
+    try {
+      final len = _wifiBuildFileRequestHex(
+        fileId,
+        alreadyTransferred,
+        outPtr,
+        64,
+      );
+      return utf8.decode(outPtr.asTypedList(len));
+    } finally {
+      malloc.free(outPtr);
+    }
+  }
+
+  String wifiTransferCompleteHex() {
+    final outPtr = malloc<Uint8>(64);
+    try {
+      final len = _wifiBuildTransferCompleteHex(outPtr, 64);
+      return utf8.decode(outPtr.asTypedList(len));
+    } finally {
+      malloc.free(outPtr);
+    }
+  }
+
+  Uint8List wifiKeepalivePayload() {
+    final outPtr = malloc<Uint8>(64);
+    try {
+      final len = _wifiKeepalivePayload(outPtr, 64);
+      return Uint8List.fromList(outPtr.asTypedList(len));
+    } finally {
+      malloc.free(outPtr);
     }
   }
 

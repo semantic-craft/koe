@@ -265,5 +265,86 @@ struct KoeCoreSwiftTest {
       }
       await actor.finishStream()
     }
+
+    var wifiConfigRx = Data([
+      0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x05, 0x10, 0x00,
+      1, 4, 168, 192, 0x02, 0x7D,
+    ])
+    wifiConfigRx.append(KoeCore.checksum(wifiConfigRx))
+    let parsedEp = KoeCore.parseWifiConfigResponse(wifiConfigRx)
+    check(parsedEp?.ip == [192, 168, 4, 1] && parsedEp?.port == 32002 && parsedEp?.ipString == "192.168.4.1", "parseWifiConfigResponse must decode reverse IPv4 and LE port 32002")
+    check(KoeCore.sharesIpv4Subnet(deviceIp: [192, 168, 4, 1], localIp: [192, 168, 4, 2]), "sharesIpv4Subnet must match /24")
+    check(!KoeCore.sharesIpv4Subnet(deviceIp: [192, 168, 4, 1], localIp: [192, 168, 4, 1]), "sharesIpv4Subnet must reject identical host")
+    let reqHex = KoeCore.buildWifiFileRequestHex(fileId: 1001, alreadyTransferred: 0)
+    check(reqHex.count == 36 && reqHex.hasPrefix("08ee0000001a071200") && reqHex.hasSuffix("1b"), "buildWifiFileRequestHex must emit 36-char lowercase hex ending with 1b")
+    check(KoeCore.wifiTransferCompleteHex() == "08ee0000001a0a0b000126", "wifiTransferCompleteHex must match 22-char hex")
+    check(String(decoding: KoeCore.wifiKeepalivePayload(), as: UTF8.self) == "soundcore-keep-alive-unicast", "wifiKeepalivePayload must be 28-byte keep-alive")
+
+    let wifiSession = KoeTransportSession()
+    _ = wifiSession.ingestBleChunk(wifiConfigRx, nowEpochSec: 1_700_000_200)
+    check(wifiSession.currentWifiEndpoint()?.ipString == "192.168.4.1" && wifiSession.currentWifiEndpoint()?.port == 32002, "ingestBleChunk(1A/05) must store wifiEndpoint on session")
+
+    check(wifiSession.beginWifiBatch(fileIds: [701, 702, 703]), "beginWifiBatch must start batch")
+    check(wifiSession.popOutboundWifiWs() == KoeCore.buildWifiFileRequestHex(fileId: 701, alreadyTransferred: 0), "beginWifiBatch must queue WS 1A/07 request for 701")
+    check(wifiSession.popOutboundWifiUdp() == KoeCore.wifiKeepalivePayload(), "beginWifiBatch must queue initial UDP keepalive")
+
+    func makeShortHead(fileId: UInt32, fileSize: UInt32, errorCode: UInt8 = 0) -> Data {
+      var frame = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x07, 0x12, 0x00])
+      var fid = fileId.littleEndian
+      var fsize = fileSize.littleEndian
+      withUnsafeBytes(of: &fid) { frame.append(contentsOf: $0) }
+      withUnsafeBytes(of: &fsize) { frame.append(contentsOf: $0) }
+      if errorCode != 0 {
+        frame.append(contentsOf: [UInt8](repeating: 0, count: 78))
+        frame.append(errorCode)
+        let total = UInt16(frame.count + 1)
+        frame[7] = UInt8(total & 0xFF)
+        frame[8] = UInt8((total >> 8) & 0xFF)
+      }
+      frame.append(KoeCore.checksum(frame))
+      return frame
+    }
+
+    func makeSingleSlice(seq: UInt32, mark: Bool) -> Data {
+      var payload = Data()
+      var s = seq.littleEndian
+      withUnsafeBytes(of: &s) { payload.append(contentsOf: $0) }
+      payload.append(mark ? 0x01 : 0x00)
+      payload.append(padded160)
+      payload.append(0x00)
+      let total = UInt16(10 + payload.count)
+      var frame = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x08, UInt8(total & 0xFF), UInt8((total >> 8) & 0xFF)])
+      frame.append(payload)
+      frame.append(KoeCore.checksum(frame))
+      return frame
+    }
+
+    var doneFrame = Data([0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x0A, 0x0B, 0x00, 0x00])
+    doneFrame.append(KoeCore.checksum(doneFrame))
+
+    let hexHead701 = makeShortHead(fileId: 701, fileSize: 166).map { String(format: "%02x", $0) }.joined()
+    _ = wifiSession.ingestWifiChunk(Data(hexHead701.utf8), nowEpochSec: 1_700_000_201)
+    let step701 = wifiSession.ingestWifiChunk(makeSingleSlice(seq: 0, mark: true), nowEpochSec: 1_700_000_201)
+    check(step701.hasFinalizedRecording, "file 701 must finalize immediately on reaching expected_wire_bytes")
+    check(wifiSession.popOutboundWifiWs() == KoeCore.buildWifiFileRequestHex(fileId: 702, alreadyTransferred: 0), "completing 701 must advance to 702")
+
+    let step702 = wifiSession.ingestWifiChunk(makeShortHead(fileId: 702, fileSize: 166, errorCode: 1), nowEpochSec: 1_700_000_202)
+    check(step702.transferUpdated && wifiSession.currentWifiBatchProgress().skippedCount == 1, "error_code 1 on 702 must skip and advance")
+    check(wifiSession.popOutboundWifiWs() == KoeCore.buildWifiFileRequestHex(fileId: 703, alreadyTransferred: 0), "skipping 702 must advance to 703")
+
+    _ = wifiSession.ingestWifiChunk(makeShortHead(fileId: 703, fileSize: 332), nowEpochSec: 1_700_000_203)
+    _ = wifiSession.ingestWifiChunk(doneFrame, nowEpochSec: 1_700_000_203)
+    check(wifiSession.currentWifiBatchProgress().phase == 2, "stale 1A/0A before slices must be ignored")
+    _ = wifiSession.ingestWifiChunk(makeSingleSlice(seq: 0, mark: false), nowEpochSec: 1_700_000_203)
+    _ = wifiSession.ingestWifiChunk(doneFrame, nowEpochSec: 1_700_000_203)
+    check(wifiSession.currentWifiBatchProgress().phase == 2, "premature 1A/0A at 166/332 bytes must be ignored")
+    _ = wifiSession.ingestWifiChunk(makeSingleSlice(seq: 1, mark: true), nowEpochSec: 1_700_000_204)
+    let progDone = wifiSession.currentWifiBatchProgress()
+    check(progDone.phase == 4 && progDone.finalizedCount == 2 && progDone.skippedCount == 1, "batch must complete with 2 finalized and 1 skipped")
+    check(wifiSession.popOutboundWifiWs() == "FINISH", "completed batch must emit FINISH first")
+    check(wifiSession.popOutboundWifiWs() == KoeCore.wifiTransferCompleteHex(), "completed batch must emit 1A/0A hex second")
+    let fin701 = wifiSession.takeFinalized()
+    let fin703 = wifiSession.takeFinalized()
+    check(fin701?.entry.id == 701 && fin703?.entry.id == 703 && wifiSession.takeFinalized() == nil, "takeFinalized must drain both 701 and 703 in FIFO order")
   }
 }

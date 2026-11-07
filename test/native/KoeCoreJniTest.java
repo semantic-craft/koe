@@ -34,6 +34,20 @@ final class KoeCoreNative {
   static native long[] sessionTakeFinalizedMeta(long handle);
   static native byte[] sessionTakeFinalizedOgg(long handle);
   static native byte[] sessionTakeFinalizedWav(long handle);
+  static native long[] wifiParseConfigResponse(byte[] raw);
+  static native boolean wifiSharesSubnet(byte[] deviceIp, byte[] localIp);
+  static native byte[] wifiBuildFileRequestHex(int fileId, int alreadyTransferred);
+  static native byte[] wifiBuildTransferCompleteHex();
+  static native byte[] wifiKeepalivePayload();
+  static native boolean sessionBeginWifiBatch(long handle, long[] fileIds);
+  static native long[] sessionIngestWifiChunk(long handle, byte[] chunk, long nowEpochSec);
+  static native byte[] sessionPopOutboundWifiWs(long handle);
+  static native byte[] sessionPopOutboundWifiUdp(long handle);
+  static native long[] sessionGetWifiBatchProgress(long handle);
+  static native long[] sessionGetWifiEndpoint(long handle);
+  static native boolean sessionOnWifiInterrupted(long handle, long nowEpochSec);
+  static native boolean sessionResumeWifiBatch(long handle);
+  static native void sessionCancelWifiBatch(long handle);
 
   static native long libraryNew();
   static native void libraryFree(long handle);
@@ -143,5 +157,40 @@ public final class KoeCoreJniTest {
     long[] snapRestored = KoeCoreNative.librarySnapshot(library);
     check(snapRestored[0] == 1L && snapRestored[1] == 20261107L, "snapshot after undo");
     KoeCoreNative.libraryFree(library);
+
+    byte[] wifiCfg = new byte[] {
+      0x09, (byte) 0xFF, 0x00, 0x00, 0x01, 0x1A, 0x05, 0x10, 0x00,
+      1, 4, (byte) 168, (byte) 192, 0x02, 0x7D, 0x00
+    };
+    wifiCfg[15] = (byte) KoeCoreNative.checksum(Arrays.copyOf(wifiCfg, 15));
+    long[] ep = KoeCoreNative.wifiParseConfigResponse(wifiCfg);
+    check(
+        ep != null && ep.length == 5 && ep[0] == 192L && ep[1] == 168L && ep[2] == 4L && ep[3] == 1L && ep[4] == 32002L,
+        "wifiParseConfigResponse 192.168.4.1:32002");
+    check(
+        KoeCoreNative.wifiSharesSubnet(
+            new byte[] {(byte) 192, (byte) 168, 4, 1},
+            new byte[] {(byte) 192, (byte) 168, 4, 2}),
+        "wifiSharesSubnet /24 match");
+    String reqHex = new String(KoeCoreNative.wifiBuildFileRequestHex(1001, 0), StandardCharsets.UTF_8);
+    check(reqHex.length() == 36 && reqHex.endsWith("1b"), "wifiBuildFileRequestHex 36 chars ending with 1b");
+    String completeHex = new String(KoeCoreNative.wifiBuildTransferCompleteHex(), StandardCharsets.UTF_8);
+    check(completeHex.equals("08ee0000001a0a0b000126"), "wifiBuildTransferCompleteHex");
+    String keepalive = new String(KoeCoreNative.wifiKeepalivePayload(), StandardCharsets.UTF_8);
+    check(keepalive.equals("soundcore-keep-alive-unicast"), "wifiKeepalivePayload");
+
+    long wifiSession = KoeCoreNative.sessionNew();
+    KoeCoreNative.sessionIngestBleChunk(wifiSession, wifiCfg, 1_700_000_200L);
+    long[] sessEp = KoeCoreNative.sessionGetWifiEndpoint(wifiSession);
+    check(sessEp != null && sessEp[0] == 192L && sessEp[4] == 32002L, "sessionGetWifiEndpoint");
+    check(KoeCoreNative.sessionBeginWifiBatch(wifiSession, new long[] {801L}), "sessionBeginWifiBatch");
+    byte[] wsOut = KoeCoreNative.sessionPopOutboundWifiWs(wifiSession);
+    byte[] udpOut = KoeCoreNative.sessionPopOutboundWifiUdp(wifiSession);
+    check(wsOut != null && wsOut.length == 36, "sessionPopOutboundWifiWs initial 36-char hex");
+    check(udpOut != null && udpOut.length == 28, "sessionPopOutboundWifiUdp initial 28B keepalive");
+    long[] wifiProg = KoeCoreNative.sessionGetWifiBatchProgress(wifiSession);
+    check(wifiProg.length == 11 && wifiProg[0] == 2L && wifiProg[3] == 1L && wifiProg[4] == 801L, "sessionGetWifiBatchProgress");
+    KoeCoreNative.sessionCancelWifiBatch(wifiSession);
+    KoeCoreNative.sessionFree(wifiSession);
   }
 }

@@ -112,6 +112,27 @@ typedef struct KoeLibrarySnapshot {
   uint32_t pad_tail;
 } KoeLibrarySnapshot;
 
+typedef struct KoeWifiEndpoint {
+  uint8_t ip[4];
+  uint16_t port;
+  uint8_t reserved[2];
+} KoeWifiEndpoint;
+
+typedef struct KoeWifiBatchProgress {
+  uint8_t phase;
+  uint8_t error_code;
+  uint8_t reserved[2];
+  uint32_t current_file_index;
+  uint32_t total_files;
+  uint32_t active_file_id;
+  uint32_t received_wire_bytes;
+  uint32_t expected_wire_bytes;
+  uint32_t finalized_count;
+  uint32_t salvaged_count;
+  uint32_t skipped_count;
+  uint32_t remaining_count;
+} KoeWifiBatchProgress;
+
 uint8_t koe_protocol_checksum(const uint8_t* data_ptr, size_t data_len);
 uint8_t koe_protocol_verify_checksum(const uint8_t* packet_ptr, size_t packet_len);
 size_t koe_protocol_encode(uint8_t cmd_type, uint8_t cmd_id, const uint8_t* payload_ptr, size_t payload_len, uint8_t* out_ptr, size_t out_cap);
@@ -159,6 +180,20 @@ uint8_t koe_session_finalize_active_transfer(uint64_t handle, uint64_t now_epoch
 uint8_t koe_session_simulate_realtime_pipeline(uint64_t handle, uint64_t now_epoch_sec, KoeSessionStepResult* out_step_ptr);
 uint8_t* koe_session_take_live_pcm16(uint64_t handle, size_t* out_len_ptr);
 uint8_t koe_session_take_finalized(uint64_t handle, KoeRecordingEntry* out_entry_ptr, uint8_t** out_ogg_ptr, size_t* out_ogg_len_ptr, uint8_t** out_wav_ptr, size_t* out_wav_len_ptr);
+uint8_t koe_wifi_parse_config_response(const uint8_t* raw_ptr, size_t raw_len, KoeWifiEndpoint* out_endpoint_ptr);
+uint8_t koe_wifi_shares_subnet(const uint8_t* device_ip_ptr, const uint8_t* local_ip_ptr);
+size_t koe_wifi_build_file_request_hex(uint32_t file_id, uint32_t already_transferred, uint8_t* out_ptr, size_t out_cap);
+size_t koe_wifi_build_transfer_complete_hex(uint8_t* out_ptr, size_t out_cap);
+size_t koe_wifi_keepalive_payload(uint8_t* out_ptr, size_t out_cap);
+uint8_t koe_session_begin_wifi_batch(uint64_t handle, const uint32_t* file_ids_ptr, size_t file_count);
+int32_t koe_session_ingest_wifi_chunk(uint64_t handle, const uint8_t* chunk_ptr, size_t chunk_len, uint64_t now_epoch_sec, KoeSessionStepResult* out_step_ptr);
+size_t koe_session_pop_outbound_wifi_ws(uint64_t handle, uint8_t* out_ptr, size_t out_cap);
+size_t koe_session_pop_outbound_wifi_udp(uint64_t handle, uint8_t* out_ptr, size_t out_cap);
+int32_t koe_session_get_wifi_batch_progress(uint64_t handle, KoeWifiBatchProgress* out_progress_ptr);
+uint8_t koe_session_get_wifi_endpoint(uint64_t handle, KoeWifiEndpoint* out_endpoint_ptr);
+uint8_t koe_session_on_wifi_interrupted(uint64_t handle, uint64_t now_epoch_sec);
+uint8_t koe_session_resume_wifi_batch(uint64_t handle);
+void koe_session_cancel_wifi_batch(uint64_t handle);
 uint64_t koe_library_new(void);
 void koe_library_free(uint64_t handle);
 int32_t koe_library_snapshot(uint64_t handle, KoeLibrarySnapshot* out_snapshot_ptr);
