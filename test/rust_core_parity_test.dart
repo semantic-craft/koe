@@ -755,4 +755,159 @@ void main() {
       ffi.spineFree(spine);
     }
   });
+
+  test('Rust FFI Slice L Cicada rolling minutes scheduler, 30s silence reducer, and .koepack v2 codec verify across C-ABI', () {
+    final ffi = KoeCoreFfi.instance!;
+    final rolling = ffi.cicadaRollingNew(sessionId: 'dart-slice-l');
+    try {
+      final chunk100 = '会' * 100;
+      expect(
+        ffi.cicadaRollingAddSegment(
+          handle: rolling,
+          segId: 'c1',
+          text: chunk100,
+          nowMs: 1000,
+        ),
+        isTrue,
+      );
+      expect(ffi.cicadaRollingPollTick(handle: rolling, nowMs: 15000), isNull);
+      final ticket1 = ffi.cicadaRollingPollTick(handle: rolling, nowMs: 32000);
+      expect(ticket1, isNotNull);
+      expect(ticket1!.fromIndex, equals(0));
+      expect(ticket1.endIndex, equals(1));
+
+      const min1 = '''
+{
+  "schemaVersion": 2,
+  "title": "初稿",
+  "overview": "概述",
+  "topics": [{ "text": "讨论事项", "sources": ["S1"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": []
+}
+''';
+      expect(
+        ffi.cicadaRollingComplete(
+          handle: rolling,
+          generation: ticket1.generation,
+          fromIndex: ticket1.fromIndex,
+          endIndex: ticket1.endIndex,
+          rawJson: min1,
+        ),
+        equals(1),
+      );
+      expect(ffi.cicadaRollingGetActive(rolling), contains('初稿'));
+
+      const editedMin = '''
+{
+  "schemaVersion": 2,
+  "title": "人工修订稿",
+  "overview": "保留人工修改",
+  "topics": [{ "text": "讨论事项", "sources": ["S1"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": []
+}
+''';
+      expect(
+        ffi.cicadaRollingEdit(handle: rolling, editedJson: editedMin),
+        equals(1),
+      );
+      expect(ffi.cicadaRollingStatus(rolling)?.edited, isTrue);
+
+      expect(
+        ffi.cicadaRollingAddSegment(
+          handle: rolling,
+          segId: 'c2',
+          text: chunk100,
+          nowMs: 35000,
+        ),
+        isTrue,
+      );
+      expect(ffi.cicadaRollingPollTick(handle: rolling, nowMs: 70000), isNull);
+      expect(
+        ffi.cicadaRollingAddSegment(
+          handle: rolling,
+          segId: 'c3',
+          text: chunk100,
+          nowMs: 71000,
+        ),
+        isTrue,
+      );
+      final ticket2 = ffi.cicadaRollingPollTick(handle: rolling, nowMs: 72000);
+      expect(ticket2, isNotNull);
+      expect(ticket2!.fromIndex, equals(1));
+      expect(ticket2.endIndex, equals(3));
+
+      const min2 = '''
+{
+  "schemaVersion": 2,
+  "title": "二稿候选",
+  "overview": "增量整理",
+  "topics": [{ "text": "新增事项", "sources": ["S2", "S3"] }],
+  "decisions": [],
+  "actions": [],
+  "questions": []
+}
+''';
+      expect(
+        ffi.cicadaRollingComplete(
+          handle: rolling,
+          generation: ticket2.generation,
+          fromIndex: ticket2.fromIndex,
+          endIndex: ticket2.endIndex,
+          rawJson: min2,
+        ),
+        equals(1),
+      );
+      final statusHeld = ffi.cicadaRollingStatus(rolling)!;
+      expect(statusHeld.hasCandidate, isTrue);
+      expect(ffi.cicadaRollingGetActive(rolling), contains('人工修订稿'));
+
+      expect(ffi.cicadaRollingAcceptCandidate(rolling), isTrue);
+      final statusAccepted = ffi.cicadaRollingStatus(rolling)!;
+      expect(statusAccepted.hasCandidate, isFalse);
+      expect(ffi.cicadaRollingGetActive(rolling), contains('二稿候选'));
+    } finally {
+      ffi.cicadaRollingFree(rolling);
+    }
+
+    final sil1 = ffi.cicadaSilenceReduce(
+      silenceElapsedMs: 0,
+      deltaMs: 15000,
+      speechDetected: false,
+      alreadyAutoStopped: false,
+    );
+    expect(sil1.nextElapsedMs, equals(15000));
+    expect(sil1.autoStopped, isFalse);
+    expect(sil1.triggered, isFalse);
+
+    final sil2 = ffi.cicadaSilenceReduce(
+      silenceElapsedMs: sil1.nextElapsedMs,
+      deltaMs: 15000,
+      speechDetected: false,
+      alreadyAutoStopped: false,
+    );
+    expect(sil2.nextElapsedMs, equals(30000));
+    expect(sil2.autoStopped, isTrue);
+    expect(sil2.triggered, isTrue);
+
+    final demoHash = 'a' * 64;
+    const demoMinJson =
+        '{"schemaVersion":2,"title":"资料包纪要","overview":"概述","topics":[{"text":"讨论事项","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}';
+    final packBytes = ffi.koepackEncodeDemoV2(
+      contentHash: demoHash,
+      title: '周会资料包',
+      source: '第一段会议记录',
+      minutesJson: demoMinJson,
+    );
+    expect(packBytes, isNotNull);
+    expect(utf8.decode(packBytes!.sublist(0, 8)), equals('KOEPACK1'));
+    expect(ffi.koepackVerifyV2(packBytes), equals(2));
+
+    final tampered = Uint8List.fromList(packBytes);
+    tampered[tampered.length - 1] ^= 0xFF;
+    expect(ffi.koepackVerifyV2(tampered), lessThan(0));
+  });
 }

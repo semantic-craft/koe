@@ -42,10 +42,19 @@ pub mod wav;
 pub mod wifi;
 
 pub use cicada::{
-    pending_translation_segments, CicadaEvent, CicadaOutcome, CicadaReducer, CicadaState,
-    CICADA_MAX_CALLS_PER_HOUR, CICADA_ROLLING_CHAR_THRESHOLD, CICADA_ROLLING_INTERVAL_SEC,
-    CICADA_SILENCE_AUTO_STOP_MS,
+    analysis_source_blocks, build_translation_instruction, decode_koepack_v2, encode_koepack_v2,
+    format_caption_journal_key, live_minute_citations, merge_minutes_history,
+    pending_translation_segments, translation_system_prompt, validate_live_minutes_json,
+    CaptionJournalStatus, CaptionTranslationTicket, CicadaEvent, CicadaOutcome, CicadaReducer,
+    CicadaState, LiveCaptionsQueue, MaterialPackError, MaterialPackV2, MinutesHistoryMergeOutcome,
+    PackMaterialMeta, PackMinutesV2, PortableMinutesEntry, RollingMinutesScheduler,
+    RollingMinutesTicket, RollingRequestStatus, RollingTickDecision, CICADA_HOUR_WINDOW_MS,
+    CICADA_MAX_CALLS_PER_HOUR, CICADA_MAX_SINGLE_WINDOW_CHARS, CICADA_MAX_TOTAL_SOURCE_CHARS,
+    CICADA_MAX_WAITING_CAPTIONS, CICADA_ROLLING_CHAR_THRESHOLD, CICADA_ROLLING_INTERVAL_SEC,
+    CICADA_SILENCE_AUTO_STOP_MS, CICADA_SOURCE_BLOCK_MAX_RUNES, CICADA_TRANSLATION_SYSTEM_PROMPT,
+    KOEPACK_FORMAT_NAME, KOEPACK_MAGIC, KOEPACK_MAX_MANIFEST_BYTES, KOEPACK_MAX_MINUTES_HISTORY,
 };
+pub use hash::{is_valid_sha256_hex, sha256_hex};
 pub use context::{
     filter_open_mine_todos, sort_context_timeline, ContextEvent, ContextOutcome, ContextReducer,
     ContextState,

@@ -421,5 +421,97 @@ struct KoeCoreSwiftTest {
     let qwenSpine = KoeUtteranceSpine(sessionId: "qwen-swift")
     let qwenJson = #"{"transcripts":[{"sentences":[{"text":"第一句。","begin_time":0,"end_time":1000,"speaker_id":0},{"text":"第二句。","begin_time":1000,"end_time":2000,"speaker_id":1}]}]}"#
     check(qwenSpine.parseQwenTranscript(qwenJson) == 2 && qwenSpine.snapshot().segmentCount == 2, "parseQwenTranscript must append 2 timed segments into spine")
+
+    let rolling = KoeCicadaRollingScheduler(sessionId: "swift-rolling")
+    let chunk100 = String(repeating: "会", count: 100)
+    check(rolling.addSegment(id: "c1", text: chunk100, nowMs: 1_000), "addSegment c1 must succeed")
+    check(rolling.pollTick(nowMs: 15_000) == nil, "first window must wait when <30s and <200 chars")
+    let firstTicket = rolling.pollTick(nowMs: 32_000)
+    check(firstTicket != nil && firstTicket?.fromIndex == 0 && firstTicket?.endIndex == 1, "first window must trigger at >=30s even with 100 chars")
+    let rollingMin1 = #"{"schemaVersion":2,"title":"初稿","overview":"概述","topics":[{"text":"讨论事项","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#
+    if let firstTicket {
+      check(rolling.complete(generation: firstTicket.generation, fromIndex: firstTicket.fromIndex, endIndex: firstTicket.endIndex, rawJson: rollingMin1) == 1, "complete first window must succeed")
+    }
+    check(rolling.activeJson()?.contains("初稿") == true, "activeJson must expose first window minutes")
+
+    let editedMin = #"{"schemaVersion":2,"title":"人工修订","overview":"保留人工稿","topics":[{"text":"讨论事项","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#
+    check(rolling.edit(editedMin) == 1, "manual edit on rolling minutes must succeed")
+    check(rolling.status()?.edited == true, "status.edited must be true after manual edit")
+
+    check(rolling.addSegment(id: "c2", text: chunk100, nowMs: 35_000), "addSegment c2 must succeed")
+    check(rolling.pollTick(nowMs: 70_000) == nil, "second window must require both >=30s and >=200 chars")
+    check(rolling.addSegment(id: "c3", text: chunk100, nowMs: 71_000), "addSegment c3 must reach 200 new chars")
+    let secondTicket = rolling.pollTick(nowMs: 72_000)
+    check(secondTicket != nil && secondTicket?.fromIndex == 1 && secondTicket?.endIndex == 3, "second window must trigger at >=30s and >=200 chars")
+    let rollingMin2 = #"{"schemaVersion":2,"title":"二稿","overview":"增量","topics":[{"text":"新增事项","sources":["S2","S3"]}],"decisions":[],"actions":[],"questions":[]}"#
+    if let secondTicket {
+      check(rolling.complete(generation: secondTicket.generation, fromIndex: secondTicket.fromIndex, endIndex: secondTicket.endIndex, rawJson: rollingMin2) == 1, "complete second window must store candidate without overwriting manual edit")
+    }
+    check(rolling.status()?.hasCandidate == true && rolling.activeJson()?.contains("人工修订") == true, "manual edit must remain active while candidate is held")
+    check(rolling.acceptCandidate(), "acceptCandidate must promote candidate to active")
+    check(rolling.status()?.hasCandidate == false && rolling.activeJson()?.contains("二稿") == true, "accepted candidate must become active and clear hasCandidate")
+
+    let silence1 = KoeCore.reduceSilenceAutoStop(silenceElapsedMs: 0, deltaMs: 15_000, speechDetected: false, alreadyAutoStopped: false)
+    check(!silence1.autoStopped && !silence1.triggered && silence1.nextElapsedMs == 15_000, "15s silence must accumulate without stopping")
+    let silenceReset = KoeCore.reduceSilenceAutoStop(silenceElapsedMs: silence1.nextElapsedMs, deltaMs: 5_000, speechDetected: true, alreadyAutoStopped: false)
+    check(!silenceReset.autoStopped && !silenceReset.triggered && silenceReset.nextElapsedMs == 0, "speechDetected must reset silence counter to 0")
+    let silenceStop = KoeCore.reduceSilenceAutoStop(silenceElapsedMs: 20_000, deltaMs: 10_000, speechDetected: false, alreadyAutoStopped: false)
+    check(silenceStop.autoStopped && silenceStop.triggered && silenceStop.nextElapsedMs == 30_000, "30s cumulative silence must trigger autoStopped")
+
+    let demoHash = String(repeating: "a", count: 64)
+    let demoMinJson = #"{"schemaVersion":2,"title":"资料包纪要","overview":"概述","topics":[{"text":"讨论事项","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#
+    let koepackBytes = KoeCore.encodeDemoKoepackV2(
+      contentHash: demoHash,
+      title: "周会资料包",
+      source: "第一段会议记录",
+      minutesJson: demoMinJson
+    )
+    check(koepackBytes != nil, "encodeDemoKoepackV2 must succeed")
+    if let koepackBytes {
+      check(koepackBytes.count > 16 && String(decoding: koepackBytes.prefix(8), as: UTF8.self) == "KOEPACK1", "encodeDemoKoepackV2 must emit KOEPACK1 header")
+      check(KoeCore.verifyKoepackV2(koepackBytes) == 2, "verifyKoepackV2 must return version 2 for valid v2 pack")
+      var tamperedPack = koepackBytes
+      tamperedPack[tamperedPack.count - 1] ^= 0xFF
+      check(KoeCore.verifyKoepackV2(tamperedPack) < 0, "verifyKoepackV2 must reject tampered payload")
+    }
+
+    let leaseDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-lease-test-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: leaseDir) }
+    await MainActor.run {
+      let model = LiveInterpretingModel(leaseDirectory: leaseDir)
+      model.ttsEnabled = false
+      model.refreshAudioDevices()
+      model.beginHoldToInterpret(session: "hold-1", token: "tok-1")
+      check(model.isHoldingToInterpret, "beginHoldToInterpret must set isHoldingToInterpret = true")
+      check(!model.recordAudioActivity(elapsedMs: 12_000, speechDetected: false), "12s silence must not trigger auto-stop")
+      check(model.silenceElapsedMs == 12_000 && model.isHoldingToInterpret, "12s silence must keep hold active")
+      check(model.recordAudioActivity(elapsedMs: 18_000, speechDetected: false), "30s silence must trigger auto-stop")
+      check(!model.isHoldingToInterpret && model.statusBanner == "静音满 30 秒，已自动停止同传拾音", "30s silence must auto-stop hold and set statusBanner")
+
+      var mockDefaultInput = "BuiltInMic"
+      let lease = KoeInputDeviceLease(directory: leaseDir)
+      check(
+        lease.acquire(
+          session: "s1",
+          target: "D3200Mic",
+          currentDefaultInput: { mockDefaultInput },
+          setDefaultInput: { next in mockDefaultInput = next; return true }
+        ),
+        "KoeInputDeviceLease.acquire must switch mock input to target"
+      )
+      check(mockDefaultInput == "D3200Mic", "mockDefaultInput must be D3200Mic after acquire")
+      let releaseRes = lease.release(
+        currentDefaultInput: { mockDefaultInput },
+        setDefaultInput: { next in mockDefaultInput = next; return true }
+      )
+      check(releaseRes == "restored" && mockDefaultInput == "BuiltInMic", "KoeInputDeviceLease.release must restore original input")
+      check(
+        lease.release(
+          currentDefaultInput: { mockDefaultInput },
+          setDefaultInput: { next in mockDefaultInput = next; return true }
+        ) == "kept",
+        "second KoeInputDeviceLease.release must be idempotent"
+      )
+    }
   }
 }

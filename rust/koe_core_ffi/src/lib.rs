@@ -6,10 +6,16 @@ use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use koe_core::cicada::{
+    decode_koepack_v2, encode_koepack_v2, CicadaEvent, CicadaReducer, CicadaState, MaterialPackV2,
+    PackMaterialMeta, PackMinutesV2, PortableMinutesEntry, RollingMinutesScheduler,
+    RollingTickDecision,
+};
 use koe_core::commands::DeviceCommands;
 use koe_core::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 use koe_core::domain::{SegmentId, UtteranceSpine};
 use koe_core::frame::{DecodedPacket, FrameReassembler, ProtocolFrame};
+use koe_core::hash::sha256_hex;
 use koe_core::library::{RecordingEntry, RecordingLibrary};
 use koe_core::minutes::{
     build_minutes_batches, parse_meeting_minutes_json, parse_qwen_transcript_json,
@@ -411,6 +417,30 @@ pub struct KoeUtteranceSegmentHeader {
     pub source_language: [u8; 16],
     /// NUL-terminated UTF-8 target language code (`<= 15` bytes + NUL).
     pub target_language: [u8; 16],
+}
+
+/// C-ABI flat status snapshot of `RollingMinutesScheduler`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeCicadaRollingStatus {
+    /// `1` when rolling scheduler is paused, else `0`.
+    pub paused: u8,
+    /// `1` when rolling scheduler is closed, else `0`.
+    pub closed: u8,
+    /// `1` when active minutes were manually edited by the user, else `0`.
+    pub edited: u8,
+    /// `1` when a newer machine-generated candidate is waiting behind a user edit, else `0`.
+    pub has_candidate: u8,
+    /// `RollingRequestStatus` discriminant (`0..=4`).
+    pub request_status: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 3],
+    /// Current source block watermark index.
+    pub watermark: u32,
+    /// Number of rolling calls issued in the active 1-hour sliding window.
+    pub calls_this_hour: u32,
+    /// Monotonically increasing scheduler generation.
+    pub generation: u64,
 }
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
@@ -1072,6 +1102,7 @@ static REASSEMBLER_REGISTRY: OnceLock<Mutex<BTreeMap<u64, ReassemblerSlot>>> = O
 static TRANSPORT_REGISTRY: OnceLock<Mutex<BTreeMap<u64, SessionSlot>>> = OnceLock::new();
 static LIBRARY_REGISTRY: OnceLock<Mutex<BTreeMap<u64, RecordingLibrary>>> = OnceLock::new();
 static SPINE_REGISTRY: OnceLock<Mutex<BTreeMap<u64, UtteranceSpine>>> = OnceLock::new();
+static ROLLING_REGISTRY: OnceLock<Mutex<BTreeMap<u64, RollingMinutesScheduler>>> = OnceLock::new();
 
 fn reassembler_map() -> &'static Mutex<BTreeMap<u64, ReassemblerSlot>> {
     REASSEMBLER_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -1087,6 +1118,10 @@ pub(crate) fn library_map() -> &'static Mutex<BTreeMap<u64, RecordingLibrary>> {
 
 pub(crate) fn spine_map() -> &'static Mutex<BTreeMap<u64, UtteranceSpine>> {
     SPINE_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn rolling_map() -> &'static Mutex<BTreeMap<u64, RollingMinutesScheduler>> {
+    ROLLING_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
 pub(crate) fn alloc_handle() -> u64 {
@@ -2907,6 +2942,414 @@ pub unsafe extern "C" fn koe_qwen_parse_transcript_into_spine(
         }
     }
     -1
+}
+
+/// Allocates a stateful Cicada `RollingMinutesScheduler` handle.
+///
+/// # Safety
+///
+/// `session_id_ptr` must be valid for reads of `session_id_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_rolling_new(
+    session_id_ptr: *const u8,
+    session_id_len: usize,
+) -> u64 {
+    let session_id = if session_id_ptr.is_null() || session_id_len == 0 {
+        "cicada"
+    } else {
+        let bytes = unsafe { slice::from_raw_parts(session_id_ptr, session_id_len) };
+        std::str::from_utf8(bytes).unwrap_or("cicada")
+    };
+    let h = alloc_handle();
+    if let Ok(mut map) = rolling_map().lock() {
+        map.insert(h, RollingMinutesScheduler::new(session_id));
+    }
+    h
+}
+
+/// Frees a Cicada `RollingMinutesScheduler` handle.
+#[no_mangle]
+pub extern "C" fn koe_cicada_rolling_free(handle: u64) {
+    if let Ok(mut map) = rolling_map().lock() {
+        map.remove(&handle);
+    }
+}
+
+/// Appends or verifies a finalized `(seg_id, text)` segment in `RollingMinutesScheduler` at `now_ms`.
+/// Returns `1` on success, `0` if revised/invalidated or closed.
+///
+/// # Safety
+///
+/// `seg_id_ptr` and `text_ptr` must be valid for reads of their respective byte lengths when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_rolling_add_segment(
+    handle: u64,
+    seg_id_ptr: *const u8,
+    seg_id_len: usize,
+    text_ptr: *const u8,
+    text_len: usize,
+    now_ms: u64,
+) -> u8 {
+    if seg_id_ptr.is_null() || seg_id_len == 0 || text_ptr.is_null() || text_len == 0 {
+        return 0;
+    }
+    let id_bytes = unsafe { slice::from_raw_parts(seg_id_ptr, seg_id_len) };
+    let text_bytes = unsafe { slice::from_raw_parts(text_ptr, text_len) };
+    let (Ok(seg_id), Ok(text)) = (
+        std::str::from_utf8(id_bytes),
+        std::str::from_utf8(text_bytes),
+    ) else {
+        return 0;
+    };
+    if let Ok(mut map) = rolling_map().lock() {
+        if let Some(sched) = map.get_mut(&handle) {
+            return u8::from(sched.append_segment(seg_id, text, now_ms));
+        }
+    }
+    0
+}
+
+/// Evaluates whether a rolling summary pass should dispatch at `now_ms`.
+/// When dispatched, writes `*out_from_ptr`, `*out_end_ptr`, `*out_generation_ptr`, and `*out_len_ptr`,
+/// returning a heap-allocated UTF-8 payload buffer (freed via `koe_buffer_free`); otherwise returns null.
+///
+/// # Safety
+///
+/// Output pointers must be valid mutable pointers when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_rolling_poll_tick(
+    handle: u64,
+    now_ms: u64,
+    out_from_ptr: *mut u32,
+    out_end_ptr: *mut u32,
+    out_generation_ptr: *mut u64,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        *out_len_ptr = 0;
+    }
+    if let Ok(mut map) = rolling_map().lock() {
+        if let Some(sched) = map.get_mut(&handle) {
+            if let RollingTickDecision::Dispatch(ticket) = sched.poll_tick(now_ms) {
+                if !out_from_ptr.is_null() {
+                    unsafe {
+                        *out_from_ptr = ticket.from_index as u32;
+                    }
+                }
+                if !out_end_ptr.is_null() {
+                    unsafe {
+                        *out_end_ptr = ticket.end_index as u32;
+                    }
+                }
+                if !out_generation_ptr.is_null() {
+                    unsafe {
+                        *out_generation_ptr = ticket.generation;
+                    }
+                }
+                let mut boxed = ticket.input_payload.into_bytes().into_boxed_slice();
+                let len = boxed.len();
+                let ptr = boxed.as_mut_ptr();
+                std::mem::forget(boxed);
+                unsafe {
+                    *out_len_ptr = len;
+                }
+                return ptr;
+            }
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Validates and commits a rolling minutes LLM JSON response (`1` committed, `0` stale/ignored, `-1` invalid).
+///
+/// # Safety
+///
+/// `raw_json_ptr` must be valid for reads of `raw_json_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_rolling_complete(
+    handle: u64,
+    generation: u64,
+    from_index: u32,
+    end_index: u32,
+    raw_json_ptr: *const u8,
+    raw_json_len: usize,
+) -> i32 {
+    if raw_json_ptr.is_null() || raw_json_len == 0 {
+        return -1;
+    }
+    let bytes = unsafe { slice::from_raw_parts(raw_json_ptr, raw_json_len) };
+    let Ok(raw_json) = std::str::from_utf8(bytes) else {
+        return -1;
+    };
+    if let Ok(mut map) = rolling_map().lock() {
+        if let Some(sched) = map.get_mut(&handle) {
+            return match sched.complete_request(
+                generation,
+                from_index as usize,
+                end_index as usize,
+                raw_json,
+            ) {
+                Ok(true) => 1,
+                Ok(false) => 0,
+                Err(_) => -1,
+            };
+        }
+    }
+    -1
+}
+
+/// Validates and applies a manual user edit to the active live minutes (`1` ok, `-1` invalid).
+///
+/// # Safety
+///
+/// `edited_json_ptr` must be valid for reads of `edited_json_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_rolling_edit(
+    handle: u64,
+    edited_json_ptr: *const u8,
+    edited_json_len: usize,
+) -> i32 {
+    if edited_json_ptr.is_null() || edited_json_len == 0 {
+        return -1;
+    }
+    let bytes = unsafe { slice::from_raw_parts(edited_json_ptr, edited_json_len) };
+    let Ok(edited_json) = std::str::from_utf8(bytes) else {
+        return -1;
+    };
+    if let Ok(mut map) = rolling_map().lock() {
+        if let Some(sched) = map.get_mut(&handle) {
+            if sched.edit_active(edited_json).is_ok() {
+                sched.resume();
+                return 1;
+            }
+        }
+    }
+    -1
+}
+
+/// Promotes the pending machine candidate to active live minutes (`1` promoted, `0` no candidate).
+#[no_mangle]
+pub extern "C" fn koe_cicada_rolling_accept_candidate(handle: u64) -> u8 {
+    if let Ok(mut map) = rolling_map().lock() {
+        if let Some(sched) = map.get_mut(&handle) {
+            return u8::from(sched.accept_candidate());
+        }
+    }
+    0
+}
+
+/// Returns a heap-allocated UTF-8 copy of the active live minutes JSON (freed via `koe_buffer_free`),
+/// or null if no active minutes exist yet.
+///
+/// # Safety
+///
+/// `out_len_ptr` must be valid for writes of a `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_rolling_get_active(
+    handle: u64,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        *out_len_ptr = 0;
+    }
+    if let Ok(map) = rolling_map().lock() {
+        if let Some(sched) = map.get(&handle) {
+            if let Some(active) = sched.active_json() {
+                let mut boxed = active.as_bytes().to_vec().into_boxed_slice();
+                let len = boxed.len();
+                let ptr = boxed.as_mut_ptr();
+                std::mem::forget(boxed);
+                unsafe {
+                    *out_len_ptr = len;
+                }
+                return ptr;
+            }
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Writes the current `KoeCicadaRollingStatus` snapshot into `*out_status_ptr` (`1` ok, `0` invalid handle).
+///
+/// # Safety
+///
+/// `out_status_ptr` must be valid for writes of one `KoeCicadaRollingStatus`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_rolling_status(
+    handle: u64,
+    out_status_ptr: *mut KoeCicadaRollingStatus,
+) -> u8 {
+    if out_status_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = rolling_map().lock() {
+        if let Some(sched) = map.get(&handle) {
+            unsafe {
+                *out_status_ptr = KoeCicadaRollingStatus {
+                    paused: u8::from(sched.is_paused()),
+                    closed: u8::from(sched.is_closed()),
+                    edited: u8::from(sched.is_edited()),
+                    has_candidate: u8::from(sched.has_candidate()),
+                    request_status: sched.request_status() as u8,
+                    reserved: [0u8; 3],
+                    watermark: sched.watermark() as u32,
+                    calls_this_hour: sched.calls_in_window() as u32,
+                    generation: sched.generation(),
+                };
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Pure C-ABI step for the 30-second Cicada silence auto-stop reducer.
+/// Returns `1` when this step newly triggered auto-stop (`silence_elapsed_ms >= 30_000`), else `0`.
+///
+/// # Safety
+///
+/// `out_next_elapsed_ms_ptr` and `out_auto_stopped_ptr` must be valid mutable pointers when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_cicada_silence_reduce(
+    silence_elapsed_ms: u64,
+    delta_ms: u64,
+    speech_detected: u8,
+    already_auto_stopped: u8,
+    out_next_elapsed_ms_ptr: *mut u64,
+    out_auto_stopped_ptr: *mut u8,
+) -> u8 {
+    let mut state = CicadaState {
+        target_language: "en".to_string(),
+        calls_this_hour: 0,
+        silence_elapsed_ms,
+        auto_stopped: already_auto_stopped != 0,
+    };
+    let spine = UtteranceSpine::new("silence-check");
+    let outcome = CicadaState::reduce(
+        &mut state,
+        &spine,
+        CicadaEvent::OnAudioActivity {
+            elapsed_ms: delta_ms,
+            speech_detected: speech_detected != 0,
+        },
+    );
+    if !out_next_elapsed_ms_ptr.is_null() {
+        unsafe {
+            *out_next_elapsed_ms_ptr = state.silence_elapsed_ms;
+        }
+    }
+    if !out_auto_stopped_ptr.is_null() {
+        unsafe {
+            *out_auto_stopped_ptr = u8::from(state.auto_stopped);
+        }
+    }
+    u8::from(outcome.triggered_auto_stop)
+}
+
+/// Verifies an audio-less `.koepack` archive (`2` valid v2, `1` valid v1, `-1` invalid).
+///
+/// # Safety
+///
+/// `pack_ptr` must be valid for reads of `pack_len` bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_koepack_verify_v2(pack_ptr: *const u8, pack_len: usize) -> i32 {
+    if pack_ptr.is_null() || pack_len == 0 {
+        return -1;
+    }
+    let bytes = unsafe { slice::from_raw_parts(pack_ptr, pack_len) };
+    match decode_koepack_v2(bytes) {
+        Ok(pack) => pack.version as i32,
+        Err(_) => -1,
+    }
+}
+
+/// Encodes a valid audio-less `.koepack v2` archive from a 64-hex `content_hash`, `title`,
+/// single source sentence (`S1`), and `MeetingMinutesV2` JSON string, returning a heap buffer
+/// (freed via `koe_buffer_free`) and writing its length to `*out_len_ptr`.
+///
+/// # Safety
+///
+/// Input pointers must be valid for reads of their respective lengths, and `out_len_ptr` must be valid for writes.
+#[no_mangle]
+pub unsafe extern "C" fn koe_koepack_encode_demo_v2(
+    content_hash_ptr: *const u8,
+    content_hash_len: usize,
+    title_ptr: *const u8,
+    title_len: usize,
+    source_ptr: *const u8,
+    source_len: usize,
+    minutes_json_ptr: *const u8,
+    minutes_json_len: usize,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        *out_len_ptr = 0;
+    }
+    if content_hash_ptr.is_null()
+        || title_ptr.is_null()
+        || source_ptr.is_null()
+        || minutes_json_ptr.is_null()
+    {
+        return std::ptr::null_mut();
+    }
+    let (Ok(content_hash), Ok(title), Ok(source), Ok(minutes_json)) = (
+        std::str::from_utf8(unsafe { slice::from_raw_parts(content_hash_ptr, content_hash_len) }),
+        std::str::from_utf8(unsafe { slice::from_raw_parts(title_ptr, title_len) }),
+        std::str::from_utf8(unsafe { slice::from_raw_parts(source_ptr, source_len) }),
+        std::str::from_utf8(unsafe { slice::from_raw_parts(minutes_json_ptr, minutes_json_len) }),
+    ) else {
+        return std::ptr::null_mut();
+    };
+    let sources = vec![source.to_string()];
+    let source_hash = sha256_hex(source.as_bytes());
+    let entry = PortableMinutesEntry {
+        text: minutes_json.to_string(),
+        source_hash,
+        model: "qwen3.8-flash".to_string(),
+        instruction: "整理结构化纪要".to_string(),
+        sources,
+        created_at_iso: "2026-11-07T12:00:00Z".to_string(),
+        edited_at_iso: None,
+        template_id: Some("minutes".to_string()),
+        template_version: 4,
+        is_draft: false,
+    };
+    let pack = MaterialPackV2 {
+        version: 2,
+        exported_at_iso: "2026-11-07T12:05:00Z".to_string(),
+        material: PackMaterialMeta {
+            content_hash: content_hash.to_string(),
+            title: title.to_string(),
+            source: "device".to_string(),
+            device_file_id: Some(1),
+            recorded_at_iso: Some("2026-11-07T11:30:00Z".to_string()),
+            audio_extension: Some(".wav".to_string()),
+        },
+        minutes: Some(PackMinutesV2 {
+            current: entry,
+            history: Vec::new(),
+        }),
+    };
+    let Ok(encoded) = encode_koepack_v2(&pack) else {
+        return std::ptr::null_mut();
+    };
+    let mut boxed = encoded.into_boxed_slice();
+    let len = boxed.len();
+    let ptr = boxed.as_mut_ptr();
+    std::mem::forget(boxed);
+    unsafe {
+        *out_len_ptr = len;
+    }
+    ptr
 }
 
 #[cfg(test)]

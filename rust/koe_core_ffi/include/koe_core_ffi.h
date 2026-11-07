@@ -154,6 +154,18 @@ typedef struct KoeUtteranceSegmentHeader {
   uint8_t target_language[16];
 } KoeUtteranceSegmentHeader;
 
+typedef struct KoeCicadaRollingStatus {
+  uint8_t paused;
+  uint8_t closed;
+  uint8_t edited;
+  uint8_t has_candidate;
+  uint8_t request_status;
+  uint8_t reserved[3];
+  uint32_t watermark;
+  uint32_t calls_this_hour;
+  uint64_t generation;
+} KoeCicadaRollingStatus;
+
 uint8_t koe_protocol_checksum(const uint8_t* data_ptr, size_t data_len);
 uint8_t koe_protocol_verify_checksum(const uint8_t* packet_ptr, size_t packet_len);
 size_t koe_protocol_encode(uint8_t cmd_type, uint8_t cmd_id, const uint8_t* payload_ptr, size_t payload_len, uint8_t* out_ptr, size_t out_cap);
@@ -242,6 +254,18 @@ int32_t koe_minutes_validate_json(uint64_t spine_handle, const uint8_t* json_ptr
 int32_t koe_minutes_replace_terms_utf8(const uint8_t* text_ptr, size_t text_len, const uint8_t* from_ptr, size_t from_len, const uint8_t* to_ptr, size_t to_len, uint8_t* out_ptr, size_t out_cap);
 int32_t koe_minutes_plan_batches_count(uint64_t spine_handle, uint32_t max_runes);
 int32_t koe_qwen_parse_transcript_into_spine(uint64_t spine_handle, const uint8_t* json_ptr, size_t json_len);
+uint64_t koe_cicada_rolling_new(const uint8_t* session_id_ptr, size_t session_id_len);
+void koe_cicada_rolling_free(uint64_t handle);
+uint8_t koe_cicada_rolling_add_segment(uint64_t handle, const uint8_t* seg_id_ptr, size_t seg_id_len, const uint8_t* text_ptr, size_t text_len, uint64_t now_ms);
+uint8_t* koe_cicada_rolling_poll_tick(uint64_t handle, uint64_t now_ms, uint32_t* out_from_ptr, uint32_t* out_end_ptr, uint64_t* out_generation_ptr, size_t* out_len_ptr);
+int32_t koe_cicada_rolling_complete(uint64_t handle, uint64_t generation, uint32_t from_index, uint32_t end_index, const uint8_t* raw_json_ptr, size_t raw_json_len);
+int32_t koe_cicada_rolling_edit(uint64_t handle, const uint8_t* edited_json_ptr, size_t edited_json_len);
+uint8_t koe_cicada_rolling_accept_candidate(uint64_t handle);
+uint8_t* koe_cicada_rolling_get_active(uint64_t handle, size_t* out_len_ptr);
+uint8_t koe_cicada_rolling_status(uint64_t handle, KoeCicadaRollingStatus* out_status_ptr);
+uint8_t koe_cicada_silence_reduce(uint64_t silence_elapsed_ms, uint64_t delta_ms, uint8_t speech_detected, uint8_t already_auto_stopped, uint64_t* out_next_elapsed_ms_ptr, uint8_t* out_auto_stopped_ptr);
+int32_t koe_koepack_verify_v2(const uint8_t* pack_ptr, size_t pack_len);
+uint8_t* koe_koepack_encode_demo_v2(const uint8_t* content_hash_ptr, size_t content_hash_len, const uint8_t* title_ptr, size_t title_len, const uint8_t* source_ptr, size_t source_len, const uint8_t* minutes_json_ptr, size_t minutes_json_len, size_t* out_len_ptr);
 
 #ifdef __cplusplus
 }

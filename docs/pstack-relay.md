@@ -104,11 +104,11 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: 2f1523a;rust/koe_core/src/minutes.rs;rust/koe_core/src/domain.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
-### [ ] Slice L: Cicada 同步双语翻译、有界实时滚动纪要（120次/时）、`.koepack v2` 资料包与同传路由下沉
+### [x] Slice L: Cicada 同步双语翻译、有界实时滚动纪要（120次/时）、`.koepack v2` 资料包与同传路由下沉
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core/src/cicada.rs` 完整实现对齐 `wquguru/cicada` 的句段增量双语翻译队列、有界实时滚动纪要调度器（每小时最多 120 次、满 200 字或 30 秒触发、手改保留）、30 秒麦克风静默自动收尾检测、无音频 `.koepack v2` 资料包（当前纪要 + 最多 10 版历史 + SHA-256 校验）编解码，并在 `darwin/` 原生 SwiftUI 宿主挂载 CoreAudio + BlackHole 按住同传路由。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: f48c2a3;rust/koe_core/src/cicada.rs;rust/koe_core/src/domain.rs;rust/koe_core/src/hash.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;darwin/KoeNativeHost.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
 ### [ ] Slice M: 心力豆（Sweetpea）个人上下文时间线、待办/项目/日记沉淀与中文双字 BM25 离线问答检索下沉
 - **Playbook**: `Feature`

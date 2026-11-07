@@ -676,6 +676,67 @@ public enum KoeCore {{
     return Data(out.prefix(len))
   }}
 
+  public static func reduceSilenceAutoStop(
+    silenceElapsedMs: UInt64,
+    deltaMs: UInt64,
+    speechDetected: Bool,
+    alreadyAutoStopped: Bool
+  ) -> (nextElapsedMs: UInt64, autoStopped: Bool, triggered: Bool) {{
+    var nextElapsed: UInt64 = 0
+    var autoStopped: UInt8 = 0
+    let triggered = koe_cicada_silence_reduce(
+      silenceElapsedMs,
+      deltaMs,
+      speechDetected ? 1 : 0,
+      alreadyAutoStopped ? 1 : 0,
+      &nextElapsed,
+      &autoStopped
+    )
+    return (nextElapsed, autoStopped != 0, triggered != 0)
+  }}
+
+  public static func verifyKoepackV2(_ data: Data) -> Int32 {{
+    data.withUnsafeBytes {{ raw -> Int32 in
+      guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {{ return -1 }}
+      return koe_koepack_verify_v2(base, data.count)
+    }}
+  }}
+
+  public static func encodeDemoKoepackV2(
+    contentHash: String,
+    title: String,
+    source: String,
+    minutesJson: String
+  ) -> Data? {{
+    let hashBytes = Array(contentHash.utf8)
+    let titleBytes = Array(title.utf8)
+    let srcBytes = Array(source.utf8)
+    let minBytes = Array(minutesJson.utf8)
+    var outLen: Int = 0
+    let ptr = hashBytes.withUnsafeBufferPointer {{ hBuf in
+      titleBytes.withUnsafeBufferPointer {{ tBuf in
+        srcBytes.withUnsafeBufferPointer {{ sBuf in
+          minBytes.withUnsafeBufferPointer {{ mBuf in
+            koe_koepack_encode_demo_v2(
+              hBuf.baseAddress,
+              hBuf.count,
+              tBuf.baseAddress,
+              tBuf.count,
+              sBuf.baseAddress,
+              sBuf.count,
+              mBuf.baseAddress,
+              mBuf.count,
+              &outLen
+            )
+          }}
+        }}
+      }}
+    }}
+    guard let validPtr = ptr, outLen > 0 else {{ return nil }}
+    defer {{ koe_buffer_free(validPtr, outLen) }}
+    return Data(bytes: validPtr, count: outLen)
+  }}
+
   fileprivate static func decodeDeviceInfo(_ c: KoeDeviceInfo) -> KoeDeviceTelemetry {{
     var copy = c
     let fw = withUnsafeBytes(of: &copy.firmware_version) {{ readCString($0) }}
@@ -1489,6 +1550,139 @@ public final class KoeUtteranceSpine: @unchecked Sendable {{
     return String(decoding: out.prefix(Int(written)), as: UTF8.self)
   }}
 }}
+
+public struct KoeCicadaRollingTicket: Equatable, Sendable {{
+  public let fromIndex: UInt32
+  public let endIndex: UInt32
+  public let generation: UInt64
+  public let payload: String
+}}
+
+public struct KoeCicadaRollingStatusModel: Equatable, Sendable {{
+  public let paused: Bool
+  public let closed: Bool
+  public let edited: Bool
+  public let hasCandidate: Bool
+  public let requestStatus: UInt8
+  public let watermark: UInt32
+  public let callsThisHour: UInt32
+  public let generation: UInt64
+}}
+
+public final class KoeCicadaRollingScheduler: @unchecked Sendable {{
+  private let handle: UInt64
+
+  public init(sessionId: String = "cicada") {{
+    let bytes = Array(sessionId.utf8)
+    self.handle = bytes.withUnsafeBufferPointer {{ buf in
+      koe_cicada_rolling_new(buf.baseAddress, buf.count)
+    }}
+  }}
+
+  deinit {{
+    koe_cicada_rolling_free(handle)
+  }}
+
+  @discardableResult
+  public func addSegment(id: String, text: String, nowMs: UInt64) -> Bool {{
+    let idBytes = Array(id.utf8)
+    let textBytes = Array(text.utf8)
+    return idBytes.withUnsafeBufferPointer {{ iBuf in
+      textBytes.withUnsafeBufferPointer {{ tBuf in
+        koe_cicada_rolling_add_segment(
+          handle,
+          iBuf.baseAddress,
+          iBuf.count,
+          tBuf.baseAddress,
+          tBuf.count,
+          nowMs
+        ) != 0
+      }}
+    }}
+  }}
+
+  public func pollTick(nowMs: UInt64) -> KoeCicadaRollingTicket? {{
+    var fromIdx: UInt32 = 0
+    var endIdx: UInt32 = 0
+    var gen: UInt64 = 0
+    var outLen: Int = 0
+    guard let ptr = koe_cicada_rolling_poll_tick(
+      handle,
+      nowMs,
+      &fromIdx,
+      &endIdx,
+      &gen,
+      &outLen
+    ), outLen > 0 else {{
+      return nil
+    }}
+    defer {{ koe_buffer_free(ptr, outLen) }}
+    let payload = String(decoding: Data(bytes: ptr, count: outLen), as: UTF8.self)
+    return KoeCicadaRollingTicket(
+      fromIndex: fromIdx,
+      endIndex: endIdx,
+      generation: gen,
+      payload: payload
+    )
+  }}
+
+  @discardableResult
+  public func complete(
+    generation: UInt64,
+    fromIndex: UInt32,
+    endIndex: UInt32,
+    rawJson: String
+  ) -> Int32 {{
+    let utf8 = Array(rawJson.utf8)
+    return utf8.withUnsafeBufferPointer {{ buf in
+      koe_cicada_rolling_complete(
+        handle,
+        generation,
+        fromIndex,
+        endIndex,
+        buf.baseAddress,
+        buf.count
+      )
+    }}
+  }}
+
+  @discardableResult
+  public func edit(_ editedJson: String) -> Int32 {{
+    let utf8 = Array(editedJson.utf8)
+    return utf8.withUnsafeBufferPointer {{ buf in
+      koe_cicada_rolling_edit(handle, buf.baseAddress, buf.count)
+    }}
+  }}
+
+  @discardableResult
+  public func acceptCandidate() -> Bool {{
+    koe_cicada_rolling_accept_candidate(handle) != 0
+  }}
+
+  public func activeJson() -> String? {{
+    var outLen: Int = 0
+    guard let ptr = koe_cicada_rolling_get_active(handle, &outLen), outLen > 0 else {{
+      return nil
+    }}
+    defer {{ koe_buffer_free(ptr, outLen) }}
+    return String(decoding: Data(bytes: ptr, count: outLen), as: UTF8.self)
+  }}
+
+  public func status() -> KoeCicadaRollingStatusModel? {{
+    var c = KoeCicadaRollingStatus()
+    guard koe_cicada_rolling_status(handle, &c) != 0 else {{ return nil }}
+    return KoeCicadaRollingStatusModel(
+      paused: c.paused != 0,
+      closed: c.closed != 0,
+      edited: c.edited != 0,
+      hasCandidate: c.has_candidate != 0,
+      requestStatus: c.request_status,
+      watermark: c.watermark,
+      callsThisHour: c.calls_this_hour,
+      generation: c.generation
+    )
+  }}
+}}
 "#,
         struct_count = struct_names.len(),
         structs = struct_names.join(", "),
@@ -1875,6 +2069,19 @@ object KoeCoreNative {{
     ): ByteArray?
     @JvmStatic external fun minutesPlanBatchesCount(spineHandle: Long, maxRunes: Int): Int
     @JvmStatic external fun qwenParseTranscriptIntoSpine(spineHandle: Long, json: ByteArray): Int
+    @JvmStatic external fun nativeCicadaSilenceReduce(
+        silenceElapsedMs: Long,
+        deltaMs: Long,
+        speechDetected: Boolean,
+        alreadyAutoStopped: Boolean,
+    ): LongArray
+    @JvmStatic external fun nativeKoepackVerifyV2(pack: ByteArray): Int
+    @JvmStatic external fun nativeKoepackEncodeDemoV2(
+        contentHash: ByteArray,
+        title: ByteArray,
+        source: ByteArray,
+        minutesJson: ByteArray,
+    ): ByteArray?
 }}
 
 class KoeFrameReassembler : AutoCloseable {{
@@ -2301,6 +2508,32 @@ object KoeCore {{
         String(KoeCoreNative.wifiBuildTransferCompleteHex(), Charsets.UTF_8)
 
     fun wifiKeepalivePayload(): ByteArray = KoeCoreNative.wifiKeepalivePayload()
+
+    fun reduceSilenceAutoStop(
+        silenceElapsedMs: Long,
+        deltaMs: Long,
+        speechDetected: Boolean,
+        alreadyAutoStopped: Boolean,
+    ): LongArray = KoeCoreNative.nativeCicadaSilenceReduce(
+        silenceElapsedMs,
+        deltaMs,
+        speechDetected,
+        alreadyAutoStopped,
+    )
+
+    fun verifyKoepackV2(pack: ByteArray): Int = KoeCoreNative.nativeKoepackVerifyV2(pack)
+
+    fun encodeDemoKoepackV2(
+        contentHash: String,
+        title: String,
+        source: String,
+        minutesJson: String,
+    ): ByteArray? = KoeCoreNative.nativeKoepackEncodeDemoV2(
+        contentHash.toByteArray(Charsets.UTF_8),
+        title.toByteArray(Charsets.UTF_8),
+        source.toByteArray(Charsets.UTF_8),
+        minutesJson.toByteArray(Charsets.UTF_8),
+    )
 
     private fun readU32Le(buf: ByteArray, offset: Int): Long =
         (buf[offset].toLong() and 0xFFL) or

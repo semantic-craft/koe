@@ -445,6 +445,30 @@ impl UtteranceSpine {
         true
     }
 
+    /// Clears `translation` on every segment and optionally updates `target_language`
+    /// to `next_target_language`, incrementing the spine revision when any segment changes.
+    pub fn invalidate_translations(&mut self, next_target_language: Option<&str>) -> usize {
+        let normalized_lang = next_target_language
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let mut changed = 0usize;
+        for seg in &mut self.segments {
+            let had_tr = seg.translation.take().is_some();
+            let lang_diff = seg.target_language != normalized_lang;
+            if lang_diff {
+                seg.target_language.clone_from(&normalized_lang);
+            }
+            if had_tr || lang_diff {
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            self.revision = self.revision.saturating_add(1);
+        }
+        changed
+    }
+
     /// Renames every occurrence of `old_speaker` to `new_speaker` across all segments,
     /// returning the number of segments updated.
     pub fn replace_speaker_name(&mut self, old_speaker: &str, new_speaker: &str) -> usize {
