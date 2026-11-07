@@ -294,7 +294,10 @@ private enum AppleSpeechResources {
     let locales = Array(Set(speechLocales + dictationLocales)).sorted { $0.identifier < $1.identifier }
     let translationLanguages = await LanguageAvailability().supportedLanguages
     var suggested: String?
-    for preference in Locale.preferredLanguages {
+    let orderedPreferences = Locale.preferredLanguages.sorted {
+      $0.lowercased().hasPrefix("zh") && !$1.lowercased().hasPrefix("zh")
+    }
+    for preference in orderedPreferences {
       let preferred = Locale(identifier: preference)
       if SpeechTranscriber.isAvailable,
         let locale = await SpeechTranscriber.supportedLocale(equivalentTo: preferred)
@@ -1018,7 +1021,7 @@ private final class AppleLiveSpeech {
     let sourceFinal = final && transcript.segments.allSatisfy(\.isFinal)
     var value: [String: Any] = ["sessionId": id, "type": type, "text": transcript.text,
       "isFinal": sourceFinal, "speechFinal": sourceFinal, "durationSec": Double(inputFrames) / inputRate,
-      "translationTurns": translationTurns]
+      "segments": transcript.finalSegments, "translationTurns": translationTurns]
     if let error { value["error"] = error }
     if !translationQueue.isEmpty { value["pendingTranslationSource"] = translationQueue.joined(separator: "\n") }
     return value

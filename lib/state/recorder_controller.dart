@@ -1942,6 +1942,7 @@ class _RecordingSession {
   int? fileId;
   String? path;
   String text = '';
+  List<SttSegment> segments = const [];
   RecordingTranslation? translation;
   String? error;
   bool ended = false;

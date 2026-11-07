@@ -149,6 +149,7 @@ class AppSettings {
     this.storageError,
     this.speechProvider,
     this.appleSourceLanguage = '',
+    this.appleSourceLanguageExplicit = false,
     this.engines = const {},
     this.analysisBackend = AnalysisBackendKind.qwen,
     this.analysisOpenAiConfig = const EngineConfig(),
@@ -196,6 +197,7 @@ class AppSettings {
   /// Null means an existing install has not selected a provider yet.
   final SttProvider? speechProvider;
   final String appleSourceLanguage;
+  final bool appleSourceLanguageExplicit;
   final bool autoTranscribe;
   final bool autoRealtime;
 
@@ -239,6 +241,7 @@ class AppSettings {
     String? storageError,
     SttProvider? speechProvider,
     String? appleSourceLanguage,
+    bool? appleSourceLanguageExplicit,
     Map<String, EngineConfig>? engines,
     AnalysisBackendKind? analysisBackend,
     EngineConfig? analysisOpenAiConfig,
@@ -266,6 +269,8 @@ class AppSettings {
       storageError: storageError ?? this.storageError,
       speechProvider: speechProvider ?? this.speechProvider,
       appleSourceLanguage: appleSourceLanguage ?? this.appleSourceLanguage,
+      appleSourceLanguageExplicit:
+          appleSourceLanguageExplicit ?? this.appleSourceLanguageExplicit,
       engines: engines ?? this.engines,
       analysisBackend: analysisBackend ?? this.analysisBackend,
       analysisOpenAiConfig: analysisOpenAiConfig ?? this.analysisOpenAiConfig,
@@ -296,6 +301,7 @@ class AppSettings {
   Map<String, dynamic> toJson() => {
     if (speechProvider != null) 'speechProvider': speechProvider!.name,
     'appleSourceLanguage': appleSourceLanguage,
+    if (appleSourceLanguageExplicit) 'appleSourceLanguageExplicit': true,
     if (_engineJson.isNotEmpty) 'engines': _engineJson,
     'analysisBackend': analysisBackend.name,
     if (!analysisOpenAiConfig.isEmpty)
@@ -363,6 +369,7 @@ class AppSettings {
     return AppSettings(
       speechProvider: SttProvider.parse(map['speechProvider']),
       appleSourceLanguage: _str(map['appleSourceLanguage']) ?? '',
+      appleSourceLanguageExplicit: map['appleSourceLanguageExplicit'] == true,
       engines: engines,
       analysisBackend: AnalysisBackendKind.parse(map['analysisBackend']),
       analysisOpenAiConfig: analysisOpenAiConfig,

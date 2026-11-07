@@ -184,6 +184,11 @@ class SettingsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 14),
                           _TranscriptLanguageSelector(controller: c),
+                          if (c.meetingLocalOnly &&
+                              c.onDeviceSpeechSupported) ...[
+                            const SizedBox(height: 14),
+                            _AppleLanguageSettings(controller: c),
+                          ],
                         ] else
                           _AppleLanguageSettings(controller: c),
                         if (c.isLiveSession) ...[

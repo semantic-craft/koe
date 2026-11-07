@@ -677,6 +677,9 @@ mixin _RecorderDeviceFiles on ChangeNotifier {
     await _yieldAutoTransfer();
     if (!connected || !_ble.isConnected) return;
     if (!recording && info?.recording != true) return;
+    if (!encryptReady) {
+      await establishEncryptSession();
+    }
     await _realtime.startForFile(fileId);
   }
 

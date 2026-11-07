@@ -173,6 +173,7 @@ class SttStreamEvent {
     this.speechFinal = false,
     this.durationSec,
     this.error,
+    this.segments = const [],
     this.translationTurns = const [],
     this.pendingTranslationSource,
   });
@@ -184,6 +185,7 @@ class SttStreamEvent {
   final bool speechFinal;
   final double? durationSec;
   final String? error;
+  final List<SttSegment> segments;
   final List<SttTranslationTurn> translationTurns;
   final SttSourceChunk? pendingTranslationSource;
 }

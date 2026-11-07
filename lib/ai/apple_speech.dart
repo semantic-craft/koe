@@ -350,6 +350,7 @@ class _AppleSttStreamSession implements SttStreamSession {
     speechFinal: map['speechFinal'] == true,
     durationSec: (map['durationSec'] as num?)?.toDouble(),
     error: map['error'] as String?,
+    segments: AppleSpeechService._timedSegments(map['segments']),
     translationTurns: [
       for (final turn in map['translationTurns'] as List? ?? const [])
         if (turn is Map)
