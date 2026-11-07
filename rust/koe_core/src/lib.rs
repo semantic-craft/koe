@@ -22,9 +22,12 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod commands;
 pub mod crypto;
 pub mod frame;
 pub mod hash;
+pub mod models;
 pub mod ogg_opus;
 pub mod prng;
+pub mod slice_marks;
 pub mod wav;
