@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import SwiftUI
 
 #if KOE_STANDALONE_SWIFTUI
@@ -10,7 +12,9 @@ struct KoeNativeStandaloneApp: App {
     if CommandLine.arguments.contains("--verify-self") {
       Self.runSelfVerificationAndExit()
     }
+    #if os(macOS)
     NSApplication.shared.setActivationPolicy(.regular)
+    #endif
     let h = KoeNativeHost()
     if CommandLine.arguments.contains("--mute-tts") {
       h.interpreting.ttsEnabled = false
@@ -23,11 +27,15 @@ struct KoeNativeStandaloneApp: App {
 
   var body: some Scene {
     WindowGroup("Koe (SwiftUI + Rust)") {
+      #if os(macOS)
       KoeNativeHostView(host: host)
         .frame(minWidth: 1080, minHeight: 680)
         .onAppear {
           NSApplication.shared.activate(ignoringOtherApps: true)
         }
+      #else
+      KoeNativeHostView(host: host)
+      #endif
     }
   }
 

@@ -9,6 +9,8 @@ public final class BeanSidebarModel: ObservableObject {
   @Published public private(set) var connectionPhase: KoeConnectionPhase = .disconnected(reason: nil)
   @Published public private(set) var catalog: [KoeOfflineFileItem] = []
   @Published public private(set) var activeTransfer: KoeActiveTransfer = .idle
+  @Published public private(set) var wifiEndpoint: KoeWifiEndpointModel?
+  @Published public private(set) var wifiBatchProgress: KoeWifiBatchProgressModel?
 
   private let transport: any BeanTransporting
   private let exportDirectory: URL
@@ -29,20 +31,28 @@ public final class BeanSidebarModel: ObservableObject {
 
   public func observeEvents() async {
     for await event in transport.events() {
-      switch event {
-      case .connectionChanged(let phase):
-        connectionPhase = phase
-      case .catalogUpdated(let items):
-        catalog = items
-      case .transferChanged(let transfer):
-        activeTransfer = transfer
-      case .liveSliceUnpacked:
-        break
-      case .liveCaptionProduced(let seg):
-        onLiveCaption(seg)
-      case .recordingSaved(let rec):
-        onRecordingSaved(rec)
-      }
+      handle(event)
+    }
+  }
+
+  public func handle(_ event: BeanEvent) {
+    switch event {
+    case .connectionChanged(let phase):
+      connectionPhase = phase
+    case .catalogUpdated(let items):
+      catalog = items
+    case .transferChanged(let transfer):
+      activeTransfer = transfer
+    case .wifiEndpointUpdated(let ep):
+      wifiEndpoint = ep
+    case .wifiBatchProgressChanged(let progress):
+      wifiBatchProgress = progress.phase == 0 ? nil : progress
+    case .liveSliceUnpacked:
+      break
+    case .liveCaptionProduced(let seg):
+      onLiveCaption(seg)
+    case .recordingSaved(let rec):
+      onRecordingSaved(rec)
     }
   }
 
@@ -60,6 +70,52 @@ public final class BeanSidebarModel: ObservableObject {
 
   public func pullFile(_ item: KoeOfflineFileItem) {
     Task { await transport.pullOfflineFile(item, destinationDirectory: exportDirectory) }
+  }
+
+  public func startWifiBatch(fileIds: [UInt32]? = nil) {
+    let ids = fileIds ?? catalog.map(\.fileId)
+    Task {
+      _ = await transport.beginWifiBatch(fileIds: ids)
+      let prog = await transport.currentWifiBatchProgress()
+      wifiBatchProgress = prog.phase == 0 ? nil : prog
+    }
+  }
+
+  public func ingestWifiChunk(_ chunk: Data) {
+    Task {
+      let saved = await transport.ingestWifiChunk(chunk, destinationDirectory: exportDirectory)
+      for rec in saved {
+        onRecordingSaved(rec)
+      }
+      let prog = await transport.currentWifiBatchProgress()
+      wifiBatchProgress = prog.phase == 0 ? nil : prog
+    }
+  }
+
+  public func onWifiInterrupted() {
+    Task {
+      let saved = await transport.onWifiInterrupted(destinationDirectory: exportDirectory)
+      for rec in saved {
+        onRecordingSaved(rec)
+      }
+      let prog = await transport.currentWifiBatchProgress()
+      wifiBatchProgress = prog.phase == 0 ? nil : prog
+    }
+  }
+
+  public func resumeWifiBatch() {
+    Task {
+      _ = await transport.resumeWifiBatch()
+      let prog = await transport.currentWifiBatchProgress()
+      wifiBatchProgress = prog.phase == 0 ? nil : prog
+    }
+  }
+
+  public func cancelWifiBatch() {
+    Task {
+      await transport.cancelWifiBatch()
+      wifiBatchProgress = nil
+    }
   }
 
   public func runSimulatedRealtimeSession() {
@@ -461,12 +517,59 @@ private enum KoeNativePalette {
 
 public struct KoeNativeHostView: View {
   @ObservedObject public var host: KoeNativeHost
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
   public init(host: KoeNativeHost) {
     self.host = host
   }
 
   public var body: some View {
+    #if os(iOS)
+    if horizontalSizeClass == .compact {
+      TabView {
+        NavigationStack {
+          BeanConnectionSidebarView(
+            sidebar: host.sidebar,
+            playback: host.playback
+          )
+          .navigationTitle("设备")
+        }
+        .tabItem {
+          Label("设备", systemImage: "wave.3.right.circle")
+        }
+
+        NavigationStack {
+          LiveInterpretingPanelView(
+            interpreting: host.interpreting,
+            sidebar: host.sidebar
+          )
+          .navigationTitle("同传")
+        }
+        .tabItem {
+          Label("同传", systemImage: "captions.bubble")
+        }
+
+        NavigationStack {
+          RecordingPlaybackDetailView(
+            playback: host.playback,
+            interpreting: host.interpreting
+          )
+          .navigationTitle("录音库")
+        }
+        .tabItem {
+          Label("录音库", systemImage: "waveform")
+        }
+      }
+      .tint(KoeNativePalette.bambooGreen)
+    } else {
+      splitViewLayout
+    }
+    #else
+    splitViewLayout
+    #endif
+  }
+
+  private var splitViewLayout: some View {
     NavigationSplitView {
       BeanConnectionSidebarView(
         sidebar: host.sidebar,
@@ -504,6 +607,9 @@ public struct BeanConnectionSidebarView: View {
         if case .connected(let tel) = sidebar.connectionPhase {
           telemetryView(tel)
         }
+        if let progress = sidebar.wifiBatchProgress, progress.phase != 0 {
+          wifiBatchCard(progress)
+        }
         Button {
           sidebar.runSimulatedRealtimeSession()
         } label: {
@@ -519,13 +625,20 @@ public struct BeanConnectionSidebarView: View {
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
         } else {
+          Button {
+            sidebar.startWifiBatch()
+          } label: {
+            Label("Wi-Fi 快传全部", systemImage: "wifi.circle.fill")
+              .font(.system(size: 14, weight: .semibold))
+              .foregroundStyle(KoeNativePalette.bambooGreen)
+          }
           ForEach(sidebar.catalog, id: \.fileId) { item in
             HStack {
               VStack(alignment: .leading, spacing: 2) {
                 Text("设备文件 #\(item.fileId)")
-                  .font(.system(size: 14, weight: .medium))
+                  .font(.system(size: 14, weight: .medium).monospacedDigit())
                 Text("\(item.durationMs / 1000) 秒")
-                  .font(.system(size: 12))
+                  .font(.system(size: 12).monospacedDigit())
                   .foregroundStyle(.secondary)
               }
               Spacer()
@@ -657,11 +770,49 @@ public struct BeanConnectionSidebarView: View {
   private func telemetryView(_ tel: KoeDeviceTelemetry) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text("麦克风电量 \(tel.battery ?? 0)% | 充电盒 \(tel.boxBattery ?? 0)%")
-        .font(.system(size: 12))
+        .font(.system(size: 12).monospacedDigit())
         .foregroundStyle(.secondary)
       Text("固件 \(tel.firmwareVersion) | 剩余空间 \((tel.freeMemoryKb ?? 0) / 1024) MB")
-        .font(.system(size: 12))
+        .font(.system(size: 12).monospacedDigit())
         .foregroundStyle(.secondary)
+    }
+  }
+
+  private func wifiBatchCard(_ progress: KoeWifiBatchProgressModel) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text("Wi-Fi 快传 \(progress.finalizedCount + progress.salvagedCount)/\(progress.totalFiles)")
+          .font(.system(size: 14, weight: .semibold).monospacedDigit())
+          .foregroundStyle(KoeNativePalette.bambooGreen)
+        Spacer()
+        if let ep = sidebar.wifiEndpoint {
+          Text("\(ep.ipString):\(ep.port)")
+            .font(.system(size: 12).monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      }
+      if progress.expectedWireBytes > 0 {
+        ProgressView(
+          value: min(1.0, Double(progress.receivedWireBytes) / Double(max(1, progress.expectedWireBytes)))
+        )
+      }
+      Text("当前 #\(progress.activeFileId) | 已完成 \(progress.finalizedCount) | 抢救 \(progress.salvagedCount) | 跳过 \(progress.skippedCount)")
+        .font(.system(size: 12).monospacedDigit())
+        .foregroundStyle(.secondary)
+      if progress.phase == 3 {
+        HStack(spacing: 12) {
+          Button("继续快传") {
+            sidebar.resumeWifiBatch()
+          }
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(KoeNativePalette.bambooGreen)
+          Button("取消") {
+            sidebar.cancelWifiBatch()
+          }
+          .font(.system(size: 12))
+          .foregroundStyle(.secondary)
+        }
+      }
     }
   }
 }

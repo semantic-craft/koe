@@ -148,6 +148,8 @@ public enum BeanEvent: Equatable, Sendable {
   case connectionChanged(KoeConnectionPhase)
   case catalogUpdated([KoeOfflineFileItem])
   case transferChanged(KoeActiveTransfer)
+  case wifiEndpointUpdated(KoeWifiEndpointModel)
+  case wifiBatchProgressChanged(KoeWifiBatchProgressModel)
   case liveSliceUnpacked(fileId: BeanFileID, sliceCount: Int, marks: [MarkTimestampMs])
   case liveCaptionProduced(KoeLiveCaptionSegment)
   case recordingSaved(KoeSavedRecording)
@@ -182,6 +184,19 @@ public protocol BeanTransporting: Actor {
   func pullOfflineFile(_ item: KoeOfflineFileItem, destinationDirectory: URL) async
   func simulateBeanRealtimePipeline(destinationDirectory: URL) async -> KoeSavedRecording?
   func ingestRawBleChunk(_ chunk: Data, destinationDirectory: URL) async
+  @discardableResult
+  func beginWifiBatch(fileIds: [UInt32]) async -> Bool
+  @discardableResult
+  func ingestWifiChunk(_ chunk: Data, destinationDirectory: URL) async -> [KoeSavedRecording]
+  func popOutboundWifiWs() async -> String?
+  func popOutboundWifiUdp() async -> Data?
+  @discardableResult
+  func onWifiInterrupted(destinationDirectory: URL) async -> [KoeSavedRecording]
+  @discardableResult
+  func resumeWifiBatch() async -> Bool
+  func cancelWifiBatch() async
+  func currentWifiBatchProgress() async -> KoeWifiBatchProgressModel
+  func currentWifiEndpoint() async -> KoeWifiEndpointModel?
 }
 
 public actor BeanTransportActor: BeanTransporting {
@@ -330,6 +345,9 @@ public actor BeanTransportActor: BeanTransporting {
     if step.catalogUpdated {
       continuation?.yield(.catalogUpdated(session.currentCatalog()))
     }
+    if let ep = session.currentWifiEndpoint() {
+      continuation?.yield(.wifiEndpointUpdated(ep))
+    }
     if step.transferUpdated {
       emitTransferProgress(step)
     }
@@ -340,7 +358,9 @@ public actor BeanTransportActor: BeanTransporting {
 
   @discardableResult
   public func beginWifiBatch(fileIds: [UInt32]) -> Bool {
-    session.beginWifiBatch(fileIds: fileIds)
+    let ok = session.beginWifiBatch(fileIds: fileIds)
+    continuation?.yield(.wifiBatchProgressChanged(session.currentWifiBatchProgress()))
+    return ok
   }
 
   @discardableResult
@@ -350,10 +370,11 @@ public actor BeanTransportActor: BeanTransporting {
     if step.transferUpdated {
       emitTransferProgress(step)
     }
-    if step.hasFinalizedRecording {
-      return drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
-    }
-    return []
+    let saved = step.hasFinalizedRecording
+      ? drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
+      : []
+    continuation?.yield(.wifiBatchProgressChanged(session.currentWifiBatchProgress()))
+    return saved
   }
 
   public func popOutboundWifiWs() -> String? {
@@ -368,19 +389,23 @@ public actor BeanTransportActor: BeanTransporting {
   public func onWifiInterrupted(destinationDirectory: URL) async -> [KoeSavedRecording] {
     let nowSec = UInt64(Date().timeIntervalSince1970)
     let salvaged = session.onWifiInterrupted(nowEpochSec: nowSec)
-    if salvaged {
-      return drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
-    }
-    return []
+    let saved = salvaged
+      ? drainAllFinalizedFromSession(destinationDirectory: destinationDirectory, segments: [])
+      : []
+    continuation?.yield(.wifiBatchProgressChanged(session.currentWifiBatchProgress()))
+    return saved
   }
 
   @discardableResult
   public func resumeWifiBatch() -> Bool {
-    session.resumeWifiBatch()
+    let ok = session.resumeWifiBatch()
+    continuation?.yield(.wifiBatchProgressChanged(session.currentWifiBatchProgress()))
+    return ok
   }
 
   public func cancelWifiBatch() {
     session.cancelWifiBatch()
+    continuation?.yield(.wifiBatchProgressChanged(session.currentWifiBatchProgress()))
   }
 
   public func currentWifiBatchProgress() -> KoeWifiBatchProgressModel {
@@ -524,6 +549,88 @@ public actor BeanTransportActor: BeanTransporting {
     return base
       .appendingPathComponent("AnkerRecorder", isDirectory: true)
       .appendingPathComponent("exports", isDirectory: true)
+  }
+}
+
+public actor SimulatedBeanTransport: BeanTransporting {
+  private let inner = BeanTransportActor()
+
+  public init() {}
+
+  public nonisolated func events() -> AsyncStream<BeanEvent> {
+    inner.events()
+  }
+
+  public func startScanAndConnect() async {
+    await inner.startScanAndConnect()
+  }
+
+  public func disconnect() async {
+    await inner.disconnect()
+  }
+
+  public func requestCatalog() async {
+    await inner.requestCatalog()
+  }
+
+  public func startBeanRecording() async {
+    await inner.startBeanRecording()
+  }
+
+  public func stopBeanRecording() async {
+    await inner.stopBeanRecording()
+  }
+
+  public func pullOfflineFile(_ item: KoeOfflineFileItem, destinationDirectory: URL) async {
+    await inner.pullOfflineFile(item, destinationDirectory: destinationDirectory)
+  }
+
+  public func simulateBeanRealtimePipeline(destinationDirectory: URL) async -> KoeSavedRecording? {
+    await inner.simulateBeanRealtimePipeline(destinationDirectory: destinationDirectory)
+  }
+
+  public func ingestRawBleChunk(_ chunk: Data, destinationDirectory: URL) async {
+    await inner.ingestRawBleChunk(chunk, destinationDirectory: destinationDirectory)
+  }
+
+  @discardableResult
+  public func beginWifiBatch(fileIds: [UInt32]) async -> Bool {
+    await inner.beginWifiBatch(fileIds: fileIds)
+  }
+
+  @discardableResult
+  public func ingestWifiChunk(_ chunk: Data, destinationDirectory: URL) async -> [KoeSavedRecording] {
+    await inner.ingestWifiChunk(chunk, destinationDirectory: destinationDirectory)
+  }
+
+  public func popOutboundWifiWs() async -> String? {
+    await inner.popOutboundWifiWs()
+  }
+
+  public func popOutboundWifiUdp() async -> Data? {
+    await inner.popOutboundWifiUdp()
+  }
+
+  @discardableResult
+  public func onWifiInterrupted(destinationDirectory: URL) async -> [KoeSavedRecording] {
+    await inner.onWifiInterrupted(destinationDirectory: destinationDirectory)
+  }
+
+  @discardableResult
+  public func resumeWifiBatch() async -> Bool {
+    await inner.resumeWifiBatch()
+  }
+
+  public func cancelWifiBatch() async {
+    await inner.cancelWifiBatch()
+  }
+
+  public func currentWifiBatchProgress() async -> KoeWifiBatchProgressModel {
+    await inner.currentWifiBatchProgress()
+  }
+
+  public func currentWifiEndpoint() async -> KoeWifiEndpointModel? {
+    await inner.currentWifiEndpoint()
   }
 }
 
