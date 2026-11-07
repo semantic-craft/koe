@@ -181,6 +181,93 @@ class KoeWifiEndpoint {
   final int port;
 }
 
+final class _KoeUtteranceSpineSnapshotNative extends Struct {
+  @Uint32()
+  external int segmentCount;
+
+  @Uint8()
+  external int isStale;
+
+  @Array(3)
+  external Array<Uint8> reserved;
+
+  @Uint64()
+  external int revision;
+}
+
+final class _KoeUtteranceSegmentHeaderNative extends Struct {
+  @Uint32()
+  external int ordinal;
+
+  @Uint32()
+  external int revision;
+
+  @Uint64()
+  external int startMs;
+
+  @Uint64()
+  external int endMs;
+
+  @Uint8()
+  external int isFinal;
+
+  @Uint8()
+  external int hasTranslation;
+
+  @Array(2)
+  external Array<Uint8> reserved;
+
+  @Uint32()
+  external int textLen;
+
+  @Uint32()
+  external int translationLen;
+
+  @Array(16)
+  external Array<Uint8> sourceLanguage;
+
+  @Array(16)
+  external Array<Uint8> targetLanguage;
+}
+
+class KoeUtteranceSpineSnapshot {
+  const KoeUtteranceSpineSnapshot({
+    required this.segmentCount,
+    required this.revision,
+    required this.isStale,
+  });
+
+  final int segmentCount;
+  final int revision;
+  final bool isStale;
+}
+
+class KoeUtteranceSegment {
+  const KoeUtteranceSegment({
+    required this.ordinal,
+    required this.revision,
+    required this.startMs,
+    required this.endMs,
+    required this.isFinal,
+    required this.text,
+    this.translation,
+    required this.sourceLanguage,
+    this.targetLanguage,
+  });
+
+  final int ordinal;
+  final int revision;
+  final int startMs;
+  final int endMs;
+  final bool isFinal;
+  final String text;
+  final String? translation;
+  final String sourceLanguage;
+  final String? targetLanguage;
+
+  String get citationId => 'S$ordinal';
+}
+
 typedef _ChecksumNative = Uint8 Function(Pointer<Uint8>, Size);
 typedef _ChecksumDart = int Function(Pointer<Uint8>, int);
 
@@ -440,6 +527,148 @@ typedef _WifiOutBufDart = int Function(
   int,
 );
 
+typedef _SpineNewNative = Uint64 Function(Pointer<Uint8>, Size);
+typedef _SpineNewDart = int Function(Pointer<Uint8>, int);
+
+typedef _SpineHandleVoidNative = Void Function(Uint64);
+typedef _SpineHandleVoidDart = void Function(int);
+
+typedef _SpineSnapshotNative = Int32 Function(
+  Uint64,
+  Pointer<_KoeUtteranceSpineSnapshotNative>,
+);
+typedef _SpineSnapshotDart = int Function(
+  int,
+  Pointer<_KoeUtteranceSpineSnapshotNative>,
+);
+
+typedef _SpineAppendSegmentNative = Uint32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Uint64,
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _SpineAppendSegmentDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  int,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _SpineAcceptCumulativeNative = Uint32 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _SpineAcceptCumulativeDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _SpineUpdateSegmentTextNative = Uint8 Function(
+  Uint64,
+  Uint32,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _SpineUpdateSegmentTextDart = int Function(
+  int,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _SpineSetTranslationNative = Uint8 Function(
+  Uint64,
+  Uint32,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _SpineSetTranslationDart = int Function(
+  int,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _SpineGetSegmentNative = Uint8 Function(
+  Uint64,
+  Uint32,
+  Pointer<_KoeUtteranceSegmentHeaderNative>,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Size,
+);
+typedef _SpineGetSegmentDart = int Function(
+  int,
+  int,
+  Pointer<_KoeUtteranceSegmentHeaderNative>,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  int,
+);
+
+typedef _SpineFormatCitedSourcesNative = Pointer<Uint8> Function(
+  Uint64,
+  Pointer<Size>,
+);
+typedef _SpineFormatCitedSourcesDart = Pointer<Uint8> Function(
+  int,
+  Pointer<Size>,
+);
+
+typedef _MinutesValidateClaimGroundingNative = Uint8 Function(
+  Uint64,
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint32>,
+  Size,
+);
+typedef _MinutesValidateClaimGroundingDart = int Function(
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint32>,
+  int,
+);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -550,7 +779,61 @@ final class KoeCoreFfi {
           lib.lookupFunction<_WifiOutBufNative, _WifiOutBufDart>(
             'koe_wifi_keepalive_payload',
             isLeaf: true,
-          );
+          ),
+      _spineNew = lib.lookupFunction<_SpineNewNative, _SpineNewDart>(
+        'koe_spine_new',
+        isLeaf: true,
+      ),
+      _spineFree =
+          lib.lookupFunction<_SpineHandleVoidNative, _SpineHandleVoidDart>(
+            'koe_spine_free',
+            isLeaf: true,
+          ),
+      _spineClearStale =
+          lib.lookupFunction<_SpineHandleVoidNative, _SpineHandleVoidDart>(
+            'koe_spine_clear_stale',
+            isLeaf: true,
+          ),
+      _spineSnapshot =
+          lib.lookupFunction<_SpineSnapshotNative, _SpineSnapshotDart>(
+            'koe_spine_snapshot',
+            isLeaf: true,
+          ),
+      _spineAppendSegment =
+          lib.lookupFunction<
+            _SpineAppendSegmentNative,
+            _SpineAppendSegmentDart
+          >('koe_spine_append_segment', isLeaf: true),
+      _spineAcceptCumulative =
+          lib.lookupFunction<
+            _SpineAcceptCumulativeNative,
+            _SpineAcceptCumulativeDart
+          >('koe_spine_accept_cumulative', isLeaf: true),
+      _spineUpdateSegmentText =
+          lib.lookupFunction<
+            _SpineUpdateSegmentTextNative,
+            _SpineUpdateSegmentTextDart
+          >('koe_spine_update_segment_text', isLeaf: true),
+      _spineSetTranslation =
+          lib.lookupFunction<
+            _SpineSetTranslationNative,
+            _SpineSetTranslationDart
+          >('koe_spine_set_translation', isLeaf: true),
+      _spineGetSegment =
+          lib.lookupFunction<_SpineGetSegmentNative, _SpineGetSegmentDart>(
+            'koe_spine_get_segment',
+            isLeaf: true,
+          ),
+      _spineFormatCitedSources =
+          lib.lookupFunction<
+            _SpineFormatCitedSourcesNative,
+            _SpineFormatCitedSourcesDart
+          >('koe_spine_format_cited_sources', isLeaf: true),
+      _minutesValidateClaimGrounding =
+          lib.lookupFunction<
+            _MinutesValidateClaimGroundingNative,
+            _MinutesValidateClaimGroundingDart
+          >('koe_minutes_validate_claim_grounding', isLeaf: true);
 
   static final KoeCoreFfi? instance = _load();
 
@@ -625,6 +908,17 @@ final class KoeCoreFfi {
   final _WifiBuildFileRequestHexDart _wifiBuildFileRequestHex;
   final _WifiOutBufDart _wifiBuildTransferCompleteHex;
   final _WifiOutBufDart _wifiKeepalivePayload;
+  final _SpineNewDart _spineNew;
+  final _SpineHandleVoidDart _spineFree;
+  final _SpineHandleVoidDart _spineClearStale;
+  final _SpineSnapshotDart _spineSnapshot;
+  final _SpineAppendSegmentDart _spineAppendSegment;
+  final _SpineAcceptCumulativeDart _spineAcceptCumulative;
+  final _SpineUpdateSegmentTextDart _spineUpdateSegmentText;
+  final _SpineSetTranslationDart _spineSetTranslation;
+  final _SpineGetSegmentDart _spineGetSegment;
+  final _SpineFormatCitedSourcesDart _spineFormatCitedSources;
+  final _MinutesValidateClaimGroundingDart _minutesValidateClaimGrounding;
 
   int protocolChecksum(List<int> data) {
     if (data.isEmpty) return 0;
@@ -1175,6 +1469,285 @@ final class KoeCoreFfi {
       return Uint8List.fromList(outPtr.asTypedList(len));
     } finally {
       malloc.free(outPtr);
+    }
+  }
+
+  int spineNew({String sessionId = 'default'}) {
+    final bytes = utf8.encode(sessionId);
+    final ptr = malloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
+    try {
+      if (bytes.isNotEmpty) ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _spineNew(ptr, bytes.length);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  void spineFree(int handle) => _spineFree(handle);
+
+  void spineClearStale(int handle) => _spineClearStale(handle);
+
+  KoeUtteranceSpineSnapshot spineSnapshot(int handle) {
+    final outPtr = calloc<_KoeUtteranceSpineSnapshotNative>(1);
+    try {
+      _spineSnapshot(handle, outPtr);
+      final ref = outPtr.ref;
+      return KoeUtteranceSpineSnapshot(
+        segmentCount: ref.segmentCount,
+        revision: ref.revision,
+        isStale: ref.isStale != 0,
+      );
+    } finally {
+      calloc.free(outPtr);
+    }
+  }
+
+  int spineAppendSegment({
+    required int handle,
+    required String text,
+    int startMs = 0,
+    int endMs = 0,
+    String sourceLanguage = 'zh',
+    String provider = 'qwen',
+  }) {
+    final textBytes = utf8.encode(text);
+    final langBytes = utf8.encode(sourceLanguage);
+    final provBytes = utf8.encode(provider);
+    final textPtr = malloc<Uint8>(textBytes.isEmpty ? 1 : textBytes.length);
+    final langPtr = malloc<Uint8>(langBytes.isEmpty ? 1 : langBytes.length);
+    final provPtr = malloc<Uint8>(provBytes.isEmpty ? 1 : provBytes.length);
+    try {
+      if (textBytes.isNotEmpty) {
+        textPtr.asTypedList(textBytes.length).setAll(0, textBytes);
+      }
+      if (langBytes.isNotEmpty) {
+        langPtr.asTypedList(langBytes.length).setAll(0, langBytes);
+      }
+      if (provBytes.isNotEmpty) {
+        provPtr.asTypedList(provBytes.length).setAll(0, provBytes);
+      }
+      return _spineAppendSegment(
+        handle,
+        textPtr,
+        textBytes.length,
+        startMs,
+        endMs,
+        langPtr,
+        langBytes.length,
+        provPtr,
+        provBytes.length,
+      );
+    } finally {
+      malloc.free(textPtr);
+      malloc.free(langPtr);
+      malloc.free(provPtr);
+    }
+  }
+
+  int spineAcceptCumulative({
+    required int handle,
+    required String connectionId,
+    required String text,
+    String sourceLanguage = 'zh',
+    String? translation,
+    String? targetLanguage,
+    String provider = 'qwen',
+  }) {
+    final connBytes = utf8.encode(connectionId);
+    final textBytes = utf8.encode(text);
+    final langBytes = utf8.encode(sourceLanguage);
+    final trBytes = utf8.encode(translation ?? '');
+    final tlBytes = utf8.encode(targetLanguage ?? '');
+    final provBytes = utf8.encode(provider);
+    final connPtr = malloc<Uint8>(connBytes.isEmpty ? 1 : connBytes.length);
+    final textPtr = malloc<Uint8>(textBytes.isEmpty ? 1 : textBytes.length);
+    final langPtr = malloc<Uint8>(langBytes.isEmpty ? 1 : langBytes.length);
+    final trPtr = malloc<Uint8>(trBytes.isEmpty ? 1 : trBytes.length);
+    final tlPtr = malloc<Uint8>(tlBytes.isEmpty ? 1 : tlBytes.length);
+    final provPtr = malloc<Uint8>(provBytes.isEmpty ? 1 : provBytes.length);
+    try {
+      if (connBytes.isNotEmpty) {
+        connPtr.asTypedList(connBytes.length).setAll(0, connBytes);
+      }
+      if (textBytes.isNotEmpty) {
+        textPtr.asTypedList(textBytes.length).setAll(0, textBytes);
+      }
+      if (langBytes.isNotEmpty) {
+        langPtr.asTypedList(langBytes.length).setAll(0, langBytes);
+      }
+      if (trBytes.isNotEmpty) {
+        trPtr.asTypedList(trBytes.length).setAll(0, trBytes);
+      }
+      if (tlBytes.isNotEmpty) {
+        tlPtr.asTypedList(tlBytes.length).setAll(0, tlBytes);
+      }
+      if (provBytes.isNotEmpty) {
+        provPtr.asTypedList(provBytes.length).setAll(0, provBytes);
+      }
+      return _spineAcceptCumulative(
+        handle,
+        connPtr,
+        connBytes.length,
+        textPtr,
+        textBytes.length,
+        langPtr,
+        langBytes.length,
+        trPtr,
+        trBytes.length,
+        tlPtr,
+        tlBytes.length,
+        provPtr,
+        provBytes.length,
+      );
+    } finally {
+      malloc.free(connPtr);
+      malloc.free(textPtr);
+      malloc.free(langPtr);
+      malloc.free(trPtr);
+      malloc.free(tlPtr);
+      malloc.free(provPtr);
+    }
+  }
+
+  bool spineUpdateSegmentText({
+    required int handle,
+    required int ordinal,
+    required String newText,
+  }) {
+    final bytes = utf8.encode(newText);
+    final ptr = malloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
+    try {
+      if (bytes.isNotEmpty) ptr.asTypedList(bytes.length).setAll(0, bytes);
+      return _spineUpdateSegmentText(handle, ordinal, ptr, bytes.length) != 0;
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
+  bool spineSetTranslation({
+    required int handle,
+    required int ordinal,
+    required String translation,
+    String targetLanguage = 'en',
+  }) {
+    final trBytes = utf8.encode(translation);
+    final tlBytes = utf8.encode(targetLanguage);
+    final trPtr = malloc<Uint8>(trBytes.isEmpty ? 1 : trBytes.length);
+    final tlPtr = malloc<Uint8>(tlBytes.isEmpty ? 1 : tlBytes.length);
+    try {
+      if (trBytes.isNotEmpty) trPtr.asTypedList(trBytes.length).setAll(0, trBytes);
+      if (tlBytes.isNotEmpty) tlPtr.asTypedList(tlBytes.length).setAll(0, tlBytes);
+      return _spineSetTranslation(
+            handle,
+            ordinal,
+            trPtr,
+            trBytes.length,
+            tlPtr,
+            tlBytes.length,
+          ) !=
+          0;
+    } finally {
+      malloc.free(trPtr);
+      malloc.free(tlPtr);
+    }
+  }
+
+  KoeUtteranceSegment? spineGetSegment({
+    required int handle,
+    required int ordinal,
+  }) {
+    final hdrPtr = calloc<_KoeUtteranceSegmentHeaderNative>(1);
+    Pointer<Uint8> textPtr = nullptr;
+    Pointer<Uint8> trPtr = nullptr;
+    try {
+      final ok = _spineGetSegment(
+        handle,
+        ordinal,
+        hdrPtr,
+        nullptr,
+        0,
+        nullptr,
+        0,
+      );
+      if (ok == 0) return null;
+      final hdr = hdrPtr.ref;
+      textPtr = malloc<Uint8>(hdr.textLen == 0 ? 1 : hdr.textLen);
+      trPtr = malloc<Uint8>(hdr.translationLen == 0 ? 1 : hdr.translationLen);
+      _spineGetSegment(
+        handle,
+        ordinal,
+        hdrPtr,
+        textPtr,
+        hdr.textLen,
+        trPtr,
+        hdr.translationLen,
+      );
+      final text = utf8.decode(textPtr.asTypedList(hdr.textLen));
+      final translation = hdr.hasTranslation != 0
+          ? utf8.decode(trPtr.asTypedList(hdr.translationLen))
+          : null;
+      final srcLang = _readFixedUtf8(hdr.sourceLanguage, 16);
+      final tgtLang = _readFixedUtf8(hdr.targetLanguage, 16);
+      return KoeUtteranceSegment(
+        ordinal: hdr.ordinal,
+        revision: hdr.revision,
+        startMs: hdr.startMs,
+        endMs: hdr.endMs,
+        isFinal: hdr.isFinal != 0,
+        text: text,
+        translation: translation,
+        sourceLanguage: srcLang,
+        targetLanguage: tgtLang.isEmpty ? null : tgtLang,
+      );
+    } finally {
+      if (textPtr != nullptr) malloc.free(textPtr);
+      if (trPtr != nullptr) malloc.free(trPtr);
+      calloc.free(hdrPtr);
+    }
+  }
+
+  String spineFormatCitedSources(int handle) {
+    final outLenPtr = calloc<Size>(1);
+    Pointer<Uint8> ptr = nullptr;
+    var len = 0;
+    try {
+      ptr = _spineFormatCitedSources(handle, outLenPtr);
+      len = outLenPtr.value;
+      if (ptr == nullptr || len == 0) return '';
+      return utf8.decode(ptr.asTypedList(len));
+    } finally {
+      if (ptr != nullptr && len > 0) {
+        _bufferFree(ptr, len);
+      }
+      calloc.free(outLenPtr);
+    }
+  }
+
+  bool minutesValidateClaimGrounding({
+    required int spineHandle,
+    required String claim,
+    required List<int> citations,
+  }) {
+    if (claim.isEmpty || citations.isEmpty) return false;
+    final claimBytes = utf8.encode(claim);
+    final claimPtr = malloc<Uint8>(claimBytes.length);
+    final citesPtr = calloc<Uint32>(citations.length);
+    try {
+      claimPtr.asTypedList(claimBytes.length).setAll(0, claimBytes);
+      for (var i = 0; i < citations.length; i++) {
+        (citesPtr + i).value = citations[i];
+      }
+      return _minutesValidateClaimGrounding(
+            spineHandle,
+            claimPtr,
+            claimBytes.length,
+            citesPtr,
+            citations.length,
+          ) !=
+          0;
+    } finally {
+      malloc.free(claimPtr);
+      calloc.free(citesPtr);
     }
   }
 

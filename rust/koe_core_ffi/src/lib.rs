@@ -8,8 +8,10 @@ use std::sync::{Mutex, OnceLock};
 
 use koe_core::commands::DeviceCommands;
 use koe_core::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
+use koe_core::domain::{SegmentId, UtteranceSpine};
 use koe_core::frame::{DecodedPacket, FrameReassembler, ProtocolFrame};
 use koe_core::library::{RecordingEntry, RecordingLibrary};
+use koe_core::minutes::validate_calculation_grounding;
 use koe_core::models::{DeviceInfoModel, OfflineFileList};
 use koe_core::ogg_opus::OggOpus;
 use koe_core::session::{SessionIngestOutcome, TransferProgress, TransportSession};
@@ -364,6 +366,48 @@ impl KoeWifiBatchProgress {
             remaining_count: p.remaining_count,
         }
     }
+}
+
+/// C-ABI summary snapshot of `UtteranceSpine` (`S1..Sn`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeUtteranceSpineSnapshot {
+    /// Total number of segments (`S1..Sn`).
+    pub segment_count: u32,
+    /// `1` when derived artifacts are stale after an edit/speaker rename, else `0`.
+    pub is_stale: u8,
+    /// Padding for 8-byte alignment.
+    pub reserved: [u8; 3],
+    /// Monotonically increasing spine revision.
+    pub revision: u64,
+}
+
+/// C-ABI fixed metadata header for a single `UtteranceSegment` (`S1..Sn`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KoeUtteranceSegmentHeader {
+    /// 1-based ordinal (`1` for `S1`).
+    pub ordinal: u32,
+    /// Segment revision (starts at `1`, increments on edit).
+    pub revision: u32,
+    /// Start timestamp in milliseconds.
+    pub start_ms: u64,
+    /// End timestamp in milliseconds.
+    pub end_ms: u64,
+    /// `1` when finalized, else `0`.
+    pub is_final: u8,
+    /// `1` when `translation` is present, else `0`.
+    pub has_translation: u8,
+    /// Padding for 4-byte alignment.
+    pub reserved: [u8; 2],
+    /// UTF-8 byte length of `text`.
+    pub text_len: u32,
+    /// UTF-8 byte length of `translation` (`0` when absent).
+    pub translation_len: u32,
+    /// NUL-terminated UTF-8 source language code (`<= 15` bytes + NUL).
+    pub source_language: [u8; 16],
+    /// NUL-terminated UTF-8 target language code (`<= 15` bytes + NUL).
+    pub target_language: [u8; 16],
 }
 
 /// Computes the 8-bit wrapping protocol checksum over `data_ptr[0..data_len]`.
@@ -1024,6 +1068,7 @@ static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 static REASSEMBLER_REGISTRY: OnceLock<Mutex<BTreeMap<u64, ReassemblerSlot>>> = OnceLock::new();
 static TRANSPORT_REGISTRY: OnceLock<Mutex<BTreeMap<u64, SessionSlot>>> = OnceLock::new();
 static LIBRARY_REGISTRY: OnceLock<Mutex<BTreeMap<u64, RecordingLibrary>>> = OnceLock::new();
+static SPINE_REGISTRY: OnceLock<Mutex<BTreeMap<u64, UtteranceSpine>>> = OnceLock::new();
 
 fn reassembler_map() -> &'static Mutex<BTreeMap<u64, ReassemblerSlot>> {
     REASSEMBLER_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -1035,6 +1080,10 @@ pub(crate) fn session_map() -> &'static Mutex<BTreeMap<u64, SessionSlot>> {
 
 pub(crate) fn library_map() -> &'static Mutex<BTreeMap<u64, RecordingLibrary>> {
     LIBRARY_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+pub(crate) fn spine_map() -> &'static Mutex<BTreeMap<u64, UtteranceSpine>> {
+    SPINE_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
 pub(crate) fn alloc_handle() -> u64 {
@@ -2284,6 +2333,405 @@ pub unsafe extern "C" fn koe_library_undo_trash(
                 }
                 return 1;
             }
+        }
+    }
+    0
+}
+
+/// Allocates a stateful `UtteranceSpine` handle (`S1..Sn`).
+///
+/// # Safety
+///
+/// `session_id_ptr` must be valid for reads of `session_id_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_new(
+    session_id_ptr: *const u8,
+    session_id_len: usize,
+) -> u64 {
+    let session_id = if session_id_ptr.is_null() || session_id_len == 0 {
+        "default"
+    } else {
+        let bytes = unsafe { slice::from_raw_parts(session_id_ptr, session_id_len) };
+        std::str::from_utf8(bytes).unwrap_or("default")
+    };
+    let h = alloc_handle();
+    if let Ok(mut map) = spine_map().lock() {
+        map.insert(h, UtteranceSpine::new(session_id));
+    }
+    h
+}
+
+/// Frees an `UtteranceSpine` handle.
+#[no_mangle]
+pub extern "C" fn koe_spine_free(handle: u64) {
+    if let Ok(mut map) = spine_map().lock() {
+        map.remove(&handle);
+    }
+}
+
+/// Clears the stale flag on `UtteranceSpine`.
+#[no_mangle]
+pub extern "C" fn koe_spine_clear_stale(handle: u64) {
+    if let Ok(mut map) = spine_map().lock() {
+        if let Some(spine) = map.get_mut(&handle) {
+            spine.clear_stale();
+        }
+    }
+}
+
+/// Writes the current `KoeUtteranceSpineSnapshot` into `*out_snapshot_ptr`.
+/// Returns `1` on valid handle, `0` otherwise.
+///
+/// # Safety
+///
+/// `out_snapshot_ptr` must be valid for writes of one `KoeUtteranceSpineSnapshot`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_snapshot(
+    handle: u64,
+    out_snapshot_ptr: *mut KoeUtteranceSpineSnapshot,
+) -> i32 {
+    if out_snapshot_ptr.is_null() {
+        return 0;
+    }
+    if let Ok(map) = spine_map().lock() {
+        if let Some(spine) = map.get(&handle) {
+            unsafe {
+                *out_snapshot_ptr = KoeUtteranceSpineSnapshot {
+                    segment_count: spine.len() as u32,
+                    is_stale: u8::from(spine.is_stale()),
+                    reserved: [0u8; 3],
+                    revision: spine.revision(),
+                };
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Appends a finalized segment to `UtteranceSpine` and returns its 1-based ordinal (`1..=n`),
+/// or `0` if `text` is empty or the handle is invalid.
+///
+/// # Safety
+///
+/// `text_ptr`, `source_lang_ptr`, and `provider_ptr` must be valid for reads of their
+/// respective byte lengths when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_append_segment(
+    handle: u64,
+    text_ptr: *const u8,
+    text_len: usize,
+    start_ms: u64,
+    end_ms: u64,
+    source_lang_ptr: *const u8,
+    source_lang_len: usize,
+    provider_ptr: *const u8,
+    provider_len: usize,
+) -> u32 {
+    if text_ptr.is_null() || text_len == 0 {
+        return 0;
+    }
+    let text_bytes = unsafe { slice::from_raw_parts(text_ptr, text_len) };
+    let Ok(text) = std::str::from_utf8(text_bytes) else {
+        return 0;
+    };
+    let source_lang = if source_lang_ptr.is_null() || source_lang_len == 0 {
+        "zh"
+    } else {
+        let b = unsafe { slice::from_raw_parts(source_lang_ptr, source_lang_len) };
+        std::str::from_utf8(b).unwrap_or("zh")
+    };
+    let provider = if provider_ptr.is_null() || provider_len == 0 {
+        "qwen"
+    } else {
+        let b = unsafe { slice::from_raw_parts(provider_ptr, provider_len) };
+        std::str::from_utf8(b).unwrap_or("qwen")
+    };
+    if let Ok(mut map) = spine_map().lock() {
+        if let Some(spine) = map.get_mut(&handle) {
+            return spine
+                .append_segment(text, start_ms, end_ms, source_lang, provider)
+                .map_or(0, SegmentId::ordinal);
+        }
+    }
+    0
+}
+
+/// Accepts cumulative ASR text for `connection_id` on `UtteranceSpine`, stripping any
+/// previously confirmed prefix and returning the latest 1-based ordinal (`1..=n`), or `0`.
+///
+/// # Safety
+///
+/// All non-null byte pointers must be valid for reads of their respective byte lengths.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_accept_cumulative(
+    handle: u64,
+    conn_id_ptr: *const u8,
+    conn_id_len: usize,
+    text_ptr: *const u8,
+    text_len: usize,
+    source_lang_ptr: *const u8,
+    source_lang_len: usize,
+    translation_ptr: *const u8,
+    translation_len: usize,
+    target_lang_ptr: *const u8,
+    target_lang_len: usize,
+    provider_ptr: *const u8,
+    provider_len: usize,
+) -> u32 {
+    if text_ptr.is_null() || text_len == 0 {
+        return 0;
+    }
+    let conn_id = if conn_id_ptr.is_null() || conn_id_len == 0 {
+        "default"
+    } else {
+        let b = unsafe { slice::from_raw_parts(conn_id_ptr, conn_id_len) };
+        std::str::from_utf8(b).unwrap_or("default")
+    };
+    let text_b = unsafe { slice::from_raw_parts(text_ptr, text_len) };
+    let Ok(text) = std::str::from_utf8(text_b) else {
+        return 0;
+    };
+    let source_lang = if source_lang_ptr.is_null() || source_lang_len == 0 {
+        "zh"
+    } else {
+        let b = unsafe { slice::from_raw_parts(source_lang_ptr, source_lang_len) };
+        std::str::from_utf8(b).unwrap_or("zh")
+    };
+    let translation = if translation_ptr.is_null() || translation_len == 0 {
+        None
+    } else {
+        let b = unsafe { slice::from_raw_parts(translation_ptr, translation_len) };
+        std::str::from_utf8(b).ok()
+    };
+    let target_lang = if target_lang_ptr.is_null() || target_lang_len == 0 {
+        None
+    } else {
+        let b = unsafe { slice::from_raw_parts(target_lang_ptr, target_lang_len) };
+        std::str::from_utf8(b).ok()
+    };
+    let provider = if provider_ptr.is_null() || provider_len == 0 {
+        "qwen"
+    } else {
+        let b = unsafe { slice::from_raw_parts(provider_ptr, provider_len) };
+        std::str::from_utf8(b).unwrap_or("qwen")
+    };
+    if let Ok(mut map) = spine_map().lock() {
+        if let Some(spine) = map.get_mut(&handle) {
+            return spine
+                .accept_cumulative(conn_id, text, source_lang, translation, target_lang, provider)
+                .map_or(0, SegmentId::ordinal);
+        }
+    }
+    0
+}
+
+/// Updates the text of 1-based segment `ordinal` (`S1..Sn`), incrementing its revision,
+/// clearing any stale translation, and marking the spine stale. Returns `1` if updated, `0` otherwise.
+///
+/// # Safety
+///
+/// `new_text_ptr` must be valid for reads of `new_text_len` UTF-8 bytes when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_update_segment_text(
+    handle: u64,
+    ordinal: u32,
+    new_text_ptr: *const u8,
+    new_text_len: usize,
+) -> u8 {
+    let Some(id) = SegmentId::new(ordinal) else {
+        return 0;
+    };
+    if new_text_ptr.is_null() || new_text_len == 0 {
+        return 0;
+    }
+    let bytes = unsafe { slice::from_raw_parts(new_text_ptr, new_text_len) };
+    let Ok(new_text) = std::str::from_utf8(bytes) else {
+        return 0;
+    };
+    if let Ok(mut map) = spine_map().lock() {
+        if let Some(spine) = map.get_mut(&handle) {
+            return u8::from(spine.update_segment_text(id, new_text));
+        }
+    }
+    0
+}
+
+/// Sets the translation on 1-based segment `ordinal` (`S1..Sn`). Returns `1` if updated, `0` otherwise.
+///
+/// # Safety
+///
+/// `translation_ptr` and `target_lang_ptr` must be valid for reads of their respective lengths when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_set_translation(
+    handle: u64,
+    ordinal: u32,
+    translation_ptr: *const u8,
+    translation_len: usize,
+    target_lang_ptr: *const u8,
+    target_lang_len: usize,
+) -> u8 {
+    let Some(id) = SegmentId::new(ordinal) else {
+        return 0;
+    };
+    if translation_ptr.is_null() || translation_len == 0 {
+        return 0;
+    }
+    let tr_bytes = unsafe { slice::from_raw_parts(translation_ptr, translation_len) };
+    let Ok(tr_str) = std::str::from_utf8(tr_bytes) else {
+        return 0;
+    };
+    let target_lang = if target_lang_ptr.is_null() || target_lang_len == 0 {
+        ""
+    } else {
+        let b = unsafe { slice::from_raw_parts(target_lang_ptr, target_lang_len) };
+        std::str::from_utf8(b).unwrap_or("")
+    };
+    if let Ok(mut map) = spine_map().lock() {
+        if let Some(spine) = map.get_mut(&handle) {
+            return u8::from(spine.set_translation(id, tr_str, target_lang));
+        }
+    }
+    0
+}
+
+/// Reads 1-based segment `ordinal` (`S1..Sn`) from `UtteranceSpine`, populating `*out_header_ptr`
+/// and copying up to `out_text_cap` / `out_translation_cap` UTF-8 bytes into `out_text_ptr` /
+/// `out_translation_ptr`. Returns `1` if the segment exists, `0` otherwise.
+///
+/// # Safety
+///
+/// `out_header_ptr` must be valid for writes of one `KoeUtteranceSegmentHeader`, and
+/// `out_text_ptr` / `out_translation_ptr` must be valid for writes of their capacities when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_get_segment(
+    handle: u64,
+    ordinal: u32,
+    out_header_ptr: *mut KoeUtteranceSegmentHeader,
+    out_text_ptr: *mut u8,
+    out_text_cap: usize,
+    out_translation_ptr: *mut u8,
+    out_translation_cap: usize,
+) -> u8 {
+    if out_header_ptr.is_null() {
+        return 0;
+    }
+    let Some(id) = SegmentId::new(ordinal) else {
+        return 0;
+    };
+    if let Ok(map) = spine_map().lock() {
+        if let Some(spine) = map.get(&handle) {
+            let Some(seg) = spine.get(id) else {
+                return 0;
+            };
+            let text_bytes = seg.text.as_bytes();
+            let tr_bytes = seg.translation.as_deref().map_or(&[][..], str::as_bytes);
+            let mut hdr = KoeUtteranceSegmentHeader {
+                ordinal: seg.id.ordinal(),
+                revision: seg.revision,
+                start_ms: seg.start_ms,
+                end_ms: seg.end_ms,
+                is_final: u8::from(seg.is_final),
+                has_translation: u8::from(seg.translation.is_some()),
+                reserved: [0u8; 2],
+                text_len: text_bytes.len() as u32,
+                translation_len: tr_bytes.len() as u32,
+                source_language: [0u8; 16],
+                target_language: [0u8; 16],
+            };
+            copy_c_str(&seg.source_language, &mut hdr.source_language);
+            if let Some(tl) = &seg.target_language {
+                copy_c_str(tl, &mut hdr.target_language);
+            }
+            unsafe {
+                *out_header_ptr = hdr;
+            }
+            if !out_text_ptr.is_null() && out_text_cap > 0 && !text_bytes.is_empty() {
+                let copy_len = text_bytes.len().min(out_text_cap);
+                let dst = unsafe { slice::from_raw_parts_mut(out_text_ptr, copy_len) };
+                dst.copy_from_slice(&text_bytes[..copy_len]);
+            }
+            if !out_translation_ptr.is_null() && out_translation_cap > 0 && !tr_bytes.is_empty() {
+                let copy_len = tr_bytes.len().min(out_translation_cap);
+                let dst = unsafe { slice::from_raw_parts_mut(out_translation_ptr, copy_len) };
+                dst.copy_from_slice(&tr_bytes[..copy_len]);
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// Formats all segments in `UtteranceSpine` as newline-joined `"[S1] <text>"` UTF-8 bytes
+/// on the Rust heap, storing the byte length in `*out_len_ptr` and returning a heap pointer
+/// (freed via `koe_buffer_free`), or null when empty.
+///
+/// # Safety
+///
+/// `out_len_ptr` must be valid for writes of a `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn koe_spine_format_cited_sources(
+    handle: u64,
+    out_len_ptr: *mut usize,
+) -> *mut u8 {
+    if out_len_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        *out_len_ptr = 0;
+    }
+    if let Ok(map) = spine_map().lock() {
+        if let Some(spine) = map.get(&handle) {
+            let joined = spine.format_cited_sources().join("\n");
+            if joined.is_empty() {
+                return std::ptr::null_mut();
+            }
+            let mut boxed = joined.into_bytes().into_boxed_slice();
+            let len = boxed.len();
+            let ptr = boxed.as_mut_ptr();
+            std::mem::forget(boxed);
+            unsafe {
+                *out_len_ptr = len;
+            }
+            return ptr;
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// Validates that `claim_ptr[0..claim_len]` cited by 1-based `citations_ptr[0..citations_len]`
+/// is grounded in `UtteranceSpine` `handle` (`1` valid, `0` invalid/ungrounded).
+///
+/// # Safety
+///
+/// `claim_ptr` must be valid for reads of `claim_len` UTF-8 bytes, and `citations_ptr` must
+/// be valid for reads of `citations_len` `u32` elements when non-null.
+#[no_mangle]
+pub unsafe extern "C" fn koe_minutes_validate_claim_grounding(
+    handle: u64,
+    claim_ptr: *const u8,
+    claim_len: usize,
+    citations_ptr: *const u32,
+    citations_len: usize,
+) -> u8 {
+    if claim_ptr.is_null() || claim_len == 0 || citations_ptr.is_null() || citations_len == 0 {
+        return 0;
+    }
+    let claim_bytes = unsafe { slice::from_raw_parts(claim_ptr, claim_len) };
+    let Ok(claim) = std::str::from_utf8(claim_bytes) else {
+        return 0;
+    };
+    let raw_ids = unsafe { slice::from_raw_parts(citations_ptr, citations_len) };
+    let mut ids = Vec::with_capacity(raw_ids.len());
+    for &ord in raw_ids {
+        let Some(seg_id) = SegmentId::new(ord) else {
+            return 0;
+        };
+        ids.push(seg_id);
+    }
+    if let Ok(map) = spine_map().lock() {
+        if let Some(spine) = map.get(&handle) {
+            return u8::from(validate_calculation_grounding(claim, &ids, spine).is_ok());
         }
     }
     0

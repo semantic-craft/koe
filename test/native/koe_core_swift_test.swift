@@ -382,5 +382,25 @@ struct KoeCoreSwiftTest {
       check(wifiHost.playback.recordings.count == 1 && wifiHost.playback.recordings[0].id.rawValue == "901", "KoeNativeHost playback.recordings must include Wi-Fi batch recording 901")
     }
     await wifiActor.finishStream()
+
+    let spine = KoeUtteranceSpine(sessionId: "swift-spine-test")
+    check(spine.snapshot().segmentCount == 0 && spine.snapshot().revision == 0 && !spine.snapshot().isStale, "new KoeUtteranceSpine must start empty and non-stale")
+    let s1 = spine.appendSegment(text: "基本工资是3910元。", startMs: 0, endMs: 2_000, sourceLanguage: "zh", provider: "qwen")
+    let s2 = spine.appendSegment(text: "绩效发放比例按80%计算。", startMs: 2_000, endMs: 4_000, sourceLanguage: "zh", provider: "qwen")
+    check(s1 == 1 && s2 == 2, "appendSegment must assign 1-based ordinals S1 and S2")
+    check(spine.segment(ordinal: 1)?.id == "S1" && spine.segment(ordinal: 1)?.text == "基本工资是3910元。", "segment(1) must return S1 text")
+    check(spine.setTranslation(ordinal: 1, translation: "Base salary is 3910 CNY.", targetLanguage: "en"), "setTranslation must succeed on S1")
+    check(spine.segment(ordinal: 1)?.translation == "Base salary is 3910 CNY.", "segment(1) must expose translation")
+    check(spine.updateSegmentText(ordinal: 1, newText: "基本工资调整为4200元。"), "updateSegmentText must succeed on S1")
+    check(spine.snapshot().isStale, "updateSegmentText must mark spine stale")
+    check(spine.segment(ordinal: 1)?.revision == 2 && spine.segment(ordinal: 1)?.translation == nil, "updateSegmentText must increment segment revision and invalidate stale translation")
+    spine.clearStale()
+    check(!spine.snapshot().isStale, "clearStale must reset stale flag")
+    let s3 = spine.acceptCumulative(connectionId: "conn-1", text: "所以实发工资按4200元乘以80%发放。", sourceLanguage: "zh", translation: "Net pay is 4200 * 80%.", targetLanguage: "en", provider: "qwen")
+    let s4 = spine.acceptCumulative(connectionId: "conn-1", text: "所以实发工资按4200元乘以80%发放。 下月生效。", sourceLanguage: "zh", translation: "Effective next month.", targetLanguage: "en", provider: "qwen")
+    check(s3 == 3 && s4 == 4 && spine.segment(ordinal: 4)?.text == "下月生效。", "acceptCumulative must strip confirmed prefix and append only delta as S4")
+    check(spine.formatCitedSources().contains("[S1] 基本工资调整为4200元。") && spine.formatCitedSources().contains("[S4] 下月生效。"), "formatCitedSources must format [S1]..[S4] lines")
+    check(!spine.validateClaimGrounding(claim: "实发工资按4200元乘以80%计算", citations: [1, 2]), "validateClaimGrounding must reject cross-segment wage+percentage stitching across S1 and S2")
+    check(spine.validateClaimGrounding(claim: "实发工资按4200元乘以80%计算", citations: [3]), "validateClaimGrounding must accept single-segment grounded calculation on S3")
   }
 }

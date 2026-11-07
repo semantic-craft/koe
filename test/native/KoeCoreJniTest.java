@@ -65,6 +65,40 @@ final class KoeCoreNative {
   static native boolean libraryMoveToTrash(long handle, int recordingId);
   static native int libraryUndoTrash(long handle);
   static native long[] librarySnapshot(long handle);
+
+  static native long spineNew(byte[] sessionId);
+  static native void spineFree(long handle);
+  static native void spineClearStale(long handle);
+  static native long[] spineSnapshot(long handle);
+  static native int spineAppendSegment(
+      long handle,
+      byte[] text,
+      long startMs,
+      long endMs,
+      byte[] sourceLang,
+      byte[] provider);
+  static native int spineAcceptCumulative(
+      long handle,
+      byte[] connId,
+      byte[] text,
+      byte[] sourceLang,
+      byte[] translation,
+      byte[] targetLang,
+      byte[] provider);
+  static native boolean spineUpdateSegmentText(long handle, int ordinal, byte[] newText);
+  static native boolean spineSetTranslation(
+      long handle,
+      int ordinal,
+      byte[] translation,
+      byte[] targetLang);
+  static native long[] spineGetSegmentMeta(long handle, int ordinal);
+  static native byte[] spineGetSegmentText(long handle, int ordinal);
+  static native byte[] spineGetSegmentTranslation(long handle, int ordinal);
+  static native byte[] spineFormatCitedSources(long handle);
+  static native boolean minutesValidateClaimGrounding(
+      long spineHandle,
+      byte[] claim,
+      long[] citations);
 }
 
 public final class KoeCoreJniTest {
@@ -308,5 +342,67 @@ public final class KoeCoreJniTest {
     KoeCoreNative.libraryFree(wifiLib);
     KoeCoreNative.sessionCancelWifiBatch(wifiSession);
     KoeCoreNative.sessionFree(wifiSession);
+
+    long spine = KoeCoreNative.spineNew("jni-spine".getBytes(StandardCharsets.UTF_8));
+    int s1 = KoeCoreNative.spineAppendSegment(
+        spine,
+        "基本工资是3910元。".getBytes(StandardCharsets.UTF_8),
+        0L,
+        2000L,
+        "zh".getBytes(StandardCharsets.UTF_8),
+        "qwen".getBytes(StandardCharsets.UTF_8));
+    int s2 = KoeCoreNative.spineAppendSegment(
+        spine,
+        "绩效比例按80%发放。".getBytes(StandardCharsets.UTF_8),
+        2000L,
+        4000L,
+        "zh".getBytes(StandardCharsets.UTF_8),
+        "qwen".getBytes(StandardCharsets.UTF_8));
+    check(s1 == 1 && s2 == 2, "spineAppendSegment assigns S1 and S2");
+    check(
+        KoeCoreNative.spineSetTranslation(
+            spine,
+            1,
+            "Base salary is 3910 CNY.".getBytes(StandardCharsets.UTF_8),
+            "en".getBytes(StandardCharsets.UTF_8)),
+        "spineSetTranslation on S1");
+    byte[] tr1 = KoeCoreNative.spineGetSegmentTranslation(spine, 1);
+    check(
+        tr1 != null && new String(tr1, StandardCharsets.UTF_8).equals("Base salary is 3910 CNY."),
+        "spineGetSegmentTranslation returns S1 translation");
+    check(
+        KoeCoreNative.spineUpdateSegmentText(
+            spine, 1, "基本工资调整为4200元。".getBytes(StandardCharsets.UTF_8)),
+        "spineUpdateSegmentText on S1");
+    long[] spineSnap = KoeCoreNative.spineSnapshot(spine);
+    check(spineSnap.length == 3 && spineSnap[0] == 2L && spineSnap[2] == 1L, "spineSnapshot reports stale=1 after edit");
+    long[] meta1 = KoeCoreNative.spineGetSegmentMeta(spine, 1);
+    check(meta1 != null && meta1[1] == 2L && meta1[5] == 0L, "S1 revision=2 and translation cleared after edit");
+    KoeCoreNative.spineClearStale(spine);
+    check(KoeCoreNative.spineSnapshot(spine)[2] == 0L, "spineClearStale resets stale to 0");
+    int s3 = KoeCoreNative.spineAcceptCumulative(
+        spine,
+        "c1".getBytes(StandardCharsets.UTF_8),
+        "所以实发工资按4200元乘以80%折算。".getBytes(StandardCharsets.UTF_8),
+        "zh".getBytes(StandardCharsets.UTF_8),
+        new byte[0],
+        new byte[0],
+        "qwen".getBytes(StandardCharsets.UTF_8));
+    check(s3 == 3, "spineAcceptCumulative appends S3");
+    String cited = new String(KoeCoreNative.spineFormatCitedSources(spine), StandardCharsets.UTF_8);
+    check(cited.contains("[S1] 基本工资调整为4200元。") && cited.contains("[S3]"), "spineFormatCitedSources emits [S1]..[S3]");
+    check(
+        !KoeCoreNative.minutesValidateClaimGrounding(
+            spine,
+            "实发工资按4200元乘以80%计算".getBytes(StandardCharsets.UTF_8),
+            new long[] {1L, 2L}),
+        "minutesValidateClaimGrounding rejects stitched S1+S2 wage*percentage");
+    check(
+        KoeCoreNative.minutesValidateClaimGrounding(
+            spine,
+            "实发工资按4200元乘以80%计算".getBytes(StandardCharsets.UTF_8),
+            new long[] {3L}),
+        "minutesValidateClaimGrounding accepts single-segment grounded S3");
+    KoeCoreNative.spineFree(spine);
   }
 }

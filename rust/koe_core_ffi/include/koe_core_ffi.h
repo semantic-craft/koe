@@ -133,6 +133,27 @@ typedef struct KoeWifiBatchProgress {
   uint32_t remaining_count;
 } KoeWifiBatchProgress;
 
+typedef struct KoeUtteranceSpineSnapshot {
+  uint32_t segment_count;
+  uint8_t is_stale;
+  uint8_t reserved[3];
+  uint64_t revision;
+} KoeUtteranceSpineSnapshot;
+
+typedef struct KoeUtteranceSegmentHeader {
+  uint32_t ordinal;
+  uint32_t revision;
+  uint64_t start_ms;
+  uint64_t end_ms;
+  uint8_t is_final;
+  uint8_t has_translation;
+  uint8_t reserved[2];
+  uint32_t text_len;
+  uint32_t translation_len;
+  uint8_t source_language[16];
+  uint8_t target_language[16];
+} KoeUtteranceSegmentHeader;
+
 uint8_t koe_protocol_checksum(const uint8_t* data_ptr, size_t data_len);
 uint8_t koe_protocol_verify_checksum(const uint8_t* packet_ptr, size_t packet_len);
 size_t koe_protocol_encode(uint8_t cmd_type, uint8_t cmd_id, const uint8_t* payload_ptr, size_t payload_len, uint8_t* out_ptr, size_t out_cap);
@@ -206,6 +227,17 @@ uint64_t koe_library_seek_ms(uint64_t handle, uint64_t position_ms);
 uint8_t koe_library_jump_to_mark(uint64_t handle, uint64_t current_ms, int32_t direction, uint64_t* out_target_ms_ptr);
 uint8_t koe_library_move_to_trash(uint64_t handle, uint32_t recording_id, KoeRecordingEntry* out_trashed_ptr);
 uint8_t koe_library_undo_trash(uint64_t handle, KoeRecordingEntry* out_restored_ptr);
+uint64_t koe_spine_new(const uint8_t* session_id_ptr, size_t session_id_len);
+void koe_spine_free(uint64_t handle);
+void koe_spine_clear_stale(uint64_t handle);
+int32_t koe_spine_snapshot(uint64_t handle, KoeUtteranceSpineSnapshot* out_snapshot_ptr);
+uint32_t koe_spine_append_segment(uint64_t handle, const uint8_t* text_ptr, size_t text_len, uint64_t start_ms, uint64_t end_ms, const uint8_t* source_lang_ptr, size_t source_lang_len, const uint8_t* provider_ptr, size_t provider_len);
+uint32_t koe_spine_accept_cumulative(uint64_t handle, const uint8_t* conn_id_ptr, size_t conn_id_len, const uint8_t* text_ptr, size_t text_len, const uint8_t* source_lang_ptr, size_t source_lang_len, const uint8_t* translation_ptr, size_t translation_len, const uint8_t* target_lang_ptr, size_t target_lang_len, const uint8_t* provider_ptr, size_t provider_len);
+uint8_t koe_spine_update_segment_text(uint64_t handle, uint32_t ordinal, const uint8_t* new_text_ptr, size_t new_text_len);
+uint8_t koe_spine_set_translation(uint64_t handle, uint32_t ordinal, const uint8_t* translation_ptr, size_t translation_len, const uint8_t* target_lang_ptr, size_t target_lang_len);
+uint8_t koe_spine_get_segment(uint64_t handle, uint32_t ordinal, KoeUtteranceSegmentHeader* out_header_ptr, uint8_t* out_text_ptr, size_t out_text_cap, uint8_t* out_translation_ptr, size_t out_translation_cap);
+uint8_t* koe_spine_format_cited_sources(uint64_t handle, size_t* out_len_ptr);
+uint8_t koe_minutes_validate_claim_grounding(uint64_t handle, const uint8_t* claim_ptr, size_t claim_len, const uint32_t* citations_ptr, size_t citations_len);
 
 #ifdef __cplusplus
 }

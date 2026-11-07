@@ -8,22 +8,25 @@ use std::sync::{Mutex, OnceLock};
 use crate::{
     koe_buffer_free, koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
     koe_library_move_to_trash, koe_library_new, koe_library_seek_ms, koe_library_select,
-    koe_library_snapshot, koe_library_undo_trash, koe_opus_decode_pcm16, koe_opus_decode_wav,
-    koe_protocol_checksum, koe_protocol_encode, koe_protocol_verify_checksum,
-    koe_reassembler_free, koe_reassembler_ingest, koe_reassembler_new, koe_reassembler_pop_packet,
-    koe_reassembler_reset, koe_session_accept_ecdh_reply, koe_session_begin_offline_pull,
-    koe_session_begin_wifi_batch, koe_session_cancel_wifi_batch, koe_session_free,
-    koe_session_get_wifi_batch_progress, koe_session_get_wifi_endpoint,
-    koe_session_ingest_ble_chunk, koe_session_ingest_wifi_chunk, koe_session_new,
-    koe_session_on_transport_interrupted, koe_session_on_wifi_interrupted,
+    koe_library_snapshot, koe_library_undo_trash, koe_minutes_validate_claim_grounding,
+    koe_opus_decode_pcm16, koe_opus_decode_wav, koe_protocol_checksum, koe_protocol_encode,
+    koe_protocol_verify_checksum, koe_reassembler_free, koe_reassembler_ingest,
+    koe_reassembler_new, koe_reassembler_pop_packet, koe_reassembler_reset,
+    koe_session_accept_ecdh_reply, koe_session_begin_offline_pull, koe_session_begin_wifi_batch,
+    koe_session_cancel_wifi_batch, koe_session_free, koe_session_get_wifi_batch_progress,
+    koe_session_get_wifi_endpoint, koe_session_ingest_ble_chunk, koe_session_ingest_wifi_chunk,
+    koe_session_new, koe_session_on_transport_interrupted, koe_session_on_wifi_interrupted,
     koe_session_poll_timers, koe_session_pop_outbound_tx, koe_session_pop_outbound_wifi_udp,
     koe_session_pop_outbound_wifi_ws, koe_session_resume_offline_pull,
     koe_session_resume_wifi_batch, koe_session_simulate_realtime_pipeline,
     koe_session_stop_realtime_recording, koe_session_take_live_pcm16,
+    koe_spine_accept_cumulative, koe_spine_append_segment, koe_spine_clear_stale,
+    koe_spine_format_cited_sources, koe_spine_free, koe_spine_get_segment, koe_spine_new,
+    koe_spine_set_translation, koe_spine_snapshot, koe_spine_update_segment_text,
     koe_wifi_build_file_request_hex, koe_wifi_build_transfer_complete_hex,
     koe_wifi_keepalive_payload, koe_wifi_parse_config_response, koe_wifi_shares_subnet,
     session_map, KoeLibrarySnapshot, KoeRecordingEntry, KoeSessionStepResult,
-    KoeWifiBatchProgress, KoeWifiEndpoint,
+    KoeUtteranceSegmentHeader, KoeUtteranceSpineSnapshot, KoeWifiBatchProgress, KoeWifiEndpoint,
 };
 use koe_core::crypto::DeviceCrypto;
 use koe_core::ogg_opus::OggOpus;
@@ -1051,4 +1054,347 @@ pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_sessionCancelWifi
     handle: JLong,
 ) {
     koe_session_cancel_wifi_batch(handle as u64);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineNew(
+    env: JniEnv,
+    _cls: JClass,
+    session_id: JByteArray,
+) -> JLong {
+    let sid = unsafe { jni_read_bytes(env, session_id) };
+    unsafe { koe_spine_new(sid.as_ptr(), sid.len()) as JLong }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineFree(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) {
+    koe_spine_free(handle as u64);
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineClearStale(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) {
+    koe_spine_clear_stale(handle as u64);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineSnapshot(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JLongArray {
+    let mut snap = KoeUtteranceSpineSnapshot {
+        segment_count: 0,
+        is_stale: 0,
+        reserved: [0; 3],
+        revision: 0,
+    };
+    unsafe {
+        koe_spine_snapshot(handle as u64, &mut snap);
+        let values = [
+            i64::from(snap.segment_count),
+            snap.revision as i64,
+            i64::from(snap.is_stale),
+        ];
+        jni_new_longs(env, &values)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineAppendSegment(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    text: JByteArray,
+    start_ms: JLong,
+    end_ms: JLong,
+    source_lang: JByteArray,
+    provider: JByteArray,
+) -> JInt {
+    let text_b = unsafe { jni_read_bytes(env, text) };
+    let lang_b = unsafe { jni_read_bytes(env, source_lang) };
+    let prov_b = unsafe { jni_read_bytes(env, provider) };
+    unsafe {
+        koe_spine_append_segment(
+            handle as u64,
+            text_b.as_ptr(),
+            text_b.len(),
+            start_ms.max(0) as u64,
+            end_ms.max(0) as u64,
+            lang_b.as_ptr(),
+            lang_b.len(),
+            prov_b.as_ptr(),
+            prov_b.len(),
+        ) as JInt
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineAcceptCumulative(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    conn_id: JByteArray,
+    text: JByteArray,
+    source_lang: JByteArray,
+    translation: JByteArray,
+    target_lang: JByteArray,
+    provider: JByteArray,
+) -> JInt {
+    let conn_b = unsafe { jni_read_bytes(env, conn_id) };
+    let text_b = unsafe { jni_read_bytes(env, text) };
+    let lang_b = unsafe { jni_read_bytes(env, source_lang) };
+    let tr_b = unsafe { jni_read_bytes(env, translation) };
+    let tlang_b = unsafe { jni_read_bytes(env, target_lang) };
+    let prov_b = unsafe { jni_read_bytes(env, provider) };
+    unsafe {
+        koe_spine_accept_cumulative(
+            handle as u64,
+            conn_b.as_ptr(),
+            conn_b.len(),
+            text_b.as_ptr(),
+            text_b.len(),
+            lang_b.as_ptr(),
+            lang_b.len(),
+            tr_b.as_ptr(),
+            tr_b.len(),
+            tlang_b.as_ptr(),
+            tlang_b.len(),
+            prov_b.as_ptr(),
+            prov_b.len(),
+        ) as JInt
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineUpdateSegmentText(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    ordinal: JInt,
+    new_text: JByteArray,
+) -> JBoolean {
+    let text_b = unsafe { jni_read_bytes(env, new_text) };
+    unsafe {
+        koe_spine_update_segment_text(
+            handle as u64,
+            ordinal.max(0) as u32,
+            text_b.as_ptr(),
+            text_b.len(),
+        )
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineSetTranslation(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    ordinal: JInt,
+    translation: JByteArray,
+    target_lang: JByteArray,
+) -> JBoolean {
+    let tr_b = unsafe { jni_read_bytes(env, translation) };
+    let tlang_b = unsafe { jni_read_bytes(env, target_lang) };
+    unsafe {
+        koe_spine_set_translation(
+            handle as u64,
+            ordinal.max(0) as u32,
+            tr_b.as_ptr(),
+            tr_b.len(),
+            tlang_b.as_ptr(),
+            tlang_b.len(),
+        )
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineGetSegmentMeta(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    ordinal: JInt,
+) -> JLongArray {
+    let mut hdr = KoeUtteranceSegmentHeader {
+        ordinal: 0,
+        revision: 0,
+        start_ms: 0,
+        end_ms: 0,
+        is_final: 0,
+        has_translation: 0,
+        reserved: [0; 2],
+        text_len: 0,
+        translation_len: 0,
+        source_language: [0; 16],
+        target_language: [0; 16],
+    };
+    let ok = unsafe {
+        koe_spine_get_segment(
+            handle as u64,
+            ordinal.max(0) as u32,
+            &mut hdr,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ok == 0 {
+        return std::ptr::null_mut();
+    }
+    let values = [
+        i64::from(hdr.ordinal),
+        i64::from(hdr.revision),
+        hdr.start_ms as i64,
+        hdr.end_ms as i64,
+        i64::from(hdr.is_final),
+        i64::from(hdr.has_translation),
+    ];
+    unsafe { jni_new_longs(env, &values) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineGetSegmentText(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    ordinal: JInt,
+) -> JByteArray {
+    let mut hdr = KoeUtteranceSegmentHeader {
+        ordinal: 0,
+        revision: 0,
+        start_ms: 0,
+        end_ms: 0,
+        is_final: 0,
+        has_translation: 0,
+        reserved: [0; 2],
+        text_len: 0,
+        translation_len: 0,
+        source_language: [0; 16],
+        target_language: [0; 16],
+    };
+    let ok = unsafe {
+        koe_spine_get_segment(
+            handle as u64,
+            ordinal.max(0) as u32,
+            &mut hdr,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ok == 0 || hdr.text_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let mut text_buf = vec![0u8; hdr.text_len as usize];
+    unsafe {
+        koe_spine_get_segment(
+            handle as u64,
+            ordinal.max(0) as u32,
+            &mut hdr,
+            text_buf.as_mut_ptr(),
+            text_buf.len(),
+            std::ptr::null_mut(),
+            0,
+        );
+        jni_new_bytes(env, &text_buf)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineGetSegmentTranslation(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    ordinal: JInt,
+) -> JByteArray {
+    let mut hdr = KoeUtteranceSegmentHeader {
+        ordinal: 0,
+        revision: 0,
+        start_ms: 0,
+        end_ms: 0,
+        is_final: 0,
+        has_translation: 0,
+        reserved: [0; 2],
+        text_len: 0,
+        translation_len: 0,
+        source_language: [0; 16],
+        target_language: [0; 16],
+    };
+    let ok = unsafe {
+        koe_spine_get_segment(
+            handle as u64,
+            ordinal.max(0) as u32,
+            &mut hdr,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ok == 0 || hdr.has_translation == 0 || hdr.translation_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let mut tr_buf = vec![0u8; hdr.translation_len as usize];
+    unsafe {
+        koe_spine_get_segment(
+            handle as u64,
+            ordinal.max(0) as u32,
+            &mut hdr,
+            std::ptr::null_mut(),
+            0,
+            tr_buf.as_mut_ptr(),
+            tr_buf.len(),
+        );
+        jni_new_bytes(env, &tr_buf)
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_spineFormatCitedSources(
+    env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+) -> JByteArray {
+    let mut out_len = 0usize;
+    let ptr = unsafe { koe_spine_format_cited_sources(handle as u64, &mut out_len) };
+    if ptr.is_null() || out_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, out_len) };
+    let arr = unsafe { jni_new_bytes(env, slice) };
+    unsafe {
+        koe_buffer_free(ptr, out_len);
+    }
+    arr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_minutesValidateClaimGrounding(
+    env: JniEnv,
+    _cls: JClass,
+    spine_handle: JLong,
+    claim: JByteArray,
+    citations: JLongArray,
+) -> JBoolean {
+    let claim_b = unsafe { jni_read_bytes(env, claim) };
+    let raw_cites = unsafe { jni_read_longs(env, citations) };
+    let cites_u32: Vec<u32> = raw_cites.into_iter().map(|v| v.max(0) as u32).collect();
+    unsafe {
+        koe_minutes_validate_claim_grounding(
+            spine_handle as u64,
+            claim_b.as_ptr(),
+            claim_b.len(),
+            cites_u32.as_ptr(),
+            cites_u32.len(),
+        )
+    }
 }
