@@ -7,9 +7,15 @@ fn stage_static_archive(archive_path: &Path) -> bool {
         return false;
     };
     let staged = PathBuf::from(&out_dir).join("libopus_bundled.a");
+    let _ = fs::remove_file(&staged);
     if fs::copy(archive_path, &staged).is_ok() {
         println!("cargo:rustc-link-search=native={out_dir}");
         println!("cargo:rustc-link-lib=static=opus_bundled");
+        return true;
+    }
+    if let Some(parent) = archive_path.parent() {
+        println!("cargo:rustc-link-search=native={}", parent.display());
+        println!("cargo:rustc-link-lib=static=opus");
         return true;
     }
     false
