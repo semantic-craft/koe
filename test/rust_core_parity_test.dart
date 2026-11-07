@@ -6,7 +6,10 @@ import 'package:koe/audio/ogg_opus.dart';
 import 'package:koe/audio/opus_wave.dart';
 import 'package:koe/crypto/device_crypto.dart';
 import 'package:koe/native/koe_core_ffi.dart';
+import 'package:koe/protocol/commands.dart';
 import 'package:koe/protocol/frame.dart';
+import 'package:koe/protocol/models.dart';
+import 'package:koe/protocol/slice_marks.dart';
 
 void main() {
   test('Rust FFI kernel is loaded and matches protocol, crypto, Ogg, and WAV outputs across 20 seeds', () {
@@ -153,5 +156,97 @@ void main() {
       );
     }
     expect(batchDec, equals(perChunk.toBytes()));
+  });
+
+  test('Rust FFI matches DeviceInfoModel, OfflineFileList, and SliceMarkProbe across 20 seeds', () {
+    final ffi = KoeCoreFfi.instance!;
+    for (var seed = 0; seed < 20; seed++) {
+      expect(
+        DeviceInfoModel.batteryRemaining(seed),
+        equals(ffi.batteryRemaining(seed)),
+      );
+      final packet = Uint8List.fromList([
+        0x09, 0xFF, 0x00, 0x00, 0x01, 0x01, 0x01, 0x36, 0x00,
+        seed % 2,
+        seed % 10,
+        (seed + 1) % 2,
+        ...utf8.encode('1.${seed % 9}.0'),
+        ...utf8.encode('D3200SN${seed.toString().padLeft(9, '0')}'),
+        0x00, 0x00, 0x04, 0x00,
+        0x00, 0x00, 0x02, 0x00,
+        seed % 2,
+        ...utf8.encode('2.${seed % 9}.1'),
+        (seed + 3) % 10,
+        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, (seed + 1) & 0xFF,
+        0x00,
+      ]);
+      final info = DeviceInfoModel.parsePacket(packet);
+      final ffiInfo = ffi.parseDeviceInfoPacket(packet);
+      expect(info.connectStatus, equals(ffiInfo.connectStatus));
+      expect(info.battery, equals(ffiInfo.battery));
+      expect(info.charging, equals(ffiInfo.charging));
+      expect(info.firmwareVersion, equals(ffiInfo.firmwareVersion));
+      expect(info.serialNumber, equals(ffiInfo.serialNumber));
+      expect(info.totalMemoryKb, equals(ffiInfo.totalMemoryKb));
+      expect(info.freeMemoryKb, equals(ffiInfo.freeMemoryKb));
+      expect(info.boxBattery, equals(ffiInfo.boxBattery));
+      expect(info.boxCharging, equals(ffiInfo.boxCharging));
+      expect(info.boxMac, equals(ffiInfo.boxMac));
+      expect(info.boxFirmware, equals(ffiInfo.boxFirmware));
+
+      final fileListPayload = Uint8List.fromList([
+        2, 0,
+        ...u32Le(1000 + seed),
+        ...u32Le(2000 + seed),
+        ...u32Le(3000 + seed * 20),
+        ...u32Le(4000 + seed),
+        ...u32Le(5000 + seed),
+        ...u32Le(6000 + seed * 20),
+        ...u32Le(7000 + seed),
+        ...u32Le(8000 + seed),
+      ]);
+      final page = OfflineFileList.parse(fileListPayload, withEndTime: true);
+      final ffiPage = ffi.parseOfflineFileList(
+        fileListPayload,
+        withEndTime: true,
+      );
+      expect(page.fileCount, equals(ffiPage.fileCount));
+      expect(page.files.length, equals(ffiPage.files.length));
+      for (var i = 0; i < page.files.length; i++) {
+        expect(page.files[i].fileId, equals(ffiPage.files[i].fileId));
+        expect(page.files[i].durationMs, equals(ffiPage.files[i].durationMs));
+        expect(page.files[i].endTime, equals(ffiPage.files[i].endTime));
+      }
+      expect(
+        page.currentTransportTimestamp,
+        equals(ffiPage.currentTransportTimestamp),
+      );
+      expect(
+        page.currentTransportDuration,
+        equals(ffiPage.currentTransportDuration),
+      );
+
+      final sliceBody = <int>[
+        0x09, 0xFF, 0x00, 0x00, 0x01, 0x1A, RxCmd.fileSliceId, 0x56, 0x01,
+        ...u32Le(seed),
+        0x01,
+        ...List<int>.filled(161, 0),
+        ...u32Le(seed + 1),
+        0x00,
+        ...List<int>.filled(161, 0),
+      ];
+      final slicePkt = DecodedPacket.fromBytes([
+        ...sliceBody,
+        ProtocolFrame.checksum(sliceBody),
+      ]);
+      final probe = SliceMarkProbe();
+      final lines = probe.inspect(
+        slicePkt,
+        at: DateTime.utc(2026, 11, 7, 12, 0, seed),
+      );
+      expect(lines, hasLength(2));
+      expect(lines.first, contains('seq=$seed flags=0x01'));
+      expect(lines.last, contains('seq=${seed + 1} flags=0x00'));
+    }
   });
 }

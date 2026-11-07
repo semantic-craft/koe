@@ -224,6 +224,29 @@ pub const fn u32_le(v: u32) -> [u8; 4] {
     v.to_le_bytes()
 }
 
+/// Formats `bytes` as uppercase space-separated two-digit hex bytes (`"08 EE 00"`).
+#[must_use]
+pub fn to_hex(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(bytes.len() * 3 - 1);
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let hi = char::from_digit(u32::from(b >> 4), 16)
+            .unwrap_or('0')
+            .to_ascii_uppercase();
+        let lo = char::from_digit(u32::from(b & 0x0F), 16)
+            .unwrap_or('0')
+            .to_ascii_uppercase();
+        out.push(hi);
+        out.push(lo);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

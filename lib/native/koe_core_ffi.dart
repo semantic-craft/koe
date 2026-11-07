@@ -1,8 +1,105 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import '../protocol/models.dart';
+
+final class _KoeDeviceInfoNative extends Struct {
+  @Int32()
+  external int connectStatus;
+
+  @Int32()
+  external int battery;
+
+  @Uint8()
+  external int charging;
+
+  @Int32()
+  external int boxBattery;
+
+  @Uint8()
+  external int boxCharging;
+
+  @Uint8()
+  external int recordingStatus;
+
+  @Uint8()
+  external int hasMemory;
+
+  @Uint32()
+  external int totalMemoryKb;
+
+  @Uint32()
+  external int freeMemoryKb;
+
+  @Array(16)
+  external Array<Uint8> firmwareVersion;
+
+  @Array(32)
+  external Array<Uint8> serialNumber;
+
+  @Array(24)
+  external Array<Uint8> boxMac;
+
+  @Array(16)
+  external Array<Uint8> boxFirmware;
+
+  @Array(16)
+  external Array<Uint8> wifiFirmware;
+}
+
+final class _KoeOfflineFileEntryNative extends Struct {
+  @Uint32()
+  external int fileId;
+
+  @Uint32()
+  external int durationMs;
+
+  @Uint8()
+  external int hasEndTime;
+
+  @Array(3)
+  external Array<Uint8> reserved;
+
+  @Uint32()
+  external int endTime;
+}
+
+final class _KoeOfflineFileListHeaderNative extends Struct {
+  @Uint16()
+  external int fileCount;
+
+  @Uint16()
+  external int parsedEntries;
+
+  @Uint8()
+  external int hasTransportState;
+
+  @Array(3)
+  external Array<Uint8> reserved;
+
+  @Uint32()
+  external int currentTransportTimestamp;
+
+  @Uint32()
+  external int currentTransportDuration;
+}
+
+final class _KoeSliceMarkTransitionNative extends Struct {
+  @Uint8()
+  external int cmdId;
+
+  @Uint8()
+  external int flags;
+
+  @Array(2)
+  external Array<Uint8> reserved;
+
+  @Uint32()
+  external int sequence;
+}
 
 typedef _ChecksumNative = Uint8 Function(Pointer<Uint8>, Size);
 typedef _ChecksumDart = int Function(Pointer<Uint8>, int);
@@ -21,6 +118,54 @@ typedef _EncodeDart = int Function(
   Pointer<Uint8>,
   int,
   Pointer<Uint8>,
+  int,
+);
+
+typedef _BatteryRemainingNative = Int32 Function(Int32);
+typedef _BatteryRemainingDart = int Function(int);
+
+typedef _DeviceInfoParseNative = Int32 Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<_KoeDeviceInfoNative>,
+);
+typedef _DeviceInfoParseDart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<_KoeDeviceInfoNative>,
+);
+
+typedef _OfflineFileListParseNative = Size Function(
+  Pointer<Uint8>,
+  Size,
+  Uint8,
+  Pointer<_KoeOfflineFileListHeaderNative>,
+  Pointer<_KoeOfflineFileEntryNative>,
+  Size,
+);
+typedef _OfflineFileListParseDart = int Function(
+  Pointer<Uint8>,
+  int,
+  int,
+  Pointer<_KoeOfflineFileListHeaderNative>,
+  Pointer<_KoeOfflineFileEntryNative>,
+  int,
+);
+
+typedef _SliceMarkInspectNative = Size Function(
+  Pointer<Uint8>,
+  Size,
+  Pointer<Uint8>,
+  Pointer<Uint8>,
+  Pointer<_KoeSliceMarkTransitionNative>,
+  Size,
+);
+typedef _SliceMarkInspectDart = int Function(
+  Pointer<Uint8>,
+  int,
+  Pointer<Uint8>,
+  Pointer<Uint8>,
+  Pointer<_KoeSliceMarkTransitionNative>,
   int,
 );
 
@@ -113,6 +258,31 @@ final class KoeCoreFfi {
         'koe_protocol_encode',
         isLeaf: true,
       ),
+      _batteryRemaining =
+          lib.lookupFunction<_BatteryRemainingNative, _BatteryRemainingDart>(
+            'koe_battery_remaining',
+            isLeaf: true,
+          ),
+      _deviceInfoParsePacket =
+          lib.lookupFunction<_DeviceInfoParseNative, _DeviceInfoParseDart>(
+            'koe_device_info_parse_packet',
+            isLeaf: true,
+          ),
+      _deviceInfoParsePayload =
+          lib.lookupFunction<_DeviceInfoParseNative, _DeviceInfoParseDart>(
+            'koe_device_info_parse_payload',
+            isLeaf: true,
+          ),
+      _offlineFileListParse =
+          lib.lookupFunction<
+            _OfflineFileListParseNative,
+            _OfflineFileListParseDart
+          >('koe_offline_file_list_parse', isLeaf: true),
+      _sliceMarkInspect =
+          lib.lookupFunction<_SliceMarkInspectNative, _SliceMarkInspectDart>(
+            'koe_slice_mark_inspect_transitions',
+            isLeaf: true,
+          ),
       _hkdf = lib.lookupFunction<_HkdfNative, _HkdfDart>(
         'koe_crypto_hkdf_sha256',
         isLeaf: true,
@@ -195,6 +365,11 @@ final class KoeCoreFfi {
 
   final _ChecksumDart _checksum;
   final _EncodeDart _encode;
+  final _BatteryRemainingDart _batteryRemaining;
+  final _DeviceInfoParseDart _deviceInfoParsePacket;
+  final _DeviceInfoParseDart _deviceInfoParsePayload;
+  final _OfflineFileListParseDart _offlineFileListParse;
+  final _SliceMarkInspectDart _sliceMarkInspect;
   final _HkdfDart _hkdf;
   final _AesCtrDart _aesCtr;
   final _DecryptChunksDart _decryptChunks;
@@ -240,6 +415,140 @@ final class KoeCoreFfi {
     } finally {
       if (payloadPtr != nullptr) malloc.free(payloadPtr);
       malloc.free(outPtr);
+    }
+  }
+
+  int? batteryRemaining(int? raw) {
+    if (raw == null) return null;
+    final pct = _batteryRemaining(raw);
+    return pct < 0 ? null : pct;
+  }
+
+  DeviceInfoModel parseDeviceInfoPacket(Uint8List raw, {String rawHex = ''}) {
+    final rawPtr = raw.isEmpty ? nullptr : malloc<Uint8>(raw.length);
+    final outPtr = calloc<_KoeDeviceInfoNative>(1);
+    try {
+      if (raw.isNotEmpty) rawPtr.asTypedList(raw.length).setAll(0, raw);
+      _deviceInfoParsePacket(rawPtr, raw.length, outPtr);
+      return _decodeDeviceInfo(outPtr.ref, rawHex);
+    } finally {
+      if (rawPtr != nullptr) malloc.free(rawPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  DeviceInfoModel parseDeviceInfoPayload(
+    Uint8List payload, {
+    String rawHex = '',
+  }) {
+    final payPtr = payload.isEmpty ? nullptr : malloc<Uint8>(payload.length);
+    final outPtr = calloc<_KoeDeviceInfoNative>(1);
+    try {
+      if (payload.isNotEmpty) {
+        payPtr.asTypedList(payload.length).setAll(0, payload);
+      }
+      _deviceInfoParsePayload(payPtr, payload.length, outPtr);
+      return _decodeDeviceInfo(outPtr.ref, rawHex);
+    } finally {
+      if (payPtr != nullptr) malloc.free(payPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  OfflineFileList parseOfflineFileList(
+    Uint8List payload, {
+    bool withEndTime = false,
+  }) {
+    final payPtr = payload.isEmpty ? nullptr : malloc<Uint8>(payload.length);
+    final hdrPtr = calloc<_KoeOfflineFileListHeaderNative>(1);
+    Pointer<_KoeOfflineFileEntryNative> entriesPtr = nullptr;
+    try {
+      if (payload.isNotEmpty) {
+        payPtr.asTypedList(payload.length).setAll(0, payload);
+      }
+      final flag = withEndTime ? 1 : 0;
+      final total = _offlineFileListParse(
+        payPtr,
+        payload.length,
+        flag,
+        hdrPtr,
+        nullptr,
+        0,
+      );
+      final files = <OfflineFileEntry>[];
+      if (total > 0) {
+        entriesPtr = calloc<_KoeOfflineFileEntryNative>(total);
+        _offlineFileListParse(
+          payPtr,
+          payload.length,
+          flag,
+          hdrPtr,
+          entriesPtr,
+          total,
+        );
+        for (var i = 0; i < total; i++) {
+          final e = (entriesPtr + i).ref;
+          files.add(
+            OfflineFileEntry(
+              fileId: e.fileId,
+              durationMs: e.durationMs,
+              endTime: e.hasEndTime != 0 ? e.endTime : null,
+            ),
+          );
+        }
+      }
+      final hdr = hdrPtr.ref;
+      return OfflineFileList(
+        files: files,
+        fileCount: hdr.fileCount,
+        currentTransportTimestamp: hdr.hasTransportState != 0
+            ? hdr.currentTransportTimestamp
+            : null,
+        currentTransportDuration: hdr.hasTransportState != 0
+            ? hdr.currentTransportDuration
+            : null,
+      );
+    } finally {
+      if (payPtr != nullptr) malloc.free(payPtr);
+      if (entriesPtr != nullptr) calloc.free(entriesPtr);
+      calloc.free(hdrPtr);
+    }
+  }
+
+  (int, int, List<(int, int, int)>) inspectSliceMarkTransitions({
+    required Uint8List raw,
+    required int lastCmdId,
+    required int lastFlags,
+  }) {
+    if (raw.length < 10) return (lastCmdId, lastFlags, const []);
+    final maxSlices = (raw.length ~/ 165) + 1;
+    final rawPtr = malloc<Uint8>(raw.length);
+    final cmdPtr = calloc<Uint8>(1);
+    final flagsPtr = calloc<Uint8>(1);
+    final outPtr = calloc<_KoeSliceMarkTransitionNative>(maxSlices);
+    try {
+      rawPtr.asTypedList(raw.length).setAll(0, raw);
+      cmdPtr.value = lastCmdId & 0xFF;
+      flagsPtr.value = lastFlags & 0xFF;
+      final count = _sliceMarkInspect(
+        rawPtr,
+        raw.length,
+        cmdPtr,
+        flagsPtr,
+        outPtr,
+        maxSlices,
+      );
+      final list = <(int, int, int)>[];
+      for (var i = 0; i < count; i++) {
+        final t = (outPtr + i).ref;
+        list.add((t.cmdId, t.sequence, t.flags));
+      }
+      return (cmdPtr.value, flagsPtr.value, list);
+    } finally {
+      malloc.free(rawPtr);
+      calloc.free(cmdPtr);
+      calloc.free(flagsPtr);
+      calloc.free(outPtr);
     }
   }
 
@@ -382,5 +691,37 @@ final class KoeCoreFfi {
     } finally {
       malloc.free(outPtr);
     }
+  }
+
+  static DeviceInfoModel _decodeDeviceInfo(
+    _KoeDeviceInfoNative c,
+    String rawHex,
+  ) {
+    return DeviceInfoModel(
+      connectStatus: c.connectStatus < 0 ? null : c.connectStatus,
+      battery: c.battery < 0 ? null : c.battery,
+      charging: c.charging != 0,
+      firmwareVersion: _readFixedUtf8(c.firmwareVersion, 16),
+      serialNumber: _readFixedUtf8(c.serialNumber, 32),
+      totalMemoryKb: c.hasMemory != 0 ? c.totalMemoryKb : null,
+      freeMemoryKb: c.hasMemory != 0 ? c.freeMemoryKb : null,
+      boxBattery: c.boxBattery < 0 ? null : c.boxBattery,
+      boxCharging: c.boxCharging != 0,
+      boxMac: _readFixedUtf8(c.boxMac, 24),
+      boxFirmware: _readFixedUtf8(c.boxFirmware, 16),
+      wifiFirmware: _readFixedUtf8(c.wifiFirmware, 16),
+      recordingStatus: c.recordingStatus,
+      rawHex: rawHex,
+    );
+  }
+
+  static String _readFixedUtf8(Array<Uint8> arr, int maxLen) {
+    final bytes = <int>[];
+    for (var i = 0; i < maxLen; i++) {
+      final b = arr[i];
+      if (b == 0) break;
+      bytes.add(b);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
   }
 }

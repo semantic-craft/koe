@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../native/koe_core_ffi.dart';
 import 'frame.dart';
 
 class DeviceInfoModel {
@@ -104,6 +105,10 @@ class DeviceInfoModel {
   /// (`DeviceInfoDispatch.onParseDeviceInfo`, index starts at 9).
   factory DeviceInfoModel.parsePacket(Uint8List raw) {
     final hex = raw.toHex();
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.parseDeviceInfoPacket(raw, rawHex: hex);
+    }
     if (raw.length < 20) {
       return DeviceInfoModel(rawHex: hex);
     }
@@ -192,6 +197,10 @@ class DeviceInfoModel {
     Uint8List payload, {
     String rawHex = '',
   }) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.parseDeviceInfoPayload(payload, rawHex: rawHex);
+    }
     if (payload.length < 3) {
       return DeviceInfoModel(rawHex: rawHex);
     }
@@ -278,6 +287,11 @@ class DeviceInfoModel {
   /// (`< 3` / `< 4`). Preserve literal percentages from any firmware that
   /// reports values above the bucket range.
   static int? batteryRemaining(int? raw) {
+    if (raw == null) return null;
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.batteryRemaining(raw);
+    }
     final clamped = _clampPct(raw);
     if (clamped == null) return null;
     if (clamped <= 9) return (clamped + 1) * 10;
@@ -378,6 +392,10 @@ class OfflineFileList {
   final int? currentTransportDuration;
 
   factory OfflineFileList.parse(Uint8List payload, {bool withEndTime = false}) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      return ffi.parseOfflineFileList(payload, withEndTime: withEndTime);
+    }
     if (payload.length < 2) {
       return OfflineFileList(files: const []);
     }

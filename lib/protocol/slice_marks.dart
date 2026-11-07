@@ -1,3 +1,4 @@
+import '../native/koe_core_ffi.dart';
 import 'commands.dart';
 import 'frame.dart';
 
@@ -29,6 +30,22 @@ class SliceMarkProbe {
   /// Log lines for [packet]; empty unless the frame kind or a flags byte
   /// changed since the previous slice.
   List<String> inspect(DecodedPacket packet, {DateTime? at}) {
+    final ffi = KoeCoreFfi.instance;
+    if (ffi != null) {
+      final (nextCmd, nextFlags, transitions) = ffi.inspectSliceMarkTransitions(
+        raw: packet.raw,
+        lastCmdId: _last.$1,
+        lastFlags: _last.$2,
+      );
+      _last = (nextCmd, nextFlags);
+      if (transitions.isEmpty) return const [];
+      final time = (at ?? DateTime.now()).toIso8601String();
+      return [
+        for (final (cmdId, sequence, flags) in transitions)
+          '标记线索 cmd=0x${_hex(cmdId)} seq=$sequence '
+              'flags=0x${_hex(flags)} at=$time',
+      ];
+    }
     final raw = packet.raw;
     final lines = <String>[];
     var i = 9;
