@@ -302,7 +302,10 @@ void main() {
       final key =
           '${c.analysisKey(RecordingReference(path: audio.path))}/minutes';
       await c.waitForOrganize();
-      await _until(() => c.analysis.results[key]?.isDraft == false);
+      await _until(
+        () =>
+            c.analysis.results[key]?.isDraft == false && !c.analysis.busy(key),
+      );
       expect(c.analysis.results[key]!.text, contains('包含最后补充'));
       final reopened = RecordingAnalysis(service: _Model(), file: analysisFile);
       await reopened.load();
@@ -358,7 +361,10 @@ void main() {
       final key =
           '${c.analysisKey(RecordingReference(path: audio.path))}/minutes';
       await c.waitForOrganize();
-      await _until(() => c.analysis.results[key]?.isDraft == false);
+      await _until(
+        () =>
+            c.analysis.results[key]?.isDraft == false && !c.analysis.busy(key),
+      );
       expect(c.analysis.results[key]!.text, contains('包含最后补充'));
     },
   );
@@ -634,7 +640,10 @@ void main() {
       await tester.runAsync(() async {
         restarted.rememberTranscript(audio.path, '$opening 最后补充');
         await _until(
-          () => restarted.analysis.results['file:301/minutes']?.isDraft == false,
+          () =>
+              restarted.analysis.results['file:301/minutes']?.isDraft ==
+                  false &&
+              !restarted.analysis.busy('file:301/minutes'),
         );
         afterFormal = RecorderController(
           loadPersistedState: false,

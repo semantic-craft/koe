@@ -98,7 +98,10 @@ mixin _RecorderSettings on ChangeNotifier {
     meetingAppPromptsMuted = s.meetingAppPromptsMuted;
     meetingFromCalendar = s.meetingFromCalendar;
     transcriptLanguage = s.transcriptLanguage;
-    appleSourceLanguage = s.appleSourceLanguage;
+    _appleSourceLanguageExplicit = s.appleSourceLanguageExplicit;
+    appleSourceLanguage = _appleSourceLanguageExplicit
+        ? s.appleSourceLanguage
+        : _appleCodeForTranscriptLanguage(s.transcriptLanguage);
     translationTargetLanguage = s.translationTargetLanguage;
     ownerLanguage = isSpeechLanguage(s.ownerLanguage)
         ? s.ownerLanguage.toLowerCase()
@@ -157,6 +160,7 @@ mixin _RecorderSettings on ChangeNotifier {
           AppSettings(
             speechProvider: speechProvider,
             appleSourceLanguage: appleSourceLanguage,
+            appleSourceLanguageExplicit: _appleSourceLanguageExplicit,
             engines: {
               ..._persistedEngines(),
               if (provider != null) provider.name: config!,
@@ -325,10 +329,25 @@ mixin _RecorderSettings on ChangeNotifier {
     if (provider.onDevice) unawaited(refreshAppleCapabilities());
   }
 
+  bool _appleSourceLanguageExplicit = false;
+
+  static String _appleCodeForTranscriptLanguage(String code) =>
+      switch (code.trim().toLowerCase()) {
+        'zh' => 'zh-CN',
+        'en' => 'en-US',
+        'ja' => 'ja-JP',
+        _ => '',
+      };
+
   void setAppleSourceLanguage(String language) {
     final code = language.trim();
-    if (appleSourceLanguage == code) return;
+    final explicit = code.isNotEmpty;
+    if (appleSourceLanguage == code &&
+        _appleSourceLanguageExplicit == explicit) {
+      return;
+    }
     appleSourceLanguage = code;
+    _appleSourceLanguageExplicit = explicit;
     unawaited(refreshAppleCapabilities());
     unawaited(_persistSettings());
   }
@@ -517,6 +536,13 @@ mixin _RecorderSettings on ChangeNotifier {
   void setTranscriptLanguage(String code) {
     final normalized = code.trim().toLowerCase();
     transcriptLanguage = normalized.isEmpty ? 'auto' : normalized;
+    if (!_appleSourceLanguageExplicit) {
+      final mapped = _appleCodeForTranscriptLanguage(transcriptLanguage);
+      if (mapped.isNotEmpty && appleSourceLanguage != mapped) {
+        appleSourceLanguage = mapped;
+        unawaited(refreshAppleCapabilities());
+      }
+    }
     notifyListeners();
     unawaited(_persistSettings());
   }

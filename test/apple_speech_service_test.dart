@@ -7,13 +7,17 @@ import 'package:koe/ai/apple_speech.dart';
 import 'package:koe/ai/stt_types.dart';
 import 'package:koe/audio/opus_pcm_decoder.dart';
 import 'package:koe/ble/ble_service.dart';
+import 'package:koe/ble/realtime_stream.dart';
 import 'package:koe/state/recorder_controller.dart';
+import 'package:koe/ui/screens/recording_detail_screen.dart';
 import 'package:koe/ui/screens/settings_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+
+import 'support/wav_fixture.dart';
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
@@ -653,6 +657,209 @@ void main() {
       controller.setSpeechProvider(SttProvider.apple);
       await tester.pump();
       expect(find.text('需要 iOS 26 及以上'), findsNWidgets(2));
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
+
+  testWidgets(
+    'legacy auto-filled en-US appleSourceLanguage refreshes to suggested zh-CN, '
+    'SettingsScreen shows 原文语言 when Qwen is selected with meetingLocalOnly, '
+    'and live Apple stream preserves timed segments on the finished recording',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      late Directory tempDir;
+      late File clip;
+      await tester.runAsync(() async {
+        tempDir = await Directory.systemTemp.createTemp('koe-apple-zh-');
+        clip = File('${tempDir.path}/1794019668.wav');
+        await clip.writeAsBytes(wavBytes(List.filled(64000, 0)));
+        final settingsFile = File(
+          '${tempDir.path}/AnkerRecorder/app_settings.json',
+        );
+        await settingsFile.parent.create(recursive: true);
+        await settingsFile.writeAsString(
+          jsonEncode({
+            'speechProvider': 'qwen',
+            'appleSourceLanguage': 'en-US',
+            'meetingLocalOnly': true,
+            'transcriptLanguage': 'auto',
+          }),
+        );
+      });
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (_) async => tempDir.path,
+      );
+      addTearDown(() async {
+        binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          null,
+        );
+        await tester.runAsync(() async {
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
+        });
+      });
+
+      String? startedSourceLanguage;
+      String? activeSessionId;
+      handler = (call) async {
+        if (call.method == 'capabilities') {
+          return {
+            'supported': true,
+            'speechStatus': 'ready',
+            'translationStatus': 'ready',
+            'suggestedSourceLanguage': 'zh-CN',
+          };
+        }
+        if (call.method == 'startStream') {
+          startedSourceLanguage = call.arguments['sourceLanguage'] as String?;
+          activeSessionId = call.arguments['sessionId'] as String?;
+          return null;
+        }
+        if (call.method == 'finishStream') {
+          return {
+            'sessionId': activeSessionId,
+            'type': 'done',
+            'text': '测试一下实时中文语音识别。\n看看能不能把我的中文识别出来。',
+            'isFinal': true,
+            'speechFinal': true,
+            'segments': [
+              {
+                'text': '测试一下实时中文语音识别。',
+                'startMs': 0,
+                'endMs': 1800,
+              },
+              {
+                'text': '看看能不能把我的中文识别出来。',
+                'startMs': 2000,
+                'endMs': 3800,
+              },
+            ],
+          };
+        }
+        return null;
+      };
+
+      late RecorderController controller;
+      await tester.runAsync(() async {
+        controller = RecorderController(
+          loadPersistedState: true,
+          ble: _ConnectedBle(),
+          appleSpeech: service,
+          transcriptPersister: ({bool strict = false}) async {},
+          libraryDirectory: Directory('${tempDir.path}/imports'),
+        )
+          ..connected = true
+          ..phase = AppPhase.ready;
+        for (var i = 0;
+            i < 100 && controller.appleSourceLanguage != 'zh-CN';
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      addTearDown(controller.dispose);
+
+      expect(
+        controller.appleSourceLanguage,
+        'zh-CN',
+        reason: 'legacy unflagged en-US must refresh to suggested zh-CN',
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: controller,
+          child: const MaterialApp(home: SettingsScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('原文语言'),
+        findsOneWidget,
+        reason: 'on-device source language selector must be visible when meetingLocalOnly is on',
+      );
+
+      await tester.runAsync(() async {
+        controller.recording = true;
+        controller.handleRealtimeStateForTesting(
+          RealtimeStreamState(
+            active: true,
+            fileId: 1794019668,
+            path: clip.path,
+            bytesReceived: 3200,
+          ),
+        );
+        for (var i = 0; i < 100 && startedSourceLanguage == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(startedSourceLanguage, 'zh-CN');
+
+        await emit({
+          'sessionId': activeSessionId,
+          'type': 'partial',
+          'text': '测试一下实时中文语音识别。',
+          'isFinal': true,
+          'speechFinal': true,
+          'segments': [
+            {
+              'text': '测试一下实时中文语音识别。',
+              'startMs': 0,
+              'endMs': 1800,
+            },
+          ],
+        });
+
+        controller.recording = false;
+        controller.handleRealtimeStateForTesting(
+          RealtimeStreamState(
+            active: false,
+            fileId: 1794019668,
+            path: clip.path,
+            bytesReceived: 64000,
+          ),
+        );
+        for (var i = 0;
+            i < 100 &&
+                controller
+                        .recordingView(
+                          RecordingReference(fileId: 1794019668, path: clip.path),
+                        )
+                        .segments
+                        .length <
+                    2;
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+
+      final view = controller.recordingView(
+        RecordingReference(fileId: 1794019668, path: clip.path),
+      );
+      expect(view.text, '测试一下实时中文语音识别。\n看看能不能把我的中文识别出来。');
+      expect(view.segments, hasLength(2));
+      expect(view.segments.first.text, '测试一下实时中文语音识别。');
+      expect(view.segments.last.start, const Duration(milliseconds: 2000));
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: controller,
+          child: MaterialApp(
+            home: RecordingDetailScreen(
+              reference: RecordingReference(
+                fileId: 1794019668,
+                path: clip.path,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('这条转写没有可靠的逐句时码'),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox());
       debugDefaultTargetPlatformOverride = null;
     },
   );

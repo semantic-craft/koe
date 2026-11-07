@@ -209,6 +209,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
       session.text,
       provider: session.configuration.provider,
       sourceLanguage: session.configuration.sourceLanguage,
+      segments: session.segments.isEmpty
+          ? null
+          : RecorderController._rememberedSegments(session.segments),
     );
     final translated = session.translation;
     if (translated != null) {
@@ -261,6 +264,7 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
             _convertExportToWav(s.path!).then((wavPath) {
               _finalizingRecordings.remove(key);
               owner.path = wavPath;
+              _saveLiveRecording(owner, path: wavPath);
               if (s.fileId != null) unawaited(_applyDeviceMarks(s.fileId!));
               unawaited(_enqueueDeferredRecording(owner, wavPath));
               notifyListeners();
@@ -326,6 +330,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
           final owner = _sessionForReference(
             RecordingReference(fileId: s.fileId, path: wavPath),
           );
+          if (owner != null) {
+            _saveLiveRecording(owner, path: wavPath);
+          }
           if (owner?.configuration.provider.defersTranscription == true) {
             unawaited(_enqueueDeferredRecording(owner!, wavPath));
           }
@@ -583,6 +590,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
         language: _activeConfiguration.sourceLanguage,
       );
     }
+    if (e.segments.isNotEmpty) {
+      _currentRecording?.segments = e.segments;
+    }
     final translationSnapshotUpdated =
         (translationModeActive || communicationModeActive) &&
         (e.type == 'partial' || e.type == 'done');
@@ -729,6 +739,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
                 incoming.contains(recordingSession.text.trim())) {
               recordingSession.text = incoming;
             }
+            if (done.segments.isNotEmpty) {
+              recordingSession.segments = done.segments;
+            }
             recordingSession.transcriptionComplete = true;
             _saveLiveRecording(recordingSession, path: bindPath);
           }
@@ -742,6 +755,9 @@ mixin _RecorderLiveTranscription on ChangeNotifier {
               done,
               language: _activeConfiguration.sourceLanguage,
             );
+            if (done.segments.isNotEmpty) {
+              recordingSession.segments = done.segments;
+            }
           }
           // The same rule as the subscribed `done` event: never let a short
           // final tail replace the longer text already shown or saved.
