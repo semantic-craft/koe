@@ -430,7 +430,7 @@ class _ExternalAiDialogState extends State<_ExternalAiDialog> {
                     const Divider(height: 24),
                   ],
                   const Text(
-                    '第一步：点击下方「复制 AI 配置提示词」发给 AI Agent，由 AI 先问你是否有自己的 VPS，并自动帮你完成远程或本机配置。\n第二步：AI 配置完成后，回来点「粘贴 AI 返回的连接码」即可绑定。',
+                    '第一步：点击下方「复制 AI 配置提示词」发给 AI Agent，由 AI 先问你是否有自己的 VPS，并自动帮你完成远程或本机配置。\n第二步：AI 配置完成后，回来点「粘贴 AI 返回的连接码」即可绑定；未绑定前不会发起连接。',
                     style: TextStyle(
                       fontSize: AppFontSizes.xs,
                       color: AppColors.textSecondary,
