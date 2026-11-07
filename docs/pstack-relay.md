@@ -116,8 +116,8 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: 0930e7d;rust/koe_core/src/context.rs;rust/koe_core/src/domain.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
 
-### [ ] Slice N: Rust 原生 MCP + ACP 服务端、三端原生宿主全量接线与最终收口
+### [x] Slice N: Rust 原生 MCP + ACP 服务端、三端原生宿主全量接线与最终收口
 - **Playbook**: `Shipping`
 - **Outcome**: 在 `rust/koe_core/src/mcp_acp.rs` 与 `desktop/core` 实现原生 JSON-RPC 2.0 MCP（`list_recordings`、`get_transcript`、`get_minutes`、`search_context`、`qwennote` 热词/模板同步与 `.koepack v2` `/sync/packs`）及 ACP（Agent Communication Protocol）协议栈，将 `minutes`、`cicada`、`context`、`mcp_acp` 全链路接入 `desktop/core`、`darwin/` SwiftUI 与 Android `KoeCore.kt`，完成对抗审查（`interrogate`）、代码清理（`deslop` / `no-comments`）、性能基准与早间审计。
 - **Done Predicate**: `./scripts/test-koe-core-swift`、`./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: 3d50ef5;b899fca;rust/koe_core/src/mcp_acp.rs;desktop/core/src/lib.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;darwin/KoeNativeHost.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
