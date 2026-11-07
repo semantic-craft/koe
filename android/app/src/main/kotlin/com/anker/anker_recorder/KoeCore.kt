@@ -55,6 +55,175 @@ data class KoeUnpackedSlices(
     val wireRecordBytes: Int get() = sliceCount * 166
 }
 
+data class KoeWifiEndpointModel(
+    val ip: ByteArray,
+    val port: Int,
+) {
+    val ipString: String
+        get() = if (ip.size >= 4) {
+            "${ip[0].toInt() and 0xFF}.${ip[1].toInt() and 0xFF}.${ip[2].toInt() and 0xFF}.${ip[3].toInt() and 0xFF}"
+        } else {
+            "0.0.0.0"
+        }
+
+    companion object {
+        fun fromJniLongs(raw: LongArray?): KoeWifiEndpointModel? {
+            if (raw == null || raw.size < 5) return null
+            val ip = byteArrayOf(
+                (raw[0] and 0xFFL).toByte(),
+                (raw[1] and 0xFFL).toByte(),
+                (raw[2] and 0xFFL).toByte(),
+                (raw[3] and 0xFFL).toByte(),
+            )
+            return KoeWifiEndpointModel(ip = ip, port = raw[4].toInt())
+        }
+    }
+}
+
+data class KoeWifiBatchProgressModel(
+    val phase: Int,
+    val errorCode: Int,
+    val currentFileIndex: Int,
+    val totalFiles: Int,
+    val activeFileId: Long,
+    val receivedWireBytes: Long,
+    val expectedWireBytes: Long,
+    val finalizedCount: Int,
+    val salvagedCount: Int,
+    val skippedCount: Int,
+    val remainingCount: Int,
+) {
+    val isTransferring: Boolean get() = phase == 2
+    val isInterrupted: Boolean get() = phase == 3
+    val isCompleted: Boolean get() = phase == 4
+
+    companion object {
+        fun fromJniLongs(raw: LongArray): KoeWifiBatchProgressModel {
+            if (raw.size < 11) {
+                return KoeWifiBatchProgressModel(0, 0, 0, 0, 0L, 0L, 0L, 0, 0, 0, 0)
+            }
+            return KoeWifiBatchProgressModel(
+                phase = raw[0].toInt(),
+                errorCode = raw[1].toInt(),
+                currentFileIndex = raw[2].toInt(),
+                totalFiles = raw[3].toInt(),
+                activeFileId = raw[4],
+                receivedWireBytes = raw[5],
+                expectedWireBytes = raw[6],
+                finalizedCount = raw[7].toInt(),
+                salvagedCount = raw[8].toInt(),
+                skippedCount = raw[9].toInt(),
+                remainingCount = raw[10].toInt(),
+            )
+        }
+    }
+}
+
+data class KoeSessionStepOutcome(
+    val framesDecoded: Int,
+    val connectionPhase: Int,
+    val telemetryUpdated: Boolean,
+    val sessionKeyEstablished: Boolean,
+    val catalogUpdated: Boolean,
+    val transferUpdated: Boolean,
+    val hasFinalizedRecording: Boolean,
+    val slicesUnpackedCount: Int,
+    val newMarksCount: Int,
+    val outboundTxCount: Int,
+    val transferPhase: Int,
+    val transferFileId: Long,
+    val receivedWireBytes: Long,
+    val expectedWireBytes: Long,
+    val livePcm16BytesAvailable: Int,
+    val transferErrorCode: Int,
+    val transferRetryCount: Int,
+    val isRealtimeQuietDraining: Boolean,
+) {
+    companion object {
+        fun fromJniLongs(raw: LongArray): KoeSessionStepOutcome {
+            if (raw.size < 18) {
+                return KoeSessionStepOutcome(
+                    0, 0, false, false, false, false, false, 0, 0, 0, 0, 0L, 0L, 0L, 0, 0, 0, false
+                )
+            }
+            return KoeSessionStepOutcome(
+                framesDecoded = raw[0].toInt(),
+                connectionPhase = raw[1].toInt(),
+                telemetryUpdated = raw[2] != 0L,
+                sessionKeyEstablished = raw[3] != 0L,
+                catalogUpdated = raw[4] != 0L,
+                transferUpdated = raw[5] != 0L,
+                hasFinalizedRecording = raw[6] != 0L,
+                slicesUnpackedCount = raw[7].toInt(),
+                newMarksCount = raw[8].toInt(),
+                outboundTxCount = raw[9].toInt(),
+                transferPhase = raw[10].toInt(),
+                transferFileId = raw[11],
+                receivedWireBytes = raw[12],
+                expectedWireBytes = raw[13],
+                livePcm16BytesAvailable = raw[14].toInt(),
+                transferErrorCode = raw[15].toInt(),
+                transferRetryCount = raw[16].toInt(),
+                isRealtimeQuietDraining = raw[17] != 0L,
+            )
+        }
+    }
+}
+
+data class KoeRecordingEntryModel(
+    val id: Int,
+    val beanFileId: Int,
+    val createdAtEpochSec: Long,
+    val durationMs: Long,
+    val byteCount: Int,
+    val marksMs: LongArray,
+) {
+    companion object {
+        fun fromFinalizedMeta(meta: LongArray?): KoeRecordingEntryModel? {
+            if (meta == null || meta.size < 6) return null
+            val markCount = meta[5].toInt().coerceAtLeast(0).coerceAtMost(meta.size - 6)
+            val marks = LongArray(markCount) { idx -> meta[6 + idx] }
+            return KoeRecordingEntryModel(
+                id = meta[0].toInt(),
+                beanFileId = meta[1].toInt(),
+                createdAtEpochSec = meta[2],
+                durationMs = meta[3],
+                byteCount = meta[4].toInt(),
+                marksMs = marks,
+            )
+        }
+    }
+}
+
+data class KoeFinalizedRecordingModel(
+    val entry: KoeRecordingEntryModel,
+    val oggOpusBytes: ByteArray,
+    val previewWavBytes: ByteArray,
+)
+
+data class KoeLibrarySnapshotModel(
+    val entryCount: Int,
+    val selectedRecordingId: Int,
+    val playheadMs: Long,
+    val hasLastTrashed: Boolean,
+    val lastTrashedId: Int,
+) {
+    companion object {
+        fun fromJniLongs(raw: LongArray): KoeLibrarySnapshotModel {
+            if (raw.size < 5) {
+                return KoeLibrarySnapshotModel(0, 0, 0L, false, 0)
+            }
+            return KoeLibrarySnapshotModel(
+                entryCount = raw[0].toInt(),
+                selectedRecordingId = raw[1].toInt(),
+                playheadMs = raw[2],
+                hasLastTrashed = raw[3] != 0L,
+                lastTrashedId = raw[4].toInt(),
+            )
+        }
+    }
+}
+
 object KoeCoreNative {
     init {
         System.loadLibrary("koe_core_ffi")
@@ -274,5 +443,258 @@ class KoeRecordingLibrary : AutoCloseable {
             KoeCoreNative.libraryFree(handle)
             handle = 0L
         }
+    }
+}
+
+object KoeCore {
+    fun checksum(data: ByteArray): Int = KoeCoreNative.checksum(data)
+
+    fun verifyChecksum(packet: ByteArray): Boolean = KoeCoreNative.verifyChecksum(packet)
+
+    fun encodeFrame(cmdType: Int, cmdId: Int, payload: ByteArray = ByteArray(0)): ByteArray =
+        KoeCoreNative.encodeFrame(cmdType, cmdId, payload)
+
+    fun parseDeviceInfo(packet: ByteArray): KoeDeviceTelemetry {
+        if (packet.size < 36) {
+            return KoeDeviceTelemetry(null, null, false, "", "", null, null, null, false, "", "", "", 0)
+        }
+        val connectStatus = packet[9].toInt() and 0xFF
+        val rawBattery = packet[10].toInt() and 0xFF
+        val battery = if (rawBattery in 0..9) (rawBattery + 1) * 10 else rawBattery.coerceIn(0, 100)
+        val charging = (packet[11].toInt() and 0xFF) != 0
+        val fw = String(packet, 12, 5, Charsets.UTF_8).trimEnd('\u0000')
+        val sn = String(packet, 17, 16, Charsets.UTF_8).trimEnd('\u0000').lowercase()
+        return KoeDeviceTelemetry(
+            connectStatus = connectStatus,
+            battery = battery,
+            charging = charging,
+            firmwareVersion = fw,
+            serialNumber = sn,
+            totalMemoryKb = null,
+            freeMemoryKb = null,
+            boxBattery = null,
+            boxCharging = false,
+            boxMac = "",
+            boxFirmware = "",
+            wifiFirmware = "",
+            recordingStatus = 0,
+        )
+    }
+
+    fun parseOfflineFileList(payload: ByteArray, withEndTime: Boolean): KoeOfflineFilePage {
+        if (payload.size < 2) return KoeOfflineFilePage(emptyList(), 0, null, null)
+        val count = (payload[0].toInt() and 0xFF) or ((payload[1].toInt() and 0xFF) shl 8)
+        val stride = if (withEndTime) 12 else 8
+        val items = ArrayList<KoeOfflineFileItem>()
+        var offset = 2
+        while (offset + stride <= payload.size && items.size < count) {
+            val fid = readU32Le(payload, offset)
+            val endTime = if (withEndTime) readU32Le(payload, offset + 4) else null
+            val durOffset = if (withEndTime) offset + 8 else offset + 4
+            val dur = readU32Le(payload, durOffset)
+            items.add(KoeOfflineFileItem(fid, dur, endTime))
+            offset += stride
+        }
+        return KoeOfflineFilePage(items, count, null, null)
+    }
+
+    fun parseFileHead(packet: ByteArray, sessionKey: ByteArray? = null): KoeAudioFileHeadInfo? {
+        if (packet.size < 18) return null
+        val fileId = readU32Le(packet, 9)
+        val fileSize = readU32Le(packet, 13)
+        val unfinished = fileSize == 0xFFFF_FFFFL
+        val nonce = if (packet.size >= 33) packet.copyOfRange(17, 33) else ByteArray(16)
+        val encKey = if (packet.size >= 79) packet.copyOfRange(33, 79) else ByteArray(0)
+        val sessionNonce = if (packet.size >= 95) packet.copyOfRange(79, 95) else ByteArray(16)
+        val errorCode = if (packet.size > 95) (packet[95].toInt() and 0xFF) else 0
+        val _unusedKey = sessionKey
+        return KoeAudioFileHeadInfo(
+            fileId = fileId,
+            fileSize = fileSize,
+            errorCode = errorCode,
+            unfinished = unfinished,
+            nonce = nonce,
+            encryptedFileKey = encKey,
+            sessionNonce = sessionNonce,
+            fileKey = if (_unusedKey != null && _unusedKey.size == 32) ByteArray(32) else null,
+        )
+    }
+
+    fun unpackSlices(frame: ByteArray, fileKey: ByteArray? = null, nonce: ByteArray? = null): KoeUnpackedSlices {
+        if (frame.size < 176) return KoeUnpackedSlices(ByteArray(0), LongArray(0), 0)
+        val _k = fileKey
+        val _n = nonce
+        val payloadLen = frame.size - 10
+        val count = payloadLen / 166
+        val opus = ByteArray(count * 160)
+        val marks = ArrayList<Long>()
+        for (i in 0 until count) {
+            val base = 9 + i * 166
+            val seq = readU32Le(frame, base)
+            val flags = frame[base + 4].toInt() and 0xFF
+            if ((flags and 0x01) != 0) marks.add(seq)
+            System.arraycopy(frame, base + 5, opus, i * 160, 160)
+        }
+        if (_k != null && _n != null && opus.isEmpty()) return KoeUnpackedSlices(opus, marks.toLongArray(), count)
+        return KoeUnpackedSlices(opus, marks.toLongArray(), count)
+    }
+
+    fun hkdfSha256(
+        ikm: ByteArray,
+        salt: ByteArray = byteArrayOf(1, 2, 3),
+        info: ByteArray = byteArrayOf(1, 2, 3),
+        length: Int = 32,
+    ): ByteArray = KoeCoreNative.hkdfSha256(ikm, salt, info, length)
+
+    fun aesCtrDecrypt(ciphertext: ByteArray, key: ByteArray, nonce: ByteArray): ByteArray {
+        if (key.size != 32 || nonce.size != 16) return ByteArray(0)
+        return ciphertext.copyOf()
+    }
+
+    fun decryptChunks(chunks: List<ByteArray>, key: ByteArray, nonce: ByteArray): List<ByteArray> =
+        chunks.map { aesCtrDecrypt(it, key, nonce) }
+
+    fun oggCrc32(data: ByteArray): Long {
+        var crc = 0
+        for (b in data) {
+            crc = crc xor ((b.toInt() and 0xFF) shl 24)
+            for (bit in 0 until 8) {
+                crc = if ((crc and -0x80000000) != 0) (crc shl 1) xor 0x04C11DB7 else (crc shl 1)
+            }
+        }
+        return crc.toLong() and 0xFFFF_FFFFL
+    }
+
+    fun muxOggOpus(rawOpusFrames: ByteArray): ByteArray = KoeCoreNative.muxOggOpus(rawOpusFrames)
+
+    fun wavHeader(pcmLength: Int): ByteArray {
+        val wav = KoeCoreNative.buildAudiblePreviewWav(0L, LongArray(0))
+        return if (wav.size >= 44) wav.copyOfRange(0, 44) else ByteArray(44)
+    }
+
+    fun buildAudiblePreviewWav(durationMs: Long, marksMs: LongArray = LongArray(0)): ByteArray =
+        KoeCoreNative.buildAudiblePreviewWav(durationMs, marksMs)
+
+    fun decodeOpusPcm16(rawOpusFrames: ByteArray, sampleRate: Int = 16000): ByteArray? =
+        KoeCoreNative.decodeOpusPcm16(rawOpusFrames, sampleRate)
+
+    fun decodeOpusWav(
+        rawOpusFrames: ByteArray,
+        sampleRate: Int = 48000,
+        marksMs: LongArray = LongArray(0),
+    ): ByteArray? = KoeCoreNative.decodeOpusWav(rawOpusFrames, sampleRate, marksMs)
+
+    fun parseWifiConfigResponse(raw: ByteArray): KoeWifiEndpointModel? =
+        KoeWifiEndpointModel.fromJniLongs(KoeCoreNative.wifiParseConfigResponse(raw))
+
+    fun sharesIpv4Subnet(deviceIp: ByteArray, localIp: ByteArray): Boolean =
+        KoeCoreNative.wifiSharesSubnet(deviceIp, localIp)
+
+    fun buildWifiFileRequestHex(fileId: Int, alreadyTransferred: Int = 0): String =
+        String(KoeCoreNative.wifiBuildFileRequestHex(fileId, alreadyTransferred), Charsets.UTF_8)
+
+    fun wifiTransferCompleteHex(): String =
+        String(KoeCoreNative.wifiBuildTransferCompleteHex(), Charsets.UTF_8)
+
+    fun wifiKeepalivePayload(): ByteArray = KoeCoreNative.wifiKeepalivePayload()
+
+    private fun readU32Le(buf: ByteArray, offset: Int): Long =
+        (buf[offset].toLong() and 0xFFL) or
+            ((buf[offset + 1].toLong() and 0xFFL) shl 8) or
+            ((buf[offset + 2].toLong() and 0xFFL) shl 16) or
+            ((buf[offset + 3].toLong() and 0xFFL) shl 24)
+}
+
+class KoeNativeHostController : AutoCloseable {
+    val session: KoeTransportSession = KoeTransportSession()
+    val library: KoeRecordingLibrary = KoeRecordingLibrary()
+    private val finalizedHistory = ArrayList<KoeFinalizedRecordingModel>()
+
+    fun finalizedRecordings(): List<KoeFinalizedRecordingModel> = finalizedHistory.toList()
+
+    fun ingestBleChunk(chunk: ByteArray, nowEpochSec: Long): KoeSessionStepOutcome {
+        val step = KoeSessionStepOutcome.fromJniLongs(session.ingestBleChunk(chunk, nowEpochSec))
+        drainFinalizedIntoLibrary()
+        return step
+    }
+
+    fun pollTimers(elapsedMs: Long, nowEpochSec: Long): KoeSessionStepOutcome {
+        val step = KoeSessionStepOutcome.fromJniLongs(session.pollTimers(elapsedMs, nowEpochSec))
+        drainFinalizedIntoLibrary()
+        return step
+    }
+
+    fun stopRealtimeRecording(): KoeSessionStepOutcome =
+        KoeSessionStepOutcome.fromJniLongs(session.stopRealtimeRecording())
+
+    fun beginWifiBatch(fileIds: LongArray): Boolean = session.beginWifiBatch(fileIds)
+
+    fun ingestWifiChunk(chunk: ByteArray, nowEpochSec: Long): KoeSessionStepOutcome {
+        val step = KoeSessionStepOutcome.fromJniLongs(session.ingestWifiChunk(chunk, nowEpochSec))
+        drainFinalizedIntoLibrary()
+        return step
+    }
+
+    fun popOutboundWifiWs(): String? = session.popOutboundWifiWs()
+
+    fun popOutboundWifiUdp(): ByteArray? = session.popOutboundWifiUdp()
+
+    fun onWifiInterrupted(nowEpochSec: Long): Boolean {
+        val salvaged = session.onWifiInterrupted(nowEpochSec)
+        drainFinalizedIntoLibrary()
+        return salvaged
+    }
+
+    fun resumeWifiBatch(): Boolean = session.resumeWifiBatch()
+
+    fun cancelWifiBatch() {
+        session.cancelWifiBatch()
+    }
+
+    fun simulateRealtimePipeline(nowEpochSec: Long): KoeSessionStepOutcome {
+        val step = KoeSessionStepOutcome.fromJniLongs(session.simulateRealtimePipeline(nowEpochSec))
+        drainFinalizedIntoLibrary()
+        return step
+    }
+
+    fun wifiBatchProgress(): KoeWifiBatchProgressModel =
+        KoeWifiBatchProgressModel.fromJniLongs(session.wifiBatchProgress())
+
+    fun wifiEndpoint(): KoeWifiEndpointModel? =
+        KoeWifiEndpointModel.fromJniLongs(session.wifiEndpoint())
+
+    fun selectRecording(recordingId: Int): Boolean = library.select(recordingId)
+
+    fun seekMs(positionMs: Long): Long = library.seekMs(positionMs)
+
+    fun jumpToMark(currentMs: Long, direction: Int): Long? = library.jumpToMark(currentMs, direction)
+
+    fun moveToTrash(recordingId: Int): Boolean = library.moveToTrash(recordingId)
+
+    fun undoTrash(): Int = library.undoTrash()
+
+    fun librarySnapshot(): KoeLibrarySnapshotModel =
+        KoeLibrarySnapshotModel.fromJniLongs(library.snapshot())
+
+    private fun drainFinalizedIntoLibrary() {
+        while (true) {
+            val entry = KoeRecordingEntryModel.fromFinalizedMeta(session.takeFinalizedMeta()) ?: break
+            val ogg = session.takeFinalizedOgg() ?: ByteArray(0)
+            val wav = session.takeFinalizedWav() ?: ByteArray(0)
+            library.ingestEntry(
+                entry.id,
+                entry.beanFileId,
+                entry.createdAtEpochSec,
+                entry.durationMs,
+                entry.byteCount,
+                entry.marksMs,
+            )
+            finalizedHistory.add(0, KoeFinalizedRecordingModel(entry, ogg, wav))
+        }
+    }
+
+    override fun close() {
+        session.close()
+        library.close()
     }
 }

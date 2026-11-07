@@ -346,5 +346,41 @@ struct KoeCoreSwiftTest {
     let fin701 = wifiSession.takeFinalized()
     let fin703 = wifiSession.takeFinalized()
     check(fin701?.entry.id == 701 && fin703?.entry.id == 703 && wifiSession.takeFinalized() == nil, "takeFinalized must drain both 701 and 703 in FIFO order")
+
+    let wifiHostDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-wifi-host-test-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: wifiHostDir) }
+    let wifiActor = BeanTransportActor()
+    let wifiHost = await MainActor.run {
+      let h = KoeNativeHost(transport: wifiActor, exportDirectory: wifiHostDir)
+      h.interpreting.ttsEnabled = false
+      return h
+    }
+    await wifiActor.ingestRawBleChunk(wifiConfigRx, destinationDirectory: wifiHostDir)
+    for _ in 0..<200 {
+      let hasEp = await MainActor.run { wifiHost.sidebar.wifiEndpoint?.ipString == "192.168.4.1" }
+      if hasEp { break }
+      try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    let hostEp = await MainActor.run { wifiHost.sidebar.wifiEndpoint }
+    check(hostEp?.ipString == "192.168.4.1" && hostEp?.port == 32002, "BeanSidebarModel must receive wifiEndpointUpdated from 1A/05")
+
+    await MainActor.run {
+      wifiHost.sidebar.startWifiBatch(fileIds: [901])
+      wifiHost.sidebar.ingestWifiChunk(makeShortHead(fileId: 901, fileSize: 166))
+      wifiHost.sidebar.ingestWifiChunk(makeSingleSlice(seq: 0, mark: true))
+    }
+    for _ in 0..<200 {
+      let ready = await MainActor.run {
+        wifiHost.playback.recordings.contains(where: { $0.id.rawValue == "901" })
+          && wifiHost.sidebar.wifiBatchProgress?.phase == 4
+      }
+      if ready { break }
+      try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    await MainActor.run {
+      check(wifiHost.sidebar.wifiBatchProgress?.phase == 4 && wifiHost.sidebar.wifiBatchProgress?.finalizedCount == 1, "BeanSidebarModel wifiBatchProgress must reach phase 4 with finalizedCount == 1")
+      check(wifiHost.playback.recordings.count == 1 && wifiHost.playback.recordings[0].id.rawValue == "901", "KoeNativeHost playback.recordings must include Wi-Fi batch recording 901")
+    }
+    await wifiActor.finishStream()
   }
 }

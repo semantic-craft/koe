@@ -68,11 +68,75 @@ final class KoeCoreNative {
 }
 
 public final class KoeCoreJniTest {
+  private static final byte[] REAL_OPUS_20MS_440HZ = new byte[] {
+    0x78, (byte) 0x81, (byte) 0xa7, 0x5d, 0x6c, (byte) 0x9e, (byte) 0x99, (byte) 0xac,
+    0x00, 0x00, 0x06, 0x7e, 0x56, 0x39, (byte) 0xf7, 0x3b,
+    0x1e, (byte) 0xa2, (byte) 0xdc, 0x31, 0x0f, 0x52, 0x38, 0x39,
+    0x39, 0x3e, (byte) 0xa3, (byte) 0xd0, (byte) 0x84, 0x47, (byte) 0xcb, (byte) 0xe1,
+    (byte) 0xb6, (byte) 0xb8, (byte) 0xff, 0x44, 0x14, 0x3d, 0x76, 0x21,
+    (byte) 0xaf, 0x07, 0x34, (byte) 0xdd, 0x07, (byte) 0x87, (byte) 0xec, (byte) 0x99,
+    (byte) 0xfe, (byte) 0xc0, (byte) 0xf5, 0x44, 0x18, (byte) 0x9d, 0x5f, 0x48,
+    0x29, 0x42, (byte) 0xde, (byte) 0xd8, 0x2f, (byte) 0x85, (byte) 0xb6, 0x18,
+    (byte) 0xf4, 0x3b, 0x64, (byte) 0x92, (byte) 0xde, (byte) 0x94, 0x70, 0x50,
+    (byte) 0xe0, (byte) 0x97, 0x68, 0x7d, 0x6c, 0x10, (byte) 0xd0, (byte) 0xaf,
+    0x63, (byte) 0x85, 0x53, (byte) 0xa2, 0x71, 0x65, (byte) 0xe7, (byte) 0x91,
+    0x29, 0x01, (byte) 0x80, 0x53, 0x15, 0x04
+  };
+
   private static void check(boolean cond, String msg) {
     if (!cond) {
       System.err.println("JNI FAIL: " + msg);
       System.exit(1);
     }
+  }
+
+  private static void writeU32Le(byte[] buf, int offset, int value) {
+    buf[offset] = (byte) (value & 0xFF);
+    buf[offset + 1] = (byte) ((value >>> 8) & 0xFF);
+    buf[offset + 2] = (byte) ((value >>> 16) & 0xFF);
+    buf[offset + 3] = (byte) ((value >>> 24) & 0xFF);
+  }
+
+  private static byte[] makeShortHead(int fileId, int fileSize, int errorCode) {
+    int payloadLen = errorCode != 0 ? 87 : 8;
+    int totalLen = 9 + payloadLen + 1;
+    byte[] frame = new byte[totalLen];
+    frame[0] = 0x09;
+    frame[1] = (byte) 0xFF;
+    frame[4] = 0x01;
+    frame[5] = 0x1A;
+    frame[6] = 0x07;
+    frame[7] = (byte) (totalLen & 0xFF);
+    frame[8] = (byte) ((totalLen >>> 8) & 0xFF);
+    writeU32Le(frame, 9, fileId);
+    writeU32Le(frame, 13, fileSize);
+    if (errorCode != 0) {
+      frame[95] = (byte) errorCode;
+    }
+    frame[totalLen - 1] = (byte) KoeCoreNative.checksum(Arrays.copyOf(frame, totalLen - 1));
+    return frame;
+  }
+
+  private static byte[] makeSliceFrame(int sliceCount, int markedSeq) {
+    int payloadLen = sliceCount * 166;
+    int totalLen = 9 + payloadLen + 1;
+    byte[] frame = new byte[totalLen];
+    frame[0] = 0x09;
+    frame[1] = (byte) 0xFF;
+    frame[4] = 0x01;
+    frame[5] = 0x1A;
+    frame[6] = 0x08;
+    frame[7] = (byte) (totalLen & 0xFF);
+    frame[8] = (byte) ((totalLen >>> 8) & 0xFF);
+    for (int seq = 0; seq < sliceCount; seq++) {
+      int base = 9 + seq * 166;
+      writeU32Le(frame, base, seq);
+      frame[base + 4] = (byte) (seq == markedSeq ? 1 : 0);
+      System.arraycopy(REAL_OPUS_20MS_440HZ, 0, frame, base + 5, REAL_OPUS_20MS_440HZ.length);
+      frame[base + 165] = 0x00;
+    }
+    frame[totalLen - 1] = (byte) KoeCoreNative.checksum(Arrays.copyOf(frame, totalLen - 1));
+    return frame;
   }
 
   public static void main(String[] args) {
@@ -183,13 +247,65 @@ public final class KoeCoreJniTest {
     KoeCoreNative.sessionIngestBleChunk(wifiSession, wifiCfg, 1_700_000_200L);
     long[] sessEp = KoeCoreNative.sessionGetWifiEndpoint(wifiSession);
     check(sessEp != null && sessEp[0] == 192L && sessEp[4] == 32002L, "sessionGetWifiEndpoint");
-    check(KoeCoreNative.sessionBeginWifiBatch(wifiSession, new long[] {801L}), "sessionBeginWifiBatch");
+    check(
+        KoeCoreNative.sessionBeginWifiBatch(wifiSession, new long[] {801L, 802L, 803L}),
+        "sessionBeginWifiBatch [801, 802, 803]");
     byte[] wsOut = KoeCoreNative.sessionPopOutboundWifiWs(wifiSession);
     byte[] udpOut = KoeCoreNative.sessionPopOutboundWifiUdp(wifiSession);
     check(wsOut != null && wsOut.length == 36, "sessionPopOutboundWifiWs initial 36-char hex");
     check(udpOut != null && udpOut.length == 28, "sessionPopOutboundWifiUdp initial 28B keepalive");
     long[] wifiProg = KoeCoreNative.sessionGetWifiBatchProgress(wifiSession);
-    check(wifiProg.length == 11 && wifiProg[0] == 2L && wifiProg[3] == 1L && wifiProg[4] == 801L, "sessionGetWifiBatchProgress");
+    check(wifiProg.length == 11 && wifiProg[0] == 2L && wifiProg[3] == 3L && wifiProg[4] == 801L, "sessionGetWifiBatchProgress 801");
+
+    KoeCoreNative.sessionIngestWifiChunk(wifiSession, makeShortHead(801, 166, 0), 1_700_000_201L);
+    long[] step801 = KoeCoreNative.sessionIngestWifiChunk(wifiSession, makeSliceFrame(1, 0), 1_700_000_201L);
+    check(step801[6] == 1L, "file 801 finalized on reaching expected_wire_bytes");
+    String ws802 = new String(KoeCoreNative.sessionPopOutboundWifiWs(wifiSession), StandardCharsets.UTF_8);
+    check(
+        ws802.equals(new String(KoeCoreNative.wifiBuildFileRequestHex(802, 0), StandardCharsets.UTF_8)),
+        "completing 801 queues 1A/07 for 802");
+
+    KoeCoreNative.sessionIngestWifiChunk(wifiSession, makeShortHead(802, 166, 1), 1_700_000_202L);
+    long[] progAfter802 = KoeCoreNative.sessionGetWifiBatchProgress(wifiSession);
+    check(progAfter802[9] == 1L && progAfter802[4] == 803L, "error_code 1 skips 802 and advances to 803");
+    String ws803 = new String(KoeCoreNative.sessionPopOutboundWifiWs(wifiSession), StandardCharsets.UTF_8);
+    check(
+        ws803.equals(new String(KoeCoreNative.wifiBuildFileRequestHex(803, 0), StandardCharsets.UTF_8)),
+        "skipping 802 queues 1A/07 for 803");
+
+    KoeCoreNative.sessionIngestWifiChunk(wifiSession, makeShortHead(803, 20 * 166, 0), 1_700_000_203L);
+    KoeCoreNative.sessionIngestWifiChunk(wifiSession, makeSliceFrame(19, 5), 1_700_000_203L);
+    check(
+        KoeCoreNative.sessionOnWifiInterrupted(wifiSession, 1_700_000_204L),
+        "sessionOnWifiInterrupted salvages 803 at 95% (3154/3320 bytes)");
+    long[] progInt = KoeCoreNative.sessionGetWifiBatchProgress(wifiSession);
+    check(
+        progInt[0] == 3L && progInt[7] == 1L && progInt[8] == 1L && progInt[9] == 1L && progInt[10] == 0L,
+        "batch progress after salvage: phase=Interrupted(3), finalized=1, salvaged=1, skipped=1, remaining=0");
+
+    long wifiLib = KoeCoreNative.libraryNew();
+    long[] meta801 = KoeCoreNative.sessionTakeFinalizedMeta(wifiSession);
+    byte[] ogg801 = KoeCoreNative.sessionTakeFinalizedOgg(wifiSession);
+    byte[] wav801 = KoeCoreNative.sessionTakeFinalizedWav(wifiSession);
+    check(meta801 != null && meta801[0] == 801L && ogg801 != null && wav801 != null, "drain 801");
+    check(
+        KoeCoreNative.libraryIngestEntry(
+            wifiLib, (int) meta801[0], (int) meta801[1], meta801[2], meta801[3], (int) meta801[4], new long[] {0L}),
+        "ingest 801 into library");
+
+    long[] meta803 = KoeCoreNative.sessionTakeFinalizedMeta(wifiSession);
+    byte[] ogg803 = KoeCoreNative.sessionTakeFinalizedOgg(wifiSession);
+    byte[] wav803 = KoeCoreNative.sessionTakeFinalizedWav(wifiSession);
+    check(
+        meta803 != null && meta803[0] == 803L && meta803[5] == 1L && meta803[6] == 100L && ogg803 != null && wav803 != null,
+        "drain salvaged 803 with mark at 100ms");
+    check(
+        KoeCoreNative.libraryIngestEntry(
+            wifiLib, (int) meta803[0], (int) meta803[1], meta803[2], meta803[3], (int) meta803[4], new long[] {100L}),
+        "ingest 803 into library");
+    long[] wifiLibSnap = KoeCoreNative.librarySnapshot(wifiLib);
+    check(wifiLibSnap[0] == 2L && wifiLibSnap[1] == 803L, "wifiLib holds both 801 and 803");
+    KoeCoreNative.libraryFree(wifiLib);
     KoeCoreNative.sessionCancelWifiBatch(wifiSession);
     KoeCoreNative.sessionFree(wifiSession);
   }

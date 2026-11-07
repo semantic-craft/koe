@@ -319,6 +319,14 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/lib/theme/app_theme.dart">file lib/theme/app_theme.dart: 竹青传统色令牌、AppFontSizes 四级字号与 AppRadii.concentric 同心圆角实现</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/test/ui_principles_slice_e_test.dart">file test/ui_principles_slice_e_test.dart: Slice B/C/D/E 四套行为与多视口（1280x900 macOS、390x844 iOS、320x740 2.0x 大字号）无溢出及真实截图回归测试</a></li>
 </ul><p>Next: 本机 macOS（/Applications/Koe.app 1.2.3+6）与 iPhone 真机（Hermes 1.2.3+6）均已签名安装；跨日夜环境实机长用留待日常验证。</p></article>
+<article id="rust-core-three-host-convergence"><h3>Rust 内核下沉与三端原生宿主收口（Slice F–I）</h3><span class="badge">done</span><p>完成 Slice F–I（PR #568、#569、#570 及收口 PR）：将真实 libopus 16 kHz 单声道语音解码、BLE 字节级断点续传（received_slices * 166）、5 秒看门狗最多 2 次超时重试、实时流停止后 2 秒静默排空、CoreBluetooth 状态恢复，以及 Wi-Fi SoftAP（0x1A/05 热点应答、WSS :32002 控制帧、UDP :32003 切片重组解密与 &gt;=95% 尾包抢救）全部下沉至 rust/koe_core（#![forbid(unsafe_code)]），并接入桌面 GPUI（desktop/core DesktopBeanHost）、iOS/macOS SwiftUI（BeanTransportActor + 自适应三栏/三标签）与 Android Kotlin JNI（KoeNativeHostController）。全量 Rust/Desktop 单元与文档测试、macOS Swift 宿主自检、iOS Simulator 类型检查、OpenJDK 21 JNI 测试及 1152 项 Flutter 测试全部通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: Slice F–I 全景接力队列与完成证据：真实 libopus 语音解码、BLE 字节级断点续传与 5 秒看门狗及 2 秒静默收尾、Wi-Fi SoftAP 1A/05 配网加 WSS 32002 与 UDP 32003 切片拉流、三端原生宿主接线</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/rust/koe_core/src/session.rs">file rust/koe_core/src/session.rs: Rust 协议与音频内核（#![forbid(unsafe_code)]）：TransportSession 统一驱动 BLE 与 Wi-Fi SoftAP 会话，内聚 Opus 解码、断点续传、超时重试、静默排空与 &gt;=95% 尾包抢救</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/rust/koe_core_ffi/src/bin/gen_bindings.rs">file rust/koe_core_ffi/src/bin/gen_bindings.rs: C-ABI 与 Swift/Kotlin JNI 零拷贝双向绑定生成器及 libopus FFI 桥接</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/desktop/core/src/lib.rs">file desktop/core/src/lib.rs: 桌面 GPUI 生产核心（koe-desktop-core）直连 rust/koe_core 的 DesktopBeanHost 会话协调器</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/darwin/KoeNativeHost.swift">file darwin/KoeNativeHost.swift: iOS 与 macOS 共享 SwiftUI 宿主（Compact 三标签与 NavigationSplitView 三栏自适应）及 BeanTransportActor 蓝牙/Wi-Fi 协调器</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt">file android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt: Android Kotlin JNI 生产控制器 KoeNativeHostController（StateFlow 响应式状态流、BLE/Wi-Fi 动作分发与本机录音库管理）</a></li>
+</ul><p>Next: D3200 实体硬件在 iOS/Android 真机上的 BLE 后台恢复与 Wi-Fi SoftAP 实网拉流留待连接实体录音豆时按真机清单验证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/551">#551</a> <code>e8676498b47a73d1588f329834bbef22a11048c3</code></li>

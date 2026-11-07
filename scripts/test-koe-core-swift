@@ -2,6 +2,9 @@
 set -euo pipefail
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 cargo run --manifest-path rust/Cargo.toml --bin gen_bindings --quiet -- --check
+if [[ -f desktop/Cargo.toml ]]; then
+  cargo test --manifest-path desktop/Cargo.toml --workspace --quiet
+fi
 cargo build --manifest-path rust/Cargo.toml --package koe_core_ffi --release --quiet
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -18,6 +21,19 @@ swiftc \
   test/native/koe_core_swift_test.swift \
   -o "$work/koe-core-swift-test"
 "$work/koe-core-swift-test"
+
+if IOS_SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null) && [[ -n "$IOS_SIM_SDK" ]]; then
+  xcrun --sdk iphonesimulator swiftc \
+    -typecheck \
+    -sdk "$IOS_SIM_SDK" \
+    -target "${ARCH}-apple-ios17.0-simulator" \
+    -import-objc-header rust/koe_core_ffi/include/koe_core_ffi.h \
+    darwin/KoeCore.swift \
+    darwin/KeychainStore.swift \
+    darwin/KoeNativeTransport.swift \
+    darwin/KoeNativeHost.swift \
+    darwin/KoeNativeAppMain.swift
+fi
 
 JAVAC_BIN=""
 JAVA_BIN=""

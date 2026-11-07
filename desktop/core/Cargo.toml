@@ -1,0 +1,8 @@
+[package]
+name = "koe-desktop-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+koe_protocol_kernel = { package = "koe_core", path = "../../rust/koe_core" }
