@@ -1239,10 +1239,24 @@ void main() {
       );
       expect(acpStatus, contains('"phase":"completed"'));
 
-      final acpCancel = ffi.mcpAcpDispatchJsonRpc(
+      final acpCancelCompleted = ffi.mcpAcpDispatchJsonRpc(
         handle,
         requestJson: '{"jsonrpc":"2.0","id":15,"method":"acp/task.cancel","params":{"taskId":"acp-task-1"}}',
         nowEpochSec: 1800000025,
+      );
+      expect(acpCancelCompleted, contains('-32602'));
+
+      final acpSendAsync = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":16,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"心力豆海外渠道合同","async":true}}',
+        nowEpochSec: 1800000026,
+      );
+      expect(acpSendAsync, contains('"phase":"working"'));
+
+      final acpCancel = ffi.mcpAcpDispatchJsonRpc(
+        handle,
+        requestJson: '{"jsonrpc":"2.0","id":17,"method":"acp/task.cancel","params":{"taskId":"acp-task-2"}}',
+        nowEpochSec: 1800000027,
       );
       expect(acpCancel, contains('"phase":"canceled"'));
 
@@ -1253,7 +1267,7 @@ void main() {
       expect(status.hasPairingTicket, isTrue);
       expect(status.packCount, equals(2));
       expect(status.hotwordCount, equals(2));
-      expect(status.acpTaskCount, equals(1));
+      expect(status.acpTaskCount, equals(2));
       expect(status.liveGeneration, equals(11));
       expect(status.liveExpiresAtSec, equals(1800000035));
     } finally {

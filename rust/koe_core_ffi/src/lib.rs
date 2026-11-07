@@ -3829,22 +3829,26 @@ pub unsafe extern "C" fn koe_mcp_acp_ingest_utterance(
             if !translation.is_empty() {
                 let _ = rt.spine.set_translation(seg_id, translation, target_lang);
             }
-            if let Some(first_seg) = rt.spine.segments().first() {
-                let safe_text: String = first_seg
-                    .text
-                    .chars()
-                    .filter(|&c| c != '"' && c != '\\' && c != '\n' && c != '\r')
-                    .collect();
-                if !safe_text.trim().is_empty() {
-                    let mins_json = format!(
-                        r#"{{"schemaVersion":2,"title":"{0}","overview":"{0}","topics":[{{"text":"{0}","summary":"{0}","sources":["S1"],"points":[{{"text":"{0}","sources":["S1"]}}]}}],"decisions":[],"actions":[],"questions":[],"terms":[],"reviewItems":[]}}"#,
-                        safe_text.trim()
-                    );
-                    let _ = rt.accept_minutes_json(&mins_json);
-                }
-            }
-            rt.spine.clear_stale();
+            let _ = rt.sync_grounded_minutes_from_spine();
             return seg_id.ordinal();
+        }
+    }
+    0
+}
+
+/// Registers a saved local recording in `McpAcpOwnedRuntime` `handle`'s library (`1` ok, `0` invalid handle).
+#[no_mangle]
+pub extern "C" fn koe_mcp_acp_ingest_recording(
+    handle: u64,
+    id: u32,
+    duration_ms: u64,
+    byte_count: u32,
+    created_at_epoch_sec: u64,
+) -> u8 {
+    if let Ok(mut map) = mcp_acp_map().lock() {
+        if let Some(rt) = map.get_mut(&handle) {
+            rt.ingest_recording(id, duration_ms, byte_count, created_at_epoch_sec);
+            return 1;
         }
     }
     0

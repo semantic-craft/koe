@@ -735,11 +735,25 @@ public final class KoeCoreJniTest {
             1_800_000_024L);
     check(acpStatus != null && acpStatus.contains("\"phase\":\"completed\""), "ACP task.status completed");
 
-    String acpCancel =
+    String acpCancelCompleted =
         KoeCoreNative.mcpAcpDispatchJsonRpc(
             mcpHandle,
             "{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"acp/task.cancel\",\"params\":{\"taskId\":\"acp-task-1\"}}",
             1_800_000_025L);
+    check(acpCancelCompleted != null && acpCancelCompleted.contains("-32602"), "ACP task.cancel rejects completed task");
+
+    String acpSendAsync =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":16,\"method\":\"acp/task.send\",\"params\":{\"sessionId\":\"acp-session-1\",\"prompt\":\"海外渠道财务对账单\",\"async\":true}}",
+            1_800_000_026L);
+    check(acpSendAsync != null && acpSendAsync.contains("\"phase\":\"working\""), "ACP async task.send working");
+
+    String acpCancel =
+        KoeCoreNative.mcpAcpDispatchJsonRpc(
+            mcpHandle,
+            "{\"jsonrpc\":\"2.0\",\"id\":17,\"method\":\"acp/task.cancel\",\"params\":{\"taskId\":\"acp-task-2\"}}",
+            1_800_000_027L);
     check(acpCancel != null && acpCancel.contains("\"phase\":\"canceled\""), "ACP task.cancel canceled");
 
     long[] mcpSt = KoeCoreNative.mcpAcpStatus(mcpHandle);
@@ -752,7 +766,7 @@ public final class KoeCoreJniTest {
             && mcpSt[3] == 1L
             && mcpSt[4] == 2L
             && mcpSt[5] == 2L
-            && mcpSt[6] == 1L
+            && mcpSt[6] == 2L
             && mcpSt[8] == 9L,
         "mcpAcpStatus reports expected 10-element status array");
     KoeCoreNative.mcpAcpFree(mcpHandle);

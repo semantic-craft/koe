@@ -671,11 +671,23 @@ struct KoeCoreSwiftTest {
       )
       check(acpStatus != nil && acpStatus!.contains(#""phase":"completed""#), "ACP task.status must report completed")
 
-      let acpCancel = host.dispatchMcpAcpJsonRpc(
+      let acpCancelCompleted = host.dispatchMcpAcpJsonRpc(
         #"{"jsonrpc":"2.0","id":15,"method":"acp/task.cancel","params":{"taskId":"acp-task-1"}}"#,
         nowEpochSec: 1_800_000_025
       )
-      check(acpCancel != nil && acpCancel!.contains(#""phase":"canceled""#), "ACP task.cancel must report canceled")
+      check(acpCancelCompleted != nil && acpCancelCompleted!.contains("-32602"), "ACP task.cancel must reject canceling completed task")
+
+      let acpSendAsync = host.dispatchMcpAcpJsonRpc(
+        #"{"jsonrpc":"2.0","id":16,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"海外渠道合同","async":true}}"#,
+        nowEpochSec: 1_800_000_026
+      )
+      check(acpSendAsync != nil && acpSendAsync!.contains(#""phase":"working""#), "ACP async task.send must report working")
+
+      let acpCancel = host.dispatchMcpAcpJsonRpc(
+        #"{"jsonrpc":"2.0","id":17,"method":"acp/task.cancel","params":{"taskId":"acp-task-2"}}"#,
+        nowEpochSec: 1_800_000_027
+      )
+      check(acpCancel != nil && acpCancel!.contains(#""phase":"canceled""#), "ACP task.cancel must report canceled on working task")
 
       let st = host.refreshMcpAcpStatus()
       check(
@@ -686,7 +698,7 @@ struct KoeCoreSwiftTest {
           && st!.hasPairingTicket
           && st!.packCount == 2
           && st!.hotwordCount == 2
-          && st!.acpTaskCount == 1
+          && st!.acpTaskCount == 2
           && st!.liveGeneration == 7,
         "KoeNativeHost.refreshMcpAcpStatus must reflect MCP + ACP + pack + hotword state"
       )

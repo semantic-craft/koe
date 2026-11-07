@@ -28,13 +28,14 @@ pub use koe_protocol_kernel::domain::{
 pub use koe_protocol_kernel::frame::{FrameReassembler, ProtocolFrame};
 pub use koe_protocol_kernel::library::{RecordingEntry, RecordingLibrary};
 pub use koe_protocol_kernel::mcp_acp::{
-    compute_pack_sync_delta, constant_time_eq, is_supported_mcp_tool, AcpAgentCard, AcpTaskPhase,
-    AcpTaskRecord, LiveLeaseValidator, LivePublicationLease, McpAcpEvent, McpAcpOutcome,
-    McpAcpOwnedRuntime, McpAcpReducer, McpAcpState, McpAcpWorkspaceView, McpPairingMode,
-    McpToolError, PackSyncDelta, PairingTicket, QwennoteCatalog, SyncPackSummary,
-    ACP_PROTOCOL_VERSION, KOE_ACP_METHODS, KOE_MCP_TOOLS, LIVE_LEASE_DEFAULT_TTL_SEC,
-    LIVE_LEASE_MAX_REMAINING_SEC, MAX_ACP_TASK_LOGS, MAX_JSONRPC_REQUEST_BYTES,
-    MAX_JSONRPC_RESPONSE_BYTES, MCP_PROTOCOL_VERSION, PAIRING_TICKET_PREFIX,
+    compute_pack_sync_delta, constant_time_eq, format_epoch_sec_iso8601, is_supported_mcp_tool,
+    AcpAgentCard, AcpTaskPhase, AcpTaskRecord, LiveLeaseValidator, LivePublicationLease,
+    McpAcpEvent, McpAcpOutcome, McpAcpOwnedRuntime, McpAcpReducer, McpAcpState,
+    McpAcpWorkspaceView, McpPairingMode, McpToolError, PackSyncDelta, PairingTicket,
+    QwennoteCatalog, SyncPackSummary, ACP_PROTOCOL_VERSION, KOE_ACP_METHODS, KOE_MCP_TOOLS,
+    LIVE_LEASE_DEFAULT_TTL_SEC, LIVE_LEASE_MAX_REMAINING_SEC, MAX_ACP_TASK_LOGS,
+    MAX_JSONRPC_REQUEST_BYTES, MAX_JSONRPC_RESPONSE_BYTES, MCP_PROTOCOL_VERSION,
+    PAIRING_TICKET_PREFIX,
 };
 pub use koe_protocol_kernel::minutes::{
     contains_calculation_phrase, contains_percentage, validate_calculation_grounding,
@@ -221,8 +222,12 @@ impl DesktopBeanHost {
         source_language: impl Into<String>,
         provider: impl Into<String>,
     ) -> Option<SegmentId> {
-        self.spine
-            .append_segment(text, start_ms, end_ms, source_language, provider)
+        let text_str = text.into();
+        let seg_id = self
+            .spine
+            .append_segment(text_str.clone(), start_ms, end_ms, source_language, provider)?;
+        let _ = self.search_index.add_document(&text_str);
+        Some(seg_id)
     }
 
     /// Returns an immutable reference to the host's [`MinutesState`].
@@ -409,8 +414,84 @@ impl DesktopBeanHost {
         )?;
         let _ = fs::create_dir_all(&self.export_dir);
         let live_path = self.export_dir.join("live.json");
+
+        let wall_now_sec = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(now_epoch_sec, |d| d.as_secs());
+        let iso_expires_sec = if wall_now_sec.abs_diff(now_epoch_sec) > 5 {
+            wall_now_sec.saturating_add(LIVE_LEASE_DEFAULT_TTL_SEC)
+        } else {
+            lease.expires_at_epoch_sec
+        };
+
+        let sources: Vec<String> = self.spine.segments().iter().map(|s| s.text.clone()).collect();
+        let seed = if sources.is_empty() {
+            format!("live:{}:{next_gen}", self.spine.session_id())
+        } else {
+            sources.join("\n")
+        };
+        let content_hash = koe_protocol_kernel::hash::sha256_hex(seed.as_bytes());
+        let mut audio_obj = std::collections::BTreeMap::new();
+        audio_obj.insert("included".to_string(), JsonValue::Bool(false));
+        let mut material_obj = std::collections::BTreeMap::new();
+        material_obj.insert(
+            "title".to_string(),
+            JsonValue::String(self.spine.session_id().to_string()),
+        );
+        material_obj.insert(
+            "contentHash".to_string(),
+            JsonValue::String(content_hash.clone()),
+        );
+        material_obj.insert(
+            "source".to_string(),
+            JsonValue::String("device".to_string()),
+        );
+        let mut manifest_obj = std::collections::BTreeMap::new();
+        manifest_obj.insert(
+            "format".to_string(),
+            JsonValue::String("koe-material-pack".to_string()),
+        );
+        manifest_obj.insert("version".to_string(), JsonValue::Number(1.0));
+        manifest_obj.insert(
+            "exportedAt".to_string(),
+            JsonValue::String(format_epoch_sec_iso8601(now_epoch_sec)),
+        );
+        manifest_obj.insert("audio".to_string(), JsonValue::Object(audio_obj));
+        manifest_obj.insert("material".to_string(), JsonValue::Object(material_obj));
+        if !self.spine.is_empty() {
+            let mut segs_json = Vec::with_capacity(self.spine.len());
+            for seg in self.spine.segments() {
+                let mut s_obj = std::collections::BTreeMap::new();
+                s_obj.insert("text".to_string(), JsonValue::String(seg.text.clone()));
+                s_obj.insert("startMs".to_string(), JsonValue::Number(seg.start_ms as f64));
+                s_obj.insert("endMs".to_string(), JsonValue::Number(seg.end_ms as f64));
+                if let Some(ref spk) = seg.speaker {
+                    s_obj.insert("speaker".to_string(), JsonValue::String(spk.clone()));
+                }
+                segs_json.push(JsonValue::Object(s_obj));
+            }
+            let mut tr_obj = std::collections::BTreeMap::new();
+            tr_obj.insert(
+                "text".to_string(),
+                JsonValue::String(sources.join("\n")),
+            );
+            tr_obj.insert(
+                "revision".to_string(),
+                JsonValue::Number(self.spine.revision() as f64),
+            );
+            tr_obj.insert("segments".to_string(), JsonValue::Array(segs_json));
+            manifest_obj.insert("transcript".to_string(), JsonValue::Object(tr_obj));
+        }
+        let mut records_obj = std::collections::BTreeMap::new();
+        records_obj.insert(content_hash, JsonValue::Object(manifest_obj));
+
         let mut map = std::collections::BTreeMap::new();
+        map.insert("version".to_string(), JsonValue::Number(1.0));
         map.insert("generation".to_string(), JsonValue::Number(lease.generation as f64));
+        map.insert(
+            "expiresAt".to_string(),
+            JsonValue::String(format_epoch_sec_iso8601(iso_expires_sec)),
+        );
         map.insert(
             "expiresAtEpochSec".to_string(),
             JsonValue::Number(lease.expires_at_epoch_sec as f64),
@@ -419,6 +500,7 @@ impl DesktopBeanHost {
             "sessionId".to_string(),
             JsonValue::String(self.spine.session_id().to_string()),
         );
+        map.insert("records".to_string(), JsonValue::Object(records_obj));
         let json = JsonValue::Object(map).to_json_string();
         Self::write_atomic(&live_path, json.as_bytes());
         Ok(lease.generation)
@@ -968,7 +1050,11 @@ mod tests {
 
         let gen = host.refresh_live_publication(1_762_540_002).unwrap();
         assert_eq!(gen, 1);
-        assert!(dir.join("live.json").exists());
+        let live_raw = fs::read_to_string(dir.join("live.json")).unwrap();
+        assert!(live_raw.contains("\"version\":1"));
+        assert!(live_raw.contains("\"expiresAt\":\""));
+        assert!(live_raw.contains("\"records\":{"));
+        assert!(live_raw.contains("\"koe-material-pack\""));
 
         let (pack_summary, pack_path) = host
             .export_koepack_v2_to_disk("海外渠道合同", "2026-11-07T18:00:00Z")

@@ -1897,6 +1897,16 @@ public final class KoeMcpAcpRuntime: @unchecked Sendable {{
   }}
 
   @discardableResult
+  public func ingestRecording(
+    id: UInt32,
+    durationMs: UInt64,
+    byteCount: UInt32,
+    createdAtEpochSec: UInt64
+  ) -> Bool {{
+    koe_mcp_acp_ingest_recording(handle, id, durationMs, byteCount, createdAtEpochSec) != 0
+  }}
+
+  @discardableResult
   public func putPack(materialId: String, packBytes: Data) -> Int32 {{
     let idBytes = Array(materialId.utf8)
     return idBytes.withUnsafeBufferPointer {{ idBuf in
@@ -2498,6 +2508,13 @@ object KoeCoreNative {{
         targetLang: String,
         nowEpochSec: Long,
     ): Int
+    @JvmStatic external fun mcpAcpIngestRecording(
+        handle: Long,
+        id: Int,
+        durationMs: Long,
+        byteCount: Int,
+        createdAtEpochSec: Long,
+    ): Boolean
     @JvmStatic external fun mcpAcpPutPack(
         handle: Long,
         materialId: String,
@@ -2913,6 +2930,20 @@ class KoeMcpAcpRuntime(sessionId: String = "native-mcp-session") : AutoCloseable
             nowEpochSec,
         )
 
+    fun ingestRecording(
+        id: Int,
+        durationMs: Long,
+        byteCount: Int,
+        createdAtEpochSec: Long,
+    ): Boolean =
+        handle != 0L && KoeCoreNative.mcpAcpIngestRecording(
+            handle,
+            id,
+            durationMs,
+            byteCount,
+            createdAtEpochSec,
+        )
+
     fun putPack(materialId: String, packBytes: ByteArray): Int =
         if (handle == 0L) -1
         else KoeCoreNative.mcpAcpPutPack(handle, materialId, packBytes)
@@ -3272,6 +3303,12 @@ class KoeNativeHostController(sessionId: String = "android-host") : AutoCloseabl
                 entry.durationMs,
                 entry.byteCount,
                 entry.marksMs,
+            )
+            mcpAcp.ingestRecording(
+                entry.id,
+                entry.durationMs,
+                entry.byteCount,
+                entry.createdAtEpochSec,
             )
             finalizedHistory.add(0, KoeFinalizedRecordingModel(entry, ogg, wav))
         }}

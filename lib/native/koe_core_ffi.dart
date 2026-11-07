@@ -1196,6 +1196,15 @@ typedef _McpAcpStatusDart = int Function(
   Pointer<_KoeMcpAcpStatusNative>,
 );
 
+typedef _McpAcpIngestRecordingNative = Uint8 Function(
+  Uint64,
+  Uint32,
+  Uint64,
+  Uint32,
+  Uint64,
+);
+typedef _McpAcpIngestRecordingDart = int Function(int, int, int, int, int);
+
 /// Dart FFI bindings to the `#![forbid(unsafe_code)]` `koe_core` Rust kernel
 /// exposed via `libkoe_core_ffi`.
 final class KoeCoreFfi {
@@ -1509,6 +1518,11 @@ final class KoeCoreFfi {
             _McpAcpIngestUtteranceNative,
             _McpAcpIngestUtteranceDart
           >('koe_mcp_acp_ingest_utterance', isLeaf: true),
+      _mcpAcpIngestRecording =
+          lib.lookupFunction<
+            _McpAcpIngestRecordingNative,
+            _McpAcpIngestRecordingDart
+          >('koe_mcp_acp_ingest_recording', isLeaf: true),
       _mcpAcpPutPack =
           lib.lookupFunction<_McpAcpPutPackNative, _McpAcpPutPackDart>(
             'koe_mcp_acp_put_pack',
@@ -1639,6 +1653,7 @@ final class KoeCoreFfi {
   final _McpAcpVerifyBearerDart _mcpAcpVerifyBearer;
   final _McpAcpPublishLiveDart _mcpAcpPublishLive;
   final _McpAcpIngestUtteranceDart _mcpAcpIngestUtterance;
+  final _McpAcpIngestRecordingDart _mcpAcpIngestRecording;
   final _McpAcpPutPackDart _mcpAcpPutPack;
   final _McpAcpDispatchJsonRpcDart _mcpAcpDispatchJsonRpc;
   final _McpAcpStatusDart _mcpAcpStatus;
@@ -3089,6 +3104,22 @@ final class KoeCoreFfi {
       malloc.free(tlPtr);
     }
   }
+
+  bool mcpAcpIngestRecording(
+    int handle, {
+    required int id,
+    required int durationMs,
+    required int byteCount,
+    required int createdAtEpochSec,
+  }) =>
+      _mcpAcpIngestRecording(
+        handle,
+        id,
+        durationMs,
+        byteCount,
+        createdAtEpochSec,
+      ) !=
+      0;
 
   int mcpAcpPutPack(
     int handle, {

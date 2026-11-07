@@ -17,7 +17,7 @@ use crate::domain::{
     UtteranceSpine,
 };
 use crate::hash::{is_valid_sha256_hex, sha256_hex};
-use crate::library::RecordingLibrary;
+use crate::library::{RecordingEntry, RecordingLibrary};
 use crate::minutes::{
     encode_meeting_minutes_json, extract_json_object, parse_meeting_minutes_json,
     replace_minute_terms, JsonValue, MinutesState, BUILTIN_MINUTE_TEMPLATES,
@@ -742,12 +742,13 @@ impl McpAcpState {
             return false;
         };
         let trimmed = raw.trim();
-        let token = trimmed
+        let Some(token) = trimmed
             .strip_prefix("Bearer ")
             .or_else(|| trimmed.strip_prefix("bearer "))
-            .unwrap_or(trimmed)
-            .trim();
-        ticket.verify_token(token, now_epoch_sec)
+        else {
+            return false;
+        };
+        ticket.verify_token(token.trim(), now_epoch_sec)
     }
 
     /// Publishes or refreshes a live lease (`0 < ttl_sec <= 20`).
@@ -923,6 +924,10 @@ impl McpAcpState {
         if method == "notifications/initialized" {
             self.mcp_ready = true;
             return id_opt.map(|id| jsonrpc_result_response(&id, JsonValue::Object(BTreeMap::new())));
+        }
+
+        if id_opt.is_none() {
+            return None;
         }
 
         if method == "ping" {
@@ -1134,11 +1139,16 @@ impl McpAcpState {
                     .and_then(JsonValue::as_str)
                     .map(str::trim)
                     .unwrap_or("");
-                if !rec_id.is_empty()
-                    && rec_id != workspace.spine.session_id()
-                    && rec_id != "active"
-                {
-                    if let Some(stored) = self.sync_packs.get(&rec_id.to_ascii_lowercase()) {
+                if !rec_id.is_empty() && rec_id != "active" {
+                    let stored_opt = self
+                        .sync_packs
+                        .get(&rec_id.to_ascii_lowercase())
+                        .or_else(|| {
+                            self.sync_packs
+                                .values()
+                                .find(|p| p.summary.recording_id == rec_id)
+                        });
+                    if let Some(stored) = stored_opt {
                         let sources = stored
                             .decoded
                             .minutes
@@ -1170,9 +1180,21 @@ impl McpAcpState {
                         out.insert("sources".to_string(), JsonValue::Array(src_json));
                         return Ok(JsonValue::Object(out));
                     }
-                    return Err(McpToolError::RecordingUnavailable);
+                    let in_library = workspace
+                        .library
+                        .entries
+                        .iter()
+                        .any(|e| e.id.to_string() == rec_id);
+                    if rec_id != workspace.spine.session_id() && !in_library {
+                        return Err(McpToolError::RecordingUnavailable);
+                    }
                 }
 
+                let resolved_rec_id = if rec_id.is_empty() || rec_id == "active" {
+                    workspace.spine.session_id().to_string()
+                } else {
+                    rec_id.to_string()
+                };
                 let cited = workspace.spine.format_cited_sources();
                 let mut segs = Vec::with_capacity(workspace.spine.len());
                 for seg in workspace.spine.segments() {
@@ -1196,7 +1218,7 @@ impl McpAcpState {
                 let mut out = BTreeMap::new();
                 out.insert(
                     "recordingId".to_string(),
-                    JsonValue::String(workspace.spine.session_id().to_string()),
+                    JsonValue::String(resolved_rec_id),
                 );
                 out.insert(
                     "revision".to_string(),
@@ -1217,15 +1239,24 @@ impl McpAcpState {
                     .and_then(JsonValue::as_str)
                     .map(str::trim)
                     .unwrap_or("");
-                if !rec_id.is_empty()
-                    && rec_id != workspace.spine.session_id()
-                    && rec_id != "active"
-                {
-                    if let Some(stored) = self.sync_packs.get(&rec_id.to_ascii_lowercase()) {
+                if !rec_id.is_empty() && rec_id != "active" {
+                    let stored_opt = self
+                        .sync_packs
+                        .get(&rec_id.to_ascii_lowercase())
+                        .or_else(|| {
+                            self.sync_packs
+                                .values()
+                                .find(|p| p.summary.recording_id == rec_id)
+                        });
+                    if let Some(stored) = stored_opt {
                         let mut out = BTreeMap::new();
                         out.insert(
                             "recordingId".to_string(),
                             JsonValue::String(rec_id.to_string()),
+                        );
+                        out.insert(
+                            "revision".to_string(),
+                            JsonValue::String(current_rev.to_string()),
                         );
                         if let Some(ref mins) = stored.decoded.minutes {
                             let val = JsonValue::parse(&mins.current.text)
@@ -1249,12 +1280,28 @@ impl McpAcpState {
                         }
                         return Ok(JsonValue::Object(out));
                     }
-                    return Err(McpToolError::RecordingUnavailable);
+                    let in_library = workspace
+                        .library
+                        .entries
+                        .iter()
+                        .any(|e| e.id.to_string() == rec_id);
+                    if rec_id != workspace.spine.session_id() && !in_library {
+                        return Err(McpToolError::RecordingUnavailable);
+                    }
                 }
 
+                let resolved_rec_id = if rec_id.is_empty() || rec_id == "active" {
+                    workspace.spine.session_id().to_string()
+                } else {
+                    rec_id.to_string()
+                };
                 let mut out = BTreeMap::new();
                 out.insert(
-                    " revision".trim().to_string(),
+                    "recordingId".to_string(),
+                    JsonValue::String(resolved_rec_id),
+                );
+                out.insert(
+                    "revision".to_string(),
                     JsonValue::String(current_rev.to_string()),
                 );
                 if let Some(ref latest) = workspace.minutes.latest_minutes {
@@ -1318,11 +1365,13 @@ impl McpAcpState {
                     .unwrap_or(5)
                     .clamp(1, 20) as usize;
 
+                ensure_search_index_synced(workspace);
                 let hits = workspace
                     .search_index
                     .search(query, limit, ScoringMode::default());
                 let segs = workspace.spine.segments();
                 let mut hit_objs = Vec::with_capacity(hits.len());
+                let mut matched_seg_ids = Vec::with_capacity(hits.len());
                 for hit in hits {
                     let mut h = BTreeMap::new();
                     h.insert(
@@ -1331,6 +1380,7 @@ impl McpAcpState {
                     );
                     h.insert("score".to_string(), JsonValue::Number(hit.score));
                     if let Some(seg) = segs.get(hit.doc_index) {
+                        matched_seg_ids.push(seg.id);
                         h.insert("citation".to_string(), JsonValue::String(seg.id.to_string()));
                         h.insert("snippet".to_string(), JsonValue::String(seg.text.clone()));
                     } else if let Some(item) = workspace.context.timeline.get(hit.doc_index) {
@@ -1342,10 +1392,15 @@ impl McpAcpState {
                     }
                     hit_objs.push(JsonValue::Object(h));
                 }
-                let q_lower = query.to_ascii_lowercase();
+                let q_lower = query.to_lowercase();
                 let mut todos = Vec::new();
                 for todo in &workspace.context.todos {
-                    if todo.title.to_ascii_lowercase().contains(&q_lower) || hit_objs.is_empty() {
+                    let matches_title = todo.title.to_lowercase().contains(&q_lower);
+                    let matches_citation = todo
+                        .citations
+                        .iter()
+                        .any(|c| matched_seg_ids.contains(c));
+                    if matches_title || matches_citation {
                         let mut t = BTreeMap::new();
                         t.insert("id".to_string(), JsonValue::String(todo.id.clone()));
                         t.insert("title".to_string(), JsonValue::String(todo.title.clone()));
@@ -1643,6 +1698,7 @@ impl McpAcpState {
                 self.next_task_seq = self.next_task_seq.saturating_add(1);
                 let task_id = format!("acp-task-{}", self.next_task_seq);
 
+                ensure_search_index_synced(workspace);
                 let hits = workspace
                     .search_index
                     .search(prompt, 5, ScoringMode::default());
@@ -1653,29 +1709,36 @@ impl McpAcpState {
                         cited_lines.push(format!("[{}] {}", seg.id, seg.text));
                     }
                 }
-                if cited_lines.is_empty() && !segs.is_empty() {
-                    for seg in segs.iter().take(3) {
-                        cited_lines.push(format!("[{}] {}", seg.id, seg.text));
-                    }
-                }
                 let result_text = if cited_lines.is_empty() {
                     "未找到匹配的录音原话依据。".to_string()
                 } else {
                     format!("依据原话：\n{}", cited_lines.join("\n"))
+                };
+                let is_async = p_obj
+                    .get("async")
+                    .or_else(|| p_obj.get("defer"))
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false);
+                let phase = if is_async {
+                    AcpTaskPhase::Working
+                } else {
+                    AcpTaskPhase::Completed
                 };
 
                 let mut record = AcpTaskRecord {
                     task_id: task_id.clone(),
                     session_id,
                     prompt: prompt.to_string(),
-                    phase: AcpTaskPhase::Completed,
+                    phase,
                     result_text,
                     logs: Vec::new(),
                     updated_at_epoch_sec: now_epoch_sec,
                 };
                 record.push_log(format!("accepted:{}", record.task_id));
                 record.push_log(format!("retrieved_hits:{}", hits.len()));
-                record.push_log("completed".to_string());
+                if !is_async {
+                    record.push_log("completed".to_string());
+                }
 
                 if let Some(extra_logs) = p_obj.get("debugLogCount").and_then(JsonValue::as_i64) {
                     let count = extra_logs.clamp(0, 2500) as usize;
@@ -1716,6 +1779,13 @@ impl McpAcpState {
                 let Some(record) = self.acp_tasks.get_mut(task_id.trim()) else {
                     return jsonrpc_error_response(id_ref, -32602, "Unknown taskId");
                 };
+                if matches!(record.phase, AcpTaskPhase::Completed | AcpTaskPhase::Failed) {
+                    return jsonrpc_error_response(
+                        id_ref,
+                        -32602,
+                        "Cannot cancel terminal task",
+                    );
+                }
                 record.phase = AcpTaskPhase::Canceled;
                 record.updated_at_epoch_sec = now_epoch_sec;
                 record.push_log("canceled".to_string());
@@ -1830,6 +1900,75 @@ impl McpAcpOwnedRuntime {
         }
     }
 
+    /// Registers a saved local recording entry in `self.library` so `list_recordings`, `get_transcript`, and `get_minutes` expose it.
+    pub fn ingest_recording(
+        &mut self,
+        id: u32,
+        duration_ms: u64,
+        byte_count: u32,
+        created_at_epoch_sec: u64,
+    ) {
+        self.library.ingest(RecordingEntry {
+            id,
+            bean_file_id: id,
+            created_at_epoch_sec,
+            duration_ms,
+            byte_count,
+            marks_ms: Vec::new(),
+        });
+    }
+
+    /// Builds and accepts a grounded `MeetingMinutesV2` document covering all segments `S1..Sn` in `self.spine`.
+    pub fn sync_grounded_minutes_from_spine(&mut self) -> bool {
+        let segs = self.spine.segments();
+        if segs.is_empty() {
+            return false;
+        }
+        let first_text = segs[0].text.trim().to_string();
+        let all_sources: Vec<JsonValue> = segs
+            .iter()
+            .map(|s| JsonValue::String(s.id.to_string()))
+            .collect();
+        let points: Vec<JsonValue> = segs
+            .iter()
+            .map(|s| {
+                let mut pt = BTreeMap::new();
+                pt.insert("text".to_string(), JsonValue::String(s.text.trim().to_string()));
+                pt.insert(
+                    "sources".to_string(),
+                    JsonValue::Array(vec![JsonValue::String(s.id.to_string())]),
+                );
+                JsonValue::Object(pt)
+            })
+            .collect();
+        let mut topic = BTreeMap::new();
+        topic.insert("text".to_string(), JsonValue::String("录音纪要".to_string()));
+        topic.insert("summary".to_string(), JsonValue::String(first_text.clone()));
+        topic.insert("sources".to_string(), JsonValue::Array(all_sources));
+        topic.insert("points".to_string(), JsonValue::Array(points));
+
+        let mut root = BTreeMap::new();
+        root.insert("schemaVersion".to_string(), JsonValue::Number(2.0));
+        root.insert("title".to_string(), JsonValue::String(first_text.clone()));
+        root.insert("overview".to_string(), JsonValue::String(first_text));
+        root.insert(
+            "topics".to_string(),
+            JsonValue::Array(vec![JsonValue::Object(topic)]),
+        );
+        root.insert("decisions".to_string(), JsonValue::Array(Vec::new()));
+        root.insert("actions".to_string(), JsonValue::Array(Vec::new()));
+        root.insert("questions".to_string(), JsonValue::Array(Vec::new()));
+        root.insert("terms".to_string(), JsonValue::Array(Vec::new()));
+        root.insert("reviewItems".to_string(), JsonValue::Array(Vec::new()));
+
+        let encoded = JsonValue::Object(root).to_json_string();
+        let accepted = self.accept_minutes_json(&encoded);
+        if accepted {
+            self.spine.clear_stale();
+        }
+        accepted
+    }
+
     /// Dispatches a raw JSON-RPC 2.0 request or notification against this owned workspace.
     pub fn dispatch_jsonrpc(&mut self, raw_json: &str, now_epoch_sec: u64) -> Option<String> {
         let mut view = McpAcpWorkspaceView {
@@ -1909,6 +2048,38 @@ impl McpAcpReducer for McpAcpState {
             }
         }
     }
+}
+
+fn ensure_search_index_synced(workspace: &mut McpAcpWorkspaceView<'_>) {
+    if !workspace.spine.is_empty() && workspace.search_index.doc_count() != workspace.spine.len() {
+        let mut rebuilt = ContextSearchIndex::new();
+        for seg in workspace.spine.segments() {
+            let _ = rebuilt.add_document(&seg.text);
+        }
+        *workspace.search_index = rebuilt;
+    }
+}
+
+/// Formats `epoch_sec` as an ISO-8601 UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`).
+#[must_use]
+pub fn format_epoch_sec_iso8601(epoch_sec: u64) -> String {
+    let days = (epoch_sec / 86_400) as i64;
+    let rem_sec = epoch_sec % 86_400;
+    let hour = rem_sec / 3_600;
+    let minute = (rem_sec % 3_600) / 60;
+    let second = rem_sec % 60;
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 fn jsonrpc_result_response(id: &JsonValue, result: JsonValue) -> String {
@@ -2380,12 +2551,180 @@ mod tests {
             .unwrap();
         assert!(status.contains("\"phase\":\"completed\""));
 
-        let cancel = rt
+        let cancel_completed = rt
             .dispatch_jsonrpc(
                 r#"{"jsonrpc":"2.0","id":5,"method":"acp/task.cancel","params":{"taskId":"acp-task-1"}}"#,
                 1_762_540_105,
             )
             .unwrap();
-        assert!(cancel.contains("\"phase\":\"canceled\""));
+        assert!(cancel_completed.contains("-32602"));
+
+        let send_async = rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":6,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"供应商报价单","async":true}}"#,
+                1_762_540_106,
+            )
+            .unwrap();
+        assert!(send_async.contains("\"phase\":\"working\""));
+
+        let cancel_working = rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":7,"method":"acp/task.cancel","params":{"taskId":"acp-task-2"}}"#,
+                1_762_540_107,
+            )
+            .unwrap();
+        assert!(cancel_working.contains("\"phase\":\"canceled\""));
+    }
+
+    #[test]
+    fn interrogate_regressions_library_ids_grounded_minutes_bearer_and_notifications() {
+        let mut rt = McpAcpOwnedRuntime::new("live-session");
+        rt.ingest_recording(20261108, 2_400, 9_818, 1_762_540_000);
+        rt.ingest_utterance(
+            "第一句带引号\"与换行\n及制表符\t内容。",
+            0,
+            1_000,
+            "zh",
+            "qwen",
+            1_762_540_001,
+        );
+        rt.ingest_utterance(
+            "第二句独立讨论供应链交付与待办安排。",
+            1_000,
+            2_400,
+            "zh",
+            "qwen",
+            1_762_540_002,
+        );
+        assert!(rt.sync_grounded_minutes_from_spine());
+
+        let token = "koe-secret-token-with-at-least-24-bytes";
+        let _ = rt
+            .mcp_acp
+            .configure_pairing("https://koe.example.com", token, McpPairingMode::Lan, None, None)
+            .unwrap();
+        assert!(rt
+            .mcp_acp
+            .verify_bearer_header(Some(&format!("Bearer {token}")), 1_762_540_003));
+        assert!(!rt.mcp_acp.verify_bearer_header(Some(token), 1_762_540_003));
+        assert!(!rt
+            .mcp_acp
+            .verify_bearer_header(Some(&format!("Basic {token}")), 1_762_540_003));
+
+        let _ = rt.dispatch_jsonrpc(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+            1_762_540_003,
+        );
+        assert!(rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                1_762_540_003,
+            )
+            .is_none());
+        assert!(rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}"#,
+                1_762_540_003,
+            )
+            .is_none());
+
+        let tr_by_lib_id = rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_transcript","arguments":{"recording_id":"20261108"}}}"#,
+                1_762_540_004,
+            )
+            .unwrap();
+        assert!(tr_by_lib_id.contains("\"recordingId\":\"20261108\""));
+        assert!(tr_by_lib_id.contains("供应链交付"));
+
+        let mins_by_lib_id = rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_minutes","arguments":{"recording_id":"20261108"}}}"#,
+                1_762_540_004,
+            )
+            .unwrap();
+        assert!(mins_by_lib_id.contains("\"recordingId\":\"20261108\""));
+        assert!(mins_by_lib_id.contains("S2"));
+        assert!(mins_by_lib_id.contains("供应链交付"));
+
+        let unmatched_search = rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"完全不存在的量子天体词汇"}}}"#,
+                1_762_540_004,
+            )
+            .unwrap();
+        assert!(unmatched_search.contains("\"hits\":[]"));
+        assert!(unmatched_search.contains("\"todos\":[]"));
+
+        let unmatched_acp = rt
+            .dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":5,"method":"acp/task.send","params":{"prompt":"完全不存在的量子天体词汇"}}"#,
+                1_762_540_004,
+            )
+            .unwrap();
+        assert!(unmatched_acp.contains("未找到匹配的录音原话依据。"));
+
+        assert_eq!(
+            format_epoch_sec_iso8601(1_762_540_000),
+            "2025-11-07T18:26:40Z"
+        );
+    }
+
+    #[test]
+    fn mcp_acp_end_to_end_dispatch_and_koepack_benchmark_stays_under_budget() {
+        let mut rt = McpAcpOwnedRuntime::new("bench-session");
+        rt.ingest_recording(20261108, 60_000, 128_000, 1_762_540_000);
+        for i in 0..50u64 {
+            rt.ingest_utterance(
+                &format!("第{}段会议记录：下周三前把海外渠道合同第{}版发给法务审阅。", i + 1, i + 1),
+                i * 1_000,
+                (i + 1) * 1_000,
+                "zh",
+                "qwen",
+                1_762_540_000 + i,
+            );
+        }
+        assert!(rt.sync_grounded_minutes_from_spine());
+        let _ = rt.dispatch_jsonrpc(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+            1_762_540_100,
+        );
+        let _ = rt.dispatch_jsonrpc(
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            1_762_540_100,
+        );
+        let _ = rt.dispatch_jsonrpc(
+            r#"{"jsonrpc":"2.0","id":2,"method":"acp/initialize"}"#,
+            1_762_540_100,
+        );
+
+        let start = std::time::Instant::now();
+        let mut total_bytes = 0usize;
+        for iter in 0..100u64 {
+            for req in [
+                r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"list_recordings","arguments":{}}}"#,
+                r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"get_transcript","arguments":{"recording_id":"20261108"}}}"#,
+                r#"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"get_minutes","arguments":{"recording_id":"20261108"}}}"#,
+                r#"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道合同","limit":5}}}"#,
+                r#"{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"sync_qwennote_hotwords","arguments":{"hotwords":["心力豆","D3200"]}}}"#,
+                r#"{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"export_koepack_v2","arguments":{"title":"基准包"}}}"#,
+                r#"{"jsonrpc":"2.0","id":16,"method":"acp/task.send","params":{"prompt":"海外渠道合同审阅"}}"#,
+            ] {
+                let resp = rt.dispatch_jsonrpc(req, 1_762_540_200 + iter).unwrap();
+                total_bytes += resp.len();
+            }
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "BENCH_MCP_ACP_700_DISPATCHES: elapsed_us={} total_bytes={} handled_calls={} packs={}",
+            elapsed.as_micros(),
+            total_bytes,
+            rt.mcp_acp.handled_calls,
+            rt.mcp_acp.pack_count()
+        );
+        assert!(total_bytes > 500_000);
+        assert_eq!(rt.mcp_acp.handled_calls, 1 + 700);
+        assert_eq!(rt.mcp_acp.pack_count(), 1);
+        assert!(elapsed.as_millis() < 2_000, "expected < 2000ms, got {:?}", elapsed);
     }
 }

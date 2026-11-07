@@ -79,13 +79,14 @@ pub use domain::{
     SegmentId, TodoItem, TodoKind, TodoStatus, UtteranceSegment, UtteranceSpine,
 };
 pub use mcp_acp::{
-    compute_pack_sync_delta, constant_time_eq, is_supported_mcp_tool, AcpAgentCard, AcpTaskPhase,
-    AcpTaskRecord, LiveLeaseValidator, LivePublicationLease, McpAcpEvent, McpAcpOutcome,
-    McpAcpOwnedRuntime, McpAcpReducer, McpAcpState, McpAcpWorkspaceView, McpPairingMode,
-    McpToolError, PackSyncDelta, PairingTicket, QwennoteCatalog, SyncPackSummary,
-    ACP_PROTOCOL_VERSION, KOE_ACP_METHODS, KOE_MCP_TOOLS, LIVE_LEASE_DEFAULT_TTL_SEC,
-    LIVE_LEASE_MAX_REMAINING_SEC, MAX_ACP_TASK_LOGS, MAX_JSONRPC_REQUEST_BYTES,
-    MAX_JSONRPC_RESPONSE_BYTES, MCP_PROTOCOL_VERSION, PAIRING_TICKET_PREFIX,
+    compute_pack_sync_delta, constant_time_eq, format_epoch_sec_iso8601, is_supported_mcp_tool,
+    AcpAgentCard, AcpTaskPhase, AcpTaskRecord, LiveLeaseValidator, LivePublicationLease,
+    McpAcpEvent, McpAcpOutcome, McpAcpOwnedRuntime, McpAcpReducer, McpAcpState,
+    McpAcpWorkspaceView, McpPairingMode, McpToolError, PackSyncDelta, PairingTicket,
+    QwennoteCatalog, SyncPackSummary, ACP_PROTOCOL_VERSION, KOE_ACP_METHODS, KOE_MCP_TOOLS,
+    LIVE_LEASE_DEFAULT_TTL_SEC, LIVE_LEASE_MAX_REMAINING_SEC, MAX_ACP_TASK_LOGS,
+    MAX_JSONRPC_REQUEST_BYTES, MAX_JSONRPC_RESPONSE_BYTES, MCP_PROTOCOL_VERSION,
+    PAIRING_TICKET_PREFIX,
 };
 pub use minutes::{
     contains_calculation_phrase, contains_percentage, validate_calculation_grounding,

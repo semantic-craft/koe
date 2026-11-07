@@ -300,6 +300,7 @@ uint8_t* koe_mcp_acp_configure_pairing(uint64_t handle, const uint8_t* base_url_
 uint8_t koe_mcp_acp_verify_bearer(uint64_t handle, const uint8_t* auth_header_ptr, size_t auth_header_len, uint64_t now_epoch_sec);
 int32_t koe_mcp_acp_publish_live(uint64_t handle, uint64_t generation, uint64_t now_epoch_sec, uint32_t ttl_sec);
 uint32_t koe_mcp_acp_ingest_utterance(uint64_t handle, const uint8_t* text_ptr, size_t text_len, const uint8_t* translation_ptr, size_t translation_len, uint64_t start_ms, uint64_t end_ms, const uint8_t* source_lang_ptr, size_t source_lang_len, const uint8_t* target_lang_ptr, size_t target_lang_len, uint64_t now_epoch_sec);
+uint8_t koe_mcp_acp_ingest_recording(uint64_t handle, uint32_t id, uint64_t duration_ms, uint32_t byte_count, uint64_t created_at_epoch_sec);
 int32_t koe_mcp_acp_put_pack(uint64_t handle, const uint8_t* material_id_ptr, size_t material_id_len, const uint8_t* pack_ptr, size_t pack_len);
 uint8_t* koe_mcp_acp_dispatch_jsonrpc(uint64_t handle, const uint8_t* request_json_ptr, size_t request_json_len, uint64_t now_epoch_sec, size_t* out_len_ptr);
 uint8_t koe_mcp_acp_status(uint64_t handle, KoeMcpAcpStatus* out_status_ptr);

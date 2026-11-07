@@ -691,6 +691,7 @@ public final class RecordingPlaybackModel: ObservableObject {
   private let rustLibrary = KoeRecordingLibrary()
   private var audioPlayer: AVAudioPlayer?
   private var progressTimer: Timer?
+  public var onEntryIngested: ((KoeRecordingEntryModel) -> Void)?
 
   public var selectedRecording: KoeSavedRecording? {
     if let id = selectedRecordingId {
@@ -726,6 +727,7 @@ public final class RecordingPlaybackModel: ObservableObject {
         byteCount: UInt32(max(0, size)),
         createdAtEpochSec: UInt64(max(0, created.timeIntervalSince1970))
       ) else { continue }
+      onEntryIngested?(entry)
       let wavCandidate = directory.appendingPathComponent("\(stem).wav")
       let wavURL = FileManager.default.fileExists(atPath: wavCandidate.path) ? wavCandidate : nil
       let rec = KoeSavedRecording(
@@ -870,6 +872,7 @@ public final class RecordingPlaybackModel: ObservableObject {
       marksMs: recording.marks.map(\.rawValue)
     )
     rustLibrary.ingest(entry)
+    onEntryIngested?(entry)
   }
 
   private func numericRecordingId(_ id: RecordingID) -> UInt32 {
@@ -915,6 +918,14 @@ public final class KoeNativeHost: ObservableObject {
     self.contextSearch = searchHandle
     self.mcpAcp = mcpAcpHandle
     self.mcpAcpStatus = mcpAcpHandle.status()
+    playbackModel.onEntryIngested = { entry in
+      mcpAcpHandle.ingestRecording(
+        id: entry.id,
+        durationMs: entry.durationMs,
+        byteCount: entry.byteCount,
+        createdAtEpochSec: entry.createdAtEpochSec
+      )
+    }
     let sidebarModel = BeanSidebarModel(
       transport: transport,
       exportDirectory: exportDirectory,

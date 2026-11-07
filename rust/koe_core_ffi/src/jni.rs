@@ -16,9 +16,9 @@ use crate::{
     koe_library_free, koe_library_ingest_entry, koe_library_jump_to_mark,
     koe_library_move_to_trash, koe_library_new, koe_library_seek_ms, koe_library_select,
     koe_library_snapshot, koe_library_undo_trash, koe_mcp_acp_configure_pairing,
-    koe_mcp_acp_dispatch_jsonrpc, koe_mcp_acp_free, koe_mcp_acp_ingest_utterance,
-    koe_mcp_acp_new, koe_mcp_acp_publish_live, koe_mcp_acp_put_pack, koe_mcp_acp_status,
-    koe_mcp_acp_verify_bearer, koe_minutes_plan_batches_count,
+    koe_mcp_acp_dispatch_jsonrpc, koe_mcp_acp_free, koe_mcp_acp_ingest_recording,
+    koe_mcp_acp_ingest_utterance, koe_mcp_acp_new, koe_mcp_acp_publish_live,
+    koe_mcp_acp_put_pack, koe_mcp_acp_status, koe_mcp_acp_verify_bearer, koe_minutes_plan_batches_count,
     koe_minutes_replace_terms_utf8, koe_minutes_validate_claim_grounding,
     koe_minutes_validate_json, koe_opus_decode_pcm16, koe_opus_decode_wav, koe_protocol_checksum,
     koe_protocol_encode, koe_protocol_verify_checksum, koe_qwen_parse_transcript_into_spine,
@@ -2110,6 +2110,25 @@ pub unsafe extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpInge
             now_epoch_sec.max(0) as u64,
         ) as JInt
     }
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_anker_anker_1recorder_KoeCoreNative_mcpAcpIngestRecording(
+    _env: JniEnv,
+    _cls: JClass,
+    handle: JLong,
+    id: JInt,
+    duration_ms: JLong,
+    byte_count: JInt,
+    created_at_epoch_sec: JLong,
+) -> JBoolean {
+    koe_mcp_acp_ingest_recording(
+        handle as u64,
+        id.max(0) as u32,
+        duration_ms.max(0) as u64,
+        byte_count.max(0) as u32,
+        created_at_epoch_sec.max(0) as u64,
+    )
 }
 
 #[no_mangle]
