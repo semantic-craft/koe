@@ -117,7 +117,7 @@ pub struct DesktopExportedRecording {
 }
 
 /// Combined snapshot of the desktop recording bean transport, Wi-Fi SoftAP batch, and local library.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopHostSnapshot {
     /// Current BLE connection phase.
     pub connection_phase: ConnectionPhaseTag,

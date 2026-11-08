@@ -405,8 +405,10 @@ pub struct CopilotToolCall {
     pub arguments: BTreeMap<String, JsonValue>,
 }
 
+impl Eq for CopilotToolCall {}
+
 /// A single message in the Copilot chat history.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotMessage {
     /// Message author role.
     pub role: CopilotRole,
@@ -425,7 +427,7 @@ pub struct CopilotMessage {
 }
 
 /// Current lifecycle phase of a Copilot conversation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CopilotPhase {
     /// Ready for user prompt or preset chip.
     Idle,
@@ -499,7 +501,7 @@ impl fmt::Display for CopilotError {
 }
 
 /// Stateful Ask AI Copilot session managing multi-turn tool-calling loops.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotSession {
     /// Session identifier (`"copilot-default"`).
     pub session_id: String,

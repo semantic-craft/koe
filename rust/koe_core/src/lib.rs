@@ -21,14 +21,6 @@
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
-#![allow(
-    clippy::unnecessary_sort_by,
-    clippy::manual_range_contains,
-    clippy::while_let_loop,
-    clippy::large_enum_variant,
-    clippy::chunks_exact_to_as_chunks,
-    clippy::doc_lazy_continuation,
-)]
 
 pub mod cicada;
 pub mod commands;
