@@ -21,10 +21,19 @@
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+#![allow(
+    clippy::unnecessary_sort_by,
+    clippy::manual_range_contains,
+    clippy::while_let_loop,
+    clippy::large_enum_variant,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::doc_lazy_continuation,
+)]
 
 pub mod cicada;
 pub mod commands;
 pub mod context;
+pub mod copilot_google;
 pub mod crypto;
 pub mod domain;
 pub mod frame;
@@ -96,4 +105,16 @@ pub use minutes::{
 pub use wifi::{
     normalize_wifi_chunk, WifiBatchPhase, WifiBatchProgress, WifiEndpoint, WIFI_DEFAULT_WS_PORT,
     WIFI_KEEPALIVE_INTERVAL_MS, WIFI_KEEPALIVE_PAYLOAD, WIFI_UDP_PORT, WIFI_WS_FINISH_TEXT,
+};
+pub use copilot_google::{
+    extract_segment_citations, format_epoch_sec_rfc3339, parse_rfc3339_to_epoch_sec,
+    CopilotAuthStyle, CopilotError, CopilotMessage, CopilotPhase, CopilotPresetChip,
+    CopilotProviderConfig, CopilotRole, CopilotSession, CopilotToolCall, GeminiNotebook,
+    GoogleServiceKind, GoogleSuiteStore, GoogleTaskId, GoogleTaskRecord, GoogleTaskStatus,
+    GoogleTasksSyncReport, GoogleWireRequest, KeepChecklistItem, KeepNote, KeepNoteColor,
+    KeepNoteDraft, KeepNoteId, NotebookAudioOverview, NotebookAudioOverviewStatus, NotebookId,
+    NotebookQaTurn, NotebookRpcOp, NotebookSource, NotebookSourceKind, NotebookTransportKind,
+    ToolCallId, COPILOT_PRESET_CHIPS, COPILOT_SYSTEM_PROMPT, DEFAULT_DEEPSEEK_MODEL,
+    DEEPSEEK_CHAT_COMPLETIONS_URL, GEMINI_NOTEBOOK_BATCHEXECUTE_URL, GEMINI_NOTEBOOK_GRPC_SERVICE,
+    GOOGLE_KEEP_V1_BASE_URL, GOOGLE_TASKS_V1_BASE_URL, MAX_COPILOT_TOOL_ROUNDS,
 };
