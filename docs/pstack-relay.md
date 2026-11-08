@@ -158,8 +158,8 @@
 - **Done Predicate**: cargo test --manifest-path desktop/Cargo.toml && ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && ./scripts/check
 - **Evidence**: 618349f;desktop/core/src/lib.rs;desktop/app/src/main.rs;desktop/core/tests/interrogate_repros.rs;rust/koe_core/src/session.rs;.scratch/pstack-relay/slice-s-check.log
 
-### [ ] Slice T: 全链路对抗审查（`interrogate`）、零胶水代码精简（`deslop` / `no-comments`）、进度页更新与交付收口
+### [x] Slice T: 全链路对抗审查（`interrogate`）、零胶水代码精简（`deslop` / `no-comments`）、进度页更新与交付收口
 - **Playbook**: `Shipping`
 - **Outcome**: 完成 Slice T 终局交付收口：对照「安克随心记」Vecta × Cicada 三层零胶水架构（Layer 1 RecordingAggregate + Layer 2 SuixinRuntime + Layer 3 WorkspaceProjection/WorkspaceCommand）执行全链路对抗复核（interrogate）与代码精简（deslop / no-comments），运行 5 轮交替 Release/Debug 性能基准并解释瓶颈，同步 progress/progress.json 与 progress/index.html，跑通 ./scripts/check、python3 progress/progress.py check 与 scripts/pstack-relay status --require-all-done，并完成跨模型账本审计与 Ketchup 汇报。
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && ./scripts/pstack-relay status --require-all-done
-- **Evidence**: `PENDING`
+- **Evidence**: desktop/core/src/lib.rs;desktop/app/src/main.rs;desktop/core/tests/interrogate_repros.rs;rust/koe_core/src/minutes.rs;rust/koe_core/src/session.rs;rust/koe_core/src/mcp_acp.rs;progress/progress.json;progress/index.html;.scratch/pstack-relay/slice-t-benchmark.log;.scratch/pstack-relay/slice-t-check.log

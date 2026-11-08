@@ -555,7 +555,7 @@
         "updated_at": "2026-11-05T00:32:23Z"
       }
     ],
-    "main": "28b147d980e670f48ca9cccc094388eee660d177",
+    "main": "a53ad0af6b1e6c5b96c9df0e2dc43d195dc3d1ce",
     "open_pulls": [
       {
         "head": "e8676498b47a73d1588f329834bbef22a11048c3",
@@ -1078,7 +1078,7 @@
       {
         "base": "6a8c2174e1bd0c3f37849e318c3b2ab7a5f32c6e",
         "head": "e8676498b47a73d1588f329834bbef22a11048c3",
-        "merge_commit": "223bf4635cc574fd07eeb22f2000b2d2886a3d7f",
+        "merge_commit": null,
         "merged": false,
         "number": 551,
         "state": "open"
@@ -1114,12 +1114,148 @@
         "merged": true,
         "number": 555,
         "state": "closed"
+      },
+      {
+        "base": "16cd7d297344d725ba34b75d564ee9c52688d739",
+        "head": "6770a48715e704898f0f13a40262533b494c00ba",
+        "merge_commit": "6a19af016b03d5c7722d133b000b4b0106964f0c",
+        "merged": true,
+        "number": 568,
+        "state": "closed"
+      },
+      {
+        "base": "6a19af016b03d5c7722d133b000b4b0106964f0c",
+        "head": "57c45e015e72e0facbb089fb3153cb818f25f4fd",
+        "merge_commit": "b8b413da03c249f4f69075e6f7f8386caee73313",
+        "merged": true,
+        "number": 569,
+        "state": "closed"
+      },
+      {
+        "base": "b8b413da03c249f4f69075e6f7f8386caee73313",
+        "head": "e0da48e0b18a2789b6e2a18afc84fe15a562b27e",
+        "merge_commit": "7fa962f8bc0a0cc6ca3276ee1ddd7736e2cb79fa",
+        "merged": true,
+        "number": 570,
+        "state": "closed"
+      },
+      {
+        "base": "7fa962f8bc0a0cc6ca3276ee1ddd7736e2cb79fa",
+        "head": "a0767930d50bf9e531588c7e6cb4b92026a983f7",
+        "merge_commit": "a0e7f251d615137105178c7678eb243945785439",
+        "merged": true,
+        "number": 571,
+        "state": "closed"
+      },
+      {
+        "base": "a0e7f251d615137105178c7678eb243945785439",
+        "head": "079a241995ddeee3039299eb50fc5c77d9d0967a",
+        "merge_commit": "d7fab089f984bc1d85d6c90bd6990adf45b42b20",
+        "merged": true,
+        "number": 572,
+        "state": "closed"
+      },
+      {
+        "base": "d7fab089f984bc1d85d6c90bd6990adf45b42b20",
+        "head": "51edf6f9bbcf46fe326ac45ac0fdaed79c9a4afe",
+        "merge_commit": "6b4e7781380c980d74448f956e5748fce11f0b11",
+        "merged": true,
+        "number": 573,
+        "state": "closed"
+      },
+      {
+        "base": "6b4e7781380c980d74448f956e5748fce11f0b11",
+        "head": "df4f918925fba5d223015ee4f9feca686211715f",
+        "merge_commit": "86f8eb845e41d36c2da8bba9cb46dbfd426d8406",
+        "merged": true,
+        "number": 574,
+        "state": "closed"
+      },
+      {
+        "base": "86f8eb845e41d36c2da8bba9cb46dbfd426d8406",
+        "head": "c328ab9aa7123d848151cc49e8f9ae147fa2ba4e",
+        "merge_commit": "e25883f64da5afb0c1d328bfef97f995d61291d6",
+        "merged": true,
+        "number": 575,
+        "state": "closed"
+      },
+      {
+        "base": "e25883f64da5afb0c1d328bfef97f995d61291d6",
+        "head": "d3444fc1b53d0ff5916d0c807c43510c8fde12a6",
+        "merge_commit": "d62d58ff96ed79fc5f3179d304dfe7590e63a2eb",
+        "merged": true,
+        "number": 576,
+        "state": "closed"
+      },
+      {
+        "base": "d62d58ff96ed79fc5f3179d304dfe7590e63a2eb",
+        "head": "d85cc04fabdd52e22e60b9e771b392860a77bd1c",
+        "merge_commit": "1a00ea4d87aff21ec9378e6f9de9bc13c133414e",
+        "merged": true,
+        "number": 577,
+        "state": "closed"
+      },
+      {
+        "base": "1a00ea4d87aff21ec9378e6f9de9bc13c133414e",
+        "head": "1a6fbeaeb950d4f7a7958cabd8e5827d2ed1df2e",
+        "merge_commit": "e1503351103f5a41649ecd10eced958ec4f7367b",
+        "merged": true,
+        "number": 578,
+        "state": "closed"
+      },
+      {
+        "base": "e1503351103f5a41649ecd10eced958ec4f7367b",
+        "head": "0430b44a66d09b47b5caceb860d153c2cbf7636e",
+        "merge_commit": "a3352097bffccae5207b3a4a50ac556351f362fb",
+        "merged": true,
+        "number": 579,
+        "state": "closed"
+      },
+      {
+        "base": "a3352097bffccae5207b3a4a50ac556351f362fb",
+        "head": "f231125fe53244b33ee091c594d7ada4b3f7c4a1",
+        "merge_commit": "5702c6876cec08a095110387b1f42f0aad6f4a88",
+        "merged": true,
+        "number": 580,
+        "state": "closed"
+      },
+      {
+        "base": "1ee4b3cc37d1a03d293f50e69bb8e670d080b3a1",
+        "head": "bcce48e2c6b9deee0930e4806bef0f90132af044",
+        "merge_commit": "6f3a947bb13936023763cf0f59cdf5777c004d35",
+        "merged": true,
+        "number": 581,
+        "state": "closed"
+      },
+      {
+        "base": "5702c6876cec08a095110387b1f42f0aad6f4a88",
+        "head": "45635393b93de125765be096c7d2a2d81dceb8e3",
+        "merge_commit": "1ee4b3cc37d1a03d293f50e69bb8e670d080b3a1",
+        "merged": true,
+        "number": 582,
+        "state": "closed"
+      },
+      {
+        "base": "6f3a947bb13936023763cf0f59cdf5777c004d35",
+        "head": "f2f37b40e5c367f163e27e8a50cbddd4b1abc705",
+        "merge_commit": "94799fd438fceb6cd642a08bfb4903c87b9f0bc0",
+        "merged": true,
+        "number": 583,
+        "state": "closed"
+      },
+      {
+        "base": "94799fd438fceb6cd642a08bfb4903c87b9f0bc0",
+        "head": "ba6ec812deebc941aeaf5789b1fb1f2978003fdd",
+        "merge_commit": "a53ad0af6b1e6c5b96c9df0e2dc43d195dc3d1ce",
+        "merged": true,
+        "number": 584,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-06T23:48:00.558998Z",
+  "observed_at": "2026-11-08T15:09:00.630845Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -2718,6 +2854,40 @@
           "status": "done",
           "summary": "完成 Slice O（路线 A 纯 Rust GPUI 桌面端与存量 Flutter/SwiftUI 壳层移除）：在 desktop/app 用 gpui-kit 0.9.0 直接挂载 desktop/core（DesktopBeanHost over rust/koe_core 2.0.0），落地五页签（今日时间线、本机录音与无音频资料包、双语同传与千问纪要、心力豆双字 BM25 离线检索、原生 MCP/ACP 服务）与竹青 #2E5E4E + 暖纸灰 #F5F4F0 令牌；物理移除存量 lib/（210 个 Dart 文件 88,578 行）、pubspec.yaml、全部 Dart 测试与 Flutter/SwiftUI 壳层，将 /Applications/Koe.app 编译并签名为纯 Rust 二进制（移除 /Applications/KoeSwiftUI.app），并将 scripts/check、scripts/verify-ui-principles.py 与 CI 全量切换为纯 Rust 门禁。",
           "title": "纯 Rust GPUI 桌面端挂载 DesktopBeanHost 与存量 Flutter/SwiftUI 壳层移除（Slice O）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "安克随心记（Vecta × Cicada）三层零胶水统一架构全景队列与 20/20 切片收口证据",
+              "ref": "docs/pstack-relay.md"
+            },
+            {
+              "kind": "file",
+              "note": "第一层：单一录音生命周期聚合根 RecordingAggregate（UtteranceSpine S1..Sn 唯一事实源、SliceMark 双击 ±10s 窗口、6 张 VisualSummaryCard 柔彩卡片、MinuteFishbone 顶层与分主题根因鱼骨图序列化、.koepack v2 摘要）",
+              "ref": "rust/koe_core/src/domain.rs"
+            },
+            {
+              "kind": "file",
+              "note": "第二层：自驱流水线运行时 SuixinRuntime / DesktopBeanHost（D3200 四路硬件启动 01/01、1A/06、18/81、18/82 自动补发 1A/07(realtimeFlag=1)、默认 16kHz/48kHz libopus 解码器、StreamingAsrPump 接私有百炼 DashScope 与本地 RMS 语音活动回退、BeanPipelineDoctorSnapshot 五阶自检）",
+              "ref": "desktop/core/src/lib.rs"
+            },
+            {
+              "kind": "file",
+              "note": "第三层：纯投影视图与单向意图 WorkspaceProjection + WorkspaceCommand（Vecta 90-8-2 伊利诺伊橙 #FF5F05/#D9480F 画布、四级字号 12/14/16/22、零中间点、零行内 // 注释、5 大工作区与 4 个详情子页签）",
+              "ref": "desktop/app/src/main.rs"
+            },
+            {
+              "kind": "file",
+              "note": "Slice P–T 全链路 8 组对抗复现测试（repro_1..repro_8）与 5 轮交替 Release/Debug 三层零胶水端到端性能基准（benchmark_slice_t_three_layer_zero_glue_end_to_end_pipeline）",
+              "ref": "desktop/core/tests/interrogate_repros.rs"
+            }
+          ],
+          "id": "suixin-three-layer-zero-glue-slice-p-to-t",
+          "next": "D3200 物理录音豆实机对着说话与云端私有阿里云百炼实网长连接流式转写留待连接实体硬件时按真机清单验证。",
+          "status": "done",
+          "summary": "完成 Slice P–T（PR #581、#582、#583、#584 及终局收口 PR）：按「安克随心记（Vecta × Cicada）」三层零胶水统一架构收口全部 20/20 切片。第一层落地单一录音聚合根 RecordingAggregate（围绕 UtteranceSpine S1..Sn 统一音频分片、双击 SliceMark ±10s 重点窗口、双语同传、AIVisualEditorialPalette 6 张柔彩视觉卡片、顶层与分主题根因鱼骨图及 .koepack v2）；第二层落地 SuixinRuntime 自驱流水线（补齐 01/01、1A/06、18/81、18/82 四路硬件录音启动自动补发 1A/07(realtimeFlag=1)，DesktopBeanHost::new 默认挂载 16kHz/48kHz libopus 解码器，StreamingAsrPump 闭环驱动 1A/08 PCM16 流式转写与 Bean Doctor 五阶自检）；第三层落地纯投影视图 WorkspaceProjection + 单向命令 WorkspaceCommand（Vecta 90-8-2 伊利诺伊橙 #FF5F05/#D9480F 画布、<=4 级字号、零中间点、零 // 注释，覆盖随心记录、智能脉络、心力格式库、百炼与 MCP、设置与自检 5 大工作区）。通过全链路 interrogate 对抗复核（repro_1..repro_8 全部转绿）、comment-sicko 零注释门禁与 5 轮交替 Release/Debug 端到端性能基准（Release 中位数 38.3 ms），并重签安装 /Applications/Koe.app。",
+          "title": "安克随心记（Vecta × Cicada）三层零胶水统一架构与 D3200 实时流根治收口（Slice P–T）"
         }
       ],
       "title": "录音豆纪要与 MCP 全自动接力"
@@ -2888,7 +3058,24 @@
       552,
       553,
       554,
-      555
+      555,
+      568,
+      569,
+      570,
+      571,
+      572,
+      573,
+      574,
+      575,
+      576,
+      577,
+      578,
+      579,
+      580,
+      581,
+      582,
+      583,
+      584
     ]
   }
 }

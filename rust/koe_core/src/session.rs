@@ -699,7 +699,9 @@ impl TransportSession {
                     .push_back(WIFI_KEEPALIVE_PAYLOAD.to_vec());
                 outcome.transfer_updated = true;
             }
-            return outcome;
+            if matches!(self.runtime_state, TransferRuntimeState::Idle) {
+                return outcome;
+            }
         }
         let offset = self
             .received_slice_count()

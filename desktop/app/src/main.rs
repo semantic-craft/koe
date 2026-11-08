@@ -303,9 +303,6 @@ impl KoeDesktopApp {
 
     fn seed_workspace_sample(&mut self, seed_recording: bool, seed_pack: bool) {
         let now = Self::now_epoch_sec();
-        if seed_recording {
-            let _ = self.host.simulate_realtime_pipeline(now);
-        }
         let s1 = self
             .host
             .ingest_utterance_with_context(
@@ -328,6 +325,9 @@ impl KoeDesktopApp {
                 now + 3,
             )
             .expect("S2 must append");
+        if seed_recording {
+            let _ = self.host.simulate_realtime_pipeline(now);
+        }
 
         let _ = self.host.spine_mut().set_translation(
             s1,
@@ -1175,8 +1175,14 @@ impl KoeDesktopApp {
         let duration_ms = proj.active_aggregate.duration_ms.max(1_200);
         let position_ms = proj.library.position_ms;
         let is_playing = self.player.is_some();
-        let active_wav = proj.recordings.first().map(|r| r.wav_path.clone());
-        let active_rec_id = proj.recordings.first().map(|r| r.entry.id);
+        let selected_id = proj.library.selected_id;
+        let selected_rec = proj
+            .recordings
+            .iter()
+            .find(|r| Some(r.entry.id) == selected_id)
+            .or_else(|| proj.recordings.first());
+        let active_wav = selected_rec.map(|r| r.wav_path.clone());
+        let active_rec_id = selected_rec.map(|r| r.entry.id);
 
         let bar_count = proj.waveform_bars_norm.len().max(1);
         let mut wave_row = div().flex().items_end().gap_0p5().h(px(28.0)).flex_1();
@@ -3428,8 +3434,16 @@ fn run_self_check() -> anyhow::Result<()> {
         now_epoch_sec: now + 22,
     });
     anyhow::ensure!(
-        wifi_done_proj.wifi_batch.phase == WifiBatchPhase::Completed,
-        "ResumeAndComplete must transition to Completed"
+        wifi_done_proj.wifi_batch.phase == WifiBatchPhase::Completed
+            && wifi_done_proj.recordings.len() >= 2,
+        "ResumeAndComplete must transition to Completed and export multiple recordings"
+    );
+    let second_rec_id = wifi_done_proj.recordings[1].entry.id;
+    let sel_rec_proj = app.apply_command(WorkspaceCommand::SelectRecording(second_rec_id));
+    anyhow::ensure!(
+        sel_rec_proj.library.selected_id == Some(second_rec_id)
+            && sel_rec_proj.active_aggregate.file_id == second_rec_id,
+        "SelectRecording must update library.selected_id and active_aggregate.file_id"
     );
     let wifi_cancel_proj = app.apply_command(WorkspaceCommand::ControlWifiSoftApBatch {
         action: WifiSoftApAction::Cancel,

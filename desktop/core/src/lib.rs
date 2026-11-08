@@ -1287,8 +1287,13 @@ impl DesktopBeanHost {
             }
         ) && (self.spine.len() > prev_len || self.spine.revision() > prev_rev)
         {
-            if let Some(seg) = self.spine.segments().last().cloned() {
-                let now_sec = (now_epoch_ms / 1_000).max(1);
+            let now_sec = (now_epoch_ms / 1_000).max(1);
+            if self.spine.len() == prev_len && self.spine.revision() > prev_rev {
+                self.rebuild_search_index_from_spine();
+                self.sync_active_aggregate();
+                self.auto_translate_pending_captions(now_epoch_ms);
+                let _ = self.refresh_live_publication(now_sec);
+            } else if let Some(seg) = self.spine.segments().last().cloned() {
                 let end_ms = seg.end_ms.max(self.asr_pump.elapsed_stream_ms);
                 self.index_committed_segment(seg.id, &seg.text, end_ms, now_sec);
                 self.auto_translate_pending_captions(now_epoch_ms);
@@ -1720,16 +1725,37 @@ impl DesktopBeanHost {
     ) -> SessionIngestOutcome {
         let outcome = self.session.start_realtime_recording(file_id, now_epoch_ms);
         let _ = self.drain_finalized_to_disk();
-        self.active_aggregate.bookmarks.clear();
-        self.active_aggregate.duration_ms = 0;
+        let target_fid = self.session.active_file_id.or(file_id).unwrap_or(0);
+        self.reset_active_session_for_new_recording(target_fid, (now_epoch_ms / 1_000).max(1));
+        outcome
+    }
+
+    fn reset_active_session_for_new_recording(&mut self, fid: u32, now_epoch_sec: u64) {
+        let rec_id = if fid > 0 {
+            format!("rec-{fid}")
+        } else {
+            "rec-desktop-default".to_string()
+        };
+        self.spine = UtteranceSpine::new(rec_id.clone());
+        self.minutes.latest_minutes = None;
+        self.captions_queue = LiveCaptionsQueue::new(rec_id.clone(), "en");
+        self.rolling_scheduler = RollingMinutesScheduler::new(rec_id.clone());
+        self.search_index = ContextSearchIndex::new();
+        self.active_aggregate = RecordingAggregate::new(rec_id, fid, now_epoch_sec, 0);
         self.active_aggregate.phase = RecordingLifecyclePhase::Copying;
         self.asr_pump.pcm_window_buf.clear();
         self.asr_pump.run_task_queued = false;
-        if let Some(fid) = self.session.active_file_id.or(file_id) {
-            self.active_aggregate.file_id = fid;
-            self.active_aggregate.recording_id = format!("rec-{fid}");
+        self.asr_pump.elapsed_stream_ms = 0;
+        self.asr_pump.window_start_ms = 0;
+        self.asr_pump.committed_windows = 0;
+        self.asr_pump.qwen_accumulator = QwenStreamAccumulator::new();
+    }
+
+    fn rebuild_search_index_from_spine(&mut self) {
+        self.search_index = ContextSearchIndex::new();
+        for seg in self.spine.segments() {
+            let _ = self.search_index.add_document(&seg.text);
         }
-        outcome
     }
 
     /// Sends `01/05` (`18/82`) pause/stop and enters the 2,000 ms realtime quiet-drain window.
@@ -1751,13 +1777,11 @@ impl DesktopBeanHost {
         if let Some(fid) = self.session.active_file_id {
             if self.active_aggregate.file_id != fid {
                 if self.active_aggregate.file_id != 0 {
-                    self.active_aggregate.bookmarks.clear();
-                    self.active_aggregate.duration_ms = 0;
-                    self.asr_pump.pcm_window_buf.clear();
-                    self.asr_pump.run_task_queued = false;
+                    self.reset_active_session_for_new_recording(fid, now_epoch_sec);
+                } else {
+                    self.active_aggregate.file_id = fid;
+                    self.active_aggregate.recording_id = format!("rec-{fid}");
                 }
-                self.active_aggregate.file_id = fid;
-                self.active_aggregate.recording_id = format!("rec-{fid}");
             }
             if self.active_aggregate.created_at_epoch_sec == 0 {
                 self.active_aggregate.created_at_epoch_sec = now_epoch_sec;
@@ -1940,14 +1964,15 @@ impl DesktopBeanHost {
             .last()
             .expect("simulated realtime pipeline must export recording");
         if self.spine.is_empty() && self.active_aggregate.spine.is_empty() {
-            let _ = self.active_aggregate.spine.append_segment(
+            let model = self.asr_pump.model.clone();
+            let _ = self.ingest_utterance_with_context(
                 "录音豆 60 片 Opus 实时流闭环自检完成，双击标记 300ms 与 900ms 已落盘。",
                 0,
                 exported.entry.duration_ms,
                 "zh",
-                &self.asr_pump.model,
+                model,
+                now_epoch_sec.max(1),
             );
-            self.ensure_six_editorial_cards();
         }
         exported
     }
@@ -2169,6 +2194,33 @@ impl DesktopBeanHost {
             mins.topics.clear();
             mins.terms.clear();
             mins.questions.clear();
+        } else if s_last != s_first {
+            let cites_last = mins
+                .topics
+                .iter()
+                .any(|t| t.citations.contains(&s_last))
+                || mins
+                    .actions
+                    .iter()
+                    .any(|a| a.citations.contains(&s_last))
+                || mins
+                    .questions
+                    .iter()
+                    .any(|q| q.citations.contains(&s_last));
+            if !cites_last {
+                if let Some(first_topic) = mins.topics.first_mut() {
+                    first_topic.summary = last_seg.text.clone();
+                    first_topic.citations = all_cites.clone();
+                } else {
+                    mins.topics.push(MinuteTopic {
+                        title: "实时录音主干脉络".to_string(),
+                        summary: last_seg.text.clone(),
+                        citations: all_cites.clone(),
+                        points: Vec::new(),
+                        fishbone: None,
+                    });
+                }
+            }
         }
         if mins.decisions.is_empty() {
             mins.decisions.push(MinutePoint {
@@ -3066,13 +3118,13 @@ impl DesktopBeanHost {
                             self.sync_active_aggregate();
                         }
                     } else if self.active_aggregate.file_id == id {
-                        self.active_aggregate.file_id = 0;
-                        self.active_aggregate.recording_id = "rec-desktop-default".to_string();
-                        self.active_aggregate.bookmarks.clear();
-                        self.active_aggregate.duration_ms = 0;
+                        self.spine = UtteranceSpine::new("desktop-default");
+                        self.minutes.latest_minutes = None;
+                        self.search_index = ContextSearchIndex::new();
+                        self.active_aggregate =
+                            RecordingAggregate::new("rec-desktop-default", 0, 0, 0);
                         self.last_copilot_card = None;
                         self.copilot_history.clear();
-                        self.sync_active_aggregate();
                     }
                 }
             }
@@ -3220,7 +3272,8 @@ impl DesktopBeanHost {
                             };
                             self.begin_wifi_batch(&file_ids);
                         }
-                        for _ in 0..8 {
+                        let max_steps = self.session.catalog.len().max(8).saturating_add(4);
+                        for _ in 0..max_steps {
                             let prog = self.session.wifi_batch_progress();
                             if matches!(
                                 prog.phase,

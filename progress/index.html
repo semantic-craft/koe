@@ -3,8 +3,8 @@
 <title>Koe 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe 开发进度</h1>
-<p>Observed: 2026-11-06T23:48:00.558998Z</p>
-<p>Main: <code>main: 28b147d980e670f48ca9cccc094388eee660d177</code></p>
+<p>Observed: 2026-11-08T15:09:00.630845Z</p>
+<p>Main: <code>main: a53ad0af6b1e6c5b96c9df0e2dc43d195dc3d1ce</code></p>
 <section id="cicada-alignment"><h2>Cicada 功能对齐</h2>
 <article id="cicada-post-meeting"><h3>首批代码：分层议题、因果和术语候选</h3><span class="badge">done</span><p>PR #517 已 squash 合并。EGM 及独立代码评审问题已修复，本机 check 的静态分析和 1030 项测试通过，GitHub CI 通过。旧格式兼容、编辑、历史、导出和来源验证有回归证据；不代表真实会议效果已验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/517">pull 517: 首批实现及回归已合并，CI 通过。</a></li>
@@ -339,6 +339,13 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/install-macos.sh">file scripts/install-macos.sh: macOS 纯 Rust Release 编译、Developer ID 签名打包并安装至 /Applications/Koe.app</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 零 Flutter 依赖的纯 Rust 与原生门禁校验入口</a></li>
 </ul><p>Next: D3200 实体硬件实连拉流留待连接物理录音豆时验证。</p></article>
+<article id="suixin-three-layer-zero-glue-slice-p-to-t"><h3>安克随心记（Vecta × Cicada）三层零胶水统一架构与 D3200 实时流根治收口（Slice P–T）</h3><span class="badge">done</span><p>完成 Slice P–T（PR #581、#582、#583、#584 及终局收口 PR）：按「安克随心记（Vecta × Cicada）」三层零胶水统一架构收口全部 20/20 切片。第一层落地单一录音聚合根 RecordingAggregate（围绕 UtteranceSpine S1..Sn 统一音频分片、双击 SliceMark ±10s 重点窗口、双语同传、AIVisualEditorialPalette 6 张柔彩视觉卡片、顶层与分主题根因鱼骨图及 .koepack v2）；第二层落地 SuixinRuntime 自驱流水线（补齐 01/01、1A/06、18/81、18/82 四路硬件录音启动自动补发 1A/07(realtimeFlag=1)，DesktopBeanHost::new 默认挂载 16kHz/48kHz libopus 解码器，StreamingAsrPump 闭环驱动 1A/08 PCM16 流式转写与 Bean Doctor 五阶自检）；第三层落地纯投影视图 WorkspaceProjection + 单向命令 WorkspaceCommand（Vecta 90-8-2 伊利诺伊橙 #FF5F05/#D9480F 画布、&lt;=4 级字号、零中间点、零 // 注释，覆盖随心记录、智能脉络、心力格式库、百炼与 MCP、设置与自检 5 大工作区）。通过全链路 interrogate 对抗复核（repro_1..repro_8 全部转绿）、comment-sicko 零注释门禁与 5 轮交替 Release/Debug 端到端性能基准（Release 中位数 38.3 ms），并重签安装 /Applications/Koe.app。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: 安克随心记（Vecta × Cicada）三层零胶水统一架构全景队列与 20/20 切片收口证据</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/rust/koe_core/src/domain.rs">file rust/koe_core/src/domain.rs: 第一层：单一录音生命周期聚合根 RecordingAggregate（UtteranceSpine S1..Sn 唯一事实源、SliceMark 双击 ±10s 窗口、6 张 VisualSummaryCard 柔彩卡片、MinuteFishbone 顶层与分主题根因鱼骨图序列化、.koepack v2 摘要）</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/desktop/core/src/lib.rs">file desktop/core/src/lib.rs: 第二层：自驱流水线运行时 SuixinRuntime / DesktopBeanHost（D3200 四路硬件启动 01/01、1A/06、18/81、18/82 自动补发 1A/07(realtimeFlag=1)、默认 16kHz/48kHz libopus 解码器、StreamingAsrPump 接私有百炼 DashScope 与本地 RMS 语音活动回退、BeanPipelineDoctorSnapshot 五阶自检）</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/desktop/app/src/main.rs">file desktop/app/src/main.rs: 第三层：纯投影视图与单向意图 WorkspaceProjection + WorkspaceCommand（Vecta 90-8-2 伊利诺伊橙 #FF5F05/#D9480F 画布、四级字号 12/14/16/22、零中间点、零行内 // 注释、5 大工作区与 4 个详情子页签）</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/desktop/core/tests/interrogate_repros.rs">file desktop/core/tests/interrogate_repros.rs: Slice P–T 全链路 8 组对抗复现测试（repro_1..repro_8）与 5 轮交替 Release/Debug 三层零胶水端到端性能基准（benchmark_slice_t_three_layer_zero_glue_end_to_end_pipeline）</a></li>
+</ul><p>Next: D3200 物理录音豆实机对着说话与云端私有阿里云百炼实网长连接流式转写留待连接实体硬件时按真机清单验证。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/551">#551</a> <code>e8676498b47a73d1588f329834bbef22a11048c3</code></li>

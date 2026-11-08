@@ -1404,12 +1404,13 @@ impl McpAcpState {
                     } else {
                         "current"
                     };
+                    let is_auto_draft = latest.title == "实时语音流结构化纪要";
                     out.insert("current".to_string(), parsed);
                     out.insert(
                         "freshness".to_string(),
                         JsonValue::String(freshness.to_string()),
                     );
-                    out.insert("isDraft".to_string(), JsonValue::Bool(false));
+                    out.insert("isDraft".to_string(), JsonValue::Bool(is_auto_draft));
                 } else if let Some(active_raw) = workspace.rolling_scheduler.active_json() {
                     let parsed = JsonValue::parse(active_raw)
                         .unwrap_or_else(|_| JsonValue::String(active_raw.to_string()));
@@ -2106,6 +2107,7 @@ impl McpAcpState {
 
         let minutes_section = if let Some(ref mins) = workspace.minutes.latest_minutes {
             let text = encode_meeting_minutes_json(mins);
+            let is_auto_draft = mins.title == "实时语音流结构化纪要";
             Some(PackMinutesV2 {
                 current: PortableMinutesEntry {
                     text,
@@ -2117,7 +2119,7 @@ impl McpAcpState {
                     edited_at_iso: None,
                     template_id: Some(self.qwennote.default_template_id.clone()),
                     template_version: 2,
-                    is_draft: false,
+                    is_draft: is_auto_draft,
                 },
                 history: Vec::new(),
             })
