@@ -225,6 +225,10 @@ pub struct TransportSession {
     pub active_nonce: Option<[u8; 16]>,
     /// Whether the active transfer is a live stream (`unfinished == true`).
     pub active_is_realtime: bool,
+    /// Whether the recording bean hardware is currently recording (`01/01`, `18/81`, `18/82`, or `1A/06` state `1`).
+    pub device_recording_active: bool,
+    /// Whether the session is awaiting the next `1A/0E` or `1B/0E` catalog response to subscribe to the newest active file in realtime mode.
+    pub pending_realtime_subscribe: bool,
     /// Accumulated decrypted 160-byte Opus frames.
     pub opus_buffer: Vec<u8>,
     /// Sorted, deduplicated double-tap mark positions in milliseconds.
@@ -280,6 +284,8 @@ impl Clone for TransportSession {
             active_file_key: self.active_file_key,
             active_nonce: self.active_nonce,
             active_is_realtime: self.active_is_realtime,
+            device_recording_active: self.device_recording_active,
+            pending_realtime_subscribe: self.pending_realtime_subscribe,
             opus_buffer: self.opus_buffer.clone(),
             marks_ms: self.marks_ms.clone(),
             last_finalized: self.last_finalized.clone(),
@@ -316,6 +322,11 @@ impl core::fmt::Debug for TransportSession {
             .field("active_file_key", &self.active_file_key)
             .field("active_nonce", &self.active_nonce)
             .field("active_is_realtime", &self.active_is_realtime)
+            .field("device_recording_active", &self.device_recording_active)
+            .field(
+                "pending_realtime_subscribe",
+                &self.pending_realtime_subscribe,
+            )
             .field("opus_buffer_len", &self.opus_buffer.len())
             .field("marks_ms", &self.marks_ms)
             .field("last_finalized", &self.last_finalized)
@@ -354,6 +365,8 @@ impl TransportSession {
             active_file_key: None,
             active_nonce: None,
             active_is_realtime: false,
+            device_recording_active: false,
+            pending_realtime_subscribe: false,
             opus_buffer: Vec::new(),
             marks_ms: Vec::new(),
             last_finalized: None,
@@ -469,6 +482,8 @@ impl TransportSession {
         self.reassembler.reset();
         self.ecdh_private_key = None;
         self.session_key = None;
+        self.device_recording_active = false;
+        self.pending_realtime_subscribe = false;
         self.reset_active_transfer();
         self.connection_phase = ConnectionPhaseTag::Disconnected;
     }
@@ -558,10 +573,102 @@ impl TransportSession {
         Some(DeviceCommands::start_transport_audio_file(file_id, offset, 0))
     }
 
+    fn enter_or_resume_realtime_stream(
+        &mut self,
+        file_id: u32,
+        now_epoch_sec: u64,
+    ) -> Option<Vec<u8>> {
+        if file_id == 0 {
+            return None;
+        }
+        if self.active_file_id != Some(file_id) {
+            if self.active_is_realtime
+                && self.active_file_id.is_some()
+                && !self.opus_buffer.is_empty()
+            {
+                let _ = self.finalize_active_transfer(now_epoch_sec);
+            }
+            self.active_file_key = None;
+            self.active_nonce = None;
+            self.opus_buffer.clear();
+            self.marks_ms.clear();
+            self.live_pcm16_16khz.clear();
+            if let Some(dec) = self.live_decoder_16k.as_mut() {
+                dec.reset();
+            }
+        }
+        let offset = self
+            .received_slice_count()
+            .saturating_mul(SLICE_RECORD_BYTES as u32);
+        self.active_file_id = Some(file_id);
+        self.active_is_realtime = true;
+        self.device_recording_active = true;
+        self.pending_realtime_subscribe = false;
+        self.runtime_state = TransferRuntimeState::StreamingRealtime {
+            file_id,
+            quiet_drain_elapsed_ms: None,
+        };
+        self.transfer = TransferProgress {
+            phase: TransferPhaseTag::StreamingRealtime,
+            file_id,
+            received_wire_bytes: offset,
+            expected_wire_bytes: 0,
+            mark_count: self.marks_ms.len() as u32,
+            error_code: 0,
+            retry_count: 0,
+            quiet_draining: false,
+        };
+        Some(DeviceCommands::start_transport_audio_file(
+            file_id, offset, 1,
+        ))
+    }
+
+    /// Starts an app-initiated realtime bean recording (`0x18 0x81 [0x01]` + `0x18 0x82 [0x01]`).
+    ///
+    /// When `file_id` is `Some(fid)` (`fid > 0`), immediately subscribes to `1A/07` (`realtime_flag = 1`);
+    /// otherwise queues `1B/0E` (`list_files_with_end_time(0)`) and sets `pending_realtime_subscribe = true`
+    /// so the session subscribes as soon as the catalog or `1A/06` reports the active `file_id`.
+    pub fn start_realtime_recording(
+        &mut self,
+        file_id: Option<u32>,
+        now_epoch_ms: u64,
+    ) -> SessionIngestOutcome {
+        let mut outcome = SessionIngestOutcome::default();
+        let now_epoch_sec = (now_epoch_ms / 1_000).max(1);
+        self.device_recording_active = true;
+        outcome
+            .outbound_tx_frames
+            .push(DeviceCommands::start_realtime_record_81());
+        outcome
+            .outbound_tx_frames
+            .push(DeviceCommands::start_app_recording());
+        if let Some(fid) = file_id.filter(|&id| id > 0) {
+            if let Some(tx) = self.enter_or_resume_realtime_stream(fid, now_epoch_sec) {
+                outcome.outbound_tx_frames.push(tx);
+                outcome.transfer_updated = true;
+            }
+        } else {
+            self.pending_realtime_subscribe = true;
+            outcome
+                .outbound_tx_frames
+                .push(DeviceCommands::list_files_with_end_time(0));
+            outcome.transfer_updated = true;
+        }
+        outcome
+    }
+
+    /// Explicitly subscribes to or resumes a realtime audio stream (`1A/07` with `realtime_flag = 1`)
+    /// for `file_id` from `received_slice_count() * 166` wire bytes.
+    pub fn request_realtime_stream(&mut self, file_id: u32) -> Option<Vec<u8>> {
+        self.enter_or_resume_realtime_stream(file_id, 0)
+    }
+
     /// Stops/pauses an active realtime bean recording (`0x18 0x82 [0x02]`) and enters the
     /// 2,000 ms quiet-drain window before finalization.
     pub fn stop_realtime_recording(&mut self) -> SessionIngestOutcome {
         let mut outcome = SessionIngestOutcome::default();
+        self.device_recording_active = false;
+        self.pending_realtime_subscribe = false;
         outcome
             .outbound_tx_frames
             .push(DeviceCommands::pause_record());
@@ -945,6 +1052,25 @@ impl TransportSession {
                 }
                 (0x01, 0x01) => {
                     let info = DeviceInfoModel::parse_packet(&pkt.raw);
+                    let is_rec = info.recording();
+                    self.device_recording_active = is_rec;
+                    if is_rec {
+                        if !self.active_is_realtime || self.active_file_id.is_none() {
+                            self.pending_realtime_subscribe = true;
+                        }
+                    } else {
+                        self.pending_realtime_subscribe = false;
+                        if self.active_is_realtime {
+                            if let Some(fid) = self.active_file_id.filter(|&id| id > 0) {
+                                self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                                    file_id: fid,
+                                    quiet_drain_elapsed_ms: Some(0),
+                                };
+                                self.transfer.quiet_draining = true;
+                                outcome.transfer_updated = true;
+                            }
+                        }
+                    }
                     self.telemetry = Some(info);
                     self.connection_phase = ConnectionPhaseTag::Connected;
                     outcome.telemetry_updated = true;
@@ -958,12 +1084,106 @@ impl TransportSession {
                         }
                     }
                 }
+                (0x18, 0x81) | (0x18, 0x82) => {
+                    if !pkt.payload.is_empty() {
+                        let (fid, state) = if pkt.cmd_id == 0x81
+                            && pkt.payload.len() >= 5
+                            && read_u32_le(&pkt.payload, 0) > 2
+                            && pkt.payload[4] <= 2
+                        {
+                            (read_u32_le(&pkt.payload, 0), pkt.payload[4])
+                        } else if pkt.cmd_id == 0x81 && pkt.payload.len() == 4 {
+                            (read_u32_le(&pkt.payload, 0), 1)
+                        } else {
+                            (0, pkt.payload[0])
+                        };
+                        if state == 1 {
+                            self.device_recording_active = true;
+                            if fid > 0 {
+                                if let Some(tx) =
+                                    self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
+                                {
+                                    outcome.outbound_tx_frames.push(tx);
+                                    outcome.transfer_updated = true;
+                                }
+                            } else if let Some(active_fid) = self
+                                .active_file_id
+                                .filter(|&id| id > 0 && self.active_is_realtime)
+                            {
+                                if self.is_realtime_quiet_draining() {
+                                    if let Some(tx) = self
+                                        .enter_or_resume_realtime_stream(active_fid, now_epoch_sec)
+                                    {
+                                        outcome.outbound_tx_frames.push(tx);
+                                        outcome.transfer_updated = true;
+                                    }
+                                }
+                            } else {
+                                self.pending_realtime_subscribe = true;
+                                outcome
+                                    .outbound_tx_frames
+                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                outcome.transfer_updated = true;
+                            }
+                        } else if state == 0 || state == 2 {
+                            self.device_recording_active = false;
+                            self.pending_realtime_subscribe = false;
+                            if self.active_is_realtime {
+                                if let Some(active_fid) = self.active_file_id.filter(|&id| id > 0) {
+                                    self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                                        file_id: active_fid,
+                                        quiet_drain_elapsed_ms: Some(0),
+                                    };
+                                    self.transfer.quiet_draining = true;
+                                    outcome.transfer_updated = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 (0x1A, 0x01) | (0x1A, 0x0D) | (0x1A, 0x0E) | (0x1B, 0x0E) => {
-                    let with_end_time = pkt.cmd_id == 0x0D || (pkt.cmd_type == 0x1B && pkt.cmd_id == 0x0E);
+                    let with_end_time =
+                        pkt.cmd_id == 0x0D || (pkt.cmd_type == 0x1B && pkt.cmd_id == 0x0E);
                     let page = OfflineFileList::parse(&pkt.payload, with_end_time);
-                    self.catalog = page.files;
+                    let candidate_fid = page
+                        .current_transport_timestamp
+                        .filter(|&id| id > 0)
+                        .or_else(|| {
+                            if with_end_time {
+                                page.files
+                                    .iter()
+                                    .filter(|f| f.file_id > 0 && f.end_time == Some(0))
+                                    .map(|f| f.file_id)
+                                    .max()
+                            } else {
+                                page.files
+                                    .iter()
+                                    .map(|f| f.file_id)
+                                    .max()
+                                    .filter(|&id| id > 0)
+                            }
+                        });
+                    self.catalog = page
+                        .files
+                        .into_iter()
+                        .filter(|f| f.duration_ms > 0)
+                        .collect();
                     outcome.catalog_updated = true;
-                    if self.active_file_id.is_none() {
+                    if self.pending_realtime_subscribe
+                        || (self.device_recording_active && self.active_file_id.is_none())
+                    {
+                        if let Some(fid) = candidate_fid {
+                            if let Some(tx) =
+                                self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
+                            {
+                                outcome.outbound_tx_frames.push(tx);
+                                outcome.transfer_updated = true;
+                            }
+                        } else if self.active_file_id.is_none() {
+                            self.runtime_state = TransferRuntimeState::Idle;
+                            self.transfer.phase = TransferPhaseTag::Idle;
+                        }
+                    } else if self.active_file_id.is_none() {
                         self.runtime_state = TransferRuntimeState::Idle;
                         self.transfer.phase = TransferPhaseTag::Idle;
                     }
@@ -975,17 +1195,95 @@ impl TransportSession {
                     }
                 }
                 (0x1A, 0x06) => {
-                    if pkt.payload.len() >= 5
-                        && (pkt.payload[4] == 0 || pkt.payload[4] == 2)
-                        && self.active_is_realtime
-                    {
-                        if let Some(fid) = self.active_file_id {
-                            self.runtime_state = TransferRuntimeState::StreamingRealtime {
-                                file_id: fid,
-                                quiet_drain_elapsed_ms: Some(0),
-                            };
-                            self.transfer.quiet_draining = true;
-                            outcome.transfer_updated = true;
+                    if pkt.payload.len() >= 5 {
+                        let fid = read_u32_le(&pkt.payload, 0);
+                        let state = pkt.payload[4];
+                        if state == 1 {
+                            self.device_recording_active = true;
+                            if fid > 0 {
+                                if let Some(tx) =
+                                    self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
+                                {
+                                    outcome.outbound_tx_frames.push(tx);
+                                    outcome.transfer_updated = true;
+                                }
+                            } else if let Some(active_fid) = self
+                                .active_file_id
+                                .filter(|&id| id > 0 && self.active_is_realtime)
+                            {
+                                if let Some(tx) =
+                                    self.enter_or_resume_realtime_stream(active_fid, now_epoch_sec)
+                                {
+                                    outcome.outbound_tx_frames.push(tx);
+                                    outcome.transfer_updated = true;
+                                }
+                            } else {
+                                self.pending_realtime_subscribe = true;
+                                outcome
+                                    .outbound_tx_frames
+                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                outcome.transfer_updated = true;
+                            }
+                        } else if state == 0 || state == 2 {
+                            self.device_recording_active = false;
+                            self.pending_realtime_subscribe = false;
+                            if self.active_is_realtime {
+                                if let Some(active_fid) =
+                                    self.active_file_id.or_else(|| (fid > 0).then_some(fid))
+                                {
+                                    self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                                        file_id: active_fid,
+                                        quiet_drain_elapsed_ms: Some(0),
+                                    };
+                                    self.transfer.quiet_draining = true;
+                                    outcome.transfer_updated = true;
+                                }
+                            }
+                        }
+                    } else if pkt.payload.len() == 4 {
+                        let fid = read_u32_le(&pkt.payload, 0);
+                        if fid > 0 {
+                            if let Some(tx) =
+                                self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
+                            {
+                                outcome.outbound_tx_frames.push(tx);
+                                outcome.transfer_updated = true;
+                            }
+                        }
+                    } else if pkt.payload.len() == 1 {
+                        let state = pkt.payload[0];
+                        if state == 1 {
+                            self.device_recording_active = true;
+                            if let Some(fid) = self
+                                .active_file_id
+                                .filter(|&id| id > 0 && self.active_is_realtime)
+                            {
+                                if let Some(tx) =
+                                    self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
+                                {
+                                    outcome.outbound_tx_frames.push(tx);
+                                    outcome.transfer_updated = true;
+                                }
+                            } else {
+                                self.pending_realtime_subscribe = true;
+                                outcome
+                                    .outbound_tx_frames
+                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                outcome.transfer_updated = true;
+                            }
+                        } else if state == 0 || state == 2 {
+                            self.device_recording_active = false;
+                            self.pending_realtime_subscribe = false;
+                            if self.active_is_realtime {
+                                if let Some(fid) = self.active_file_id {
+                                    self.runtime_state = TransferRuntimeState::StreamingRealtime {
+                                        file_id: fid,
+                                        quiet_drain_elapsed_ms: Some(0),
+                                    };
+                                    self.transfer.quiet_draining = true;
+                                    outcome.transfer_updated = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -1023,8 +1321,7 @@ impl TransportSession {
                             continue;
                         }
 
-                        let is_resuming_same_file = !head.unfinished
-                            && self.active_file_id == Some(head.secret.file_id)
+                        let is_resuming_same_file = self.active_file_id == Some(head.secret.file_id)
                             && !self.opus_buffer.is_empty();
                         let retries_used = if is_resuming_same_file {
                             match self.runtime_state {
@@ -1038,6 +1335,15 @@ impl TransportSession {
                             0
                         };
                         if !is_resuming_same_file {
+                            if self.active_is_realtime
+                                && self.active_file_id.is_some()
+                                && self.active_file_id != Some(head.secret.file_id)
+                                && !self.opus_buffer.is_empty()
+                            {
+                                if let Some(fin) = self.finalize_active_transfer(now_epoch_sec) {
+                                    outcome.finalized = Some(fin);
+                                }
+                            }
                             self.opus_buffer.clear();
                             self.marks_ms.clear();
                             self.live_pcm16_16khz.clear();
@@ -1807,5 +2113,189 @@ mod tests {
             Some(WIFI_KEEPALIVE_PAYLOAD.as_slice())
         );
         assert!(session.pop_outbound_wifi_udp().is_none());
+    }
+
+    fn build_telemetry_frame_with_recording_status(recording_status: u8) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(56);
+        payload.push(1);
+        payload.push(8);
+        payload.push(0);
+        payload.extend_from_slice(b"1.4.8");
+        payload.extend_from_slice(b"D3200NATIVE639D0");
+        payload.extend_from_slice(&(64u32 * 1024 * 1024).to_le_bytes());
+        payload.extend_from_slice(&(58u32 * 1024 * 1024).to_le_bytes());
+        payload.push(0);
+        payload.extend_from_slice(b"2.1.0");
+        payload.push(9);
+        payload.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0x63, 0x9D]);
+        payload.extend_from_slice(&[0u8; 5]);
+        payload.push(recording_status);
+        payload.extend_from_slice(b"1.0.0");
+        TransportSession::build_rx_frame(0x01, 0x01, &payload)
+    }
+
+    #[test]
+    fn telemetry_recording_active_auto_subscribes_latest_catalog_file_on_1b_0e() {
+        let mut session = TransportSession::new();
+        let tel = build_telemetry_frame_with_recording_status(1);
+        let tel_out = session.ingest_ble_chunk(&tel, 1_700_000_700);
+        assert!(tel_out.telemetry_updated);
+        assert_eq!(
+            session.telemetry.as_ref().map(|t| t.recording_status),
+            Some(1)
+        );
+        assert_eq!(
+            tel_out.outbound_tx_frames,
+            vec![DeviceCommands::list_files_with_end_time(0)]
+        );
+
+        let mut list_payload = Vec::new();
+        list_payload.extend_from_slice(&2u16.to_le_bytes());
+        list_payload.extend_from_slice(&1000u32.to_le_bytes());
+        list_payload.extend_from_slice(&1010u32.to_le_bytes());
+        list_payload.extend_from_slice(&10_000u32.to_le_bytes());
+        list_payload.extend_from_slice(&2050u32.to_le_bytes());
+        list_payload.extend_from_slice(&0u32.to_le_bytes());
+        list_payload.extend_from_slice(&4_000u32.to_le_bytes());
+        let list_rx = TransportSession::build_rx_frame(0x1B, 0x0E, &list_payload);
+
+        let cat_out = session.ingest_ble_chunk(&list_rx, 1_700_000_701);
+        assert!(cat_out.catalog_updated);
+        assert_eq!(
+            cat_out.outbound_tx_frames,
+            vec![DeviceCommands::start_transport_audio_file(2050, 0, 1)]
+        );
+        assert_eq!(session.active_file_id, Some(2050));
+        assert!(session.active_is_realtime);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::StreamingRealtime);
+    }
+
+    #[test]
+    fn record_status_1a_06_starts_realtime_transport_for_5byte_and_4byte_payloads() {
+        let mut session = TransportSession::new();
+        let mut payload_5b = Vec::with_capacity(5);
+        payload_5b.extend_from_slice(&3001u32.to_le_bytes());
+        payload_5b.push(1);
+        let rx_5b = TransportSession::build_rx_frame(0x1A, 0x06, &payload_5b);
+
+        let out_5b = session.ingest_ble_chunk(&rx_5b, 1_700_000_710);
+        assert!(out_5b.transfer_updated);
+        assert_eq!(
+            out_5b.outbound_tx_frames,
+            vec![DeviceCommands::start_transport_audio_file(3001, 0, 1)]
+        );
+        assert_eq!(session.active_file_id, Some(3001));
+        assert!(session.active_is_realtime);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::StreamingRealtime);
+
+        let mut session_4b = TransportSession::new();
+        let rx_4b = TransportSession::build_rx_frame(0x1A, 0x06, &3002u32.to_le_bytes());
+        let out_4b = session_4b.ingest_ble_chunk(&rx_4b, 1_700_000_711);
+        assert!(out_4b.transfer_updated);
+        assert_eq!(
+            out_4b.outbound_tx_frames,
+            vec![DeviceCommands::start_transport_audio_file(3002, 0, 1)]
+        );
+        assert_eq!(session_4b.active_file_id, Some(3002));
+        assert!(session_4b.active_is_realtime);
+        assert_eq!(session_4b.transfer.phase, TransferPhaseTag::StreamingRealtime);
+    }
+
+    #[test]
+    fn realtime_1a_07_head_for_same_file_preserves_buffered_slices_marks_and_live_pcm() {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let sk = [0x21u8; 32];
+        let fk = [0x22u8; 32];
+        let fn_iv = [0x23u8; 16];
+        session.set_session_key(sk);
+
+        let head = build_test_head_frame(&sk, 4001, u32::MAX, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_700_000_720);
+        let slices = build_test_slice_frame(&fk, &fn_iv, &[(0, 0x00), (1, 0x01)]);
+        let _ = session.ingest_ble_chunk(&slices, 1_700_000_721);
+        assert_eq!(session.received_slice_count(), 2);
+        assert_eq!(session.marks_ms, vec![20]);
+        assert_eq!(session.live_pcm16_16khz.len(), 2 * 320 * 2);
+
+        let repeated_head = build_test_head_frame(&sk, 4001, u32::MAX, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&repeated_head, 1_700_000_722);
+        assert_eq!(session.received_slice_count(), 2);
+        assert_eq!(session.marks_ms, vec![20]);
+        assert_eq!(session.live_pcm16_16khz.len(), 2 * 320 * 2);
+        assert_eq!(session.transfer.received_wire_bytes, 2 * 166);
+    }
+
+    #[test]
+    fn start_realtime_recording_queues_81_82_and_subscribes_known_or_pending_file() {
+        let mut session = TransportSession::new();
+        let out_pending = session.start_realtime_recording(None, 1_700_000_800_000);
+        assert!(session.device_recording_active);
+        assert!(session.pending_realtime_subscribe);
+        assert_eq!(
+            out_pending.outbound_tx_frames,
+            vec![
+                DeviceCommands::start_realtime_record_81(),
+                DeviceCommands::start_app_recording(),
+                DeviceCommands::list_files_with_end_time(0),
+            ]
+        );
+
+        let mut session_known = TransportSession::new();
+        let out_known = session_known.start_realtime_recording(Some(8801), 1_700_000_800_000);
+        assert!(session_known.device_recording_active);
+        assert!(!session_known.pending_realtime_subscribe);
+        assert_eq!(session_known.active_file_id, Some(8801));
+        assert!(session_known.active_is_realtime);
+        assert_eq!(
+            out_known.outbound_tx_frames,
+            vec![
+                DeviceCommands::start_realtime_record_81(),
+                DeviceCommands::start_app_recording(),
+                DeviceCommands::start_transport_audio_file(8801, 0, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn repro_1a_06_stop_while_pending_realtime_subscribe_leaves_session_recording_active() {
+        let mut session = TransportSession::new();
+        let rx_start = TransportSession::build_rx_frame(0x1A, 0x06, &[0x01]);
+        let _ = session.ingest_ble_chunk(&rx_start, 1_700_000_900);
+        assert!(session.device_recording_active);
+        assert!(session.pending_realtime_subscribe);
+        assert!(!session.active_is_realtime);
+
+        let rx_stop = TransportSession::build_rx_frame(0x1A, 0x06, &[0x00]);
+        let _ = session.ingest_ble_chunk(&rx_stop, 1_700_000_901);
+
+        assert!(
+            !session.device_recording_active,
+            "1A/06 stop (state=0) failed to clear device_recording_active because active_is_realtime was false"
+        );
+        assert!(
+            !session.pending_realtime_subscribe,
+            "1A/06 stop (state=0) failed to clear pending_realtime_subscribe because active_is_realtime was false"
+        );
+    }
+
+    #[test]
+    fn repro_1a_06_start_during_offline_pull_hijacks_offline_file_id_for_realtime() {
+        let mut session = TransportSession::new();
+        let _ = session.begin_offline_pull(5001, 10_000);
+        assert_eq!(session.active_file_id, Some(5001));
+        assert!(!session.active_is_realtime);
+
+        let rx_start = TransportSession::build_rx_frame(0x1A, 0x06, &[0x01]);
+        let outcome = session.ingest_ble_chunk(&rx_start, 1_700_000_910);
+
+        assert_ne!(
+            outcome.outbound_tx_frames,
+            vec![DeviceCommands::start_transport_audio_file(5001, 0, 1)],
+            "1A/06 start erroneously hijacked active offline file_id 5001 for realtime stream instead of querying catalog"
+        );
+        assert_eq!(
+            outcome.outbound_tx_frames,
+            vec![DeviceCommands::list_files_with_end_time(0)]
+        );
     }
 }

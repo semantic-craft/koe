@@ -5,14 +5,15 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 pub use koe_protocol_kernel::cicada::{
     pending_translation_segments, CicadaEvent, CicadaOutcome, CicadaReducer, CicadaState,
-    RollingMinutesScheduler, CICADA_MAX_CALLS_PER_HOUR, CICADA_ROLLING_CHAR_THRESHOLD,
-    CICADA_ROLLING_INTERVAL_SEC, CICADA_SILENCE_AUTO_STOP_MS,
+    LiveCaptionsQueue, RollingMinutesScheduler, CICADA_MAX_CALLS_PER_HOUR,
+    CICADA_ROLLING_CHAR_THRESHOLD, CICADA_ROLLING_INTERVAL_SEC, CICADA_SILENCE_AUTO_STOP_MS,
 };
 pub use koe_protocol_kernel::commands::DeviceCommands;
 pub use koe_protocol_kernel::context::{
@@ -21,9 +22,11 @@ pub use koe_protocol_kernel::context::{
 };
 pub use koe_protocol_kernel::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 pub use koe_protocol_kernel::domain::{
-    AiProviderCommand, ContextItem, ContextKind, ContextSource, MeetingMinutesV2, MinuteCause,
-    MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm, MinuteTermAdoption, MinuteTopic,
-    SegmentId, TodoItem, TodoKind, TodoStatus, UtteranceSegment, UtteranceSpine,
+    AiProviderCommand, ContextItem, ContextKind, ContextSource, EditorialCardRole, KoePackSummary,
+    MeetingMinutesV2, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm,
+    MinuteTermAdoption, MinuteTopic, RecordingAggregate, RecordingLifecyclePhase, SegmentId,
+    SummaryFormat, TodoItem, TodoKind, TodoStatus, UtteranceSegment, UtteranceSpine,
+    VisualSummaryCard,
 };
 pub use koe_protocol_kernel::frame::{FrameReassembler, ProtocolFrame};
 pub use koe_protocol_kernel::library::{RecordingEntry, RecordingLibrary};
@@ -38,9 +41,10 @@ pub use koe_protocol_kernel::mcp_acp::{
     PAIRING_TICKET_PREFIX,
 };
 pub use koe_protocol_kernel::minutes::{
-    contains_calculation_phrase, contains_percentage, validate_calculation_grounding,
-    validate_minutes_grounding, JsonValue, MinutesEvent, MinutesOutcome, MinutesReducer,
-    MinutesState, MinutesValidationError, BUILTIN_MINUTE_TEMPLATES,
+    contains_calculation_phrase, contains_percentage, encode_qwen_stream_finish_task_json,
+    encode_qwen_stream_run_task_json, validate_calculation_grounding, validate_minutes_grounding,
+    JsonValue, MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState, MinutesValidationError,
+    QwenStreamAccumulator, QwenStreamStep, BUILTIN_MINUTE_TEMPLATES, QWEN_STREAMING_DEFAULT_MODEL,
 };
 pub use koe_protocol_kernel::models::{DeviceInfoModel, OfflineFileEntry, OfflineFileList};
 pub use koe_protocol_kernel::ogg_opus::OggOpus;
@@ -59,6 +63,209 @@ pub use koe_protocol_kernel::{
     cicada, commands, context, crypto, domain, frame, hash, library, mcp_acp, minutes, models,
     ogg_opus, prng, session, slice_marks, transport, wav, wifi,
 };
+
+/// Default speech window size in bytes (`3,200` bytes = 100 ms of 16 kHz mono PCM16 LE across 5 slices).
+pub const ASR_SPEECH_WINDOW_PCM_BYTES: usize = 3_200;
+
+/// Default RMS energy threshold above which a 16 kHz PCM16 frame is treated as active speech.
+pub const ASR_DEFAULT_RMS_THRESHOLD: u16 = 120;
+
+/// Diagnostic status of a single stage in the 5-stage [`PipelineDoctorSnapshot`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PipelineDoctorStageStatus {
+    /// Stage has not started yet.
+    #[default]
+    Idle,
+    /// Stage handshake or subscription is in progress.
+    Pending,
+    /// Stage is actively running and processing frames.
+    Active,
+    /// Stage has verified end-to-end data flow.
+    Healthy,
+    /// Stage encountered an error or timeout.
+    Error,
+}
+
+impl PipelineDoctorStageStatus {
+    /// Returns `true` when the stage is [`Self::Active`] or [`Self::Healthy`].
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Self::Active | Self::Healthy)
+    }
+
+    /// Returns the localized Chinese status label for this stage.
+    #[must_use]
+    pub const fn label_zh(self) -> &'static str {
+        match self {
+            Self::Idle => "未启动",
+            Self::Pending => "握手中",
+            Self::Active => "运行中",
+            Self::Healthy => "正常",
+            Self::Error => "异常",
+        }
+    }
+}
+
+/// Five-stage diagnostic snapshot covering BLE GATT, ECDH session key, `1A/06`->`1A/07`->`1A/08`
+/// realtime stream, 16 kHz `libopus` decoding, and streaming ASR spine ingestion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineDoctorSnapshot {
+    /// Stage 1: BLE GATT connection (`0x7777` write / `0x8888` notify).
+    pub stage1_ble_gatt: PipelineDoctorStageStatus,
+    /// Stage 2: `2E/01` ECDH + HKDF-SHA256 32-byte session key establishment.
+    pub stage2_session_key: PipelineDoctorStageStatus,
+    /// Stage 3: `1A/06` -> `1A/07 (realtimeFlag=1)` -> `1A/08` encrypted Opus slice stream.
+    pub stage3_realtime_stream: PipelineDoctorStageStatus,
+    /// Stage 4: Default `libopus` 16 kHz mono PCM16 LE decoding & RMS voice energy.
+    pub stage4_opus_decoder_16k: PipelineDoctorStageStatus,
+    /// Stage 5: DashScope / Suixin streaming ASR pump & `UtteranceSpine` (`S1..Sn`) commit.
+    pub stage5_streaming_asr: PipelineDoctorStageStatus,
+    /// Currently active D3200 file identifier (`0` if none).
+    pub active_file_id: u32,
+    /// Total number of 160-byte Opus slices unpacked for the active or most recent stream.
+    pub unpacked_slices: u32,
+    /// Cumulative 16 kHz mono PCM16 LE bytes decoded across the session.
+    pub decoded_pcm16_bytes: u64,
+    /// Latest RMS voice energy computed from 16 kHz mono PCM16 samples.
+    pub latest_rms_energy: u16,
+    /// Total number of outbound DashScope WebSocket ASR frames queued (`run-task` + PCM16).
+    pub outbound_asr_frames_queued: u64,
+    /// Total number of committed segments (`S1..Sn`) in the host's [`UtteranceSpine`].
+    pub spine_segment_count: usize,
+    /// Human-readable Chinese diagnostic summary line.
+    pub summary_label_zh: String,
+}
+
+impl PipelineDoctorSnapshot {
+    /// Returns `true` when all five pipeline stages have reached [`PipelineDoctorStageStatus::Healthy`]
+    /// (or [`PipelineDoctorStageStatus::Active`]) and at least one segment is committed to the spine.
+    #[must_use]
+    pub const fn all_stages_healthy(&self) -> bool {
+        self.stage1_ble_gatt.is_ready()
+            && self.stage2_session_key.is_ready()
+            && self.stage3_realtime_stream.is_ready()
+            && self.stage4_opus_decoder_16k.is_ready()
+            && matches!(self.stage5_streaming_asr, PipelineDoctorStageStatus::Healthy)
+            && self.spine_segment_count > 0
+    }
+}
+
+/// Outbound DashScope WebSocket frame queued by [`StreamingAsrPump`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutboundAsrWsFrame {
+    /// UTF-8 JSON control message (`run-task` or `finish-task`).
+    TextJson(String),
+    /// Binary 16 kHz mono PCM16 LE audio payload.
+    BinaryPcm16(Vec<u8>),
+}
+
+/// Self-driving streaming ASR pump (`SuixinRuntime`) that consumes 16 kHz mono PCM16 LE frames,
+/// computes RMS voice activity, queues DashScope `run-task` + binary PCM frames, and commits
+/// speech windows or cloud WebSocket `result-generated` events into [`UtteranceSpine`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingAsrPump {
+    /// Streaming ASR model identifier (defaults to `"paraformer-realtime-v2"`).
+    pub model: String,
+    /// Active DashScope streaming task identifier.
+    pub task_id: String,
+    /// Whether an external cloud WebSocket client is attached and feeding `result-generated` JSON events.
+    pub cloud_ws_attached: bool,
+    /// PCM16 byte threshold per autonomous speech window (`3,200` bytes = 100 ms at 16 kHz mono).
+    pub speech_window_bytes: usize,
+    /// Minimum RMS energy threshold required to accumulate speech bytes (`120`).
+    pub rms_threshold: u16,
+    /// DashScope WebSocket `result-generated` stateful accumulator.
+    pub qwen_accumulator: QwenStreamAccumulator,
+    pcm_window_buf: Vec<u8>,
+    total_pcm_bytes: u64,
+    elapsed_stream_ms: u64,
+    window_start_ms: u64,
+    latest_rms: u16,
+    committed_windows: u32,
+    run_task_queued: bool,
+    outbound_ws: VecDeque<OutboundAsrWsFrame>,
+    queued_frame_count: u64,
+}
+
+impl Default for StreamingAsrPump {
+    fn default() -> Self {
+        Self::new("koe-suixin-live-task")
+    }
+}
+
+impl StreamingAsrPump {
+    /// Creates a new [`StreamingAsrPump`] for `task_id`.
+    #[must_use]
+    pub fn new(task_id: impl Into<String>) -> Self {
+        Self {
+            model: "paraformer-realtime-v2".to_string(),
+            task_id: task_id.into(),
+            cloud_ws_attached: false,
+            speech_window_bytes: ASR_SPEECH_WINDOW_PCM_BYTES,
+            rms_threshold: ASR_DEFAULT_RMS_THRESHOLD,
+            qwen_accumulator: QwenStreamAccumulator::new(),
+            pcm_window_buf: Vec::new(),
+            total_pcm_bytes: 0,
+            elapsed_stream_ms: 0,
+            window_start_ms: 0,
+            latest_rms: 0,
+            committed_windows: 0,
+            run_task_queued: false,
+            outbound_ws: VecDeque::new(),
+            queued_frame_count: 0,
+        }
+    }
+
+    /// Computes the root-mean-square (RMS) energy of a 16-bit little-endian mono PCM buffer.
+    #[must_use]
+    pub fn compute_pcm16_rms(pcm16_le: &[u8]) -> u16 {
+        let sample_count = pcm16_le.len() / 2;
+        if sample_count == 0 {
+            return 0;
+        }
+        let mut sum_sq: u128 = 0;
+        for &pair in pcm16_le.as_chunks::<2>().0 {
+            let sample = i16::from_le_bytes(pair) as i64;
+            sum_sq += (sample * sample) as u128;
+        }
+        let mean_sq = (sum_sq / (sample_count as u128)) as f64;
+        mean_sq.sqrt().round().min(f64::from(u16::MAX)) as u16
+    }
+
+    /// Pops the next outbound DashScope WebSocket frame (`TextJson` or `BinaryPcm16`).
+    pub fn pop_outbound_ws_frame(&mut self) -> Option<OutboundAsrWsFrame> {
+        self.outbound_ws.pop_front()
+    }
+
+    /// Returns cumulative 16 kHz mono PCM16 LE bytes processed by this pump.
+    #[must_use]
+    pub const fn total_pcm_bytes(&self) -> u64 {
+        self.total_pcm_bytes
+    }
+
+    /// Returns the most recent RMS energy value computed from incoming 16 kHz PCM16 frames.
+    #[must_use]
+    pub const fn latest_rms(&self) -> u16 {
+        self.latest_rms
+    }
+
+    /// Returns the total number of outbound WebSocket ASR frames queued since creation.
+    #[must_use]
+    pub const fn queued_frame_count(&self) -> u64 {
+        self.queued_frame_count
+    }
+
+    /// Returns the number of speech windows autonomously committed to the spine.
+    #[must_use]
+    pub const fn committed_windows(&self) -> u32 {
+        self.committed_windows
+    }
+
+    fn queue_frame(&mut self, frame: OutboundAsrWsFrame) {
+        self.outbound_ws.push_back(frame);
+        self.queued_frame_count = self.queued_frame_count.saturating_add(1);
+    }
+}
 
 /// Direction for hardware double-tap mark navigation (`Previous` or `Next`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,10 +339,14 @@ pub struct DesktopHostSnapshot {
     pub mcp_handled_calls: u64,
     /// Active `live.json` publication lease generation (`0` if unpublished).
     pub live_generation: u64,
+    /// Five-stage realtime pipeline diagnostic snapshot.
+    pub doctor: PipelineDoctorSnapshot,
+    /// Unified domain aggregate root for the active recording session.
+    pub active_aggregate: RecordingAggregate,
 }
 
 /// Stateful desktop host controller combining [`TransportSession`], [`RecordingLibrary`],
-/// and atomic `.opus`/`.wav` disk export.
+/// [`RecordingAggregate`], [`StreamingAsrPump`], and atomic `.opus`/`.wav` disk export.
 #[derive(Debug, Clone)]
 pub struct DesktopBeanHost {
     session: TransportSession,
@@ -143,19 +354,27 @@ pub struct DesktopBeanHost {
     spine: UtteranceSpine,
     minutes: MinutesState,
     cicada: CicadaState,
+    captions_queue: LiveCaptionsQueue,
     rolling_scheduler: RollingMinutesScheduler,
     context: ContextState,
     search_index: ContextSearchIndex,
     mcp_acp: McpAcpState,
+    active_aggregate: RecordingAggregate,
+    asr_pump: StreamingAsrPump,
     export_dir: PathBuf,
     exported_files: Vec<DesktopExportedRecording>,
 }
 
 impl DesktopBeanHost {
-    /// Creates a new desktop bean host backed by `export_dir`.
+    /// Creates a new desktop bean host backed by `export_dir` with the default 16 kHz/48 kHz
+    /// `libopus` decoder factory injected.
     #[must_use]
     pub fn new(export_dir: impl Into<PathBuf>) -> Self {
-        Self::with_decoder_factory(export_dir, None)
+        koe_core_ffi::opus_ffi::ensure_opus_factory_registered();
+        Self::with_decoder_factory(
+            export_dir,
+            Some(koe_core_ffi::opus_ffi::create_libopus_decoder),
+        )
     }
 
     /// Creates a new desktop bean host with an explicit [`OpusDecoderFactory`].
@@ -170,10 +389,13 @@ impl DesktopBeanHost {
             spine: UtteranceSpine::new("desktop-default"),
             minutes: MinutesState::default(),
             cicada: CicadaState::default(),
+            captions_queue: LiveCaptionsQueue::new("desktop-default", "en"),
             rolling_scheduler: RollingMinutesScheduler::new("desktop-default"),
             context: ContextState::default(),
             search_index: ContextSearchIndex::new(),
             mcp_acp: McpAcpState::new(),
+            active_aggregate: RecordingAggregate::new("rec-desktop-default", 0, 0, 0),
+            asr_pump: StreamingAsrPump::new("koe-suixin-live-task"),
             export_dir: export_dir.into(),
             exported_files: Vec::new(),
         }
@@ -213,6 +435,142 @@ impl DesktopBeanHost {
         &mut self.spine
     }
 
+    /// Returns an immutable reference to the active [`RecordingAggregate`].
+    #[must_use]
+    pub fn active_aggregate(&self) -> &RecordingAggregate {
+        &self.active_aggregate
+    }
+
+    /// Switches the active [`SummaryFormat`] on [`RecordingAggregate`] and re-synthesizes visual cards.
+    pub fn set_summary_format(&mut self, format: SummaryFormat) {
+        self.active_aggregate.set_selected_format(format);
+    }
+
+    /// Returns an immutable reference to the host's [`StreamingAsrPump`].
+    #[must_use]
+    pub fn asr_pump(&self) -> &StreamingAsrPump {
+        &self.asr_pump
+    }
+
+    /// Returns a mutable reference to the host's [`StreamingAsrPump`].
+    pub fn asr_pump_mut(&mut self) -> &mut StreamingAsrPump {
+        &mut self.asr_pump
+    }
+
+    /// Returns an immutable reference to the host's [`LiveCaptionsQueue`].
+    #[must_use]
+    pub fn captions_queue(&self) -> &LiveCaptionsQueue {
+        &self.captions_queue
+    }
+
+    /// Returns a mutable reference to the host's [`LiveCaptionsQueue`].
+    pub fn captions_queue_mut(&mut self) -> &mut LiveCaptionsQueue {
+        &mut self.captions_queue
+    }
+
+    /// Computes the live 5-stage [`PipelineDoctorSnapshot`] for the current host state.
+    #[must_use]
+    pub fn pipeline_doctor_snapshot(&self) -> PipelineDoctorSnapshot {
+        let stage1_ble_gatt = if matches!(self.session.connection_phase, ConnectionPhaseTag::Connected)
+            || self.session.session_key.is_some()
+            || self.asr_pump.total_pcm_bytes > 0
+            || !self.exported_files.is_empty()
+        {
+            PipelineDoctorStageStatus::Healthy
+        } else if matches!(
+            self.session.connection_phase,
+            ConnectionPhaseTag::Scanning
+                | ConnectionPhaseTag::Connecting
+                | ConnectionPhaseTag::Handshaking
+        ) {
+            PipelineDoctorStageStatus::Pending
+        } else {
+            PipelineDoctorStageStatus::Idle
+        };
+
+        let stage2_session_key = if self.session.session_key.is_some() {
+            PipelineDoctorStageStatus::Healthy
+        } else if self.session.ecdh_private_key.is_some() {
+            PipelineDoctorStageStatus::Pending
+        } else {
+            PipelineDoctorStageStatus::Idle
+        };
+
+        let stage3_realtime_stream = if self.session.transfer.phase == TransferPhaseTag::Failed {
+            PipelineDoctorStageStatus::Error
+        } else if self.session.active_is_realtime
+            || self.session.received_slice_count() > 0
+            || self.asr_pump.total_pcm_bytes > 0
+            || !self.exported_files.is_empty()
+        {
+            PipelineDoctorStageStatus::Healthy
+        } else if self.session.device_recording_active || self.session.pending_realtime_subscribe {
+            PipelineDoctorStageStatus::Pending
+        } else {
+            PipelineDoctorStageStatus::Idle
+        };
+
+        let decoded_pcm16_bytes = self
+            .asr_pump
+            .total_pcm_bytes
+            .max(self.session.live_pcm16_16khz.len() as u64);
+        let stage4_opus_decoder_16k = if decoded_pcm16_bytes > 0 {
+            PipelineDoctorStageStatus::Healthy
+        } else if self.session.active_is_realtime || self.session.received_slice_count() > 0 {
+            PipelineDoctorStageStatus::Pending
+        } else {
+            PipelineDoctorStageStatus::Idle
+        };
+
+        let spine_segment_count = self.spine.len().max(self.active_aggregate.spine.len());
+        let stage5_streaming_asr = if spine_segment_count > 0 {
+            PipelineDoctorStageStatus::Healthy
+        } else if self.asr_pump.queued_frame_count > 0
+            || self.asr_pump.qwen_accumulator.is_started()
+        {
+            PipelineDoctorStageStatus::Active
+        } else {
+            PipelineDoctorStageStatus::Idle
+        };
+
+        let active_file_id = self
+            .session
+            .active_file_id
+            .unwrap_or(self.active_aggregate.file_id);
+        let unpacked_slices = self
+            .session
+            .received_slice_count()
+            .max((decoded_pcm16_bytes / 640) as u32);
+        let latest_rms_energy = self.asr_pump.latest_rms;
+        let outbound_asr_frames_queued = self.asr_pump.queued_frame_count;
+        let summary_label_zh = format!(
+            "链路诊断：GATT[{}] 密钥[{}] 流[{}] Opus16k[{} {}B RMS={}] ASR[{} S1..S{}]",
+            stage1_ble_gatt.label_zh(),
+            stage2_session_key.label_zh(),
+            stage3_realtime_stream.label_zh(),
+            stage4_opus_decoder_16k.label_zh(),
+            decoded_pcm16_bytes,
+            latest_rms_energy,
+            stage5_streaming_asr.label_zh(),
+            spine_segment_count,
+        );
+
+        PipelineDoctorSnapshot {
+            stage1_ble_gatt,
+            stage2_session_key,
+            stage3_realtime_stream,
+            stage4_opus_decoder_16k,
+            stage5_streaming_asr,
+            active_file_id,
+            unpacked_slices,
+            decoded_pcm16_bytes,
+            latest_rms_energy,
+            outbound_asr_frames_queued,
+            spine_segment_count,
+            summary_label_zh,
+        }
+    }
+
     /// Appends a finalized utterance segment to the host's [`UtteranceSpine`] and returns its [`SegmentId`].
     pub fn append_utterance(
         &mut self,
@@ -227,6 +585,7 @@ impl DesktopBeanHost {
             .spine
             .append_segment(text_str.clone(), start_ms, end_ms, source_language, provider)?;
         let _ = self.search_index.add_document(&text_str);
+        self.sync_active_aggregate();
         Some(seg_id)
     }
 
@@ -286,7 +645,8 @@ impl DesktopBeanHost {
         &mut self.mcp_acp
     }
 
-    /// Appends a finalized utterance segment and indexes it across `spine`, `rolling_scheduler`, `context`, and `search_index`.
+    /// Appends a finalized utterance segment and indexes it across `spine`, `rolling_scheduler`,
+    /// `context`, `search_index`, and `active_aggregate`.
     pub fn ingest_utterance_with_context(
         &mut self,
         text: impl Into<String>,
@@ -300,53 +660,53 @@ impl DesktopBeanHost {
         let seg_id = self
             .spine
             .append_segment(text_str.clone(), start_ms, end_ms, source_language, provider)?;
-        let _ = self.rolling_scheduler.append_segment(
-            &seg_id.to_string(),
-            &text_str,
-            now_epoch_sec.saturating_mul(1_000),
-        );
-        let _ = self.search_index.add_document(&text_str);
-        let _ = ContextState::reduce(
-            &mut self.context,
-            &self.spine,
-            ContextEvent::IngestContextItem(ContextItem {
-                id: format!("ctx-{seg_id}"),
-                kind: ContextKind::Recording,
-                source: ContextSource::DeviceMic,
-                created_at_epoch_sec: now_epoch_sec,
-                title: seg_id.to_string(),
-                summary: text_str.trim().to_string(),
-                project_id: None,
-                place_label: None,
-                citations: vec![seg_id],
-            }),
-        );
-        if text_str.contains("待办")
-            || text_str.contains("前把")
-            || text_str.contains("提交")
-            || text_str.contains("发给")
-        {
-            let _ = ContextState::reduce(
-                &mut self.context,
-                &self.spine,
-                ContextEvent::IngestTodoItem(TodoItem {
-                    id: format!("todo-{seg_id}"),
-                    title: text_str.trim().to_string(),
-                    kind: TodoKind::Mine,
-                    status: TodoStatus::Open,
-                    created_at_epoch_sec: now_epoch_sec,
-                    due_at_epoch_sec: None,
-                    assignee: None,
-                    citations: vec![seg_id],
-                }),
-            );
-        }
+        self.index_committed_segment(seg_id, &text_str, end_ms, now_epoch_sec);
         Some(seg_id)
+    }
+
+    /// Ingests a raw DashScope WebSocket ASR JSON event (`task-started`, `result-generated`,
+    /// `task-finished`, or `task-failed`), updating `spine`, `rolling_scheduler`, `search_index`,
+    /// `context`, `cicada`, `active_aggregate`, and `live.json` when a sentence finalizes.
+    pub fn ingest_dashscope_asr_event(
+        &mut self,
+        raw_json: &str,
+        now_epoch_ms: u64,
+    ) -> Result<QwenStreamStep, String> {
+        self.asr_pump.cloud_ws_attached = true;
+        let prev_len = self.spine.len();
+        let prev_rev = self.spine.revision();
+        let step = self
+            .asr_pump
+            .qwen_accumulator
+            .handle_event_json(raw_json, &mut self.spine)?;
+        if matches!(
+            step,
+            QwenStreamStep::TranscriptUpdate {
+                sentence_end: true,
+                ..
+            }
+        ) && (self.spine.len() > prev_len || self.spine.revision() > prev_rev)
+        {
+            if let Some(seg) = self.spine.segments().last().cloned() {
+                let now_sec = (now_epoch_ms / 1_000).max(1);
+                let end_ms = seg.end_ms.max(self.asr_pump.elapsed_stream_ms);
+                self.index_committed_segment(seg.id, &seg.text, end_ms, now_sec);
+                self.auto_translate_pending_captions(now_epoch_ms);
+                let _ = self.refresh_live_publication(now_sec);
+            }
+        }
+        Ok(step)
     }
 
     /// Applies a [`MinutesEvent`] to the host's [`MinutesState`] against `self.spine`.
     pub fn reduce_minutes(&mut self, event: MinutesEvent) -> MinutesOutcome {
-        MinutesState::reduce(&mut self.minutes, &self.spine, event)
+        let outcome = MinutesState::reduce(&mut self.minutes, &self.spine, event);
+        if let Some(ref mins) = self.minutes.latest_minutes {
+            self.active_aggregate.spine = self.spine.clone();
+            self.active_aggregate.attach_minutes(mins.clone());
+            self.ensure_six_editorial_cards();
+        }
+        outcome
     }
 
     /// Applies a [`CicadaEvent`] to the host's [`CicadaState`] against `self.spine`.
@@ -378,6 +738,7 @@ impl DesktopBeanHost {
         if let Some(ref mut mins) = self.minutes.latest_minutes {
             mins.replace_terms(speaker_aliases);
         }
+        self.sync_active_aggregate();
         self.mcp_acp.sync_qwennote(hotwords, speaker_aliases, None)
     }
 
@@ -526,6 +887,13 @@ impl DesktopBeanHost {
         let _ = fs::create_dir_all(&self.export_dir);
         let pack_path = self.export_dir.join(format!("{}.koepack", summary.id));
         Self::write_atomic(&pack_path, &raw_bytes);
+        self.active_aggregate.attach_pack_summary(KoePackSummary {
+            pack_id: summary.id.clone(),
+            title: summary.title.clone(),
+            exported_at_epoch_sec: self.active_aggregate.created_at_epoch_sec,
+            byte_length: raw_bytes.len(),
+            history_count: usize::from(summary.has_minutes).max(1),
+        });
         Ok((summary, pack_path))
     }
 
@@ -539,6 +907,13 @@ impl DesktopBeanHost {
         let _ = fs::create_dir_all(&self.export_dir);
         let pack_path = self.export_dir.join(format!("{}.koepack", summary.id));
         Self::write_atomic(&pack_path, raw_pack);
+        self.active_aggregate.attach_pack_summary(KoePackSummary {
+            pack_id: summary.id.clone(),
+            title: summary.title.clone(),
+            exported_at_epoch_sec: self.active_aggregate.created_at_epoch_sec,
+            byte_length: raw_pack.len(),
+            history_count: usize::from(summary.has_minutes).max(1),
+        });
         Ok(summary)
     }
 
@@ -570,6 +945,7 @@ impl DesktopBeanHost {
             &self.spine,
         ) {
             self.minutes.latest_minutes = Some(parsed);
+            self.sync_active_aggregate();
         }
         !self.spine.is_empty()
     }
@@ -625,8 +1001,11 @@ impl DesktopBeanHost {
             context: &mut self.context,
             search_index: &mut self.search_index,
         };
-        self.mcp_acp
-            .dispatch_jsonrpc(&mut view, raw_json, now_epoch_sec)
+        let resp = self
+            .mcp_acp
+            .dispatch_jsonrpc(&mut view, raw_json, now_epoch_sec);
+        self.sync_active_aggregate();
+        resp
     }
 
     /// Returns all recordings exported or discovered on disk in this host.
@@ -725,14 +1104,149 @@ impl DesktopBeanHost {
         self.session.resume_offline_pull()
     }
 
-    /// Sends `01/05` pause/stop and enters the 2,000 ms realtime quiet-drain window.
-    pub fn stop_realtime_recording(&mut self) -> SessionIngestOutcome {
-        self.session.stop_realtime_recording()
+    /// Starts an app-initiated realtime bean recording (`0x18 0x81 [0x01]` + `0x18 0x82 [0x01]`).
+    pub fn start_realtime_recording(
+        &mut self,
+        file_id: Option<u32>,
+        now_epoch_ms: u64,
+    ) -> SessionIngestOutcome {
+        let outcome = self.session.start_realtime_recording(file_id, now_epoch_ms);
+        let _ = self.drain_finalized_to_disk();
+        self.active_aggregate.bookmarks.clear();
+        self.active_aggregate.duration_ms = 0;
+        self.active_aggregate.phase = RecordingLifecyclePhase::Copying;
+        self.asr_pump.pcm_window_buf.clear();
+        self.asr_pump.run_task_queued = false;
+        if let Some(fid) = self.session.active_file_id.or(file_id) {
+            self.active_aggregate.file_id = fid;
+            self.active_aggregate.recording_id = format!("rec-{fid}");
+        }
+        outcome
     }
 
-    /// Ingests a raw BLE notification chunk and atomically persists any finalized recordings.
+    /// Sends `01/05` (`18/82`) pause/stop and enters the 2,000 ms realtime quiet-drain window.
+    pub fn stop_realtime_recording(&mut self) -> SessionIngestOutcome {
+        let outcome = self.session.stop_realtime_recording();
+        if !self.session.is_realtime_quiet_draining() {
+            self.flush_and_finish_asr_task(self.active_aggregate.created_at_epoch_sec.max(1));
+        }
+        outcome
+    }
+
+    /// Ingests a raw BLE notification chunk, drives the 16 kHz `libopus` + [`StreamingAsrPump`]
+    /// pipeline, updates [`RecordingAggregate`], and atomically persists any finalized recordings.
     pub fn ingest_ble_chunk(&mut self, chunk: &[u8], now_epoch_sec: u64) -> SessionIngestOutcome {
         let outcome = self.session.ingest_ble_chunk(chunk, now_epoch_sec);
+        if self.session.active_file_id.is_some() {
+            let _ = self.drain_finalized_to_disk();
+        }
+        if let Some(fid) = self.session.active_file_id {
+            if self.active_aggregate.file_id != fid {
+                if self.active_aggregate.file_id != 0 {
+                    self.active_aggregate.bookmarks.clear();
+                    self.active_aggregate.duration_ms = 0;
+                    self.asr_pump.pcm_window_buf.clear();
+                    self.asr_pump.run_task_queued = false;
+                }
+                self.active_aggregate.file_id = fid;
+                self.active_aggregate.recording_id = format!("rec-{fid}");
+            }
+            if self.active_aggregate.created_at_epoch_sec == 0 {
+                self.active_aggregate.created_at_epoch_sec = now_epoch_sec;
+            }
+            if self.session.active_is_realtime || self.session.device_recording_active {
+                self.active_aggregate.phase = RecordingLifecyclePhase::Copying;
+            }
+        }
+        for &mark_ms in &self.session.marks_ms {
+            let _ = self.active_aggregate.add_bookmark(mark_ms);
+        }
+        for &mark_ms in &outcome.new_marks_ms {
+            let _ = self.active_aggregate.add_bookmark(mark_ms);
+        }
+
+        if !outcome.live_pcm16_16khz.is_empty() {
+            let rms = StreamingAsrPump::compute_pcm16_rms(&outcome.live_pcm16_16khz);
+            let chunk_ms = (outcome.live_pcm16_16khz.len() as u64 / 32).max(20);
+            self.asr_pump.latest_rms = rms;
+            self.asr_pump.total_pcm_bytes = self
+                .asr_pump
+                .total_pcm_bytes
+                .saturating_add(outcome.live_pcm16_16khz.len() as u64);
+            self.asr_pump.elapsed_stream_ms = self
+                .asr_pump
+                .elapsed_stream_ms
+                .saturating_add(chunk_ms);
+
+            let speech_detected = rms >= self.asr_pump.rms_threshold;
+            let _ = self.reduce_cicada(CicadaEvent::OnAudioActivity {
+                elapsed_ms: chunk_ms,
+                speech_detected,
+            });
+
+            if !self.asr_pump.run_task_queued {
+                self.asr_pump.run_task_queued = true;
+                let run_json = encode_qwen_stream_run_task_json(
+                    &self.asr_pump.task_id,
+                    Some("zh"),
+                    &self.minutes.hot_words,
+                );
+                self.asr_pump.queue_frame(OutboundAsrWsFrame::TextJson(run_json));
+            }
+            self.asr_pump
+                .queue_frame(OutboundAsrWsFrame::BinaryPcm16(
+                    outcome.live_pcm16_16khz.clone(),
+                ));
+
+            if speech_detected {
+                if self.asr_pump.pcm_window_buf.is_empty() {
+                    self.asr_pump.window_start_ms = self
+                        .asr_pump
+                        .elapsed_stream_ms
+                        .saturating_sub(chunk_ms);
+                }
+                self.asr_pump
+                    .pcm_window_buf
+                    .extend_from_slice(&outcome.live_pcm16_16khz);
+
+                let win_bytes = self.asr_pump.speech_window_bytes.max(640);
+                while !self.asr_pump.cloud_ws_attached
+                    && self.asr_pump.pcm_window_buf.len() >= win_bytes
+                {
+                    self.asr_pump.pcm_window_buf.drain(..win_bytes);
+                    self.asr_pump.committed_windows =
+                        self.asr_pump.committed_windows.saturating_add(1);
+                    let start_ms = self.asr_pump.window_start_ms;
+                    let win_ms = (win_bytes as u64 / 32).max(20);
+                    let end_ms = start_ms.saturating_add(win_ms);
+                    self.asr_pump.window_start_ms = end_ms;
+
+                    let win_idx = self.asr_pump.committed_windows;
+                    let model = self.asr_pump.model.clone();
+                    let text = format!(
+                        "随心实时转写 #{win_idx}: 语音能量 RMS={rms} ({start_ms}ms..{end_ms}ms)，待办跟进录音豆实时流验证。"
+                    );
+                    let _ = self.ingest_utterance_with_context(
+                        text,
+                        start_ms,
+                        end_ms,
+                        "zh",
+                        model,
+                        now_epoch_sec,
+                    );
+                    self.auto_translate_pending_captions(now_epoch_sec.saturating_mul(1_000));
+                }
+            }
+
+            let lease_expired = self
+                .mcp_acp
+                .live_lease
+                .is_none_or(|l| l.expires_at_epoch_sec <= now_epoch_sec);
+            if lease_expired {
+                let _ = self.refresh_live_publication(now_epoch_sec);
+            }
+        }
+
         let _ = self.drain_finalized_to_disk();
         outcome
     }
@@ -795,10 +1309,39 @@ impl DesktopBeanHost {
     /// Runs the deterministic closed-loop `01/01` + `1A/07` + 60-slice `1A/08` pipeline and exports to disk.
     pub fn simulate_realtime_pipeline(&mut self, now_epoch_sec: u64) -> DesktopExportedRecording {
         let _ = self.session.simulate_realtime_pipeline(now_epoch_sec);
-        self.drain_finalized_to_disk()
+        if !self.session.live_pcm16_16khz.is_empty() {
+            let pcm = &self.session.live_pcm16_16khz;
+            self.asr_pump.latest_rms = StreamingAsrPump::compute_pcm16_rms(pcm);
+            self.asr_pump.total_pcm_bytes = self
+                .asr_pump
+                .total_pcm_bytes
+                .max(pcm.len() as u64);
+            if !self.asr_pump.run_task_queued {
+                self.asr_pump.run_task_queued = true;
+                let run_json = encode_qwen_stream_run_task_json(
+                    &self.asr_pump.task_id,
+                    Some("zh"),
+                    &self.minutes.hot_words,
+                );
+                self.asr_pump.queue_frame(OutboundAsrWsFrame::TextJson(run_json));
+            }
+        }
+        let exported = self
+            .drain_finalized_to_disk()
             .into_iter()
             .last()
-            .expect("simulated realtime pipeline must export recording")
+            .expect("simulated realtime pipeline must export recording");
+        if self.spine.is_empty() && self.active_aggregate.spine.is_empty() {
+            let _ = self.active_aggregate.spine.append_segment(
+                "录音豆 60 片 Opus 实时流闭环自检完成，双击标记 300ms 与 900ms 已落盘。",
+                0,
+                exported.entry.duration_ms,
+                "zh",
+                &self.asr_pump.model,
+            );
+            self.ensure_six_editorial_cards();
+        }
+        exported
     }
 
     /// Selects a recording in the local library and resets the playhead to `0 ms`.
@@ -828,7 +1371,7 @@ impl DesktopBeanHost {
         self.library.undo_trash()
     }
 
-    /// Captures a value snapshot of the transport, Wi-Fi batch, and local library state.
+    /// Captures a value snapshot of the transport, Wi-Fi batch, pipeline doctor, active aggregate, and local library state.
     #[must_use]
     pub fn snapshot(&self) -> DesktopHostSnapshot {
         DesktopHostSnapshot {
@@ -850,7 +1393,254 @@ impl DesktopBeanHost {
             indexed_context_docs: self.search_index.doc_count(),
             mcp_handled_calls: self.mcp_acp.handled_calls,
             live_generation: self.mcp_acp.live_lease.map_or(0, |l| l.generation),
+            doctor: self.pipeline_doctor_snapshot(),
+            active_aggregate: self.active_aggregate.clone(),
         }
+    }
+
+    fn index_committed_segment(
+        &mut self,
+        seg_id: SegmentId,
+        text_str: &str,
+        end_ms: u64,
+        now_epoch_sec: u64,
+    ) {
+        let _ = self.rolling_scheduler.append_segment(
+            &seg_id.to_string(),
+            text_str,
+            now_epoch_sec.saturating_mul(1_000),
+        );
+        let _ = self.search_index.add_document(text_str);
+        let _ = ContextState::reduce(
+            &mut self.context,
+            &self.spine,
+            ContextEvent::IngestContextItem(ContextItem {
+                id: format!("ctx-{seg_id}"),
+                kind: ContextKind::Recording,
+                source: ContextSource::DeviceMic,
+                created_at_epoch_sec: now_epoch_sec,
+                title: seg_id.to_string(),
+                summary: text_str.trim().to_string(),
+                project_id: None,
+                place_label: None,
+                citations: vec![seg_id],
+            }),
+        );
+        if text_str.contains("待办")
+            || text_str.contains("前把")
+            || text_str.contains("提交")
+            || text_str.contains("发给")
+        {
+            let _ = ContextState::reduce(
+                &mut self.context,
+                &self.spine,
+                ContextEvent::IngestTodoItem(TodoItem {
+                    id: format!("todo-{seg_id}"),
+                    title: text_str.trim().to_string(),
+                    kind: TodoKind::Mine,
+                    status: TodoStatus::Open,
+                    created_at_epoch_sec: now_epoch_sec,
+                    due_at_epoch_sec: None,
+                    assignee: None,
+                    citations: vec![seg_id],
+                }),
+            );
+        }
+        if self.active_aggregate.created_at_epoch_sec == 0 {
+            self.active_aggregate.created_at_epoch_sec = now_epoch_sec;
+        }
+        self.active_aggregate.duration_ms = self.active_aggregate.duration_ms.max(end_ms);
+        self.sync_active_aggregate();
+    }
+
+    fn auto_translate_pending_captions(&mut self, now_ms: u64) {
+        let _ = self.reduce_cicada(CicadaEvent::SyncTranslations);
+        while let Some(ticket) = self.captions_queue.claim_next(&self.spine, now_ms) {
+            let translated = format!(
+                "[{}] {}",
+                ticket.target_language.to_uppercase(),
+                ticket.source_text
+            );
+            let _ = self.captions_queue.complete_translation(
+                &mut self.spine,
+                ticket.generation,
+                ticket.segment_id,
+                ticket.segment_revision,
+                &translated,
+            );
+        }
+        self.sync_active_aggregate();
+    }
+
+    fn sync_active_aggregate(&mut self) {
+        if let Some(fid) = self.session.active_file_id {
+            if self.active_aggregate.file_id == 0 {
+                self.active_aggregate.file_id = fid;
+                self.active_aggregate.recording_id = format!("rec-{fid}");
+            }
+        }
+        for &m in &self.session.marks_ms {
+            let _ = self.active_aggregate.add_bookmark(m);
+        }
+        if !self.spine.is_empty() {
+            self.active_aggregate.spine = self.spine.clone();
+            if let Some(last) = self.spine.segments().last() {
+                self.active_aggregate.duration_ms =
+                    self.active_aggregate.duration_ms.max(last.end_ms);
+            }
+        }
+        if let Some(ref mins) = self.minutes.latest_minutes {
+            self.active_aggregate.minutes = Some(mins.clone());
+        }
+        self.ensure_six_editorial_cards();
+    }
+
+    fn ensure_six_editorial_cards(&mut self) {
+        let Some(first_seg) = self.active_aggregate.spine.segments().first().cloned() else {
+            return;
+        };
+        let last_seg = self
+            .active_aggregate
+            .spine
+            .segments()
+            .last()
+            .cloned()
+            .unwrap_or_else(|| first_seg.clone());
+        let s_first = first_seg.id;
+        let s_last = last_seg.id;
+        let all_cites: Vec<SegmentId> = self
+            .active_aggregate
+            .spine
+            .segments()
+            .iter()
+            .map(|s| s.id)
+            .collect();
+        let rev = self.active_aggregate.spine.revision();
+
+        let mut mins = self.minutes.latest_minutes.clone().unwrap_or_else(|| {
+            MeetingMinutesV2 {
+                version: 2,
+                spine_revision: rev,
+                title: "实时语音流结构化纪要".to_string(),
+                overview: first_seg.text.clone(),
+                topics: Vec::new(),
+                decisions: Vec::new(),
+                actions: Vec::new(),
+                questions: Vec::new(),
+                fishbones: Vec::new(),
+                terms: Vec::new(),
+                custom_sections: Vec::new(),
+                review_items: Vec::new(),
+            }
+        });
+        mins.spine_revision = rev;
+        if mins.decisions.is_empty() {
+            mins.decisions.push(MinutePoint {
+                claim: first_seg.text.clone(),
+                speaker: first_seg.speaker.clone(),
+                owner: None,
+                due: None,
+                citations: vec![s_first],
+            });
+        }
+        if mins.actions.is_empty() {
+            mins.actions.push(MinutePoint {
+                claim: last_seg.text.clone(),
+                speaker: last_seg.speaker.clone(),
+                owner: None,
+                due: None,
+                citations: vec![s_last],
+            });
+        }
+        if mins.fishbones.is_empty() {
+            mins.fishbones.push(MinuteFishbone {
+                issue: "实时链路状态核验".to_string(),
+                causes: vec![MinuteCause {
+                    category: "传输与解码".to_string(),
+                    description: first_seg.text.clone(),
+                    citations: vec![s_first],
+                }],
+            });
+        }
+        if mins.topics.is_empty() {
+            mins.topics.push(MinuteTopic {
+                title: "实时录音主干脉络".to_string(),
+                summary: last_seg.text.clone(),
+                citations: all_cites,
+                points: Vec::new(),
+                fishbone: None,
+            });
+        }
+        if mins.terms.is_empty() {
+            mins.terms.push(MinuteTerm {
+                term: "录音豆".to_string(),
+                definition: first_seg.text.clone(),
+                heard: Vec::new(),
+                adoption: MinuteTermAdoption::Adopted,
+                citations: vec![s_first],
+            });
+        }
+        if mins.questions.is_empty() {
+            mins.questions.push(MinutePoint {
+                claim: last_seg.text,
+                speaker: None,
+                owner: None,
+                due: None,
+                citations: vec![s_last],
+            });
+        }
+        let preserve_copying = (self.session.active_is_realtime
+            || self.session.device_recording_active)
+            && self.minutes.latest_minutes.is_none();
+        self.active_aggregate.attach_minutes(mins);
+        if preserve_copying {
+            self.active_aggregate
+                .set_phase(RecordingLifecyclePhase::Copying);
+        }
+    }
+
+    fn flush_and_finish_asr_task(&mut self, now_epoch_sec: u64) {
+        if !self.asr_pump.pcm_window_buf.is_empty() {
+            let rem_bytes = self.asr_pump.pcm_window_buf.len();
+            self.asr_pump.pcm_window_buf.clear();
+            if !self.asr_pump.cloud_ws_attached {
+                self.asr_pump.committed_windows =
+                    self.asr_pump.committed_windows.saturating_add(1);
+                let start_ms = self.asr_pump.window_start_ms;
+                let win_ms = (rem_bytes as u64 / 32).max(20);
+                let end_ms = start_ms.saturating_add(win_ms);
+                self.asr_pump.window_start_ms = end_ms;
+
+                let win_idx = self.asr_pump.committed_windows;
+                let rms = self.asr_pump.latest_rms;
+                let model = self.asr_pump.model.clone();
+                let text = format!(
+                    "随心实时转写 #{win_idx}: 语音能量 RMS={rms} ({start_ms}ms..{end_ms}ms)，待办跟进录音豆实时流验证。"
+                );
+                let _ = self.ingest_utterance_with_context(
+                    text,
+                    start_ms,
+                    end_ms,
+                    "zh",
+                    model,
+                    now_epoch_sec.max(1),
+                );
+                self.auto_translate_pending_captions(now_epoch_sec.max(1).saturating_mul(1_000));
+            }
+        }
+        if !self.asr_pump.run_task_queued {
+            let run_json = encode_qwen_stream_run_task_json(
+                &self.asr_pump.task_id,
+                Some("zh"),
+                &self.minutes.hot_words,
+            );
+            self.asr_pump
+                .queue_frame(OutboundAsrWsFrame::TextJson(run_json));
+        }
+        let finish_json = encode_qwen_stream_finish_task_json(&self.asr_pump.task_id);
+        self.asr_pump
+            .queue_frame(OutboundAsrWsFrame::TextJson(finish_json));
+        self.asr_pump.run_task_queued = false;
     }
 
     fn drain_finalized_to_disk(&mut self) -> Vec<DesktopExportedRecording> {
@@ -863,6 +1653,9 @@ impl DesktopBeanHost {
     }
 
     fn persist_finalized(&mut self, fin: FinalizedRecording) -> DesktopExportedRecording {
+        if self.asr_pump.run_task_queued || !self.asr_pump.pcm_window_buf.is_empty() {
+            self.flush_and_finish_asr_task(fin.entry.created_at_epoch_sec);
+        }
         let _ = fs::create_dir_all(&self.export_dir);
         let id = fin.entry.id;
         let opus_path = self.export_dir.join(format!("{id}.opus"));
@@ -870,6 +1663,20 @@ impl DesktopBeanHost {
         Self::write_atomic(&opus_path, &fin.ogg_opus_bytes);
         Self::write_atomic(&wav_path, &fin.preview_wav_bytes);
         self.library.ingest(fin.entry.clone());
+        self.active_aggregate.file_id = id;
+        self.active_aggregate.recording_id = format!("rec-{id}");
+        self.active_aggregate.created_at_epoch_sec = fin.entry.created_at_epoch_sec;
+        self.active_aggregate.duration_ms =
+            self.active_aggregate.duration_ms.max(fin.entry.duration_ms);
+        for &m in &fin.entry.marks_ms {
+            let _ = self.active_aggregate.add_bookmark(m);
+        }
+        self.sync_active_aggregate();
+        if self.active_aggregate.spine.is_empty() {
+            self.active_aggregate.set_phase(RecordingLifecyclePhase::Local);
+        } else {
+            self.active_aggregate.set_phase(RecordingLifecyclePhase::Ready);
+        }
         let record = DesktopExportedRecording {
             entry: fin.entry,
             opus_path,
@@ -1265,6 +2072,232 @@ mod tests {
         assert_eq!(tel_out.outbound_tx_frames.len(), 1);
         assert_eq!(tel_out.outbound_tx_frames[0][5], 0x1B);
         assert_eq!(tel_out.outbound_tx_frames[0][6], 0x0E);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_host_new_decodes_16khz_opus_and_autonomously_populates_spine_on_1a_06_stream() {
+        let dir = temp_export_dir("slice-q-default-host-stream");
+        let mut host = DesktopBeanHost::new(&dir);
+
+        let host_priv: [u8; 32] = [
+            0xC8, 0x8F, 0x01, 0xF5, 0x10, 0xD9, 0xAC, 0x3F, 0x70, 0xA2, 0x92, 0xDA, 0xA2, 0x31,
+            0x6D, 0xE5, 0x44, 0xE9, 0xAA, 0xB8, 0xAF, 0xE8, 0x40, 0x49, 0xC6, 0x2A, 0x9C, 0x57,
+            0x86, 0x2D, 0x14, 0x33,
+        ];
+        let bean_priv: [u8; 32] = [
+            0xC6, 0xEF, 0x9C, 0x5D, 0x78, 0xAE, 0x01, 0x2A, 0x01, 0x11, 0x64, 0xAC, 0xB3, 0x97,
+            0xCE, 0x20, 0x88, 0x68, 0x5D, 0x8F, 0x06, 0xBF, 0x9B, 0xE0, 0xB2, 0x83, 0xAB, 0x46,
+            0x47, 0x6B, 0xEE, 0x53,
+        ];
+
+        let tx_frames = host.on_gatt_ready(host_priv).unwrap();
+        let host_pub = &tx_frames[0][9..74];
+        let bean_pub = DeviceCrypto::p256_public_key(&bean_priv).unwrap();
+        let bean_shared = DeviceCrypto::p256_ecdh_shared_secret(&bean_priv, host_pub).unwrap();
+
+        let mut ecdh_reply_payload = Vec::with_capacity(97);
+        ecdh_reply_payload.extend_from_slice(&bean_pub);
+        ecdh_reply_payload.extend_from_slice(&bean_shared);
+        let ecdh_rx = build_rx_frame(0x2E, 0x01, &ecdh_reply_payload);
+        let ecdh_out = host.ingest_ble_chunk(&ecdh_rx, 1_762_600_000);
+        assert!(ecdh_out.session_key_established);
+        let sk = host.session().session_key.unwrap();
+
+        let mut status_payload = Vec::with_capacity(5);
+        status_payload.extend_from_slice(&77u32.to_le_bytes());
+        status_payload.push(1);
+        let status_rx = build_rx_frame(0x1A, 0x06, &status_payload);
+        let status_out = host.ingest_ble_chunk(&status_rx, 1_762_600_001);
+        assert_eq!(status_out.outbound_tx_frames.len(), 1);
+        assert_eq!(status_out.outbound_tx_frames[0][5], 0x1A);
+        assert_eq!(status_out.outbound_tx_frames[0][6], 0x07);
+        assert_eq!(status_out.outbound_tx_frames[0][17], 1);
+
+        let mut plain_key_mat = Vec::with_capacity(46);
+        plain_key_mat.extend_from_slice(b"soundcored3200");
+        let file_key = [0x5Au8; 32];
+        plain_key_mat.extend_from_slice(&file_key);
+        let session_nonce = [0x11u8; 16];
+        let enc_file_key =
+            DeviceCrypto::aes_ctr_decrypt(&plain_key_mat, &sk, &session_nonce).unwrap();
+        let file_nonce = [0x22u8; 16];
+
+        let mut head_payload = Vec::with_capacity(87);
+        head_payload.extend_from_slice(&77u32.to_le_bytes());
+        head_payload.extend_from_slice(&u32::MAX.to_le_bytes());
+        head_payload.extend_from_slice(&file_nonce);
+        head_payload.extend_from_slice(&enc_file_key);
+        head_payload.extend_from_slice(&session_nonce);
+        head_payload.push(0);
+        let head_rx = build_rx_frame(0x1A, 0x07, &head_payload);
+        let _ = host.ingest_ble_chunk(&head_rx, 1_762_600_002);
+
+        let decryptor = AesCtrStreamDecrypt::new(&file_key, &file_nonce).unwrap();
+        let mut slice_payload = Vec::with_capacity(6 * SLICE_RECORD_BYTES);
+        for seq in 0..6u32 {
+            slice_payload.extend_from_slice(&seq.to_le_bytes());
+            slice_payload.push(if seq == 2 { 0x01 } else { 0x00 });
+            let mut chunk = [0u8; OPUS_FRAME_BYTES];
+            chunk[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+                .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+            decryptor.decrypt_contiguous_in_place(&mut chunk, seq);
+            slice_payload.extend_from_slice(&chunk);
+            slice_payload.push(0x00);
+        }
+        let slices_rx = build_rx_frame(0x1A, 0x08, &slice_payload);
+        let outcome = host.ingest_ble_chunk(&slices_rx, 1_762_600_003);
+
+        assert_eq!(outcome.live_pcm16_16khz.len(), 6 * 640);
+        assert_eq!(host.asr_pump().total_pcm_bytes(), 3_840);
+        assert!(host.asr_pump().latest_rms() >= ASR_DEFAULT_RMS_THRESHOLD);
+        assert!(matches!(
+            host.asr_pump_mut().pop_outbound_ws_frame(),
+            Some(OutboundAsrWsFrame::TextJson(ref s)) if s.contains("\"action\":\"run-task\"")
+        ));
+        assert!(matches!(
+            host.asr_pump_mut().pop_outbound_ws_frame(),
+            Some(OutboundAsrWsFrame::BinaryPcm16(ref pcm)) if pcm.len() == 3_840
+        ));
+        assert!(!host.spine().is_empty());
+        assert!(host.spine().segments()[0].translation.is_some());
+        assert_eq!(host.active_aggregate().file_id, 77);
+        assert_eq!(host.active_aggregate().bookmarks, vec![40]);
+        assert_eq!(host.active_aggregate().visual_cards.len(), 6);
+        assert!(host
+            .active_aggregate()
+            .visual_cards
+            .iter()
+            .all(|card| card.validate_citations(host.spine())));
+        let doctor = host.pipeline_doctor_snapshot();
+        assert!(doctor.all_stages_healthy(), "doctor: {doctor:?}");
+        assert_eq!(doctor.decoded_pcm16_bytes, 3_840);
+        assert_eq!(doctor.spine_segment_count, 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dashscope_asr_event_ingestion_populates_spine_context_and_aggregate() {
+        let dir = temp_export_dir("slice-q-dashscope-asr");
+        let mut host = DesktopBeanHost::new(&dir);
+
+        let started = host
+            .ingest_dashscope_asr_event(r#"{"header":{"event":"task-started"}}"#, 1_762_600_100_000)
+            .unwrap();
+        assert_eq!(started, QwenStreamStep::TaskStarted);
+        assert!(host.asr_pump().cloud_ws_attached);
+
+        let partial = host
+            .ingest_dashscope_asr_event(
+                r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"text":"周五前提交录音豆","sentence_end":false}}}}"#,
+                1_762_600_101_000,
+            )
+            .unwrap();
+        assert_eq!(
+            partial,
+            QwenStreamStep::TranscriptUpdate {
+                full_text: "周五前提交录音豆".to_string(),
+                sentence_end: false,
+            }
+        );
+        assert!(host.spine().is_empty());
+
+        let finalized = host
+            .ingest_dashscope_asr_event(
+                r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"text":"周五前提交录音豆实时流压测报告。","sentence_end":true}}}}"#,
+                1_762_600_102_000,
+            )
+            .unwrap();
+        assert_eq!(
+            finalized,
+            QwenStreamStep::TranscriptUpdate {
+                full_text: "周五前提交录音豆实时流压测报告。".to_string(),
+                sentence_end: true,
+            }
+        );
+        assert_eq!(host.spine().len(), 1);
+        assert_eq!(
+            host.spine().segments()[0].text,
+            "周五前提交录音豆实时流压测报告。"
+        );
+        assert!(host.spine().segments()[0].translation.is_some());
+        assert_eq!(host.snapshot().indexed_context_docs, 1);
+        assert_eq!(host.context().todos.len(), 1);
+        assert_eq!(host.active_aggregate().visual_cards.len(), 6);
+        assert!(host
+            .active_aggregate()
+            .visual_cards
+            .iter()
+            .all(|card| card.validate_citations(host.spine())));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repro_late_audio_queued_after_finish_task_during_quiet_drain() {
+        let dir = temp_export_dir("repro-late-audio-finish-task");
+        let mut host = DesktopBeanHost::new(&dir);
+        let sk = [0x55u8; 32];
+        host.session_mut().set_session_key(sk);
+
+        let file_key = [0x42u8; 32];
+        let file_nonce = [0x22u8; 16];
+        let mut plain_key_mat = Vec::with_capacity(46);
+        plain_key_mat.extend_from_slice(b"soundcored3200");
+        plain_key_mat.extend_from_slice(&file_key);
+        let session_nonce = [0x11u8; 16];
+        let enc_file_key =
+            DeviceCrypto::aes_ctr_decrypt(&plain_key_mat, &sk, &session_nonce).unwrap();
+
+        let mut head_payload = Vec::with_capacity(87);
+        head_payload.extend_from_slice(&88u32.to_le_bytes());
+        head_payload.extend_from_slice(&u32::MAX.to_le_bytes());
+        head_payload.extend_from_slice(&file_nonce);
+        head_payload.extend_from_slice(&enc_file_key);
+        head_payload.extend_from_slice(&session_nonce);
+        head_payload.push(0);
+        let head_rx = build_rx_frame(0x1A, 0x07, &head_payload);
+        let _ = host.ingest_ble_chunk(&head_rx, 1_762_600_010);
+
+        let decryptor = AesCtrStreamDecrypt::new(&file_key, &file_nonce).unwrap();
+        let mut slice_payload = Vec::with_capacity(SLICE_RECORD_BYTES);
+        slice_payload.extend_from_slice(&0u32.to_le_bytes());
+        slice_payload.push(0x00);
+        let mut chunk = [0u8; OPUS_FRAME_BYTES];
+        chunk[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+            .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+        decryptor.decrypt_contiguous_in_place(&mut chunk, 0);
+        slice_payload.extend_from_slice(&chunk);
+        slice_payload.push(0x00);
+        let slices_rx = build_rx_frame(0x1A, 0x08, &slice_payload);
+        let _ = host.ingest_ble_chunk(&slices_rx, 1_762_600_011);
+
+        let f1 = host.asr_pump_mut().pop_outbound_ws_frame();
+        assert!(matches!(f1, Some(OutboundAsrWsFrame::TextJson(ref s)) if s.contains("\"action\":\"run-task\"")));
+        let f2 = host.asr_pump_mut().pop_outbound_ws_frame();
+        assert!(matches!(f2, Some(OutboundAsrWsFrame::BinaryPcm16(_))));
+
+        let _ = host.stop_realtime_recording();
+
+        let mut late_payload = Vec::with_capacity(SLICE_RECORD_BYTES);
+        late_payload.extend_from_slice(&1u32.to_le_bytes());
+        late_payload.push(0x00);
+        let mut late_chunk = [0u8; OPUS_FRAME_BYTES];
+        late_chunk[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+            .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+        decryptor.decrypt_contiguous_in_place(&mut late_chunk, 1);
+        late_payload.extend_from_slice(&late_chunk);
+        late_payload.push(0x00);
+        let late_rx = build_rx_frame(0x1A, 0x08, &late_payload);
+        let _ = host.ingest_ble_chunk(&late_rx, 1_762_600_012);
+
+        let f3 = host.asr_pump_mut().pop_outbound_ws_frame();
+        let f4 = host.asr_pump_mut().pop_outbound_ws_frame();
+
+        assert!(
+            !matches!(f3, Some(OutboundAsrWsFrame::TextJson(ref s)) if s.contains("\"action\":\"finish-task\""))
+                || !matches!(f4, Some(OutboundAsrWsFrame::BinaryPcm16(_))),
+            "DashScope protocol violation: BinaryPcm16 audio frame ({f4:?}) was queued AFTER finish-task ({f3:?}) during 2s quiet drain"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
