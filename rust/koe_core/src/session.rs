@@ -803,10 +803,14 @@ impl TransportSession {
     pub fn cancel_wifi_batch(&mut self) {
         self.wifi_queue.clear();
         self.wifi_current_index = 0;
+        self.wifi_finalized_count = 0;
+        self.wifi_salvaged_count = 0;
+        self.wifi_skipped_count = 0;
         self.wifi_outbound_ws.clear();
         self.wifi_outbound_udp.clear();
         self.wifi_keepalive_elapsed_ms = 0;
         self.wifi_batch_phase = WifiBatchPhase::Idle;
+        self.wifi_endpoint = None;
         self.reset_active_transfer();
     }
 

@@ -8,11 +8,11 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::*;
 use koe_desktop_ble::{BleEvent, MacBleController};
 use koe_desktop_core::{
-    CicadaEvent, ConnectionPhaseTag, CopilotPresetChip, DesktopBeanHost, DesktopExportedRecording,
-    DetailTab, DeviceCrypto, MarkJumpDirection, McpPairingMode, MeetingMinutesV2, MinuteCause,
-    MinuteFishbone, MinutePoint, MinuteTopic, MinutesEvent, PAIRING_TICKET_PREFIX, SummaryFormat,
-    TodoStatus, WorkspaceCommand, WorkspaceProjection, WorkspaceSection,
-    validate_calculation_grounding,
+    BuiltinTemplateId, CicadaEvent, ConnectionPhaseTag, CopilotPresetChip, DesktopBeanHost,
+    DesktopExportedRecording, DetailTab, DeviceCrypto, MarkJumpDirection, McpPairingMode,
+    MeetingMinutesV2, MinuteCause, MinuteFishbone, MinutePoint, MinuteTopic, MinutesEvent,
+    PAIRING_TICKET_PREFIX, SummaryFormat, TodoStatus, WifiBatchPhase, WifiSoftApAction,
+    WorkspaceCommand, WorkspaceProjection, WorkspaceSection, validate_calculation_grounding,
 };
 use std::fs::{self, File};
 use std::io::{BufRead, Write};
@@ -1348,24 +1348,636 @@ impl KoeDesktopApp {
                             );
                         })),
                 ),
-            WorkspaceSection::Formats => {
-                let mut pills = div().flex().flex_wrap().gap_1p5();
-                for fmt in SummaryFormat::ALL {
-                    let selected = proj.active_aggregate.selected_format == fmt;
-                    let btn_id: SharedString = format!("banner-fmt-{fmt:?}").into();
-                    let btn = if selected {
-                        Button::new(btn_id).primary().small().label(fmt.label_zh())
-                    } else {
-                        Button::new(btn_id).small().label(fmt.label_zh())
-                    };
-                    pills = pills.child(btn.on_click(cx.listener(move |this, _, _, cx| {
-                        this.dispatch_command(
-                            WorkspaceCommand::SelectSummaryFormat(fmt),
-                            format!("已切换心力格式为「{}」并重算 6 宫格卡片", fmt.label_zh()),
-                            cx,
-                        );
-                    })));
-                }
+            WorkspaceSection::Formats => self.render_formats_console(cx),
+            WorkspaceSection::AliyunMcp => self.render_aliyun_mcp_console(cx),
+            WorkspaceSection::SettingsDoctor => self.render_settings_doctor_console(cx),
+        }
+    }
+
+    fn render_formats_console(&self, cx: &mut Context<Self>) -> Div {
+        let proj = &self.projection;
+        let mut fmt_pills = div().flex().flex_wrap().gap_1p5();
+        for fmt in SummaryFormat::ALL {
+            let selected = proj.formats.selected_format == fmt;
+            let btn_id: SharedString = format!("banner-fmt-{fmt:?}").into();
+            let btn = if selected {
+                Button::new(btn_id).primary().small().label(fmt.label_zh())
+            } else {
+                Button::new(btn_id).small().label(fmt.label_zh())
+            };
+            fmt_pills = fmt_pills.child(btn.on_click(cx.listener(move |this, _, _, cx| {
+                this.dispatch_command(
+                    WorkspaceCommand::SelectSummaryFormat(fmt),
+                    format!("已切换心力格式为「{}」并重算 6 宫格卡片", fmt.label_zh()),
+                    cx,
+                );
+            })));
+        }
+
+        let mut tpl_pills = div().flex().flex_wrap().gap_1p5();
+        for tpl in BuiltinTemplateId::ALL {
+            let active = proj.formats.active_template == tpl;
+            let btn_id: SharedString = format!("banner-tpl-{}", tpl.id_str()).into();
+            let label = format!("{} ({})", tpl.label_zh(), tpl.id_str());
+            let btn = if active {
+                Button::new(btn_id).primary().small().label(label)
+            } else {
+                Button::new(btn_id).small().label(label)
+            };
+            tpl_pills = tpl_pills.child(btn.on_click(cx.listener(move |this, _, _, cx| {
+                this.dispatch_command(
+                    WorkspaceCommand::SelectMinuteTemplate(tpl),
+                    format!(
+                        "已切换内置纪要模板为「{} ({})」并重算 6 宫格卡片",
+                        tpl.label_zh(),
+                        tpl.id_str()
+                    ),
+                    cx,
+                );
+            })));
+        }
+
+        let mut custom_list = div().flex().flex_col().gap_1p5();
+        for sec in &proj.formats.custom_sections {
+            let first_claim = sec
+                .points
+                .first()
+                .map_or("暂无溯源要点", |p| p.claim.as_str());
+            let cite_count: usize = sec.points.iter().map(|p| p.citations.len()).sum();
+            let cite_tags: Vec<String> = sec
+                .points
+                .iter()
+                .flat_map(|p| p.citations.iter().map(|c| format!("[{c}]")))
+                .collect();
+            let heading_for_rm = sec.heading.clone();
+            let rm_id: SharedString = format!("btn-rm-custom-sec-{}", sec.heading).into();
+            custom_list = custom_list.child(
+                div()
+                    .p_2()
+                    .rounded(px(AppRadii::CONTROL))
+                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .font_bold()
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::ORANGE_DEEP,
+                                            )))
+                                            .child(sec.heading.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::TEXT_MUTED,
+                                            )))
+                                            .child(format!(
+                                                "引用 {} 处 {}",
+                                                cite_count,
+                                                cite_tags.join(" ")
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                                    .child(first_claim.to_string()),
+                            ),
+                    )
+                    .child(
+                        Button::new(rm_id)
+                            .ghost()
+                            .small()
+                            .label("移除")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let removed = heading_for_rm.clone();
+                                this.dispatch_command(
+                                    WorkspaceCommand::RemoveCustomMinuteSection {
+                                        heading: removed.clone(),
+                                    },
+                                    format!("已移除自定义纪要分节「{removed}」并重算 6 宫格卡片"),
+                                    cx,
+                                );
+                            })),
+                    ),
+            );
+        }
+
+        div()
+            .p_3()
+            .rounded(px(AppRadii::CARD))
+            .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::MD))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child("心力格式库与内置纪要模板控制台 (Formats)"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .child(format!(
+                                "当前格式：{} | 当前模板：{} ({}) | 分节：{}",
+                                proj.formats.selected_format.label_zh(),
+                                proj.formats.active_template.label_zh(),
+                                proj.formats.active_template.id_str(),
+                                proj.formats.builtin_sections_zh.join(" / ")
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child("6 种心力总结格式（零幻觉重算 6 宫格柔彩卡片）："),
+                    )
+                    .child(fmt_pills),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child("5 套内置纪要模板（自动映射 [S1..Sn] 分节）："),
+                    )
+                    .child(tpl_pills),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(format!(
+                                "自定义纪要分节（共 {} 节，均绑定原话锚点）：",
+                                proj.formats.custom_sections.len()
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .child(
+                                Button::new("btn-add-sec-customer-voice")
+                                    .small()
+                                    .label("+ 客户原声锚点")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::AddCustomMinuteSection {
+                                                heading: "客户原声锚点".to_string(),
+                                            },
+                                            "已新增自定义纪要分节「客户原声锚点」并重算 6 宫格卡片",
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-add-sec-risk-followup")
+                                    .small()
+                                    .label("+ 关键风险追问")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::AddCustomMinuteSection {
+                                                heading: "关键风险追问".to_string(),
+                                            },
+                                            "已新增自定义纪要分节「关键风险追问」并重算 6 宫格卡片",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    ),
+            )
+            .child(custom_list)
+    }
+
+    fn render_aliyun_mcp_console(&self, cx: &mut Context<Self>) -> Div {
+        let proj = &self.projection;
+        let ds = &proj.aliyun_mcp.dashscope;
+        let key_badge = if ds.api_key_configured {
+            "环境凭据已就绪 (脱敏布尔态)"
+        } else {
+            "离线本地兜底 (未设 DASHSCOPE_API_KEY)"
+        };
+        let ws_badge = if ds.cloud_ws_attached {
+            "云端 WS 已挂载"
+        } else {
+            "本机流式泵自驱"
+        };
+        let mode_label = match proj.aliyun_mcp.pairing_mode {
+            McpPairingMode::Lan => "LAN 局域网直连",
+            McpPairingMode::Vps => "VPS 隧道穿透",
+        };
+        let ticket_preview = proj
+            .aliyun_mcp
+            .pairing_ticket
+            .as_deref()
+            .unwrap_or("尚未签发 KOEMCP1 配对票据");
+
+        let mut copilot_turns = div().flex().flex_col().gap_1p5();
+        if proj.aliyun_mcp.copilot_history.is_empty() {
+            copilot_turns = copilot_turns.child(
+                div()
+                    .text_size(px(AppFontSizes::XS))
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                    .child("暂无多轮问答记录，可点击右侧按钮发起基于 BM25 与 [S1..Sn] 原话引用的追问。"),
+            );
+        } else {
+            for (idx, turn) in proj.aliyun_mcp.copilot_history.iter().enumerate() {
+                let cites: Vec<String> = turn.citations.iter().map(|c| format!("[{c}]")).collect();
+                copilot_turns = copilot_turns.child(
+                    div()
+                        .p_2()
+                        .rounded(px(AppRadii::CONTROL))
+                        .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                        .border_1()
+                        .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(AppFontSizes::XS))
+                                        .font_bold()
+                                        .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                        .child(format!("第 {} 轮提问：{}", idx + 1, turn.prompt)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(AppFontSizes::XS))
+                                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                        .child(format!(
+                                            "引用 {} 处 {}",
+                                            turn.citations.len(),
+                                            cites.join(" ")
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                .child(turn.answer.clone()),
+                        ),
+                );
+            }
+        }
+
+        div()
+            .p_3()
+            .rounded(px(AppRadii::CARD))
+            .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::MD))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child("私有阿里云百炼与本机 MCP / ACP 控制台"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .child(
+                                Button::new("btn-aliyun-sync-hotwords")
+                                    .small()
+                                    .label("同步 qwennote 热词")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::SyncHotWords {
+                                                hotwords: vec![
+                                                    "海外渠道".to_string(),
+                                                    "心力豆".to_string(),
+                                                    "D3200".to_string(),
+                                                    "paraformer".to_string(),
+                                                ],
+                                                speaker_aliases: vec![(
+                                                    "Speaker 1".to_string(),
+                                                    "张工".to_string(),
+                                                )],
+                                            },
+                                            "已同步私有阿里云 qwennote-minutes 热词与说话人别名",
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-banner-open-mcp-tab")
+                                    .primary()
+                                    .small()
+                                    .label("打开 AI 随心问 & MCP 标签页")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::SelectDetailTab(
+                                                DetailTab::AskAiAndMcp,
+                                            ),
+                                            "已切换到 AI 随心问与阿里云 MCP 面板",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .p_2p5()
+                    .rounded(px(AppRadii::CONTROL))
+                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(format!(
+                                "流式 ASR：{} | 录音文件精转：{} | 状态：{} | 凭据：{}",
+                                ds.streaming_asr_model,
+                                ds.filetrans_asr_model,
+                                ws_badge,
+                                key_badge
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                            .child(format!(
+                                "流式队列帧：{} | 语音窗口提交：{} | 热词数：{} ({})",
+                                ds.queued_asr_frames,
+                                ds.committed_speech_windows,
+                                ds.active_hotword_count,
+                                proj.hot_words.join(" / ")
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(format!(
+                                        "配对模式：{} | 15s live.json 租约代数 #{} (到期时间戳 {}s) | 已处理调用 {} 次",
+                                        mode_label,
+                                        proj.aliyun_mcp.live_generation,
+                                        proj.aliyun_mcp.live_lease_expires_at_epoch_sec,
+                                        proj.mcp_handled_calls
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                    .child(format!("KOEMCP1 票据：{ticket_preview}")),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .child(
+                                Button::new("btn-issue-ticket-lan")
+                                    .small()
+                                    .label("签发 LAN 票据")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        this.dispatch_command(
+                                            WorkspaceCommand::IssuePairingTicket {
+                                                mode: McpPairingMode::Lan,
+                                                email: None,
+                                                now_epoch_sec: now,
+                                            },
+                                            "已签发局域网 KOEMCP1 配对票据",
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-issue-ticket-vps")
+                                    .small()
+                                    .label("签发 VPS 票据")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        this.dispatch_command(
+                                            WorkspaceCommand::IssuePairingTicket {
+                                                mode: McpPairingMode::Vps,
+                                                email: Some("owner@koe.local".to_string()),
+                                                now_epoch_sec: now,
+                                            },
+                                            "已签发 VPS 隧道 KOEMCP1 配对票据",
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-refresh-live-lease")
+                                    .small()
+                                    .label("续期 15s live.json 租约")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        this.dispatch_command(
+                                            WorkspaceCommand::RefreshLiveLease {
+                                                now_epoch_sec: now,
+                                            },
+                                            "已续期 15s live.json 实时广播租约",
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-gen-mcp-stdio-cfg")
+                                    .small()
+                                    .label("生成 --mcp-stdio 配置")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::GenerateMcpStdioConfig,
+                                            "已生成 --mcp-stdio 零配置接入 JSON",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .p_2()
+                    .rounded(px(AppRadii::CONTROL))
+                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                    .text_size(px(AppFontSizes::XS))
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                    .child(proj.aliyun_mcp.mcp_stdio_config_json.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(format!(
+                                "BM25 原话锚点多轮追问历史（共 {} 轮）：",
+                                proj.aliyun_mcp.copilot_history.len()
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .child(
+                                Button::new("btn-mcp-ask-turn-1")
+                                    .small()
+                                    .label("追问：海外渠道结论")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        this.dispatch_command(
+                                            WorkspaceCommand::AskCopilot {
+                                                prompt: "海外渠道样品合同的关键结论是什么？"
+                                                    .to_string(),
+                                                now_epoch_sec: now,
+                                            },
+                                            "已追加多轮追问：海外渠道样品合同结论",
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-mcp-ask-turn-2")
+                                    .small()
+                                    .label("追问：下一步行动项")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        this.dispatch_command(
+                                            WorkspaceCommand::AskCopilot {
+                                                prompt: "下周需要跟进的行动承诺有哪些？"
+                                                    .to_string(),
+                                                now_epoch_sec: now,
+                                            },
+                                            "已追加多轮追问：下周行动承诺",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    ),
+            )
+            .child(copilot_turns)
+    }
+
+    fn render_settings_doctor_console(&self, cx: &mut Context<Self>) -> Div {
+        let proj = &self.projection;
+        let settings = &proj.settings;
+        let wb = &proj.wifi_batch;
+        let phase_label = match wb.phase {
+            WifiBatchPhase::Idle => "空闲待命 (Idle)",
+            WifiBatchPhase::ConnectingWs => "握手中 (ConnectingWs)",
+            WifiBatchPhase::Transferring => "高速快传中 (Transferring)",
+            WifiBatchPhase::Completed => "快传已完成 (Completed)",
+            WifiBatchPhase::Interrupted => "中断已抢救 (Interrupted)",
+            WifiBatchPhase::Failed => "快传异常 (Failed)",
+        };
+        let auto_launch_label = if settings.auto_launch_enabled {
+            "开机自启：已开启"
+        } else {
+            "开机自启：已关闭"
+        };
+        let keep_alive_label = if settings.keep_alive_enabled {
+            "后台常驻保活：已开启"
+        } else {
+            "后台常驻保活：已关闭"
+        };
+        let next_auto_launch = !settings.auto_launch_enabled;
+        let next_keep_alive = !settings.keep_alive_enabled;
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(self.render_pipeline_doctor_card(cx))
+            .child(
                 div()
                     .p_3()
                     .rounded(px(AppRadii::CARD))
@@ -1373,51 +1985,210 @@ impl KoeDesktopApp {
                     .border_1()
                     .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
                     .flex()
-                    .items_center()
-                    .justify_between()
+                    .flex_col()
+                    .gap_2()
                     .child(
                         div()
-                            .text_size(px(AppFontSizes::SM))
-                            .font_semibold()
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child("切换 6 种心力总结格式（零幻觉重算 6 宫格柔彩卡片）："),
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::MD))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child("桌面常驻与开机自启偏好 (持久化至 settings.json)"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_1p5()
+                                    .child({
+                                        let btn = Button::new("btn-toggle-auto-launch")
+                                            .small()
+                                            .label(auto_launch_label);
+                                        let btn = if settings.auto_launch_enabled {
+                                            btn.primary()
+                                        } else {
+                                            btn
+                                        };
+                                        btn.on_click(cx.listener(move |this, _, _, cx| {
+                                            this.dispatch_command(
+                                                WorkspaceCommand::SetAutoLaunch(next_auto_launch),
+                                                format!(
+                                                    "已更新开机自启为：{}",
+                                                    if next_auto_launch { "开启" } else { "关闭" }
+                                                ),
+                                                cx,
+                                            );
+                                        }))
+                                    })
+                                    .child({
+                                        let btn = Button::new("btn-toggle-keep-alive")
+                                            .small()
+                                            .label(keep_alive_label);
+                                        let btn = if settings.keep_alive_enabled {
+                                            btn.primary()
+                                        } else {
+                                            btn
+                                        };
+                                        btn.on_click(cx.listener(move |this, _, _, cx| {
+                                            this.dispatch_command(
+                                                WorkspaceCommand::SetKeepAlive(next_keep_alive),
+                                                format!(
+                                                    "已更新后台常驻保活为：{}",
+                                                    if next_keep_alive { "开启" } else { "关闭" }
+                                                ),
+                                                cx,
+                                            );
+                                        }))
+                                    }),
+                            ),
                     )
-                    .child(pills)
-            }
-            WorkspaceSection::AliyunMcp => div()
-                .p_3()
-                .rounded(px(AppRadii::CARD))
-                .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
-                .border_1()
-                .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(px(AppFontSizes::SM))
-                        .font_semibold()
-                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                        .child(format!(
-                            "私有阿里云百炼 (qwen3-asr-flash-realtime) + 本机 MCP 2025-11-25 租约 #{} (已响应 {} 次调用)",
-                            proj.live_generation, proj.mcp_handled_calls
-                        )),
-                )
-                .child(
-                    Button::new("btn-banner-open-mcp-tab")
-                        .primary()
-                        .small()
-                        .label("打开 AI 随心问 & MCP 控制台")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.dispatch_command(
-                                WorkspaceCommand::SelectDetailTab(DetailTab::AskAiAndMcp),
-                                "已切换到 AI 随心问与阿里云 MCP 面板",
-                                cx,
-                            );
-                        })),
-                ),
-            WorkspaceSection::SettingsDoctor => self.render_pipeline_doctor_card(cx),
-        }
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .child(format!(
+                                "配置文件路径：{}",
+                                settings.settings_path_display
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .rounded(px(AppRadii::CARD))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::MD))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child("Wi-Fi SoftAP (1A/05, 192.168.4.1:32002) 批量快传控制台"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_1p5()
+                                    .child(
+                                        Button::new("btn-wifi-start-softap")
+                                            .primary()
+                                            .small()
+                                            .label("启动 1A/05 快传")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let now = Self::now_epoch_sec();
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::ControlWifiSoftApBatch {
+                                                        action:
+                                                            WifiSoftApAction::StartDefaultSoftAp,
+                                                        now_epoch_sec: now,
+                                                    },
+                                                    "已协商 1A/05 热点 192.168.4.1:32002 并启动批量快传",
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("btn-wifi-interrupt")
+                                            .small()
+                                            .label("模拟中断 (95% 抢救)")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let now = Self::now_epoch_sec();
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::ControlWifiSoftApBatch {
+                                                        action: WifiSoftApAction::Interrupt,
+                                                        now_epoch_sec: now,
+                                                    },
+                                                    "已模拟 SoftAP 断连并自动抢救 >=95% 录音文件",
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("btn-wifi-resume-complete")
+                                            .small()
+                                            .label("断点续传并收尾")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let now = Self::now_epoch_sec();
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::ControlWifiSoftApBatch {
+                                                        action: WifiSoftApAction::ResumeAndComplete,
+                                                        now_epoch_sec: now,
+                                                    },
+                                                    "已恢复 SoftAP 批量快传并完成全部文件落盘",
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("btn-wifi-cancel")
+                                            .ghost()
+                                            .small()
+                                            .label("取消快传")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let now = Self::now_epoch_sec();
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::ControlWifiSoftApBatch {
+                                                        action: WifiSoftApAction::Cancel,
+                                                        now_epoch_sec: now,
+                                                    },
+                                                    "已取消 SoftAP 快传并重置为空闲状态",
+                                                    cx,
+                                                );
+                                            })),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .p_2p5()
+                            .rounded(px(AppRadii::CONTROL))
+                            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                            .border_1()
+                            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(format!(
+                                        "SoftAP 端点：{} | 状态：{}",
+                                        settings.softap_endpoint_label, phase_label
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                                    .child(format!(
+                                        "已完成 {}/{} 份 | 95% 抢救 {} 份 | 当前文件字节 {}/{}",
+                                        wb.finalized_count,
+                                        wb.total_files,
+                                        wb.salvaged_count,
+                                        wb.received_wire_bytes,
+                                        wb.expected_wire_bytes
+                                    )),
+                            ),
+                    ),
+            )
     }
 
     fn render_pipeline_doctor_card(&self, cx: &mut Context<Self>) -> Div {
@@ -1518,26 +2289,57 @@ impl KoeDesktopApp {
                     .flex()
                     .items_center()
                     .justify_between()
+                    .gap_2()
                     .child(
                         div()
-                            .text_size(px(AppFontSizes::MD))
-                            .font_semibold()
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child("安克录音豆 D3200 五阶实时链路自检 (Bean Doctor)"),
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::MD))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child("安克录音豆 D3200 五阶实时链路自检 (Bean Doctor)"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                    .child(doc.summary_label_zh.clone()),
+                            ),
                     )
                     .child(
-                        Button::new("btn-doctor-retrigger-1a07")
-                            .primary()
-                            .small()
-                            .label("一键重发 1A/07 (realtimeFlag=1)")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let now_ms = Self::now_epoch_sec().saturating_mul(1_000);
-                                this.dispatch_command(
-                                    WorkspaceCommand::RetriggerRealtimeStream { now_ms },
-                                    "已主动重发 1A/07 (realtimeFlag=1) 实时流订阅帧并唤醒百炼流式泵",
-                                    cx,
-                                );
-                            })),
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .child(
+                                Button::new("btn-doctor-retrigger-1a07")
+                                    .primary()
+                                    .small()
+                                    .label("一键重发 1A/07 (realtimeFlag=1)")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now_ms = Self::now_epoch_sec().saturating_mul(1_000);
+                                        this.dispatch_command(
+                                            WorkspaceCommand::RetriggerRealtimeStream { now_ms },
+                                            "已主动重发 1A/07 (realtimeFlag=1) 实时流订阅帧并唤醒百炼流式泵",
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-doctor-simulate-60-slices")
+                                    .small()
+                                    .label("模拟 60 片 Opus 实时闭环")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::SimulateRealtimePipeline,
+                                            "已执行 60 片 Opus 实时流闭环自检并更新五阶诊断",
+                                            cx,
+                                        );
+                                    })),
+                            ),
                     ),
             )
             .child(row)
@@ -2511,6 +3313,131 @@ fn run_self_check() -> anyhow::Result<()> {
     anyhow::ensure!(
         reopened.ingest_pack_file(&custom_pack) && !reopened.smoke_failed,
         "human-named .koepack file must ingest via content_hash"
+    );
+
+    let tpl_proj = app.apply_command(WorkspaceCommand::SelectMinuteTemplate(
+        BuiltinTemplateId::Fishbone,
+    ));
+    anyhow::ensure!(
+        tpl_proj.formats.active_template == BuiltinTemplateId::Fishbone
+            && !tpl_proj.formats.custom_sections.is_empty()
+            && tpl_proj
+                .formats
+                .custom_sections
+                .iter()
+                .all(|s| !s.points.is_empty() && !s.points[0].citations.is_empty())
+            && tpl_proj.visual_cards.len() == 6,
+        "SelectMinuteTemplate(Fishbone) must update active_template, populate grounded custom_sections, and recompute 6 visual_cards"
+    );
+
+    let add_sec_proj = app.apply_command(WorkspaceCommand::AddCustomMinuteSection {
+        heading: "客户原声锚点".to_string(),
+    });
+    anyhow::ensure!(
+        add_sec_proj
+            .formats
+            .custom_sections
+            .iter()
+            .any(|s| s.heading == "客户原声锚点")
+            && add_sec_proj.visual_cards.len() == 6,
+        "AddCustomMinuteSection must append custom section heading and recompute 6 visual_cards"
+    );
+    let rm_sec_proj = app.apply_command(WorkspaceCommand::RemoveCustomMinuteSection {
+        heading: "客户原声锚点".to_string(),
+    });
+    anyhow::ensure!(
+        !rm_sec_proj
+            .formats
+            .custom_sections
+            .iter()
+            .any(|s| s.heading == "客户原声锚点")
+            && rm_sec_proj.visual_cards.len() == 6,
+        "RemoveCustomMinuteSection must remove custom section heading and recompute 6 visual_cards"
+    );
+
+    let pair_proj = app.apply_command(WorkspaceCommand::IssuePairingTicket {
+        mode: McpPairingMode::Vps,
+        email: Some("owner@example.com".to_string()),
+        now_epoch_sec: now + 10,
+    });
+    anyhow::ensure!(
+        pair_proj.aliyun_mcp.pairing_mode == McpPairingMode::Vps
+            && pair_proj
+                .aliyun_mcp
+                .pairing_ticket
+                .as_deref()
+                .is_some_and(|t| t.starts_with(PAIRING_TICKET_PREFIX))
+            && pair_proj
+                .aliyun_mcp
+                .mcp_stdio_config_json
+                .contains("--mcp-stdio"),
+        "IssuePairingTicket must issue KOEMCP1. ticket and expose --mcp-stdio config JSON"
+    );
+    let _ = app.apply_command(WorkspaceCommand::GenerateMcpStdioConfig);
+    let _ = app.apply_command(WorkspaceCommand::AskCopilot {
+        prompt: "海外渠道样品合同的关键结论是什么？".to_string(),
+        now_epoch_sec: now + 11,
+    });
+    let copilot_proj = app.apply_command(WorkspaceCommand::AskCopilot {
+        prompt: "下周需要跟进的行动承诺有哪些？".to_string(),
+        now_epoch_sec: now + 12,
+    });
+    anyhow::ensure!(
+        copilot_proj.aliyun_mcp.copilot_history.len() >= 2
+            && copilot_proj
+                .aliyun_mcp
+                .copilot_history
+                .iter()
+                .all(|turn| !turn.citations.is_empty()),
+        "two consecutive AskCopilot commands must populate copilot_history.len() >= 2 with grounded [S1..Sn] citations"
+    );
+
+    let _ = app.apply_command(WorkspaceCommand::SetAutoLaunch(true));
+    let settings_proj = app.apply_command(WorkspaceCommand::SetKeepAlive(false));
+    let settings_file = temp_dir.join("settings.json");
+    anyhow::ensure!(
+        settings_proj.settings.auto_launch_enabled
+            && !settings_proj.settings.keep_alive_enabled
+            && settings_file.exists(),
+        "SetAutoLaunch(true) and SetKeepAlive(false) must update settings snapshot and persist settings.json on disk"
+    );
+
+    let wifi_start_proj = app.apply_command(WorkspaceCommand::ControlWifiSoftApBatch {
+        action: WifiSoftApAction::StartDefaultSoftAp,
+        now_epoch_sec: now + 20,
+    });
+    anyhow::ensure!(
+        wifi_start_proj
+            .settings
+            .softap_endpoint_label
+            .contains("192.168.4.1:32002")
+            && wifi_start_proj.wifi_batch.phase == WifiBatchPhase::Transferring,
+        "StartDefaultSoftAp must bind 192.168.4.1:32002 and enter Transferring phase"
+    );
+    let wifi_int_proj = app.apply_command(WorkspaceCommand::ControlWifiSoftApBatch {
+        action: WifiSoftApAction::Interrupt,
+        now_epoch_sec: now + 21,
+    });
+    anyhow::ensure!(
+        wifi_int_proj.wifi_batch.phase == WifiBatchPhase::Interrupted
+            && wifi_int_proj.wifi_batch.salvaged_count >= 1,
+        "Interrupt must transition to Interrupted and salvage >=95% file"
+    );
+    let wifi_done_proj = app.apply_command(WorkspaceCommand::ControlWifiSoftApBatch {
+        action: WifiSoftApAction::ResumeAndComplete,
+        now_epoch_sec: now + 22,
+    });
+    anyhow::ensure!(
+        wifi_done_proj.wifi_batch.phase == WifiBatchPhase::Completed,
+        "ResumeAndComplete must transition to Completed"
+    );
+    let wifi_cancel_proj = app.apply_command(WorkspaceCommand::ControlWifiSoftApBatch {
+        action: WifiSoftApAction::Cancel,
+        now_epoch_sec: now + 23,
+    });
+    anyhow::ensure!(
+        wifi_cancel_proj.wifi_batch.phase == WifiBatchPhase::Idle,
+        "Cancel must transition to Idle"
     );
 
     let _ = fs::remove_dir_all(&temp_dir);
