@@ -1,6 +1,6 @@
 [package]
 name = "koe_core"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
 description = "Safe Rust kernel for Koe D3200 BLE framing, HKDF/AES-CTR stream decryption, Ogg Opus muxing, and WAV PCM16 framing."
 license = "MIT"
