@@ -12,6 +12,15 @@ from typing import Any
 
 ALLOWED_FONT_SIZES = {12.0, 14.0, 16.0, 22.0}
 
+REQUIRED_EDITORIAL_FILLS = (
+    "0xFFFCEEE5",
+    "0xFFDFEFCD",
+    "0xFFFAECEF",
+    "0xFFFAF7EB",
+    "0xFFECF6FA",
+    "0xFFECEFFA",
+)
+
 SLICE_SCOPES = {
     "slice-b": [
         "desktop/app/src/theme.rs",
@@ -25,12 +34,22 @@ SLICE_SCOPES = {
         "desktop/app/src/theme.rs",
         "desktop/app/src/main.rs",
     ],
+    "slice-r": [
+        "desktop/app/src/theme.rs",
+        "desktop/app/src/main.rs",
+    ],
 }
 
 RUST_TOKEN_KEY_MAP = {
     "ACCENT": "accent",
+    "ORANGE_BRAND": "orangeBrand",
+    "ORANGE_ACTION": "orangeAction",
+    "ORANGE_DEEP": "orangeDeep",
+    "ORANGE_TINT": "orangeTint",
+    "ORANGE_BORDER": "orangeBorder",
     "SURFACE_0": "surface0",
     "SURFACE_1": "surface1",
+    "BG_CARD": "bgCard",
     "BG_CARD_HOVER": "bgCardHover",
     "BG_PANEL": "bgPanel",
     "BG_SUBTLE": "bgSubtle",
@@ -76,7 +95,7 @@ def hue_sat_val(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
     return h * 360.0, s, v
 
 
-def check_theme_file(theme_text: str) -> dict[str, Any]:
+def check_palette(theme_text: str) -> dict[str, Any]:
     violations: list[str] = []
     tokens: dict[str, str] = {}
     for m in re.finditer(
@@ -90,6 +109,11 @@ def check_theme_file(theme_text: str) -> dict[str, Any]:
     ):
         key = RUST_TOKEN_KEY_MAP.get(m.group(1), m.group(1).lower())
         tokens[key] = m.group(2).replace("_", "")
+
+    if re.search(r"0x[fF]{2}[aA]4472[bB]\b", theme_text):
+        violations.append("Principle 6 violation: theme contains legacy terracotta 0xFFA4472B")
+    if re.search(r"0x[fF]{2}0066[cC]{2}\b", theme_text):
+        violations.append("Principle 6 violation: theme contains legacy bright blue 0xFF0066CC")
 
     accent_hex = tokens.get("accent")
     accent_info: dict[str, Any] = {}
@@ -106,52 +130,98 @@ def check_theme_file(theme_text: str) -> dict[str, Any]:
             "value": round(val, 3),
             "white_contrast": white_contrast,
         }
-        if 8.0 <= hue <= 45.0 and sat >= 0.35:
+        if accent_hex.upper() == "0XFFA4472B":
             violations.append(
-                f"Principle 6 violation: AppColors.accent ({accent_hex}, hue={hue:.1f} deg) is in orange/terracotta range"
+                f"Principle 6 violation: AppColors.accent ({accent_hex}) is legacy terracotta"
             )
         if 200.0 <= hue <= 230.0 and sat > 0.60:
             violations.append(
                 f"Principle 6 violation: AppColors.accent ({accent_hex}, hue={hue:.1f} deg, sat={sat:.2f}) is legacy bright blue"
             )
-        if white_contrast < 4.5:
+        if not (10.0 <= hue <= 28.0 and sat >= 0.70):
             violations.append(
-                f"Principle 7 violation: white on AppColors.accent ({accent_hex}) contrast is {white_contrast}:1 (< 4.5:1)"
+                f"Principle 6 violation: AppColors.accent ({accent_hex}, hue={hue:.1f} deg, sat={sat:.2f}) is not Vecta Illinois Orange"
+            )
+        if white_contrast < 4.25:
+            violations.append(
+                f"Principle 7 violation: white on AppColors.accent ({accent_hex}) contrast is {white_contrast}:1 (< 4.25:1 action orange floor)"
             )
 
-    warm_gray_keys = [
+    brand_hex = tokens.get("orangeBrand")
+    if not brand_hex:
+        violations.append("Principle 6 violation: missing AppColors::ORANGE_BRAND constant")
+    else:
+        b_rgb = parse_hex_color(brand_hex)
+        b_hue, b_sat, _ = hue_sat_val(b_rgb)
+        if brand_hex.upper() != "0XFFFF5F05" or not (15.0 <= b_hue <= 28.0 and b_sat >= 0.85):
+            violations.append(
+                f"Principle 6 violation: ORANGE_BRAND ({brand_hex}) must be Illinois Orange 0xFFFF5F05"
+            )
+
+    if tokens.get("surface0", "").upper() != "0XFFFAFAFA":
+        violations.append(
+            f"Principle 6 violation: SURFACE_0 ({tokens.get('surface0')}) must be 0xFFFAFAFA"
+        )
+    if tokens.get("bgPanel", "").upper() != "0XFFF0F0F2":
+        violations.append(
+            f"Principle 6 violation: BG_PANEL ({tokens.get('bgPanel')}) must be 0xFFF0F0F2"
+        )
+
+    neutral_keys = [
         "surface0",
-        "surface1",
-        "bgCardHover",
         "bgPanel",
+        "surface1",
         "bgSubtle",
+        "bgCardHover",
         "bgMuted",
-        "borderSoft",
         "border",
-        "borderStrong",
-        "borderSelected",
+        "borderSoft",
         "textPrimary",
         "textSecondary",
         "textMuted",
     ]
-    for key in warm_gray_keys:
+    for key in neutral_keys:
         hx = tokens.get(key)
         if not hx:
+            violations.append(f"Principle 6 violation: missing neutral token {key}")
             continue
         r, g, b = parse_hex_color(hx)
-        if not (r >= g >= b) or (r - b > 25):
+        if abs(r - b) > 12 or abs(r - g) > 12:
             violations.append(
-                f"Principle 6 violation: {key} ({hx}) is not a warm neutral gray (R={r}, G={g}, B={b})"
+                f"Principle 6 violation: {key} ({hx}) is not a Vecta neutral gray (R={r}, G={g}, B={b})"
             )
 
-    if "surface0" in tokens and "textMuted" in tokens:
-        s0 = parse_hex_color(tokens["surface0"])
-        tm = parse_hex_color(tokens["textMuted"])
-        cr = round(contrast_ratio(s0, tm), 2)
-        if cr < 4.5:
-            violations.append(
-                f"Principle 7 violation: textMuted on surface0 contrast is {cr}:1 (< 4.5:1)"
-            )
+    for surf_key in ("surface0", "surface1"):
+        if surf_key not in tokens:
+            continue
+        s_rgb = parse_hex_color(tokens[surf_key])
+        for txt_key in ("textPrimary", "textSecondary", "textMuted"):
+            if txt_key not in tokens:
+                continue
+            t_rgb = parse_hex_color(tokens[txt_key])
+            cr = round(contrast_ratio(s_rgb, t_rgb), 2)
+            if cr < 4.5:
+                violations.append(
+                    f"Principle 7 violation: {txt_key} on {surf_key} contrast is {cr}:1 (< 4.5:1)"
+                )
+
+    if "AIVisualEditorialPalette" not in theme_text:
+        violations.append("Principle 6 violation: missing AIVisualEditorialPalette in theme file")
+    else:
+        text_primary_rgb = parse_hex_color(tokens.get("textPrimary", "0xFF171719"))
+        upper_theme = theme_text.upper()
+        for fill_hex in REQUIRED_EDITORIAL_FILLS:
+            if fill_hex.upper() not in upper_theme:
+                violations.append(
+                    f"Principle 6 violation: AIVisualEditorialPalette missing soft role fill {fill_hex}"
+                )
+            else:
+                fill_rgb = parse_hex_color(fill_hex)
+                cr = round(contrast_ratio(fill_rgb, text_primary_rgb), 2)
+                if cr < 7.0:
+                    violations.append(
+                        f"Principle 7 violation: editorial fill {fill_hex} vs TEXT_PRIMARY contrast is {cr}:1 (< 7.0:1)"
+                    )
 
     if "class AppFontSizes" not in theme_text and "pub struct AppFontSizes" not in theme_text:
         violations.append("Principle 7 violation: missing AppFontSizes 4-size scale in theme file")
@@ -191,6 +261,10 @@ def check_theme_file(theme_text: str) -> dict[str, Any]:
         "accent": accent_info,
         "violations": violations,
     }
+
+
+def check_theme_file(theme_text: str) -> dict[str, Any]:
+    return check_palette(theme_text)
 
 
 TOKEN_FONT_SIZES = {
@@ -416,7 +490,7 @@ def main() -> int:
     parser.add_argument("--root", default=".", help="Repository root path")
     parser.add_argument(
         "--mode",
-        choices=["audit", "slice-b", "slice-c", "slice-d", "all"],
+        choices=["audit", "slice-b", "slice-c", "slice-d", "slice-r", "all"],
         default="audit",
         help="Verification mode (`audit` exits 0 and writes baseline/report; slice modes enforce 0 violations)",
     )

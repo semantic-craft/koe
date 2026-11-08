@@ -17,8 +17,11 @@ pub use koe_protocol_kernel::cicada::{
 };
 pub use koe_protocol_kernel::commands::DeviceCommands;
 pub use koe_protocol_kernel::context::{
-    filter_open_mine_todos, sort_context_timeline, ContextEvent, ContextOutcome, ContextReducer,
-    ContextSearchIndex, ContextState, ScoringMode,
+    build_morning_brief, compute_project_progress, filter_open_mine_todos, format_coarse_place,
+    pack_context_source_lines, select_focus_project, sort_context_timeline, sort_todos,
+    ContextEvent, ContextOutcome, ContextReducer, ContextSearchIndex, ContextState, DiaryDraft,
+    DiaryEntry, DiaryPeriod, MorningBrief, Project, ProjectProgress, ProjectStatus, ScoringMode,
+    SourceLine, SourcePointer, TimelineEntry,
 };
 pub use koe_protocol_kernel::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 pub use koe_protocol_kernel::domain::{
@@ -366,6 +369,340 @@ pub struct DesktopHostSnapshot {
     pub active_aggregate: RecordingAggregate,
 }
 
+/// Extension trait providing deterministic highlight window calculation on [`SliceMark`].
+pub trait SliceMarkHighlightExt {
+    /// Computes the `(start_ms, end_ms)` highlight window around `mark_ms` with `half_window_ms` radius,
+    /// clamped to `[0, duration_ms]` when `duration_ms > 0`.
+    #[must_use]
+    fn highlight_window(mark_ms: u64, half_window_ms: u64, duration_ms: u64) -> (u64, u64);
+}
+
+impl SliceMarkHighlightExt for SliceMark {
+    fn highlight_window(mark_ms: u64, half_window_ms: u64, duration_ms: u64) -> (u64, u64) {
+        let start_ms = mark_ms.saturating_sub(half_window_ms);
+        let raw_end_ms = mark_ms.saturating_add(half_window_ms);
+        let end_ms = if duration_ms > 0 {
+            raw_end_ms.min(duration_ms.max(mark_ms))
+        } else {
+            raw_end_ms
+        };
+        (start_ms, end_ms)
+    }
+}
+
+/// Primary navigation section in the Vecta editorial desktop workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkspaceSection {
+    /// Daily voice mind capture, morning brief, focus project, and grounded diary (`"随心记录"`).
+    #[default]
+    DailyMind,
+    /// Conference minutes, speaker attribution, and action tracking (`"顺带会议"`).
+    Conferences,
+    /// Summary format gallery and 6-role editorial card synthesizer (`"心力格式"`).
+    Formats,
+    /// Aliyun DashScope ASR/Tingwu and MCP/ACP bridge (`"阿里云与 MCP"`).
+    AliyunMcp,
+    /// Hardware settings and 5-stage realtime pipeline doctor (`"设置与自检"`).
+    SettingsDoctor,
+}
+
+impl WorkspaceSection {
+    /// Canonical list of all five workspace sections in sidebar display order.
+    pub const ALL: [Self; 5] = [
+        Self::DailyMind,
+        Self::Conferences,
+        Self::Formats,
+        Self::AliyunMcp,
+        Self::SettingsDoctor,
+    ];
+
+    /// Returns the localized Chinese navigation label for this section.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DailyMind => "随心记录",
+            Self::Conferences => "顺带会议",
+            Self::Formats => "心力格式",
+            Self::AliyunMcp => "阿里云与 MCP",
+            Self::SettingsDoctor => "设置与自检",
+        }
+    }
+}
+
+/// Right-hand detail pane tab in the Vecta editorial desktop workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DetailTab {
+    /// Six-role visual editorial summary cards (`"心智总结"`).
+    #[default]
+    VisualSummary,
+    /// Utterance spine transcript and speaker voiceprint replacement (`"逐字原话与声纹"`).
+    TranscriptAndVoiceprint,
+    /// Ask AI Copilot presets, freeform Q&A, and Aliyun/Google MCP tools (`"AI 随心问 & 阿里云 MCP"`).
+    AskAiAndMcp,
+}
+
+impl DetailTab {
+    /// Canonical list of all three detail tabs in header display order.
+    pub const ALL: [Self; 3] = [
+        Self::VisualSummary,
+        Self::TranscriptAndVoiceprint,
+        Self::AskAiAndMcp,
+    ];
+
+    /// Returns the localized Chinese tab label for this detail tab.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::VisualSummary => "心智总结",
+            Self::TranscriptAndVoiceprint => "逐字原话与声纹",
+            Self::AskAiAndMcp => "AI 随心问 & 阿里云 MCP",
+        }
+    }
+}
+
+/// Ranked context search hit with optional [`SegmentId`] spine citation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceSearchHit {
+    /// Indexed document identifier (`doc-1`, `doc-2`, ...).
+    pub doc_id: String,
+    /// Short display title for the matched segment or context item.
+    pub title: String,
+    /// Matched transcript or context text snippet.
+    pub snippet: String,
+    /// BM25 + temporal decay relevance score.
+    pub score: f64,
+    /// Grounded [`SegmentId`] citation when linked to the active [`UtteranceSpine`].
+    pub citation: Option<SegmentId>,
+}
+
+/// Value snapshot of the latest Ask AI Copilot answer card with grounded [`SegmentId`] citations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopilotAnswerCard {
+    /// User prompt or preset query that produced this card.
+    pub prompt: String,
+    /// Assistant answer text grounded in `[S1..Sn]`.
+    pub answer: String,
+    /// Preset chip used to trigger this card, if any.
+    pub preset: Option<CopilotPresetChip>,
+    /// Extracted [`SegmentId`] citations referenced by `answer`.
+    pub citations: Vec<SegmentId>,
+    /// MCP or Google Workspace tools invoked while producing this answer.
+    pub tools_used: Vec<String>,
+    /// Unix epoch timestamp in seconds when this card was generated.
+    pub generated_at_epoch_sec: u64,
+}
+
+/// Value snapshot of a Gemini NotebookLM notebook for UI projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleNotebookSnapshot {
+    /// Notebook identifier.
+    pub id: String,
+    /// Notebook display title.
+    pub title: String,
+    /// Number of grounded sources attached to the notebook.
+    pub source_count: usize,
+    /// Whether the Audio Overview is ready for playback.
+    pub audio_overview_ready: bool,
+    /// Total number of Q&A turns recorded in this notebook.
+    pub qa_count: usize,
+    /// Last updated timestamp in Unix epoch seconds.
+    pub updated_at_epoch_sec: u64,
+}
+
+/// Value snapshot of a Google Keep note for UI projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleKeepNoteSnapshot {
+    /// Keep note identifier.
+    pub id: String,
+    /// Note display title.
+    pub title: String,
+    /// Body text preview.
+    pub body_preview: String,
+    /// Total checklist items in the note.
+    pub checklist_total: usize,
+    /// Completed checklist items in the note.
+    pub checklist_checked: usize,
+    /// Whether the note is pinned.
+    pub pinned: bool,
+    /// Last updated timestamp in Unix epoch seconds.
+    pub updated_at_epoch_sec: u64,
+}
+
+/// Pure immutable UI projection of the entire desktop workspace at a point in time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceProjection {
+    /// Currently selected left-rail navigation section.
+    pub section: WorkspaceSection,
+    /// Currently selected detail pane tab.
+    pub detail_tab: DetailTab,
+    /// Active recording domain aggregate root.
+    pub active_aggregate: RecordingAggregate,
+    /// Six-role visual summary cards for the active recording and format.
+    pub visual_cards: Vec<VisualSummaryCard>,
+    /// Five-stage realtime pipeline diagnostic snapshot.
+    pub doctor: PipelineDoctorSnapshot,
+    /// Grounded morning brief synthesized from open todos, yesterday's context, and diary.
+    pub morning_brief: MorningBrief,
+    /// Currently selected focus project, if any.
+    pub focus_project: Option<Project>,
+    /// Progress snapshot for the active focus project.
+    pub project_progress: ProjectProgress,
+    /// Grounded daily diary entry with `[S1..Sn]` source lines.
+    pub diary_entry: DiaryEntry,
+    /// Chronologically sorted context timeline items.
+    pub timeline: Vec<ContextItem>,
+    /// Filtered open self-assigned todo items.
+    pub open_todos: Vec<TodoItem>,
+    /// Local recording library state snapshot.
+    pub library: LibrarySnapshot,
+    /// On-disk exported `.opus`/`.wav` recordings.
+    pub recordings: Vec<DesktopExportedRecording>,
+    /// Deterministic 48-bar normalized waveform (`18..=96`) derived from active audio and bookmarks.
+    pub waveform_bars_norm: Vec<u8>,
+    /// Highlight windows `(start_ms, end_ms)` (`±10,000 ms`) for each hardware double-tap bookmark.
+    pub bookmark_windows_ms: Vec<(u64, u64)>,
+    /// Current context search query string.
+    pub search_query: String,
+    /// Ranked context search hits for `search_query`.
+    pub search_hits: Vec<WorkspaceSearchHit>,
+    /// Latest Ask AI Copilot answer card, if any.
+    pub copilot_card: Option<CopilotAnswerCard>,
+    /// Latest Google Tasks bidirectional sync report, if any.
+    pub google_sync_report: Option<GoogleTasksSyncReport>,
+    /// Snapshots of Gemini NotebookLM notebooks in the local Google suite store.
+    pub google_notebooks: Vec<GoogleNotebookSnapshot>,
+    /// Snapshots of Google Keep notes in the local Google suite store.
+    pub google_keep_notes: Vec<GoogleKeepNoteSnapshot>,
+    /// Current BLE connection phase tag.
+    pub connection_phase: ConnectionPhaseTag,
+    /// Latest parsed D3200 device telemetry (`01/01`).
+    pub telemetry: Option<DeviceInfoModel>,
+    /// Latest parsed Wi-Fi SoftAP endpoint (`1A/05`).
+    pub wifi_endpoint: Option<WifiEndpoint>,
+    /// Active Wi-Fi SoftAP batch transfer progress.
+    pub wifi_batch: WifiBatchProgress,
+    /// Current `live.json` publication lease generation.
+    pub live_generation: u64,
+    /// Total `.koepack v2` archives registered in `/sync/packs`.
+    pub pack_count: usize,
+    /// Total documents indexed in [`ContextSearchIndex`].
+    pub indexed_context_docs: usize,
+    /// Total MCP/ACP JSON-RPC calls handled.
+    pub mcp_handled_calls: u64,
+    /// Most recent JSON-RPC 2.0 response payload.
+    pub last_jsonrpc_response: String,
+    /// Active hotwords registered for DashScope ASR / Qwen minutes.
+    pub hot_words: Vec<String>,
+    /// Active `(old_speaker, new_speaker)` aliases applied across the workspace.
+    pub speaker_aliases: Vec<(String, String)>,
+}
+
+/// Unidirectional command dispatched from the GPUI view layer to [`DesktopBeanHost::dispatch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceCommand {
+    /// Switches the active [`WorkspaceSection`].
+    SelectSection(WorkspaceSection),
+    /// Switches the active [`DetailTab`].
+    SelectDetailTab(DetailTab),
+    /// Runs the deterministic 60-slice Opus realtime simulation pipeline.
+    SimulateRealtimePipeline,
+    /// Requests a `(0x1A, 0x07)` realtime stream start frame for the active/selected recording.
+    RetriggerRealtimeStream {
+        /// Current monotonic or epoch timestamp in milliseconds.
+        now_ms: u64,
+    },
+    /// Selects recording `id` in the local library and syncs the active aggregate.
+    SelectRecording(u32),
+    /// Seeks playback to `target_ms`.
+    SeekMs(u64),
+    /// Jumps playback to the previous or next double-tap mark.
+    JumpMark(MarkJumpDirection),
+    /// Adds a hardware/UI slice bookmark at `mark_ms` (`±10s` highlight window).
+    AddSliceMark(u64),
+    /// Moves recording `id` to the single-step undo trash.
+    MoveToTrash(u32),
+    /// Restores the most recently trashed recording.
+    UndoTrash,
+    /// Switches the active [`SummaryFormat`] and re-synthesizes the 6 editorial visual cards.
+    SelectSummaryFormat(SummaryFormat),
+    /// Updates the privacy-redacted coarse place label on the active recording aggregate.
+    SetCoarsePlace(Option<String>),
+    /// Appends a finalized utterance segment and indexes it into context, todos, and search.
+    AppendUtterance {
+        /// Finalized transcript text.
+        text: String,
+        /// Segment start offset in milliseconds.
+        start_ms: u64,
+        /// Segment end offset in milliseconds.
+        end_ms: u64,
+        /// ISO language code (`"zh"`, `"en"`, etc.).
+        source_language: String,
+        /// ASR provider or model identifier.
+        provider: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Replaces `old_speaker` with `new_speaker` across `spine`, `minutes`, and `mcp_acp`.
+    ReplaceSpeaker {
+        /// Original speaker label to replace.
+        old_speaker: String,
+        /// Replacement speaker display name.
+        new_speaker: String,
+    },
+    /// Synchronizes custom hotwords and speaker aliases across `minutes`, `spine`, and `mcp_acp`.
+    SyncHotWords {
+        /// Custom vocabulary hotwords.
+        hotwords: Vec<String>,
+        /// Speaker alias pairs `(from, to)`.
+        speaker_aliases: Vec<(String, String)>,
+    },
+    /// Executes a hybrid BM25 + temporal decay search across indexed utterances.
+    SearchContext {
+        /// Search query string.
+        query: String,
+        /// Maximum number of ranked hits to return.
+        limit: usize,
+    },
+    /// Executes a canonical Ask AI Copilot preset chip against the active workspace.
+    RunCopilotPreset {
+        /// Selected preset chip.
+        preset: CopilotPresetChip,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Submits a freeform Ask AI Copilot prompt and synthesizes a grounded answer card.
+    AskCopilot {
+        /// User question or instruction.
+        prompt: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Synchronizes Google Tasks, NotebookLM, and Keep with the local workspace context.
+    SyncGoogleWorkspace {
+        /// Target Google Tasks list identifier (e.g. `"@default"`).
+        tasklist_id: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Exports the current workspace to disk as a `.koepack v2` archive.
+    ExportKoePackV2 {
+        /// Human-readable pack title.
+        title: String,
+        /// ISO-8601 export timestamp string.
+        exported_at_iso: String,
+    },
+    /// Publishes or refreshes the 15-second `live.json` publication lease.
+    RefreshLiveLease {
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Dispatches a raw JSON-RPC 2.0 MCP/ACP request string.
+    DispatchJsonRpc {
+        /// Raw JSON-RPC 2.0 request body.
+        request_json: String,
+    },
+}
+
 /// Stateful desktop host controller combining [`TransportSession`], [`RecordingLibrary`],
 /// [`RecordingAggregate`], [`StreamingAsrPump`], and atomic `.opus`/`.wav` disk export.
 #[derive(Debug, Clone)]
@@ -384,6 +721,17 @@ pub struct DesktopBeanHost {
     asr_pump: StreamingAsrPump,
     export_dir: PathBuf,
     exported_files: Vec<DesktopExportedRecording>,
+    workspace_section: WorkspaceSection,
+    detail_tab: DetailTab,
+    search_query: String,
+    search_hits: Vec<WorkspaceSearchHit>,
+    last_copilot_card: Option<CopilotAnswerCard>,
+    last_google_sync: Option<GoogleTasksSyncReport>,
+    last_jsonrpc_response: String,
+    projects: Vec<Project>,
+    speaker_aliases: Vec<(String, String)>,
+    live_lease_epoch_sec: u64,
+    outbound_ble_frames: Vec<Vec<u8>>,
 }
 
 impl DesktopBeanHost {
@@ -404,6 +752,13 @@ impl DesktopBeanHost {
         export_dir: impl Into<PathBuf>,
         factory: Option<OpusDecoderFactory>,
     ) -> Self {
+        let default_project = Project {
+            id: "proj-suixin-default".to_string(),
+            title: "安克随心记".to_string(),
+            goal: "日常心力记录与录音豆实时转写闭环".to_string(),
+            status: ProjectStatus::Active,
+            created_at_epoch_sec: 1_775_000_000,
+        };
         let mut host = Self {
             session: TransportSession::with_decoder_factory(factory),
             library: RecordingLibrary::new(),
@@ -419,6 +774,17 @@ impl DesktopBeanHost {
             asr_pump: StreamingAsrPump::new("koe-suixin-live-task"),
             export_dir: export_dir.into(),
             exported_files: Vec::new(),
+            workspace_section: WorkspaceSection::DailyMind,
+            detail_tab: DetailTab::VisualSummary,
+            search_query: String::new(),
+            search_hits: Vec::new(),
+            last_copilot_card: None,
+            last_google_sync: None,
+            last_jsonrpc_response: String::new(),
+            projects: vec![default_project],
+            speaker_aliases: Vec::new(),
+            live_lease_epoch_sec: 1_775_000_000,
+            outbound_ble_frames: Vec::new(),
         };
         let _ = host.load_google_suite();
         host
@@ -1484,11 +1850,16 @@ impl DesktopBeanHost {
     fn auto_translate_pending_captions(&mut self, now_ms: u64) {
         let _ = self.reduce_cicada(CicadaEvent::SyncTranslations);
         while let Some(ticket) = self.captions_queue.claim_next(&self.spine, now_ms) {
-            let translated = format!(
-                "[{}] {}",
-                ticket.target_language.to_uppercase(),
-                ticket.source_text
-            );
+            let lang_tag = if ticket.target_language.eq_ignore_ascii_case("en") {
+                "EN"
+            } else if ticket.target_language.eq_ignore_ascii_case("zh") {
+                "ZH"
+            } else if ticket.target_language.eq_ignore_ascii_case("ja") {
+                "JA"
+            } else {
+                ticket.target_language.as_str()
+            };
+            let translated = format!("[{lang_tag}] {}", ticket.source_text);
             let _ = self.captions_queue.complete_translation(
                 &mut self.spine,
                 ticket.generation,
@@ -1507,8 +1878,12 @@ impl DesktopBeanHost {
                 self.active_aggregate.recording_id = format!("rec-{fid}");
             }
         }
-        for &m in &self.session.marks_ms {
-            let _ = self.active_aggregate.add_bookmark(m);
+        if self.session.active_file_id == Some(self.active_aggregate.file_id)
+            || self.active_aggregate.file_id == 0
+        {
+            for &m in &self.session.marks_ms {
+                let _ = self.active_aggregate.add_bookmark(m);
+            }
         }
         if !self.spine.is_empty() {
             self.active_aggregate.spine = self.spine.clone();
@@ -1826,6 +2201,694 @@ impl DesktopBeanHost {
             }
         }
         Ok(())
+    }
+
+    /// Returns the projects tracked in this workspace.
+    #[must_use]
+    pub fn projects(&self) -> &[Project] {
+        &self.projects
+    }
+
+    /// Inserts or updates a [`Project`] by identifier.
+    pub fn upsert_project(&mut self, project: Project) {
+        if let Some(existing) = self.projects.iter_mut().find(|p| p.id == project.id) {
+            *existing = project;
+        } else {
+            self.projects.push(project);
+        }
+    }
+
+    /// Drains all queued outbound BLE TX frames (such as `1A/07` realtime stream requests).
+    pub fn drain_outbound_ble_frames(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.outbound_ble_frames)
+    }
+
+    /// Requests a `(0x1A, 0x07)` realtime stream start frame (`realtime_flag = 1`) for the active
+    /// or selected file ID and primes `asr_pump` and `active_aggregate`.
+    pub fn retrigger_realtime_stream_subscribe(&mut self, now_ms: u64) -> Option<Vec<u8>> {
+        let target_file_id = self
+            .session
+            .active_file_id
+            .or(self.library.selected_id)
+            .or_else(|| {
+                (self.active_aggregate.file_id > 0).then_some(self.active_aggregate.file_id)
+            })
+            .unwrap_or(20_261_108);
+        let frame = self.session.request_realtime_stream(target_file_id)?;
+        self.outbound_ble_frames.push(frame.clone());
+        let now_sec = (now_ms / 1_000).max(1);
+        self.active_aggregate.file_id = target_file_id;
+        self.active_aggregate.recording_id = format!("rec-{target_file_id}");
+        if self.active_aggregate.created_at_epoch_sec == 0 {
+            self.active_aggregate.created_at_epoch_sec = now_sec;
+        }
+        self.active_aggregate
+            .set_phase(RecordingLifecyclePhase::Copying);
+        if !self.asr_pump.run_task_queued {
+            self.asr_pump.run_task_queued = true;
+            let run_json = encode_qwen_stream_run_task_json(
+                &self.asr_pump.task_id,
+                Some("zh"),
+                &self.minutes.hot_words,
+            );
+            self.asr_pump
+                .queue_frame(OutboundAsrWsFrame::TextJson(run_json));
+        }
+        Some(frame)
+    }
+
+    /// Computes the pure [`WorkspaceProjection`] for the current host state using the host's
+    /// latest `live_lease_epoch_sec` (defaulting to `1_775_000_000`).
+    #[must_use]
+    pub fn projection(&self) -> WorkspaceProjection {
+        self.workspace_projection(self.live_lease_epoch_sec.max(1_775_000_000))
+    }
+
+    /// Computes the pure [`WorkspaceProjection`] for the current host state at `now_epoch_sec`.
+    #[must_use]
+    pub fn workspace_projection(&self, now_epoch_sec: u64) -> WorkspaceProjection {
+        let effective_now_sec = now_epoch_sec.max(1_775_000_000);
+        let active_spine = if !self.spine.is_empty() {
+            &self.spine
+        } else {
+            &self.active_aggregate.spine
+        };
+
+        let project_ids: Vec<String> = self.projects.iter().map(|p| p.id.clone()).collect();
+        let rec_start_sec = self
+            .active_aggregate
+            .created_at_epoch_sec
+            .max(effective_now_sec.saturating_sub(3_600));
+        let rec_end_sec = rec_start_sec.saturating_add(self.active_aggregate.duration_ms / 1_000);
+        let timeline_entry = TimelineEntry {
+            id: format!("recording:{}", self.active_aggregate.recording_id),
+            kind: ContextKind::Recording,
+            title: self.minutes.latest_minutes.as_ref().map_or_else(
+                || format!("随心记录 #{}", self.active_aggregate.file_id.max(1)),
+                |m| m.title.clone(),
+            ),
+            start_epoch_sec: Some(rec_start_sec),
+            end_epoch_sec: Some(rec_end_sec),
+            added_at_epoch_sec: rec_start_sec,
+            source: Some(SourcePointer {
+                recording_key: format!("file:{}", self.active_aggregate.file_id),
+                path: None,
+                start_ms: 0,
+                end_ms: Some(self.active_aggregate.duration_ms),
+                line: None,
+            }),
+            location: self.active_aggregate.coarse_place.clone(),
+            topic_ids: Vec::new(),
+            project_ids: project_ids.clone(),
+            user_edited: false,
+            timing_reliable: true,
+            segments: active_spine.segments().to_vec(),
+        };
+        let timeline_entries = vec![timeline_entry];
+
+        let mut todo_projects = std::collections::BTreeMap::new();
+        for todo in &self.context.todos {
+            todo_projects.insert(todo.id.clone(), project_ids.clone());
+        }
+
+        let focus_project = select_focus_project(
+            &self.projects,
+            &timeline_entries,
+            &self.context.todos,
+            &todo_projects,
+        )
+        .or_else(|| self.projects.first().cloned());
+
+        let project_progress = focus_project.as_ref().map_or_else(
+            || ProjectProgress {
+                latest: None,
+                next_todo: None,
+            },
+            |proj| {
+                compute_project_progress(
+                    &proj.id,
+                    &timeline_entries,
+                    &self.context.todos,
+                    &todo_projects,
+                )
+            },
+        );
+
+        let iso_now = format_epoch_sec_iso8601(effective_now_sec);
+        let year = iso_now
+            .get(0..4)
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(2026);
+        let month = iso_now
+            .get(5..7)
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(11);
+        let day = iso_now
+            .get(8..10)
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(8);
+        let period = DiaryPeriod::new_day(year, month, day);
+        let date_key = period.key();
+        let mut diary_entry = DiaryEntry::new(date_key.clone());
+        let source_lines = pack_context_source_lines(&timeline_entries, 12_000);
+        if !source_lines.is_empty() {
+            let fp = period.fingerprint(&source_lines);
+            let _ = diary_entry.begin_generation(&fp, true);
+            let first_tag = &source_lines[0].label;
+            let last_tag = &source_lines[source_lines.len() - 1].label;
+            let first_quote = active_spine
+                .segments()
+                .first()
+                .map_or("随心记录已就绪", |s| s.text.as_str());
+            let body = format!(
+                "【整理】今日随心记与会议脉络已收敛 [{first_tag}] [{last_tag}]\n【原话】「{first_quote}」[{first_tag}]"
+            );
+            diary_entry.complete_generation(
+                body,
+                &source_lines,
+                fp,
+                effective_now_sec,
+            );
+        }
+
+        let today_iso_date = iso_now.get(0..10).unwrap_or("2026-11-08");
+        let morning_brief = build_morning_brief(
+            today_iso_date,
+            effective_now_sec.saturating_add(86_400),
+            &self.context.todos,
+            &timeline_entries,
+            Some(diary_entry.clone()),
+        );
+
+        let timeline = sort_context_timeline(self.context.timeline.clone());
+        let open_todos = filter_open_mine_todos(&self.context.todos);
+
+        let duration_ms = self.active_aggregate.duration_ms;
+        let bookmark_windows_ms: Vec<(u64, u64)> = self
+            .active_aggregate
+            .bookmarks
+            .iter()
+            .map(|&mark_ms| SliceMark::highlight_window(mark_ms, 10_000, duration_ms))
+            .collect();
+
+        let waveform_bars_norm = Self::compute_waveform_bars_norm(
+            active_spine,
+            &self.active_aggregate.bookmarks,
+            duration_ms,
+            self.asr_pump.latest_rms,
+        );
+
+        let google_notebooks: Vec<GoogleNotebookSnapshot> = self
+            .mcp_acp
+            .google_suite
+            .notebooks
+            .values()
+            .map(|nb| GoogleNotebookSnapshot {
+                id: nb.id.0.clone(),
+                title: nb.title.clone(),
+                source_count: nb.sources.len(),
+                audio_overview_ready: nb
+                    .audio_overviews
+                    .iter()
+                    .any(|ao| matches!(ao.status, NotebookAudioOverviewStatus::Ready)),
+                qa_count: nb.qa_history.len(),
+                updated_at_epoch_sec: nb.updated_at_epoch_sec,
+            })
+            .collect();
+
+        let google_keep_notes: Vec<GoogleKeepNoteSnapshot> = self
+            .mcp_acp
+            .google_suite
+            .keep_notes
+            .values()
+            .map(|note| {
+                let checklist_total = note.checklist.len();
+                let checklist_checked = note.checklist.iter().filter(|i| i.checked).count();
+                GoogleKeepNoteSnapshot {
+                    id: note.id.0.clone(),
+                    title: note.title.clone(),
+                    body_preview: note.body_text.clone(),
+                    checklist_total,
+                    checklist_checked,
+                    pinned: note.pinned,
+                    updated_at_epoch_sec: note.updated_at_epoch_sec,
+                }
+            })
+            .collect();
+
+        let active_recordings: Vec<DesktopExportedRecording> = self
+            .library
+            .entries
+            .iter()
+            .filter_map(|e| self.exported_files.iter().find(|r| r.entry.id == e.id).cloned())
+            .collect();
+
+        WorkspaceProjection {
+            section: self.workspace_section,
+            detail_tab: self.detail_tab,
+            active_aggregate: self.active_aggregate.clone(),
+            visual_cards: self.active_aggregate.visual_cards.clone(),
+            doctor: self.pipeline_doctor_snapshot(),
+            morning_brief,
+            focus_project,
+            project_progress,
+            diary_entry,
+            timeline,
+            open_todos,
+            library: LibrarySnapshot {
+                entry_count: self.library.entries.len(),
+                selected_id: self.library.selected_id,
+                position_ms: self.library.position_ms,
+                is_playing: self.library.is_playing,
+                last_trashed_id: self.library.trashed_entry.as_ref().map(|e| e.id),
+            },
+            recordings: active_recordings,
+            waveform_bars_norm,
+            bookmark_windows_ms,
+            search_query: self.search_query.clone(),
+            search_hits: self.search_hits.clone(),
+            copilot_card: self.last_copilot_card.clone(),
+            google_sync_report: self.last_google_sync.clone(),
+            google_notebooks,
+            google_keep_notes,
+            connection_phase: self.session.connection_phase,
+            telemetry: self.session.telemetry.clone(),
+            wifi_endpoint: self.session.wifi_endpoint,
+            wifi_batch: self.session.wifi_batch_progress(),
+            live_generation: self.mcp_acp.live_lease.map_or(0, |l| l.generation),
+            pack_count: self.mcp_acp.pack_count(),
+            indexed_context_docs: self.search_index.doc_count(),
+            mcp_handled_calls: self.mcp_acp.handled_calls,
+            last_jsonrpc_response: self.last_jsonrpc_response.clone(),
+            hot_words: self.minutes.hot_words.clone(),
+            speaker_aliases: self.speaker_aliases.clone(),
+        }
+    }
+
+    /// Executes a unidirectional [`WorkspaceCommand`], keeping `active_aggregate`, `library`,
+    /// `search_index`, `mcp_acp`, and `live.json` in lockstep, and returns the updated [`WorkspaceProjection`].
+    pub fn dispatch(&mut self, cmd: WorkspaceCommand, now_epoch_sec: u64) -> WorkspaceProjection {
+        let effective_now_sec = now_epoch_sec.max(1);
+        self.live_lease_epoch_sec = self.live_lease_epoch_sec.max(effective_now_sec);
+
+        match cmd {
+            WorkspaceCommand::SelectSection(section) => {
+                self.workspace_section = section;
+            }
+            WorkspaceCommand::SelectDetailTab(tab) => {
+                self.detail_tab = tab;
+            }
+            WorkspaceCommand::SimulateRealtimePipeline => {
+                let exported = self.simulate_realtime_pipeline(effective_now_sec);
+                if self.spine.is_empty() {
+                    let _ = self.ingest_utterance_with_context(
+                        "录音豆 60 片 Opus 实时流闭环自检完成，待办跟进双击标记 300ms 与 900ms 验收。",
+                        0,
+                        exported.entry.duration_ms.max(1_200),
+                        "zh",
+                        self.asr_pump.model.clone(),
+                        effective_now_sec,
+                    );
+                }
+                let _ = self.refresh_live_publication(effective_now_sec);
+            }
+            WorkspaceCommand::RetriggerRealtimeStream { now_ms } => {
+                let _ = self.retrigger_realtime_stream_subscribe(now_ms);
+            }
+            WorkspaceCommand::SelectRecording(id) => {
+                if self.select_recording(id) {
+                    if let Some(entry) = self.library.entries.iter().find(|e| e.id == id).cloned()
+                    {
+                        self.active_aggregate.file_id = entry.id;
+                        self.active_aggregate.recording_id = format!("rec-{}", entry.id);
+                        self.active_aggregate.created_at_epoch_sec = entry.created_at_epoch_sec;
+                        self.active_aggregate.duration_ms = entry.duration_ms;
+                        self.active_aggregate.bookmarks.clear();
+                        for m in entry.marks_ms {
+                            let _ = self.active_aggregate.add_bookmark(m);
+                        }
+                        self.sync_active_aggregate();
+                    }
+                }
+            }
+            WorkspaceCommand::SeekMs(target_ms) => {
+                let _ = self.seek_ms(target_ms);
+            }
+            WorkspaceCommand::JumpMark(direction) => {
+                let _ = self.jump_to_mark(direction);
+            }
+            WorkspaceCommand::AddSliceMark(mark_ms) => {
+                let _ = self.active_aggregate.add_bookmark(mark_ms);
+                self.active_aggregate.duration_ms = self
+                    .active_aggregate
+                    .duration_ms
+                    .max(mark_ms.saturating_add(10_000));
+                if let Some(sel_id) = self.library.selected_id {
+                    if let Some(entry) = self.library.entries.iter_mut().find(|e| e.id == sel_id) {
+                        if !entry.marks_ms.contains(&mark_ms) {
+                            entry.marks_ms.push(mark_ms);
+                            entry.marks_ms.sort_unstable();
+                        }
+                        entry.duration_ms =
+                            entry.duration_ms.max(self.active_aggregate.duration_ms);
+                    }
+                }
+            }
+            WorkspaceCommand::MoveToTrash(id) => {
+                if self.move_to_trash(id) {
+                    if let Some(sel_id) = self.library.selected_id {
+                        if let Some(entry) =
+                            self.library.entries.iter().find(|e| e.id == sel_id).cloned()
+                        {
+                            self.active_aggregate.file_id = entry.id;
+                            self.active_aggregate.recording_id = format!("rec-{}", entry.id);
+                            self.active_aggregate.created_at_epoch_sec = entry.created_at_epoch_sec;
+                            self.active_aggregate.duration_ms = entry.duration_ms;
+                            self.active_aggregate.bookmarks.clear();
+                            for m in entry.marks_ms {
+                                let _ = self.active_aggregate.add_bookmark(m);
+                            }
+                        }
+                    } else if self.active_aggregate.file_id == id {
+                        self.active_aggregate.file_id = 0;
+                        self.active_aggregate.recording_id = "rec-desktop-default".to_string();
+                        self.active_aggregate.bookmarks.clear();
+                        self.active_aggregate.duration_ms = 0;
+                    }
+                }
+            }
+            WorkspaceCommand::UndoTrash => {
+                if self.undo_trash() {
+                    if let Some(sel_id) = self.library.selected_id {
+                        if let Some(entry) =
+                            self.library.entries.iter().find(|e| e.id == sel_id).cloned()
+                        {
+                            self.active_aggregate.file_id = entry.id;
+                            self.active_aggregate.recording_id = format!("rec-{}", entry.id);
+                            self.active_aggregate.created_at_epoch_sec = entry.created_at_epoch_sec;
+                            self.active_aggregate.duration_ms = entry.duration_ms;
+                            self.active_aggregate.bookmarks.clear();
+                            for m in entry.marks_ms {
+                                let _ = self.active_aggregate.add_bookmark(m);
+                            }
+                        }
+                    }
+                }
+            }
+            WorkspaceCommand::SelectSummaryFormat(format) => {
+                self.set_summary_format(format);
+                self.ensure_six_editorial_cards();
+            }
+            WorkspaceCommand::SetCoarsePlace(place) => {
+                let sanitized = place.as_deref().and_then(|raw| {
+                    let parts: Vec<&str> = raw
+                        .split(|c: char| c.is_whitespace() || matches!(c, ',' | '，' | '、' | '/'))
+                        .filter(|s| !s.is_empty() && !s.chars().any(|c| c.is_ascii_digit()))
+                        .collect();
+                    format_coarse_place(&parts)
+                });
+                self.active_aggregate.update_coarse_place(sanitized);
+            }
+            WorkspaceCommand::AppendUtterance {
+                text,
+                start_ms,
+                end_ms,
+                source_language,
+                provider,
+                now_epoch_sec: utt_sec,
+            } => {
+                let ts = utt_sec.max(effective_now_sec);
+                let _ = self.ingest_utterance_with_context(
+                    text,
+                    start_ms,
+                    end_ms,
+                    source_language,
+                    provider,
+                    ts,
+                );
+                self.auto_translate_pending_captions(ts.saturating_mul(1_000));
+                let _ = self.refresh_live_publication(ts);
+            }
+            WorkspaceCommand::ReplaceSpeaker {
+                old_speaker,
+                new_speaker,
+            } => {
+                let updated = self.spine.replace_speaker_name(&old_speaker, &new_speaker);
+                if updated == 0
+                    && old_speaker == "Speaker 1"
+                    && self
+                        .spine
+                        .segments()
+                        .first()
+                        .is_some_and(|s| s.speaker.is_none())
+                {
+                    if let Some(first_id) = SegmentId::new(1) {
+                        let _ = self.spine.set_speaker(first_id, Some(new_speaker.clone()));
+                    }
+                }
+                let agg_updated = self
+                    .active_aggregate
+                    .spine
+                    .replace_speaker_name(&old_speaker, &new_speaker);
+                if agg_updated == 0
+                    && old_speaker == "Speaker 1"
+                    && self
+                        .active_aggregate
+                        .spine
+                        .segments()
+                        .first()
+                        .is_some_and(|s| s.speaker.is_none())
+                {
+                    if let Some(first_id) = SegmentId::new(1) {
+                        let _ = self
+                            .active_aggregate
+                            .spine
+                            .set_speaker(first_id, Some(new_speaker.clone()));
+                    }
+                }
+                if let Some(ref mut mins) = self.minutes.latest_minutes {
+                    mins.replace_terms(&[(old_speaker.as_str(), new_speaker.as_str())]);
+                }
+                if !self
+                    .speaker_aliases
+                    .iter()
+                    .any(|(o, n)| o == &old_speaker && n == &new_speaker)
+                {
+                    self.speaker_aliases
+                        .push((old_speaker.clone(), new_speaker.clone()));
+                }
+                let _ = self.mcp_acp.sync_qwennote(
+                    &[],
+                    &[(old_speaker.as_str(), new_speaker.as_str())],
+                    None,
+                );
+                self.sync_active_aggregate();
+            }
+            WorkspaceCommand::SyncHotWords {
+                hotwords,
+                speaker_aliases,
+            } => {
+                let hw_refs: Vec<&str> = hotwords.iter().map(String::as_str).collect();
+                let alias_refs: Vec<(&str, &str)> = speaker_aliases
+                    .iter()
+                    .map(|(a, b)| (a.as_str(), b.as_str()))
+                    .collect();
+                let _ = self.sync_qwennote_hotwords(&hw_refs, &alias_refs);
+                for (from, to) in speaker_aliases {
+                    if !self
+                        .speaker_aliases
+                        .iter()
+                        .any(|(o, n)| o == &from && n == &to)
+                    {
+                        self.speaker_aliases.push((from, to));
+                    }
+                }
+            }
+            WorkspaceCommand::SearchContext { query, limit } => {
+                self.search_query = query.clone();
+                let max_hits = limit.max(1);
+                let raw_hits = self
+                    .search_index
+                    .search(&query, max_hits, ScoringMode::default());
+                let segments = self.spine.segments();
+                self.search_hits = raw_hits
+                    .into_iter()
+                    .map(|hit| {
+                        let matched_seg = segments.get(hit.doc_index);
+                        let citation = matched_seg.map(|s| s.id);
+                        let snippet =
+                            matched_seg.map_or_else(|| query.clone(), |s| s.text.clone());
+                        let title = citation.map_or_else(
+                            || format!("doc-{}", hit.doc_index + 1),
+                            |cid| format!("原话片段 [{cid}]"),
+                        );
+                        WorkspaceSearchHit {
+                            doc_id: format!("doc-{}", hit.doc_index + 1),
+                            title,
+                            snippet,
+                            score: hit.score,
+                            citation,
+                        }
+                    })
+                    .collect();
+            }
+            WorkspaceCommand::RunCopilotPreset {
+                preset,
+                now_epoch_sec: preset_sec,
+            } => {
+                let ts = preset_sec.max(effective_now_sec);
+                if let Ok(answer) = self.run_copilot_preset(preset, ts) {
+                    let mut citations = extract_segment_citations(&answer);
+                    if citations.is_empty() {
+                        if let Some(first) = self.spine.segments().first() {
+                            citations.push(first.id);
+                        }
+                    }
+                    let tools_used = preset
+                        .default_tool_plan()
+                        .iter()
+                        .map(|t| (*t).to_string())
+                        .collect();
+                    self.last_copilot_card = Some(CopilotAnswerCard {
+                        prompt: preset.label().to_string(),
+                        answer,
+                        preset: Some(preset),
+                        citations,
+                        tools_used,
+                        generated_at_epoch_sec: ts,
+                    });
+                }
+            }
+            WorkspaceCommand::AskCopilot {
+                prompt,
+                now_epoch_sec: ask_sec,
+            } => {
+                let ts = ask_sec.max(effective_now_sec);
+                self.submit_copilot_prompt(&prompt, ts);
+                let first_seg = self.spine.segments().first().cloned();
+                let answer = first_seg.as_ref().map_or_else(
+                    || format!("已记录问题「{prompt}」，等待语音主干输入后生成带 [S1] 锚点的回答。"),
+                    |seg| format!("基于原话 [{}]：「{}」，针对「{prompt}」的结论已就绪。", seg.id, seg.text),
+                );
+                let citations = first_seg.map_or_else(Vec::new, |s| vec![s.id]);
+                self.last_copilot_card = Some(CopilotAnswerCard {
+                    prompt,
+                    answer,
+                    preset: None,
+                    citations,
+                    tools_used: vec!["search_context".to_string()],
+                    generated_at_epoch_sec: ts,
+                });
+            }
+            WorkspaceCommand::SyncGoogleWorkspace {
+                tasklist_id,
+                now_epoch_sec: sync_sec,
+            } => {
+                let ts = sync_sec.max(effective_now_sec);
+                if self.mcp_acp.google_suite.notebooks.is_empty() {
+                    let nb_id = self
+                        .mcp_acp
+                        .google_suite
+                        .create_notebook("安克随心记 每日脉络 Notebook", ts);
+                    let summary_src = self
+                        .spine
+                        .segments()
+                        .first()
+                        .map_or("随心记音频主干摘要", |s| s.text.as_str());
+                    let _ = self.mcp_acp.google_suite.add_notebook_source(
+                        &nb_id,
+                        "当前随心记原话主干",
+                        summary_src,
+                        Some(&self.active_aggregate.recording_id),
+                        ts,
+                    );
+                    let _ = self
+                        .mcp_acp
+                        .google_suite
+                        .generate_notebook_audio_overview(&nb_id, "Executive summary", Some(&self.spine), ts);
+                }
+                if self.mcp_acp.google_suite.keep_notes.is_empty() {
+                    let checklist: Vec<KeepChecklistItem> = self
+                        .context
+                        .todos
+                        .iter()
+                        .map(|t| {
+                            KeepChecklistItem::new(
+                                t.title.clone(),
+                                matches!(t.status, TodoStatus::Done),
+                            )
+                        })
+                        .collect();
+                    let _ = self.mcp_acp.google_suite.create_keep_note(
+                        KeepNoteDraft {
+                            id: None,
+                            title: "随心记重点与待办清单".to_string(),
+                            body_text: "由 Koe 桌面端自动同步的随心记速记卡".to_string(),
+                            checklist,
+                            color: KeepNoteColor::Teal,
+                            pinned: true,
+                            labels: vec!["Koe".to_string(), "随心记".to_string()],
+                        },
+                        ts,
+                    );
+                }
+                let report = self.sync_google_tasks(&tasklist_id, ts);
+                self.last_google_sync = Some(report);
+            }
+            WorkspaceCommand::ExportKoePackV2 {
+                title,
+                exported_at_iso,
+            } => {
+                let _ = self.export_koepack_v2_to_disk(&title, &exported_at_iso);
+            }
+            WorkspaceCommand::RefreshLiveLease {
+                now_epoch_sec: lease_sec,
+            } => {
+                let _ = self.refresh_live_publication(lease_sec.max(effective_now_sec));
+            }
+            WorkspaceCommand::DispatchJsonRpc { request_json } => {
+                if !self.mcp_acp.mcp_ready && !request_json.contains("\"initialize\"") {
+                    let _ = self.dispatch_jsonrpc(
+                        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+                        effective_now_sec,
+                    );
+                }
+                self.last_jsonrpc_response = self
+                    .dispatch_jsonrpc(&request_json, effective_now_sec)
+                    .unwrap_or_default();
+            }
+        }
+
+        self.workspace_projection(effective_now_sec)
+    }
+
+    fn compute_waveform_bars_norm(
+        spine: &UtteranceSpine,
+        bookmarks: &[u64],
+        duration_ms: u64,
+        latest_rms: u16,
+    ) -> Vec<u8> {
+        const BAR_COUNT: usize = 48;
+        let seg_count = spine.len() as u64;
+        let rms_boost = u64::from(latest_rms.min(400)) / 10;
+        let eff_dur = duration_ms.max(1_200);
+        let mut bars = Vec::with_capacity(BAR_COUNT);
+        for idx in 0..BAR_COUNT {
+            let pos_ms = (idx as u64).saturating_mul(eff_dur) / (BAR_COUNT as u64);
+            let near_bookmark = bookmarks
+                .iter()
+                .any(|&bm| bm.abs_diff(pos_ms) <= (eff_dur / 16).max(150));
+            let base = 24u64
+                .saturating_add((idx as u64 * 17 + seg_count * 13) % 42)
+                .saturating_add(rms_boost);
+            let val = if near_bookmark {
+                base.saturating_add(24).min(96)
+            } else {
+                base.clamp(18, 92)
+            };
+            bars.push(val as u8);
+        }
+        bars
     }
 
     fn write_atomic(target: &Path, bytes: &[u8]) {
@@ -2472,6 +3535,172 @@ mod tests {
                 || !matches!(f4, Some(OutboundAsrWsFrame::BinaryPcm16(_))),
             "DashScope protocol violation: BinaryPcm16 audio frame ({f4:?}) was queued AFTER finish-task ({f3:?}) during 2s quiet drain"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn workspace_projection_and_dispatch_drive_all_sections_tabs_and_domain_invariants() {
+        let dir = temp_export_dir("slice-r-workspace-projection");
+        let mut host = DesktopBeanHost::new(&dir);
+        let now_sec = 1_775_000_100;
+
+        let initial = host.projection();
+        assert_eq!(initial.section, WorkspaceSection::DailyMind);
+        assert_eq!(initial.section.label(), "随心记录");
+        assert_eq!(initial.detail_tab, DetailTab::VisualSummary);
+        assert_eq!(initial.detail_tab.label(), "心智总结");
+        assert_eq!(initial.waveform_bars_norm.len(), 48);
+        assert!(initial
+            .waveform_bars_norm
+            .iter()
+            .all(|&bar| (18..=96).contains(&bar)));
+        assert!(initial.focus_project.is_some());
+        assert_eq!(
+            initial.focus_project.as_ref().unwrap().title,
+            "安克随心记"
+        );
+
+        for section in WorkspaceSection::ALL {
+            let proj = host.dispatch(WorkspaceCommand::SelectSection(section), now_sec);
+            assert_eq!(proj.section, section);
+            assert!(!proj.section.label().is_empty());
+        }
+        for tab in DetailTab::ALL {
+            let proj = host.dispatch(WorkspaceCommand::SelectDetailTab(tab), now_sec);
+            assert_eq!(proj.detail_tab, tab);
+            assert!(!proj.detail_tab.label().is_empty());
+        }
+
+        let sim_proj = host.dispatch(WorkspaceCommand::SimulateRealtimePipeline, now_sec);
+        assert!(!sim_proj.recordings.is_empty());
+        assert_eq!(sim_proj.visual_cards.len(), 6);
+        assert!(sim_proj.live_generation >= 1);
+
+        let utt_proj = host.dispatch(
+            WorkspaceCommand::AppendUtterance {
+                text: "周五前提交安克录音豆量产固件压测报告，并同步给硬件团队。".to_string(),
+                start_ms: 1_200,
+                end_ms: 4_800,
+                source_language: "zh".to_string(),
+                provider: "qwen3-asr-flash-realtime".to_string(),
+                now_epoch_sec: now_sec + 5,
+            },
+            now_sec + 5,
+        );
+        assert!(utt_proj.active_aggregate.spine.len() >= 2);
+        assert!(!utt_proj.open_todos.is_empty());
+        assert!(utt_proj.project_progress.next_todo.is_some());
+        assert!(utt_proj.diary_entry.current.is_some());
+        let diary_draft = utt_proj.diary_entry.current.as_ref().unwrap();
+        assert!(diary_draft.text.contains("[S1]"));
+        assert!(!diary_draft.sources.is_empty());
+        assert!(utt_proj.morning_brief.key_points.is_some());
+        assert!(!utt_proj.morning_brief.open_mine.is_empty());
+
+        let _ = host
+            .spine_mut()
+            .set_speaker(SegmentId::new(1).unwrap(), Some("Speaker 1".to_string()));
+        let spk_proj = host.dispatch(
+            WorkspaceCommand::ReplaceSpeaker {
+                old_speaker: "Speaker 1".to_string(),
+                new_speaker: "张工".to_string(),
+            },
+            now_sec + 6,
+        );
+        assert_eq!(
+            spk_proj.active_aggregate.spine.segments()[0]
+                .speaker
+                .as_deref(),
+            Some("张工")
+        );
+        assert!(spk_proj
+            .speaker_aliases
+            .contains(&("Speaker 1".to_string(), "张工".to_string())));
+
+        let hw_proj = host.dispatch(
+            WorkspaceCommand::SyncHotWords {
+                hotwords: vec!["soundcore".to_string(), "D3200".to_string()],
+                speaker_aliases: vec![("Speaker 2".to_string(), "李工".to_string())],
+            },
+            now_sec + 7,
+        );
+        assert!(hw_proj.hot_words.contains(&"soundcore".to_string()));
+        assert!(hw_proj.hot_words.contains(&"D3200".to_string()));
+        assert!(hw_proj
+            .speaker_aliases
+            .contains(&("Speaker 2".to_string(), "李工".to_string())));
+
+        let mark_proj = host.dispatch(WorkspaceCommand::AddSliceMark(15_000), now_sec + 8);
+        assert!(mark_proj.active_aggregate.bookmarks.contains(&15_000));
+        assert!(mark_proj.bookmark_windows_ms.contains(&(5_000, 25_000)));
+
+        let fmt_proj = host.dispatch(
+            WorkspaceCommand::SelectSummaryFormat(SummaryFormat::PersonalReflection),
+            now_sec + 9,
+        );
+        assert_eq!(
+            fmt_proj.active_aggregate.selected_format,
+            SummaryFormat::PersonalReflection
+        );
+        assert_eq!(fmt_proj.visual_cards.len(), 6);
+
+        let place_proj = host.dispatch(
+            WorkspaceCommand::SetCoarsePlace(Some("上海市 静安区".to_string())),
+            now_sec + 10,
+        );
+        assert_eq!(
+            place_proj.active_aggregate.coarse_place.as_deref(),
+            Some("上海市 静安区")
+        );
+
+        let search_proj = host.dispatch(
+            WorkspaceCommand::SearchContext {
+                query: "压测报告".to_string(),
+                limit: 5,
+            },
+            now_sec + 11,
+        );
+        assert_eq!(search_proj.search_query, "压测报告");
+        assert!(!search_proj.search_hits.is_empty());
+        assert!(search_proj.search_hits[0].citation.is_some());
+
+        let copilot_proj = host.dispatch(
+            WorkspaceCommand::RunCopilotPreset {
+                preset: CopilotPresetChip::SummarizeAudioFile,
+                now_epoch_sec: now_sec + 12,
+            },
+            now_sec + 12,
+        );
+        assert!(copilot_proj.copilot_card.is_some());
+        assert!(!copilot_proj
+            .copilot_card
+            .as_ref()
+            .unwrap()
+            .citations
+            .is_empty());
+
+        let gsync_proj = host.dispatch(
+            WorkspaceCommand::SyncGoogleWorkspace {
+                tasklist_id: "@default".to_string(),
+                now_epoch_sec: now_sec + 13,
+            },
+            now_sec + 13,
+        );
+        assert!(gsync_proj.google_sync_report.is_some());
+        assert!(!gsync_proj.google_notebooks.is_empty());
+        assert!(!gsync_proj.google_keep_notes.is_empty());
+
+        let retrigger_proj = host.dispatch(
+            WorkspaceCommand::RetriggerRealtimeStream {
+                now_ms: (now_sec + 14) * 1_000,
+            },
+            now_sec + 14,
+        );
+        assert_eq!(
+            retrigger_proj.active_aggregate.phase,
+            RecordingLifecyclePhase::Copying
+        );
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

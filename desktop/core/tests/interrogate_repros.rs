@@ -330,3 +330,114 @@ fn repro_5_host_short_speech_dropped_on_stop_and_second_recording_leaks_bookmark
         take2_bookmarks
     );
 }
+
+#[test]
+fn repro_6_slice_r_coarse_place_trash_sync_dynamic_date_speaker_and_1a07_tx() {
+    use koe_desktop_core::WorkspaceCommand;
+
+    let dir = temp_dir("repro-6");
+    let mut host = DesktopBeanHost::new(&dir);
+
+    let proj_place = host.dispatch(
+        WorkspaceCommand::SetCoarsePlace(Some(
+            "浙江省 杭州市 西湖区 文三路 478 号".to_string(),
+        )),
+        1_796_256_000,
+    );
+    let sanitized_place = proj_place.active_aggregate.coarse_place.clone();
+
+    let proj_date = host.workspace_projection(1_796_256_000);
+    let brief_date = proj_date.morning_brief.key.clone();
+    let diary_key = proj_date.diary_entry.key.clone();
+
+    let _ = host.dispatch(WorkspaceCommand::SimulateRealtimePipeline, 1_796_256_010);
+    let sim_id = host.projection().library.selected_id.unwrap();
+    let proj_after_trash = host.dispatch(WorkspaceCommand::MoveToTrash(sim_id), 1_796_256_011);
+
+    let mut host_spk = DesktopBeanHost::new(&dir);
+    let s1 = host_spk
+        .ingest_utterance_with_context("Alice 的第一句话", 0, 1_000, "zh", "qwen", 1_796_256_020)
+        .unwrap();
+    let _ = host_spk.spine_mut().set_speaker(s1, Some("Alice".to_string()));
+    let proj_spk = host_spk.dispatch(
+        WorkspaceCommand::ReplaceSpeaker {
+            old_speaker: "Ghost".to_string(),
+            new_speaker: "Bob".to_string(),
+        },
+        1_796_256_021,
+    );
+    let s1_speaker_after_unmatched = proj_spk.active_aggregate.spine.segments()[0]
+        .speaker
+        .clone();
+
+    let mut host_rpc = DesktopBeanHost::new(&dir);
+    let _ = host_rpc.dispatch(
+        WorkspaceCommand::AppendUtterance {
+            text: "测试免手动 initialize 直接调 get_minutes".to_string(),
+            start_ms: 0,
+            end_ms: 1_200,
+            source_language: "zh".to_string(),
+            provider: "qwen".to_string(),
+            now_epoch_sec: 1_796_256_030,
+        },
+        1_796_256_030,
+    );
+    let proj_rpc = host_rpc.dispatch(
+        WorkspaceCommand::DispatchJsonRpc {
+            request_json:
+                r#"{"jsonrpc":"2.0","id":77,"method":"tools/call","params":{"name":"get_minutes","arguments":{}}}"#
+                    .to_string(),
+        },
+        1_796_256_031,
+    );
+
+    let mut host_tx = DesktopBeanHost::new(&dir);
+    let _ = host_tx.dispatch(
+        WorkspaceCommand::RetriggerRealtimeStream {
+            now_ms: 1_796_256_040_000,
+        },
+        1_796_256_040,
+    );
+    let tx_frames = host_tx.drain_outbound_ble_frames();
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        sanitized_place.as_deref(),
+        Some("杭州市 西湖区"),
+        "SetCoarsePlace stored raw street-level PII {:?} instead of sanitizing via format_coarse_place!",
+        sanitized_place
+    );
+    assert_eq!(
+        brief_date, "brief:2026-12-03",
+        "workspace_projection hardcoded 2026-11-08 instead of deriving calendar date from now_epoch_sec!"
+    );
+    assert_eq!(diary_key, "day:2026-12-03");
+    assert_eq!(
+        proj_after_trash.recordings.len(),
+        0,
+        "WorkspaceProjection.recordings still contained trashed recording after MoveToTrash!"
+    );
+    assert_eq!(
+        proj_after_trash.active_aggregate.file_id,
+        0,
+        "active_aggregate.file_id remained pointing to trashed recording {}!",
+        proj_after_trash.active_aggregate.file_id
+    );
+    assert_eq!(
+        s1_speaker_after_unmatched.as_deref(),
+        Some("Alice"),
+        "ReplaceSpeaker with unmatched old_speaker clobbered Alice on S1 with {:?}!",
+        s1_speaker_after_unmatched
+    );
+    assert!(
+        !proj_rpc.last_jsonrpc_response.contains("ServerNotInitialized"),
+        "DispatchJsonRpc failed with ServerNotInitialized when called directly from UI command: {}",
+        proj_rpc.last_jsonrpc_response
+    );
+    assert_eq!(
+        tx_frames.len(),
+        1,
+        "RetriggerRealtimeStream did not queue the 1A/07 outbound BLE frame!"
+    );
+}
