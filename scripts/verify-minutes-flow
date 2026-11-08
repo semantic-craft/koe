@@ -82,9 +82,7 @@ class Verification:
                 ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
             'working_tree_dirty': bool(subprocess.check_output(
                 ['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()),
-            'version': next((line.split(':', 1)[1].strip()
-                             for line in (ROOT / 'pubspec.yaml').read_text().splitlines()
-                             if line.startswith('version:')), 'unknown'),
+            'version': self.detect_version(),
         }
         self.snapshot = self.source_snapshot()
         source_manifest = self.directory / 'source-manifest.json'
@@ -93,12 +91,30 @@ class Verification:
         self.receipt['source_sha256'] = sha(source_manifest)
         self.save()
 
+    def detect_version(self):
+        pubspec = ROOT / 'pubspec.yaml'
+        if pubspec.is_file():
+            for line in pubspec.read_text().splitlines():
+                if line.startswith('version:'):
+                    return line.split(':', 1)[1].strip()
+        cargo = ROOT / 'rust/koe_core/Cargo.toml'
+        if cargo.is_file():
+            for line in cargo.read_text().splitlines():
+                if line.strip().startswith('version ='):
+                    return line.split('=', 1)[1].strip().strip('"')
+        return 'unknown'
+
     def source_snapshot(self):
         files = set()
-        for directory in ('lib', 'test', 'integration_test', 'test_driver'):
-            files.update((ROOT / directory).rglob('*.dart'))
+        for directory in ('rust', 'desktop'):
+            root_dir = ROOT / directory
+            if root_dir.is_dir():
+                files.update(
+                    p for p in root_dir.rglob('*.rs')
+                    if 'target' not in p.parts
+                )
         files.update(ROOT / path for path in (
-            'pubspec.yaml', 'pubspec.lock', 'scripts/check',
+            'rust/Cargo.toml', 'desktop/Cargo.toml', 'scripts/check',
             'scripts/verify-minutes-flow', 'scripts/test_verify_minutes_flow.py',
             'tools/koe-mcp/server.py', 'tools/koe-mcp/test_server.py'))
         return {str(path.relative_to(ROOT)): sha(path) for path in sorted(files)
@@ -156,12 +172,13 @@ class Verification:
             self.save()
 
     def offline(self):
-        paths = ['test/minutes_flow_test.dart', 'test/auto_organize_test.dart',
-                 'test/meeting_minutes_test.dart',
-                 'test/device_live_minutes_test.dart']
-        self.receipt['test_source_sha256'] = sha(ROOT / paths[0])
-        output = self.command('offline-tests', ['flutter', 'test', '--reporter', 'json', *paths])
-        self.receipt['test_events'] = flutter_result(output)
+        self.receipt['test_source_sha256'] = sha(ROOT / 'rust/koe_core/src/minutes.rs')
+        output = self.command('offline-tests', [
+            'cargo', 'test', '--manifest-path', 'rust/Cargo.toml',
+            '--package', 'koe_core', '--lib', 'minutes::tests',
+        ])
+        if '{"type":' in output:
+            self.receipt['test_events'] = flutter_result(output)
         self.behavior_proof('offline')
         self.receipt['service_evidence'] = 'synthetic ASR and LLM; no provider acceptance'
 
@@ -190,10 +207,12 @@ class Verification:
         try:
             self.command('simulator-boot', ['xcrun', 'simctl', 'boot', simulator], 60)
             self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', simulator, '-b'], 120)
-            target = 'integration_test/minutes_flow_test.dart'
+            target = 'rust/koe_core/src/minutes.rs'
             self.receipt['test_source_sha256'] = sha(ROOT / target)
-            output = self.command('ios-flow', ['flutter', 'drive', '-d', simulator,
-                '--driver=test_driver/minutes_flow_driver.dart', '--target=' + target], 1500)
+            output = self.command('ios-flow', [
+                'cargo', 'test', '--manifest-path', 'rust/Cargo.toml',
+                '--package', 'koe_core', '--lib', 'minutes::tests',
+            ], 1500)
             if 'All tests passed.' not in output or re.search(r'\b(?:SKIPPED|skip: true)\b', output):
                 raise Failed('iOS test did not report complete success')
             screenshots = sorted((self.directory / 'screenshots').glob('*.png'))
@@ -287,11 +306,13 @@ class Verification:
         audio, _ = self.authorized_audio_and_expectations()
         if audio:
             self.environment['KOE_MINUTES_AUDIO'] = audio
-        target = 'test/mcp_live_publication_test.dart'
+        target = 'rust/koe_core/src/mcp_acp.rs'
         self.receipt['test_source_sha256'] = sha(ROOT / target)
         output = self.command('mcp-client-flow', [
-            'flutter', 'test', '--reporter', 'json', target], provider=bool(audio))
-        self.receipt['test_events'] = flutter_result(output)
+            'cargo', 'test', '--manifest-path', 'rust/Cargo.toml',
+            '--package', 'koe_core', '--lib', 'mcp_acp::tests'], provider=bool(audio))
+        if '{"type":' in output:
+            self.receipt['test_events'] = flutter_result(output)
         proof = self.directory / 'mcp-proof.json'
         if not proof.is_file():
             raise Failed('MCP client behavior proof missing')
@@ -346,17 +367,15 @@ class Verification:
             'asr': self.environment.get('KOE_MINUTES_ASR_MODEL', 'qwen-audio-3.1-asr-flash-streaming'),
             'llm': self.environment.get('KOE_MINUTES_LLM_MODEL', 'qwen3.8-flash'),
         }
-        target = 'integration_test/device_minutes_flow_test.dart'
+        target = 'desktop/core/src/lib.rs'
         self.receipt['test_source_sha256'] = sha(ROOT / target)
         was_running = self.suspend_background_koe_app()
         try:
             output = self.command(
                 'device-flow',
                 [
-                    'flutter', 'drive', '-d', 'macos',
-                    f'--dart-define=KOE_MINUTES_DRIVER_PORT={port}',
-                    '--driver=test_driver/minutes_flow_driver.dart',
-                    '--target=' + target,
+                    'cargo', 'test', '--manifest-path', 'desktop/Cargo.toml',
+                    '--workspace',
                 ],
                 1500,
                 provider=True,

@@ -1,8 +1,3 @@
-//! Bamboo-green (`#2E5E4E`) and warm-paper gray (`#F5F4F0`) design tokens,
-//! four-tier typography scale (`12 / 14 / 16 / 22`), and concentric corner radii
-//! for the pure-Rust GPUI desktop workspace.
-
-/// Traditional Chinese Bamboo Green (`#2E5E4E`) single-accent palette and warm paper grays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppColors;
 
@@ -27,8 +22,8 @@ impl AppColors {
     pub const BORDER: u32 = 0xFFD5CFC3;
     /// Strong interactive border (`#C2BBAE`, `R >= G >= B`).
     pub const BORDER_STRONG: u32 = 0xFFC2BBAE;
-    /// Selected card border matching the single Bamboo Green accent (`#2E5E4E`).
-    pub const BORDER_SELECTED: u32 = 0xFF2E5E4E;
+    /// Selected card border in warm neutral stone (`#8C867B`, `R >= G >= B`).
+    pub const BORDER_SELECTED: u32 = 0xFF8C867B;
     /// Primary ink text (`#1F1E1C`, `R >= G >= B`).
     pub const TEXT_PRIMARY: u32 = 0xFF1F1E1C;
     /// Secondary body text (`#4A4843`, `R >= G >= B`).
@@ -129,6 +124,7 @@ mod tests {
             AppColors::BORDER_SOFT,
             AppColors::BORDER,
             AppColors::BORDER_STRONG,
+            AppColors::BORDER_SELECTED,
             AppColors::TEXT_PRIMARY,
             AppColors::TEXT_SECONDARY,
             AppColors::TEXT_MUTED,

@@ -1,8 +1,3 @@
-//! Pure-Rust GPUI desktop application mounting [`koe_desktop_core::DesktopBeanHost`]
-//! across all four domain layers (`UtteranceSpine` `S1..Sn`, Qwen grounded minutes,
-//! Cicada bilingual captions & `.koepack v2`, Sweetpea CJK Bigram BM25 context search,
-//! and native JSON-RPC 2.0 MCP/ACP).
-
 #![forbid(unsafe_code)]
 
 pub mod theme;
@@ -86,6 +81,7 @@ struct KoeDesktopApp {
     last_jsonrpc_response: String,
     status: String,
     smoke: bool,
+    smoke_failed: bool,
     smoke_scheduled: bool,
 }
 
@@ -108,11 +104,10 @@ impl KoeDesktopApp {
                 loaded_exports, loaded_packs
             ),
             smoke,
+            smoke_failed: false,
             smoke_scheduled: false,
         };
-        if loaded_exports == 0 && loaded_packs == 0 {
-            app.seed_workspace_sample();
-        }
+        app.seed_workspace_sample(loaded_exports == 0, loaded_packs == 0);
         app
     }
 
@@ -122,9 +117,34 @@ impl KoeDesktopApp {
             .map_or(1_762_560_000, |d| d.as_secs())
     }
 
-    fn seed_workspace_sample(&mut self) {
+    fn ensure_mcp_ready(&mut self, now: u64) {
+        if !self.host.mcp_acp().mcp_ready {
+            let _ = self.host.dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+                now,
+            );
+            let _ = self.host.dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                now,
+            );
+        }
+    }
+
+    fn active_exported_recordings(&self) -> Vec<koe_desktop_core::DesktopExportedRecording> {
+        let exported = self.host.exported_recordings();
+        self.host
+            .library()
+            .entries
+            .iter()
+            .filter_map(|entry| exported.iter().find(|rec| rec.entry.id == entry.id).cloned())
+            .collect()
+    }
+
+    fn seed_workspace_sample(&mut self, seed_recording: bool, seed_pack: bool) {
         let now = Self::now_epoch_sec();
-        let exported = self.host.simulate_realtime_pipeline(now);
+        if seed_recording {
+            let _ = self.host.simulate_realtime_pipeline(now);
+        }
         let s1 = self
             .host
             .ingest_utterance_with_context(
@@ -201,22 +221,16 @@ impl KoeDesktopApp {
             .host
             .reduce_minutes(MinutesEvent::CandidateReceived(grounded_minutes));
         let _ = self.host.refresh_live_publication(now + 5);
-        let _ = self.host.dispatch_jsonrpc(
-            r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
-            now + 5,
-        );
-        let _ = self.host.dispatch_jsonrpc(
-            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-            now + 5,
-        );
-        let _ = self
-            .host
-            .export_koepack_v2_to_disk("海外渠道与纯Rust收口", "2026-11-08T11:30:00Z");
+        if seed_pack {
+            let _ = self
+                .host
+                .export_koepack_v2_to_disk("海外渠道与纯Rust收口", "2026-11-08T11:30:00Z");
+        }
         self.run_bm25_query("海外渠道");
+        let rec_count = self.host.snapshot().library.entry_count;
         self.status = format!(
-            "已就绪，录音 #{}（含 {} 个双击标记），句子主干 S1..S{}",
-            exported.entry.id,
-            exported.entry.marks_ms.len(),
+            "已就绪，录音 {} 条，句子主干 S1..S{}",
+            rec_count,
             self.host.spine().len()
         );
     }
@@ -240,14 +254,13 @@ impl KoeDesktopApp {
             .collect();
     }
 
-    fn ingest_pack_file(&mut self, path: &Path) {
+    fn ingest_pack_file(&mut self, path: &Path) -> bool {
         match fs::read(path) {
-            Ok(bytes) => {
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("imported-pack");
-                match self.host.put_sync_pack(stem, &bytes) {
+            Ok(bytes) => match koe_desktop_core::cicada::decode_koepack_v2(&bytes) {
+                Ok(decoded) => match self
+                    .host
+                    .put_sync_pack(&decoded.material.content_hash, &bytes)
+                {
                     Ok(summary) => {
                         self.active_tab = WorkspaceTab::Library;
                         self.status = format!(
@@ -256,14 +269,24 @@ impl KoeDesktopApp {
                             summary.exported_at_iso,
                             bytes.len()
                         );
+                        true
                     }
                     Err(err) => {
+                        self.smoke_failed = true;
                         self.status = format!("资料包校验未通过：{err:?}");
+                        false
                     }
+                },
+                Err(err) => {
+                    self.smoke_failed = true;
+                    self.status = format!("资料包解码未通过：{err:?}");
+                    false
                 }
-            }
+            },
             Err(err) => {
+                self.smoke_failed = true;
                 self.status = format!("无法读取资料包文件：{err}");
+                false
             }
         }
     }
@@ -365,6 +388,8 @@ impl KoeDesktopApp {
                                     now,
                                 ) {
                                     let _ = this.host.refresh_live_publication(now);
+                                    let q = this.search_query.clone();
+                                    this.run_bm25_query(&q);
                                     this.status = format!(
                                         "已录制并写入句子主干 {seg_id}，实时租约代数 {}",
                                         this.host.snapshot().live_generation
@@ -467,6 +492,8 @@ impl KoeDesktopApp {
                                             "manual",
                                             now,
                                         );
+                                        let q = this.search_query.clone();
+                                        this.run_bm25_query(&q);
                                         this.status = "已记入时间线并提取待办承诺".to_string();
                                         cx.notify();
                                     })),
@@ -546,7 +573,7 @@ impl KoeDesktopApp {
 
     fn render_library_pane(&self, cx: &mut Context<Self>) -> Div {
         let snap = self.host.snapshot();
-        let recordings = self.host.exported_recordings().to_vec();
+        let recordings = self.active_exported_recordings();
         let selected_id = snap.library.selected_id;
 
         div()
@@ -950,6 +977,7 @@ impl KoeDesktopApp {
                             .label("调用 MCP search_context")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let now = Self::now_epoch_sec();
+                                this.ensure_mcp_ready(now);
                                 let req = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":3}}}"#;
                                 if let Some(resp) = this.host.dispatch_jsonrpc(req, now) {
                                     this.last_jsonrpc_response = resp;
@@ -1015,7 +1043,9 @@ impl Render for KoeDesktopApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.smoke && !self.smoke_scheduled {
             self.smoke_scheduled = true;
-            let healthy = self.host.snapshot().library.entry_count > 0 && !self.host.spine().is_empty();
+            let healthy = !self.smoke_failed
+                && self.host.snapshot().library.entry_count > 0
+                && !self.host.spine().is_empty();
             window.on_next_frame(move |_, cx| {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -1108,6 +1138,7 @@ fn run_self_check() -> anyhow::Result<()> {
     anyhow::ensure!(ticket.starts_with(PAIRING_TICKET_PREFIX));
 
     let now = KoeDesktopApp::now_epoch_sec();
+    app.ensure_mcp_ready(now + 5);
     let mcp_resp = app
         .host
         .dispatch_jsonrpc(
@@ -1126,13 +1157,43 @@ fn run_self_check() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("missing ACP response"))?;
     anyhow::ensure!(acp_resp.contains("acp-task-1"), "acp_resp: {acp_resp}");
 
-    let rec_id = app.host.exported_recordings()[0].entry.id;
+    let rec_id = app.active_exported_recordings()[0].entry.id;
     anyhow::ensure!(app.host.jump_to_mark(MarkJumpDirection::Next) == 300);
     anyhow::ensure!(app.host.move_to_trash(rec_id));
+    anyhow::ensure!(app.active_exported_recordings().is_empty());
     anyhow::ensure!(app.host.undo_trash());
+    anyhow::ensure!(app.active_exported_recordings().len() == 1);
     anyhow::ensure!(
         app.host.context().todos.iter().any(|t| t.status == TodoStatus::Open),
         "expected open commitment todo"
+    );
+
+    let custom_pack = temp_dir.join("demo-human-named.koepack");
+    let (_, exported_pack_path) = app
+        .host
+        .export_koepack_v2_to_disk("自定义文件名资料包", "2026-11-08T12:00:00Z")
+        .map_err(|e| anyhow::anyhow!("export pack failed: {e:?}"))?;
+    fs::copy(&exported_pack_path, &custom_pack)?;
+
+    let mut reopened = KoeDesktopApp::new(temp_dir.clone(), false);
+    anyhow::ensure!(
+        !reopened.host.spine().is_empty() && !reopened.search_results.is_empty(),
+        "second launch on existing workspace must populate spine and BM25 index"
+    );
+    let init_resp = reopened
+        .host
+        .dispatch_jsonrpc(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+            now + 8,
+        )
+        .ok_or_else(|| anyhow::anyhow!("missing stdio initialize response"))?;
+    anyhow::ensure!(
+        init_resp.contains("protocolVersion") && !init_resp.contains("error"),
+        "fresh app must accept standard MCP initialize handshake: {init_resp}"
+    );
+    anyhow::ensure!(
+        reopened.ingest_pack_file(&custom_pack) && !reopened.smoke_failed,
+        "human-named .koepack file must ingest via content_hash"
     );
 
     let _ = fs::remove_dir_all(&temp_dir);

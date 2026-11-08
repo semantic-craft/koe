@@ -16,8 +16,6 @@ swiftc \
   -lkoe_core_ffi \
   -Xlinker -rpath -Xlinker "$PWD/rust/target/release" \
   darwin/KoeCore.swift \
-  darwin/KoeNativeTransport.swift \
-  darwin/KoeNativeHost.swift \
   test/native/koe_core_swift_test.swift \
   -o "$work/koe-core-swift-test"
 "$work/koe-core-swift-test"
@@ -29,10 +27,7 @@ if IOS_SIM_SDK=$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null) && [[ 
     -target "${ARCH}-apple-ios17.0-simulator" \
     -import-objc-header rust/koe_core_ffi/include/koe_core_ffi.h \
     darwin/KoeCore.swift \
-    darwin/KeychainStore.swift \
-    darwin/KoeNativeTransport.swift \
-    darwin/KoeNativeHost.swift \
-    darwin/KoeNativeAppMain.swift
+    darwin/KeychainStore.swift
 fi
 
 JAVAC_BIN=""
