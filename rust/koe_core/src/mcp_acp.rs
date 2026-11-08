@@ -18,6 +18,12 @@ use crate::domain::{
 };
 use crate::hash::{is_valid_sha256_hex, sha256_hex};
 use crate::library::{RecordingEntry, RecordingLibrary};
+use crate::copilot_google::{
+    CopilotError, CopilotPhase, CopilotPresetChip,
+    CopilotSession, GoogleSuiteStore, GoogleTaskId, GoogleTaskRecord, GoogleTaskStatus,
+    KeepChecklistItem, KeepNote, KeepNoteColor, KeepNoteDraft, KeepNoteId, NotebookId,
+    ToolCallId,
+};
 use crate::minutes::{
     encode_meeting_minutes_json, extract_json_object, parse_meeting_minutes_json,
     replace_minute_terms, JsonValue, MinutesState, BUILTIN_MINUTE_TEMPLATES,
@@ -47,14 +53,95 @@ pub const MAX_JSONRPC_RESPONSE_BYTES: usize = 1024 * 1024;
 /// Maximum log lines retained per [`AcpTaskRecord`] (`1000`).
 pub const MAX_ACP_TASK_LOGS: usize = 1000;
 
+/// Detailed schema specification for a registered MCP tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToolSpec {
+    /// Tool name matching [`KOE_MCP_TOOLS`].
+    pub name: &'static str,
+    /// Human- and agent-readable summary of what this tool does.
+    pub description: &'static str,
+    /// JSON schema string for `inputSchema`.
+    pub input_schema_json: &'static str,
+}
+
 /// Canonical MCP tools exposed by Koe's local and VPS agent bridge.
-pub const KOE_MCP_TOOLS: [&str; 6] = [
+pub const KOE_MCP_TOOLS: [&str; 12] = [
     "list_recordings",
     "get_transcript",
     "get_minutes",
     "search_context",
     "sync_qwennote_hotwords",
     "export_koepack_v2",
+    "google_tasks_list",
+    "google_tasks_sync",
+    "google_tasks_mutate",
+    "gemini_notebook_ops",
+    "google_keep_ops",
+    "copilot_chat",
+];
+
+/// Specifications and JSON schemas for all 12 canonical Koe MCP tools.
+pub const KOE_MCP_TOOL_SPECS: [McpToolSpec; 12] = [
+    McpToolSpec {
+        name: "list_recordings",
+        description: "Lists local audio recordings with titles, durations, and sync status.",
+        input_schema_json: r#"{"type":"object","properties":{"query":{"type":"string","description":"Optional search query to filter recordings by title"}},"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "get_transcript",
+        description: "Retrieves utterance segments and transcript citations for an active or past recording.",
+        input_schema_json: r#"{"type":"object","properties":{"expected_revision":{"type":"string","description":"Optional revision tag for caching"}},"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "get_minutes",
+        description: "Retrieves structured meeting minutes including decisions, action items, topics, and terms.",
+        input_schema_json: r#"{"type":"object","properties":{"recording_id":{"type":"string","description":"Optional recording ID"}},"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "search_context",
+        description: "Searches personal context timeline and todos using BM25 and segment citations.",
+        input_schema_json: r#"{"type":"object","properties":{"query":{"type":"string","description":"Search keywords"},"limit":{"type":"integer","description":"Max results to return"}},"required":["query"],"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "sync_qwennote_hotwords",
+        description: "Synchronizes custom hotwords, speaker aliases, and custom templates with qwennote.",
+        input_schema_json: r#"{"type":"object","properties":{"hotwords":{"type":"array","items":{"type":"string"}},"template_id":{"type":"string"}},"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "export_koepack_v2",
+        description: "Exports recording material, audio spine, and minutes into a portable .koepack v2 container.",
+        input_schema_json: r#"{"type":"object","properties":{"recording_id":{"type":"string"}},"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "google_tasks_list",
+        description: "Lists Google Tasks from a tasklist with completion statuses.",
+        input_schema_json: r#"{"type":"object","properties":{"tasklist_id":{"type":"string","description":"Tasklist ID (default '@default')"},"show_completed":{"type":"boolean","description":"Whether to include completed tasks"}},"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "google_tasks_sync",
+        description: "Synchronizes Google Tasks bidirectionally with Koe personal context todos using 3-way reconciliation.",
+        input_schema_json: r#"{"type":"object","properties":{"tasklist_id":{"type":"string","description":"Tasklist ID (default '@default')"}},"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "google_tasks_mutate",
+        description: "Creates, completes, or deletes a Google Task.",
+        input_schema_json: r#"{"type":"object","properties":{"op":{"type":"string","enum":["create","complete","delete"]},"task_id":{"type":"string"},"title":{"type":"string"},"notes":{"type":"string"},"due_epoch_sec":{"type":"integer"}},"required":["op"],"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "gemini_notebook_ops",
+        description: "Manages Gemini NotebookLM notebooks, sources, grounded Q&A, and Audio Overview podcasts.",
+        input_schema_json: r#"{"type":"object","properties":{"op":{"type":"string","enum":["create","add_source","generate_audio_overview","query_grounded"]},"notebook_id":{"type":"string"},"title":{"type":"string"},"source_kind":{"type":"string"},"source_content":{"type":"string"},"prompt":{"type":"string"},"query":{"type":"string"}},"required":["op"],"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "google_keep_ops",
+        description: "Creates, syncs, and toggles Google Keep notes and checklists.",
+        input_schema_json: r#"{"type":"object","properties":{"op":{"type":"string","enum":["create","toggle_checklist","sync_context","list"]},"note_id":{"type":"string"},"title":{"type":"string"},"body_text":{"type":"string"},"color":{"type":"string"},"pinned":{"type":"boolean"},"index":{"type":"integer"}},"required":["op"],"additionalProperties":false}"#,
+    },
+    McpToolSpec {
+        name: "copilot_chat",
+        description: "Interacts with Ask AI Copilot session, running preset chips or freeform grounded chat turns.",
+        input_schema_json: r#"{"type":"object","properties":{"prompt":{"type":"string"},"preset":{"type":"string"},"execute_tools":{"type":"boolean"}},"additionalProperties":false}"#,
+    },
 ];
 
 /// Canonical ACP JSON-RPC 2.0 methods exposed by Koe's native agent runtime.
@@ -675,7 +762,7 @@ struct StoredSyncPack {
 }
 
 /// Stateful MCP (`2025-11-25`) and ACP (`2026-01-01`) protocol engine.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct McpAcpState {
     /// Total JSON-RPC 2.0 tool or ACP task invocations handled.
     pub handled_calls: u64,
@@ -693,6 +780,10 @@ pub struct McpAcpState {
     pub live_lease: Option<LivePublicationLease>,
     /// Synchronized `qwennote-minutes` hotwords, speaker aliases, and template selection.
     pub qwennote: QwennoteCatalog,
+    /// Local Google Suite store (Google Tasks, Gemini NotebookLM, Google Keep).
+    pub google_suite: GoogleSuiteStore,
+    /// Stateful Ask AI Copilot chat session.
+    pub copilot: CopilotSession,
     sync_packs: BTreeMap<String, StoredSyncPack>,
     acp_sessions: Vec<String>,
     acp_tasks: BTreeMap<String, AcpTaskRecord>,
@@ -926,9 +1017,7 @@ impl McpAcpState {
             return id_opt.map(|id| jsonrpc_result_response(&id, JsonValue::Object(BTreeMap::new())));
         }
 
-        if id_opt.is_none() {
-            return None;
-        }
+        id_opt.as_ref()?;
 
         if method == "ping" {
             return Some(jsonrpc_result_response(
@@ -1536,7 +1625,461 @@ impl McpAcpState {
                 );
                 Ok(JsonValue::Object(out))
             }
+            "google_tasks_list" => {
+                let show_completed = args
+                    .get("show_completed")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false);
+                let tasks: Vec<JsonValue> = self
+                    .google_suite
+                    .tasks
+                    .values()
+                    .filter(|t| !t.deleted && (show_completed || t.status != GoogleTaskStatus::Completed))
+                    .map(GoogleTaskRecord::to_json_value)
+                    .collect();
+                let mut out = BTreeMap::new();
+                out.insert("count".to_string(), JsonValue::Number(tasks.len() as f64));
+                out.insert("tasks".to_string(), JsonValue::Array(tasks));
+                Ok(JsonValue::Object(out))
+            }
+            "google_tasks_sync" => {
+                let tasklist_id = args
+                    .get("tasklist_id")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or("@default");
+                let report = self.google_suite.sync_google_tasks_with_context(
+                    workspace.context,
+                    tasklist_id,
+                    now_epoch_sec,
+                );
+                let mut out = BTreeMap::new();
+                out.insert("createdRemote".to_string(), JsonValue::Number(report.created_remote as f64));
+                out.insert("pushedToRemote".to_string(), JsonValue::Number(report.pushed_to_remote as f64));
+                out.insert("appliedFromRemote".to_string(), JsonValue::Number(report.applied_from_remote as f64));
+                out.insert("conflicts".to_string(), JsonValue::Number(report.conflicts as f64));
+                out.insert("unlinkedDeleted".to_string(), JsonValue::Number(report.unlinked_deleted as f64));
+                out.insert("unchanged".to_string(), JsonValue::Number(report.unchanged as f64));
+                out.insert("totalLinks".to_string(), JsonValue::Number(self.google_suite.task_links.len() as f64));
+                Ok(JsonValue::Object(out))
+            }
+            "google_tasks_mutate" => {
+                let op = args
+                    .get("op")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(McpToolError::InvalidArguments)?;
+                match op {
+                    "create" => {
+                        let tasklist_id = args
+                            .get("tasklist_id")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("@default");
+                        let title = args
+                            .get("title")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let notes = args
+                            .get("notes")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("");
+                        let due = args
+                            .get("due_epoch_sec")
+                            .and_then(JsonValue::as_f64)
+                            .map(|n| n as u64);
+                        let record = self.google_suite.create_task(
+                            tasklist_id,
+                            title,
+                            notes,
+                            due,
+                            now_epoch_sec,
+                        );
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("create".to_string()));
+                        out.insert("task".to_string(), record.to_json_value());
+                        Ok(JsonValue::Object(out))
+                    }
+                    "complete" => {
+                        let task_id_str = args
+                            .get("task_id")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let completed = args
+                            .get("completed")
+                            .and_then(JsonValue::as_bool)
+                            .unwrap_or(true);
+                        self.google_suite
+                            .complete_task(&GoogleTaskId(task_id_str.to_string()), completed, now_epoch_sec)
+                            .map_err(|_| McpToolError::InvalidArguments)?;
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("complete".to_string()));
+                        out.insert("taskId".to_string(), JsonValue::String(task_id_str.to_string()));
+                        out.insert("completed".to_string(), JsonValue::Bool(completed));
+                        Ok(JsonValue::Object(out))
+                    }
+                    "delete" => {
+                        let task_id_str = args
+                            .get("task_id")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        self.google_suite
+                            .delete_task(&GoogleTaskId(task_id_str.to_string()), now_epoch_sec)
+                            .map_err(|_| McpToolError::InvalidArguments)?;
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("delete".to_string()));
+                        out.insert("taskId".to_string(), JsonValue::String(task_id_str.to_string()));
+                        Ok(JsonValue::Object(out))
+                    }
+                    _ => Err(McpToolError::InvalidArguments),
+                }
+            }
+            "gemini_notebook_ops" => {
+                let op = args
+                    .get("op")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(McpToolError::InvalidArguments)?;
+                match op {
+                    "create" => {
+                        let title = args
+                            .get("title")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let nb_id = self.google_suite.create_notebook(title, now_epoch_sec);
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("create".to_string()));
+                        out.insert("notebookId".to_string(), JsonValue::String(nb_id.0));
+                        Ok(JsonValue::Object(out))
+                    }
+                    "add_source" => {
+                        let notebook_id_str = args
+                            .get("notebook_id")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let title = args
+                            .get("title")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let content = args
+                            .get("source_content")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let src_id = self.google_suite
+                            .add_notebook_source(
+                                &NotebookId(notebook_id_str.to_string()),
+                                title,
+                                content,
+                                None,
+                                now_epoch_sec,
+                            )
+                            .map_err(|_| McpToolError::InvalidArguments)?;
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("add_source".to_string()));
+                        out.insert("sourceId".to_string(), JsonValue::String(src_id));
+                        Ok(JsonValue::Object(out))
+                    }
+                    "generate_audio_overview" => {
+                        let notebook_id_str = args
+                            .get("notebook_id")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let prompt = args
+                            .get("prompt")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("");
+                        let overview = self.google_suite
+                            .generate_notebook_audio_overview(
+                                &NotebookId(notebook_id_str.to_string()),
+                                prompt,
+                                Some(workspace.spine),
+                                now_epoch_sec,
+                            )
+                            .map_err(|_| McpToolError::InvalidArguments)?;
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("generate_audio_overview".to_string()));
+                        out.insert("overview".to_string(), overview.to_json_value());
+                        Ok(JsonValue::Object(out))
+                    }
+                    "query_grounded" => {
+                        let notebook_id_str = args
+                            .get("notebook_id")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let query = args
+                            .get("query")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        ensure_search_index_synced(workspace);
+                        let turn = self.google_suite
+                            .query_notebook_grounded(
+                                &NotebookId(notebook_id_str.to_string()),
+                                query,
+                                workspace.search_index,
+                                workspace.spine,
+                                now_epoch_sec,
+                            )
+                            .map_err(|_| McpToolError::InvalidArguments)?;
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("query_grounded".to_string()));
+                        out.insert("turn".to_string(), turn.to_json_value());
+                        Ok(JsonValue::Object(out))
+                    }
+                    _ => Err(McpToolError::InvalidArguments),
+                }
+            }
+            "google_keep_ops" => {
+                let op = args
+                    .get("op")
+                    .and_then(JsonValue::as_str)
+                    .ok_or(McpToolError::InvalidArguments)?;
+                match op {
+                    "create" => {
+                        let title = args
+                            .get("title")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let body_text = args
+                            .get("body_text")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let color_str = args
+                            .get("color")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("default");
+                        let color = KeepNoteColor::parse(color_str).unwrap_or(KeepNoteColor::Default);
+                        let pinned = args
+                            .get("pinned")
+                            .and_then(JsonValue::as_bool)
+                            .unwrap_or(false);
+                        let mut checklist = Vec::new();
+                        if let Some(items) = args.get("checklist").and_then(JsonValue::as_array) {
+                            for item_val in items {
+                                if let Some(text) = item_val.as_str() {
+                                    checklist.push(KeepChecklistItem {
+                                        text: text.to_string(),
+                                        checked: false,
+                                    });
+                                }
+                            }
+                        }
+                        let draft = KeepNoteDraft {
+                            id: None,
+                            title,
+                            body_text,
+                            checklist,
+                            color,
+                            pinned,
+                            labels: Vec::new(),
+                        };
+                        let note = self.google_suite.create_keep_note(draft, now_epoch_sec);
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("create".to_string()));
+                        out.insert("note".to_string(), note.to_json_value());
+                        Ok(JsonValue::Object(out))
+                    }
+                    "toggle_checklist" => {
+                        let note_id_str = args
+                            .get("note_id")
+                            .and_then(JsonValue::as_str)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let index = args
+                            .get("index")
+                            .and_then(JsonValue::as_f64)
+                            .map(|n| n as usize)
+                            .ok_or(McpToolError::InvalidArguments)?;
+                        let new_state = self.google_suite
+                            .toggle_keep_checklist_item(&KeepNoteId(note_id_str.to_string()), index, now_epoch_sec)
+                            .map_err(|_| McpToolError::InvalidArguments)?;
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("toggle_checklist".to_string()));
+                        out.insert("noteId".to_string(), JsonValue::String(note_id_str.to_string()));
+                        out.insert("index".to_string(), JsonValue::Number(index as f64));
+                        out.insert("checked".to_string(), JsonValue::Bool(new_state));
+                        Ok(JsonValue::Object(out))
+                    }
+                    "sync_context" => {
+                        let synced = self.google_suite.sync_keep_with_context(workspace.context, now_epoch_sec);
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("sync_context".to_string()));
+                        out.insert("syncedCount".to_string(), JsonValue::Number(synced as f64));
+                        out.insert("totalNotes".to_string(), JsonValue::Number(self.google_suite.keep_notes.len() as f64));
+                        Ok(JsonValue::Object(out))
+                    }
+                    "list" => {
+                        let notes: Vec<JsonValue> = self.google_suite
+                            .keep_notes
+                            .values()
+                            .map(KeepNote::to_json_value)
+                            .collect();
+                        let mut out = BTreeMap::new();
+                        out.insert("op".to_string(), JsonValue::String("list".to_string()));
+                        out.insert("count".to_string(), JsonValue::Number(notes.len() as f64));
+                        out.insert("notes".to_string(), JsonValue::Array(notes));
+                        Ok(JsonValue::Object(out))
+                    }
+                    _ => Err(McpToolError::InvalidArguments),
+                }
+            }
+            "copilot_chat" => {
+                if let Some(preset_str) = args.get("preset").and_then(JsonValue::as_str) {
+                    if let Some(chip) = CopilotPresetChip::parse(preset_str) {
+                        let result_text = self.run_copilot_preset(workspace, chip, now_epoch_sec)
+                            .map_err(|_| McpToolError::InvalidArguments)?;
+                        let mut out = BTreeMap::new();
+                        out.insert("status".to_string(), JsonValue::String("completed".to_string()));
+                        out.insert("phase".to_string(), JsonValue::String(self.copilot.phase.as_str().to_string()));
+                        out.insert("reply".to_string(), JsonValue::String(result_text));
+                        return Ok(JsonValue::Object(out));
+                    }
+                }
+                if let Some(prompt_str) = args.get("prompt").and_then(JsonValue::as_str) {
+                    self.submit_copilot_prompt(prompt_str, now_epoch_sec);
+                    let mut out = BTreeMap::new();
+                    out.insert("status".to_string(), JsonValue::String("started".to_string()));
+                    out.insert("phase".to_string(), JsonValue::String(self.copilot.phase.as_str().to_string()));
+                    return Ok(JsonValue::Object(out));
+                }
+                let mut out = BTreeMap::new();
+                out.insert("phase".to_string(), JsonValue::String(self.copilot.phase.as_str().to_string()));
+                out.insert("messageCount".to_string(), JsonValue::Number(self.copilot.messages.len() as f64));
+                Ok(JsonValue::Object(out))
+            }
             _ => Err(McpToolError::UnknownTool),
+        }
+    }
+
+    /// Runs a preset chip by executing its tool plan and synthesizing a grounded response.
+    pub fn run_copilot_preset(
+        &mut self,
+        workspace: &mut McpAcpWorkspaceView<'_>,
+        preset: CopilotPresetChip,
+        now_epoch_sec: u64,
+    ) -> Result<String, String> {
+        self.copilot.start_preset(preset, now_epoch_sec);
+        let plan = preset.default_tool_plan();
+        for &tool_name in plan {
+            let empty_args = BTreeMap::new();
+            let _ = self.execute_mcp_tool(workspace, tool_name, &empty_args, now_epoch_sec);
+        }
+        let result_text = match preset {
+            CopilotPresetChip::AnalyzeRecurringThoughts => {
+                let note_count = workspace.context.timeline.len();
+                let topic_count = workspace
+                    .minutes
+                    .latest_minutes
+                    .as_ref()
+                    .map_or(0, |m| m.topics.len());
+                format!(
+                    "Recurring Thoughts Analysis: Synthesized across {} timeline items and {} discussion topics.",
+                    note_count, topic_count
+                )
+            }
+            CopilotPresetChip::TurnNotesIntoExecutiveBrief => {
+                let nb_id = self.google_suite.create_notebook("Executive Brief", now_epoch_sec);
+                let _ = self.google_suite.generate_notebook_audio_overview(
+                    &nb_id,
+                    "Executive Brief Focus",
+                    Some(workspace.spine),
+                    now_epoch_sec,
+                );
+                format!(
+                    "Executive Brief generated for notebook '{}'.",
+                    nb_id.0
+                )
+            }
+            CopilotPresetChip::SummarizeAudioFile => {
+                let decisions_count = workspace
+                    .minutes
+                    .latest_minutes
+                    .as_ref()
+                    .map_or(0, |m| m.decisions.len());
+                let topic_count = workspace
+                    .minutes
+                    .latest_minutes
+                    .as_ref()
+                    .map_or(0, |m| m.topics.len());
+                format!(
+                    "Audio Summary: Reviewed meeting with {} topics and {} key decisions recorded.",
+                    topic_count, decisions_count
+                )
+            }
+            CopilotPresetChip::SyncActionItemsToGoogleTasks => {
+                let rep = self.google_suite.sync_google_tasks_with_context(
+                    workspace.context,
+                    "@default",
+                    now_epoch_sec,
+                );
+                format!(
+                    "Google Tasks Sync: Created {} remote tasks, pushed {} updates, {} unchanged.",
+                    rep.created_remote, rep.pushed_to_remote, rep.unchanged
+                )
+            }
+        };
+        self.copilot.complete_turn(&result_text, now_epoch_sec);
+        Ok(result_text)
+    }
+
+    /// Submits a user prompt to the Copilot session.
+    pub fn submit_copilot_prompt(&mut self, prompt: &str, now_epoch_sec: u64) {
+        self.copilot.start_user_prompt(prompt, now_epoch_sec);
+    }
+
+    /// Executes any tool calls currently pending on the Copilot session against local MCP tools.
+    pub fn execute_pending_copilot_tools(
+        &mut self,
+        workspace: &mut McpAcpWorkspaceView<'_>,
+        now_epoch_sec: u64,
+    ) -> Result<Vec<(ToolCallId, JsonValue)>, CopilotError> {
+        let calls = match &self.copilot.phase {
+            CopilotPhase::PendingLocalTools { calls, .. } => calls.clone(),
+            _ => return Err(CopilotError::SessionNotAwaitingTools),
+        };
+        let mut results = Vec::with_capacity(calls.len());
+        for call in &calls {
+            let res = match self.execute_mcp_tool(
+                workspace,
+                &call.tool_name,
+                &call.arguments,
+                now_epoch_sec,
+            ) {
+                Ok(val) => val,
+                Err(err) => {
+                    let mut err_obj = BTreeMap::new();
+                    err_obj.insert(
+                        "error".to_string(),
+                        JsonValue::String(err.as_code().to_string()),
+                    );
+                    JsonValue::Object(err_obj)
+                }
+            };
+            results.push((call.id.clone(), call.tool_name.clone(), res));
+        }
+        let mut ret = Vec::with_capacity(results.len());
+        for (id, name, res) in results {
+            self.copilot
+                .record_tool_result(id.clone(), &name, &res, now_epoch_sec);
+            ret.push((id, res));
+        }
+        self.copilot.advance_after_tools_executed()?;
+        Ok(ret)
+    }
+
+    /// Ingests a model completion response JSON object, either triggering tool execution or completing turn.
+    pub fn ingest_copilot_model_response(
+        &mut self,
+        workspace: &mut McpAcpWorkspaceView<'_>,
+        response_json: &JsonValue,
+        now_epoch_sec: u64,
+    ) -> Result<Option<String>, CopilotError> {
+        let next_phase = self
+            .copilot
+            .ingest_openai_chat_response(response_json, now_epoch_sec)?;
+        match next_phase {
+            CopilotPhase::Completed { reply_text, .. } => Ok(Some(reply_text)),
+            CopilotPhase::PendingLocalTools { .. } => {
+                let _ = self.execute_pending_copilot_tools(workspace, now_epoch_sec)?;
+                Ok(None)
+            }
+            _ => Ok(None),
         }
     }
 
@@ -2141,22 +2684,54 @@ fn mcp_tool_error_payload(err: McpToolError, detail: &str) -> JsonValue {
     JsonValue::Object(res)
 }
 
-fn build_mcp_tools_schema() -> Vec<JsonValue> {
-    KOE_MCP_TOOLS
+/// Builds the MCP `tools/list` schema array for all 12 registered tools.
+#[must_use]
+pub fn build_mcp_tools_schema() -> Vec<JsonValue> {
+    KOE_MCP_TOOL_SPECS
         .iter()
-        .map(|&name| {
-            let mut schema = BTreeMap::new();
-            schema.insert("type".to_string(), JsonValue::String("object".to_string()));
+        .map(|spec| {
             let mut tool = BTreeMap::new();
-            tool.insert("name".to_string(), JsonValue::String(name.to_string()));
+            tool.insert("name".to_string(), JsonValue::String(spec.name.to_string()));
             tool.insert(
                 "description".to_string(),
-                JsonValue::String(format!("Koe native MCP tool: {name}")),
+                JsonValue::String(spec.description.to_string()),
             );
-            tool.insert("inputSchema".to_string(), JsonValue::Object(schema));
+            let schema_val = JsonValue::parse(spec.input_schema_json).unwrap_or_else(|_| {
+                let mut fallback = BTreeMap::new();
+                fallback.insert("type".to_string(), JsonValue::String("object".to_string()));
+                fallback.insert("properties".to_string(), JsonValue::Object(BTreeMap::new()));
+                JsonValue::Object(fallback)
+            });
+            tool.insert("inputSchema".to_string(), schema_val);
             JsonValue::Object(tool)
         })
         .collect()
+}
+
+/// Builds the OpenAI tools JSON array for all 12 registered tools.
+#[must_use]
+pub fn build_openai_tools_json() -> JsonValue {
+    let mut list = Vec::with_capacity(KOE_MCP_TOOL_SPECS.len());
+    for spec in &KOE_MCP_TOOL_SPECS {
+        let mut func = BTreeMap::new();
+        func.insert("name".to_string(), JsonValue::String(spec.name.to_string()));
+        func.insert(
+            "description".to_string(),
+            JsonValue::String(spec.description.to_string()),
+        );
+        let schema_val = JsonValue::parse(spec.input_schema_json).unwrap_or_else(|_| {
+            let mut fallback = BTreeMap::new();
+            fallback.insert("type".to_string(), JsonValue::String("object".to_string()));
+            fallback.insert("properties".to_string(), JsonValue::Object(BTreeMap::new()));
+            JsonValue::Object(fallback)
+        });
+        func.insert("parameters".to_string(), schema_val);
+        let mut tool_obj = BTreeMap::new();
+        tool_obj.insert("type".to_string(), JsonValue::String("function".to_string()));
+        tool_obj.insert("function".to_string(), JsonValue::Object(func));
+        list.push(JsonValue::Object(tool_obj));
+    }
+    JsonValue::Array(list)
 }
 
 const BASE64URL_ALPHABET: &[u8; 64] =
@@ -2236,6 +2811,69 @@ fn base64url_decode(raw: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_twelve_mcp_tools_schema_and_openai_tools() {
+        assert_eq!(KOE_MCP_TOOLS.len(), 12);
+        assert_eq!(KOE_MCP_TOOL_SPECS.len(), 12);
+        let mcp_schema = build_mcp_tools_schema();
+        assert_eq!(mcp_schema.len(), 12);
+
+        let openai_tools = build_openai_tools_json();
+        assert_eq!(openai_tools.as_array().unwrap().len(), 12);
+
+        for spec in &KOE_MCP_TOOL_SPECS {
+            assert!(is_supported_mcp_tool(spec.name));
+        }
+    }
+
+    #[test]
+    fn test_copilot_and_google_suite_tools_via_mcp() {
+        let mut spine = UtteranceSpine::new("test-session");
+        spine.append_segment("Discussing Q4 roadmap and deliverables.", 0, 1_000, "en", "model");
+        let library = RecordingLibrary::default();
+        let mut minutes = MinutesState::default();
+        let mut rolling = RollingMinutesScheduler::new("test-session");
+        let mut context = ContextState::default();
+        let mut search = ContextSearchIndex::default();
+        let mut state = McpAcpState::default();
+
+        let mut ws = McpAcpWorkspaceView {
+            spine: &mut spine,
+            library: &library,
+            minutes: &mut minutes,
+            rolling_scheduler: &mut rolling,
+            context: &mut context,
+            search_index: &mut search,
+        };
+
+        let mut create_args = BTreeMap::new();
+        create_args.insert("op".to_string(), JsonValue::String("create".to_string()));
+        create_args.insert("title".to_string(), JsonValue::String("Prepare Q4 deck".to_string()));
+        let res = state.execute_mcp_tool(&mut ws, "google_tasks_mutate", &create_args, 1_000).unwrap();
+        assert_eq!(res.as_object().unwrap().get("op").unwrap().as_str().unwrap(), "create");
+
+        let empty_args = BTreeMap::new();
+        let list_res = state.execute_mcp_tool(&mut ws, "google_tasks_list", &empty_args, 1_001).unwrap();
+        assert_eq!(list_res.as_object().unwrap().get("count").unwrap().as_f64().unwrap() as usize, 1);
+
+        let mut nb_args = BTreeMap::new();
+        nb_args.insert("op".to_string(), JsonValue::String("create".to_string()));
+        nb_args.insert("title".to_string(), JsonValue::String("Q4 Strategy".to_string()));
+        let nb_res = state.execute_mcp_tool(&mut ws, "gemini_notebook_ops", &nb_args, 1_002).unwrap();
+        assert_eq!(nb_res.as_object().unwrap().get("op").unwrap().as_str().unwrap(), "create");
+
+        let mut keep_args = BTreeMap::new();
+        keep_args.insert("op".to_string(), JsonValue::String("create".to_string()));
+        keep_args.insert("title".to_string(), JsonValue::String("Urgent Notes".to_string()));
+        keep_args.insert("body_text".to_string(), JsonValue::String("Check deliverables".to_string()));
+        let keep_res = state.execute_mcp_tool(&mut ws, "google_keep_ops", &keep_args, 1_003).unwrap();
+        assert_eq!(keep_res.as_object().unwrap().get("op").unwrap().as_str().unwrap(), "create");
+
+        let chip_res = state.run_copilot_preset(&mut ws, CopilotPresetChip::SummarizeAudioFile, 1_004).unwrap();
+        assert!(chip_res.contains("Audio Summary"));
+        assert_eq!(state.copilot.phase, CopilotPhase::Completed { reply_text: chip_res, citations: Vec::new() });
+    }
 
     #[test]
     fn mcp_registry_recognizes_canonical_tools_and_formats_transcript() {

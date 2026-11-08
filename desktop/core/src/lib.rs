@@ -30,15 +30,26 @@ pub use koe_protocol_kernel::domain::{
 };
 pub use koe_protocol_kernel::frame::{FrameReassembler, ProtocolFrame};
 pub use koe_protocol_kernel::library::{RecordingEntry, RecordingLibrary};
+pub use koe_protocol_kernel::copilot_google::{
+    extract_segment_citations, CopilotAuthStyle, CopilotError, CopilotMessage, CopilotPhase,
+    CopilotPresetChip, CopilotProviderConfig, CopilotRole, CopilotSession, CopilotToolCall,
+    GeminiNotebook, GoogleServiceKind, GoogleSuiteStore, GoogleTaskId, GoogleTaskRecord,
+    GoogleTaskStatus, GoogleTasksSyncReport, GoogleWireRequest, KeepChecklistItem, KeepNote,
+    KeepNoteColor, KeepNoteDraft, KeepNoteId, NotebookAudioOverview, NotebookAudioOverviewStatus,
+    NotebookId, NotebookQaTurn, NotebookRpcOp, NotebookSource, NotebookSourceKind,
+    NotebookTransportKind, ToolCallId, COPILOT_PRESET_CHIPS, COPILOT_SYSTEM_PROMPT,
+    DEFAULT_DEEPSEEK_MODEL, GEMINI_NOTEBOOK_BATCHEXECUTE_URL, GOOGLE_KEEP_V1_BASE_URL,
+    GOOGLE_TASKS_V1_BASE_URL, MAX_COPILOT_TOOL_ROUNDS,
+};
 pub use koe_protocol_kernel::mcp_acp::{
-    compute_pack_sync_delta, constant_time_eq, format_epoch_sec_iso8601, is_supported_mcp_tool,
-    AcpAgentCard, AcpTaskPhase, AcpTaskRecord, LiveLeaseValidator, LivePublicationLease,
-    McpAcpEvent, McpAcpOutcome, McpAcpOwnedRuntime, McpAcpReducer, McpAcpState,
-    McpAcpWorkspaceView, McpPairingMode, McpToolError, PackSyncDelta, PairingTicket,
-    QwennoteCatalog, SyncPackSummary, ACP_PROTOCOL_VERSION, KOE_ACP_METHODS, KOE_MCP_TOOLS,
-    LIVE_LEASE_DEFAULT_TTL_SEC, LIVE_LEASE_MAX_REMAINING_SEC, MAX_ACP_TASK_LOGS,
-    MAX_JSONRPC_REQUEST_BYTES, MAX_JSONRPC_RESPONSE_BYTES, MCP_PROTOCOL_VERSION,
-    PAIRING_TICKET_PREFIX,
+    build_mcp_tools_schema, build_openai_tools_json, compute_pack_sync_delta, constant_time_eq,
+    format_epoch_sec_iso8601, is_supported_mcp_tool, AcpAgentCard, AcpTaskPhase, AcpTaskRecord,
+    LiveLeaseValidator, LivePublicationLease, McpAcpEvent, McpAcpOutcome, McpAcpOwnedRuntime,
+    McpAcpReducer, McpAcpState, McpAcpWorkspaceView, McpPairingMode, McpToolError, McpToolSpec,
+    PackSyncDelta, PairingTicket, QwennoteCatalog, SyncPackSummary, ACP_PROTOCOL_VERSION,
+    KOE_ACP_METHODS, KOE_MCP_TOOLS, KOE_MCP_TOOL_SPECS, LIVE_LEASE_DEFAULT_TTL_SEC,
+    LIVE_LEASE_MAX_REMAINING_SEC, MAX_ACP_TASK_LOGS, MAX_JSONRPC_REQUEST_BYTES,
+    MAX_JSONRPC_RESPONSE_BYTES, MCP_PROTOCOL_VERSION, PAIRING_TICKET_PREFIX,
 };
 pub use koe_protocol_kernel::minutes::{
     contains_calculation_phrase, contains_percentage, encode_qwen_stream_finish_task_json,
@@ -60,7 +71,7 @@ pub use koe_protocol_kernel::wifi::{
     WIFI_KEEPALIVE_INTERVAL_MS, WIFI_KEEPALIVE_PAYLOAD, WIFI_UDP_PORT, WIFI_WS_FINISH_TEXT,
 };
 pub use koe_protocol_kernel::{
-    cicada, commands, context, crypto, domain, frame, hash, library, mcp_acp, minutes, models,
+    cicada, commands, context, copilot_google, crypto, domain, frame, hash, library, mcp_acp, minutes, models,
     ogg_opus, prng, session, slice_marks, transport, wav, wifi,
 };
 
@@ -339,6 +350,16 @@ pub struct DesktopHostSnapshot {
     pub mcp_handled_calls: u64,
     /// Active `live.json` publication lease generation (`0` if unpublished).
     pub live_generation: u64,
+    /// Total number of Google Tasks currently in store.
+    pub google_task_count: usize,
+    /// Total number of Gemini NotebookLM notebooks currently in store.
+    pub gemini_notebook_count: usize,
+    /// Total number of Google Keep notes currently in store.
+    pub google_keep_note_count: usize,
+    /// Total number of Copilot messages in session history.
+    pub copilot_message_count: usize,
+    /// Active lifecycle phase of the Ask AI Copilot session.
+    pub copilot_phase: CopilotPhase,
     /// Five-stage realtime pipeline diagnostic snapshot.
     pub doctor: PipelineDoctorSnapshot,
     /// Unified domain aggregate root for the active recording session.
@@ -383,7 +404,7 @@ impl DesktopBeanHost {
         export_dir: impl Into<PathBuf>,
         factory: Option<OpusDecoderFactory>,
     ) -> Self {
-        Self {
+        let mut host = Self {
             session: TransportSession::with_decoder_factory(factory),
             library: RecordingLibrary::new(),
             spine: UtteranceSpine::new("desktop-default"),
@@ -398,7 +419,9 @@ impl DesktopBeanHost {
             asr_pump: StreamingAsrPump::new("koe-suixin-live-task"),
             export_dir: export_dir.into(),
             exported_files: Vec::new(),
-        }
+        };
+        let _ = host.load_google_suite();
+        host
     }
 
     /// Returns the directory where `.opus` and `.wav` files are exported.
@@ -1393,6 +1416,11 @@ impl DesktopBeanHost {
             indexed_context_docs: self.search_index.doc_count(),
             mcp_handled_calls: self.mcp_acp.handled_calls,
             live_generation: self.mcp_acp.live_lease.map_or(0, |l| l.generation),
+            google_task_count: self.mcp_acp.google_suite.tasks.len(),
+            gemini_notebook_count: self.mcp_acp.google_suite.notebooks.len(),
+            google_keep_note_count: self.mcp_acp.google_suite.keep_notes.len(),
+            copilot_message_count: self.mcp_acp.copilot.messages.len(),
+            copilot_phase: self.mcp_acp.copilot.phase.clone(),
             doctor: self.pipeline_doctor_snapshot(),
             active_aggregate: self.active_aggregate.clone(),
         }
@@ -1687,6 +1715,119 @@ impl DesktopBeanHost {
         record
     }
 
+    /// Returns the canonical Ask AI Copilot preset chips in UI display order.
+    #[must_use]
+    pub const fn copilot_preset_chips(&self) -> &'static [CopilotPresetChip] {
+        &COPILOT_PRESET_CHIPS
+    }
+
+    /// Configures the Copilot model provider (e.g. DeepSeek or local OpenAI-compatible endpoint).
+    pub fn configure_copilot_provider(&mut self, config: CopilotProviderConfig) {
+        self.mcp_acp.copilot.provider = config;
+    }
+
+    /// Executes a preset chip turn end-to-end against the host's active state.
+    pub fn run_copilot_preset(
+        &mut self,
+        preset: CopilotPresetChip,
+        now_epoch_sec: u64,
+    ) -> Result<String, String> {
+        let mut ws = McpAcpWorkspaceView {
+            spine: &mut self.spine,
+            library: &self.library,
+            minutes: &mut self.minutes,
+            rolling_scheduler: &mut self.rolling_scheduler,
+            context: &mut self.context,
+            search_index: &mut self.search_index,
+        };
+        let res = self.mcp_acp.run_copilot_preset(&mut ws, preset, now_epoch_sec)?;
+        let _ = self.save_google_suite();
+        Ok(res)
+    }
+
+    /// Submits a freeform user prompt to the Copilot session.
+    pub fn submit_copilot_prompt(&mut self, prompt: &str, now_epoch_sec: u64) {
+        self.mcp_acp.submit_copilot_prompt(prompt, now_epoch_sec);
+    }
+
+    /// Builds the OpenAI `/v1/chat/completions` request payload JSON for the active Copilot turn.
+    #[must_use]
+    pub fn build_copilot_openai_request(&self) -> JsonValue {
+        let tools = build_openai_tools_json();
+        self.mcp_acp.copilot.build_openai_chat_request_json(tools)
+    }
+
+    /// Ingests a model completion response JSON object, executing any requested tool calls.
+    pub fn ingest_copilot_openai_response(
+        &mut self,
+        response_json: &JsonValue,
+        now_epoch_sec: u64,
+    ) -> Result<Option<String>, CopilotError> {
+        let mut ws = McpAcpWorkspaceView {
+            spine: &mut self.spine,
+            library: &self.library,
+            minutes: &mut self.minutes,
+            rolling_scheduler: &mut self.rolling_scheduler,
+            context: &mut self.context,
+            search_index: &mut self.search_index,
+        };
+        let res = self.mcp_acp.ingest_copilot_model_response(&mut ws, response_json, now_epoch_sec)?;
+        let _ = self.save_google_suite();
+        Ok(res)
+    }
+
+    /// Synchronizes Google Tasks bidirectionally with local Koe context todos.
+    pub fn sync_google_tasks(&mut self, tasklist_id: &str, now_epoch_sec: u64) -> GoogleTasksSyncReport {
+        let report = self.mcp_acp.google_suite.sync_google_tasks_with_context(
+            &mut self.context,
+            tasklist_id,
+            now_epoch_sec,
+        );
+        let _ = self.save_google_suite();
+        report
+    }
+
+    /// Returns an immutable reference to the host's [`GoogleSuiteStore`].
+    #[must_use]
+    pub fn google_suite(&self) -> &GoogleSuiteStore {
+        &self.mcp_acp.google_suite
+    }
+
+    /// Returns a mutable reference to the host's [`GoogleSuiteStore`].
+    pub fn google_suite_mut(&mut self) -> &mut GoogleSuiteStore {
+        &mut self.mcp_acp.google_suite
+    }
+
+    /// Returns an immutable reference to the host's [`CopilotSession`].
+    #[must_use]
+    pub fn copilot_session(&self) -> &CopilotSession {
+        &self.mcp_acp.copilot
+    }
+
+    /// Atomically persists `google_suite.json` to the export directory.
+    pub fn save_google_suite(&self) -> std::io::Result<()> {
+        let target = self.export_dir.join("google_suite.json");
+        let json_val = self.mcp_acp.google_suite.to_json_value();
+        let json_bytes = json_val.to_json_string().into_bytes();
+        Self::write_atomic(&target, &json_bytes);
+        Ok(())
+    }
+
+    /// Loads and restores `google_suite.json` from the export directory if present.
+    pub fn load_google_suite(&mut self) -> std::io::Result<()> {
+        let target = self.export_dir.join("google_suite.json");
+        if target.exists() {
+            if let Ok(content) = fs::read_to_string(&target) {
+                if let Ok(json_val) = JsonValue::parse(&content) {
+                    if let Ok(store) = GoogleSuiteStore::from_json_value(&json_val) {
+                        self.mcp_acp.google_suite = store;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn write_atomic(target: &Path, bytes: &[u8]) {
         let tmp = target.with_extension("tmp");
         if fs::write(&tmp, bytes).is_ok() {
@@ -1754,6 +1895,39 @@ mod tests {
             payload.push(0x00);
         }
         build_rx_frame(0x1A, 0x08, &payload)
+    }
+
+    #[test]
+    fn test_desktop_bean_host_copilot_and_google_suite_integration() {
+        let dir = temp_export_dir("copilot-suite");
+        let mut host = DesktopBeanHost::new(&dir);
+
+        assert_eq!(host.copilot_preset_chips().len(), 4);
+        assert_eq!(host.snapshot().google_task_count, 0);
+        assert_eq!(host.snapshot().gemini_notebook_count, 0);
+        assert_eq!(host.snapshot().copilot_message_count, 0);
+
+        host.google_suite_mut().create_task("@default", "Urgent Deck", "Due Friday", Some(1_800_000_000), 1_000);
+        assert_eq!(host.snapshot().google_task_count, 1);
+        let sync_rep = host.sync_google_tasks("@default", 1_001);
+        assert_eq!(sync_rep.created_remote, 0);
+
+        let suite_path = dir.join("google_suite.json");
+        assert!(suite_path.exists());
+
+        let host2 = DesktopBeanHost::new(&dir);
+        assert_eq!(host2.snapshot().google_task_count, 1);
+
+        let preset_res = host.run_copilot_preset(CopilotPresetChip::SummarizeAudioFile, 1_002).unwrap();
+        assert!(preset_res.contains("Audio Summary"));
+        assert_eq!(host.snapshot().copilot_message_count, 2);
+
+        host.submit_copilot_prompt("What are my next steps?", 1_003);
+        let req = host.build_copilot_openai_request();
+        assert!(req.as_object().unwrap().get("messages").is_some());
+        assert!(req.as_object().unwrap().get("tools").is_some());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
