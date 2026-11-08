@@ -140,16 +140,16 @@
 - **Done Predicate**: `python3 /Users/xianweizhang/.gemini/config/skills/xw-design/scripts/check_canvas.py .scratch/koe-ui-options`、`python3 /Users/xianweizhang/Projects/xw-skills/xw-tooling/skills/pstack-relay/tests/test_pstack_relay.py` 与 `scripts/pstack-relay selftest` 全部 `PASS`。
 - **Evidence**: .scratch/koe-ui-options/export/koe-uiuc-plaud-mcp-cli.html;scripts/pstack-relay;docs/pstack-relay.md
 
-### [ ] Slice Q: 第一与第二层收口 (`RecordingAggregate` + 自驱实时流管道，修复 `1A/06`->`1A/07`、注入 16kHz Opus 解码与 DashScope 流式 ASR 泵)
+### [x] Slice Q: 第一与第二层收口 (`RecordingAggregate` + 自驱实时流管道，修复 `1A/06`->`1A/07`、注入 16kHz Opus 解码与 DashScope 流式 ASR 泵)
 - **Playbook**: `Feature`
 - **Outcome**: 在 `rust/koe_core` 与 `desktop/core` 消除散装状态拼接，落地自驱实时流与分析管道：(1) 在 `rust/koe_core/src/session.rs` 补齐 `(0x01, 0x01)` 录音中状态及 `(0x1A, 0x06)` `state == 1`（机身按下开始录音）自动排队下发 `1A/07 (realtimeFlag=1)`，并提供 `start_realtime_recording()` (`18/81`)；(2) 在 `desktop/core` 为 `DesktopBeanHost` 默认注入真实 16kHz/48kHz Opus 解码器工厂，使 `ingest_ble_chunk` 实时产出 640B/20ms `live_pcm16_16khz`；(3) 在 `desktop/core` 建立自驱流式转写与 Cicada 滚动提炼泵（支持私有阿里云 DashScope `paraformer-realtime-v2` / 本地流式识别回退），自动将 `live_pcm16_16khz` 转为 `UtteranceSpine (S1..Sn)` 原句、双语同传、个人承诺与五阶自检遥测（`PipelineDoctorSnapshot`），无需 GPUI 层手写胶水逻辑。
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Evidence**: 6f0eb12;rust/koe_core/src/domain.rs;rust/koe_core/src/session.rs;desktop/core/src/lib.rs;desktop/core/tests/interrogate_repros.rs;.scratch/pstack-relay/slice-q-check.log
 
 ### [ ] Slice R: 第三层收口（上），Vecta 90-8-2 伊利诺伊橙主题令牌、`WorkspaceProjection` 纯投影模型与双栏主工作台（随心记录 + 声波书签 + 逐字声纹同传 + 6 宫格视觉总结）
 - **Playbook**: `Feature`
-- **Outcome**: 在 `desktop/core` 暴露单一不可变视图投影 `WorkspaceProjection` 与单向意图 `WorkspaceCommand`；将 `desktop/app/src/theme.rs` 与 `scripts/verify-ui-principles.py` 升级为 Vecta 90-8-2 配色（`#FAFAFA`/`#F0F0F2` 基底 + `AIVisualEditorialPalette` 6 色柔彩卡片 + 2% 伊利诺伊橙 `#FF5F05`/`#D9480F`）；在 `desktop/app/src/main.rs` 落地 Vecta 双栏壳层、左侧五项导航与底部 `安克心力豆 D3200` 状态卡、右侧顶部日常心力概览条（`MorningBrief` + `ProjectProgress` + `DiaryDraft` + 粗粒度地点）、带橙色已播声波与 `±10s` 双击书签的横向播放器，以及「心智总结（6 宫格柔彩卡片 + Cicada 根因鱼骨图）」与「逐字原话与声纹（`UtteranceSpine` + 双语同传 + 说话人/热词纠错）」双标签页。
-- **Done Predicate**: `python3 -B scripts/verify-ui-principles.py --mode all`、`cargo test --manifest-path desktop/Cargo.toml` 与 `./scripts/check` 全部 `PASS`。
+- **Outcome**: 在 desktop/core 暴露单一不可变视图投影 WorkspaceProjection 与单向意图枚举 WorkspaceCommand（消费 active_aggregate()、visual_cards、pipeline_doctor()、MorningBrief、ProjectProgress、DiaryEntry 与 UtteranceSpine S1..Sn）；将 desktop/app/src/theme.rs 与 scripts/verify-ui-principles.py 升级为 Vecta 90-8-2 配色（90% #FAFAFA/#F0F0F2 灰白画布 + 8% AIVisualEditorialPalette 6 色柔彩卡片 + 2% 伊利诺伊橙 #FF5F05/#D9480F 点睛，保留 12/14/16/22 四级字号与零中间点门禁）；在 desktop/app/src/main.rs 消除分散子引擎胶水调用，落地 Vecta 双栏主工作台（左侧五项导航与底部安克心力豆 D3200 状态卡、右侧顶部日常心力概览条、带橙色已播声波与 ±10s 双击书签的横向播放器、心智总结 6 宫格柔彩卡片 + Cicada 根因鱼骨图、逐字原话与声纹双语同传标签页）。
+- **Done Predicate**: python3 -B scripts/verify-ui-principles.py --mode all && cargo test --manifest-path desktop/Cargo.toml && ./scripts/check
 - **Evidence**: `PENDING`
 
 ### [ ] Slice S: 第三层收口（下），心力格式库（`Formats`）、私有阿里云与本机 MCP/ACP 控制台、设置与心力豆五阶自检（`Bean Doctor` + Wi-Fi `1A/05` 快传）
