@@ -146,20 +146,20 @@
 - **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml` 与 `./scripts/check` 全部 `PASS`。
 - **Evidence**: 6f0eb12;rust/koe_core/src/domain.rs;rust/koe_core/src/session.rs;desktop/core/src/lib.rs;desktop/core/tests/interrogate_repros.rs;.scratch/pstack-relay/slice-q-check.log
 
-### [ ] Slice R: 第三层收口（上），Vecta 90-8-2 伊利诺伊橙主题令牌、`WorkspaceProjection` 纯投影模型与双栏主工作台（随心记录 + 声波书签 + 逐字声纹同传 + 6 宫格视觉总结）
+### [x] Slice R: 第三层收口（上），Vecta 90-8-2 伊利诺伊橙主题令牌、`WorkspaceProjection` 纯投影模型与双栏主工作台（随心记录 + 声波书签 + 逐字声纹同传 + 6 宫格视觉总结）
 - **Playbook**: `Feature`
 - **Outcome**: 在 desktop/core 暴露单一不可变视图投影 WorkspaceProjection 与单向意图枚举 WorkspaceCommand（消费 active_aggregate()、visual_cards、pipeline_doctor()、MorningBrief、ProjectProgress、DiaryEntry 与 UtteranceSpine S1..Sn）；将 desktop/app/src/theme.rs 与 scripts/verify-ui-principles.py 升级为 Vecta 90-8-2 配色（90% #FAFAFA/#F0F0F2 灰白画布 + 8% AIVisualEditorialPalette 6 色柔彩卡片 + 2% 伊利诺伊橙 #FF5F05/#D9480F 点睛，保留 12/14/16/22 四级字号与零中间点门禁）；在 desktop/app/src/main.rs 消除分散子引擎胶水调用，落地 Vecta 双栏主工作台（左侧五项导航与底部安克心力豆 D3200 状态卡、右侧顶部日常心力概览条、带橙色已播声波与 ±10s 双击书签的横向播放器、心智总结 6 宫格柔彩卡片 + Cicada 根因鱼骨图、逐字原话与声纹双语同传标签页）。
 - **Done Predicate**: python3 -B scripts/verify-ui-principles.py --mode all && cargo test --manifest-path desktop/Cargo.toml && ./scripts/check
-- **Evidence**: `PENDING`
+- **Evidence**: 94799fd;desktop/app/src/theme.rs;desktop/app/src/main.rs;desktop/core/src/lib.rs;desktop/core/tests/interrogate_repros.rs;scripts/verify-ui-principles.py;scripts/test_verify_ui_principles.py;.scratch/pstack-relay/slice-r-check.log
 
-### [ ] Slice S: 第三层收口（下），心力格式库（`Formats`）、私有阿里云与本机 MCP/ACP 控制台、设置与心力豆五阶自检（`Bean Doctor` + Wi-Fi `1A/05` 快传）
+### [x] Slice S: 第三层收口（下），心力格式库（`Formats`）、私有阿里云与本机 MCP/ACP 控制台、设置与心力豆五阶自检（`Bean Doctor` + Wi-Fi `1A/05` 快传）
 - **Playbook**: `Feature`
-- **Outcome**: 通过 `WorkspaceProjection` 与 `WorkspaceCommand` 完整落地剩余三屏工作流：(1) `心力格式 (Formats)` 页接入 5 套预置心力/会议模板与自定义分区编辑；(2) `阿里云与 MCP` 页接入私有阿里云 DashScope Keychain 配置、`KOEMCP1` 配对票据、`15s live.json` 租约、`--mcp-stdio` 一键配置生成与中文双字 BM25 多轮溯源问答；(3) `设置与硬件自检 (Bean Doctor)` 页落地五阶实时流状态灯、一键重发 `1A/07` 实时流测音按钮、开机自启/后台常驻同步开关与 Wi-Fi SoftAP (`192.168.4.1:32002`) 批量快传控制。
-- **Done Predicate**: `cargo test --manifest-path desktop/Cargo.toml`、`./scripts/install-macos.sh`、`/Applications/Koe.app/Contents/MacOS/Koe --verify-self`、`/Applications/Koe.app/Contents/MacOS/Koe --smoke-test` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `PENDING`
+- **Outcome**: 通过 WorkspaceProjection 与 WorkspaceCommand 深度收口 Slice S 剩余三屏专页交互与 macOS 真机安装包自检：(1) 心力格式 (Formats) 专页接入 BUILTIN_MINUTE_TEMPLATES 5 套预置模板切换、MinuteCustomSection 自定义分区增删与 6 宫格即时重算；(2) 阿里云与 MCP (AliyunMcp) 专页接入私有阿里云百炼 DashScope 配置状态与热词同步、KOEMCP1 配对票据签发、15s live.json 租约刷新、--mcp-stdio 配置一键生成与 BM25 多轮溯源问答；(3) 设置与自检 (SettingsDoctor) 专页完善五阶 Bean Doctor 诊断、一键重发 1A/07 实时流测音、开机自启/后台常驻开关与 Wi-Fi SoftAP (192.168.4.1:32002) 批量快传进度控制，并跑通 ./scripts/install-macos.sh 及 /Applications/Koe.app --verify-self / --smoke-test。
+- **Done Predicate**: cargo test --manifest-path desktop/Cargo.toml && ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && ./scripts/check
+- **Evidence**: 618349f;desktop/core/src/lib.rs;desktop/app/src/main.rs;desktop/core/tests/interrogate_repros.rs;rust/koe_core/src/session.rs;.scratch/pstack-relay/slice-s-check.log
 
 ### [ ] Slice T: 全链路对抗审查（`interrogate`）、零胶水代码精简（`deslop` / `no-comments`）、进度页更新与交付收口
 - **Playbook**: `Shipping`
-- **Outcome**: 对照「安克随心记」Vecta × Cicada 架构主线执行全仓对抗审查与代码精简，确认 `/Applications/Koe.app` 真机安装与自检全绿，同步 `progress/progress.json` 与 `progress/index.html`，产出完整审计摘要。
-- **Done Predicate**: `./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
+- **Outcome**: 完成 Slice T 终局交付收口：对照「安克随心记」Vecta × Cicada 三层零胶水架构（Layer 1 RecordingAggregate + Layer 2 SuixinRuntime + Layer 3 WorkspaceProjection/WorkspaceCommand）执行全链路对抗复核（interrogate）与代码精简（deslop / no-comments），运行 5 轮交替 Release/Debug 性能基准并解释瓶颈，同步 progress/progress.json 与 progress/index.html，跑通 ./scripts/check、python3 progress/progress.py check 与 scripts/pstack-relay status --require-all-done，并完成跨模型账本审计与 Ketchup 汇报。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && ./scripts/pstack-relay status --require-all-done
 - **Evidence**: `PENDING`
