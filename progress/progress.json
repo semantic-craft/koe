@@ -2617,9 +2617,9 @@
             }
           ],
           "id": "ui-redesign-11-principles",
-          "next": "本机 macOS（/Applications/Koe.app 1.2.3+6）与 iPhone 真机（Hermes 1.2.3+6）均已签名安装；跨日夜环境实机长用留待日常验证。",
+          "next": "本机 macOS（/Applications/Koe.app 2.0.0+8）与 iPhone 真机（Hermes 2.0.0+8）均已签名安装；跨日夜环境实机长用留待日常验证。",
           "status": "done",
-          "summary": "完成 macOS 与 iOS 全仓 62 个 UI/主题文件的 11 项原则重构（Slice A–E）：统一「连接录音豆」动词与新手指引，去除冗余解释文案与常规可逆操作确认弹窗，移除大片红底危险按钮，落地中国传统色竹青（#2E5E4E）单强调色与暖纸灰层级（WCAG AA >= 4.5:1），全仓收敛至 12/14/16/22 四级字号且清零中间点「·」、斜体与全大写标签，内联卡片默认纯平无阴影并统一同心圆角，通过 verify-ui-principles.py --mode all（62 文件 0 违规）、perf-check 与全量测试，并构建签名安装 1.2.3+6 至 /Applications/Koe.app 与 iPhone 真机 Hermes。",
+          "summary": "完成 macOS 与 iOS 全仓 62 个 UI/主题文件的 11 项原则重构（Slice A–E）：统一「连接录音豆」动词与新手指引，去除冗余解释文案与常规可逆操作确认弹窗，移除大片红底危险按钮，落地中国传统色竹青（#2E5E4E）单强调色与暖纸灰层级（WCAG AA >= 4.5:1），全仓收敛至 12/14/16/22 四级字号且清零中间点「·」、斜体与全大写标签，内联卡片默认纯平无阴影并统一同心圆角，通过 verify-ui-principles.py --mode all（62 文件 0 违规）、perf-check 与全量测试，并构建签名安装 2.0.0+8 至 /Applications/Koe.app 与 iPhone 真机 Hermes。",
           "title": "macOS 与 iOS 界面 11 原则重构（Slice A–E）"
         },
         {
