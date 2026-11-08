@@ -493,6 +493,40 @@ pub struct CopilotAnswerCard {
     pub generated_at_epoch_sec: u64,
 }
 
+/// Value snapshot of a Google Task item for UI projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleTaskSnapshot {
+    /// Task identifier in Google Tasks (`gtask-...`).
+    pub id: String,
+    /// Task list identifier (`"@default"`).
+    pub tasklist_id: String,
+    /// Task display title.
+    pub title: String,
+    /// Task notes or grounded `[S#]` citation details.
+    pub notes: String,
+    /// Whether the task is marked completed.
+    pub completed: bool,
+    /// Optional Koe local todo identifier linked for bidirectional sync.
+    pub linked_koe_todo_id: Option<String>,
+    /// Last updated timestamp in Unix epoch seconds.
+    pub updated_at_epoch_sec: u64,
+}
+
+/// Value snapshot of the active Ask AI Copilot provider configuration (redacting secrets).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopilotProviderSnapshot {
+    /// Active provider display name (`"deepseek"`, `"openai-local"`, `"mcp-native"`).
+    pub provider_name: String,
+    /// OpenAI-compatible chat completions endpoint URL.
+    pub endpoint_url: String,
+    /// Target model identifier (`"deepseek-chat"`, `"qwen2.5-coder:14b"`, etc.).
+    pub model: String,
+    /// Whether an API key is configured in memory or environment (never exposes the secret).
+    pub has_api_key: bool,
+    /// Total messages recorded in the active [`CopilotSession`].
+    pub session_message_count: usize,
+}
+
 /// Value snapshot of a Gemini NotebookLM notebook for UI projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoogleNotebookSnapshot {
@@ -506,6 +540,8 @@ pub struct GoogleNotebookSnapshot {
     pub audio_overview_ready: bool,
     /// Total number of Q&A turns recorded in this notebook.
     pub qa_count: usize,
+    /// Latest grounded Q&A answer or audio overview preview text.
+    pub latest_qa_preview: Option<String>,
     /// Last updated timestamp in Unix epoch seconds.
     pub updated_at_epoch_sec: u64,
 }
@@ -523,6 +559,8 @@ pub struct GoogleKeepNoteSnapshot {
     pub checklist_total: usize,
     /// Completed checklist items in the note.
     pub checklist_checked: usize,
+    /// Interactive checklist items `(index, text, checked)`.
+    pub checklist_items: Vec<(usize, String, bool)>,
     /// Whether the note is pinned.
     pub pinned: bool,
     /// Last updated timestamp in Unix epoch seconds.
@@ -714,8 +752,12 @@ pub struct WorkspaceProjection {
     pub search_hits: Vec<WorkspaceSearchHit>,
     /// Latest Ask AI Copilot answer card, if any.
     pub copilot_card: Option<CopilotAnswerCard>,
+    /// Active Ask AI Copilot model provider snapshot (redacting API keys).
+    pub copilot_provider: CopilotProviderSnapshot,
     /// Latest Google Tasks bidirectional sync report, if any.
     pub google_sync_report: Option<GoogleTasksSyncReport>,
+    /// Snapshots of Google Tasks items in the local Google suite store.
+    pub google_tasks: Vec<GoogleTaskSnapshot>,
     /// Snapshots of Gemini NotebookLM notebooks in the local Google suite store.
     pub google_notebooks: Vec<GoogleNotebookSnapshot>,
     /// Snapshots of Google Keep notes in the local Google suite store.
@@ -861,6 +903,56 @@ pub enum WorkspaceCommand {
     AskCopilot {
         /// User question or instruction.
         prompt: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Configures the Ask AI Copilot model provider (`"deepseek"`, `"openai-local"`, or `"mcp-native"`).
+    ConfigureCopilotProvider {
+        /// Provider identifier (`"deepseek"`, `"openai-local"`, or `"mcp-native"`).
+        provider_name: String,
+        /// OpenAI-compatible chat completions endpoint URL.
+        endpoint_url: String,
+        /// Model name (`"deepseek-chat"`, `"qwen2.5-coder:14b"`, etc.).
+        model: String,
+        /// Optional environment variable name holding the bearer API key.
+        api_key_env: Option<String>,
+    },
+    /// Ingests a raw OpenAI/DeepSeek `/v1/chat/completions` JSON response (supporting `tool_calls` loop).
+    IngestCopilotModelResponse {
+        /// Raw JSON string returned by the OpenAI-compatible endpoint.
+        response_json: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Toggles the completion state of a Google Task in the local suite store and syncs with Koe todos.
+    ToggleGoogleTask {
+        /// Google Task identifier (`gtask-...`).
+        task_id: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Creates a new Google Task in the local suite store and links it into Koe context todos.
+    CreateGoogleTask {
+        /// Task title.
+        title: String,
+        /// Task notes or citation context.
+        notes: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Creates a new Gemini NotebookLM notebook grounded in the active recording spine.
+    CreateGeminiNotebook {
+        /// Notebook title.
+        title: String,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Toggles a checklist item on a Google Keep note.
+    ToggleGoogleKeepChecklist {
+        /// Google Keep note identifier (`keep-...`).
+        note_id: String,
+        /// Zero-based checklist item index.
+        item_index: usize,
         /// Wall-clock timestamp in Unix epoch seconds.
         now_epoch_sec: u64,
     },
@@ -2887,6 +2979,23 @@ impl DesktopBeanHost {
             self.asr_pump.latest_rms,
         );
 
+        let google_tasks: Vec<GoogleTaskSnapshot> = self
+            .mcp_acp
+            .google_suite
+            .tasks
+            .values()
+            .filter(|t| !t.deleted)
+            .map(|t| GoogleTaskSnapshot {
+                id: t.id.0.clone(),
+                tasklist_id: t.tasklist_id.clone(),
+                title: t.title.clone(),
+                notes: t.notes.clone(),
+                completed: matches!(t.status, GoogleTaskStatus::Completed),
+                linked_koe_todo_id: t.linked_koe_todo_id.clone(),
+                updated_at_epoch_sec: t.updated_at_epoch_sec,
+            })
+            .collect();
+
         let google_notebooks: Vec<GoogleNotebookSnapshot> = self
             .mcp_acp
             .google_suite
@@ -2901,6 +3010,11 @@ impl DesktopBeanHost {
                     .iter()
                     .any(|ao| matches!(ao.status, NotebookAudioOverviewStatus::Ready)),
                 qa_count: nb.qa_history.len(),
+                latest_qa_preview: nb
+                    .qa_history
+                    .last()
+                    .map(|qa| qa.answer.clone())
+                    .or_else(|| nb.audio_overviews.last().map(|ao| ao.dialogue_script.clone())),
                 updated_at_epoch_sec: nb.updated_at_epoch_sec,
             })
             .collect();
@@ -2913,17 +3027,35 @@ impl DesktopBeanHost {
             .map(|note| {
                 let checklist_total = note.checklist.len();
                 let checklist_checked = note.checklist.iter().filter(|i| i.checked).count();
+                let checklist_items = note
+                    .checklist
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, item)| (idx, item.text.clone(), item.checked))
+                    .collect();
                 GoogleKeepNoteSnapshot {
                     id: note.id.0.clone(),
                     title: note.title.clone(),
                     body_preview: note.body_text.clone(),
                     checklist_total,
                     checklist_checked,
+                    checklist_items,
                     pinned: note.pinned,
                     updated_at_epoch_sec: note.updated_at_epoch_sec,
                 }
             })
             .collect();
+
+        let prov = &self.mcp_acp.copilot.provider;
+        let copilot_provider = CopilotProviderSnapshot {
+            provider_name: prov.provider_name.clone(),
+            endpoint_url: prov.endpoint_url.clone(),
+            model: prov.model.clone(),
+            has_api_key: prov.api_key.is_some()
+                || std::env::var_os("DEEPSEEK_API_KEY").is_some_and(|v| !v.is_empty())
+                || std::env::var_os("OPENAI_API_KEY").is_some_and(|v| !v.is_empty()),
+            session_message_count: self.mcp_acp.copilot.messages.len(),
+        };
 
         let active_recordings: Vec<DesktopExportedRecording> = self
             .library
@@ -2957,7 +3089,9 @@ impl DesktopBeanHost {
             search_query: self.search_query.clone(),
             search_hits: self.search_hits.clone(),
             copilot_card: self.last_copilot_card.clone(),
+            copilot_provider,
             google_sync_report: self.last_google_sync.clone(),
+            google_tasks,
             google_notebooks,
             google_keep_notes,
             connection_phase: self.session.connection_phase,
@@ -3454,6 +3588,10 @@ impl DesktopBeanHost {
             } => {
                 let ts = preset_sec.max(effective_now_sec);
                 if let Ok(answer) = self.run_copilot_preset(preset, ts) {
+                    if matches!(preset, CopilotPresetChip::SyncActionItemsToGoogleTasks) {
+                        let rep = self.sync_google_tasks("@default", ts);
+                        self.last_google_sync = Some(rep);
+                    }
                     let mut citations = extract_segment_citations(&answer);
                     if citations.is_empty() {
                         if let Some(first) = self.spine.segments().first() {
@@ -3482,23 +3620,197 @@ impl DesktopBeanHost {
                 now_epoch_sec: ask_sec,
             } => {
                 let ts = ask_sec.max(effective_now_sec);
-                self.submit_copilot_prompt(&prompt, ts);
-                let first_seg = self.spine.segments().first().cloned();
-                let answer = first_seg.as_ref().map_or_else(
-                    || format!("已记录问题「{prompt}」，等待语音主干输入后生成带 [S1] 锚点的回答。"),
-                    |seg| format!("基于原话 [{}]：「{}」，针对「{prompt}」的结论已就绪。", seg.id, seg.text),
-                );
-                let citations = first_seg.map_or_else(Vec::new, |s| vec![s.id]);
-                let card = CopilotAnswerCard {
-                    prompt,
-                    answer,
-                    preset: None,
-                    citations,
-                    tools_used: vec!["search_context".to_string()],
-                    generated_at_epoch_sec: ts,
-                };
+                let card = self.execute_copilot_prompt_turn(&prompt, ts);
                 self.copilot_history.push(card.clone());
                 self.last_copilot_card = Some(card);
+            }
+            WorkspaceCommand::ConfigureCopilotProvider {
+                provider_name,
+                endpoint_url,
+                model,
+                api_key_env,
+            } => {
+                let api_key = api_key_env
+                    .as_deref()
+                    .and_then(|env_name| std::env::var(env_name).ok())
+                    .filter(|s| !s.trim().is_empty());
+                self.configure_copilot_provider(CopilotProviderConfig {
+                    provider_name,
+                    endpoint_url,
+                    model,
+                    auth_style: CopilotAuthStyle::BearerHeader,
+                    api_key,
+                    temperature_milli: 200,
+                    max_tokens: 2048,
+                });
+            }
+            WorkspaceCommand::IngestCopilotModelResponse {
+                response_json,
+                now_epoch_sec: resp_sec,
+            } => {
+                let ts = resp_sec.max(effective_now_sec);
+                if let Ok(parsed) = JsonValue::parse(&response_json) {
+                    if let Ok(Some(final_reply)) = self.ingest_copilot_openai_response(&parsed, ts)
+                    {
+                        let mut citations = extract_segment_citations(&final_reply);
+                        if citations.is_empty() {
+                            if let Some(first) = self.spine.segments().first() {
+                                citations.push(first.id);
+                            }
+                        }
+                        let mut tools_used = self.mcp_acp.copilot.current_turn_tools.clone();
+                        if tools_used.is_empty() {
+                            tools_used.push("openai_chat_completions".to_string());
+                        }
+                        let prompt = self
+                            .mcp_acp
+                            .copilot
+                            .messages
+                            .iter()
+                            .rev()
+                            .find(|m| matches!(m.role, CopilotRole::User))
+                            .map_or_else(
+                                || "外部模型对话".to_string(),
+                                |m| m.content.clone(),
+                            );
+                        let card = CopilotAnswerCard {
+                            prompt,
+                            answer: final_reply,
+                            preset: None,
+                            citations,
+                            tools_used,
+                            generated_at_epoch_sec: ts,
+                        };
+                        self.copilot_history.push(card.clone());
+                        self.last_copilot_card = Some(card);
+                    }
+                }
+            }
+            WorkspaceCommand::ToggleGoogleTask {
+                task_id,
+                now_epoch_sec: toggle_sec,
+            } => {
+                let ts = toggle_sec.max(effective_now_sec);
+                let tid = GoogleTaskId(task_id);
+                let is_completed = self
+                    .mcp_acp
+                    .google_suite
+                    .tasks
+                    .get(&tid)
+                    .is_some_and(|t| matches!(t.status, GoogleTaskStatus::Completed));
+                let _ = self
+                    .mcp_acp
+                    .google_suite
+                    .complete_task(&tid, !is_completed, ts);
+                if let Some(linked_id) = self
+                    .mcp_acp
+                    .google_suite
+                    .tasks
+                    .get(&tid)
+                    .and_then(|t| t.linked_koe_todo_id.clone())
+                {
+                    if let Some(todo) = self.context.todos.iter_mut().find(|t| t.id == linked_id) {
+                        todo.status = if is_completed {
+                            TodoStatus::Open
+                        } else {
+                            TodoStatus::Done
+                        };
+                    }
+                }
+                let _ = self.save_google_suite();
+            }
+            WorkspaceCommand::CreateGoogleTask {
+                title,
+                notes,
+                now_epoch_sec: create_sec,
+            } => {
+                let ts = create_sec.max(effective_now_sec);
+                let trimmed = title.trim();
+                if !trimmed.is_empty() {
+                    let first_cite = self.spine.segments().first().map(|s| s.id);
+                    let cite_tag = first_cite.map_or_else(|| "[S1]".to_string(), |c| format!("[{c}]"));
+                    let full_notes = if notes.trim().is_empty() {
+                        format!("来自 Koe 桌面端随心记 {cite_tag}")
+                    } else {
+                        notes
+                    };
+                    let task = self.mcp_acp.google_suite.create_task(
+                        "@default",
+                        trimmed,
+                        &full_notes,
+                        Some(ts.saturating_add(86_400)),
+                        ts,
+                    );
+                    let koe_todo_id = format!("todo-gtask-{}", task.id.0);
+                    self.context.todos.push(TodoItem {
+                        id: koe_todo_id.clone(),
+                        title: trimmed.to_string(),
+                        kind: TodoKind::Mine,
+                        status: TodoStatus::Open,
+                        created_at_epoch_sec: ts,
+                        due_at_epoch_sec: Some(ts.saturating_add(86_400)),
+                        assignee: None,
+                        citations: first_cite.into_iter().collect(),
+                    });
+                    if let Some(stored) = self.mcp_acp.google_suite.tasks.get_mut(&task.id) {
+                        stored.linked_koe_todo_id = Some(koe_todo_id);
+                    }
+                    let _ = self.save_google_suite();
+                }
+            }
+            WorkspaceCommand::CreateGeminiNotebook {
+                title,
+                now_epoch_sec: nb_sec,
+            } => {
+                let ts = nb_sec.max(effective_now_sec);
+                let trimmed = title.trim();
+                if !trimmed.is_empty() {
+                    let nb_id = self.mcp_acp.google_suite.create_notebook(trimmed, ts);
+                    let src_text = if self.spine.is_empty() {
+                        "随心记音频主干摘要 [S1]".to_string()
+                    } else {
+                        self.spine
+                            .segments()
+                            .iter()
+                            .map(|s| format!("[{}] {}", s.id, s.text))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    };
+                    let _ = self.mcp_acp.google_suite.add_notebook_source(
+                        &nb_id,
+                        "当前随心记原话主干",
+                        &src_text,
+                        Some(&self.active_aggregate.recording_id),
+                        ts,
+                    );
+                    let _ = self.mcp_acp.google_suite.query_notebook_grounded(
+                        &nb_id,
+                        "提炼核心结论与行动项",
+                        &self.search_index,
+                        &self.spine,
+                        ts,
+                    );
+                    let _ = self.mcp_acp.google_suite.generate_notebook_audio_overview(
+                        &nb_id,
+                        "Executive summary",
+                        Some(&self.spine),
+                        ts,
+                    );
+                    let _ = self.save_google_suite();
+                }
+            }
+            WorkspaceCommand::ToggleGoogleKeepChecklist {
+                note_id,
+                item_index,
+                now_epoch_sec: keep_sec,
+            } => {
+                let ts = keep_sec.max(effective_now_sec);
+                let nid = KeepNoteId(note_id);
+                let _ = self
+                    .mcp_acp
+                    .google_suite
+                    .toggle_keep_checklist_item(&nid, item_index, ts);
+                let _ = self.save_google_suite();
             }
             WorkspaceCommand::SyncGoogleWorkspace {
                 tasklist_id,
@@ -3617,7 +3929,396 @@ impl DesktopBeanHost {
             let _ = fs::rename(&tmp, target);
         }
     }
+
+    fn ensure_mcp_initialized(&mut self, now_epoch_sec: u64) {
+        if !self.mcp_acp.mcp_ready {
+            let _ = self.dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+                now_epoch_sec,
+            );
+            let _ = self.dispatch_jsonrpc(
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                now_epoch_sec,
+            );
+        }
+    }
+
+    fn execute_copilot_prompt_turn(&mut self, prompt: &str, ts: u64) -> CopilotAnswerCard {
+        self.submit_copilot_prompt(prompt, ts);
+        self.ensure_mcp_initialized(ts);
+
+        let lowered = prompt.to_lowercase();
+        let mut matched_routes = Vec::new();
+        let mut tools_used = Vec::new();
+
+        for rule in COPILOT_INTENT_TABLE {
+            if rule.keywords.iter().any(|kw| lowered.contains(kw)) {
+                matched_routes.push(rule.route);
+                for &tool in rule.mcp_tools {
+                    if !tools_used.iter().any(|t| t == tool) {
+                        tools_used.push(tool.to_string());
+                    }
+                }
+            }
+        }
+        if matched_routes.is_empty() {
+            matched_routes.push(CopilotIntentRoute::ExecutiveMinutesBrief);
+            tools_used.push("search_context".to_string());
+            tools_used.push("get_minutes".to_string());
+        }
+
+        let first_seg = self.spine.segments().first().cloned();
+        let last_seg = self.spine.segments().last().cloned();
+        let mut citations: Vec<SegmentId> = Vec::new();
+        if let Some(ref s1) = first_seg {
+            citations.push(s1.id);
+        }
+        if let Some(ref s2) = last_seg {
+            if !citations.contains(&s2.id) {
+                citations.push(s2.id);
+            }
+        }
+        let cite_badge = citations
+            .first()
+            .map_or_else(|| "[S1]".to_string(), |c| format!("[{c}]"));
+
+        let mut summary_parts = Vec::new();
+
+        for route in matched_routes {
+            match route {
+                CopilotIntentRoute::CreateGoogleTask => {
+                    let clean_title = prompt
+                        .trim_start_matches("新建待办")
+                        .trim_start_matches("创建待办")
+                        .trim_start_matches("添加待办")
+                        .trim_start_matches("待办：")
+                        .trim_start_matches("待办:")
+                        .trim_start_matches(['：', ':', ' '])
+                        .trim();
+                    let task_title = if clean_title.is_empty() {
+                        first_seg
+                            .as_ref()
+                            .map_or_else(|| prompt.to_string(), |s| s.text.clone())
+                    } else {
+                        clean_title.to_string()
+                    };
+                    let mut args = std::collections::BTreeMap::new();
+                    args.insert("op".to_string(), JsonValue::String("create".to_string()));
+                    args.insert(
+                        "tasklist_id".to_string(),
+                        JsonValue::String("@default".to_string()),
+                    );
+                    args.insert("title".to_string(), JsonValue::String(task_title.clone()));
+                    args.insert(
+                        "notes".to_string(),
+                        JsonValue::String(format!("AI 随心问创建 {cite_badge}")),
+                    );
+                    let req = Self::build_mcp_tool_call_json(201, "google_tasks_mutate", args);
+                    if let Some(resp) = self.dispatch_jsonrpc(&req, ts) {
+                        self.last_jsonrpc_response = resp;
+                    }
+                    let rep = self.sync_google_tasks("@default", ts);
+                    self.last_google_sync = Some(rep);
+                    summary_parts.push(format!(
+                        "已通过 google_tasks_mutate 写入 Google Tasks 待办「{task_title}」{cite_badge}（当前共 {} 项）",
+                        self.mcp_acp.google_suite.tasks.len()
+                    ));
+                }
+                CopilotIntentRoute::CompleteGoogleTask => {
+                    let target_id = self
+                        .mcp_acp
+                        .google_suite
+                        .tasks
+                        .values()
+                        .find(|t| !t.deleted && matches!(t.status, GoogleTaskStatus::NeedsAction))
+                        .map(|t| (t.id.0.clone(), t.title.clone()));
+                    if let Some((tid, title)) = target_id {
+                        let mut args = std::collections::BTreeMap::new();
+                        args.insert("op".to_string(), JsonValue::String("complete".to_string()));
+                        args.insert("task_id".to_string(), JsonValue::String(tid));
+                        let req = Self::build_mcp_tool_call_json(202, "google_tasks_mutate", args);
+                        if let Some(resp) = self.dispatch_jsonrpc(&req, ts) {
+                            self.last_jsonrpc_response = resp;
+                        }
+                        summary_parts.push(format!(
+                            "已通过 google_tasks_mutate 勾选完成 Google Tasks 待办「{title}」{cite_badge}"
+                        ));
+                    } else {
+                        let rep = self.sync_google_tasks("@default", ts);
+                        self.last_google_sync = Some(rep);
+                        summary_parts.push(format!(
+                            "已同步 Google Tasks 清单（当前共 {} 项）{cite_badge}",
+                            self.mcp_acp.google_suite.tasks.len()
+                        ));
+                    }
+                }
+                CopilotIntentRoute::SyncGoogleTasks => {
+                    let mut args = std::collections::BTreeMap::new();
+                    args.insert(
+                        "tasklist_id".to_string(),
+                        JsonValue::String("@default".to_string()),
+                    );
+                    let req = Self::build_mcp_tool_call_json(203, "google_tasks_sync", args);
+                    if let Some(resp) = self.dispatch_jsonrpc(&req, ts) {
+                        self.last_jsonrpc_response = resp;
+                    }
+                    let rep = self.sync_google_tasks("@default", ts);
+                    self.last_google_sync = Some(rep.clone());
+                    summary_parts.push(format!(
+                        "已通过 google_tasks_sync 双向同步 Google Tasks（远端新增 {} 项，双向联动 {} 项，总计 {} 项）{cite_badge}",
+                        rep.created_remote,
+                        rep.pushed_to_remote + rep.applied_from_remote,
+                        self.mcp_acp.google_suite.tasks.len()
+                    ));
+                }
+                CopilotIntentRoute::GeminiNotebookResearch => {
+                    let nb_id = if let Some(first_nb) =
+                        self.mcp_acp.google_suite.notebooks.keys().next().cloned()
+                    {
+                        first_nb.0
+                    } else {
+                        let id = self
+                            .mcp_acp
+                            .google_suite
+                            .create_notebook("安克随心记 每日脉络 Notebook", ts);
+                        let src = first_seg
+                            .as_ref()
+                            .map_or("随心记音频主干摘要 [S1]", |s| s.text.as_str());
+                        let _ = self.mcp_acp.google_suite.add_notebook_source(
+                            &id,
+                            "当前随心记原话主干",
+                            src,
+                            Some(&self.active_aggregate.recording_id),
+                            ts,
+                        );
+                        id.0
+                    };
+                    let mut q_args = std::collections::BTreeMap::new();
+                    q_args.insert(
+                        "op".to_string(),
+                        JsonValue::String("query_grounded".to_string()),
+                    );
+                    q_args.insert(
+                        "notebook_id".to_string(),
+                        JsonValue::String(nb_id.clone()),
+                    );
+                    q_args.insert("query".to_string(), JsonValue::String(prompt.to_string()));
+                    let q_req = Self::build_mcp_tool_call_json(204, "gemini_notebook_ops", q_args);
+                    if let Some(resp) = self.dispatch_jsonrpc(&q_req, ts) {
+                        self.last_jsonrpc_response = resp;
+                    }
+                    let mut ao_args = std::collections::BTreeMap::new();
+                    ao_args.insert(
+                        "op".to_string(),
+                        JsonValue::String("generate_audio_overview".to_string()),
+                    );
+                    ao_args.insert(
+                        "notebook_id".to_string(),
+                        JsonValue::String(nb_id.clone()),
+                    );
+                    ao_args.insert(
+                        "prompt".to_string(),
+                        JsonValue::String(prompt.to_string()),
+                    );
+                    let ao_req =
+                        Self::build_mcp_tool_call_json(205, "gemini_notebook_ops", ao_args);
+                    let _ = self.dispatch_jsonrpc(&ao_req, ts);
+                    summary_parts.push(format!(
+                        "已通过 gemini_notebook_ops 更新研究本 {nb_id}（Audio Overview 播客脚本与有据问答已就绪）{cite_badge}"
+                    ));
+                }
+                CopilotIntentRoute::GoogleKeepChecklist => {
+                    let item_text = format!("{prompt} {cite_badge}");
+                    if let Some(first_note) =
+                        self.mcp_acp.google_suite.keep_notes.values_mut().next()
+                    {
+                        first_note
+                            .checklist
+                            .push(KeepChecklistItem::new(item_text.clone(), false));
+                        first_note.updated_at_epoch_sec = ts;
+                    } else {
+                        let mut k_args = std::collections::BTreeMap::new();
+                        k_args.insert("op".to_string(), JsonValue::String("create".to_string()));
+                        k_args.insert(
+                            "title".to_string(),
+                            JsonValue::String("随心记重点与待办清单".to_string()),
+                        );
+                        k_args.insert(
+                            "body_text".to_string(),
+                            JsonValue::String("由 Koe AI 随心问维护的速记清单".to_string()),
+                        );
+                        k_args.insert("pinned".to_string(), JsonValue::Bool(true));
+                        k_args.insert(
+                            "checklist".to_string(),
+                            JsonValue::Array(vec![JsonValue::String(item_text.clone())]),
+                        );
+                        let k_req = Self::build_mcp_tool_call_json(206, "google_keep_ops", k_args);
+                        if let Some(resp) = self.dispatch_jsonrpc(&k_req, ts) {
+                            self.last_jsonrpc_response = resp;
+                        }
+                    }
+                    let mut sync_args = std::collections::BTreeMap::new();
+                    sync_args.insert(
+                        "op".to_string(),
+                        JsonValue::String("sync_context".to_string()),
+                    );
+                    let sync_req =
+                        Self::build_mcp_tool_call_json(207, "google_keep_ops", sync_args);
+                    if let Some(resp) = self.dispatch_jsonrpc(&sync_req, ts) {
+                        self.last_jsonrpc_response = resp;
+                    }
+                    summary_parts.push(format!(
+                        "已通过 google_keep_ops 追加 Google Keep 速记清单项「{item_text}」"
+                    ));
+                }
+                CopilotIntentRoute::ExecutiveMinutesBrief => {
+                    let mut s_args = std::collections::BTreeMap::new();
+                    s_args.insert("query".to_string(), JsonValue::String(prompt.to_string()));
+                    s_args.insert("limit".to_string(), JsonValue::Number(5.0));
+                    let s_req = Self::build_mcp_tool_call_json(207, "search_context", s_args);
+                    if let Some(resp) = self.dispatch_jsonrpc(&s_req, ts) {
+                        self.last_jsonrpc_response = resp;
+                    }
+                    let quote_summary = match (&first_seg, &last_seg) {
+                        (Some(s1), Some(s2)) if s1.id != s2.id => format!(
+                            "基于原话 [{}]「{}」与 [{}]「{}」，针对「{prompt}」的结论已收敛。",
+                            s1.id, s1.text, s2.id, s2.text
+                        ),
+                        (Some(s1), _) => format!(
+                            "基于原话 [{}]：「{}」，针对「{prompt}」的结论已就绪。",
+                            s1.id, s1.text
+                        ),
+                        (None, _) => format!(
+                            "已记录问题「{prompt}」，等待语音主干输入后生成带 [S1] 锚点的回答。"
+                        ),
+                    };
+                    summary_parts.push(quote_summary);
+                }
+            }
+        }
+
+        let _ = self.save_google_suite();
+        let answer = summary_parts.join(" ");
+        let extracted = extract_segment_citations(&answer);
+        if !extracted.is_empty() {
+            citations = extracted;
+        }
+        self.mcp_acp.copilot.messages.push(CopilotMessage {
+            role: CopilotRole::Assistant,
+            content: answer.clone(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            citations: citations.clone(),
+            created_at_epoch_sec: ts,
+        });
+        self.mcp_acp.copilot.current_turn_tools = tools_used.clone();
+        self.mcp_acp.copilot.phase = CopilotPhase::Completed {
+            reply_text: answer.clone(),
+            citations: citations.clone(),
+        };
+
+        CopilotAnswerCard {
+            prompt: prompt.to_string(),
+            answer,
+            preset: None,
+            citations,
+            tools_used,
+            generated_at_epoch_sec: ts,
+        }
+    }
+
+    fn build_mcp_tool_call_json(
+        id: u64,
+        tool_name: &str,
+        arguments: std::collections::BTreeMap<String, JsonValue>,
+    ) -> String {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("name".to_string(), JsonValue::String(tool_name.to_string()));
+        params.insert("arguments".to_string(), JsonValue::Object(arguments));
+        let mut root = std::collections::BTreeMap::new();
+        root.insert("jsonrpc".to_string(), JsonValue::String("2.0".to_string()));
+        root.insert("id".to_string(), JsonValue::Number(id as f64));
+        root.insert(
+            "method".to_string(),
+            JsonValue::String("tools/call".to_string()),
+        );
+        root.insert("params".to_string(), JsonValue::Object(params));
+        JsonValue::Object(root).to_json_string()
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopilotIntentRoute {
+    CreateGoogleTask,
+    CompleteGoogleTask,
+    SyncGoogleTasks,
+    GeminiNotebookResearch,
+    GoogleKeepChecklist,
+    ExecutiveMinutesBrief,
+}
+
+struct CopilotIntentRule {
+    keywords: &'static [&'static str],
+    route: CopilotIntentRoute,
+    mcp_tools: &'static [&'static str],
+}
+
+const COPILOT_INTENT_TABLE: [CopilotIntentRule; 6] = [
+    CopilotIntentRule {
+        keywords: &[
+            "新建待办",
+            "创建待办",
+            "添加待办",
+            "add task",
+            "create task",
+            "todo:",
+            "待办：",
+        ],
+        route: CopilotIntentRoute::CreateGoogleTask,
+        mcp_tools: &["google_tasks_mutate", "google_tasks_sync"],
+    },
+    CopilotIntentRule {
+        keywords: &["完成待办", "勾选待办", "complete task", "done task"],
+        route: CopilotIntentRoute::CompleteGoogleTask,
+        mcp_tools: &["google_tasks_mutate", "google_tasks_list"],
+    },
+    CopilotIntentRule {
+        keywords: &[
+            "google tasks",
+            "同步待办",
+            "行动项",
+            "action items",
+            "待办",
+            "tasks",
+        ],
+        route: CopilotIntentRoute::SyncGoogleTasks,
+        mcp_tools: &["google_tasks_sync", "google_tasks_list"],
+    },
+    CopilotIntentRule {
+        keywords: &[
+            "notebook",
+            "研究本",
+            "笔记本",
+            "notebooklm",
+            "audio overview",
+            "播客",
+            "脑图",
+        ],
+        route: CopilotIntentRoute::GeminiNotebookResearch,
+        mcp_tools: &["gemini_notebook_ops", "get_minutes"],
+    },
+    CopilotIntentRule {
+        keywords: &["keep", "便签", "速记", "清单", "checklist", "note"],
+        route: CopilotIntentRoute::GoogleKeepChecklist,
+        mcp_tools: &["google_keep_ops", "search_context"],
+    },
+    CopilotIntentRule {
+        keywords: &["纪要", "总结", "brief", "minutes", "summary", "结论", "原话"],
+        route: CopilotIntentRoute::ExecutiveMinutesBrief,
+        mcp_tools: &["get_minutes", "search_context"],
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -4637,6 +5338,80 @@ mod tests {
             now_sec + 16,
         );
         assert_eq!(wifi_cancel.wifi_batch.phase, WifiBatchPhase::Idle);
+
+        let prov_proj = host.dispatch(
+            WorkspaceCommand::ConfigureCopilotProvider {
+                provider_name: "openai-local".to_string(),
+                endpoint_url: "http://127.0.0.1:11434/v1/chat/completions".to_string(),
+                model: "qwen2.5-coder:14b".to_string(),
+                api_key_env: None,
+            },
+            now_sec + 17,
+        );
+        assert_eq!(prov_proj.copilot_provider.provider_name, "openai-local");
+        assert_eq!(prov_proj.copilot_provider.model, "qwen2.5-coder:14b");
+
+        let gtask_proj = host.dispatch(
+            WorkspaceCommand::AskCopilot {
+                prompt: "新建待办：周五前复核海外渠道合同并同步 Google Tasks、NotebookLM 研究本与 Keep 清单"
+                    .to_string(),
+                now_epoch_sec: now_sec + 18,
+            },
+            now_sec + 18,
+        );
+        assert!(!gtask_proj.google_tasks.is_empty());
+        assert!(!gtask_proj.google_notebooks.is_empty());
+        assert!(!gtask_proj.google_keep_notes.is_empty());
+        let last_turn = gtask_proj.copilot_card.as_ref().expect("copilot card");
+        assert!(last_turn.tools_used.iter().any(|t| t == "google_tasks_mutate"));
+        assert!(last_turn.tools_used.iter().any(|t| t == "gemini_notebook_ops"));
+        assert!(last_turn.tools_used.iter().any(|t| t == "google_keep_ops"));
+        assert!(!last_turn.citations.is_empty());
+
+        let first_task_id = gtask_proj.google_tasks[0].id.clone();
+        let toggled_task_proj = host.dispatch(
+            WorkspaceCommand::ToggleGoogleTask {
+                task_id: first_task_id.clone(),
+                now_epoch_sec: now_sec + 19,
+            },
+            now_sec + 19,
+        );
+        assert!(
+            toggled_task_proj
+                .google_tasks
+                .iter()
+                .any(|t| t.id == first_task_id && t.completed)
+        );
+
+        let first_note_id = toggled_task_proj.google_keep_notes[0].id.clone();
+        let toggled_keep_proj = host.dispatch(
+            WorkspaceCommand::ToggleGoogleKeepChecklist {
+                note_id: first_note_id.clone(),
+                item_index: 0,
+                now_epoch_sec: now_sec + 20,
+            },
+            now_sec + 20,
+        );
+        assert!(
+            toggled_keep_proj
+                .google_keep_notes
+                .iter()
+                .any(|n| n.id == first_note_id && n.checklist_checked >= 1)
+        );
+
+        let created_nb_proj = host.dispatch(
+            WorkspaceCommand::CreateGeminiNotebook {
+                title: "Q4 海外渠道专题 Notebook".to_string(),
+                now_epoch_sec: now_sec + 21,
+            },
+            now_sec + 21,
+        );
+        assert!(
+            created_nb_proj
+                .google_notebooks
+                .iter()
+                .any(|nb| nb.title == "Q4 海外渠道专题 Notebook" && nb.audio_overview_ready)
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

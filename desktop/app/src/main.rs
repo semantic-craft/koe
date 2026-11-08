@@ -5,6 +5,7 @@ pub mod theme;
 use gpui_kit::base::{Disableable, StyledExt};
 use gpui_kit::component::Sizable;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::*;
 use koe_desktop_ble::{BleEvent, MacBleController};
 use koe_desktop_core::{
@@ -55,6 +56,8 @@ struct KoeDesktopApp {
     ble_poll_task: Option<Task<()>>,
     player: Option<AudioPlayer>,
     playback_task: Option<Task<()>>,
+    copilot_input: Option<Entity<InputState>>,
+    copilot_input_sub: Option<Subscription>,
     status: String,
     smoke: bool,
     smoke_failed: bool,
@@ -78,6 +81,8 @@ impl KoeDesktopApp {
             ble_poll_task: None,
             player: None,
             playback_task: None,
+            copilot_input: None,
+            copilot_input_sub: None,
             status: format!(
                 "已载入本机目录，录音 {} 条，资料包 {} 份",
                 loaded_exports, loaded_packs
@@ -422,6 +427,10 @@ impl KoeDesktopApp {
         let _ = self.apply_command(WorkspaceCommand::SearchContext {
             query: "海外渠道".to_string(),
             limit: 5,
+        });
+        let _ = self.apply_command(WorkspaceCommand::SyncGoogleWorkspace {
+            tasklist_id: "@default".to_string(),
+            now_epoch_sec: now + 6,
         });
         let rec_count = self.projection.library.entry_count;
         self.status = format!(
@@ -2789,6 +2798,100 @@ impl KoeDesktopApp {
             .child(seg_list)
     }
 
+    fn ensure_copilot_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.copilot_input.is_some() {
+            return;
+        }
+        let input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(
+                "输入问题或指令（例如：新建待办：周五复核合同 / 同步 Google Tasks / 追问 NotebookLM 研究本 / 追加 Keep 清单）...",
+            )
+        });
+        let sub = cx.subscribe_in(
+            &input,
+            window,
+            |this, state, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter {
+                    secondary: false, ..
+                } = event
+                {
+                    let text = state.read(cx).value().trim().to_string();
+                    if !text.is_empty() {
+                        state.update(cx, |s, cx| s.set_value("", window, cx));
+                        this.submit_copilot_chat_input(text, cx);
+                    }
+                }
+            },
+        );
+        self.copilot_input = Some(input);
+        self.copilot_input_sub = Some(sub);
+    }
+
+    fn submit_copilot_chat_input(&mut self, prompt: String, cx: &mut Context<Self>) {
+        let now = Self::now_epoch_sec();
+        self.dispatch_command(
+            WorkspaceCommand::AskCopilot {
+                prompt: prompt.clone(),
+                now_epoch_sec: now,
+            },
+            format!(
+                "AI 随心问已完成本机 MCP 工具联动与 [S1..Sn] 原话溯源（提问：{}）",
+                prompt
+            ),
+            cx,
+        );
+        if std::env::var_os("KOE_COPILOT_LIVE_HTTP").is_some_and(|v| v == "1") {
+            let endpoint = self.projection.copilot_provider.endpoint_url.clone();
+            if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+                let req_body = self.host.build_copilot_openai_request().to_json_string();
+                let prov_name = self.projection.copilot_provider.provider_name.clone();
+                cx.spawn(async move |this, cx| {
+                    let output = cx
+                        .background_executor()
+                        .spawn(async move {
+                            let mut cmd = std::process::Command::new("curl");
+                            cmd.arg("-sS")
+                                .arg("--max-time")
+                                .arg("15")
+                                .arg("-H")
+                                .arg("Content-Type: application/json");
+                            let env_key = if prov_name == "deepseek" {
+                                "DEEPSEEK_API_KEY"
+                            } else {
+                                "OPENAI_API_KEY"
+                            };
+                            if let Some(k) = std::env::var(env_key).ok().filter(|s| !s.trim().is_empty()) {
+                                cmd.arg("-H").arg(format!("Authorization: Bearer {k}"));
+                            }
+                            cmd.arg("-d")
+                                .arg(req_body)
+                                .arg(endpoint)
+                                .output()
+                                .ok()
+                                .filter(|o| o.status.success())
+                                .and_then(|o| String::from_utf8(o.stdout).ok())
+                                .filter(|s| !s.trim().is_empty())
+                        })
+                        .await;
+                    if let Some(resp_str) = output {
+                        let _ = this.update(cx, |this, cx| {
+                            let ts = Self::now_epoch_sec();
+                            this.dispatch_command(
+                                WorkspaceCommand::IngestCopilotModelResponse {
+                                    response_json: resp_str,
+                                    now_epoch_sec: ts,
+                                },
+                                "已接收远端大模型 OpenAI 兼容响应并完成 MCP 工具闭环",
+                                cx,
+                            );
+                        });
+                    }
+                })
+                .detach();
+            }
+        }
+    }
+
     fn render_ask_ai_and_mcp_tab(&self, cx: &mut Context<Self>) -> Div {
         let proj = &self.projection;
 
@@ -2850,45 +2953,693 @@ impl KoeDesktopApp {
             );
         }
 
-        let copilot_answer_box = match &proj.copilot_card {
-            Some(card) => {
-                let cites: Vec<String> = card.citations.iter().map(|c| format!("[{c}]")).collect();
+        let provider_bar = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .p_2()
+            .rounded(px(AppRadii::CONTROL))
+            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+            .child(
                 div()
-                    .p_3()
-                    .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
-                    .bg(rgb(AppColors::rgb24(AppColors::ORANGE_TINT)))
-                    .border_1()
-                    .border_color(rgb(AppColors::rgb24(AppColors::ORANGE_BORDER)))
+                    .text_size(px(AppFontSizes::XS))
+                    .font_semibold()
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                    .child(format!(
+                        "当前对话引擎：{} | 模型：{} | 端点：{} | 凭据：{}",
+                        proj.copilot_provider.provider_name,
+                        proj.copilot_provider.model,
+                        proj.copilot_provider.endpoint_url,
+                        if proj.copilot_provider.has_api_key {
+                            "已就绪"
+                        } else {
+                            "本机免密 MCP 模式"
+                        }
+                    )),
+            )
+            .child(
+                div()
                     .flex()
-                    .flex_col()
-                    .gap_1()
+                    .flex_wrap()
+                    .gap_1p5()
+                    .child(
+                        Button::new("btn-prov-deepseek")
+                            .small()
+                            .label("DeepSeek (deepseek-chat)")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::ConfigureCopilotProvider {
+                                        provider_name: "deepseek".to_string(),
+                                        endpoint_url:
+                                            "https://api.deepseek.com/v1/chat/completions"
+                                                .to_string(),
+                                        model: "deepseek-chat".to_string(),
+                                        api_key_env: Some("DEEPSEEK_API_KEY".to_string()),
+                                    },
+                                    "已切换 AI 随心问引擎至 DeepSeek (deepseek-chat)",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-prov-local")
+                            .small()
+                            .label("本地 AI (11434 OpenAI)")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::ConfigureCopilotProvider {
+                                        provider_name: "openai-local".to_string(),
+                                        endpoint_url:
+                                            "http://127.0.0.1:11434/v1/chat/completions"
+                                                .to_string(),
+                                        model: "qwen2.5-coder:14b".to_string(),
+                                        api_key_env: Some("OPENAI_API_KEY".to_string()),
+                                    },
+                                    "已切换 AI 随心问引擎至本地 OpenAI 兼容端点 (127.0.0.1:11434)",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-prov-mcp")
+                            .small()
+                            .label("本机 MCP 原生直连")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::ConfigureCopilotProvider {
+                                        provider_name: "mcp-native".to_string(),
+                                        endpoint_url: "local://koe-mcp-stdio".to_string(),
+                                        model: "koe-grounded-v2".to_string(),
+                                        api_key_env: None,
+                                    },
+                                    "已切换至本机 MCP 12 工具直连模式",
+                                    cx,
+                                );
+                            })),
+                    ),
+            );
+
+        let mut chat_stream = div().flex().flex_col().gap_2();
+        let turns: Vec<_> = if !proj.aliyun_mcp.copilot_history.is_empty() {
+            proj.aliyun_mcp.copilot_history.iter().collect()
+        } else {
+            proj.copilot_card.iter().collect()
+        };
+        if turns.is_empty() {
+            chat_stream = chat_stream.child(
+                div()
+                    .p_2p5()
+                    .rounded(px(AppRadii::CONTROL))
+                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                    .text_size(px(AppFontSizes::XS))
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                    .child(
+                        "在下方输入框直接输入自然语言或点击上方 4 枚预设胶囊，即可通过本机 AI 与 MCP 工具直接读写 Google Tasks、Gemini Notebooks 与 Google Keep。",
+                    ),
+            );
+        } else {
+            for (turn_idx, card) in turns.into_iter().enumerate() {
+                let mut cite_buttons = div().flex().flex_wrap().items_center().gap_1p5();
+                for cite in &card.citations {
+                    let target_ms = proj
+                        .active_aggregate
+                        .spine
+                        .get(*cite)
+                        .map_or(0, |s| s.start_ms);
+                    let cite_label = format!("[{cite}] 跳转 {}ms", target_ms);
+                    let btn_id: SharedString =
+                        format!("btn-copilot-cite-{turn_idx}-{}", cite.ordinal()).into();
+                    cite_buttons = cite_buttons.child(
+                        Button::new(btn_id)
+                            .small()
+                            .label(cite_label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::SeekMs(target_ms),
+                                    format!("已根据对话锚点跳转至原话位置 {}ms", target_ms),
+                                    cx,
+                                );
+                            })),
+                    );
+                }
+                let tools_badge = if card.tools_used.is_empty() {
+                    "MCP 工具：search_context".to_string()
+                } else {
+                    format!("已调用 MCP 工具：{}", card.tools_used.join(" / "))
+                };
+                chat_stream = chat_stream
                     .child(
                         div()
-                            .text_size(px(AppFontSizes::XS))
-                            .font_bold()
-                            .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
-                            .child(format!(
-                                "提问：{} | 引用：{} | 工具：{}",
-                                card.prompt,
-                                cites.join(" "),
-                                card.tools_used.join(", ")
-                            )),
+                            .p_2p5()
+                            .rounded(px(AppRadii::CONTROL))
+                            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                            .border_1()
+                            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::SM))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(format!("你：{}", card.prompt)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                    .child(format!("第 {} 轮对话", turn_idx + 1)),
+                            ),
                     )
                     .child(
                         div()
-                            .text_size(px(AppFontSizes::SM))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child(card.answer.clone()),
-                    )
+                            .p_3()
+                            .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
+                            .bg(rgb(AppColors::rgb24(AppColors::ORANGE_TINT)))
+                            .border_1()
+                            .border_color(rgb(AppColors::rgb24(AppColors::ORANGE_BORDER)))
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_1p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .font_bold()
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::ORANGE_DEEP,
+                                            )))
+                                            .child(tools_badge),
+                                    )
+                                    .child(cite_buttons),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::SM))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(card.answer.clone()),
+                            ),
+                    );
             }
-            None => div()
-                .p_2p5()
+        }
+
+        let input_widget = if let Some(ref input_state) = self.copilot_input {
+            div()
+                .flex_1()
+                .min_w(px(260.0))
+                .child(Input::new(input_state).small())
+        } else {
+            div()
+                .flex_1()
+                .p_2()
                 .rounded(px(AppRadii::CONTROL))
                 .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
                 .text_size(px(AppFontSizes::XS))
                 .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
-                .child("点击上方预设胶囊或「总结当前录音要务」，生成带 [S1..Sn] 原话引用的回答。"),
+                .child("正在初始化对话输入框...")
         };
+
+        let chat_input_bar = div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .p_2p5()
+            .rounded(px(AppRadii::CONTROL))
+            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(input_widget)
+                    .child(
+                        Button::new("btn-copilot-send")
+                            .primary()
+                            .small()
+                            .label("发送提问 (Enter)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let typed = this
+                                    .copilot_input
+                                    .as_ref()
+                                    .map(|s| s.read(cx).value().trim().to_string())
+                                    .unwrap_or_default();
+                                if let Some(ref input_state) = this.copilot_input {
+                                    input_state.update(cx, |s, cx| s.set_value("", window, cx));
+                                }
+                                let prompt = if typed.is_empty() {
+                                    "总结当前录音要务并同步 Google Tasks、NotebookLM 与 Keep 清单"
+                                        .to_string()
+                                } else {
+                                    typed
+                                };
+                                this.submit_copilot_chat_input(prompt, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .child("快捷自然语言指令："),
+                    )
+                    .child(
+                        Button::new("btn-chat-cmd-gtask")
+                            .small()
+                            .label("对话新建 Google 待办")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.submit_copilot_chat_input(
+                                    "新建待办：下周三前跟进海外渠道合同法务审阅".to_string(),
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-chat-cmd-notebook")
+                            .small()
+                            .label("对话追问 Gemini Notebook")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.submit_copilot_chat_input(
+                                    "在 NotebookLM 研究本追问海外渠道核心风险并生成播客脚本"
+                                        .to_string(),
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-chat-cmd-keep")
+                            .small()
+                            .label("对话追加 Google Keep 清单")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.submit_copilot_chat_input(
+                                    "在 Google Keep 速记便签追加清单：核对纯 Rust 固件 60 片 Opus 验收"
+                                        .to_string(),
+                                    cx,
+                                );
+                            })),
+                    ),
+            );
+
+        let mut tasks_list_col = div().flex().flex_col().gap_1p5();
+        if proj.google_tasks.is_empty() {
+            tasks_list_col = tasks_list_col.child(
+                div()
+                    .text_size(px(AppFontSizes::XS))
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                    .child("暂无 Google Tasks 条目，可点击右上角「+ 新建待办」或通过上方对话直接写入。"),
+            );
+        } else {
+            for (idx, task) in proj.google_tasks.iter().enumerate() {
+                let tid = task.id.clone();
+                let check_label = if task.completed {
+                    format!("[已完成] {}", task.title)
+                } else {
+                    format!("[待办] {}", task.title)
+                };
+                let btn_id: SharedString = format!("btn-toggle-gtask-{idx}").into();
+                tasks_list_col = tasks_list_col.child(
+                    div()
+                        .p_2()
+                        .rounded(px(AppRadii::CONTROL))
+                        .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                        .border_1()
+                        .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_1p5()
+                                .child(
+                                    Button::new(btn_id)
+                                        .small()
+                                        .label(check_label)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            let now = Self::now_epoch_sec();
+                                            this.dispatch_command(
+                                                WorkspaceCommand::ToggleGoogleTask {
+                                                    task_id: tid.clone(),
+                                                    now_epoch_sec: now,
+                                                },
+                                                format!("已切换 Google Task ({tid}) 完成状态"),
+                                                cx,
+                                            );
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(AppFontSizes::XS))
+                                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                        .child(task.tasklist_id.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                                .child(if task.notes.is_empty() {
+                                    "双向绑定本机待办".to_string()
+                                } else {
+                                    task.notes.clone()
+                                }),
+                        ),
+                );
+            }
+        }
+
+        let mut notebooks_list_col = div().flex().flex_col().gap_1p5();
+        if proj.google_notebooks.is_empty() {
+            notebooks_list_col = notebooks_list_col.child(
+                div()
+                    .text_size(px(AppFontSizes::XS))
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                    .child("暂无 Gemini Notebook 研究本，点击「+ 新建研究本」导入原话主干。"),
+            );
+        } else {
+            for (idx, nb) in proj.google_notebooks.iter().enumerate() {
+                let nb_title = nb.title.clone();
+                let ask_btn_id: SharedString = format!("btn-query-nb-{idx}").into();
+                let ao_badge = if nb.audio_overview_ready {
+                    "Audio Overview 播客就绪"
+                } else {
+                    "播客待生成"
+                };
+                notebooks_list_col = notebooks_list_col.child(
+                    div()
+                        .p_2()
+                        .rounded(px(AppRadii::CONTROL))
+                        .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                        .border_1()
+                        .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .text_size(px(AppFontSizes::SM))
+                                        .font_semibold()
+                                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                        .child(nb.title.clone()),
+                                )
+                                .child(
+                                    Button::new(ask_btn_id)
+                                        .small()
+                                        .label("追问研究本")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.submit_copilot_chat_input(
+                                                format!(
+                                                    "在 NotebookLM 研究本「{nb_title}」追问核心结论并刷新播客"
+                                                ),
+                                                cx,
+                                            );
+                                        })),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .font_semibold()
+                                .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                .child(format!(
+                                    "来源 {} 份 | 问答 {} 轮 | {}",
+                                    nb.source_count, nb.qa_count, ao_badge
+                                )),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                                .child(
+                                    nb.latest_qa_preview
+                                        .clone()
+                                        .unwrap_or_else(|| "已挂载当前录音原话主干 [S1..Sn]".to_string()),
+                                ),
+                        ),
+                );
+            }
+        }
+
+        let mut keep_list_col = div().flex().flex_col().gap_1p5();
+        if proj.google_keep_notes.is_empty() {
+            keep_list_col = keep_list_col.child(
+                div()
+                    .text_size(px(AppFontSizes::XS))
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                    .child("暂无 Google Keep 速记卡，点击「+ 追加清单」同步随心记要点。"),
+            );
+        } else {
+            for (n_idx, note) in proj.google_keep_notes.iter().enumerate() {
+                let mut checklist_rows = div().flex().flex_col().gap_1();
+                for (i_idx, text, checked) in &note.checklist_items {
+                    let note_id = note.id.clone();
+                    let item_index = *i_idx;
+                    let item_btn_id: SharedString =
+                        format!("btn-toggle-keep-{n_idx}-{item_index}").into();
+                    let item_label = if *checked {
+                        format!("[已勾选] {text}")
+                    } else {
+                        format!("[未勾选] {text}")
+                    };
+                    checklist_rows = checklist_rows.child(
+                        Button::new(item_btn_id)
+                            .small()
+                            .label(item_label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let now = Self::now_epoch_sec();
+                                this.dispatch_command(
+                                    WorkspaceCommand::ToggleGoogleKeepChecklist {
+                                        note_id: note_id.clone(),
+                                        item_index,
+                                        now_epoch_sec: now,
+                                    },
+                                    format!(
+                                        "已切换 Google Keep ({note_id}) 第 {} 项清单状态",
+                                        item_index + 1
+                                    ),
+                                    cx,
+                                );
+                            })),
+                    );
+                }
+                keep_list_col = keep_list_col.child(
+                    div()
+                        .p_2()
+                        .rounded(px(AppRadii::CONTROL))
+                        .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                        .border_1()
+                        .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(AppFontSizes::SM))
+                                        .font_semibold()
+                                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                        .child(note.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(AppFontSizes::XS))
+                                        .font_semibold()
+                                        .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                        .child(format!(
+                                            "清单 {}/{}",
+                                            note.checklist_checked, note.checklist_total
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                                .child(note.body_preview.clone()),
+                        )
+                        .child(checklist_rows),
+                );
+            }
+        }
+
+        let google_three_col_grid = div()
+            .flex()
+            .flex_wrap()
+            .gap_3()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(250.0))
+                    .p_3()
+                    .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
+                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::SM))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(format!(
+                                        "Google Tasks ({})",
+                                        proj.google_tasks.len()
+                                    )),
+                            )
+                            .child(
+                                Button::new("btn-create-gtask")
+                                    .small()
+                                    .label("+ 新建待办")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        let seq = this.projection.google_tasks.len() + 1;
+                                        this.dispatch_command(
+                                            WorkspaceCommand::CreateGoogleTask {
+                                                title: format!(
+                                                    "跟进海外渠道合同审阅 #{}",
+                                                    seq
+                                                ),
+                                                notes: "由桌面端 Google Tasks 面板创建 [S1]"
+                                                    .to_string(),
+                                                now_epoch_sec: now,
+                                            },
+                                            "已在 Google Tasks 新建待办并双向关联本机待办",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(tasks_list_col),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(250.0))
+                    .p_3()
+                    .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
+                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::SM))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(format!(
+                                        "Gemini Notebooks ({})",
+                                        proj.google_notebooks.len()
+                                    )),
+                            )
+                            .child(
+                                Button::new("btn-create-notebook")
+                                    .small()
+                                    .label("+ 新建研究本")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        let seq = this.projection.google_notebooks.len() + 1;
+                                        this.dispatch_command(
+                                            WorkspaceCommand::CreateGeminiNotebook {
+                                                title: format!(
+                                                    "随心记深度研究本 #{}",
+                                                    seq
+                                                ),
+                                                now_epoch_sec: now,
+                                            },
+                                            "已创建 Gemini Notebook 研究本并生成 Audio Overview 播客脚本",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(notebooks_list_col),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(250.0))
+                    .p_3()
+                    .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
+                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::SM))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(format!(
+                                        "Google Keep ({})",
+                                        proj.google_keep_notes.len()
+                                    )),
+                            )
+                            .child(
+                                Button::new("btn-append-keep")
+                                    .small()
+                                    .label("+ 追加清单")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.submit_copilot_chat_input(
+                                            "在 Google Keep 速记追加清单：复核海外渠道合同与固件验收"
+                                                .to_string(),
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(keep_list_col),
+            );
 
         div()
             .flex()
@@ -2963,7 +3714,7 @@ impl KoeDesktopApp {
                     .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_2p5()
                     .child(
                         div()
                             .flex()
@@ -2974,7 +3725,7 @@ impl KoeDesktopApp {
                                     .text_size(px(AppFontSizes::MD))
                                     .font_semibold()
                                     .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                                    .child("AI 随心问 (Ask AI Copilot)"),
+                                    .child("AI 随心问对话窗 (Ask AI Copilot Studio)"),
                             )
                             .child(
                                 Button::new("btn-ask-freeform")
@@ -2995,8 +3746,10 @@ impl KoeDesktopApp {
                                     })),
                             ),
                     )
+                    .child(provider_bar)
                     .child(copilot_chips)
-                    .child(copilot_answer_box),
+                    .child(chat_stream)
+                    .child(chat_input_bar),
             )
             .child(
                 div()
@@ -3007,7 +3760,7 @@ impl KoeDesktopApp {
                     .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_2p5()
                     .child(
                         div()
                             .flex()
@@ -3018,7 +3771,7 @@ impl KoeDesktopApp {
                                     .text_size(px(AppFontSizes::MD))
                                     .font_semibold()
                                     .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                                    .child("本机原生 MCP / ACP 协议与 Google Workspace 同步"),
+                                    .child("Google Workspace 实时三栏桥接 & 本机 MCP 2025-11-25 协议"),
                             )
                             .child(
                                 div()
@@ -3061,13 +3814,15 @@ impl KoeDesktopApp {
                             .text_size(px(AppFontSizes::XS))
                             .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
                             .child(format!(
-                                "live.json 租约代数 #{} | 归档包 {} 份 | NotebookLM {} 本 | Keep 速记 {} 条",
+                                "live.json 租约代数 #{} | 归档包 {} 份 | Google Tasks {} 项 | NotebookLM {} 本 | Keep 速记 {} 条",
                                 proj.live_generation,
                                 proj.pack_count,
+                                proj.google_tasks.len(),
                                 proj.google_notebooks.len(),
                                 proj.google_keep_notes.len()
                             )),
                     )
+                    .child(google_three_col_grid)
                     .child(
                         div()
                             .p_2()
@@ -3087,6 +3842,7 @@ impl KoeDesktopApp {
 
 impl Render for KoeDesktopApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_copilot_input(window, cx);
         if self.smoke && !self.smoke_scheduled {
             self.smoke_scheduled = true;
             let healthy = !self.smoke_failed
@@ -3452,6 +4208,69 @@ fn run_self_check() -> anyhow::Result<()> {
     anyhow::ensure!(
         wifi_cancel_proj.wifi_batch.phase == WifiBatchPhase::Idle,
         "Cancel must transition to Idle"
+    );
+
+    let prov_proj = app.apply_command(WorkspaceCommand::ConfigureCopilotProvider {
+        provider_name: "openai-local".to_string(),
+        endpoint_url: "http://127.0.0.1:11434/v1/chat/completions".to_string(),
+        model: "qwen2.5-coder:14b".to_string(),
+        api_key_env: None,
+    });
+    anyhow::ensure!(
+        prov_proj.copilot_provider.provider_name == "openai-local"
+            && prov_proj.copilot_provider.model == "qwen2.5-coder:14b",
+        "ConfigureCopilotProvider must update copilot_provider snapshot"
+    );
+
+    let suite_chat_proj = app.apply_command(WorkspaceCommand::AskCopilot {
+        prompt: "新建待办：周五前复核海外渠道合同并同步 Google Tasks、NotebookLM 研究本与 Keep 清单"
+            .to_string(),
+        now_epoch_sec: now + 24,
+    });
+    anyhow::ensure!(
+        !suite_chat_proj.google_tasks.is_empty()
+            && !suite_chat_proj.google_notebooks.is_empty()
+            && !suite_chat_proj.google_keep_notes.is_empty(),
+        "AskCopilot with Google Suite intents must populate google_tasks, google_notebooks, and google_keep_notes"
+    );
+
+    let first_gtask_id = suite_chat_proj.google_tasks[0].id.clone();
+    let toggled_gtask_proj = app.apply_command(WorkspaceCommand::ToggleGoogleTask {
+        task_id: first_gtask_id.clone(),
+        now_epoch_sec: now + 25,
+    });
+    anyhow::ensure!(
+        toggled_gtask_proj
+            .google_tasks
+            .iter()
+            .any(|t| t.id == first_gtask_id && t.completed),
+        "ToggleGoogleTask must mark task completed in google_tasks snapshot"
+    );
+
+    let nb_proj = app.apply_command(WorkspaceCommand::CreateGeminiNotebook {
+        title: "Q4 海外渠道专题研究本".to_string(),
+        now_epoch_sec: now + 26,
+    });
+    anyhow::ensure!(
+        nb_proj
+            .google_notebooks
+            .iter()
+            .any(|nb| nb.title == "Q4 海外渠道专题研究本" && nb.audio_overview_ready),
+        "CreateGeminiNotebook must create notebook with ready audio overview"
+    );
+
+    let first_keep_id = nb_proj.google_keep_notes[0].id.clone();
+    let keep_proj = app.apply_command(WorkspaceCommand::ToggleGoogleKeepChecklist {
+        note_id: first_keep_id.clone(),
+        item_index: 0,
+        now_epoch_sec: now + 27,
+    });
+    anyhow::ensure!(
+        keep_proj
+            .google_keep_notes
+            .iter()
+            .any(|n| n.id == first_keep_id && n.checklist_checked >= 1),
+        "ToggleGoogleKeepChecklist must check item 0 in google_keep_notes snapshot"
     );
 
     let _ = fs::remove_dir_all(&temp_dir);
