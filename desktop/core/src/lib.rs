@@ -3993,7 +3993,7 @@ impl DesktopBeanHost {
                         .trim_start_matches("添加待办")
                         .trim_start_matches("待办：")
                         .trim_start_matches("待办:")
-                        .trim_start_matches(|c: char| matches!(c, '：' | ':' | ' '))
+                        .trim_start_matches(['：', ':', ' '])
                         .trim();
                     let task_title = if clean_title.is_empty() {
                         first_seg
