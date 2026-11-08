@@ -441,4 +441,3 @@ fn repro_6_slice_r_coarse_place_trash_sync_dynamic_date_speaker_and_1a07_tx() {
         "RetriggerRealtimeStream did not queue the 1A/07 outbound BLE frame!"
     );
 }
-
