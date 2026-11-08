@@ -2127,6 +2127,19 @@ pub fn parse_meeting_minutes_json_with_allowed(
             fishbone: t_fishbone,
         });
     }
+    if let Some(fbs_val) = map.get("fishbones") {
+        if !matches!(fbs_val, JsonValue::Null) {
+            let arr = fbs_val.as_array().ok_or_else(|| {
+                MinutesValidationError::InvalidJson("'fishbones' must be an array".to_string())
+            })?;
+            for fb_val in arr {
+                let fb = parse_fishbone(fb_val)?;
+                if !top_fishbones.contains(&fb) {
+                    top_fishbones.push(fb);
+                }
+            }
+        }
+    }
 
     let decisions = parse_point_list("decisions", true)?;
     let actions = parse_point_list("actions", true)?;
@@ -2366,6 +2379,12 @@ pub fn encode_meeting_minutes_json(minutes: &MeetingMinutesV2) -> String {
         })
         .collect();
     root.insert("topics".to_string(), JsonValue::Array(topics_json));
+    if !minutes.fishbones.is_empty() {
+        root.insert(
+            "fishbones".to_string(),
+            JsonValue::Array(minutes.fishbones.iter().map(encode_fishbone).collect()),
+        );
+    }
     root.insert(
         "decisions".to_string(),
         JsonValue::Array(minutes.decisions.iter().map(encode_point).collect()),

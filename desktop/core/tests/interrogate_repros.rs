@@ -579,3 +579,376 @@ fn repro_7_slice_s_wifi_resume_from_transferring_cancel_cleanup_builtin_section_
         "save_desktop_settings clobbered extra key custom_theme in settings.json: {saved_raw}"
     );
 }
+
+#[test]
+fn repro_8_slice_t_fishbone_roundtrip_multi_take_reset_card_live_update_simulate_sync_trash_clear_search_doc_index_and_wifi_catalog() {
+    use koe_desktop_core::{
+        domain::{MinuteCause, MinuteFishbone, MinuteTopic},
+        minutes::{encode_meeting_minutes_json, parse_meeting_minutes_json, MinutesEvent},
+        models::OfflineFileEntry,
+        WifiBatchPhase, WifiSoftApAction, WorkspaceCommand,
+    };
+
+    let dir = temp_dir("repro-8");
+
+    let mut spine_fb = UtteranceSpine::new("rec-fb");
+    let s1_fb = spine_fb
+        .append_segment("海外渠道固件认证排期顺延两周，导致交付存在延迟风险。", 0, 2_000, "zh", "qwen")
+        .unwrap();
+    let mins_fb = MeetingMinutesV2 {
+        version: 2,
+        spine_revision: spine_fb.revision(),
+        title: "Q4 供应链风险评审".to_string(),
+        overview: "海外渠道固件认证排期顺延两周，导致交付存在延迟风险。".to_string(),
+        topics: vec![MinuteTopic {
+            title: "海外交付排期".to_string(),
+            summary: "海外渠道固件认证排期顺延两周。".to_string(),
+            citations: vec![s1_fb],
+            points: Vec::new(),
+            fishbone: None,
+        }],
+        decisions: vec![MinutePoint {
+            claim: "海外渠道固件认证排期顺延两周。".to_string(),
+            speaker: None,
+            owner: None,
+            due: None,
+            citations: vec![s1_fb],
+        }],
+        actions: Vec::new(),
+        questions: Vec::new(),
+        fishbones: vec![MinuteFishbone {
+            issue: "海外渠道固件认证延期".to_string(),
+            causes: vec![MinuteCause {
+                category: "合规与认证".to_string(),
+                description: "海外渠道固件认证排期顺延两周，导致交付存在延迟风险。".to_string(),
+                citations: vec![s1_fb],
+            }],
+        }],
+        terms: Vec::new(),
+        custom_sections: Vec::new(),
+        review_items: Vec::new(),
+    };
+    let encoded_fb = encode_meeting_minutes_json(&mins_fb);
+    let reparsed_fb = parse_meeting_minutes_json(&encoded_fb, &spine_fb).unwrap();
+
+    let mut host_takes = DesktopBeanHost::new(&dir);
+    let _ = host_takes.start_realtime_recording(Some(1001), 1_796_270_000_000);
+    let _ = host_takes.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"task-started"}}"#,
+        1_796_270_000_100,
+    );
+    let _ = host_takes.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"text":"第一段录音第一句：确认明日上午十点召开评审会。"}}}}"#,
+        1_796_270_000_500,
+    );
+    let _ = host_takes.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":2,"sentence_end":true,"text":"第一段录音第二句：上一段录音遗留的旧内容。"}}}}"#,
+        1_796_270_001_000,
+    );
+    let _ = host_takes.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"task-finished"}}"#,
+        1_796_270_001_200,
+    );
+    let _ = host_takes.start_realtime_recording(Some(1002), 1_796_270_010_000);
+    let _ = host_takes.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"task-started"}}"#,
+        1_796_270_010_100,
+    );
+    let _ = host_takes.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"text":"第二段全新录音：下午三点去机场接客户。"}}}}"#,
+        1_796_270_010_500,
+    );
+    let take2_texts: Vec<String> = host_takes
+        .projection()
+        .active_aggregate
+        .spine
+        .segments()
+        .iter()
+        .map(|s| s.text.clone())
+        .collect();
+
+    let mut host_cards = DesktopBeanHost::new(&dir);
+    let s1_card = host_cards
+        .ingest_utterance_with_context(
+            "第一句：确定由张总负责硬件试产。",
+            0,
+            1_000,
+            "zh",
+            "qwen",
+            1_796_270_020,
+        )
+        .unwrap();
+    let mcp_init = host_cards.dispatch(
+        WorkspaceCommand::DispatchJsonRpc {
+            request_json: r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_minutes","arguments":{}}}"#.to_string(),
+        },
+        1_796_270_021,
+    );
+    let mcp_initial_resp = mcp_init.last_jsonrpc_response.clone();
+    let cand_mins = MeetingMinutesV2 {
+        version: 2,
+        spine_revision: host_cards.spine().revision(),
+        title: "硬件试产周会".to_string(),
+        overview: "第一句：确定由张总负责硬件试产。".to_string(),
+        topics: vec![MinuteTopic {
+            title: "试产分工".to_string(),
+            summary: "第一句：确定由张总负责硬件试产。".to_string(),
+            citations: vec![s1_card],
+            points: Vec::new(),
+            fishbone: None,
+        }],
+        decisions: vec![MinutePoint {
+            claim: "第一句：确定由张总负责硬件试产。".to_string(),
+            speaker: None,
+            owner: None,
+            due: None,
+            citations: vec![s1_card],
+        }],
+        actions: vec![MinutePoint {
+            claim: "第一句：确定由张总负责硬件试产。".to_string(),
+            speaker: None,
+            owner: None,
+            due: None,
+            citations: vec![s1_card],
+        }],
+        questions: Vec::new(),
+        fishbones: Vec::new(),
+        terms: Vec::new(),
+        custom_sections: Vec::new(),
+        review_items: Vec::new(),
+    };
+    let _ = host_cards.reduce_minutes(MinutesEvent::CandidateReceived(cand_mins));
+    let s2_card = host_cards
+        .ingest_utterance_with_context(
+            "第二句：李工周五前提交电池低温放电曲线报告。",
+            1_000,
+            2_200,
+            "zh",
+            "qwen",
+            1_796_270_022,
+        )
+        .unwrap();
+    let any_card_cites_s2 = host_cards
+        .projection()
+        .visual_cards
+        .iter()
+        .any(|c| c.citations.contains(&s2_card));
+
+    let sim_dir = temp_dir("repro-8-sim");
+    let mut host_sim = DesktopBeanHost::new(&sim_dir);
+    let _ = host_sim.simulate_realtime_pipeline(1_796_270_030);
+    let sim_host_spine_len = host_sim.spine().len();
+    let sim_pack_res = host_sim.export_koepack_v2_to_disk("实时自检包", "2026-11-08T15:00:00Z");
+
+    let trash_dir = temp_dir("repro-8-trash");
+    let mut host_trash = DesktopBeanHost::new(&trash_dir);
+    let _ = host_trash.dispatch(WorkspaceCommand::SimulateRealtimePipeline, 1_796_270_040);
+    let trash_id = host_trash.projection().library.selected_id.unwrap();
+    let proj_after_trash_all =
+        host_trash.dispatch(WorkspaceCommand::MoveToTrash(trash_id), 1_796_270_041);
+
+    let search_dir = temp_dir("repro-8-search");
+    let mut host_search = DesktopBeanHost::new(&search_dir);
+    let _ = host_search.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"task-started"}}"#,
+        1_796_270_050_000,
+    );
+    let _ = host_search.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"text":"初步讨论量子加密模块"}}}}"#,
+        1_796_270_050_200,
+    );
+    let _ = host_search.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"text":"正式确认采购量子加密芯片并完成固件签名"}}}}"#,
+        1_796_270_050_500,
+    );
+    let _ = host_search.ingest_dashscope_asr_event(
+        r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":2,"sentence_end":true,"text":"午餐预订广东烧鹅便当"}}}}"#,
+        1_796_270_050_900,
+    );
+    let proj_q1 = host_search.dispatch(
+        WorkspaceCommand::SearchContext {
+            query: "量子加密芯片".to_string(),
+            limit: 5,
+        },
+        1_796_270_051,
+    );
+    let proj_q2 = host_search.dispatch(
+        WorkspaceCommand::SearchContext {
+            query: "广东烧鹅便当".to_string(),
+            limit: 5,
+        },
+        1_796_270_052,
+    );
+
+    let wifi_dir = temp_dir("repro-8-wifi");
+    let mut host_wifi = DesktopBeanHost::new(&wifi_dir);
+    host_wifi.session_mut().catalog = (1..=10)
+        .map(|i| OfflineFileEntry {
+            file_id: 600 + i,
+            end_time: Some(1_796_270_010 + i),
+            duration_ms: 2_000,
+        })
+        .collect();
+    let _ = host_wifi.dispatch(
+        WorkspaceCommand::ControlWifiSoftApBatch {
+            action: WifiSoftApAction::StartDefaultSoftAp,
+            now_epoch_sec: 1_796_270_060,
+        },
+        1_796_270_060,
+    );
+    let _ = host_wifi.session_mut().begin_offline_pull(601, 2_000);
+    let timer_out = host_wifi.poll_timers(5_000, 1_796_270_065);
+    let proj_wifi_10 = host_wifi.dispatch(
+        WorkspaceCommand::ControlWifiSoftApBatch {
+            action: WifiSoftApAction::ResumeAndComplete,
+            now_epoch_sec: 1_796_270_066,
+        },
+        1_796_270_066,
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&sim_dir);
+    let _ = fs::remove_dir_all(&trash_dir);
+    let _ = fs::remove_dir_all(&search_dir);
+    let _ = fs::remove_dir_all(&wifi_dir);
+
+    assert_eq!(
+        reparsed_fb.fishbones.len(),
+        1,
+        "encode_meeting_minutes_json dropped top-level fishbones: {encoded_fb}"
+    );
+    assert_eq!(
+        take2_texts,
+        vec!["第二段全新录音：下午三点去机场接客户。".to_string()],
+        "Take 2 leaked Take 1 segments or failed to reset qwen_accumulator: {take2_texts:?}"
+    );
+    assert!(
+        !mcp_initial_resp.contains(r#"\"isDraft\":false"#)
+            && !mcp_initial_resp.contains(r#""isDraft":false"#),
+        "MCP get_minutes returned auto-synthesized placeholder as formal non-draft minutes: {mcp_initial_resp}"
+    );
+    assert!(
+        any_card_cites_s2,
+        "VisualSummaryCards froze on [S1] after S2 was appended following CandidateReceived!"
+    );
+    assert!(
+        sim_host_spine_len > 0 && sim_pack_res.is_ok(),
+        "simulate_realtime_pipeline left host.spine empty (len={sim_host_spine_len}) or failed koepack export: {sim_pack_res:?}"
+    );
+    assert!(
+        proj_after_trash_all.active_aggregate.spine.is_empty()
+            && proj_after_trash_all.active_aggregate.duration_ms == 0,
+        "Trashing the last recording left stale spine (len={}) or duration_ms={} on active_aggregate!",
+        proj_after_trash_all.active_aggregate.spine.len(),
+        proj_after_trash_all.active_aggregate.duration_ms
+    );
+    assert_eq!(
+        proj_q1.search_hits.first().and_then(|h| h.citation),
+        SegmentId::new(1),
+        "SearchContext for revised S1 returned wrong citation: {:?}",
+        proj_q1.search_hits.first()
+    );
+    assert_eq!(
+        proj_q2.search_hits.first().and_then(|h| h.citation),
+        SegmentId::new(2),
+        "SearchContext for S2 after S1 revision returned wrong citation: {:?}",
+        proj_q2.search_hits.first()
+    );
+    assert!(
+        !timer_out.outbound_tx_frames.is_empty(),
+        "poll_timers during WifiBatchPhase::Transferring starved the 5000ms BLE PullingOffline watchdog!"
+    );
+    assert_eq!(
+        proj_wifi_10.wifi_batch.phase,
+        WifiBatchPhase::Completed,
+        "ResumeAndComplete truncated a 10-file catalog in {:?}",
+        proj_wifi_10.wifi_batch
+    );
+}
+
+#[test]
+fn benchmark_slice_t_three_layer_zero_glue_end_to_end_pipeline() {
+    use koe_desktop_core::WorkspaceCommand;
+    use std::time::Instant;
+
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let dir = temp_dir(&format!("bench-slice-t-{profile}"));
+    let mut host = DesktopBeanHost::new(&dir);
+    let now_sec = 1_796_280_000;
+
+    let t0 = Instant::now();
+    let exported = host.simulate_realtime_pipeline(now_sec);
+    let opus_pipeline_us = t0.elapsed().as_micros();
+
+    for idx in 0..800u64 {
+        let _ = host.ingest_utterance_with_context(
+            format!(
+                "安克录音豆第 {idx} 段原话：下周三前完成海外渠道样品合同审阅并归档百炼实时流纪要。"
+            ),
+            idx * 1_000,
+            (idx + 1) * 1_000,
+            "zh",
+            "qwen3-asr-flash-realtime",
+            now_sec + 1,
+        );
+    }
+
+    let t1 = Instant::now();
+    let search_proj = host.dispatch(
+        WorkspaceCommand::SearchContext {
+            query: "海外渠道样品合同".to_string(),
+            limit: 5,
+        },
+        now_sec + 10,
+    );
+    let search_projection_us = t1.elapsed().as_micros();
+
+    let t2 = Instant::now();
+    let (pack_summary, pack_path) = host
+        .export_koepack_v2_to_disk("安克随心记终局基准测试", "2026-11-08T15:00:00Z")
+        .expect("benchmark koepack v2 export must succeed");
+    let koepack_export_us = t2.elapsed().as_micros();
+
+    let t3 = Instant::now();
+    let _ = host.dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+        now_sec + 11,
+    );
+    let _ = host.dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        now_sec + 11,
+    );
+    let mcp_resp = host
+        .dispatch_jsonrpc(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":5}}}"#,
+            now_sec + 12,
+        )
+        .expect("MCP search_context must return JSON-RPC response");
+    let mcp_jsonrpc_us = t3.elapsed().as_micros();
+    let total_us = t0.elapsed().as_micros();
+
+    let wav_len = fs::metadata(&exported.wav_path).map_or(0, |m| m.len());
+    let pack_len = fs::metadata(&pack_path).map_or(0, |m| m.len());
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(search_proj.visual_cards.len(), 6);
+    assert!(!search_proj.search_hits.is_empty());
+    assert!(wav_len > 44 && pack_len > 128);
+    assert!(mcp_resp.contains(&pack_summary.id) || mcp_resp.contains("海外渠道"));
+    assert!(
+        total_us < 2_000_000,
+        "end-to-end 3-layer pipeline exceeded 2s budget: {total_us} us"
+    );
+
+    println!(
+        "BENCH_SLICE_T profile={profile} opus_60slices_us={opus_pipeline_us} bm25_and_projection_us={search_projection_us} koepack_v2_us={koepack_export_us} mcp_jsonrpc_us={mcp_jsonrpc_us} total_us={total_us} spine_segments={} cards={} wav_bytes={wav_len} pack_bytes={pack_len}",
+        search_proj.active_aggregate.spine.len(),
+        search_proj.visual_cards.len()
+    );
+}
+
+
