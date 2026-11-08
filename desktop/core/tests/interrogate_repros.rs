@@ -950,5 +950,3 @@ fn benchmark_slice_t_three_layer_zero_glue_end_to_end_pipeline() {
         search_proj.visual_cards.len()
     );
 }
-
-
