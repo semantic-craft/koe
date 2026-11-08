@@ -1,75 +1,142 @@
+use koe_desktop_core::EditorialCardRole;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppColors;
 
 impl AppColors {
-    /// Traditional Chinese Bamboo Green primary accent (`#2E5E4E`, contrast `7.42:1` on white).
-    pub const ACCENT: u32 = 0xFF2E5E4E;
-    /// Warm paper primary background (`#F5F4F0`, `R >= G >= B`).
-    pub const SURFACE_0: u32 = 0xFFF5F4F0;
-    /// Elevated warm paper card surface (`#FAF9F6`, `R >= G >= B`).
-    pub const SURFACE_1: u32 = 0xFFFAF9F6;
-    /// Subtle warm card hover state (`#F0EDE6`, `R >= G >= B`).
-    pub const BG_CARD_HOVER: u32 = 0xFFF0EDE6;
-    /// Sidebar and secondary panel surface (`#EFECE6`, `R >= G >= B`).
-    pub const BG_PANEL: u32 = 0xFFEFECE6;
-    /// Subtle badge and grouping surface (`#E8E4DC`, `R >= G >= B`).
-    pub const BG_SUBTLE: u32 = 0xFFE8E4DC;
-    /// Muted divider and track surface (`#E0DBD1`, `R >= G >= B`).
-    pub const BG_MUTED: u32 = 0xFFE0DBD1;
-    /// Soft hairline border (`#E2DDD3`, `R >= G >= B`).
-    pub const BORDER_SOFT: u32 = 0xFFE2DDD3;
-    /// Standard card border (`#D5CFC3`, `R >= G >= B`).
-    pub const BORDER: u32 = 0xFFD5CFC3;
-    /// Strong interactive border (`#C2BBAE`, `R >= G >= B`).
-    pub const BORDER_STRONG: u32 = 0xFFC2BBAE;
-    /// Selected card border in warm neutral stone (`#8C867B`, `R >= G >= B`).
-    pub const BORDER_SELECTED: u32 = 0xFF8C867B;
-    /// Primary ink text (`#1F1E1C`, `R >= G >= B`).
-    pub const TEXT_PRIMARY: u32 = 0xFF1F1E1C;
-    /// Secondary body text (`#4A4843`, `R >= G >= B`).
-    pub const TEXT_SECONDARY: u32 = 0xFF4A4843;
-    /// Muted metadata text (`#5E5B55`, `R >= G >= B`, contrast `>= 4.5:1` on `SURFACE_0`).
-    pub const TEXT_MUTED: u32 = 0xFF5E5B55;
-    /// Pure white foreground for primary accent buttons (`#FFFFFF`).
+    pub const CANVAS: u32 = 0xFFFAFAFA;
+    pub const SIDEBAR: u32 = 0xFFF0F0F2;
+    pub const SURFACE_0: u32 = 0xFFFAFAFA;
+    pub const BG_PANEL: u32 = 0xFFF0F0F2;
+    pub const SURFACE_1: u32 = 0xFFF0F0F2;
+    pub const BG_CARD: u32 = 0xFFFFFFFF;
+    pub const BG_SUBTLE: u32 = 0xFFE6E6E9;
+    pub const BG_CARD_HOVER: u32 = 0xFFDADADD;
+    pub const BG_MUTED: u32 = 0xFFD1D1D5;
+    pub const BORDER: u32 = 0xFFCCCCD2;
+    pub const BORDER_SOFT: u32 = 0xFFE2E2E7;
+    pub const BORDER_STRONG: u32 = 0xFFB8B8C0;
+    pub const BORDER_SELECTED: u32 = 0xFFD9480F;
+    pub const TEXT_PRIMARY: u32 = 0xFF171719;
+    pub const TEXT_SECONDARY: u32 = 0xFF515157;
+    pub const TEXT_MUTED: u32 = 0xFF626269;
+    pub const ACCENT: u32 = 0xFFD9480F;
+    pub const ACCENT_HOVER: u32 = 0xFFB83B0B;
+    pub const ACCENT_SOFT: u32 = 0xFFFFF1E6;
+    pub const ACCENT_BORDER: u32 = 0xFFFDBA8C;
+    pub const ORANGE_BRAND: u32 = 0xFFFF5F05;
+    pub const ORANGE_ACTION: u32 = 0xFFD9480F;
+    pub const ORANGE_DEEP: u32 = 0xFF9A3412;
+    pub const ORANGE_TINT: u32 = 0xFFFFF1E6;
+    pub const ORANGE_BORDER: u32 = 0xFFFDBA8C;
+    pub const WAVE_UNPLAYED: u32 = 0xFF9E9EA6;
     pub const ON_ACCENT: u32 = 0xFFFFFFFF;
-    /// Inline cards stay flat with zero default drop shadow.
+    pub const SUCCESS: u32 = 0xFF18713B;
+    pub const SUCCESS_SOFT: u32 = 0xFFE8F5ED;
+    pub const WARNING: u32 = 0xFF9A5B13;
+    pub const WARNING_SOFT: u32 = 0xFFFEF4E6;
+    pub const DANGER: u32 = 0xFFB42318;
+    pub const DANGER_SOFT: u32 = 0xFFFEECEB;
+    pub const INFO: u32 = 0xFF1B618A;
+    pub const INFO_SOFT: u32 = 0xFFECF6FA;
     pub const CARD_SHADOW: &[u32] = &[];
 
-    /// Converts a `0xAARRGGBB` token into a `0xRRGGBB` hex integer for `gpui::rgb()`.
     #[must_use]
     pub const fn rgb24(argb: u32) -> u32 {
         argb & 0x00FF_FFFF
     }
 }
 
-/// Strictly bounded four-tier typography scale (`12 / 14 / 16 / 22` px).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorialRolePalette {
+    pub bg: u32,
+    pub border: u32,
+    pub badge_text: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AIVisualEditorialPalette;
+
+impl AIVisualEditorialPalette {
+    pub const CONCLUSION_AMBER_BG: u32 = 0xFFFCEEE5;
+    pub const CONCLUSION_AMBER_BORDER: u32 = 0xFFFF5F05;
+    pub const CONCLUSION_AMBER_BADGE: u32 = 0xFF9A3412;
+
+    pub const ACTIONS_SAGE_BG: u32 = 0xFFDFEFCD;
+    pub const ACTIONS_SAGE_BORDER: u32 = 0xFFB8DE98;
+    pub const ACTIONS_SAGE_BADGE: u32 = 0xFF18713B;
+
+    pub const RISKS_ROSE_BG: u32 = 0xFFFAECEF;
+    pub const RISKS_ROSE_BORDER: u32 = 0xFFF5BDC7;
+    pub const RISKS_ROSE_BADGE: u32 = 0xFFA72727;
+
+    pub const FLOW_CREAM_BG: u32 = 0xFFFAF7EB;
+    pub const FLOW_CREAM_BORDER: u32 = 0xFFE8DEB0;
+    pub const FLOW_CREAM_BADGE: u32 = 0xFF6B5812;
+
+    pub const QUESTIONS_SKY_BG: u32 = 0xFFECF6FA;
+    pub const QUESTIONS_SKY_BORDER: u32 = 0xFFBFDFEF;
+    pub const QUESTIONS_SKY_BADGE: u32 = 0xFF1B618A;
+
+    pub const TAKEAWAYS_LAVENDER_BG: u32 = 0xFFECEFFA;
+    pub const TAKEAWAYS_LAVENDER_BORDER: u32 = 0xFFC0CAF2;
+    pub const TAKEAWAYS_LAVENDER_BADGE: u32 = 0xFF2A429E;
+
+    #[must_use]
+    pub const fn for_role(role: EditorialCardRole) -> EditorialRolePalette {
+        match role {
+            EditorialCardRole::ConclusionAmber => EditorialRolePalette {
+                bg: Self::CONCLUSION_AMBER_BG,
+                border: Self::CONCLUSION_AMBER_BORDER,
+                badge_text: Self::CONCLUSION_AMBER_BADGE,
+            },
+            EditorialCardRole::ActionsBlue => EditorialRolePalette {
+                bg: Self::ACTIONS_SAGE_BG,
+                border: Self::ACTIONS_SAGE_BORDER,
+                badge_text: Self::ACTIONS_SAGE_BADGE,
+            },
+            EditorialCardRole::RisksCoral => EditorialRolePalette {
+                bg: Self::RISKS_ROSE_BG,
+                border: Self::RISKS_ROSE_BORDER,
+                badge_text: Self::RISKS_ROSE_BADGE,
+            },
+            EditorialCardRole::FlowEmerald => EditorialRolePalette {
+                bg: Self::FLOW_CREAM_BG,
+                border: Self::FLOW_CREAM_BORDER,
+                badge_text: Self::FLOW_CREAM_BADGE,
+            },
+            EditorialCardRole::QuestionsSlate => EditorialRolePalette {
+                bg: Self::QUESTIONS_SKY_BG,
+                border: Self::QUESTIONS_SKY_BORDER,
+                badge_text: Self::QUESTIONS_SKY_BADGE,
+            },
+            EditorialCardRole::TakeawaysPlum => EditorialRolePalette {
+                bg: Self::TAKEAWAYS_LAVENDER_BG,
+                border: Self::TAKEAWAYS_LAVENDER_BORDER,
+                badge_text: Self::TAKEAWAYS_LAVENDER_BADGE,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AppFontSizes;
 
 impl AppFontSizes {
-    /// Caption, metadata, and timestamp size (`12.0` px).
     pub const XS: f32 = 12.0;
-    /// Standard body, button, and list item size (`14.0` px).
     pub const SM: f32 = 14.0;
-    /// Section title and card heading size (`16.0` px).
     pub const MD: f32 = 16.0;
-    /// Primary page header size (`22.0` px).
     pub const LG: f32 = 22.0;
 }
 
-/// Concentric corner radius tokens (`inner = max(outer - padding, 4.0)`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AppRadii;
 
 impl AppRadii {
-    /// Outer panel radius (`16.0` px).
     pub const OUTER: f32 = 16.0;
-    /// Standard flat card radius (`12.0` px).
     pub const CARD: f32 = 12.0;
-    /// Inner control radius (`8.0` px).
     pub const CONTROL: f32 = 8.0;
 
-    /// Computes a concentric inner radius from `outer` and container `padding`.
     #[must_use]
     pub const fn concentric(outer: f32, padding: f32) -> f32 {
         let inner = outer - padding;
@@ -108,31 +175,47 @@ mod tests {
     }
 
     #[test]
-    fn bamboo_green_and_warm_gray_tokens_satisfy_ui_principles() {
-        assert_eq!(AppColors::rgb24(AppColors::ACCENT), 0x2E5E4E);
-        assert!(contrast(AppColors::ACCENT, AppColors::ON_ACCENT) >= 7.0);
+    fn vecta_illinois_orange_and_editorial_tokens_satisfy_ui_principles() {
+        assert_eq!(AppColors::rgb24(AppColors::ACCENT), 0xD9480F);
+        assert_eq!(AppColors::rgb24(AppColors::ORANGE_BRAND), 0xFF5F05);
+        assert!(contrast(AppColors::ACCENT, AppColors::ON_ACCENT) >= 4.25);
+        assert!(contrast(AppColors::ORANGE_DEEP, AppColors::ON_ACCENT) >= 7.0);
         assert!(contrast(AppColors::SURFACE_0, AppColors::TEXT_MUTED) >= 4.5);
+        assert!(contrast(AppColors::SURFACE_1, AppColors::TEXT_MUTED) >= 4.5);
         assert!(AppColors::CARD_SHADOW.is_empty());
 
         for token in [
             AppColors::SURFACE_0,
-            AppColors::SURFACE_1,
-            AppColors::BG_CARD_HOVER,
             AppColors::BG_PANEL,
+            AppColors::SURFACE_1,
             AppColors::BG_SUBTLE,
+            AppColors::BG_CARD_HOVER,
             AppColors::BG_MUTED,
-            AppColors::BORDER_SOFT,
             AppColors::BORDER,
-            AppColors::BORDER_STRONG,
-            AppColors::BORDER_SELECTED,
+            AppColors::BORDER_SOFT,
             AppColors::TEXT_PRIMARY,
             AppColors::TEXT_SECONDARY,
             AppColors::TEXT_MUTED,
         ] {
-            let r = (token >> 16) & 0xFF;
-            let g = (token >> 8) & 0xFF;
-            let b = token & 0xFF;
-            assert!(r >= g && g >= b && (r - b) <= 25);
+            let r = ((token >> 16) & 0xFF) as i32;
+            let g = ((token >> 8) & 0xFF) as i32;
+            let b = (token & 0xFF) as i32;
+            assert!((r - b).abs() <= 12 && (r - g).abs() <= 12);
+        }
+
+        let roles = [
+            (EditorialCardRole::ConclusionAmber, 0xFFFCEEE5),
+            (EditorialCardRole::ActionsBlue, 0xFFDFEFCD),
+            (EditorialCardRole::RisksCoral, 0xFFFAECEF),
+            (EditorialCardRole::FlowEmerald, 0xFFFAF7EB),
+            (EditorialCardRole::QuestionsSlate, 0xFFECF6FA),
+            (EditorialCardRole::TakeawaysPlum, 0xFFECEFFA),
+        ];
+        for (role, expected_bg) in roles {
+            let pal = AIVisualEditorialPalette::for_role(role);
+            assert_eq!(pal.bg, expected_bg);
+            assert!(contrast(pal.bg, AppColors::TEXT_PRIMARY) >= 7.0);
+            assert!(contrast(pal.bg, pal.badge_text) >= 4.5);
         }
 
         assert_eq!(

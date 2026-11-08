@@ -18,72 +18,107 @@ def load_verifier():
 verifier = load_verifier()
 
 
+VALID_VECTA_THEME = """
+pub struct AppFontSizes;
+impl AppFontSizes {
+    pub const XS: f32 = 12.0;
+    pub const SM: f32 = 14.0;
+    pub const MD: f32 = 16.0;
+    pub const LG: f32 = 22.0;
+}
+pub struct AppRadii;
+impl AppRadii {
+    pub const fn concentric(outer: f32, padding: f32) -> f32 { outer - padding }
+}
+pub struct AppColors;
+impl AppColors {
+    pub const SURFACE_0: u32 = 0xFFFAFAFA;
+    pub const BG_PANEL: u32 = 0xFFF0F0F2;
+    pub const SURFACE_1: u32 = 0xFFF0F0F2;
+    pub const BG_CARD: u32 = 0xFFFFFFFF;
+    pub const BG_SUBTLE: u32 = 0xFFE6E6E9;
+    pub const BG_CARD_HOVER: u32 = 0xFFDADADD;
+    pub const BG_MUTED: u32 = 0xFFD1D1D5;
+    pub const BORDER: u32 = 0xFFCCCCD2;
+    pub const BORDER_SOFT: u32 = 0xFFE2E2E7;
+    pub const TEXT_PRIMARY: u32 = 0xFF171719;
+    pub const TEXT_SECONDARY: u32 = 0xFF515157;
+    pub const TEXT_MUTED: u32 = 0xFF626269;
+    pub const ACCENT: u32 = 0xFFD9480F;
+    pub const ORANGE_BRAND: u32 = 0xFFFF5F05;
+    pub const ORANGE_ACTION: u32 = 0xFFD9480F;
+    pub const ORANGE_DEEP: u32 = 0xFF9A3412;
+    pub const ORANGE_TINT: u32 = 0xFFFFF1E6;
+    pub const ORANGE_BORDER: u32 = 0xFFFDBA8C;
+    pub const CARD_SHADOW: &[u32] = &[];
+}
+pub struct AIVisualEditorialPalette;
+impl AIVisualEditorialPalette {
+    pub const CORE_CONCLUSION_BG: u32 = 0xFFFCEEE5;
+    pub const ACTION_ITEMS_BG: u32 = 0xFFDFEFCD;
+    pub const RISKS_BG: u32 = 0xFFFAECEF;
+    pub const TIMELINE_BG: u32 = 0xFFFAF7EB;
+    pub const ENTITIES_BG: u32 = 0xFFECF6FA;
+    pub const OPEN_QUESTIONS_BG: u32 = 0xFFECEFFA;
+}
+"""
+
+
 class VerifyUiPrinciplesTest(unittest.TestCase):
-    def test_rejects_terracotta_and_enterprise_blue_accents(self) -> None:
-        terracotta_theme = """
-        class AppFontSizes { static const double xs = 12; }
-        class AppRadii { static double concentric(double outer, double gap) => outer - gap; }
-        class AppColors {
-          static const surface0 = Color(0xFFF5F4F0);
-          static const textMuted = Color(0xFF6E6C65);
-          static const accent = Color(0xFFA4472B);
-          static List<BoxShadow> get cardShadow => const [];
-        }
-        """
+    def test_accepts_vecta_90_8_2_illinois_orange_theme(self) -> None:
+        res = verifier.check_theme_file(VALID_VECTA_THEME)
+        self.assertEqual(res["violations"], [])
+        self.assertGreaterEqual(res["accent"]["white_contrast"], 4.25)
+
+    def test_rejects_legacy_terracotta_and_enterprise_blue_accents(self) -> None:
+        terracotta_theme = VALID_VECTA_THEME.replace(
+            "pub const ACCENT: u32 = 0xFFD9480F;",
+            "pub const ACCENT: u32 = 0xFFA4472B;",
+        )
         res = verifier.check_theme_file(terracotta_theme)
         self.assertTrue(
-            any("orange/terracotta" in v for v in res["violations"]),
+            any("legacy terracotta" in v for v in res["violations"]),
             res["violations"],
         )
 
-        enterprise_blue_theme = terracotta_theme.replace("0xFFA4472B", "0xFF0066CC")
+        enterprise_blue_theme = VALID_VECTA_THEME.replace(
+            "pub const ACCENT: u32 = 0xFFD9480F;",
+            "pub const ACCENT: u32 = 0xFF0066CC;",
+        )
         res_blue = verifier.check_theme_file(enterprise_blue_theme)
         self.assertTrue(
             any("legacy bright blue" in v for v in res_blue["violations"]),
             res_blue["violations"],
         )
 
-    def test_rejects_cold_blue_gray_surfaces(self) -> None:
-        cold_gray_theme = """
-        class AppFontSizes { static const double xs = 12; }
-        class AppRadii { static double concentric(double outer, double gap) => outer - gap; }
-        class AppColors {
-          static const surface0 = Color(0xFFF0F2F5);
-          static const textMuted = Color(0xFF6E6C65);
-          static const accent = Color(0xFF2E5E4E);
-          static List<BoxShadow> get cardShadow => const [];
-        }
-        """
-        res = verifier.check_theme_file(cold_gray_theme)
+    def test_rejects_low_contrast_brand_orange_used_as_action_accent(self) -> None:
+        bad_accent_theme = VALID_VECTA_THEME.replace(
+            "pub const ACCENT: u32 = 0xFFD9480F;",
+            "pub const ACCENT: u32 = 0xFFFF5F05;",
+        )
+        res = verifier.check_theme_file(bad_accent_theme)
         self.assertTrue(
-            any("not a warm neutral gray" in v for v in res["violations"]),
+            any("contrast" in v for v in res["violations"]),
             res["violations"],
         )
 
-    def test_accepts_bamboo_green_and_warm_paper_grays(self) -> None:
-        good_theme = """
-        class AppFontSizes {
-          static const double xs = 12;
-          static const double sm = 14;
-          static const double md = 17;
-          static const double lg = 22;
-        }
-        class AppRadii {
-          static double concentric(double outer, double gap) => outer - gap;
-        }
-        class AppColors {
-          static const surface0 = Color(0xFFF5F4F0);
-          static const surface1 = Color(0xFFFAF9F6);
-          static const textPrimary = Color(0xFF242320);
-          static const textSecondary = Color(0xFF5C5A54);
-          static const textMuted = Color(0xFF6E6C65);
-          static const accent = Color(0xFF2E5E4E);
-          static List<BoxShadow> get cardShadow => const [];
-        }
-        """
-        res = verifier.check_theme_file(good_theme)
-        self.assertEqual(res["violations"], [])
-        self.assertGreaterEqual(res["accent"]["white_contrast"], 7.0)
+    def test_rejects_missing_editorial_palette_fills_and_non_empty_shadow(self) -> None:
+        missing_fill_theme = VALID_VECTA_THEME.replace("0xFFECEFFA", "0xFF123456")
+        res = verifier.check_theme_file(missing_fill_theme)
+        self.assertTrue(
+            any("AIVisualEditorialPalette" in v for v in res["violations"]),
+            res["violations"],
+        )
+
+        shadow_theme = VALID_VECTA_THEME.replace(
+            "pub const CARD_SHADOW: &[u32] = &[];",
+            "pub const CARD_SHADOW: &[u32] = &[0x11000000];",
+        )
+        res_shadow = verifier.check_theme_file(shadow_theme)
+        self.assertTrue(
+            any("CARD_SHADOW" in v or "cardShadow" in v for v in res_shadow["violations"]),
+            res_shadow["violations"],
+        )
 
     def test_catches_font_size_sprawl_middle_dots_uppercase_and_red_buttons(self) -> None:
         bad_ui = """

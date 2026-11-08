@@ -2,14 +2,16 @@
 
 pub mod theme;
 
-use gpui_kit::base::Disableable;
+use gpui_kit::base::{Disableable, StyledExt};
+use gpui_kit::component::Sizable;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::*;
 use koe_desktop_ble::{BleEvent, MacBleController};
 use koe_desktop_core::{
-    CicadaEvent, ConnectionPhaseTag, DesktopBeanHost, DeviceCrypto, MarkJumpDirection,
-    McpPairingMode, MeetingMinutesV2, MinutePoint, MinuteTopic, MinutesEvent,
-    PAIRING_TICKET_PREFIX, ScoringMode, TodoStatus, filter_open_mine_todos, sort_context_timeline,
+    CicadaEvent, ConnectionPhaseTag, CopilotPresetChip, DesktopBeanHost, DesktopExportedRecording,
+    DetailTab, DeviceCrypto, MarkJumpDirection, McpPairingMode, MeetingMinutesV2, MinuteCause,
+    MinuteFishbone, MinutePoint, MinuteTopic, MinutesEvent, PAIRING_TICKET_PREFIX, SummaryFormat,
+    TodoStatus, WorkspaceCommand, WorkspaceProjection, WorkspaceSection,
     validate_calculation_grounding,
 };
 use std::fs::{self, File};
@@ -17,7 +19,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use theme::{AppColors, AppFontSizes, AppRadii};
+use theme::{AIVisualEditorialPalette, AppColors, AppFontSizes, AppRadii};
 
 struct AudioPlayer {
     _stream: rodio::OutputStream,
@@ -37,35 +39,6 @@ impl AudioPlayer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WorkspaceTab {
-    Today,
-    Library,
-    LiveCicada,
-    AskContext,
-    McpAcp,
-}
-
-impl WorkspaceTab {
-    const ALL: [Self; 5] = [
-        Self::Today,
-        Self::Library,
-        Self::LiveCicada,
-        Self::AskContext,
-        Self::McpAcp,
-    ];
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Today => "今日记录",
-            Self::Library => "录音与资料包",
-            Self::LiveCicada => "双语同传与纪要",
-            Self::AskContext => "离线双字检索",
-            Self::McpAcp => "外部 AI 协议",
-        }
-    }
-}
-
 enum LaunchTarget {
     Gui(Option<PathBuf>),
     Pack(PathBuf),
@@ -76,15 +49,12 @@ enum LaunchTarget {
 
 struct KoeDesktopApp {
     host: DesktopBeanHost,
+    projection: WorkspaceProjection,
     ble: MacBleController,
     ble_rx: mpsc::Receiver<BleEvent>,
     ble_poll_task: Option<Task<()>>,
-    active_tab: WorkspaceTab,
     player: Option<AudioPlayer>,
     playback_task: Option<Task<()>>,
-    search_query: String,
-    search_results: Vec<(usize, String)>,
-    last_jsonrpc_response: String,
     status: String,
     smoke: bool,
     smoke_failed: bool,
@@ -97,18 +67,17 @@ impl KoeDesktopApp {
         let mut host = DesktopBeanHost::new(&export_dir);
         let loaded_exports = host.load_existing_exports().unwrap_or(0);
         let loaded_packs = host.load_existing_packs().unwrap_or(0);
+        let now = Self::now_epoch_sec();
+        let projection = host.workspace_projection(now);
         let (ble, ble_rx) = MacBleController::new();
         let mut app = Self {
             host,
+            projection,
             ble,
             ble_rx,
             ble_poll_task: None,
-            active_tab: WorkspaceTab::Today,
             player: None,
             playback_task: None,
-            search_query: "海外渠道".to_string(),
-            search_results: Vec::new(),
-            last_jsonrpc_response: String::new(),
             status: format!(
                 "已载入本机目录，录音 {} 条，资料包 {} 份",
                 loaded_exports, loaded_packs
@@ -120,22 +89,55 @@ impl KoeDesktopApp {
         if loaded_exports == 0 && loaded_packs == 0 {
             app.seed_workspace_sample(true, true);
         } else {
-            let now = Self::now_epoch_sec();
-            let _ = app
-                .host
-                .sync_qwennote_hotwords(&["海外渠道", "心力豆", "竹青"], &[("张总", "张伟")]);
-            let _ = app.host.refresh_live_publication(now);
-            if !app.host.spine().is_empty() {
-                app.run_bm25_query("海外渠道");
+            let _ = app.apply_command(WorkspaceCommand::SyncHotWords {
+                hotwords: vec![
+                    "海外渠道".to_string(),
+                    "心力豆".to_string(),
+                    "soundcore".to_string(),
+                ],
+                speaker_aliases: vec![("张总".to_string(), "张伟".to_string())],
+            });
+            let _ = app.apply_command(WorkspaceCommand::RefreshLiveLease { now_epoch_sec: now });
+            if !app.projection.active_aggregate.spine.is_empty() {
+                let _ = app.apply_command(WorkspaceCommand::SearchContext {
+                    query: "海外渠道".to_string(),
+                    limit: 5,
+                });
             }
             app.status = format!(
                 "已载入本机工作区，录音 {} 条，资料包 {} 份，句子主干 {} 段",
-                app.host.snapshot().library.entry_count,
-                app.host.snapshot().pack_count,
-                app.host.spine().len()
+                app.projection.library.entry_count,
+                app.projection.pack_count,
+                app.projection.active_aggregate.spine.len()
             );
         }
         app
+    }
+
+    fn apply_command(&mut self, cmd: WorkspaceCommand) -> &WorkspaceProjection {
+        let now = Self::now_epoch_sec();
+        self.projection = self.host.dispatch(cmd, now);
+        &self.projection
+    }
+
+    fn dispatch_command(
+        &mut self,
+        cmd: WorkspaceCommand,
+        status_msg: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let now = Self::now_epoch_sec();
+        self.projection = self.host.dispatch(cmd, now);
+        for frame in self.host.drain_outbound_ble_frames() {
+            let _ = self.ble.send_frame(&frame);
+        }
+        self.status = status_msg.into();
+        cx.notify();
+    }
+
+    fn sync_projection(&mut self) {
+        let now = Self::now_epoch_sec();
+        self.projection = self.host.workspace_projection(now);
     }
 
     fn generate_ephemeral_p256_key(seed: u64) -> [u8; 32] {
@@ -157,14 +159,20 @@ impl KoeDesktopApp {
             match ev {
                 BleEvent::Scanning => {
                     self.host.on_scanning();
-                    self.status = "正在通过 CoreBluetooth 搜索 D3200 录音豆（UUID 0xF5DA）…".to_string();
+                    self.sync_projection();
+                    self.status =
+                        "正在通过 CoreBluetooth 搜索 D3200 录音豆（UUID 0xF5DA）…".to_string();
                 }
                 BleEvent::Unavailable(reason) => {
                     self.host.on_disconnected();
-                    self.status = format!("蓝牙未就绪（{reason}），可点击「模拟同步录音」验证离线闭环");
+                    self.sync_projection();
+                    self.status = format!(
+                        "蓝牙未就绪（{reason}），可点击「开始随心记 (60片实时流)」验证离线闭环"
+                    );
                 }
                 BleEvent::Connecting(name) => {
                     self.host.on_connecting();
+                    self.sync_projection();
                     self.status = format!("已发现 {name}，正在建立 GATT 连接…");
                 }
                 BleEvent::GattReady(name) => {
@@ -174,36 +182,39 @@ impl KoeDesktopApp {
                             let _ = self.ble.send_frame(&frame);
                         }
                     }
-                    self.status = format!("已连接 {name}（0x7777/0x8888 就绪），正在执行 2E/01 ECDH 握手…");
+                    self.sync_projection();
+                    self.status = format!(
+                        "已连接 {name}（0x7777/0x8888 就绪），正在执行 2E/01 ECDH 握手…"
+                    );
                 }
                 BleEvent::Notification(bytes) => {
                     let now = Self::now_epoch_sec();
-                    let prev_count = self.host.snapshot().library.entry_count;
+                    let prev_count = self.projection.library.entry_count;
                     let outcome = self.host.ingest_ble_chunk(&bytes, now);
                     for frame in outcome.outbound_tx_frames {
                         let _ = self.ble.send_frame(&frame);
                     }
+                    self.sync_projection();
                     if outcome.session_key_established {
                         self.status = "2E/01 ECDH 会话密钥协商成功".to_string();
                     }
                     if outcome.telemetry_updated {
-                        self.status = format!("录音豆已连接（{}）", self.connection_badge_text());
+                        self.status =
+                            format!("录音豆已连接（{}）", self.connection_badge_text());
                     }
                     if outcome.catalog_updated {
-                        self.status = format!(
-                            "已同步录音豆目录，共 {} 条设备录音",
-                            self.host.snapshot().catalog.len()
-                        );
+                        self.status = "已同步录音豆目录与实时流状态".to_string();
                     }
-                    if self.host.snapshot().library.entry_count > prev_count {
+                    if self.projection.library.entry_count > prev_count {
                         self.status = format!(
                             "已从录音豆取回并导出新录音，当前共 {} 条",
-                            self.host.snapshot().library.entry_count
+                            self.projection.library.entry_count
                         );
                     }
                 }
                 BleEvent::Disconnected(reason) => {
                     let salvaged = self.host.on_transport_interrupted();
+                    self.sync_projection();
                     let suffix = reason.unwrap_or_else(|| "连接已断开".to_string());
                     if !salvaged.is_empty() {
                         self.status = format!(
@@ -237,12 +248,13 @@ impl KoeDesktopApp {
                             let _ = this.ble.send_frame(&frame);
                         }
                         if timer_out.transfer_updated || timer_out.finalized.is_some() {
+                            this.sync_projection();
                             changed = true;
                         }
                         if changed {
                             cx.notify();
                         }
-                        this.host.snapshot().connection_phase != ConnectionPhaseTag::Disconnected
+                        this.projection.connection_phase != ConnectionPhaseTag::Disconnected
                     })
                     .unwrap_or(false);
                 if !keep_going {
@@ -263,19 +275,24 @@ impl KoeDesktopApp {
 
     fn ensure_mcp_ready(&mut self, now: u64) {
         if !self.host.mcp_acp().mcp_ready {
-            let _ = self.host.dispatch_jsonrpc(
-                r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+            let _ = self.host.dispatch(
+                WorkspaceCommand::DispatchJsonRpc {
+                    request_json: r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#.to_string(),
+                },
                 now,
             );
-            let _ = self.host.dispatch_jsonrpc(
-                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            self.projection = self.host.dispatch(
+                WorkspaceCommand::DispatchJsonRpc {
+                    request_json: r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
+                        .to_string(),
+                },
                 now,
             );
         }
     }
 
-    fn active_exported_recordings(&self) -> Vec<koe_desktop_core::DesktopExportedRecording> {
-        let exported = self.host.exported_recordings();
+    fn active_exported_recordings(&self) -> Vec<DesktopExportedRecording> {
+        let exported = &self.projection.recordings;
         self.host
             .library()
             .entries
@@ -296,18 +313,18 @@ impl KoeDesktopApp {
                 0,
                 2_400,
                 "zh",
-                "qwen",
+                "qwen3-asr-flash-realtime",
                 now,
             )
             .expect("S1 must append");
         let s2 = self
             .host
             .ingest_utterance_with_context(
-                "核心固件采用纯 Rust 内核并默认开启竹青界面令牌。",
+                "核心固件采用纯 Rust 内核并默认开启伊利诺伊橙界面令牌。",
                 2_400,
                 5_200,
                 "zh",
-                "qwen",
+                "qwen3-asr-flash-realtime",
                 now + 3,
             )
             .expect("S2 must append");
@@ -319,30 +336,48 @@ impl KoeDesktopApp {
         );
         let _ = self.host.spine_mut().set_translation(
             s2,
-            "The core firmware uses a pure Rust kernel with Bamboo Green UI tokens enabled by default.",
+            "The core firmware uses a pure Rust kernel with Illinois Orange UI tokens enabled by default.",
             "en",
         );
         let _ = self.host.reduce_cicada(CicadaEvent::SyncTranslations);
 
-        let _ = self
-            .host
-            .sync_qwennote_hotwords(&["海外渠道", "心力豆", "竹青"], &[("张总", "张伟")]);
+        let fishbone = MinuteFishbone {
+            issue: "D3200 真机说话偶发不出字与实时流断点根治".to_string(),
+            causes: vec![
+                MinuteCause {
+                    category: "固件协议".to_string(),
+                    description: "补齐 01/01、1A/06、18/81、18/82 四路硬件录音启动入口并自动补发 1A/07(realtimeFlag=1)".to_string(),
+                    citations: vec![s1, s2],
+                },
+                MinuteCause {
+                    category: "音频解码".to_string(),
+                    description: "DesktopBeanHost::new 默认注入 16kHz/48kHz libopus 解码器工厂".to_string(),
+                    citations: vec![s2],
+                },
+                MinuteCause {
+                    category: "流式百炼".to_string(),
+                    description: "SuixinRuntime 自驱泵将 1A/08 PCM16 帧实时推入 DashScope ASR 并投影到 UtteranceSpine".to_string(),
+                    citations: vec![s1, s2],
+                },
+            ],
+        };
 
         let grounded_minutes = MeetingMinutesV2 {
             version: 2,
             spine_revision: self.host.spine().revision(),
             title: "海外渠道与纯 Rust 内核收口纪要".to_string(),
-            overview: "确认下周三前完成海外渠道合同法务审阅，并启用纯 Rust 内核与竹青界面令牌。"
-                .to_string(),
+            overview:
+                "确认下周三前完成海外渠道合同法务审阅，并启用纯 Rust 内核与 Vecta 伊利诺伊橙界面令牌。"
+                    .to_string(),
             topics: vec![MinuteTopic {
                 title: "合同审阅与内核收口".to_string(),
-                summary: "法务审阅海外渠道合同，桌面端切换纯 Rust GPUI 架构。".to_string(),
+                summary: "法务审阅海外渠道合同，桌面端切换纯 Rust GPUI 双栏工作台。".to_string(),
                 citations: vec![s1, s2],
                 points: Vec::new(),
-                fishbone: None,
+                fishbone: Some(fishbone.clone()),
             }],
             decisions: vec![MinutePoint {
-                claim: "核心固件采用纯 Rust 内核并默认开启竹青界面令牌。".to_string(),
+                claim: "核心固件采用纯 Rust 内核并默认开启伊利诺伊橙界面令牌。".to_string(),
                 speaker: None,
                 owner: None,
                 due: None,
@@ -356,7 +391,7 @@ impl KoeDesktopApp {
                 citations: vec![s1],
             }],
             questions: Vec::new(),
-            fishbones: Vec::new(),
+            fishbones: vec![fishbone],
             terms: Vec::new(),
             custom_sections: Vec::new(),
             review_items: Vec::new(),
@@ -364,38 +399,36 @@ impl KoeDesktopApp {
         let _ = self
             .host
             .reduce_minutes(MinutesEvent::CandidateReceived(grounded_minutes));
-        let _ = self.host.refresh_live_publication(now + 5);
+        let _ = self.apply_command(WorkspaceCommand::SetCoarsePlace(Some(
+            "上海市 静安区".to_string(),
+        )));
+        let _ = self.apply_command(WorkspaceCommand::SyncHotWords {
+            hotwords: vec![
+                "海外渠道".to_string(),
+                "心力豆".to_string(),
+                "soundcore".to_string(),
+            ],
+            speaker_aliases: vec![("张总".to_string(), "张伟".to_string())],
+        });
+        let _ = self.apply_command(WorkspaceCommand::RefreshLiveLease {
+            now_epoch_sec: now + 5,
+        });
         if seed_pack {
-            let _ = self
-                .host
-                .export_koepack_v2_to_disk("海外渠道与纯Rust收口", "2026-11-08T11:30:00Z");
+            let _ = self.apply_command(WorkspaceCommand::ExportKoePackV2 {
+                title: "海外渠道与纯Rust收口".to_string(),
+                exported_at_iso: "2026-11-08T11:30:00Z".to_string(),
+            });
         }
-        self.run_bm25_query("海外渠道");
-        let rec_count = self.host.snapshot().library.entry_count;
+        let _ = self.apply_command(WorkspaceCommand::SearchContext {
+            query: "海外渠道".to_string(),
+            limit: 5,
+        });
+        let rec_count = self.projection.library.entry_count;
         self.status = format!(
             "已就绪，录音 {} 条，句子主干 S1..S{}",
             rec_count,
-            self.host.spine().len()
+            self.projection.active_aggregate.spine.len()
         );
-    }
-
-    fn run_bm25_query(&mut self, query: &str) {
-        self.search_query = query.to_string();
-        let hits = self
-            .host
-            .search_index()
-            .search(query, 5, ScoringMode::default());
-        let segments = self.host.spine().segments();
-        self.search_results = hits
-            .into_iter()
-            .map(|hit| {
-                let text = segments.get(hit.doc_index).map_or_else(
-                    || format!("文档 #{}", hit.doc_index),
-                    |s| format!("[{}] {}", s.id, s.text),
-                );
-                (hit.doc_index, format!("得分 {:.2}  {}", hit.score, text))
-            })
-            .collect();
     }
 
     fn ingest_pack_file(&mut self, path: &Path) -> bool {
@@ -407,9 +440,14 @@ impl KoeDesktopApp {
                 {
                     Ok(summary) => {
                         if self.host.restore_workspace_from_pack(&decoded) {
-                            self.run_bm25_query("海外渠道");
+                            let _ = self.apply_command(WorkspaceCommand::SearchContext {
+                                query: "海外渠道".to_string(),
+                                limit: 5,
+                            });
                         }
-                        self.active_tab = WorkspaceTab::Library;
+                        let _ = self.apply_command(WorkspaceCommand::SelectSection(
+                            WorkspaceSection::DailyMind,
+                        ));
                         self.status = format!(
                             "已载入资料包 {}（导出于 {}，共 {} 字节）",
                             summary.title,
@@ -420,171 +458,776 @@ impl KoeDesktopApp {
                     }
                     Err(err) => {
                         self.smoke_failed = true;
-                        self.status = format!("资料包校验未通过：{err:?}");
+                        self.status = format!("资料包校验失败：{err:?}");
                         false
                     }
                 },
                 Err(err) => {
                     self.smoke_failed = true;
-                    self.status = format!("资料包解码未通过：{err:?}");
+                    self.status = format!("无法解析 .koepack v2（{}）：{err:?}", path.display());
                     false
                 }
             },
             Err(err) => {
                 self.smoke_failed = true;
-                self.status = format!("无法读取资料包文件：{err}");
+                self.status = format!("无法读取资料包（{}）：{err}", path.display());
                 false
             }
         }
     }
 
-    fn format_mm_ss(ms: u64) -> String {
-        let total_sec = ms / 1_000;
-        format!("时长 {:02}:{:02}", total_sec / 60, total_sec % 60)
-    }
-
     fn connection_badge_text(&self) -> String {
-        let snap = self.host.snapshot();
-        let phase_label = match snap.connection_phase {
-            ConnectionPhaseTag::Disconnected => "未连接录音豆",
-            ConnectionPhaseTag::Scanning => "正在搜索录音豆",
-            ConnectionPhaseTag::Connecting => "正在连接录音豆",
-            ConnectionPhaseTag::Handshaking => "正在协商加密会话",
-            ConnectionPhaseTag::Connected => "录音豆已连接",
-        };
-        if let Some(tel) = snap.telemetry {
-            format!("{phase_label}  电量 {}%", tel.battery.unwrap_or(100))
-        } else {
-            phase_label.to_string()
+        match self.projection.connection_phase {
+            ConnectionPhaseTag::Disconnected => "未连接录音豆".to_string(),
+            ConnectionPhaseTag::Scanning => "正在搜索录音豆…".to_string(),
+            ConnectionPhaseTag::Connecting => "正在连接 GATT…".to_string(),
+            ConnectionPhaseTag::Handshaking => "ECDH 握手中…".to_string(),
+            ConnectionPhaseTag::Connected => match &self.projection.telemetry {
+                Some(info) => format!("已连接 电量 {}%", info.battery.unwrap_or(100)),
+                None => "录音豆已连接".to_string(),
+            },
         }
     }
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> Div {
-        let snap = self.host.snapshot();
-        let can_undo = snap.library.last_trashed_id.is_some();
+    fn format_mm_ss(ms: u64) -> String {
+        let total_sec = ms / 1_000;
+        let mins = total_sec / 60;
+        let secs = total_sec % 60;
+        format!("{mins:02}:{secs:02}")
+    }
 
-        div()
-            .w(px(256.0))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .rounded(px(AppRadii::OUTER))
-            .bg(rgb(AppColors::rgb24(AppColors::BG_PANEL)))
-            .border_1()
-            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
-            .child(
+    fn toggle_audio_playback(&mut self, wav_path: &Path, cx: &mut Context<Self>) {
+        if let Some(ref player) = self.player {
+            player.sink.stop();
+            self.player = None;
+            self.playback_task = None;
+            self.status = "已停止播放".to_string();
+            return;
+        }
+        match AudioPlayer::play(wav_path) {
+            Ok(player) => {
+                self.player = Some(player);
+                self.status = format!("正在播放 {}", wav_path.display());
+                self.playback_task = Some(cx.spawn(async move |this, cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(200))
+                            .await;
+                        let done = this
+                            .update(cx, |this, cx| {
+                                if this.player.as_ref().is_none_or(|p| p.sink.empty()) {
+                                    this.player = None;
+                                    this.playback_task = None;
+                                    this.status = "播放已完成".to_string();
+                                    cx.notify();
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            .unwrap_or(true);
+                        if done {
+                            break;
+                        }
+                    }
+                }));
+            }
+            Err(err) => {
+                self.status = format!(
+                    "已验证 WAV 文件存在（{}），当前音频输出设备不可用：{err}",
+                    wav_path.display()
+                );
+            }
+        }
+    }
+
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let proj = &self.projection;
+        let has_trashed = proj.library.last_trashed_id.is_some();
+
+        let mut nav_col = div().flex().flex_col().gap_1();
+        for section in WorkspaceSection::ALL {
+            let active = proj.section == section;
+            let badge_text = match section {
+                WorkspaceSection::DailyMind => format!("{}", proj.recordings.len().max(1)),
+                WorkspaceSection::Conferences => format!("{}", proj.open_todos.len()),
+                WorkspaceSection::Formats => format!("{}", SummaryFormat::ALL.len()),
+                WorkspaceSection::AliyunMcp => "在线".to_string(),
+                WorkspaceSection::SettingsDoctor => "5/5".to_string(),
+            };
+            let bg_hex = if active {
+                AppColors::BG_MUTED
+            } else {
+                AppColors::SIDEBAR
+            };
+            let fg_hex = if active {
+                AppColors::TEXT_PRIMARY
+            } else {
+                AppColors::TEXT_SECONDARY
+            };
+            let left_bar = if active {
+                AppColors::ORANGE_BRAND
+            } else {
+                AppColors::SIDEBAR
+            };
+            let nav_id: SharedString = format!("nav-sec-{section:?}").into();
+            nav_col = nav_col.child(
                 div()
-                    .text_size(px(AppFontSizes::MD))
-                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                    .child("Koe 录音豆工作台"),
-            )
-            .child(
-                div()
-                    .p_3()
-                    .rounded(px(AppRadii::concentric(AppRadii::OUTER, 4.0)))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
-                    .border_1()
-                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                    .id(nav_id)
                     .flex()
-                    .flex_col()
-                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(AppRadii::CONTROL))
+                    .bg(rgb(AppColors::rgb24(bg_hex)))
+                    .border_l_2()
+                    .border_color(rgb(AppColors::rgb24(left_bar)))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.dispatch_command(
+                            WorkspaceCommand::SelectSection(section),
+                            format!("已切换到「{}」视图", section.label()),
+                            cx,
+                        );
+                    }))
                     .child(
                         div()
                             .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(fg_hex)))
+                            .child(section.label()),
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded(px(AppRadii::concentric(AppRadii::CONTROL, 2.0)))
+                            .bg(rgb(AppColors::rgb24(AppColors::BG_SUBTLE)))
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .child(badge_text),
+                    ),
+            );
+        }
+
+        let mut rec_list = div().flex().flex_col().gap_1p5();
+        for rec in proj.recordings.iter().take(3) {
+            let rec_id = rec.entry.id;
+            let selected = proj.library.selected_id == Some(rec_id)
+                || proj.active_aggregate.file_id == rec_id;
+            let card_bg = if selected {
+                AppColors::BG_CARD
+            } else {
+                AppColors::BG_SUBTLE
+            };
+            let card_border = if selected {
+                AppColors::ORANGE_BRAND
+            } else {
+                AppColors::BORDER_SOFT
+            };
+            let item_id: SharedString = format!("side-rec-{rec_id}").into();
+            rec_list = rec_list.child(
+                div()
+                    .id(item_id)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .p_2()
+                    .rounded(px(AppRadii::CONTROL))
+                    .bg(rgb(AppColors::rgb24(card_bg)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(card_border)))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.dispatch_command(
+                            WorkspaceCommand::SelectRecording(rec_id),
+                            format!("已选中录音 #{rec_id}"),
+                            cx,
+                        );
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .font_semibold()
                             .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child(self.connection_badge_text()),
+                            .child(format!("随心记 #{rec_id}")),
                     )
                     .child(
                         div()
                             .text_size(px(AppFontSizes::XS))
                             .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .child(format!("书签 x{}", rec.entry.marks_ms.len())),
+                    ),
+            );
+        }
+
+        div()
+            .w(px(244.0))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .justify_between()
+            .p_4()
+            .rounded(px(AppRadii::OUTER))
+            .bg(rgb(AppColors::rgb24(AppColors::SIDEBAR)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2p5()
+                            .child(
+                                div()
+                                    .w(px(26.0))
+                                    .h(px(26.0))
+                                    .rounded(px(AppRadii::CONTROL))
+                                    .bg(rgb(AppColors::rgb24(AppColors::ORANGE_BRAND)))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_bold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::ON_ACCENT)))
+                                    .child("K"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::MD))
+                                            .font_bold()
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::TEXT_PRIMARY,
+                                            )))
+                                            .child("安克随心记"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::TEXT_MUTED,
+                                            )))
+                                            .child("日常心力豆工作台 顺带纪要"),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        Button::new("btn-simulate-sync")
+                            .primary()
+                            .label("开始随心记 (60片实时流)")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::SimulateRealtimePipeline,
+                                    "已完成 60 片 Opus 实时流模拟，双轨书签与 6 宫格卡片已刷新",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(nav_col)
+                    .child(
+                        div()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .font_semibold()
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::TEXT_MUTED,
+                                            )))
+                                            .child("最近随心记与回收站"),
+                                    )
+                                    .child(
+                                        Button::new("btn-undo-trash")
+                                            .ghost()
+                                            .small()
+                                            .disabled(!has_trashed)
+                                            .label("撤销删除")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::UndoTrash,
+                                                    "已从回收站恢复录音",
+                                                    cx,
+                                                );
+                                            })),
+                                    ),
+                            )
+                            .child(rec_list),
+                    ),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .rounded(px(AppRadii::CARD))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(
+                                        div()
+                                            .w(px(8.0))
+                                            .h(px(8.0))
+                                            .rounded(px(4.0))
+                                            .bg(rgb(AppColors::rgb24(AppColors::ORANGE_BRAND))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .font_semibold()
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::TEXT_PRIMARY,
+                                            )))
+                                            .child("安克心力豆 D3200"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                    .child(self.connection_badge_text()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
                             .child(format!(
-                                "本机录音 {} 条  资料包 {} 份",
-                                snap.library.entry_count, snap.pack_count
+                                "16kHz Opus 实时流 分片 {} 书签 {}",
+                                proj.doctor.unpacked_slices,
+                                proj.active_aggregate.bookmarks.len()
                             )),
                     )
                     .child(
-                        Button::new("connect-bean")
-                            .primary()
-                            .label("连接录音豆")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.ble.start_scan();
-                                let _ = this.drain_ble_events();
-                                this.ensure_ble_poll_task(cx);
-                                cx.notify();
-                            })),
+                        div()
+                            .flex()
+                            .gap_1p5()
+                            .child(
+                                Button::new("btn-connect-bean")
+                                    .small()
+                                    .label("连接录音豆")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.ble.start_scan();
+                                        this.ensure_ble_poll_task(cx);
+                                        this.status = "已发起 CoreBluetooth 扫描…".to_string();
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-open-doctor")
+                                    .ghost()
+                                    .small()
+                                    .label("链路自检")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::SelectSection(
+                                                WorkspaceSection::SettingsDoctor,
+                                            ),
+                                            "已打开 D3200 五阶实时流自检面板",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    ),
+            )
+    }
+
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let proj = &self.projection;
+        let place_label = proj
+            .active_aggregate
+            .coarse_place
+            .clone()
+            .unwrap_or_else(|| "未标记粗粒度地点".to_string());
+        let title = proj.active_aggregate.minutes.as_ref().map_or_else(
+            || {
+                format!(
+                    "{} 录音 #{}",
+                    proj.section.label(),
+                    proj.active_aggregate.file_id.max(1)
+                )
+            },
+            |m| m.title.clone(),
+        );
+
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .pb_3()
+            .border_b_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::LG))
+                            .font_bold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(title),
                     )
                     .child(
-                        Button::new("simulate-bean-sync")
-                            .label("模拟同步录音")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let now = Self::now_epoch_sec();
-                                let exported = this.host.simulate_realtime_pipeline(now);
-                                this.status = format!(
-                                    "录音豆已同步录音 #{}（{}，双击标记 {} 处）",
-                                    exported.entry.id,
-                                    Self::format_mm_ss(exported.entry.duration_ms),
-                                    exported.entry.marks_ms.len()
-                                );
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("start-recording")
-                            .label("开始录音")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let now = Self::now_epoch_sec();
-                                let next_idx = this.host.spine().len() + 1;
-                                if let Some(seg_id) = this.host.ingest_utterance_with_context(
-                                    format!("第 {next_idx} 段实时会议发言与待办事项已记入主干。"),
-                                    (next_idx as u64) * 2_000,
-                                    (next_idx as u64 + 1) * 2_000,
-                                    "zh",
-                                    "qwen",
-                                    now,
-                                ) {
-                                    let _ = this.host.refresh_live_publication(now);
-                                    let q = this.search_query.clone();
-                                    this.run_bm25_query(&q);
-                                    this.status = format!(
-                                        "已录制并写入句子主干 {seg_id}，实时租约代数 {}",
-                                        this.host.snapshot().live_generation
-                                    );
-                                }
-                                cx.notify();
-                            })),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(AppRadii::concentric(AppRadii::CONTROL, 2.0)))
+                                    .bg(rgb(AppColors::rgb24(AppColors::BG_SUBTLE)))
+                                    .text_size(px(AppFontSizes::XS))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                                    .child(format!("地点：{place_label}")),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(AppRadii::concentric(AppRadii::CONTROL, 2.0)))
+                                    .bg(rgb(AppColors::rgb24(AppColors::ORANGE_TINT)))
+                                    .border_1()
+                                    .border_color(rgb(AppColors::rgb24(AppColors::ORANGE_BORDER)))
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                    .child(format!(
+                                        "双击书签 x{}",
+                                        proj.active_aggregate.bookmarks.len()
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(AppRadii::concentric(AppRadii::CONTROL, 2.0)))
+                                    .bg(rgb(AppColors::rgb24(AppColors::BG_SUBTLE)))
+                                    .text_size(px(AppFontSizes::XS))
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                                    .child(format!(
+                                        "格式：{}",
+                                        proj.active_aggregate.selected_format.label_zh()
+                                    )),
+                            ),
                     ),
             )
             .child(
                 div()
                     .flex()
-                    .flex_col()
+                    .items_center()
                     .gap_2()
-                    .children(WorkspaceTab::ALL.into_iter().map(|tab| {
-                        let selected = self.active_tab == tab;
-                        let btn = Button::new(("nav-tab", tab as usize)).label(tab.label());
-                        let styled = if selected { btn.primary() } else { btn };
-                        styled.on_click(cx.listener(move |this, _, _, cx| {
-                            this.active_tab = tab;
-                            this.status = format!("已切换至{}", tab.label());
-                            cx.notify();
-                        }))
-                    })),
+                    .child(
+                        Button::new("btn-toggle-place")
+                            .ghost()
+                            .small()
+                            .label("切换粗粒度地点")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let next_place = match this
+                                    .projection
+                                    .active_aggregate
+                                    .coarse_place
+                                    .as_deref()
+                                {
+                                    Some("上海市 静安区") => Some("北京市 海淀区".to_string()),
+                                    _ => Some("上海市 静安区".to_string()),
+                                };
+                                this.dispatch_command(
+                                    WorkspaceCommand::SetCoarsePlace(next_place),
+                                    "已更新粗粒度地点标签（自动隐去门牌与街道）",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-header-doctor")
+                            .small()
+                            .label("五阶链路自检")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::SelectSection(
+                                        WorkspaceSection::SettingsDoctor,
+                                    ),
+                                    "已切换到五阶实时流自检",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-export-koepack")
+                            .primary()
+                            .small()
+                            .label("导出 .koepack v2")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::ExportKoePackV2 {
+                                        title: "随心记收口资料包".to_string(),
+                                        exported_at_iso: "2026-11-08T12:00:00Z".to_string(),
+                                    },
+                                    "已导出 .koepack v2 资料包到本机归档目录",
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+    }
+
+    fn render_daily_context_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let proj = &self.projection;
+        let brief_todo_preview = proj.morning_brief.open_mine.first().map_or_else(
+            || "今日暂无待办积压".to_string(),
+            |t| {
+                let cite = t
+                    .citations
+                    .first()
+                    .map_or_else(String::new, |c| format!(" [{c}]"));
+                format!("{}{cite}", t.title)
+            },
+        );
+        let focus_title = proj
+            .focus_project
+            .as_ref()
+            .map_or("安克随心记", |p| p.title.as_str());
+        let focus_next = proj.project_progress.next_todo.as_ref().map_or_else(
+            || "焦点项目所有待办已就绪".to_string(),
+            |t| format!("下一项：{}", t.title),
+        );
+        let diary_preview = proj.diary_entry.current.as_ref().map_or_else(
+            || "等待随心记句段生成事实日记".to_string(),
+            |d| {
+                d.text
+                    .lines()
+                    .next()
+                    .unwrap_or("事实日记已生成")
+                    .to_string()
+            },
+        );
+
+        div()
+            .flex()
+            .gap_3()
+            .child(
+                div()
+                    .flex_1()
+                    .p_3()
+                    .rounded(px(AppRadii::CARD))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                    .child("今日晨间简报 MorningBrief"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                    .child(format!(
+                                        "待办 {} 跟进 {}",
+                                        proj.morning_brief.open_mine.len(),
+                                        proj.morning_brief.follow_ups.len()
+                                    )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(brief_todo_preview),
+                    ),
             )
             .child(
                 div()
-                    .mt_auto()
+                    .flex_1()
+                    .p_3()
+                    .rounded(px(AppRadii::CARD))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1()
                     .child(
-                        Button::new("undo-trash")
-                            .label("撤回删除")
-                            .disabled(!can_undo)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if this.host.undo_trash() {
-                                    this.status = "已从回收站恢复最近删除的录音".to_string();
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                    .child("焦点项目进度 ProjectProgress"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::SUCCESS)))
+                                    .child(focus_title.to_string()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(focus_next),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .p_3()
+                    .rounded(px(AppRadii::CARD))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::XS))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                    .child("事实日记与检索 DiaryEntry"),
+                            )
+                            .child(
+                                Button::new("btn-strip-open-search")
+                                    .ghost()
+                                    .small()
+                                    .label(format!("BM25 索引 {} 段", proj.indexed_context_docs))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dispatch_command(
+                                            WorkspaceCommand::SelectDetailTab(
+                                                DetailTab::AskAiAndMcp,
+                                            ),
+                                            "已打开 AI 随心问与离线 BM25 检索",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(diary_preview),
+                    ),
+            )
+    }
+
+    fn render_waveform_player_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let proj = &self.projection;
+        let duration_ms = proj.active_aggregate.duration_ms.max(1_200);
+        let position_ms = proj.library.position_ms;
+        let is_playing = self.player.is_some();
+        let active_wav = proj.recordings.first().map(|r| r.wav_path.clone());
+        let active_rec_id = proj.recordings.first().map(|r| r.entry.id);
+
+        let bar_count = proj.waveform_bars_norm.len().max(1);
+        let mut wave_row = div().flex().items_end().gap_0p5().h(px(28.0)).flex_1();
+        for (idx, &height_pct) in proj.waveform_bars_norm.iter().enumerate() {
+            let bar_ms = (idx as u64).saturating_mul(duration_ms) / (bar_count as u64);
+            let in_bookmark_window = proj
+                .bookmark_windows_ms
+                .iter()
+                .any(|&(start, end)| bar_ms >= start && bar_ms <= end);
+            let is_played = bar_ms <= position_ms || (position_ms == 0 && idx < bar_count / 3);
+            let bar_color = if in_bookmark_window {
+                AppColors::ORANGE_ACTION
+            } else if is_played {
+                AppColors::ORANGE_BRAND
+            } else {
+                AppColors::WAVE_UNPLAYED
+            };
+            let h_px = 6.0 + (f32::from(height_pct) * 0.20);
+            wave_row = wave_row.child(
+                div()
+                    .w(px(3.0))
+                    .h(px(h_px))
+                    .rounded(px(2.0))
+                    .bg(rgb(AppColors::rgb24(bar_color))),
+            );
+        }
+
+        div()
+            .p_3()
+            .rounded(px(AppRadii::CARD))
+            .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2p5()
+                    .child(
+                        Button::new("btn-wave-play")
+                            .primary()
+                            .small()
+                            .disabled(active_wav.is_none())
+                            .label(if is_playing { "停止播放" } else { "播放录音" })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(ref wav) = active_wav {
+                                    this.toggle_audio_playback(wav, cx);
                                     cx.notify();
                                 }
                             })),
@@ -592,370 +1235,490 @@ impl KoeDesktopApp {
                     .child(
                         div()
                             .text_size(px(AppFontSizes::XS))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
                             .child(format!(
-                                "索引文档 {} 条  MCP 调用 {} 次",
-                                snap.indexed_context_docs, snap.mcp_handled_calls
+                                "{} / {}",
+                                Self::format_mm_ss(position_ms),
+                                Self::format_mm_ss(duration_ms)
                             )),
                     ),
             )
+            .child(wave_row)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        Button::new("btn-prev-mark")
+                            .ghost()
+                            .small()
+                            .label("上一标记")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::JumpMark(MarkJumpDirection::Previous),
+                                    "已跳到上一处硬件双击标记",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-next-mark")
+                            .ghost()
+                            .small()
+                            .label("下一标记")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::JumpMark(MarkJumpDirection::Next),
+                                    "已跳到下一处硬件双击标记",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-add-slicemark")
+                            .small()
+                            .label("+ 双击书签 (±10s)")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let mark_ms = this.projection.library.position_ms.max(600);
+                                this.dispatch_command(
+                                    WorkspaceCommand::AddSliceMark(mark_ms),
+                                    format!(
+                                        "已在 {} 处打上双击书签（自动高亮前后 10s 区间）",
+                                        Self::format_mm_ss(mark_ms)
+                                    ),
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-trash-active")
+                            .ghost()
+                            .small()
+                            .disabled(active_rec_id.is_none())
+                            .label("移入回收站")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(id) = active_rec_id {
+                                    this.dispatch_command(
+                                        WorkspaceCommand::MoveToTrash(id),
+                                        format!("已将录音 #{id} 移入回收站（可在左栏一键撤销）"),
+                                        cx,
+                                    );
+                                }
+                            })),
+                    ),
+            )
     }
 
-    fn render_today_pane(&self, cx: &mut Context<Self>) -> Div {
-        let items = sort_context_timeline(self.host.context().timeline.clone());
-        let open_todos = filter_open_mine_todos(&self.host.context().todos);
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
+    fn render_section_context_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let proj = &self.projection;
+        match proj.section {
+            WorkspaceSection::DailyMind => div(),
+            WorkspaceSection::Conferences => div()
+                .p_3()
+                .rounded(px(AppRadii::CARD))
+                .bg(rgb(AppColors::rgb24(AppColors::ORANGE_TINT)))
+                .border_1()
+                .border_color(rgb(AppColors::rgb24(AppColors::ORANGE_BORDER)))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(AppFontSizes::SM))
+                        .font_semibold()
+                        .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                        .child(format!(
+                            "顺带会议视图：当前共 {} 项个人行动承诺，所有决议均绑定 [S1..Sn] 逐字原话出处",
+                            proj.open_todos.len()
+                        )),
+                )
+                .child(
+                    Button::new("btn-conf-open-transcript")
+                        .small()
+                        .label("查看声纹与双语同传")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.dispatch_command(
+                                WorkspaceCommand::SelectDetailTab(
+                                    DetailTab::TranscriptAndVoiceprint,
+                                ),
+                                "已切换到逐字原话与声纹双语同传",
+                                cx,
+                            );
+                        })),
+                ),
+            WorkspaceSection::Formats => {
+                let mut pills = div().flex().flex_wrap().gap_1p5();
+                for fmt in SummaryFormat::ALL {
+                    let selected = proj.active_aggregate.selected_format == fmt;
+                    let btn_id: SharedString = format!("banner-fmt-{fmt:?}").into();
+                    let btn = if selected {
+                        Button::new(btn_id).primary().small().label(fmt.label_zh())
+                    } else {
+                        Button::new(btn_id).small().label(fmt.label_zh())
+                    };
+                    pills = pills.child(btn.on_click(cx.listener(move |this, _, _, cx| {
+                        this.dispatch_command(
+                            WorkspaceCommand::SelectSummaryFormat(fmt),
+                            format!("已切换心力格式为「{}」并重算 6 宫格卡片", fmt.label_zh()),
+                            cx,
+                        );
+                    })));
+                }
                 div()
-                    .text_size(px(AppFontSizes::LG))
-                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                    .child("今日记录与承诺待办"),
-            )
-            .child(
-                div()
-                    .p_4()
+                    .p_3()
                     .rounded(px(AppRadii::CARD))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
                     .border_1()
                     .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
                     .flex()
-                    .flex_col()
-                    .gap_2()
+                    .items_center()
+                    .justify_between()
                     .child(
                         div()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::MD))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                                    .child(format!("待办承诺（共 {} 项）", open_todos.len())),
-                            )
-                            .child(
-                                Button::new("add-note-context")
-                                    .label("记一条随手记")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let now = Self::now_epoch_sec();
-                                        let _ = this.host.ingest_utterance_with_context(
-                                            "周五前提交安克录音豆量产固件回归报告。",
-                                            5_200,
-                                            7_800,
-                                            "zh",
-                                            "manual",
-                                            now,
-                                        );
-                                        let q = this.search_query.clone();
-                                        this.run_bm25_query(&q);
-                                        this.status = "已记入时间线并提取待办承诺".to_string();
-                                        cx.notify();
-                                    })),
-                            ),
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child("切换 6 种心力总结格式（零幻觉重算 6 宫格柔彩卡片）："),
                     )
-                    .children(open_todos.into_iter().map(|todo| {
-                        let cites = todo
-                            .citations
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        div()
-                            .p_3()
-                            .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
-                            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
-                            .border_1()
-                            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::SM))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                                    .child(todo.title),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::XS))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::ACCENT)))
-                                    .child(format!("出处 {cites}")),
-                            )
-                    })),
-            )
-            .child(
+                    .child(pills)
+            }
+            WorkspaceSection::AliyunMcp => div()
+                .p_3()
+                .rounded(px(AppRadii::CARD))
+                .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                .border_1()
+                .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(AppFontSizes::SM))
+                        .font_semibold()
+                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                        .child(format!(
+                            "私有阿里云百炼 (qwen3-asr-flash-realtime) + 本机 MCP 2025-11-25 租约 #{} (已响应 {} 次调用)",
+                            proj.live_generation, proj.mcp_handled_calls
+                        )),
+                )
+                .child(
+                    Button::new("btn-banner-open-mcp-tab")
+                        .primary()
+                        .small()
+                        .label("打开 AI 随心问 & MCP 控制台")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.dispatch_command(
+                                WorkspaceCommand::SelectDetailTab(DetailTab::AskAiAndMcp),
+                                "已切换到 AI 随心问与阿里云 MCP 面板",
+                                cx,
+                            );
+                        })),
+                ),
+            WorkspaceSection::SettingsDoctor => self.render_pipeline_doctor_card(cx),
+        }
+    }
+
+    fn render_pipeline_doctor_card(&self, cx: &mut Context<Self>) -> Div {
+        let doc = &self.projection.doctor;
+        let stages = [
+            (
+                "1. BLE GATT 0x7777/0x8888 链路",
+                doc.stage1_ble_gatt.is_ready(),
+                format!(
+                    "状态 {} 文件 #{}",
+                    doc.stage1_ble_gatt.label_zh(),
+                    doc.active_file_id
+                ),
+            ),
+            (
+                "2. 2E/01 ECDH 会话密钥协商",
+                doc.stage2_session_key.is_ready(),
+                format!("状态 {}", doc.stage2_session_key.label_zh()),
+            ),
+            (
+                "3. 1A/06 -> 1A/07 -> 1A/08 实时流",
+                doc.stage3_realtime_stream.is_ready(),
+                format!(
+                    "状态 {} 分片 {}",
+                    doc.stage3_realtime_stream.label_zh(),
+                    doc.unpacked_slices
+                ),
+            ),
+            (
+                "4. libopus 16kHz 解码与声学能量",
+                doc.stage4_opus_decoder_16k.is_ready(),
+                format!(
+                    "PCM16 {}B RMS {}",
+                    doc.decoded_pcm16_bytes, doc.latest_rms_energy
+                ),
+            ),
+            (
+                "5. 百炼流式 ASR 与 UtteranceSpine",
+                doc.stage5_streaming_asr.is_ready(),
+                format!(
+                    "队列 {} 帧 主干 {} 段",
+                    doc.outbound_asr_frames_queued, doc.spine_segment_count
+                ),
+            ),
+        ];
+
+        let mut row = div().flex().flex_wrap().gap_2();
+        for (title, ok, detail) in stages {
+            let badge_bg = if ok {
+                AppColors::SUCCESS_SOFT
+            } else {
+                AppColors::WARNING_SOFT
+            };
+            let badge_fg = if ok {
+                AppColors::SUCCESS
+            } else {
+                AppColors::WARNING
+            };
+            row = row.child(
                 div()
-                    .p_4()
-                    .rounded(px(AppRadii::CARD))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
+                    .flex_1()
+                    .min_w(px(160.0))
+                    .p_2p5()
+                    .rounded(px(AppRadii::CONTROL))
+                    .bg(rgb(AppColors::rgb24(badge_bg)))
                     .border_1()
-                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(badge_fg)))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                            .child(detail),
+                    ),
+            );
+        }
+
+        div()
+            .p_3()
+            .rounded(px(AppRadii::CARD))
+            .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .child(
                         div()
                             .text_size(px(AppFontSizes::MD))
+                            .font_semibold()
                             .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child(format!("个人上下文时间线（共 {} 条）", items.len())),
-                    )
-                    .children(items.into_iter().map(|item| {
-                        div()
-                            .p_3()
-                            .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
-                            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
-                            .border_1()
-                            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::SM))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                                    .child(format!("[{}] {}", item.title, item.summary)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::XS))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
-                                    .child(format!("时间戳 {} 秒", item.created_at_epoch_sec)),
-                            )
-                    })),
-            )
-    }
-
-    fn render_library_pane(&self, cx: &mut Context<Self>) -> Div {
-        let snap = self.host.snapshot();
-        let recordings = self.active_exported_recordings();
-        let selected_id = snap.library.selected_id;
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_size(px(AppFontSizes::LG))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child("本机录音与无音频资料包"),
+                            .child("安克录音豆 D3200 五阶实时链路自检 (Bean Doctor)"),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                Button::new("prev-mark")
-                                    .label("上一标记")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let pos = this.host.jump_to_mark(MarkJumpDirection::Previous);
-                                        this.status = format!("已跳至上一双击标记 {} 毫秒", pos);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("next-mark")
-                                    .label("下一标记")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let pos = this.host.jump_to_mark(MarkJumpDirection::Next);
-                                        this.status = format!("已跳至下一双击标记 {} 毫秒", pos);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("export-pack-v2")
-                                    .primary()
-                                    .label("导出资料包")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        match this.host.export_koepack_v2_to_disk(
-                                            "桌面端导出纪要包",
-                                            "2026-11-08T12:00:00Z",
-                                        ) {
-                                            Ok((summary, path)) => {
-                                                this.status = format!(
-                                                    "已导出资料包 {} 至 {}",
-                                                    summary.id,
-                                                    path.display()
-                                                );
-                                            }
-                                            Err(err) => {
-                                                this.status = format!("导出资料包失败：{err:?}");
-                                            }
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
+                        Button::new("btn-doctor-retrigger-1a07")
+                            .primary()
+                            .small()
+                            .label("一键重发 1A/07 (realtimeFlag=1)")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let now_ms = Self::now_epoch_sec().saturating_mul(1_000);
+                                this.dispatch_command(
+                                    WorkspaceCommand::RetriggerRealtimeStream { now_ms },
+                                    "已主动重发 1A/07 (realtimeFlag=1) 实时流订阅帧并唤醒百炼流式泵",
+                                    cx,
+                                );
+                            })),
                     ),
             )
+            .child(row)
+    }
+
+    fn render_detail_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let proj = &self.projection;
+        let mut bar = div()
+            .flex()
+            .items_center()
+            .gap_4()
+            .border_b_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)));
+
+        for tab in DetailTab::ALL {
+            let active = proj.detail_tab == tab;
+            let text_col = if active {
+                AppColors::TEXT_PRIMARY
+            } else {
+                AppColors::TEXT_MUTED
+            };
+            let border_col = if active {
+                AppColors::ORANGE_BRAND
+            } else {
+                AppColors::CANVAS
+            };
+            let tab_id: SharedString = format!("detail-tab-{tab:?}").into();
+            bar = bar.child(
+                div()
+                    .id(tab_id)
+                    .pb_2()
+                    .border_b_2()
+                    .border_color(rgb(AppColors::rgb24(border_col)))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.dispatch_command(
+                            WorkspaceCommand::SelectDetailTab(tab),
+                            format!("已切换到「{}」标签页", tab.label()),
+                            cx,
+                        );
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(text_col)))
+                            .child(tab.label()),
+                    ),
+            );
+        }
+        bar
+    }
+
+    fn render_visual_summary_tab(&self, cx: &mut Context<Self>) -> Div {
+        let proj = &self.projection;
+
+        let mut format_row = div().flex().items_center().justify_between().gap_2();
+        let mut pills = div().flex().flex_wrap().gap_1p5();
+        for fmt in SummaryFormat::ALL {
+            let active = proj.active_aggregate.selected_format == fmt;
+            let fid: SharedString = format!("fmt-pill-{fmt:?}").into();
+            let btn = if active {
+                Button::new(fid).primary().small().label(fmt.label_zh())
+            } else {
+                Button::new(fid).ghost().small().label(fmt.label_zh())
+            };
+            pills = pills.child(btn.on_click(cx.listener(move |this, _, _, cx| {
+                this.dispatch_command(
+                    WorkspaceCommand::SelectSummaryFormat(fmt),
+                    format!("已切换总结格式为「{}」", fmt.label_zh()),
+                    cx,
+                );
+            })));
+        }
+        format_row = format_row
             .child(
                 div()
                     .text_size(px(AppFontSizes::SM))
-                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
-                    .child(format!(
-                        "当前播放游标 {} 毫秒  已归档资料包 {} 份  导出目录 {}",
-                        snap.library.position_ms,
-                        snap.pack_count,
-                        self.host.export_dir().display()
-                    )),
+                    .font_semibold()
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                    .child("6 宫格 AI 视觉总结卡片 (AIVisualEditorialPalette 8% 柔彩层)"),
             )
-            .children(recordings.into_iter().map(|rec| {
-                let id = rec.entry.id;
-                let wav_path = rec.wav_path.clone();
-                let is_selected = selected_id == Some(id);
-                let border_hex = if is_selected {
-                    AppColors::BORDER_SELECTED
-                } else {
-                    AppColors::BORDER
-                };
-                let marks_desc = if rec.entry.marks_ms.is_empty() {
-                    "无双击标记".to_string()
-                } else {
-                    format!("双击标记 {:?} 毫秒", rec.entry.marks_ms)
-                };
-                div()
-                    .p_4()
-                    .rounded(px(AppRadii::CARD))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
-                    .border_1()
-                    .border_color(rgb(AppColors::rgb24(border_hex)))
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::MD))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                                    .child(format!(
-                                        "录音 #{id}  {}",
-                                        Self::format_mm_ss(rec.entry.duration_ms)
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::XS))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
-                                    .child(format!(
-                                        "文件大小 {} 字节  {}",
-                                        rec.entry.byte_count, marks_desc
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                Button::new(("play-wav", id as usize))
-                                    .primary()
-                                    .label("播放原声")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let _ = this.host.select_recording(id);
-                                        this.player = None;
-                                        match AudioPlayer::play(&wav_path) {
-                                            Ok(player) => {
-                                                this.player = Some(player);
-                                                this.status = format!("正在播放录音 #{id}");
-                                                this.playback_task = Some(cx.spawn(async |view, cx| {
-                                                    loop {
-                                                        cx.background_executor()
-                                                            .timer(Duration::from_millis(200))
-                                                            .await;
-                                                        let keep = view.update(cx, |view, cx| {
-                                                            if view
-                                                                .player
-                                                                .as_ref()
-                                                                .is_some_and(|p| p.sink.empty())
-                                                            {
-                                                                view.player = None;
-                                                                view.status = "播放结束".to_string();
-                                                                cx.notify();
-                                                            }
-                                                            view.player.is_some()
-                                                        });
-                                                        if !matches!(keep, Ok(true)) {
-                                                            break;
-                                                        }
-                                                    }
-                                                }));
-                                            }
-                                            Err(err) => {
-                                                this.status = format!("播放失败：{err}");
-                                            }
-                                        }
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new(("trash-rec", id as usize))
-                                    .label("移到回收站")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.player = None;
-                                        if this.host.move_to_trash(id) {
-                                            this.status = format!(
-                                                "录音 #{id} 已移到回收站，可点左侧「撤回删除」立即恢复"
-                                            );
-                                            cx.notify();
-                                        }
-                                    })),
-                            ),
-                    )
-            }))
-    }
+            .child(pills);
 
-    fn render_live_cicada_pane(&self, _cx: &mut Context<Self>) -> Div {
-        let segments = self.host.spine().segments().to_vec();
-        let mins = self.host.minutes().latest_minutes.clone();
+        let mut cards_grid = div().flex().flex_wrap().gap_3();
+        for card in &proj.visual_cards {
+            let pal = AIVisualEditorialPalette::for_role(card.role);
+            let cites: Vec<String> = card.citations.iter().map(|c| format!("[{c}]")).collect();
+            let mut card_div = div()
+                .w(px(285.0))
+                .flex_1()
+                .p_3p5()
+                .rounded(px(AppRadii::CARD))
+                .bg(rgb(AppColors::rgb24(pal.bg)))
+                .border_1()
+                .border_color(rgb(AppColors::rgb24(pal.border)))
+                .flex()
+                .flex_col()
+                .gap_1p5()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .font_bold()
+                                .text_color(rgb(AppColors::rgb24(pal.badge_text)))
+                                .child(card.role.label_zh()),
+                        )
+                        .child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded(px(AppRadii::concentric(AppRadii::CONTROL, 2.0)))
+                                .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                                .text_size(px(AppFontSizes::XS))
+                                .font_semibold()
+                                .text_color(rgb(AppColors::rgb24(pal.badge_text)))
+                                .child(cites.join(" ")),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(AppFontSizes::MD))
+                        .font_bold()
+                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                        .child(card.headline.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(AppFontSizes::SM))
+                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
+                        .child(card.body.clone()),
+                );
 
-        div()
+            if let Some(ref hi) = card.highlight_box {
+                card_div = card_div.child(
+                    div()
+                        .mt_1()
+                        .p_2()
+                        .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
+                        .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                        .text_size(px(AppFontSizes::XS))
+                        .font_semibold()
+                        .text_color(rgb(AppColors::rgb24(pal.badge_text)))
+                        .child(hi.clone()),
+                );
+            }
+            cards_grid = cards_grid.child(card_div);
+        }
+
+        let mut fishbone_panel = div()
+            .p_3p5()
+            .rounded(px(AppRadii::CARD))
+            .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
             .flex()
             .flex_col()
-            .gap_4()
+            .gap_2()
             .child(
                 div()
-                    .text_size(px(AppFontSizes::LG))
+                    .text_size(px(AppFontSizes::MD))
+                    .font_semibold()
                     .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                    .child("双语同传字幕与千问防幻觉结构化纪要"),
-            )
-            .child(
-                div()
-                    .p_4()
-                    .rounded(px(AppRadii::CARD))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
-                    .border_1()
-                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
+                    .child("Cicada 根因鱼骨图 (MinuteFishbone 因果溯源)"),
+            );
+
+        if let Some(ref mins) = proj.active_aggregate.minutes {
+            for fb in &mins.fishbones {
+                let mut branches = div().flex().flex_wrap().gap_2();
+                for cause in &fb.causes {
+                    let cites: Vec<String> =
+                        cause.citations.iter().map(|c| format!("[{c}]")).collect();
+                    branches = branches.child(
                         div()
-                            .text_size(px(AppFontSizes::MD))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child(format!(
-                                "统一句子主干 UtteranceSpine（修订号 {}，共 {} 句）",
-                                self.host.spine().revision(),
-                                segments.len()
-                            )),
-                    )
-                    .children(segments.into_iter().map(|seg| {
-                        let en_text = seg
-                            .translation
-                            .clone()
-                            .unwrap_or_else(|| "待增量翻译".to_string());
-                        div()
-                            .p_3()
+                            .flex_1()
+                            .min_w(px(200.0))
+                            .p_2p5()
                             .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
                             .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
                             .border_1()
@@ -963,28 +1726,371 @@ impl KoeDesktopApp {
                             .flex()
                             .flex_col()
                             .gap_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .font_bold()
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::ORANGE_DEEP,
+                                            )))
+                                            .child(cause.category.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(AppFontSizes::XS))
+                                            .text_color(rgb(AppColors::rgb24(
+                                                AppColors::TEXT_MUTED,
+                                            )))
+                                            .child(cites.join(" ")),
+                                    ),
+                            )
                             .child(
                                 div()
                                     .text_size(px(AppFontSizes::SM))
                                     .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                                    .child(format!(
-                                        "[{}] {} ms - {} ms  {}",
-                                        seg.id, seg.start_ms, seg.end_ms, seg.text
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(AppFontSizes::XS))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
-                                    .child(format!("译文：{en_text}")),
-                            )
-                    })),
+                                    .child(cause.description.clone()),
+                            ),
+                    );
+                }
+                fishbone_panel = fishbone_panel
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                            .child(format!("主干问题：{}", fb.issue)),
+                    )
+                    .child(branches);
+            }
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(format_row)
+            .child(cards_grid)
+            .child(fishbone_panel)
+    }
+
+    fn render_transcript_and_voiceprint_tab(&self, cx: &mut Context<Self>) -> Div {
+        let proj = &self.projection;
+        let aliases_label = if proj.speaker_aliases.is_empty() {
+            "暂无声纹别名".to_string()
+        } else {
+            proj.speaker_aliases
+                .iter()
+                .map(|(from, to)| format!("{from} -> {to}"))
+                .collect::<Vec<_>>()
+                .join("，")
+        };
+
+        let control_box = div()
+            .p_3()
+            .rounded(px(AppRadii::CARD))
+            .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+            .border_1()
+            .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .font_semibold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(format!("声纹映射：{aliases_label}")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .child(format!(
+                                "热词词表：{} | 流式诊断：{}",
+                                proj.hot_words.join(" / "),
+                                proj.doctor.summary_label_zh
+                            )),
+                    ),
             )
             .child(
                 div()
-                    .p_4()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1p5()
+                    .child(
+                        Button::new("btn-retrigger-1a07")
+                            .primary()
+                            .small()
+                            .label("一键重发 1A/07 实时流")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let now_ms = Self::now_epoch_sec().saturating_mul(1_000);
+                                this.dispatch_command(
+                                    WorkspaceCommand::RetriggerRealtimeStream { now_ms },
+                                    "已补发 1A/07 (realtimeFlag=1) 实时流订阅指令",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-replace-speaker")
+                            .small()
+                            .label("声纹替换 Speaker 1 -> 张工")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::ReplaceSpeaker {
+                                        old_speaker: "Speaker 1".to_string(),
+                                        new_speaker: "张工".to_string(),
+                                    },
+                                    "已将 Speaker 1 声纹统一替换为「张工」并同步纪要",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-sync-hotwords")
+                            .small()
+                            .label("同步热词 D3200")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dispatch_command(
+                                    WorkspaceCommand::SyncHotWords {
+                                        hotwords: vec![
+                                            "D3200".to_string(),
+                                            "soundcore".to_string(),
+                                            "随心记".to_string(),
+                                        ],
+                                        speaker_aliases: vec![(
+                                            "Speaker 2".to_string(),
+                                            "李工".to_string(),
+                                        )],
+                                    },
+                                    "已同步百炼热词词表与说话人声纹映射",
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        Button::new("btn-append-bilingual")
+                            .small()
+                            .label("+ 追加双语同传句段")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let now = Self::now_epoch_sec();
+                                let count = this.projection.active_aggregate.spine.len() as u64;
+                                this.dispatch_command(
+                                    WorkspaceCommand::AppendUtterance {
+                                        text: "下周五前完成安克心力豆 D3200 真机双轨压测与百炼同传验收。"
+                                            .to_string(),
+                                        start_ms: count * 2_500,
+                                        end_ms: (count + 1) * 2_500,
+                                        source_language: "zh".to_string(),
+                                        provider: "qwen3-asr-flash-realtime".to_string(),
+                                        now_epoch_sec: now,
+                                    },
+                                    "已追加实时流句段并触发双语同传与待办提取",
+                                    cx,
+                                );
+                            })),
+                    ),
+            );
+
+        let mut seg_list = div().flex().flex_col().gap_2();
+        for seg in proj.active_aggregate.spine.segments() {
+            let speaker = seg.speaker.as_deref().unwrap_or("本人随记");
+            let mut seg_card = div()
+                .p_3()
+                .rounded(px(AppRadii::CARD))
+                .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                .border_1()
+                .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(AppRadii::concentric(AppRadii::CONTROL, 2.0)))
+                                        .bg(rgb(AppColors::rgb24(AppColors::ORANGE_TINT)))
+                                        .text_size(px(AppFontSizes::XS))
+                                        .font_bold()
+                                        .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                        .child(format!("[{}]", seg.id)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(AppFontSizes::XS))
+                                        .font_semibold()
+                                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                        .child(speaker.to_string()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                                .child(format!(
+                                    "{} - {}",
+                                    Self::format_mm_ss(seg.start_ms),
+                                    Self::format_mm_ss(seg.end_ms)
+                                )),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(AppFontSizes::SM))
+                        .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                        .child(seg.text.clone()),
+                );
+
+            if let Some(ref tr) = seg.translation {
+                seg_card = seg_card.child(
+                    div()
+                        .text_size(px(AppFontSizes::XS))
+                        .text_color(rgb(AppColors::rgb24(AppColors::INFO)))
+                        .child(format!("EN 同传：{tr}")),
+                );
+            }
+            seg_list = seg_list.child(seg_card);
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(control_box)
+            .child(seg_list)
+    }
+
+    fn render_ask_ai_and_mcp_tab(&self, cx: &mut Context<Self>) -> Div {
+        let proj = &self.projection;
+
+        let mut search_hits_col = div().flex().flex_col().gap_1p5();
+        if proj.search_hits.is_empty() {
+            search_hits_col = search_hits_col.child(
+                div()
+                    .text_size(px(AppFontSizes::XS))
+                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                    .child("暂无匹配片段，可点击上方检索预设词测试离线双字 BM25 索引。"),
+            );
+        } else {
+            for hit in &proj.search_hits {
+                search_hits_col = search_hits_col.child(
+                    div()
+                        .p_2()
+                        .rounded(px(AppRadii::CONTROL))
+                        .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                        .border_1()
+                        .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::SM))
+                                .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                .child(format!("{}：{}", hit.title, hit.snippet)),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(AppFontSizes::XS))
+                                .font_semibold()
+                                .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                                .child(format!("BM25 {:.2}", hit.score)),
+                        ),
+                );
+            }
+        }
+
+        let mut copilot_chips = div().flex().flex_wrap().gap_1p5();
+        for preset in CopilotPresetChip::ALL {
+            let cid: SharedString = format!("copilot-chip-{}", preset.slug()).into();
+            copilot_chips = copilot_chips.child(
+                Button::new(cid)
+                    .small()
+                    .label(preset.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let now = Self::now_epoch_sec();
+                        this.dispatch_command(
+                            WorkspaceCommand::RunCopilotPreset {
+                                preset,
+                                now_epoch_sec: now,
+                            },
+                            format!("已执行 AI 随心问预设：{}", preset.label()),
+                            cx,
+                        );
+                    })),
+            );
+        }
+
+        let copilot_answer_box = match &proj.copilot_card {
+            Some(card) => {
+                let cites: Vec<String> = card.citations.iter().map(|c| format!("[{c}]")).collect();
+                div()
+                    .p_3()
+                    .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
+                    .bg(rgb(AppColors::rgb24(AppColors::ORANGE_TINT)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::ORANGE_BORDER)))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::XS))
+                            .font_bold()
+                            .text_color(rgb(AppColors::rgb24(AppColors::ORANGE_DEEP)))
+                            .child(format!(
+                                "提问：{} | 引用：{} | 工具：{}",
+                                card.prompt,
+                                cites.join(" "),
+                                card.tools_used.join(", ")
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(AppFontSizes::SM))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .child(card.answer.clone()),
+                    )
+            }
+            None => div()
+                .p_2p5()
+                .rounded(px(AppRadii::CONTROL))
+                .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                .text_size(px(AppFontSizes::XS))
+                .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                .child("点击上方预设胶囊或「总结当前录音要务」，生成带 [S1..Sn] 原话引用的回答。"),
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .p_3p5()
                     .rounded(px(AppRadii::CARD))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
                     .border_1()
                     .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
                     .flex()
@@ -992,204 +2098,179 @@ impl KoeDesktopApp {
                     .gap_2()
                     .child(
                         div()
-                            .text_size(px(AppFontSizes::MD))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                            .flex()
+                            .items_center()
+                            .justify_between()
                             .child(
-                                mins.as_ref()
-                                    .map_or_else(|| "结构化纪要".to_string(), |m| m.title.clone()),
+                                div()
+                                    .text_size(px(AppFontSizes::MD))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child(format!("离线双字 BM25 检索（当前词：{}）", proj.search_query)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1p5()
+                                    .child(
+                                        Button::new("btn-q-overseas")
+                                            .small()
+                                            .label("检索：海外渠道")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::SearchContext {
+                                                        query: "海外渠道".to_string(),
+                                                        limit: 5,
+                                                    },
+                                                    "已完成「海外渠道」BM25 检索",
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("btn-q-rust")
+                                            .small()
+                                            .label("检索：纯 Rust")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::SearchContext {
+                                                        query: "纯 Rust".to_string(),
+                                                        limit: 5,
+                                                    },
+                                                    "已完成「纯 Rust」BM25 检索",
+                                                    cx,
+                                                );
+                                            })),
+                                    ),
+                            ),
+                    )
+                    .child(search_hits_col),
+            )
+            .child(
+                div()
+                    .p_3p5()
+                    .rounded(px(AppRadii::CARD))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::MD))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child("AI 随心问 (Ask AI Copilot)"),
+                            )
+                            .child(
+                                Button::new("btn-ask-freeform")
+                                    .primary()
+                                    .small()
+                                    .label("总结当前录音要务")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let now = Self::now_epoch_sec();
+                                        this.dispatch_command(
+                                            WorkspaceCommand::AskCopilot {
+                                                prompt: "当前录音的核心结论与下一步待办是什么？"
+                                                    .to_string(),
+                                                now_epoch_sec: now,
+                                            },
+                                            "已生成带 [S1] 原话锚点的随心问回答",
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(copilot_chips)
+                    .child(copilot_answer_box),
+            )
+            .child(
+                div()
+                    .p_3p5()
+                    .rounded(px(AppRadii::CARD))
+                    .bg(rgb(AppColors::rgb24(AppColors::BG_CARD)))
+                    .border_1()
+                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(AppFontSizes::MD))
+                                    .font_semibold()
+                                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
+                                    .child("本机原生 MCP / ACP 协议与 Google Workspace 同步"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1p5()
+                                    .child(
+                                        Button::new("btn-sync-google-ws")
+                                            .small()
+                                            .label("同步 Google Tasks / Keep")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let now = Self::now_epoch_sec();
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::SyncGoogleWorkspace {
+                                                        tasklist_id: "@default".to_string(),
+                                                        now_epoch_sec: now,
+                                                    },
+                                                    "已同步 Google Tasks、NotebookLM 与 Keep 清单",
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("btn-mcp-get-minutes")
+                                            .small()
+                                            .label("调用 MCP get_minutes")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.dispatch_command(
+                                                    WorkspaceCommand::DispatchJsonRpc {
+                                                        request_json: r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"get_minutes","arguments":{}}}"#.to_string(),
+                                                    },
+                                                    "已通过本机 MCP 2025-11-25 协议返回结构化纪要",
+                                                    cx,
+                                                );
+                                            })),
+                                    ),
                             ),
                     )
                     .child(
                         div()
-                            .text_size(px(AppFontSizes::SM))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
-                            .child(mins.as_ref().map_or_else(
-                                || "暂无纪要".to_string(),
-                                |m| m.overview.clone(),
-                            )),
-                    )
-                    .children(
-                        mins.into_iter()
-                            .flat_map(|m| m.decisions.into_iter().chain(m.actions))
-                            .map(|pt| {
-                                let cites = pt
-                                    .citations
-                                    .iter()
-                                    .map(ToString::to_string)
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                div()
-                                    .text_size(px(AppFontSizes::XS))
-                                    .text_color(rgb(AppColors::rgb24(AppColors::ACCENT)))
-                                    .child(format!("{} [原句出处 {}]", pt.claim, cites))
-                            }),
-                    ),
-            )
-    }
-
-    fn render_ask_context_pane(&self, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                div()
-                    .text_size(px(AppFontSizes::LG))
-                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                    .child("心力豆中文双字与拉丁词根 BM25 离线检索"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("query-overseas")
-                            .primary()
-                            .label("检索「海外渠道」")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.run_bm25_query("海外渠道");
-                                this.status = "已完成「海外渠道」双字 BM25 检索".to_string();
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("query-rust")
-                            .label("检索「竹青界面」")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.run_bm25_query("竹青界面");
-                                this.status = "已完成「竹青界面」双字 BM25 检索".to_string();
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .p_4()
-                    .rounded(px(AppRadii::CARD))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
-                    .border_1()
-                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(AppFontSizes::MD))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child(format!(
-                                "查询词「{}」命中 {} 条原句证据",
-                                self.search_query,
-                                self.search_results.len()
-                            )),
-                    )
-                    .children(self.search_results.iter().map(|(_, line)| {
-                        div()
-                            .p_3()
-                            .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
-                            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
-                            .border_1()
-                            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
-                            .text_size(px(AppFontSizes::SM))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child(line.clone())
-                    })),
-            )
-    }
-
-    fn render_mcp_acp_pane(&self, cx: &mut Context<Self>) -> Div {
-        let snap = self.host.snapshot();
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                div()
-                    .text_size(px(AppFontSizes::LG))
-                    .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                    .child("原生 JSON-RPC 2.0 MCP 与 ACP 代理服务"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("refresh-live-lease")
-                            .primary()
-                            .label("刷新 15 秒实时租约")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let now = Self::now_epoch_sec();
-                                match this.host.refresh_live_publication(now) {
-                                    Ok(generation) => {
-                                        this.status = format!("已发布 live.json 租约，代数 {generation}");
-                                    }
-                                    Err(err) => {
-                                        this.status = format!("发布租约失败：{err:?}");
-                                    }
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("dispatch-mcp-search")
-                            .label("调用 MCP search_context")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let now = Self::now_epoch_sec();
-                                this.ensure_mcp_ready(now);
-                                let req = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":3}}}"#;
-                                if let Some(resp) = this.host.dispatch_jsonrpc(req, now) {
-                                    this.last_jsonrpc_response = resp;
-                                    this.status = "已完成原生 MCP search_context 调用".to_string();
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("dispatch-acp-task")
-                            .label("派发 ACP 溯源任务")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let now = Self::now_epoch_sec();
-                                let req = r#"{"jsonrpc":"2.0","id":11,"method":"acp/task.send","params":{"prompt":"海外渠道合同"}}"#;
-                                if let Some(resp) = this.host.dispatch_jsonrpc(req, now) {
-                                    this.last_jsonrpc_response = resp;
-                                    this.status = "已完成原生 ACP acp/task.send 调用".to_string();
-                                }
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .p_4()
-                    .rounded(px(AppRadii::CARD))
-                    .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
-                    .border_1()
-                    .border_color(rgb(AppColors::rgb24(AppColors::BORDER)))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(AppFontSizes::MD))
-                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-                            .child(format!(
-                                "实时租约代数 {}  累计协议调用 {} 次  已同步资料包 {} 份",
-                                snap.live_generation, snap.mcp_handled_calls, snap.pack_count
-                            )),
-                    )
-                    .child(
-                        div()
-                            .p_3()
-                            .rounded(px(AppRadii::concentric(AppRadii::CARD, 4.0)))
-                            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
-                            .border_1()
-                            .border_color(rgb(AppColors::rgb24(AppColors::BORDER_SOFT)))
                             .text_size(px(AppFontSizes::XS))
                             .text_color(rgb(AppColors::rgb24(AppColors::TEXT_SECONDARY)))
-                            .child(if self.last_jsonrpc_response.is_empty() {
-                                "点击上方按钮可直接在内存工作区执行 MCP 2025-11-25 或 ACP 2026-01-01 协议调用。"
-                                    .to_string()
+                            .child(format!(
+                                "live.json 租约代数 #{} | 归档包 {} 份 | NotebookLM {} 本 | Keep 速记 {} 条",
+                                proj.live_generation,
+                                proj.pack_count,
+                                proj.google_notebooks.len(),
+                                proj.google_keep_notes.len()
+                            )),
+                    )
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded(px(AppRadii::CONTROL))
+                            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+                            .text_size(px(AppFontSizes::XS))
+                            .text_color(rgb(AppColors::rgb24(AppColors::TEXT_MUTED)))
+                            .child(if proj.last_jsonrpc_response.is_empty() {
+                                "MCP stdio (--mcp-stdio) 与 15s live.json 已就绪，支持 Claude / Cursor / OpenClaw 零配置接入。".to_string()
                             } else {
-                                self.last_jsonrpc_response.clone()
+                                proj.last_jsonrpc_response.clone()
                             }),
                     ),
             )
@@ -1201,8 +2282,7 @@ impl Render for KoeDesktopApp {
         if self.smoke && !self.smoke_scheduled {
             self.smoke_scheduled = true;
             let healthy = !self.smoke_failed
-                && (self.host.snapshot().library.entry_count > 0
-                    || self.host.snapshot().pack_count > 0);
+                && (self.projection.library.entry_count > 0 || self.projection.pack_count > 0);
             window.on_next_frame(move |_, cx| {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -1214,28 +2294,26 @@ impl Render for KoeDesktopApp {
             });
         }
 
-        let main_pane = match self.active_tab {
-            WorkspaceTab::Today => self.render_today_pane(cx),
-            WorkspaceTab::Library => self.render_library_pane(cx),
-            WorkspaceTab::LiveCicada => self.render_live_cicada_pane(cx),
-            WorkspaceTab::AskContext => self.render_ask_context_pane(cx),
-            WorkspaceTab::McpAcp => self.render_mcp_acp_pane(cx),
+        let detail_view = match self.projection.detail_tab {
+            DetailTab::VisualSummary => self.render_visual_summary_tab(cx),
+            DetailTab::TranscriptAndVoiceprint => self.render_transcript_and_voiceprint_tab(cx),
+            DetailTab::AskAiAndMcp => self.render_ask_ai_and_mcp_tab(cx),
         };
 
         div()
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(AppColors::rgb24(AppColors::SURFACE_0)))
+            .bg(rgb(AppColors::rgb24(AppColors::CANVAS)))
             .text_color(rgb(AppColors::rgb24(AppColors::TEXT_PRIMARY)))
-            .p_5()
-            .gap_4()
+            .p_4()
+            .gap_3()
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .gap_5()
+                    .gap_4()
                     .child(self.render_sidebar(cx))
                     .child(
                         div()
@@ -1244,12 +2322,20 @@ impl Render for KoeDesktopApp {
                             .min_w_0()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .child(main_pane),
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(self.render_header(cx))
+                            .child(self.render_daily_context_strip(cx))
+                            .child(self.render_waveform_player_strip(cx))
+                            .child(self.render_section_context_banner(cx))
+                            .child(self.render_detail_tabs(cx))
+                            .child(detail_view),
                     ),
             )
             .child(
                 div()
-                    .p_3()
+                    .p_2p5()
                     .rounded(px(AppRadii::CONTROL))
                     .bg(rgb(AppColors::rgb24(AppColors::SURFACE_1)))
                     .border_1()
@@ -1267,18 +2353,57 @@ fn run_self_check() -> anyhow::Result<()> {
     fs::create_dir_all(&temp_dir)?;
 
     let mut app = KoeDesktopApp::new(temp_dir.clone(), false);
-    let snap = app.host.snapshot();
-    anyhow::ensure!(snap.library.entry_count >= 1, "expected seeded recording");
-    anyhow::ensure!(app.host.spine().len() >= 2, "expected S1..S2 in spine");
-    anyhow::ensure!(snap.pack_count >= 1, "expected exported .koepack v2");
-    anyhow::ensure!(snap.live_generation >= 1, "expected live.json lease");
-    anyhow::ensure!(!app.search_results.is_empty(), "expected BM25 search hits");
-
-    let s1 = app.host.spine().segments()[0].id;
-    let s2 = app.host.spine().segments()[1].id;
     anyhow::ensure!(
-        validate_calculation_grounding("基本工资3910元乘以80%发放", &[s1, s2], app.host.spine())
-            .is_err(),
+        app.projection.library.entry_count >= 1,
+        "expected seeded recording in WorkspaceProjection"
+    );
+    anyhow::ensure!(
+        app.projection.active_aggregate.spine.len() >= 2,
+        "expected S1..S2 in WorkspaceProjection spine"
+    );
+    anyhow::ensure!(
+        app.projection.visual_cards.len() == 6,
+        "expected 6 editorial visual cards in WorkspaceProjection"
+    );
+    anyhow::ensure!(
+        app.projection.pack_count >= 1,
+        "expected exported .koepack v2"
+    );
+    anyhow::ensure!(
+        app.projection.live_generation >= 1,
+        "expected live.json lease"
+    );
+    anyhow::ensure!(
+        !app.projection.search_hits.is_empty(),
+        "expected BM25 search hits in WorkspaceProjection"
+    );
+    anyhow::ensure!(
+        app.projection.focus_project.is_some(),
+        "expected focus project in WorkspaceProjection"
+    );
+    anyhow::ensure!(
+        app.projection.diary_entry.current.is_some(),
+        "expected grounded DiaryEntry in WorkspaceProjection"
+    );
+
+    for sec in WorkspaceSection::ALL {
+        let p = app.apply_command(WorkspaceCommand::SelectSection(sec));
+        anyhow::ensure!(p.section == sec, "WorkspaceSection switch failed");
+    }
+    for tab in DetailTab::ALL {
+        let p = app.apply_command(WorkspaceCommand::SelectDetailTab(tab));
+        anyhow::ensure!(p.detail_tab == tab, "DetailTab switch failed");
+    }
+
+    let s1 = app.projection.active_aggregate.spine.segments()[0].id;
+    let s2 = app.projection.active_aggregate.spine.segments()[1].id;
+    anyhow::ensure!(
+        validate_calculation_grounding(
+            "基本工资3910元乘以80%发放",
+            &[s1, s2],
+            &app.projection.active_aggregate.spine
+        )
+        .is_err(),
         "cross-segment wage/percentage stitching must be rejected"
     );
 
@@ -1296,32 +2421,36 @@ fn run_self_check() -> anyhow::Result<()> {
 
     let now = KoeDesktopApp::now_epoch_sec();
     app.ensure_mcp_ready(now + 5);
-    let mcp_resp = app
-        .host
-        .dispatch_jsonrpc(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":5}}}"#,
-            now + 6,
-        )
-        .ok_or_else(|| anyhow::anyhow!("missing MCP response"))?;
-    anyhow::ensure!(mcp_resp.contains("海外渠道"), "mcp_resp: {mcp_resp}");
+    let mcp_proj = app.apply_command(WorkspaceCommand::DispatchJsonRpc {
+        request_json: r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":5}}}"#.to_string(),
+    });
+    anyhow::ensure!(
+        mcp_proj.last_jsonrpc_response.contains("海外渠道"),
+        "mcp_resp: {}",
+        mcp_proj.last_jsonrpc_response
+    );
 
-    let acp_resp = app
-        .host
-        .dispatch_jsonrpc(
-            r#"{"jsonrpc":"2.0","id":2,"method":"acp/task.send","params":{"prompt":"海外渠道合同"}}"#,
-            now + 7,
-        )
-        .ok_or_else(|| anyhow::anyhow!("missing ACP response"))?;
-    anyhow::ensure!(acp_resp.contains("acp-task-1"), "acp_resp: {acp_resp}");
+    let acp_proj = app.apply_command(WorkspaceCommand::DispatchJsonRpc {
+        request_json: r#"{"jsonrpc":"2.0","id":2,"method":"acp/task.send","params":{"prompt":"海外渠道合同"}}"#.to_string(),
+    });
+    anyhow::ensure!(
+        acp_proj.last_jsonrpc_response.contains("acp-task-1"),
+        "acp_resp: {}",
+        acp_proj.last_jsonrpc_response
+    );
 
     let rec_id = app.active_exported_recordings()[0].entry.id;
-    anyhow::ensure!(app.host.jump_to_mark(MarkJumpDirection::Next) == 300);
-    anyhow::ensure!(app.host.move_to_trash(rec_id));
+    let mark_proj = app.apply_command(WorkspaceCommand::JumpMark(MarkJumpDirection::Next));
+    anyhow::ensure!(mark_proj.library.position_ms == 300);
+    let _ = app.apply_command(WorkspaceCommand::MoveToTrash(rec_id));
     anyhow::ensure!(app.active_exported_recordings().is_empty());
-    anyhow::ensure!(app.host.undo_trash());
+    let _ = app.apply_command(WorkspaceCommand::UndoTrash);
     anyhow::ensure!(app.active_exported_recordings().len() == 1);
     anyhow::ensure!(
-        app.host.context().todos.iter().any(|t| t.status == TodoStatus::Open),
+        app.projection
+            .open_todos
+            .iter()
+            .any(|t| t.status == TodoStatus::Open),
         "expected open commitment todo"
     );
 
@@ -1334,7 +2463,8 @@ fn run_self_check() -> anyhow::Result<()> {
 
     let mut reopened = KoeDesktopApp::new(temp_dir.clone(), false);
     anyhow::ensure!(
-        reopened.host.spine().len() == 2 && !reopened.search_results.is_empty(),
+        reopened.projection.active_aggregate.spine.len() == 2
+            && !reopened.projection.search_hits.is_empty(),
         "second launch on existing workspace must restore spine from .koepack v2 without duplicating sample sentences"
     );
 
@@ -1354,8 +2484,8 @@ fn run_self_check() -> anyhow::Result<()> {
     let real_only_app = KoeDesktopApp::new(real_only_dir.clone(), false);
     let _ = fs::remove_dir_all(&real_only_dir);
     anyhow::ensure!(
-        real_only_app.host.snapshot().library.entry_count == 1
-            && real_only_app.host.spine().is_empty(),
+        real_only_app.projection.library.entry_count == 1
+            && real_only_app.projection.active_aggregate.spine.is_empty(),
         "directory with existing recordings and no .koepack must NOT inject default sample sentences"
     );
     let ephemeral_priv = KoeDesktopApp::generate_ephemeral_p256_key(now);
@@ -1385,10 +2515,11 @@ fn run_self_check() -> anyhow::Result<()> {
 
     let _ = fs::remove_dir_all(&temp_dir);
     println!(
-        "PASS: koe-desktop pure-Rust GPUI + DesktopBeanHost self-check (spine={}, packs={}, mcp_calls={})",
-        app.host.spine().len(),
-        app.host.snapshot().pack_count,
-        app.host.snapshot().mcp_handled_calls
+        "PASS: koe-desktop pure-Rust GPUI + WorkspaceProjection self-check (spine={}, cards={}, packs={}, mcp_calls={})",
+        app.projection.active_aggregate.spine.len(),
+        app.projection.visual_cards.len(),
+        app.projection.pack_count,
+        app.projection.mcp_handled_calls
     );
     Ok(())
 }
