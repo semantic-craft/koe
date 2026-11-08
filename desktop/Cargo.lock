@@ -3439,11 +3439,19 @@ name = "koe-desktop-core"
 version = "2.0.0"
 dependencies = [
  "koe_core",
+ "koe_core_ffi",
 ]
 
 [[package]]
 name = "koe_core"
 version = "2.0.0"
+
+[[package]]
+name = "koe_core_ffi"
+version = "2.0.0"
+dependencies = [
+ "koe_core",
+]
 
 [[package]]
 name = "kqueue"

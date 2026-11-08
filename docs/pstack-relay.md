@@ -3,10 +3,12 @@
 本文件是 PStack 跨对话自动接力的唯一全景队列（对应 `pstack` 的 `figure-it-out`、`sequence-verifiable-units` 与 `Session pickup`）。
 只维护每个对话切片（Slice）的用户可感知效果（Outcome）与可证伪验收条件（Done Predicate）。
 
-- 总目标：按用户提出的 11 条 UI 与产品原则重新设计 Koe 的 macOS 与 iOS 界面（小白主链路无卡点免说明书、母语自然文案、不写冗余解释、数据单位准确校验、克制二次确认与去大片红、中国传统色单一强调色与暖灰、单页最多 4 种字号、禁说明斜体/按钮全大写/中间点 `·` 且统一动词、纯平表面+同心圆角+禁卡片套卡片、多语言与多尺寸不缩字不截断、三套高水准方案对比演进）。
+- 总目标：以 `olgvroe/Vecta` 的原生双栏轻盈界面（90% `#FAFAFA`/`#F0F0F2` 灰白画布 + 8% `AIVisualEditorialPalette` 6 色柔彩卡片 + 2% 伊利诺伊橙 `#FF5F05`/`#D9480F` 点睛）和 `wquguru/cicada` 的实时同传与滚动纪要引擎为基准，将 Koe 全面塑造为纯 Rust + GPUI 的「安克随心记」（日常心力豆工作台，顺带覆盖会议纪要），通过私有阿里云百炼（DashScope ASR/LLM）与本机原生 MCP/ACP 对外服务，并彻底根治 D3200 真机「对着豆子说话不出字」的三处链路断点。
+- 架构主线：三层零胶水统一架构，包含 (1) 单一录音生命周期聚合根 `RecordingAggregate`（以 `UtteranceSpine S1..Sn` 为唯一事实源，统一承载音频分片、双击 `SliceMark`、双语同传、6 宫格视觉卡片、根因鱼骨图、个人承诺与 `.koepack v2`），(2) 自驱流水线运行时 `SuixinRuntime`（对标 Vecta `NativeAppRuntime` + `NativeAnalysisQueue` 与 Cicada `ListenEngine`，在 `desktop/core` 内部闭环驱动 `BLE/Wi-Fi -> 16kHz Opus -> DashScope 流式 ASR -> 滚动纪要 -> BM25/MCP`，无需 UI 手写胶水串联），(3) 纯投影视图与单向意图 `WorkspaceProjection + WorkspaceCommand`（`desktop/app` GPUI 只渲染不可变投影并发射命令）。
 - 自动验收入口：`scripts/verify-ui-principles.py` + `scripts/check`
-- 三套视觉与布局对比画板：`.scratch/pstack-relay/koe-ui-proposals/export/koe-macos-ios-11.html`
+- 视觉与架构原型画板：`.scratch/koe-ui-options/export/koe-uiuc-plaud-mcp-cli.html`
 - 决策账本（`show-me-your-work`）：`.scratch/pstack-relay/decisions.tsv`
+- 动态交接胶囊：`.scratch/pstack-relay/handoff_capsule.json`
 - 下一棒提示词快照：`.scratch/pstack-relay/NEXT_PROMPT.md`
 
 ---
@@ -127,3 +129,37 @@
 - **Outcome**: 在 `desktop/app` 使用纯 Rust `gpui`（`gpui-kit = "=0.9.0"`）直接挂载 `desktop/core`（`DesktopBeanHost` over `rust/koe_core` 2.0.0），实现 5 页签（今日时间线、本机录音库与千问闪记纪要、Cicada 双语实时翻译与 `.koepack v2`、心力豆 BM25 离线问答、MCP/ACP 代理接口）与竹青色 `#2E5E4E` + 暖纸灰 `#F5F4F0` 视觉规范；将 `/Applications/Koe.app` 编译并签名为纯 Rust 二进制（同时清理 `/Applications/KoeSwiftUI.app`）；物理删除 `lib/`、`pubspec.yaml`、全部 Dart 测试与 Flutter/SwiftUI 宿主壳层，将 `scripts/check`、`scripts/verify-ui-principles.py`、`scripts/install-macos.sh` 与 CI 门禁全面收敛至纯 Rust。
 - **Done Predicate**: `find lib test integration_test -name '*.dart' 2>/dev/null | wc -l` 为 `0`、`./scripts/check`、`./scripts/install-macos.sh`、`/Applications/Koe.app/Contents/MacOS/Koe --verify-self`、`/Applications/Koe.app/Contents/MacOS/Koe --smoke-test`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
 - **Evidence**: e150335;d9b54ed;87e60f6;desktop/app/src/main.rs;desktop/app/src/theme.rs;desktop/ble/src/lib.rs;scripts/install-macos.sh;scripts/check;/Applications/Koe.app
+
+---
+
+## 全景滚动切片队列（P → T：「安克随心记」Vecta × Cicada 零胶水三层架构与真机实时流闭环）
+
+### [x] Slice P: 「安克随心记」Vecta × Cicada 三层零胶水架构确立、4 屏原型画板、三处实时流断点定位与 `pstack-relay` 动态合成升级
+- **Playbook**: `Investigation` + `figure-it-out`
+- **Outcome**: 深度剖析 `olgvroe/Vecta` 与 `wquguru/cicada` 源码，确立「安克随心记」三层零胶水架构（`RecordingAggregate` 聚合根 + `SuixinRuntime` 自驱管道 + `WorkspaceProjection/WorkspaceCommand` 纯投影视图）；完成 Vecta 90-8-2 伊利诺伊橙 4 屏交互画板（`.scratch/koe-ui-options/export/koe-uiuc-plaud-mcp-cli.html`）；定位「对着豆子说话不出字」的三处代码级断点；将 `pstack-relay` 升级为根据每棒真实进展与上下文水位动态合成下一棒提示词的滚动引擎。
+- **Done Predicate**: `python3 /Users/xianweizhang/.gemini/config/skills/xw-design/scripts/check_canvas.py .scratch/koe-ui-options`、`python3 /Users/xianweizhang/Projects/xw-skills/xw-tooling/skills/pstack-relay/tests/test_pstack_relay.py` 与 `scripts/pstack-relay selftest` 全部 `PASS`。
+- **Evidence**: .scratch/koe-ui-options/export/koe-uiuc-plaud-mcp-cli.html;scripts/pstack-relay;docs/pstack-relay.md
+
+### [ ] Slice Q: 第一与第二层收口 (`RecordingAggregate` + 自驱实时流管道，修复 `1A/06`->`1A/07`、注入 16kHz Opus 解码与 DashScope 流式 ASR 泵)
+- **Playbook**: `Feature`
+- **Outcome**: 在 `rust/koe_core` 与 `desktop/core` 消除散装状态拼接，落地自驱实时流与分析管道：(1) 在 `rust/koe_core/src/session.rs` 补齐 `(0x01, 0x01)` 录音中状态及 `(0x1A, 0x06)` `state == 1`（机身按下开始录音）自动排队下发 `1A/07 (realtimeFlag=1)`，并提供 `start_realtime_recording()` (`18/81`)；(2) 在 `desktop/core` 为 `DesktopBeanHost` 默认注入真实 16kHz/48kHz Opus 解码器工厂，使 `ingest_ble_chunk` 实时产出 640B/20ms `live_pcm16_16khz`；(3) 在 `desktop/core` 建立自驱流式转写与 Cicada 滚动提炼泵（支持私有阿里云 DashScope `paraformer-realtime-v2` / 本地流式识别回退），自动将 `live_pcm16_16khz` 转为 `UtteranceSpine (S1..Sn)` 原句、双语同传、个人承诺与五阶自检遥测（`PipelineDoctorSnapshot`），无需 GPUI 层手写胶水逻辑。
+- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `PENDING`
+
+### [ ] Slice R: 第三层收口（上），Vecta 90-8-2 伊利诺伊橙主题令牌、`WorkspaceProjection` 纯投影模型与双栏主工作台（随心记录 + 声波书签 + 逐字声纹同传 + 6 宫格视觉总结）
+- **Playbook**: `Feature`
+- **Outcome**: 在 `desktop/core` 暴露单一不可变视图投影 `WorkspaceProjection` 与单向意图 `WorkspaceCommand`；将 `desktop/app/src/theme.rs` 与 `scripts/verify-ui-principles.py` 升级为 Vecta 90-8-2 配色（`#FAFAFA`/`#F0F0F2` 基底 + `AIVisualEditorialPalette` 6 色柔彩卡片 + 2% 伊利诺伊橙 `#FF5F05`/`#D9480F`）；在 `desktop/app/src/main.rs` 落地 Vecta 双栏壳层、左侧五项导航与底部 `安克心力豆 D3200` 状态卡、右侧顶部日常心力概览条（`MorningBrief` + `ProjectProgress` + `DiaryDraft` + 粗粒度地点）、带橙色已播声波与 `±10s` 双击书签的横向播放器，以及「心智总结（6 宫格柔彩卡片 + Cicada 根因鱼骨图）」与「逐字原话与声纹（`UtteranceSpine` + 双语同传 + 说话人/热词纠错）」双标签页。
+- **Done Predicate**: `python3 -B scripts/verify-ui-principles.py --mode all`、`cargo test --manifest-path desktop/Cargo.toml` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `PENDING`
+
+### [ ] Slice S: 第三层收口（下），心力格式库（`Formats`）、私有阿里云与本机 MCP/ACP 控制台、设置与心力豆五阶自检（`Bean Doctor` + Wi-Fi `1A/05` 快传）
+- **Playbook**: `Feature`
+- **Outcome**: 通过 `WorkspaceProjection` 与 `WorkspaceCommand` 完整落地剩余三屏工作流：(1) `心力格式 (Formats)` 页接入 5 套预置心力/会议模板与自定义分区编辑；(2) `阿里云与 MCP` 页接入私有阿里云 DashScope Keychain 配置、`KOEMCP1` 配对票据、`15s live.json` 租约、`--mcp-stdio` 一键配置生成与中文双字 BM25 多轮溯源问答；(3) `设置与硬件自检 (Bean Doctor)` 页落地五阶实时流状态灯、一键重发 `1A/07` 实时流测音按钮、开机自启/后台常驻同步开关与 Wi-Fi SoftAP (`192.168.4.1:32002`) 批量快传控制。
+- **Done Predicate**: `cargo test --manifest-path desktop/Cargo.toml`、`./scripts/install-macos.sh`、`/Applications/Koe.app/Contents/MacOS/Koe --verify-self`、`/Applications/Koe.app/Contents/MacOS/Koe --smoke-test` 与 `./scripts/check` 全部 `PASS`。
+- **Evidence**: `PENDING`
+
+### [ ] Slice T: 全链路对抗审查（`interrogate`）、零胶水代码精简（`deslop` / `no-comments`）、进度页更新与交付收口
+- **Playbook**: `Shipping`
+- **Outcome**: 对照「安克随心记」Vecta × Cicada 架构主线执行全仓对抗审查与代码精简，确认 `/Applications/Koe.app` 真机安装与自检全绿，同步 `progress/progress.json` 与 `progress/index.html`，产出完整审计摘要。
+- **Done Predicate**: `./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
+- **Evidence**: `PENDING`
