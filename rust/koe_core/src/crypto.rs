@@ -111,6 +111,371 @@ impl DeviceCrypto {
         file_key.copy_from_slice(&plain[14..46]);
         Some(file_key)
     }
+
+    /// Computes the 65-byte uncompressed X9.63 public key (`0x04 || X || Y`) for a 32-byte
+    /// NIST P-256 (`secp256r1`) private scalar `private_key`.
+    #[must_use]
+    pub fn p256_public_key(private_key: &[u8; 32]) -> Option<[u8; 65]> {
+        let d = p256_scalar_from_be(private_key)?;
+        let g = P256Point {
+            x: P256_GX,
+            y: P256_GY,
+            z: P256_ONE,
+        };
+        let pub_pt = p256_point_mul(&g, &d);
+        let (x, y) = p256_point_to_affine(&pub_pt)?;
+        let mut out = [0u8; 65];
+        out[0] = 0x04;
+        out[1..33].copy_from_slice(&p256_fe_to_be(&x));
+        out[33..65].copy_from_slice(&p256_fe_to_be(&y));
+        Some(out)
+    }
+
+    /// Computes the 32-byte ECDH shared secret X coordinate (`Z_x`) from our 32-byte
+    /// NIST P-256 private scalar `private_key` and the peer's 65-byte uncompressed X9.63
+    /// public key (`0x04 || X || Y`).
+    #[must_use]
+    pub fn p256_ecdh_shared_secret(
+        private_key: &[u8; 32],
+        peer_public_x963: &[u8],
+    ) -> Option<[u8; 32]> {
+        if peer_public_x963.len() < 65 || peer_public_x963[0] != 0x04 {
+            return None;
+        }
+        let d = p256_scalar_from_be(private_key)?;
+        let mut px_bytes = [0u8; 32];
+        let mut py_bytes = [0u8; 32];
+        px_bytes.copy_from_slice(&peer_public_x963[1..33]);
+        py_bytes.copy_from_slice(&peer_public_x963[33..65]);
+        let px = p256_fe_from_be(&px_bytes)?;
+        let py = p256_fe_from_be(&py_bytes)?;
+        if !p256_is_on_curve(&px, &py) {
+            return None;
+        }
+        let peer_pt = P256Point {
+            x: px,
+            y: py,
+            z: P256_ONE,
+        };
+        let shared_pt = p256_point_mul(&peer_pt, &d);
+        let (sx, _sy) = p256_point_to_affine(&shared_pt)?;
+        Some(p256_fe_to_be(&sx))
+    }
+}
+
+const P256_ZERO: [u64; 4] = [0, 0, 0, 0];
+const P256_ONE: [u64; 4] = [1, 0, 0, 0];
+const P256_P: [u64; 4] = [
+    0xFFFF_FFFF_FFFF_FFFF,
+    0x0000_0000_FFFF_FFFF,
+    0x0000_0000_0000_0000,
+    0xFFFF_FFFF_0000_0001,
+];
+const P256_P_MINUS_2: [u64; 4] = [
+    0xFFFF_FFFF_FFFF_FFFD,
+    0x0000_0000_FFFF_FFFF,
+    0x0000_0000_0000_0000,
+    0xFFFF_FFFF_0000_0001,
+];
+const P256_N: [u64; 4] = [
+    0xF3B9_CAC2_FC63_2551,
+    0xBCE6_FAAD_A717_9E84,
+    0xFFFF_FFFF_FFFF_FFFF,
+    0xFFFF_FFFF_0000_0000,
+];
+const P256_B: [u64; 4] = [
+    0x3BCE_3C3E_27D2_604B,
+    0x651D_06B0_CC53_B0F6,
+    0xB3EB_BD55_7698_86BC,
+    0x5AC6_35D8_AA3A_93E7,
+];
+const P256_GX: [u64; 4] = [
+    0xF4A1_3945_D898_C296,
+    0x7703_7D81_2DEB_33A0,
+    0xF8BC_E6E5_63A4_40F2,
+    0x6B17_D1F2_E12C_4247,
+];
+const P256_GY: [u64; 4] = [
+    0xCBB6_4068_37BF_51F5,
+    0x2BCE_3357_6B31_5ECE,
+    0x8EE7_EB4A_7C0F_9E16,
+    0x4FE3_42E2_FE1A_7F9B,
+];
+
+#[derive(Clone, Copy)]
+struct P256Point {
+    x: [u64; 4],
+    y: [u64; 4],
+    z: [u64; 4],
+}
+
+fn p256_ge(a: &[u64; 4], b: &[u64; 4]) -> bool {
+    for i in (0..4).rev() {
+        if a[i] != b[i] {
+            return a[i] > b[i];
+        }
+    }
+    true
+}
+
+fn p256_is_zero(a: &[u64; 4]) -> bool {
+    (a[0] | a[1] | a[2] | a[3]) == 0
+}
+
+fn p256_raw_add(a: &[u64; 4], b: &[u64; 4]) -> ([u64; 4], u64) {
+    let mut out = [0u64; 4];
+    let mut carry = 0u128;
+    for i in 0..4 {
+        let sum = (a[i] as u128) + (b[i] as u128) + carry;
+        out[i] = sum as u64;
+        carry = sum >> 64;
+    }
+    (out, carry as u64)
+}
+
+fn p256_raw_sub(a: &[u64; 4], b: &[u64; 4]) -> ([u64; 4], u64) {
+    let mut out = [0u64; 4];
+    let mut borrow = 0u128;
+    for i in 0..4 {
+        let ai = a[i] as u128;
+        let bi = (b[i] as u128) + borrow;
+        if ai >= bi {
+            out[i] = (ai - bi) as u64;
+            borrow = 0;
+        } else {
+            out[i] = ((1u128 << 64) + ai - bi) as u64;
+            borrow = 1;
+        }
+    }
+    (out, borrow as u64)
+}
+
+fn p256_fp_add(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    let (sum, carry) = p256_raw_add(a, b);
+    if carry != 0 || p256_ge(&sum, &P256_P) {
+        p256_raw_sub(&sum, &P256_P).0
+    } else {
+        sum
+    }
+}
+
+fn p256_fp_sub(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    let (diff, borrow) = p256_raw_sub(a, b);
+    if borrow != 0 {
+        p256_raw_add(&diff, &P256_P).0
+    } else {
+        diff
+    }
+}
+
+fn p256_fp_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    let mut res = P256_ZERO;
+    for i in (0..4).rev() {
+        let word = b[i];
+        for bit in (0..64).rev() {
+            res = p256_fp_add(&res, &res);
+            if ((word >> bit) & 1) != 0 {
+                res = p256_fp_add(&res, a);
+            }
+        }
+    }
+    res
+}
+
+fn p256_fp_sqr(a: &[u64; 4]) -> [u64; 4] {
+    p256_fp_mul(a, a)
+}
+
+fn p256_fp_inv(a: &[u64; 4]) -> Option<[u64; 4]> {
+    if p256_is_zero(a) {
+        return None;
+    }
+    let mut res = P256_ONE;
+    for i in (0..4).rev() {
+        let word = P256_P_MINUS_2[i];
+        for bit in (0..64).rev() {
+            res = p256_fp_sqr(&res);
+            if ((word >> bit) & 1) != 0 {
+                res = p256_fp_mul(&res, a);
+            }
+        }
+    }
+    Some(res)
+}
+
+fn p256_fe_from_be(bytes: &[u8; 32]) -> Option<[u64; 4]> {
+    let limbs = [
+        u64::from_be_bytes([
+            bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
+        ]),
+        u64::from_be_bytes([
+            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+        ]),
+        u64::from_be_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        ]),
+        u64::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]),
+    ];
+    if p256_ge(&limbs, &P256_P) {
+        return None;
+    }
+    Some(limbs)
+}
+
+fn p256_scalar_from_be(bytes: &[u8; 32]) -> Option<[u64; 4]> {
+    let limbs = [
+        u64::from_be_bytes([
+            bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
+        ]),
+        u64::from_be_bytes([
+            bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+        ]),
+        u64::from_be_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        ]),
+        u64::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]),
+    ];
+    if p256_is_zero(&limbs) || p256_ge(&limbs, &P256_N) {
+        return None;
+    }
+    Some(limbs)
+}
+
+fn p256_fe_to_be(a: &[u64; 4]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[0..8].copy_from_slice(&a[3].to_be_bytes());
+    out[8..16].copy_from_slice(&a[2].to_be_bytes());
+    out[16..24].copy_from_slice(&a[1].to_be_bytes());
+    out[24..32].copy_from_slice(&a[0].to_be_bytes());
+    out
+}
+
+fn p256_is_on_curve(x: &[u64; 4], y: &[u64; 4]) -> bool {
+    let y2 = p256_fp_sqr(y);
+    let x2 = p256_fp_sqr(x);
+    let x3 = p256_fp_mul(&x2, x);
+    let three_x = p256_fp_add(&p256_fp_add(x, x), x);
+    let rhs = p256_fp_add(&p256_fp_sub(&x3, &three_x), &P256_B);
+    y2 == rhs
+}
+
+fn p256_point_double(p: &P256Point) -> P256Point {
+    if p256_is_zero(&p.z) || p256_is_zero(&p.y) {
+        return P256Point {
+            x: P256_ZERO,
+            y: P256_ZERO,
+            z: P256_ZERO,
+        };
+    }
+    let z2 = p256_fp_sqr(&p.z);
+    let x_minus_z2 = p256_fp_sub(&p.x, &z2);
+    let x_plus_z2 = p256_fp_add(&p.x, &z2);
+    let m_base = p256_fp_mul(&x_minus_z2, &x_plus_z2);
+    let m = p256_fp_add(&p256_fp_add(&m_base, &m_base), &m_base);
+
+    let y2 = p256_fp_sqr(&p.y);
+    let xy2 = p256_fp_mul(&p.x, &y2);
+    let two_xy2 = p256_fp_add(&xy2, &xy2);
+    let s = p256_fp_add(&two_xy2, &two_xy2);
+
+    let m2 = p256_fp_sqr(&m);
+    let two_s = p256_fp_add(&s, &s);
+    let x3 = p256_fp_sub(&m2, &two_s);
+
+    let y4 = p256_fp_sqr(&y2);
+    let two_y4 = p256_fp_add(&y4, &y4);
+    let four_y4 = p256_fp_add(&two_y4, &two_y4);
+    let eight_y4 = p256_fp_add(&four_y4, &four_y4);
+    let s_minus_x3 = p256_fp_sub(&s, &x3);
+    let y3 = p256_fp_sub(&p256_fp_mul(&m, &s_minus_x3), &eight_y4);
+
+    let yz = p256_fp_mul(&p.y, &p.z);
+    let z3 = p256_fp_add(&yz, &yz);
+
+    P256Point {
+        x: x3,
+        y: y3,
+        z: z3,
+    }
+}
+
+fn p256_point_add(p: &P256Point, q: &P256Point) -> P256Point {
+    if p256_is_zero(&p.z) {
+        return *q;
+    }
+    if p256_is_zero(&q.z) {
+        return *p;
+    }
+    let z1z1 = p256_fp_sqr(&p.z);
+    let z2z2 = p256_fp_sqr(&q.z);
+    let u1 = p256_fp_mul(&p.x, &z2z2);
+    let u2 = p256_fp_mul(&q.x, &z1z1);
+    let s1 = p256_fp_mul(&p.y, &p256_fp_mul(&q.z, &z2z2));
+    let s2 = p256_fp_mul(&q.y, &p256_fp_mul(&p.z, &z1z1));
+
+    if u1 == u2 {
+        if s1 == s2 {
+            return p256_point_double(p);
+        }
+        return P256Point {
+            x: P256_ZERO,
+            y: P256_ZERO,
+            z: P256_ZERO,
+        };
+    }
+
+    let h = p256_fp_sub(&u2, &u1);
+    let r = p256_fp_sub(&s2, &s1);
+    let h2 = p256_fp_sqr(&h);
+    let h3 = p256_fp_mul(&h, &h2);
+    let u1h2 = p256_fp_mul(&u1, &h2);
+
+    let r2 = p256_fp_sqr(&r);
+    let two_u1h2 = p256_fp_add(&u1h2, &u1h2);
+    let x3 = p256_fp_sub(&p256_fp_sub(&r2, &h3), &two_u1h2);
+
+    let u1h2_minus_x3 = p256_fp_sub(&u1h2, &x3);
+    let y3 = p256_fp_sub(&p256_fp_mul(&r, &u1h2_minus_x3), &p256_fp_mul(&s1, &h3));
+
+    let z1z2 = p256_fp_mul(&p.z, &q.z);
+    let z3 = p256_fp_mul(&z1z2, &h);
+
+    P256Point {
+        x: x3,
+        y: y3,
+        z: z3,
+    }
+}
+
+fn p256_point_mul(base: &P256Point, scalar: &[u64; 4]) -> P256Point {
+    let mut acc = P256Point {
+        x: P256_ZERO,
+        y: P256_ZERO,
+        z: P256_ZERO,
+    };
+    for i in (0..4).rev() {
+        let word = scalar[i];
+        for bit in (0..64).rev() {
+            acc = p256_point_double(&acc);
+            if ((word >> bit) & 1) != 0 {
+                acc = p256_point_add(&acc, base);
+            }
+        }
+    }
+    acc
+}
+
+fn p256_point_to_affine(p: &P256Point) -> Option<([u64; 4], [u64; 4])> {
+    let z_inv = p256_fp_inv(&p.z)?;
+    let z_inv2 = p256_fp_sqr(&z_inv);
+    let z_inv3 = p256_fp_mul(&z_inv2, &z_inv);
+    let x = p256_fp_mul(&p.x, &z_inv2);
+    let y = p256_fp_mul(&p.y, &z_inv3);
+    Some((x, y))
 }
 
 /// Pre-expanded AES-128/192/256 block cipher using compile-time `TE0` tables.
@@ -358,5 +723,53 @@ mod tests {
         let enc = DeviceCrypto::aes_ctr_decrypt(&raw_key, &session_key, &session_nonce).unwrap();
         let unwrapped = DeviceCrypto::unwrap_file_key(&session_key, &enc, &session_nonce).unwrap();
         assert_eq!(unwrapped, [0x99u8; 32]);
+    }
+
+    #[test]
+    fn p256_ecdh_matches_rfc5903_section_8_1_vectors_and_rejects_invalid_points() {
+        let i_priv: [u8; 32] = [
+            0xC8, 0x8F, 0x01, 0xF5, 0x10, 0xD9, 0xAC, 0x3F, 0x70, 0xA2, 0x92, 0xDA, 0xA2, 0x31,
+            0x6D, 0xE5, 0x44, 0xE9, 0xAA, 0xB8, 0xAF, 0xE8, 0x40, 0x49, 0xC6, 0x2A, 0x9C, 0x57,
+            0x86, 0x2D, 0x14, 0x33,
+        ];
+        let i_pub_expected: [u8; 65] = [
+            0x04, 0xDA, 0xD0, 0xB6, 0x53, 0x94, 0x22, 0x1C, 0xF9, 0xB0, 0x51, 0xE1, 0xFE, 0xCA,
+            0x57, 0x87, 0xD0, 0x98, 0xDF, 0xE6, 0x37, 0xFC, 0x90, 0xB9, 0xEF, 0x94, 0x5D, 0x0C,
+            0x37, 0x72, 0x58, 0x11, 0x80, 0x52, 0x71, 0xA0, 0x46, 0x1C, 0xDB, 0x82, 0x52, 0xD6,
+            0x1F, 0x1C, 0x45, 0x6F, 0xA3, 0xE5, 0x9A, 0xB1, 0xF4, 0x5B, 0x33, 0xAC, 0xCF, 0x5F,
+            0x58, 0x38, 0x9E, 0x05, 0x77, 0xB8, 0x99, 0x0B, 0xB3,
+        ];
+        let r_priv: [u8; 32] = [
+            0xC6, 0xEF, 0x9C, 0x5D, 0x78, 0xAE, 0x01, 0x2A, 0x01, 0x11, 0x64, 0xAC, 0xB3, 0x97,
+            0xCE, 0x20, 0x88, 0x68, 0x5D, 0x8F, 0x06, 0xBF, 0x9B, 0xE0, 0xB2, 0x83, 0xAB, 0x46,
+            0x47, 0x6B, 0xEE, 0x53,
+        ];
+        let r_pub_expected: [u8; 65] = [
+            0x04, 0xD1, 0x2D, 0xFB, 0x52, 0x89, 0xC8, 0xD4, 0xF8, 0x12, 0x08, 0xB7, 0x02, 0x70,
+            0x39, 0x8C, 0x34, 0x22, 0x96, 0x97, 0x0A, 0x0B, 0xCC, 0xB7, 0x4C, 0x73, 0x6F, 0xC7,
+            0x55, 0x44, 0x94, 0xBF, 0x63, 0x56, 0xFB, 0xF3, 0xCA, 0x36, 0x6C, 0xC2, 0x3E, 0x81,
+            0x57, 0x85, 0x4C, 0x13, 0xC5, 0x8D, 0x6A, 0xAC, 0x23, 0xF0, 0x46, 0xAD, 0xA3, 0x0F,
+            0x83, 0x53, 0xE7, 0x4F, 0x33, 0x03, 0x98, 0x72, 0xAB,
+        ];
+        let shared_expected: [u8; 32] = [
+            0xD6, 0x84, 0x0F, 0x6B, 0x42, 0xF6, 0xED, 0xAF, 0xD1, 0x31, 0x16, 0xE0, 0xE1, 0x25,
+            0x65, 0x20, 0x2F, 0xEF, 0x8E, 0x9E, 0xCE, 0x7D, 0xCE, 0x03, 0x81, 0x24, 0x64, 0xD0,
+            0x4B, 0x94, 0x42, 0xDE,
+        ];
+
+        let i_pub = DeviceCrypto::p256_public_key(&i_priv).unwrap();
+        let r_pub = DeviceCrypto::p256_public_key(&r_priv).unwrap();
+        assert_eq!(i_pub, i_pub_expected);
+        assert_eq!(r_pub, r_pub_expected);
+
+        let shared_ir = DeviceCrypto::p256_ecdh_shared_secret(&i_priv, &r_pub).unwrap();
+        let shared_ri = DeviceCrypto::p256_ecdh_shared_secret(&r_priv, &i_pub).unwrap();
+        assert_eq!(shared_ir, shared_expected);
+        assert_eq!(shared_ri, shared_expected);
+
+        let mut bad_pub = r_pub;
+        bad_pub[64] ^= 0x01;
+        assert!(DeviceCrypto::p256_ecdh_shared_secret(&i_priv, &bad_pub).is_none());
+        assert!(DeviceCrypto::p256_public_key(&[0u8; 32]).is_none());
     }
 }

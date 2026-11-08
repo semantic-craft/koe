@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "app"]
+members = ["core", "ble", "app"]
 
 [workspace.dependencies]
 anyhow = "1"

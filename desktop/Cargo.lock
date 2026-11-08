@@ -3421,8 +3421,17 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
+ "koe-desktop-ble",
  "koe-desktop-core",
  "rodio",
+]
+
+[[package]]
+name = "koe-desktop-ble"
+version = "2.0.0"
+dependencies = [
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]

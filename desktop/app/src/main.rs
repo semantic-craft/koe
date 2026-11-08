@@ -5,14 +5,17 @@ pub mod theme;
 use gpui_kit::base::Disableable;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::*;
+use koe_desktop_ble::{BleEvent, MacBleController};
 use koe_desktop_core::{
-    CicadaEvent, ConnectionPhaseTag, DesktopBeanHost, MarkJumpDirection, McpPairingMode,
-    MeetingMinutesV2, MinutePoint, MinuteTopic, MinutesEvent, PAIRING_TICKET_PREFIX, ScoringMode,
-    TodoStatus, filter_open_mine_todos, sort_context_timeline, validate_calculation_grounding,
+    CicadaEvent, ConnectionPhaseTag, DesktopBeanHost, DeviceCrypto, MarkJumpDirection,
+    McpPairingMode, MeetingMinutesV2, MinutePoint, MinuteTopic, MinutesEvent,
+    PAIRING_TICKET_PREFIX, ScoringMode, TodoStatus, filter_open_mine_todos, sort_context_timeline,
+    validate_calculation_grounding,
 };
 use std::fs::{self, File};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use theme::{AppColors, AppFontSizes, AppRadii};
 
@@ -73,6 +76,9 @@ enum LaunchTarget {
 
 struct KoeDesktopApp {
     host: DesktopBeanHost,
+    ble: MacBleController,
+    ble_rx: mpsc::Receiver<BleEvent>,
+    ble_poll_task: Option<Task<()>>,
     active_tab: WorkspaceTab,
     player: Option<AudioPlayer>,
     playback_task: Option<Task<()>>,
@@ -91,8 +97,12 @@ impl KoeDesktopApp {
         let mut host = DesktopBeanHost::new(&export_dir);
         let loaded_exports = host.load_existing_exports().unwrap_or(0);
         let loaded_packs = host.load_existing_packs().unwrap_or(0);
+        let (ble, ble_rx) = MacBleController::new();
         let mut app = Self {
             host,
+            ble,
+            ble_rx,
+            ble_poll_task: None,
             active_tab: WorkspaceTab::Today,
             player: None,
             playback_task: None,
@@ -107,8 +117,139 @@ impl KoeDesktopApp {
             smoke_failed: false,
             smoke_scheduled: false,
         };
-        app.seed_workspace_sample(loaded_exports == 0, loaded_packs == 0);
+        if app.host.spine().is_empty() {
+            app.seed_workspace_sample(loaded_exports == 0, loaded_packs == 0);
+        } else {
+            let now = Self::now_epoch_sec();
+            let _ = app
+                .host
+                .sync_qwennote_hotwords(&["海外渠道", "心力豆", "竹青"], &[("张总", "张伟")]);
+            let _ = app.host.refresh_live_publication(now);
+            app.run_bm25_query("海外渠道");
+            app.status = format!(
+                "已从本机资料包恢复工作区，录音 {} 条，句子主干 S1..S{}",
+                app.host.snapshot().library.entry_count,
+                app.host.spine().len()
+            );
+        }
         app
+    }
+
+    fn generate_ephemeral_p256_key(seed: u64) -> [u8; 32] {
+        let mut rng = koe_desktop_core::prng::SplitMix64::new(seed ^ 0xD320_0B1E_5EED_CAFE);
+        loop {
+            let bytes = rng.next_bytes(32);
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&bytes);
+            if DeviceCrypto::p256_public_key(&key).is_some() {
+                return key;
+            }
+        }
+    }
+
+    fn drain_ble_events(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(ev) = self.ble_rx.try_recv() {
+            changed = true;
+            match ev {
+                BleEvent::Scanning => {
+                    self.host.on_scanning();
+                    self.status = "正在通过 CoreBluetooth 搜索 D3200 录音豆（UUID 0xF5DA）…".to_string();
+                }
+                BleEvent::Unavailable(reason) => {
+                    self.host.on_disconnected();
+                    self.status = format!("蓝牙未就绪（{reason}），可点击「模拟同步录音」验证离线闭环");
+                }
+                BleEvent::Connecting(name) => {
+                    self.host.on_connecting();
+                    self.status = format!("已发现 {name}，正在建立 GATT 连接…");
+                }
+                BleEvent::GattReady(name) => {
+                    let priv_key = Self::generate_ephemeral_p256_key(Self::now_epoch_sec());
+                    if let Some(tx_frames) = self.host.on_gatt_ready(priv_key) {
+                        for frame in tx_frames {
+                            let _ = self.ble.send_frame(&frame);
+                        }
+                    }
+                    self.status = format!("已连接 {name}（0x7777/0x8888 就绪），正在执行 2E/01 ECDH 握手…");
+                }
+                BleEvent::Notification(bytes) => {
+                    let now = Self::now_epoch_sec();
+                    let prev_count = self.host.snapshot().library.entry_count;
+                    let outcome = self.host.ingest_ble_chunk(&bytes, now);
+                    for frame in outcome.outbound_tx_frames {
+                        let _ = self.ble.send_frame(&frame);
+                    }
+                    if outcome.session_key_established {
+                        self.status = "2E/01 ECDH 会话密钥协商成功".to_string();
+                    }
+                    if outcome.telemetry_updated {
+                        self.status = format!("录音豆已连接（{}）", self.connection_badge_text());
+                    }
+                    if outcome.catalog_updated {
+                        self.status = format!(
+                            "已同步录音豆目录，共 {} 条设备录音",
+                            self.host.snapshot().catalog.len()
+                        );
+                    }
+                    if self.host.snapshot().library.entry_count > prev_count {
+                        self.status = format!(
+                            "已从录音豆取回并导出新录音，当前共 {} 条",
+                            self.host.snapshot().library.entry_count
+                        );
+                    }
+                }
+                BleEvent::Disconnected(reason) => {
+                    let salvaged = self.host.on_transport_interrupted();
+                    let suffix = reason.unwrap_or_else(|| "连接已断开".to_string());
+                    if !salvaged.is_empty() {
+                        self.status = format!(
+                            "录音豆断开（{suffix}），已抢救导出 {} 条实时录音",
+                            salvaged.len()
+                        );
+                    } else {
+                        self.status = format!("录音豆未连接（{suffix}）");
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    fn ensure_ble_poll_task(&mut self, cx: &mut Context<Self>) {
+        if self.ble_poll_task.is_some() {
+            return;
+        }
+        self.ble_poll_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                let keep_going = this
+                    .update(cx, |this, cx| {
+                        let mut changed = this.drain_ble_events();
+                        let now = Self::now_epoch_sec();
+                        let timer_out = this.host.poll_timers(100, now);
+                        for frame in timer_out.outbound_tx_frames {
+                            let _ = this.ble.send_frame(&frame);
+                        }
+                        if timer_out.transfer_updated || timer_out.finalized.is_some() {
+                            changed = true;
+                        }
+                        if changed {
+                            cx.notify();
+                        }
+                        this.host.snapshot().connection_phase != ConnectionPhaseTag::Disconnected
+                    })
+                    .unwrap_or(false);
+                if !keep_going {
+                    let _ = this.update(cx, |this, _| {
+                        this.ble_poll_task = None;
+                    });
+                    break;
+                }
+            }
+        }));
     }
 
     fn now_epoch_sec() -> u64 {
@@ -361,6 +502,16 @@ impl KoeDesktopApp {
                         Button::new("connect-bean")
                             .primary()
                             .label("连接录音豆")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.ble.start_scan();
+                                let _ = this.drain_ble_events();
+                                this.ensure_ble_poll_task(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("simulate-bean-sync")
+                            .label("模拟同步录音")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let now = Self::now_epoch_sec();
                                 let exported = this.host.simulate_realtime_pipeline(now);
@@ -1177,8 +1328,17 @@ fn run_self_check() -> anyhow::Result<()> {
 
     let mut reopened = KoeDesktopApp::new(temp_dir.clone(), false);
     anyhow::ensure!(
-        !reopened.host.spine().is_empty() && !reopened.search_results.is_empty(),
-        "second launch on existing workspace must populate spine and BM25 index"
+        reopened.host.spine().len() == 2 && !reopened.search_results.is_empty(),
+        "second launch on existing workspace must restore spine from .koepack v2 without duplicating sample sentences"
+    );
+    let ephemeral_priv = KoeDesktopApp::generate_ephemeral_p256_key(now);
+    let tx_frames = reopened
+        .host
+        .on_gatt_ready(ephemeral_priv)
+        .ok_or_else(|| anyhow::anyhow!("on_gatt_ready must produce ECDH + telemetry TX frames"))?;
+    anyhow::ensure!(
+        tx_frames.len() == 2 && tx_frames[0][5] == 0x2E && tx_frames[1][5] == 0x01,
+        "expected 2E/01 and 01/01 handshake frames"
     );
     let init_resp = reopened
         .host
