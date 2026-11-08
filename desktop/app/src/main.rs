@@ -117,18 +117,21 @@ impl KoeDesktopApp {
             smoke_failed: false,
             smoke_scheduled: false,
         };
-        if app.host.spine().is_empty() {
-            app.seed_workspace_sample(loaded_exports == 0, loaded_packs == 0);
+        if loaded_exports == 0 && loaded_packs == 0 {
+            app.seed_workspace_sample(true, true);
         } else {
             let now = Self::now_epoch_sec();
             let _ = app
                 .host
                 .sync_qwennote_hotwords(&["海外渠道", "心力豆", "竹青"], &[("张总", "张伟")]);
             let _ = app.host.refresh_live_publication(now);
-            app.run_bm25_query("海外渠道");
+            if !app.host.spine().is_empty() {
+                app.run_bm25_query("海外渠道");
+            }
             app.status = format!(
-                "已从本机资料包恢复工作区，录音 {} 条，句子主干 S1..S{}",
+                "已载入本机工作区，录音 {} 条，资料包 {} 份，句子主干 {} 段",
                 app.host.snapshot().library.entry_count,
+                app.host.snapshot().pack_count,
                 app.host.spine().len()
             );
         }
@@ -403,6 +406,9 @@ impl KoeDesktopApp {
                     .put_sync_pack(&decoded.material.content_hash, &bytes)
                 {
                     Ok(summary) => {
+                        if self.host.restore_workspace_from_pack(&decoded) {
+                            self.run_bm25_query("海外渠道");
+                        }
                         self.active_tab = WorkspaceTab::Library;
                         self.status = format!(
                             "已载入资料包 {}（导出于 {}，共 {} 字节）",
@@ -1195,8 +1201,8 @@ impl Render for KoeDesktopApp {
         if self.smoke && !self.smoke_scheduled {
             self.smoke_scheduled = true;
             let healthy = !self.smoke_failed
-                && self.host.snapshot().library.entry_count > 0
-                && !self.host.spine().is_empty();
+                && (self.host.snapshot().library.entry_count > 0
+                    || self.host.snapshot().pack_count > 0);
             window.on_next_frame(move |_, cx| {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -1330,6 +1336,27 @@ fn run_self_check() -> anyhow::Result<()> {
     anyhow::ensure!(
         reopened.host.spine().len() == 2 && !reopened.search_results.is_empty(),
         "second launch on existing workspace must restore spine from .koepack v2 without duplicating sample sentences"
+    );
+
+    let real_only_dir =
+        std::env::temp_dir().join(format!("koe-gpui-real-only-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&real_only_dir);
+    fs::create_dir_all(&real_only_dir)?;
+    let first_export = &app.active_exported_recordings()[0];
+    fs::copy(
+        &first_export.opus_path,
+        real_only_dir.join(format!("{}.opus", first_export.entry.id)),
+    )?;
+    fs::copy(
+        &first_export.wav_path,
+        real_only_dir.join(format!("{}.wav", first_export.entry.id)),
+    )?;
+    let real_only_app = KoeDesktopApp::new(real_only_dir.clone(), false);
+    let _ = fs::remove_dir_all(&real_only_dir);
+    anyhow::ensure!(
+        real_only_app.host.snapshot().library.entry_count == 1
+            && real_only_app.host.spine().is_empty(),
+        "directory with existing recordings and no .koepack must NOT inject default sample sentences"
     );
     let ephemeral_priv = KoeDesktopApp::generate_ephemeral_p256_key(now);
     let tx_frames = reopened

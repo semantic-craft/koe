@@ -542,6 +542,38 @@ impl DesktopBeanHost {
         Ok(summary)
     }
 
+    /// Restores `spine`, `minutes`, `context`, and `search_index` from a decoded [`koe_protocol_kernel::cicada::MaterialPackV2`]
+    /// when `self.spine` is currently empty.
+    pub fn restore_workspace_from_pack(
+        &mut self,
+        pack: &koe_protocol_kernel::cicada::MaterialPackV2,
+    ) -> bool {
+        if !self.spine.is_empty() {
+            return false;
+        }
+        let Some(ref pm) = pack.minutes else {
+            return false;
+        };
+        for (idx, src) in pm.current.sources.iter().enumerate() {
+            let start_ms = (idx as u64) * 2_000;
+            let _ = self.ingest_utterance_with_context(
+                src.clone(),
+                start_ms,
+                start_ms + 1_800,
+                "zh",
+                "qwen",
+                1_762_540_000 + (idx as u64),
+            );
+        }
+        if let Ok(parsed) = koe_protocol_kernel::minutes::parse_meeting_minutes_json(
+            &pm.current.text,
+            &self.spine,
+        ) {
+            self.minutes.latest_minutes = Some(parsed);
+        }
+        !self.spine.is_empty()
+    }
+
     /// Scans `export_dir` for `*.koepack` files, registers valid archives into `mcp_acp`,
     /// and restores `spine`, `minutes`, `context`, and `search_index` from the latest `.koepack v2`
     /// when `spine` is empty.
@@ -557,46 +589,28 @@ impl DesktopBeanHost {
             if path.extension().and_then(|e| e.to_str()) != Some("koepack") {
                 continue;
             }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            let bytes = fs::read(&path)?;
+            let Ok(decoded) = koe_protocol_kernel::cicada::decode_koepack_v2(&bytes) else {
                 continue;
             };
-            let bytes = fs::read(&path)?;
-            if self.mcp_acp.put_sync_pack(stem, &bytes).is_ok() {
+            if self
+                .mcp_acp
+                .put_sync_pack(&decoded.material.content_hash, &bytes)
+                .is_ok()
+            {
                 loaded += 1;
-                if let Ok(decoded) = koe_protocol_kernel::cicada::decode_koepack_v2(&bytes) {
-                    if decoded.minutes.is_some() {
-                        let replace = latest_pack
-                            .as_ref()
-                            .is_none_or(|prev| decoded.exported_at_iso >= prev.exported_at_iso);
-                        if replace {
-                            latest_pack = Some(decoded);
-                        }
+                if decoded.minutes.is_some() {
+                    let replace = latest_pack
+                        .as_ref()
+                        .is_none_or(|prev| decoded.exported_at_iso >= prev.exported_at_iso);
+                    if replace {
+                        latest_pack = Some(decoded);
                     }
                 }
             }
         }
-        if self.spine.is_empty() {
-            if let Some(pack) = latest_pack {
-                if let Some(pm) = pack.minutes {
-                    for (idx, src) in pm.current.sources.iter().enumerate() {
-                        let start_ms = (idx as u64) * 2_000;
-                        let _ = self.ingest_utterance_with_context(
-                            src.clone(),
-                            start_ms,
-                            start_ms + 1_800,
-                            "zh",
-                            "qwen",
-                            1_762_540_000 + (idx as u64),
-                        );
-                    }
-                    if let Ok(parsed) = koe_protocol_kernel::minutes::parse_meeting_minutes_json(
-                        &pm.current.text,
-                        &self.spine,
-                    ) {
-                        self.minutes.latest_minutes = Some(parsed);
-                    }
-                }
-            }
+        if let Some(ref pack) = latest_pack {
+            let _ = self.restore_workspace_from_pack(pack);
         }
         Ok(loaded)
     }
