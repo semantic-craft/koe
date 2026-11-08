@@ -542,12 +542,15 @@ impl DesktopBeanHost {
         Ok(summary)
     }
 
-    /// Scans `export_dir` for `*.koepack` files and registers valid archives into `mcp_acp`.
+    /// Scans `export_dir` for `*.koepack` files, registers valid archives into `mcp_acp`,
+    /// and restores `spine`, `minutes`, `context`, and `search_index` from the latest `.koepack v2`
+    /// when `spine` is empty.
     pub fn load_existing_packs(&mut self) -> std::io::Result<usize> {
         if !self.export_dir.exists() {
             return Ok(0);
         }
         let mut loaded = 0usize;
+        let mut latest_pack: Option<koe_protocol_kernel::cicada::MaterialPackV2> = None;
         for dir_entry in fs::read_dir(&self.export_dir)? {
             let dir_entry = dir_entry?;
             let path = dir_entry.path();
@@ -560,6 +563,39 @@ impl DesktopBeanHost {
             let bytes = fs::read(&path)?;
             if self.mcp_acp.put_sync_pack(stem, &bytes).is_ok() {
                 loaded += 1;
+                if let Ok(decoded) = koe_protocol_kernel::cicada::decode_koepack_v2(&bytes) {
+                    if decoded.minutes.is_some() {
+                        let replace = latest_pack
+                            .as_ref()
+                            .is_none_or(|prev| decoded.exported_at_iso >= prev.exported_at_iso);
+                        if replace {
+                            latest_pack = Some(decoded);
+                        }
+                    }
+                }
+            }
+        }
+        if self.spine.is_empty() {
+            if let Some(pack) = latest_pack {
+                if let Some(pm) = pack.minutes {
+                    for (idx, src) in pm.current.sources.iter().enumerate() {
+                        let start_ms = (idx as u64) * 2_000;
+                        let _ = self.ingest_utterance_with_context(
+                            src.clone(),
+                            start_ms,
+                            start_ms + 1_800,
+                            "zh",
+                            "qwen",
+                            1_762_540_000 + (idx as u64),
+                        );
+                    }
+                    if let Ok(parsed) = koe_protocol_kernel::minutes::parse_meeting_minutes_json(
+                        &pm.current.text,
+                        &self.spine,
+                    ) {
+                        self.minutes.latest_minutes = Some(parsed);
+                    }
+                }
             }
         }
         Ok(loaded)
@@ -626,6 +662,27 @@ impl DesktopBeanHost {
             }
         }
         Ok(loaded)
+    }
+
+    /// Transitions the BLE transport session into `Scanning` for D3200 advertisements.
+    pub fn on_scanning(&mut self) {
+        self.session.on_scanning();
+    }
+
+    /// Transitions the BLE transport session into `Connecting` to a discovered D3200 peripheral.
+    pub fn on_connecting(&mut self) {
+        self.session.on_connecting();
+    }
+
+    /// Starts the `2E/01` ECDH + `01/01` device telemetry handshake once GATT characteristics
+    /// `0x7777` (write) and `0x8888` (notify) are ready, returning the outbound TX frames.
+    pub fn on_gatt_ready(&mut self, private_key: [u8; 32]) -> Option<Vec<Vec<u8>>> {
+        self.session.on_gatt_ready(private_key)
+    }
+
+    /// Handles explicit GATT disconnection by resetting transfer state and entering `Disconnected`.
+    pub fn on_disconnected(&mut self) {
+        self.session.on_disconnected();
     }
 
     /// Verifies the device's `2E/01` ECDH reply and derives the 32-byte session key.
@@ -1056,6 +1113,32 @@ mod tests {
         assert!(live_raw.contains("\"records\":{"));
         assert!(live_raw.contains("\"koe-material-pack\""));
 
+        host.minutes_mut().latest_minutes = Some(MeetingMinutesV2 {
+            version: 2,
+            spine_revision: host.spine().revision(),
+            title: "海外渠道合同".to_string(),
+            overview: "下周三前把海外渠道合同发给法务审阅。".to_string(),
+            topics: vec![MinuteTopic {
+                title: "合同审阅".to_string(),
+                summary: "下周三前把海外渠道合同发给法务审阅。".to_string(),
+                citations: vec![s1],
+                points: Vec::new(),
+                fishbone: None,
+            }],
+            decisions: Vec::new(),
+            actions: vec![MinutePoint {
+                claim: "下周三前把海外渠道合同发给法务审阅。".to_string(),
+                speaker: None,
+                owner: None,
+                due: None,
+                citations: vec![s1],
+            }],
+            questions: Vec::new(),
+            fishbones: Vec::new(),
+            terms: Vec::new(),
+            custom_sections: Vec::new(),
+            review_items: Vec::new(),
+        });
         let (pack_summary, pack_path) = host
             .export_koepack_v2_to_disk("海外渠道合同", "2026-11-07T18:00:00Z")
             .unwrap();
@@ -1064,6 +1147,9 @@ mod tests {
         let mut fresh_host = DesktopBeanHost::new(&dir);
         assert_eq!(fresh_host.load_existing_packs().unwrap(), 1);
         assert_eq!(fresh_host.snapshot().pack_count, 1);
+        assert_eq!(fresh_host.spine().len(), 1);
+        assert!(fresh_host.minutes().latest_minutes.is_some());
+        assert_eq!(fresh_host.snapshot().indexed_context_docs, 1);
 
         let _ = host
             .dispatch_jsonrpc(
@@ -1093,6 +1179,78 @@ mod tests {
             .unwrap();
         assert!(acp_send.contains("acp-task-1"));
         assert!(host.snapshot().mcp_handled_calls >= 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ble_gatt_ecdh_handshake_and_encrypted_stream_roundtrip() {
+        let dir = temp_export_dir("ble-ecdh-handshake");
+        let mut host = DesktopBeanHost::new(&dir);
+
+        host.on_scanning();
+        assert_eq!(host.snapshot().connection_phase, ConnectionPhaseTag::Scanning);
+        host.on_connecting();
+        assert_eq!(
+            host.snapshot().connection_phase,
+            ConnectionPhaseTag::Connecting
+        );
+
+        let host_priv: [u8; 32] = [
+            0xC8, 0x8F, 0x01, 0xF5, 0x10, 0xD9, 0xAC, 0x3F, 0x70, 0xA2, 0x92, 0xDA, 0xA2, 0x31,
+            0x6D, 0xE5, 0x44, 0xE9, 0xAA, 0xB8, 0xAF, 0xE8, 0x40, 0x49, 0xC6, 0x2A, 0x9C, 0x57,
+            0x86, 0x2D, 0x14, 0x33,
+        ];
+        let bean_priv: [u8; 32] = [
+            0xC6, 0xEF, 0x9C, 0x5D, 0x78, 0xAE, 0x01, 0x2A, 0x01, 0x11, 0x64, 0xAC, 0xB3, 0x97,
+            0xCE, 0x20, 0x88, 0x68, 0x5D, 0x8F, 0x06, 0xBF, 0x9B, 0xE0, 0xB2, 0x83, 0xAB, 0x46,
+            0x47, 0x6B, 0xEE, 0x53,
+        ];
+
+        let tx_frames = host.on_gatt_ready(host_priv).unwrap();
+        assert_eq!(
+            host.snapshot().connection_phase,
+            ConnectionPhaseTag::Handshaking
+        );
+        assert_eq!(tx_frames.len(), 2);
+        assert_eq!(tx_frames[0][5], 0x2E);
+        assert_eq!(tx_frames[0][6], 0x01);
+        assert_eq!(tx_frames[1][5], 0x01);
+        assert_eq!(tx_frames[1][6], 0x01);
+
+        let host_pub = &tx_frames[0][9..74];
+        let bean_pub = DeviceCrypto::p256_public_key(&bean_priv).unwrap();
+        let bean_shared = DeviceCrypto::p256_ecdh_shared_secret(&bean_priv, host_pub).unwrap();
+
+        let mut ecdh_reply_payload = Vec::with_capacity(97);
+        ecdh_reply_payload.extend_from_slice(&bean_pub);
+        ecdh_reply_payload.extend_from_slice(&bean_shared);
+        let ecdh_rx = build_rx_frame(0x2E, 0x01, &ecdh_reply_payload);
+        let ecdh_out = host.ingest_ble_chunk(&ecdh_rx, 1_762_550_000);
+        assert!(ecdh_out.session_key_established);
+        assert!(host.session().session_key.is_some());
+
+        let mut tel_payload = Vec::new();
+        tel_payload.push(1);
+        tel_payload.push(9);
+        tel_payload.push(1);
+        tel_payload.extend_from_slice(b"1.4.8");
+        tel_payload.extend_from_slice(b"D3200NATIVE639D0");
+        tel_payload.extend_from_slice(&(64u32 * 1024 * 1024).to_le_bytes());
+        tel_payload.extend_from_slice(&(58u32 * 1024 * 1024).to_le_bytes());
+        tel_payload.push(0);
+        tel_payload.extend_from_slice(b"2.1.0");
+        tel_payload.push(9);
+        tel_payload.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0x63, 0x9D]);
+        let tel_rx = build_rx_frame(0x01, 0x01, &tel_payload);
+        let tel_out = host.ingest_ble_chunk(&tel_rx, 1_762_550_001);
+        assert!(tel_out.telemetry_updated);
+        assert_eq!(
+            host.snapshot().connection_phase,
+            ConnectionPhaseTag::Connected
+        );
+        assert_eq!(tel_out.outbound_tx_frames.len(), 1);
+        assert_eq!(tel_out.outbound_tx_frames[0][5], 0x1B);
+        assert_eq!(tel_out.outbound_tx_frames[0][6], 0x0E);
         let _ = fs::remove_dir_all(&dir);
     }
 }

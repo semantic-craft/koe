@@ -207,6 +207,8 @@ pub struct TransportSession {
     pub connection_phase: ConnectionPhaseTag,
     /// Latest parsed device telemetry (`01/01`).
     pub telemetry: Option<DeviceInfoModel>,
+    /// Ephemeral 32-byte NIST P-256 private scalar for the active `2E/01` ECDH handshake.
+    pub ecdh_private_key: Option<[u8; 32]>,
     /// Unwrapped 32-byte HKDF session key (`2E/01`).
     pub session_key: Option<[u8; 32]>,
     /// Latest offline catalog entries (`1A/01`/`1A/0D`/`1B/0E`).
@@ -269,6 +271,7 @@ impl Clone for TransportSession {
             reassembler: self.reassembler.clone(),
             connection_phase: self.connection_phase,
             telemetry: self.telemetry.clone(),
+            ecdh_private_key: self.ecdh_private_key,
             session_key: self.session_key,
             catalog: self.catalog.clone(),
             transfer: self.transfer,
@@ -304,6 +307,7 @@ impl core::fmt::Debug for TransportSession {
             .field("reassembler", &self.reassembler)
             .field("connection_phase", &self.connection_phase)
             .field("telemetry", &self.telemetry)
+            .field("has_ecdh_private_key", &self.ecdh_private_key.is_some())
             .field("session_key", &self.session_key)
             .field("catalog", &self.catalog)
             .field("transfer", &self.transfer)
@@ -341,6 +345,7 @@ impl TransportSession {
             reassembler: FrameReassembler::default(),
             connection_phase: ConnectionPhaseTag::Disconnected,
             telemetry: None,
+            ecdh_private_key: None,
             session_key: None,
             catalog: Vec::new(),
             transfer: TransferProgress::default(),
@@ -419,6 +424,30 @@ impl TransportSession {
         self.session_key = Some(key);
     }
 
+    /// Transitions the transport session into `Scanning` for D3200 BLE advertisements.
+    pub fn on_scanning(&mut self) {
+        self.connection_phase = ConnectionPhaseTag::Scanning;
+    }
+
+    /// Transitions the transport session into `Connecting` to a discovered D3200 peripheral.
+    pub fn on_connecting(&mut self) {
+        self.connection_phase = ConnectionPhaseTag::Connecting;
+    }
+
+    /// Starts the `2E/01` ECDH + `01/01` device telemetry handshake once GATT characteristics
+    /// `0x7777` (write) and `0x8888` (notify) are ready, returning the outbound TX frames.
+    pub fn on_gatt_ready(&mut self, private_key: [u8; 32]) -> Option<Vec<Vec<u8>>> {
+        let pub_key = DeviceCrypto::p256_public_key(&private_key)?;
+        self.reassembler.reset();
+        self.ecdh_private_key = Some(private_key);
+        self.session_key = None;
+        self.connection_phase = ConnectionPhaseTag::Handshaking;
+        Some(vec![
+            DeviceCommands::notify_encrypt_public_key(&pub_key),
+            DeviceCommands::get_device_info(),
+        ])
+    }
+
     /// Resets any active file transfer and clears partial buffers.
     pub fn reset_active_transfer(&mut self) {
         self.active_file_id = None;
@@ -438,6 +467,7 @@ impl TransportSession {
     /// Handles explicit GATT disconnection by resetting transfer state and entering `Disconnected`.
     pub fn on_disconnected(&mut self) {
         self.reassembler.reset();
+        self.ecdh_private_key = None;
         self.session_key = None;
         self.reset_active_transfer();
         self.connection_phase = ConnectionPhaseTag::Disconnected;
@@ -448,6 +478,7 @@ impl TransportSession {
     /// Opus slices into `last_finalized`.
     pub fn on_transport_interrupted(&mut self) {
         self.reassembler.reset();
+        self.ecdh_private_key = None;
         self.session_key = None;
         self.connection_phase = ConnectionPhaseTag::Disconnected;
         match self.runtime_state {
@@ -891,6 +922,27 @@ impl TransportSession {
 
         for pkt in packets {
             match (pkt.cmd_type, pkt.cmd_id) {
+                (0x2E, 0x01) => {
+                    if pkt.payload.len() >= 97 {
+                        if let Some(priv_key) = self.ecdh_private_key {
+                            if let Some(shared) =
+                                DeviceCrypto::p256_ecdh_shared_secret(&priv_key, &pkt.payload[0..65])
+                            {
+                                if self.accept_ecdh_reply(&pkt.payload, &shared) {
+                                    outcome.session_key_established = true;
+                                    if self.is_offline_pull_suspended()
+                                        && self.connection_phase == ConnectionPhaseTag::Connected
+                                    {
+                                        if let Some(resume_tx) = self.resume_offline_pull() {
+                                            outcome.outbound_tx_frames.push(resume_tx);
+                                            outcome.transfer_updated = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 (0x01, 0x01) => {
                     let info = DeviceInfoModel::parse_packet(&pkt.raw);
                     self.telemetry = Some(info);
