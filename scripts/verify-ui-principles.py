@@ -14,29 +14,34 @@ ALLOWED_FONT_SIZES = {12.0, 14.0, 16.0, 22.0}
 
 SLICE_SCOPES = {
     "slice-b": [
-        "lib/theme/app_theme.dart",
-        "lib/ui/widgets/widgets.dart",
-        "lib/ui/shell.dart",
-        "lib/ui/screens/home_screen.dart",
+        "desktop/app/src/theme.rs",
+        "desktop/app/src/main.rs",
     ],
     "slice-c": [
-        "lib/ui/screens/today_screen.dart",
-        "lib/ui/screens/library_screen.dart",
-        "lib/ui/screens/projects_screen.dart",
-        "lib/ui/screens/new_recording_sheet.dart",
-        "lib/ui/widgets/connect_onboarding.dart",
-        "lib/ui/widgets/scan_sheet.dart",
-        "lib/ui/widgets/morning_brief_card.dart",
-        "lib/ui/widgets/context_timeline.dart",
+        "desktop/app/src/theme.rs",
+        "desktop/app/src/main.rs",
     ],
     "slice-d": [
-        "lib/ui/screens/files_screen.dart",
-        "lib/ui/screens/recording_detail_screen.dart",
-        "lib/ui/screens/minutes_document_screen.dart",
-        "lib/ui/screens/device_screen.dart",
-        "lib/ui/screens/settings_screen.dart",
-        "lib/ui/widgets/minutes_panel.dart",
+        "desktop/app/src/theme.rs",
+        "desktop/app/src/main.rs",
     ],
+}
+
+RUST_TOKEN_KEY_MAP = {
+    "ACCENT": "accent",
+    "SURFACE_0": "surface0",
+    "SURFACE_1": "surface1",
+    "BG_CARD_HOVER": "bgCardHover",
+    "BG_PANEL": "bgPanel",
+    "BG_SUBTLE": "bgSubtle",
+    "BG_MUTED": "bgMuted",
+    "BORDER_SOFT": "borderSoft",
+    "BORDER": "border",
+    "BORDER_STRONG": "borderStrong",
+    "BORDER_SELECTED": "borderSelected",
+    "TEXT_PRIMARY": "textPrimary",
+    "TEXT_SECONDARY": "textSecondary",
+    "TEXT_MUTED": "textMuted",
 }
 
 
@@ -79,6 +84,12 @@ def check_theme_file(theme_text: str) -> dict[str, Any]:
         theme_text,
     ):
         tokens[m.group(1)] = m.group(2)
+    for m in re.finditer(
+        r"pub\s+const\s+([A-Z0-9_]+)\s*:\s*u32\s*=\s*(0x[0-9A-Fa-f_]{8,10});",
+        theme_text,
+    ):
+        key = RUST_TOKEN_KEY_MAP.get(m.group(1), m.group(1).lower())
+        tokens[key] = m.group(2).replace("_", "")
 
     accent_hex = tokens.get("accent")
     accent_info: dict[str, Any] = {}
@@ -142,18 +153,36 @@ def check_theme_file(theme_text: str) -> dict[str, Any]:
                 f"Principle 7 violation: textMuted on surface0 contrast is {cr}:1 (< 4.5:1)"
             )
 
-    if "class AppFontSizes" not in theme_text:
-        violations.append("Principle 7 violation: missing AppFontSizes 4-size scale in app_theme.dart")
+    if "class AppFontSizes" not in theme_text and "pub struct AppFontSizes" not in theme_text:
+        violations.append("Principle 7 violation: missing AppFontSizes 4-size scale in theme file")
 
-    if "static double concentric(" not in theme_text:
-        violations.append("Principle 9 violation: missing AppRadii.concentric helper in app_theme.dart")
+    if (
+        "static double concentric(" not in theme_text
+        and "pub const fn concentric(" not in theme_text
+    ):
+        violations.append("Principle 9 violation: missing AppRadii.concentric helper in theme file")
 
     card_shadow_match = re.search(
         r"static\s+(?:const\s+)?List<BoxShadow>\s+(?:get\s+)?cardShadow\s*(?:=>|=)\s*(?:const\s+)?(\[[^\]]*\]);",
         theme_text,
         re.DOTALL,
     )
-    if not card_shadow_match or "BoxShadow(" in card_shadow_match.group(1):
+    rust_shadow_match = re.search(
+        r"pub\s+const\s+CARD_SHADOW\s*:\s*&\[u32\]\s*=\s*&(\[[^\]]*\]);",
+        theme_text,
+        re.DOTALL,
+    )
+    if card_shadow_match:
+        if "BoxShadow(" in card_shadow_match.group(1):
+            violations.append(
+                "Principle 9 violation: AppColors.cardShadow must be empty by default so inline cards stay flat"
+            )
+    elif rust_shadow_match:
+        if rust_shadow_match.group(1).strip() != "[]":
+            violations.append(
+                "Principle 9 violation: AppColors::CARD_SHADOW must be empty by default so inline cards stay flat"
+            )
+    else:
         violations.append(
             "Principle 9 violation: AppColors.cardShadow must be empty by default so inline cards stay flat"
         )
@@ -193,14 +222,20 @@ TEXT_THEME_SLOT_SIZES = {
 def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[str, Any]:
     violations: list[str] = []
     raw_sizes = [float(m.group(1)) for m in re.finditer(r"fontSize:\s*([0-9.]+)", text)]
+    raw_sizes.extend(
+        float(m.group(1)) for m in re.finditer(r"\.text_size\(px\(([0-9.]+)\)\)", text)
+    )
     font_size_exprs = [
         m.group(1).strip() for m in re.finditer(r"fontSize:\s*([^,\n)]+)", text)
     ]
+    gpui_size_exprs = [
+        m.group(1).strip() for m in re.finditer(r"\.text_size\(px\(([^)]+)\)\)", text)
+    ]
     token_sizes = [
-        TOKEN_FONT_SIZES[t]
-        for expr in font_size_exprs
-        for t in re.findall(r"AppFontSizes\.([a-zA-Z0-9_]+)", expr)
-        if t in TOKEN_FONT_SIZES
+        TOKEN_FONT_SIZES[t.lower()]
+        for expr in (font_size_exprs + gpui_size_exprs)
+        for t in re.findall(r"AppFontSizes(?:\.|::)([a-zA-Z0-9_]+)", expr)
+        if t.lower() in TOKEN_FONT_SIZES
     ]
     slot_sizes = [
         TEXT_THEME_SLOT_SIZES[m.group(1)]
@@ -209,9 +244,9 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
     ]
     dynamic_font_exprs = [
         expr
-        for expr in font_size_exprs
+        for expr in (font_size_exprs + gpui_size_exprs)
         if not re.fullmatch(
-            r"(?:[0-9.]+|AppFontSizes\.[a-zA-Z0-9_]+|[a-zA-Z_][a-zA-Z0-9_]*\s*\?\s*AppFontSizes\.[a-zA-Z0-9_]+\s*:\s*AppFontSizes\.[a-zA-Z0-9_]+)",
+            r"(?:[0-9.]+|AppFontSizes(?:\.|::)[a-zA-Z0-9_]+|[a-zA-Z_][a-zA-Z0-9_]*\s*\?\s*AppFontSizes\.[a-zA-Z0-9_]+\s*:\s*AppFontSizes\.[a-zA-Z0-9_]+)",
             expr,
         )
     ]
@@ -221,8 +256,11 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         )
     unknown_tokens = [
         m.group(1)
-        for m in re.finditer(r"fontSize:\s*AppFontSizes\.([a-zA-Z0-9_]+)", text)
-        if m.group(1) not in TOKEN_FONT_SIZES
+        for m in re.finditer(
+            r"(?:fontSize:\s*|\.text_size\(px\()AppFontSizes(?:\.|::)([a-zA-Z0-9_]+)",
+            text,
+        )
+        if m.group(1).lower() not in TOKEN_FONT_SIZES
     ]
     if unknown_tokens:
         violations.append(
@@ -254,7 +292,9 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
             f"Principle 8 violation: {path_str} contains {italics} FontStyle.italic usage(s)"
         )
 
-    uppercases = len(re.findall(r"\.toUpperCase\(", text))
+    uppercases = len(
+        re.findall(r"\.(?:toUpperCase|to_uppercase|to_ascii_uppercase)\(", text)
+    )
     if uppercases > 0:
         violations.append(
             f"Principle 8 violation: {path_str} contains {uppercases} .toUpperCase() call(s)"
@@ -316,14 +356,21 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
 
 
 def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
-    theme_path = root / "lib" / "theme" / "app_theme.dart"
+    rust_theme = root / "desktop" / "app" / "src" / "theme.rs"
+    dart_theme = root / "lib" / "theme" / "app_theme.dart"
+    theme_path = rust_theme if rust_theme.exists() else dart_theme
     theme_res = check_theme_file(theme_path.read_text(encoding="utf-8")) if theme_path.exists() else {
         "accent": {},
-        "violations": ["missing lib/theme/app_theme.dart"],
+        "violations": ["missing desktop/app/src/theme.rs"],
     }
 
     if mode in SLICE_SCOPES:
         rel_files = SLICE_SCOPES[mode]
+    elif (root / "desktop" / "app" / "src").exists():
+        rel_files = sorted(
+            str(p.relative_to(root))
+            for p in (root / "desktop" / "app" / "src").rglob("*.rs")
+        )
     else:
         rel_files = sorted(
             str(p.relative_to(root))

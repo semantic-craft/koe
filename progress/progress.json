@@ -2689,6 +2689,35 @@
           "status": "done",
           "summary": "完成 Slice J–N（PR #572、#573、#574、#575 及 Slice N 收口）：将录音豆（Meeting Minutes）、知了（Cicada）、心力豆（Sweetpea Context & 400k 字 <0.3ms 双字 BM25 检索）及原生 JSON-RPC 2.0 MCP（list_recordings、get_transcript、get_minutes、search_context、sync_qwennote_hotwords、export_koepack_v2）与 ACP（Agent Communication Protocol）协议栈全量下沉至 rust/koe_core（#![forbid(unsafe_code)]），并经 C-ABI / Swift / Kotlin JNI / Dart FFI（16 结构体、118 函数）接入 desktop/core、darwin/ SwiftUI 与 Android KoeCore.kt。58 项 koe_core 单测、31 项文档测试、5 项 desktop/core 单测、Swift+JNI 自检与全量 Flutter 测试全部通过。",
           "title": "三大核心板块与原生 MCP + ACP 协议栈下沉收口（Slice J–N）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "纯 Rust GPUI 桌面应用（gpui-kit 0.9.0，#![forbid(unsafe_code)]）挂载 DesktopBeanHost 五页签、--verify-self、--smoke-test 与 --mcp-stdio",
+              "ref": "desktop/app/src/main.rs"
+            },
+            {
+              "kind": "file",
+              "note": "竹青 #2E5E4E 单强调色、暖纸灰 #F5F4F0、四级字号 12/14/16/22 与同心圆角纯 Rust 令牌",
+              "ref": "desktop/app/src/theme.rs"
+            },
+            {
+              "kind": "file",
+              "note": "macOS 纯 Rust Release 编译、Developer ID 签名打包并安装至 /Applications/Koe.app",
+              "ref": "scripts/install-macos.sh"
+            },
+            {
+              "kind": "file",
+              "note": "零 Flutter 依赖的纯 Rust 与原生门禁校验入口",
+              "ref": "scripts/check"
+            }
+          ],
+          "id": "pure-rust-gpui-desktop-slice-o",
+          "next": "D3200 实体硬件实连拉流留待连接物理录音豆时验证。",
+          "status": "done",
+          "summary": "完成 Slice O（路线 A 纯 Rust GPUI 桌面端与存量 Flutter/SwiftUI 壳层移除）：在 desktop/app 用 gpui-kit 0.9.0 直接挂载 desktop/core（DesktopBeanHost over rust/koe_core 2.0.0），落地五页签（今日时间线、本机录音与无音频资料包、双语同传与千问纪要、心力豆双字 BM25 离线检索、原生 MCP/ACP 服务）与竹青 #2E5E4E + 暖纸灰 #F5F4F0 令牌；物理移除存量 lib/（210 个 Dart 文件 88,578 行）、pubspec.yaml、全部 Dart 测试与 Flutter/SwiftUI 壳层，将 /Applications/Koe.app 编译并签名为纯 Rust 二进制（移除 /Applications/KoeSwiftUI.app），并将 scripts/check、scripts/verify-ui-principles.py 与 CI 全量切换为纯 Rust 门禁。",
+          "title": "纯 Rust GPUI 桌面端挂载 DesktopBeanHost 与存量 Flutter/SwiftUI 壳层移除（Slice O）"
         }
       ],
       "title": "录音豆纪要与 MCP 全自动接力"

@@ -169,6 +169,12 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         self.assertIn("legacy terracotta or unstyled Material color", joined)
         self.assertIn("pushy marketing verb", joined)
 
+    def test_repository_pure_rust_gpui_passes_all_principles(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        report = verifier.analyze_repository(root, "all")
+        self.assertEqual(report["violations"], [])
+        self.assertGreaterEqual(report["checked_files_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

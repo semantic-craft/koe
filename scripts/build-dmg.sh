@@ -12,10 +12,9 @@ DISPLAY_NAME="Koe"
 RELEASE_APP="build/macos/Build/Products/Release/${DISPLAY_NAME}.app"
 DIST_DIR="${ROOT}/dist"
 VERSION="$(
-  # pubspec: version: 1.2.2+5 → 1.2.2
-  grep -E '^version:' pubspec.yaml | head -1 | sed -E 's/^version:[[:space:]]*//; s/\+.*//; s/[[:space:]]//g'
+  sed -n 's/^version = "\([^"]*\)".*/\1/p' desktop/app/Cargo.toml 2>/dev/null | head -1
 )"
-VERSION="${VERSION:-0.0.0}"
+VERSION="${VERSION:-2.0.0}"
 STAGING="${DIST_DIR}/.dmg-staging"
 DMG_RW="${DIST_DIR}/${APP_NAME}-${VERSION}-rw.dmg"
 DMG_OUT="${DIST_DIR}/${APP_NAME}-${VERSION}-macos.dmg"
@@ -53,8 +52,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if ! command -v flutter >/dev/null 2>&1; then
-  echo "error: flutter not found in PATH" >&2
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "error: cargo not found in PATH" >&2
   exit 1
 fi
 if ! command -v hdiutil >/dev/null 2>&1; then
@@ -67,12 +66,8 @@ echo "==> Version: $VERSION"
 echo "==> Output:  $DMG_OUT"
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  echo "==> flutter pub get"
-  flutter pub get
-  echo "==> flutter build macos --release"
-  flutter build macos --release
-  echo "==> scripts/sign-macos.sh"
-  "${ROOT}/scripts/sign-macos.sh" "$RELEASE_APP"
+  echo "==> scripts/install-macos.sh (stage release bundle)"
+  MACOS_INSTALL_PATH="$RELEASE_APP" "${ROOT}/scripts/install-macos.sh" --keep-legacy
 else
   echo "==> Skipping build (--skip-build)"
 fi

@@ -64,12 +64,8 @@ def main():
         subprocess.run([sys.executable, 'progress/progress.py', 'check'], check=True)
     if light:
         return
-    expected = os.environ['FLUTTER_VERSION']
-    actual = json.loads(subprocess.check_output(['flutter', '--version', '--machine']))['frameworkVersion']
-    if actual != expected:
-        raise ValueError(f'Runner has Flutter {actual}, CI expects {expected}')
-    subprocess.run(['flutter', 'pub', 'get'], check=True)
-    subprocess.run(['scripts/check', '--reporter', 'expanded'], check=True)
+    subprocess.run(['cargo', '--version'], check=True)
+    subprocess.run(['scripts/check'], check=True)
 
 
 if __name__ == '__main__':

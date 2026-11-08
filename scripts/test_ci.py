@@ -32,12 +32,12 @@ if '--machine' in sys.argv:
     print(json.dumps({'frameworkVersion': '3.47.7'}))
 sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
 '''
-        for relative in ('bin/flutter', 'scripts/check', 'progress/progress.py'):
+        for relative in ('bin/cargo', 'scripts/check', 'progress/progress.py'):
             self.write(relative, stub)
             (self.root / relative).chmod(0o755)
         self.write('scripts/ci.py', SOURCE.read_text())
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
-                        CI_TEST_LOG=str(self.log), FLUTTER_VERSION='3.47.7')
+                        CI_TEST_LOG=str(self.log))
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root, text=True).strip()
@@ -67,8 +67,8 @@ sys.exit(int(os.environ.get('CI_TEST_EXIT', '0')))
 
     def assert_full(self, result, calls):
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [['progress.py', 'check'], ['flutter', '--version', '--machine'],
-                                ['flutter', 'pub', 'get'], ['check', '--reporter', 'expanded']])
+        self.assertEqual(calls, [['progress.py', 'check'], ['cargo', '--version'],
+                                ['check']])
 
     def test_document_only_skips_flutter(self):
         self.write('docs/guide with spaces.md', '# Guide\n')

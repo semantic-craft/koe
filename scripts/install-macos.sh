@@ -32,8 +32,50 @@ fi
 # The pre-rename bundle shares the Bundle ID; it must not be running either.
 # It also refuses when the install target is the old bundle path.
 MACOS_INSTALL_PATH="$TARGET" "$ROOT/scripts/retire-legacy-macos-app.sh" --check-running
-if [[ "$SKIP_BUILD" -eq 0 ]]; then flutter build macos --release; fi
 SOURCE="$ROOT/build/macos/Build/Products/Release/${APP_NAME}.app"
+if [[ "$SKIP_BUILD" -eq 0 ]]; then
+  cargo build --manifest-path "$ROOT/desktop/Cargo.toml" --package koe-desktop --release --offline \
+    || cargo build --manifest-path "$ROOT/desktop/Cargo.toml" --package koe-desktop --release
+  rm -rf "$SOURCE"
+  mkdir -p "$SOURCE/Contents/MacOS" "$SOURCE/Contents/Resources"
+  cp "$ROOT/desktop/target/release/koe-desktop" "$SOURCE/Contents/MacOS/${APP_NAME}"
+  chmod +x "$SOURCE/Contents/MacOS/${APP_NAME}"
+  printf 'APPL????' > "$SOURCE/Contents/PkgInfo"
+  cat > "$SOURCE/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>zh_CN</string>
+  <key>CFBundleDisplayName</key>
+  <string>Koe</string>
+  <key>CFBundleExecutable</key>
+  <string>Koe</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.anker.ankerRecorder</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Koe</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>2.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>8</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Koe 需要蓝牙权限以连接 Soundcore Work D3200 录音豆。</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Koe 需要麦克风权限以进行实时语音同传与本地录音。</string>
+</dict>
+</plist>
+PLIST
+fi
 [[ -d "$SOURCE" ]] || { echo 'Release build missing.' >&2; exit 1; }
 STAGING="$(mktemp -d "${TMPDIR:-/tmp}/koe-install.XXXXXX")"
 cleanup_stage() {
@@ -48,10 +90,6 @@ cleanup_stage() {
 trap cleanup_stage EXIT
 APP="$STAGING/${APP_NAME}.app"
 ditto "$SOURCE" "$APP"
-if command -v cargo >/dev/null 2>&1 && [[ -f "$ROOT/rust/Cargo.toml" ]]; then
-  cargo build --manifest-path "$ROOT/rust/Cargo.toml" --package koe_core_ffi --release --quiet
-  cp "$ROOT/rust/target/release/libkoe_core_ffi.dylib" "$APP/Contents/Frameworks/libkoe_core_ffi.dylib"
-fi
 if [[ -n "$IDENTITY" ]]; then
   "$ROOT/scripts/sign-macos.sh" --identity "$IDENTITY" "$APP"
 else
@@ -76,6 +114,9 @@ fi
 # ditto merges into an existing bundle: files the new build no longer ships
 # would stay behind and break the code seal. Replace the bundle whole.
 rm -rf "$TARGET"
+if [[ "$TARGET" == "/Applications/Koe.app" && -d "/Applications/KoeSwiftUI.app" ]]; then
+  rm -rf "/Applications/KoeSwiftUI.app"
+fi
 ditto "$APP" "$TARGET"
 "$ROOT/scripts/sign-macos.sh" --verify-only "$TARGET"
 

@@ -90,7 +90,7 @@
 
 ---
 
-## 全景切片队列（J → N：千问闪记 + Cicada 同步翻译 + 心力豆个人图谱 + Rust 原生 MCP/ACP 全量下沉）
+## 全景切片队列（J → O：千问闪记 + Cicada 同步翻译 + 心力豆个人图谱 + Rust 原生 MCP/ACP 全量下沉 + 纯 Rust GPUI 桌面端与存量 Flutter/SwiftUI 彻底退役）
 
 ### [x] Slice J: 统一句子主干 `UtteranceSpine`（`S1..Sn`）与四模块纯 Rust 领域骨架
 - **Playbook**: `Feature`
@@ -121,3 +121,9 @@
 - **Outcome**: 在 `rust/koe_core/src/mcp_acp.rs` 与 `desktop/core` 实现原生 JSON-RPC 2.0 MCP（`list_recordings`、`get_transcript`、`get_minutes`、`search_context`、`qwennote` 热词/模板同步与 `.koepack v2` `/sync/packs`）及 ACP（Agent Communication Protocol）协议栈，将 `minutes`、`cicada`、`context`、`mcp_acp` 全链路接入 `desktop/core`、`darwin/` SwiftUI 与 Android `KoeCore.kt`，完成对抗审查（`interrogate`）、代码清理（`deslop` / `no-comments`）、性能基准与早间审计。
 - **Done Predicate**: `./scripts/test-koe-core-swift`、`./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
 - **Evidence**: 3d50ef5;b899fca;rust/koe_core/src/mcp_acp.rs;desktop/core/src/lib.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;darwin/KoeNativeHost.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
+
+### [x] Slice O: 纯 Rust GPUI 桌面端（`desktop/app`）挂载 `DesktopBeanHost` 与存量 8.8 万行 Flutter/SwiftUI 彻底退役
+- **Playbook**: `Shipping`
+- **Outcome**: 在 `desktop/app` 使用纯 Rust `gpui`（`gpui-kit = "=0.9.0"`）直接挂载 `desktop/core`（`DesktopBeanHost` over `rust/koe_core` 2.0.0），实现 5 页签（今日时间线、本机录音库与千问闪记纪要、Cicada 双语实时翻译与 `.koepack v2`、心力豆 BM25 离线问答、MCP/ACP 代理接口）与竹青色 `#2E5E4E` + 暖纸灰 `#F5F4F0` 视觉规范；将 `/Applications/Koe.app` 编译并签名为纯 Rust 二进制（同时清理 `/Applications/KoeSwiftUI.app`）；物理删除 `lib/`、`pubspec.yaml`、全部 Dart 测试与 Flutter/SwiftUI 宿主壳层，将 `scripts/check`、`scripts/verify-ui-principles.py`、`scripts/install-macos.sh` 与 CI 门禁全面收敛至纯 Rust。
+- **Done Predicate**: `find lib test integration_test -name '*.dart' 2>/dev/null | wc -l` 为 `0`、`./scripts/check`、`./scripts/install-macos.sh`、`/Applications/Koe.app/Contents/MacOS/Koe --verify-self`、`/Applications/Koe.app/Contents/MacOS/Koe --smoke-test`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
+- **Evidence**: d9b54ed;87e60f6;desktop/app/src/main.rs;desktop/app/src/theme.rs;scripts/install-macos.sh;scripts/check;/Applications/Koe.app

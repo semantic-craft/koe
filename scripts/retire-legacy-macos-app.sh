@@ -40,7 +40,11 @@ KOE_DEFAULT_INSTALL="/Applications/Koe.app"
 # Koe.app from matching.
 LEGACY_VERSIONS=("1.0.0+1")
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-KOE_VERSION="$(sed -n 's/^version:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$SCRIPT_ROOT/pubspec.yaml" 2>/dev/null | head -n 1)"
+KOE_VERSION=""
+if [[ -f "$SCRIPT_ROOT/pubspec.yaml" ]]; then
+  KOE_VERSION="$(sed -n 's/^version:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$SCRIPT_ROOT/pubspec.yaml" | head -n 1)"
+fi
+KOE_VERSION="${KOE_VERSION:-2.0.0+8}"
 BACKUP_DIR="${MACOS_LEGACY_BACKUP_DIR:-$HOME/Library/Application Support/Koe Install Backups}"
 LSREGISTER='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 CHECK_ONLY=0

@@ -138,7 +138,7 @@ struct KoeCoreSwiftTest {
     check(KoeCore.isSliceMark(0x01) && !KoeCore.isSliceMark(0x00), "isSliceMark must check bit 0")
     check(KoeCore.sliceMarkPositionMs(50) == 1000, "sliceMarkPositionMs(50) must equal 1000ms")
 
-    var reassembler = D3200FrameReassembler()
+    let reassembler = KoeFrameReassembler()
     let splitA = Data([0xDE, 0xAD]) + rxPacket.prefix(12)
     let splitB = rxPacket.dropFirst(12)
     check(reassembler.ingest(splitA).isEmpty, "partial BLE notification must wait for remainder")
@@ -201,69 +201,36 @@ struct KoeCoreSwiftTest {
     let drainedModel = drainSession.takeFinalized()
     check(drainedModel?.entry.id == 9002 && drainedModel?.entry.marksMs == [0], "finalized quiet-drained recording must preserve id and mark")
 
-    check(D3200CoreBluetoothBridge.restoreIdentifier == "com.anker.koe.d3200.central", "CoreBluetooth restoreIdentifier must match")
-    check(D3200CoreBluetoothBridge.lastPeripheralUUIDDefaultsKey == "koe.ble.last_peripheral_uuid", "lastPeripheralUUIDDefaultsKey must match")
-    check(!D3200CoreBluetoothBridge.supportsStateRestoration(), "unbundled test binary must disable CoreBluetooth state restoration")
-    check(D3200CoreBluetoothBridge.makeCentralOptions() == nil, "makeCentralOptions must return nil in unbundled CLI")
-    let sampleUUID = UUID()
-    let restoredIds = D3200CoreBluetoothBridge.restoredPeripheralIdentifiers(
-      from: ["kCBRestoredPeripherals": [sampleUUID]]
-    )
-    check(restoredIds == [sampleUUID], "restoredPeripheralIdentifiers must extract restored UUIDs")
-
-    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-native-host-test-\(UUID().uuidString)", isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let actor = BeanTransportActor()
-    let saved = await actor.simulateBeanRealtimePipeline(destinationDirectory: tempDir)
-    check(saved != nil, "simulateBeanRealtimePipeline must produce a KoeSavedRecording")
+    let liveSession = KoeTransportSession()
+    let liveStep = liveSession.simulateRealtimePipeline(nowEpochSec: 1_700_000_000)
+    check(liveStep.livePcm16BytesAvailable == 38_400, "simulateRealtimePipeline must report 38,400 bytes of 16 kHz live PCM16")
+    let livePcm = liveSession.takeLivePcm16()
+    check(livePcm.count == 38_400, "takeLivePcm16 must drain 38,400 bytes")
+    let saved = liveSession.takeFinalized()
+    check(saved != nil, "simulateRealtimePipeline must produce a KoeFinalizedRecordingModel")
     if let saved {
-      check(saved.id.rawValue == "20261107", "saved recording id must match simulated fileId")
-      check(saved.marks.map(\.sequence) == [15, 45], "saved recording marks must extract sequences [15, 45]")
-      check(saved.marks.map(\.rawValue) == [300, 900], "saved recording mark timestamps must be [300, 900] ms")
-      let opusBytes = (try? Data(contentsOf: saved.opusFileURL)) ?? Data()
-      check(opusBytes.count > 64 && String(decoding: opusBytes.prefix(4), as: UTF8.self) == "OggS", "saved .opus file must start with OggS")
-      if let wavURL = saved.playableWAVURL {
-        let wavBytes = (try? Data(contentsOf: wavURL)) ?? Data()
-        check(
-          wavBytes.count == 44 + 60 * 960 * 2 && String(decoding: wavBytes.prefix(4), as: UTF8.self) == "RIFF",
-          "saved .wav file must be 115,244 bytes of decoded 48 kHz RIFF WAV"
-        )
-      } else {
-        check(false, "saved recording must include playableWAVURL")
-      }
+      check(saved.entry.id == 20_261_107, "saved recording id must match simulated fileId")
+      check(saved.entry.marksMs == [300, 900], "saved recording mark timestamps must be [300, 900] ms")
+      check(
+        saved.oggOpusBytes.count > 64 && String(decoding: saved.oggOpusBytes.prefix(4), as: UTF8.self) == "OggS",
+        "saved .opus bytes must start with OggS"
+      )
+      check(
+        saved.previewWavBytes.count == 44 + 60 * 960 * 2
+          && String(decoding: saved.previewWavBytes.prefix(4), as: UTF8.self) == "RIFF",
+        "saved .wav bytes must be 115,244 bytes of decoded 48 kHz RIFF WAV"
+      )
 
-      let liveSession = KoeTransportSession()
-      let liveStep = liveSession.simulateRealtimePipeline(nowEpochSec: 1_700_000_000)
-      check(liveStep.livePcm16BytesAvailable == 38_400, "simulateRealtimePipeline must report 38,400 bytes of 16 kHz live PCM16")
-      let livePcm = liveSession.takeLivePcm16()
-      check(livePcm.count == 38_400, "takeLivePcm16 must drain 38,400 bytes")
-
-      await MainActor.run {
-        let host = KoeNativeHost(transport: actor, exportDirectory: tempDir)
-        host.interpreting.ttsEnabled = false
-        host.playback.ingestRecording(saved)
-        check(host.playback.selectedRecordingId == saved.id, "ingestRecording must select the new recording")
-
-        host.playback.jumpToMark(direction: .next)
-        check(host.playback.playbackState.positionMs == 300, "first jumpToMark(.next) must land on 300ms")
-        host.playback.jumpToMark(direction: .next)
-        check(host.playback.playbackState.positionMs == 900, "second jumpToMark(.next) must land on 900ms")
-        host.playback.jumpToMark(direction: .previous)
-        check(host.playback.playbackState.positionMs == 300, "jumpToMark(.previous) must return to 300ms")
-
-        host.playback.moveToTrash(saved.id)
-        check(host.playback.recordings.isEmpty, "moveToTrash must remove recording immediately without modal")
-        check(host.playback.recentlyTrashed?.id == saved.id, "recentlyTrashed must hold removed recording")
-        host.playback.undoTrash()
-        check(host.playback.recordings.count == 1 && host.playback.recordings[0].id == saved.id, "undoTrash must restore recording")
-
-        for seg in saved.transcriptSegments {
-          host.interpreting.ingestSegment(seg)
-        }
-        check(host.interpreting.segments.count == 2, "LiveInterpretingModel must store 2 bilingual segments")
-      }
-      await actor.finishStream()
+      let lib = KoeRecordingLibrary()
+      lib.ingest(saved.entry)
+      check(lib.selectedEntry()?.id == saved.entry.id, "ingest must select the new recording")
+      check(lib.jumpToMark(currentMs: 0, direction: 1) == 300, "first jumpToMark(+1) must land on 300ms")
+      check(lib.jumpToMark(currentMs: 300, direction: 1) == 900, "second jumpToMark(+1) must land on 900ms")
+      check(lib.jumpToMark(currentMs: 900, direction: -1) == 300, "jumpToMark(-1) must return to 300ms")
+      let trashed = lib.moveToTrash(saved.entry.id)
+      check(trashed?.id == saved.entry.id && lib.entries().isEmpty, "moveToTrash must remove recording immediately without modal")
+      let restored = lib.undoTrash()
+      check(restored?.id == saved.entry.id && lib.entries().count == 1, "undoTrash must restore recording")
     }
 
     var wifiConfigRx = Data([
@@ -346,42 +313,6 @@ struct KoeCoreSwiftTest {
     let fin701 = wifiSession.takeFinalized()
     let fin703 = wifiSession.takeFinalized()
     check(fin701?.entry.id == 701 && fin703?.entry.id == 703 && wifiSession.takeFinalized() == nil, "takeFinalized must drain both 701 and 703 in FIFO order")
-
-    let wifiHostDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-wifi-host-test-\(UUID().uuidString)", isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: wifiHostDir) }
-    let wifiActor = BeanTransportActor()
-    let wifiHost = await MainActor.run {
-      let h = KoeNativeHost(transport: wifiActor, exportDirectory: wifiHostDir)
-      h.interpreting.ttsEnabled = false
-      return h
-    }
-    await wifiActor.ingestRawBleChunk(wifiConfigRx, destinationDirectory: wifiHostDir)
-    for _ in 0..<200 {
-      let hasEp = await MainActor.run { wifiHost.sidebar.wifiEndpoint?.ipString == "192.168.4.1" }
-      if hasEp { break }
-      try? await Task.sleep(nanoseconds: 5_000_000)
-    }
-    let hostEp = await MainActor.run { wifiHost.sidebar.wifiEndpoint }
-    check(hostEp?.ipString == "192.168.4.1" && hostEp?.port == 32002, "BeanSidebarModel must receive wifiEndpointUpdated from 1A/05")
-
-    await MainActor.run {
-      wifiHost.sidebar.startWifiBatch(fileIds: [901])
-      wifiHost.sidebar.ingestWifiChunk(makeShortHead(fileId: 901, fileSize: 166))
-      wifiHost.sidebar.ingestWifiChunk(makeSingleSlice(seq: 0, mark: true))
-    }
-    for _ in 0..<200 {
-      let ready = await MainActor.run {
-        wifiHost.playback.recordings.contains(where: { $0.id.rawValue == "901" })
-          && wifiHost.sidebar.wifiBatchProgress?.phase == 4
-      }
-      if ready { break }
-      try? await Task.sleep(nanoseconds: 5_000_000)
-    }
-    await MainActor.run {
-      check(wifiHost.sidebar.wifiBatchProgress?.phase == 4 && wifiHost.sidebar.wifiBatchProgress?.finalizedCount == 1, "BeanSidebarModel wifiBatchProgress must reach phase 4 with finalizedCount == 1")
-      check(wifiHost.playback.recordings.count == 1 && wifiHost.playback.recordings[0].id.rawValue == "901", "KoeNativeHost playback.recordings must include Wi-Fi batch recording 901")
-    }
-    await wifiActor.finishStream()
 
     let spine = KoeUtteranceSpine(sessionId: "swift-spine-test")
     check(spine.snapshot().segmentCount == 0 && spine.snapshot().revision == 0 && !spine.snapshot().isStale, "new KoeUtteranceSpine must start empty and non-stale")
@@ -491,217 +422,174 @@ struct KoeCoreSwiftTest {
     check(!KoeCore.namesTodo(mention: "这件事", sentence: "昨天说的这件事已经搞定了", title: "发合同给法务"), "vague demonstrative must fail #234 namesTodo gate")
     check(KoeCore.namesTodo(mention: "合同", sentence: "昨天说的合同已经发给法务了", title: "发合同给法务"), "named noun must pass #234 namesTodo gate")
 
-    let leaseDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-lease-test-\(UUID().uuidString)", isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: leaseDir) }
-    await MainActor.run {
-      let model = LiveInterpretingModel(leaseDirectory: leaseDir)
-      model.ttsEnabled = false
-      model.refreshAudioDevices()
-      model.beginHoldToInterpret(session: "hold-1", token: "tok-1")
-      check(model.isHoldingToInterpret, "beginHoldToInterpret must set isHoldingToInterpret = true")
-      check(!model.recordAudioActivity(elapsedMs: 12_000, speechDetected: false), "12s silence must not trigger auto-stop")
-      check(model.silenceElapsedMs == 12_000 && model.isHoldingToInterpret, "12s silence must keep hold active")
-      check(model.recordAudioActivity(elapsedMs: 18_000, speechDetected: false), "30s silence must trigger auto-stop")
-      check(!model.isHoldingToInterpret && model.statusBanner == "静音满 30 秒，已自动停止同传拾音", "30s silence must auto-stop hold and set statusBanner")
+    let host = KoeMcpAcpRuntime(sessionId: "swift-mcp-host")
+    let ticket = host.configurePairing(
+      baseUrl: "https://koe.example.com",
+      token: "swift-mcp-secret-token-at-least-24-bytes",
+      modeIsLan: true,
+      expiresAtEpochSec: 1_900_000_000
+    )
+    check(ticket != nil && ticket!.hasPrefix("KOEMCP1."), "KoeMcpAcpRuntime.configurePairing must issue KOEMCP1. ticket")
+    check(
+      host.verifyBearer(
+        authHeader: "Bearer swift-mcp-secret-token-at-least-24-bytes",
+        nowEpochSec: 1_800_000_000
+      ),
+      "KoeMcpAcpRuntime.verifyBearer must accept valid Bearer token"
+    )
+    check(
+      !host.verifyBearer(
+        authHeader: "Bearer wrong-mcp-secret-token-at-least-24-bytes",
+        nowEpochSec: 1_800_000_000
+      ),
+      "KoeMcpAcpRuntime.verifyBearer must reject wrong Bearer token"
+    )
+    check(
+      host.publishLive(generation: 7, nowEpochSec: 1_800_000_000, ttlSec: 15) == 1,
+      "KoeMcpAcpRuntime.publishLive must accept 15s TTL"
+    )
+    check(
+      host.publishLive(generation: 7, nowEpochSec: 1_800_000_000, ttlSec: 25) < 0,
+      "KoeMcpAcpRuntime.publishLive must reject >20s TTL"
+    )
+    let ord = host.ingestUtterance(
+      text: "周五下午前把第三季度海外渠道合同发给法务审阅",
+      translation: "Send the Q3 overseas channel contract to legal before Friday afternoon",
+      startMs: 0,
+      endMs: 2_600,
+      sourceLanguage: "zh",
+      targetLanguage: "en",
+      nowEpochSec: 1_800_000_001
+    )
+    check(ord == 1, "KoeMcpAcpRuntime.ingestUtterance must return ordinal 1")
 
-      var mockDefaultInput = "BuiltInMic"
-      let lease = KoeInputDeviceLease(directory: leaseDir)
-      check(
-        lease.acquire(
-          session: "s1",
-          target: "D3200Mic",
-          currentDefaultInput: { mockDefaultInput },
-          setDefaultInput: { next in mockDefaultInput = next; return true }
-        ),
-        "KoeInputDeviceLease.acquire must switch mock input to target"
-      )
-      check(mockDefaultInput == "D3200Mic", "mockDefaultInput must be D3200Mic after acquire")
-      let releaseRes = lease.release(
-        currentDefaultInput: { mockDefaultInput },
-        setDefaultInput: { next in mockDefaultInput = next; return true }
-      )
-      check(releaseRes == "restored" && mockDefaultInput == "BuiltInMic", "KoeInputDeviceLease.release must restore original input")
-      check(
-        lease.release(
-          currentDefaultInput: { mockDefaultInput },
-          setDefaultInput: { next in mockDefaultInput = next; return true }
-        ) == "kept",
-        "second KoeInputDeviceLease.release must be idempotent"
-      )
+    let mcpInit = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
+      nowEpochSec: 1_800_000_002
+    )
+    check(mcpInit != nil && mcpInit!.contains("2025-11-25"), "MCP initialize must succeed")
+    let mcpNotif = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+      nowEpochSec: 1_800_000_002
+    )
+    check(mcpNotif == nil, "MCP notifications/initialized must return nil")
 
-      let hostDir = FileManager.default.temporaryDirectory.appendingPathComponent("koe-host-mcp-\(UUID().uuidString)", isDirectory: true)
-      defer { try? FileManager.default.removeItem(at: hostDir) }
-      let host = KoeNativeHost(exportDirectory: hostDir, sessionId: "swift-mcp-host")
-      let ticket = host.configureMcpPairing(
-        baseUrl: "https://koe.example.com",
-        token: "swift-mcp-secret-token-at-least-24-bytes",
-        modeIsLan: true,
-        expiresAtEpochSec: 1_900_000_000
-      )
-      check(ticket != nil && ticket!.hasPrefix("KOEMCP1."), "KoeNativeHost.configureMcpPairing must issue KOEMCP1. ticket")
-      check(
-        host.verifyMcpBearer(
-          authHeader: "Bearer swift-mcp-secret-token-at-least-24-bytes",
-          nowEpochSec: 1_800_000_000
-        ),
-        "KoeNativeHost.verifyMcpBearer must accept valid Bearer token"
-      )
-      check(
-        !host.verifyMcpBearer(
-          authHeader: "Bearer wrong-mcp-secret-token-at-least-24-bytes",
-          nowEpochSec: 1_800_000_000
-        ),
-        "KoeNativeHost.verifyMcpBearer must reject wrong Bearer token"
-      )
-      check(
-        host.publishMcpLiveLease(generation: 7, nowEpochSec: 1_800_000_000, ttlSec: 15) == 1,
-        "KoeNativeHost.publishMcpLiveLease must accept 15s TTL"
-      )
-      check(
-        host.publishMcpLiveLease(generation: 7, nowEpochSec: 1_800_000_000, ttlSec: 25) < 0,
-        "KoeNativeHost.publishMcpLiveLease must reject >20s TTL"
-      )
-      let ord = host.ingestUtterance(
-        text: "周五下午前把第三季度海外渠道合同发给法务审阅",
-        translation: "Send the Q3 overseas channel contract to legal before Friday afternoon",
-        startMs: 0,
-        endMs: 2_600,
-        sourceLanguage: "zh",
-        targetLanguage: "en",
-        nowEpochSec: 1_800_000_001
-      )
-      check(ord == 1, "KoeNativeHost.ingestUtterance must return ordinal 1")
-      check(host.spine.snapshot().segmentCount == 1, "KoeNativeHost.spine must contain 1 segment")
-      check(host.contextSearch.query("海外渠道合同", limit: 3) == [0], "KoeNativeHost.contextSearch must hit doc 0")
+    let listRec = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_recordings","arguments":{}}}"#,
+      nowEpochSec: 1_800_000_003
+    )
+    check(listRec != nil && listRec!.contains("swift-mcp-host"), "MCP list_recordings must include live session")
 
-      let mcpInit = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#,
-        nowEpochSec: 1_800_000_002
-      )
-      check(mcpInit != nil && mcpInit!.contains("2025-11-25"), "MCP initialize must succeed")
-      let mcpNotif = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-        nowEpochSec: 1_800_000_002
-      )
-      check(mcpNotif == nil, "MCP notifications/initialized must return nil")
+    let getTr = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"7"}}}"#,
+      nowEpochSec: 1_800_000_003
+    )
+    check(getTr != nil && getTr!.contains("海外渠道合同"), "MCP get_transcript must return S1 utterance")
 
-      let listRec = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_recordings","arguments":{}}}"#,
-        nowEpochSec: 1_800_000_003
-      )
-      check(listRec != nil && listRec!.contains("swift-mcp-host"), "MCP list_recordings must include live session")
+    let staleTr = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"99"}}}"#,
+      nowEpochSec: 1_800_000_003
+    )
+    check(staleTr != nil && staleTr!.contains("snapshot_changed"), "MCP get_transcript must report snapshot_changed on revision mismatch")
 
-      let getTr = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"7"}}}"#,
-        nowEpochSec: 1_800_000_003
-      )
-      check(getTr != nil && getTr!.contains("海外渠道合同"), "MCP get_transcript must return S1 utterance")
+    let expiredTr = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"7"}}}"#,
+      nowEpochSec: 1_800_000_020
+    )
+    check(expiredTr != nil && expiredTr!.contains("publication_expired"), "MCP get_transcript must report publication_expired after 15s lease")
+    _ = host.publishLive(generation: 7, nowEpochSec: 1_800_000_020, ttlSec: 15)
 
-      let staleTr = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"99"}}}"#,
-        nowEpochSec: 1_800_000_003
-      )
-      check(staleTr != nil && staleTr!.contains("snapshot_changed"), "MCP get_transcript must report snapshot_changed on revision mismatch")
+    let getMin = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_minutes","arguments":{}}}"#,
+      nowEpochSec: 1_800_000_021
+    )
+    check(getMin != nil && getMin!.contains("海外渠道合同"), "MCP get_minutes must return grounded minutes")
 
-      let expiredTr = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_transcript","arguments":{"expected_revision":"7"}}}"#,
-        nowEpochSec: 1_800_000_020
-      )
-      check(expiredTr != nil && expiredTr!.contains("publication_expired"), "MCP get_transcript must report publication_expired after 15s lease")
-      _ = host.publishMcpLiveLease(generation: 7, nowEpochSec: 1_800_000_020, ttlSec: 15)
+    let searchCtx = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":5}}}"#,
+      nowEpochSec: 1_800_000_021
+    )
+    check(searchCtx != nil && searchCtx!.contains(#""citation":"S1""#), "MCP search_context must return S1 hit")
 
-      let getMin = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_minutes","arguments":{}}}"#,
-        nowEpochSec: 1_800_000_021
-      )
-      check(getMin != nil && getMin!.contains("海外渠道合同"), "MCP get_minutes must return grounded minutes")
+    let syncQwen = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"sync_qwennote_hotwords","arguments":{"hotwords":["心力豆","D3200"],"template_id":"fishbone"}}}"#,
+      nowEpochSec: 1_800_000_021
+    )
+    check(syncQwen != nil && syncQwen!.contains("fishbone"), "MCP sync_qwennote_hotwords must update hotwords and template")
 
-      let searchCtx = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"search_context","arguments":{"query":"海外渠道","limit":5}}}"#,
-        nowEpochSec: 1_800_000_021
-      )
-      check(searchCtx != nil && searchCtx!.contains(#""citation":"S1""#), "MCP search_context must return S1 hit")
+    let exportPack = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"export_koepack_v2","arguments":{"title":"Swift导出的资料包"}}}"#,
+      nowEpochSec: 1_800_000_021
+    )
+    check(exportPack != nil && exportPack!.contains("KOEPACK1"), "MCP export_koepack_v2 must emit KOEPACK1")
 
-      let syncQwen = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"sync_qwennote_hotwords","arguments":{"hotwords":["心力豆","D3200"],"template_id":"fishbone"}}}"#,
-        nowEpochSec: 1_800_000_021
-      )
-      check(syncQwen != nil && syncQwen!.contains("fishbone"), "MCP sync_qwennote_hotwords must update hotwords and template")
-
-      let exportPack = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"export_koepack_v2","arguments":{"title":"Swift导出的资料包"}}}"#,
-        nowEpochSec: 1_800_000_021
-      )
-      check(exportPack != nil && exportPack!.contains("KOEPACK1"), "MCP export_koepack_v2 must emit KOEPACK1")
-
-      if let koepackBytes {
-        check(host.putMcpSyncPack(materialId: demoHash, packBytes: koepackBytes) == 1, "putMcpSyncPack must accept valid .koepack v2")
-        var tamperedSyncPack = koepackBytes
-        tamperedSyncPack[tamperedSyncPack.count - 1] ^= 0xFF
-        check(host.putMcpSyncPack(materialId: demoHash, packBytes: tamperedSyncPack) < 0, "putMcpSyncPack must reject tampered .koepack v2")
-      }
-
-      let acpInit = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":10,"method":"acp/initialize"}"#,
-        nowEpochSec: 1_800_000_022
-      )
-      check(acpInit != nil && acpInit!.contains("aid://koe.local/native-agent"), "ACP initialize must return agent card")
-
-      let acpCard = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":11,"method":"acp/agent.card"}"#,
-        nowEpochSec: 1_800_000_022
-      )
-      check(acpCard != nil && acpCard!.contains("Koe Native Agent"), "ACP agent.card must return card metadata")
-
-      let acpSession = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":12,"method":"acp/session.start"}"#,
-        nowEpochSec: 1_800_000_022
-      )
-      check(acpSession != nil && acpSession!.contains("acp-session-1"), "ACP session.start must create acp-session-1")
-
-      let acpSend = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":13,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"海外渠道合同"}}"#,
-        nowEpochSec: 1_800_000_023
-      )
-      check(acpSend != nil && acpSend!.contains("acp-task-1") && acpSend!.contains("[S1]"), "ACP task.send must return S1 cited result")
-
-      let acpStatus = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":14,"method":"acp/task.status","params":{"taskId":"acp-task-1"}}"#,
-        nowEpochSec: 1_800_000_024
-      )
-      check(acpStatus != nil && acpStatus!.contains(#""phase":"completed""#), "ACP task.status must report completed")
-
-      let acpCancelCompleted = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":15,"method":"acp/task.cancel","params":{"taskId":"acp-task-1"}}"#,
-        nowEpochSec: 1_800_000_025
-      )
-      check(acpCancelCompleted != nil && acpCancelCompleted!.contains("-32602"), "ACP task.cancel must reject canceling completed task")
-
-      let acpSendAsync = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":16,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"海外渠道合同","async":true}}"#,
-        nowEpochSec: 1_800_000_026
-      )
-      check(acpSendAsync != nil && acpSendAsync!.contains(#""phase":"working""#), "ACP async task.send must report working")
-
-      let acpCancel = host.dispatchMcpAcpJsonRpc(
-        #"{"jsonrpc":"2.0","id":17,"method":"acp/task.cancel","params":{"taskId":"acp-task-2"}}"#,
-        nowEpochSec: 1_800_000_027
-      )
-      check(acpCancel != nil && acpCancel!.contains(#""phase":"canceled""#), "ACP task.cancel must report canceled on working task")
-
-      let st = host.refreshMcpAcpStatus()
-      check(
-        st != nil
-          && st!.mcpInitialized
-          && st!.mcpReady
-          && st!.acpInitialized
-          && st!.hasPairingTicket
-          && st!.packCount == 2
-          && st!.hotwordCount == 2
-          && st!.acpTaskCount == 2
-          && st!.liveGeneration == 7,
-        "KoeNativeHost.refreshMcpAcpStatus must reflect MCP + ACP + pack + hotword state"
-      )
+    if let koepackBytes {
+      check(host.putPack(materialId: demoHash, packBytes: koepackBytes) == 1, "putPack must accept valid .koepack v2")
+      var tamperedSyncPack = koepackBytes
+      tamperedSyncPack[tamperedSyncPack.count - 1] ^= 0xFF
+      check(host.putPack(materialId: demoHash, packBytes: tamperedSyncPack) < 0, "putPack must reject tampered .koepack v2")
     }
+
+    let acpInit = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":10,"method":"acp/initialize"}"#,
+      nowEpochSec: 1_800_000_022
+    )
+    check(acpInit != nil && acpInit!.contains("aid://koe.local/native-agent"), "ACP initialize must return agent card")
+
+    let acpCard = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":11,"method":"acp/agent.card"}"#,
+      nowEpochSec: 1_800_000_022
+    )
+    check(acpCard != nil && acpCard!.contains("Koe Native Agent"), "ACP agent.card must return card metadata")
+
+    let acpSession = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":12,"method":"acp/session.start"}"#,
+      nowEpochSec: 1_800_000_022
+    )
+    check(acpSession != nil && acpSession!.contains("acp-session-1"), "ACP session.start must create acp-session-1")
+
+    let acpSend = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":13,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"海外渠道合同"}}"#,
+      nowEpochSec: 1_800_000_023
+    )
+    check(acpSend != nil && acpSend!.contains("acp-task-1") && acpSend!.contains("[S1]"), "ACP task.send must return S1 cited result")
+
+    let acpStatus = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":14,"method":"acp/task.status","params":{"taskId":"acp-task-1"}}"#,
+      nowEpochSec: 1_800_000_024
+    )
+    check(acpStatus != nil && acpStatus!.contains(#""phase":"completed""#), "ACP task.status must report completed")
+
+    let acpCancelCompleted = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":15,"method":"acp/task.cancel","params":{"taskId":"acp-task-1"}}"#,
+      nowEpochSec: 1_800_000_025
+    )
+    check(acpCancelCompleted != nil && acpCancelCompleted!.contains("-32602"), "ACP task.cancel must reject canceling completed task")
+
+    let acpSendAsync = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":16,"method":"acp/task.send","params":{"sessionId":"acp-session-1","prompt":"海外渠道合同","async":true}}"#,
+      nowEpochSec: 1_800_000_026
+    )
+    check(acpSendAsync != nil && acpSendAsync!.contains(#""phase":"working""#), "ACP async task.send must report working")
+
+    let acpCancel = host.dispatchJsonRpc(
+      #"{"jsonrpc":"2.0","id":17,"method":"acp/task.cancel","params":{"taskId":"acp-task-2"}}"#,
+      nowEpochSec: 1_800_000_027
+    )
+    check(acpCancel != nil && acpCancel!.contains(#""phase":"canceled""#), "ACP task.cancel must report canceled on working task")
+
+    let st = host.status()
+    check(
+      st != nil
+        && st!.mcpInitialized
+        && st!.mcpReady
+        && st!.acpInitialized
+        && st!.hasPairingTicket
+        && st!.packCount == 2
+        && st!.hotwordCount == 2
+        && st!.acpTaskCount == 2
+        && st!.liveGeneration == 7,
+      "KoeMcpAcpRuntime.status must reflect MCP + ACP + pack + hotword state"
+    )
   }
 }
