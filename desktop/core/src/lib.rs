@@ -921,6 +921,7 @@ pub struct DesktopBeanHost {
     outbound_ble_frames: Vec<Vec<u8>>,
     active_template: BuiltinTemplateId,
     user_custom_headings: Vec<String>,
+    removed_builtin_headings: Vec<String>,
     pairing_ticket: Option<String>,
     pairing_mode: McpPairingMode,
     copilot_history: Vec<CopilotAnswerCard>,
@@ -981,6 +982,7 @@ impl DesktopBeanHost {
             outbound_ble_frames: Vec::new(),
             active_template: BuiltinTemplateId::Retro,
             user_custom_headings: Vec::new(),
+            removed_builtin_headings: Vec::new(),
             pairing_ticket: None,
             pairing_mode: McpPairingMode::Lan,
             copilot_history: Vec::new(),
@@ -2137,6 +2139,11 @@ impl DesktopBeanHost {
             .collect();
         let rev = self.active_aggregate.spine.revision();
 
+        let is_auto_synthesized = self
+            .minutes
+            .latest_minutes
+            .as_ref()
+            .is_none_or(|m| m.title == "实时语音流结构化纪要");
         let mut mins = self.minutes.latest_minutes.clone().unwrap_or_else(|| {
             MeetingMinutesV2 {
                 version: 2,
@@ -2154,6 +2161,15 @@ impl DesktopBeanHost {
             }
         });
         mins.spine_revision = rev;
+        if is_auto_synthesized {
+            mins.overview = first_seg.text.clone();
+            mins.decisions.clear();
+            mins.actions.clear();
+            mins.fishbones.clear();
+            mins.topics.clear();
+            mins.terms.clear();
+            mins.questions.clear();
+        }
         if mins.decisions.is_empty() {
             mins.decisions.push(MinutePoint {
                 claim: first_seg.text.clone(),
@@ -2210,16 +2226,12 @@ impl DesktopBeanHost {
             });
         }
         mins.custom_sections = self.build_grounded_custom_sections(
-            s_first,
+            Some(s_first),
             &first_seg.text,
             first_seg.speaker.clone(),
         );
-        let preserve_copying = (self.session.active_is_realtime
-            || self.session.device_recording_active)
-            && self.minutes.latest_minutes.is_none();
-        if self.minutes.latest_minutes.is_some() {
-            self.minutes.latest_minutes = Some(mins.clone());
-        }
+        let preserve_copying =
+            self.session.active_is_realtime || self.session.device_recording_active;
         let custom_count = mins.custom_sections.len();
         let custom_headings: Vec<String> = mins
             .custom_sections
@@ -2227,6 +2239,7 @@ impl DesktopBeanHost {
             .map(|s| s.heading.clone())
             .collect();
         self.active_aggregate.attach_minutes(mins);
+        self.minutes.latest_minutes = self.active_aggregate.minutes.clone();
         if let Some(first_card) = self.active_aggregate.visual_cards.first_mut() {
             first_card.highlight_box = Some(format!(
                 "{} | 模板：{}（{} 项：{}）",
@@ -2306,6 +2319,10 @@ impl DesktopBeanHost {
         Self::write_atomic(&opus_path, &fin.ogg_opus_bytes);
         Self::write_atomic(&wav_path, &fin.preview_wav_bytes);
         self.library.ingest(fin.entry.clone());
+        if self.active_aggregate.file_id != id {
+            self.active_aggregate.bookmarks.clear();
+            self.active_aggregate.duration_ms = 0;
+        }
         self.active_aggregate.file_id = id;
         self.active_aggregate.recording_id = format!("rec-{id}");
         self.active_aggregate.created_at_epoch_sec = fin.entry.created_at_epoch_sec;
@@ -2447,7 +2464,18 @@ impl DesktopBeanHost {
     pub fn save_desktop_settings(&self) -> std::io::Result<()> {
         let _ = fs::create_dir_all(&self.export_dir);
         let target = self.export_dir.join("settings.json");
-        let mut map = std::collections::BTreeMap::new();
+        let mut map = if target.exists() {
+            fs::read_to_string(&target)
+                .ok()
+                .and_then(|content| JsonValue::parse(&content).ok())
+                .and_then(|val| match val {
+                    JsonValue::Object(existing) => Some(existing),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        } else {
+            std::collections::BTreeMap::new()
+        };
         map.insert(
             "auto_launch_enabled".to_string(),
             JsonValue::Bool(self.auto_launch_enabled),
@@ -2467,11 +2495,29 @@ impl DesktopBeanHost {
         if target.exists() {
             if let Ok(content) = fs::read_to_string(&target) {
                 if let Ok(JsonValue::Object(map)) = JsonValue::parse(&content) {
-                    if let Some(JsonValue::Bool(auto_launch)) = map.get("auto_launch_enabled") {
-                        self.auto_launch_enabled = *auto_launch;
+                    match map.get("auto_launch_enabled") {
+                        Some(JsonValue::Bool(auto_launch)) => {
+                            self.auto_launch_enabled = *auto_launch;
+                        }
+                        Some(JsonValue::String(s)) if s.eq_ignore_ascii_case("true") => {
+                            self.auto_launch_enabled = true;
+                        }
+                        Some(JsonValue::String(s)) if s.eq_ignore_ascii_case("false") => {
+                            self.auto_launch_enabled = false;
+                        }
+                        _ => {}
                     }
-                    if let Some(JsonValue::Bool(keep_alive)) = map.get("keep_alive_enabled") {
-                        self.keep_alive_enabled = *keep_alive;
+                    match map.get("keep_alive_enabled") {
+                        Some(JsonValue::Bool(keep_alive)) => {
+                            self.keep_alive_enabled = *keep_alive;
+                        }
+                        Some(JsonValue::String(s)) if s.eq_ignore_ascii_case("true") => {
+                            self.keep_alive_enabled = true;
+                        }
+                        Some(JsonValue::String(s)) if s.eq_ignore_ascii_case("false") => {
+                            self.keep_alive_enabled = false;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -2502,19 +2548,24 @@ impl DesktopBeanHost {
 
     fn build_grounded_custom_sections(
         &self,
-        s_first: SegmentId,
+        s_first: Option<SegmentId>,
         claim: &str,
         speaker: Option<String>,
     ) -> Vec<MinuteCustomSection> {
         let def = self.active_template.definition();
         let tpl_label = self.active_template.label_zh();
-        let mut headings: Vec<String> =
-            def.sections_zh.iter().map(|s| (*s).to_string()).collect();
+        let mut headings: Vec<String> = def
+            .sections_zh
+            .iter()
+            .filter(|&&s| !self.removed_builtin_headings.iter().any(|r| r == s))
+            .map(|s| (*s).to_string())
+            .collect();
         for user_heading in &self.user_custom_headings {
             if !headings.iter().any(|h| h == user_heading) {
                 headings.push(user_heading.clone());
             }
         }
+        let citations: Vec<SegmentId> = s_first.into_iter().collect();
         headings
             .into_iter()
             .map(|heading| MinuteCustomSection {
@@ -2524,23 +2575,27 @@ impl DesktopBeanHost {
                     speaker: speaker.clone(),
                     owner: None,
                     due: None,
-                    citations: vec![s_first],
+                    citations: citations.clone(),
                 }],
             })
             .collect()
     }
 
     fn rebuild_template_and_custom_sections(&mut self) {
-        if self.spine.is_empty() && self.active_aggregate.spine.is_empty() {
-            let _ = self.active_aggregate.spine.append_segment(
+        if self.spine.is_empty() {
+            let model = self.asr_pump.model.clone();
+            let now_sec = self.live_lease_epoch_sec.max(1_775_000_000);
+            let _ = self.ingest_utterance_with_context(
                 "录音豆结构化纪要主干已就绪，支持模板切换与自定义分节溯源。",
                 0,
                 1_200,
                 "zh",
-                &self.asr_pump.model,
+                model,
+                now_sec,
             );
+        } else {
+            self.sync_active_aggregate();
         }
-        self.sync_active_aggregate();
     }
 
     fn build_wifi_rx_frame(cmd_type: u8, cmd_id: u8, payload: &[u8]) -> Vec<u8> {
@@ -2566,9 +2621,14 @@ impl DesktopBeanHost {
     }
 
     fn build_wifi_plain_slices(count: usize) -> Vec<u8> {
+        Self::build_wifi_plain_slices_from(0, count)
+    }
+
+    fn build_wifi_plain_slices_from(start_seq: u32, count: usize) -> Vec<u8> {
         let mut payload =
             Vec::with_capacity(count * koe_protocol_kernel::transport::SLICE_RECORD_BYTES);
-        for seq in 0..(count as u32) {
+        for offset in 0..(count as u32) {
+            let seq = start_seq.saturating_add(offset);
             payload.extend_from_slice(&seq.to_le_bytes());
             payload.push(if seq == 0 { 0x01 } else { 0x00 });
             let mut chunk = [0u8; koe_protocol_kernel::transport::OPUS_FRAME_BYTES];
@@ -2875,10 +2935,7 @@ impl DesktopBeanHost {
                     .as_ref()
                     .map(|m| m.custom_sections.clone())
                     .unwrap_or_else(|| {
-                        let s_first = active_spine
-                            .segments()
-                            .first()
-                            .map_or_else(|| SegmentId::new(1).expect("S1 is non-zero"), |s| s.id);
+                        let s_first = active_spine.segments().first().map(|s| s.id);
                         let claim = active_spine
                             .segments()
                             .first()
@@ -3006,12 +3063,16 @@ impl DesktopBeanHost {
                             for m in entry.marks_ms {
                                 let _ = self.active_aggregate.add_bookmark(m);
                             }
+                            self.sync_active_aggregate();
                         }
                     } else if self.active_aggregate.file_id == id {
                         self.active_aggregate.file_id = 0;
                         self.active_aggregate.recording_id = "rec-desktop-default".to_string();
                         self.active_aggregate.bookmarks.clear();
                         self.active_aggregate.duration_ms = 0;
+                        self.last_copilot_card = None;
+                        self.copilot_history.clear();
+                        self.sync_active_aggregate();
                     }
                 }
             }
@@ -3029,6 +3090,7 @@ impl DesktopBeanHost {
                             for m in entry.marks_ms {
                                 let _ = self.active_aggregate.add_bookmark(m);
                             }
+                            self.sync_active_aggregate();
                         }
                     }
                 }
@@ -3039,20 +3101,37 @@ impl DesktopBeanHost {
             }
             WorkspaceCommand::SelectMinuteTemplate(template) => {
                 self.active_template = template;
+                self.removed_builtin_headings.clear();
                 self.rebuild_template_and_custom_sections();
             }
             WorkspaceCommand::AddCustomMinuteSection { heading } => {
                 let trimmed = heading.trim();
-                if !trimmed.is_empty()
-                    && !self.user_custom_headings.iter().any(|h| h == trimmed)
-                {
-                    self.user_custom_headings.push(trimmed.to_string());
+                if !trimmed.is_empty() {
+                    self.removed_builtin_headings.retain(|h| h != trimmed);
+                    if !self
+                        .active_template
+                        .definition()
+                        .sections_zh
+                        .contains(&trimmed)
+                        && !self.user_custom_headings.iter().any(|h| h == trimmed)
+                    {
+                        self.user_custom_headings.push(trimmed.to_string());
+                    }
                 }
                 self.rebuild_template_and_custom_sections();
             }
             WorkspaceCommand::RemoveCustomMinuteSection { heading } => {
                 let trimmed = heading.trim();
                 self.user_custom_headings.retain(|h| h != trimmed);
+                if self
+                    .active_template
+                    .definition()
+                    .sections_zh
+                    .contains(&trimmed)
+                    && !self.removed_builtin_headings.iter().any(|h| h == trimmed)
+                {
+                    self.removed_builtin_headings.push(trimmed.to_string());
+                }
                 self.rebuild_template_and_custom_sections();
             }
             WorkspaceCommand::IssuePairingTicket {
@@ -3124,24 +3203,58 @@ impl DesktopBeanHost {
                         let _ = self.on_wifi_interrupted(ts);
                     }
                     WifiSoftApAction::ResumeAndComplete => {
-                        let _ = self.resume_wifi_batch();
+                        let initial_phase = self.session.wifi_batch_progress().phase;
+                        if initial_phase == WifiBatchPhase::Interrupted {
+                            let _ = self.resume_wifi_batch();
+                        } else if initial_phase == WifiBatchPhase::Idle {
+                            let wifi_resp = Self::build_wifi_rx_frame(
+                                0x1A,
+                                0x05,
+                                &[1, 4, 168, 192, 0x02, 0x7D],
+                            );
+                            let _ = self.ingest_ble_chunk(&wifi_resp, ts);
+                            let file_ids: Vec<u32> = if !self.session.catalog.is_empty() {
+                                self.session.catalog.iter().map(|e| e.file_id).collect()
+                            } else {
+                                vec![101, 102]
+                            };
+                            self.begin_wifi_batch(&file_ids);
+                        }
                         for _ in 0..8 {
                             let prog = self.session.wifi_batch_progress();
                             if matches!(
                                 prog.phase,
-                                WifiBatchPhase::Completed | WifiBatchPhase::Idle
+                                WifiBatchPhase::Completed
+                                    | WifiBatchPhase::Idle
+                                    | WifiBatchPhase::Failed
                             ) {
                                 break;
                             }
                             let fid = self.session.active_file_id.unwrap_or(102);
-                            let total_bytes =
-                                (10 * koe_protocol_kernel::transport::SLICE_RECORD_BYTES) as u32;
-                            let _ = self.ingest_wifi_chunk(
-                                &Self::build_wifi_short_head(fid, total_bytes),
-                                ts,
-                            );
-                            let _ =
-                                self.ingest_wifi_chunk(&Self::build_wifi_plain_slices(10), ts);
+                            let cur_slices = self.session.received_slice_count();
+                            if cur_slices > 0 {
+                                let expected_slices = (prog.expected_wire_bytes as usize
+                                    / koe_protocol_kernel::transport::SLICE_RECORD_BYTES)
+                                    .max(cur_slices as usize + 1);
+                                let rem_slices =
+                                    expected_slices.saturating_sub(cur_slices as usize).max(1);
+                                let _ = self.ingest_wifi_chunk(
+                                    &Self::build_wifi_plain_slices_from(cur_slices, rem_slices),
+                                    ts,
+                                );
+                            } else {
+                                let total_bytes =
+                                    (10 * koe_protocol_kernel::transport::SLICE_RECORD_BYTES)
+                                        as u32;
+                                let _ = self.ingest_wifi_chunk(
+                                    &Self::build_wifi_short_head(fid, total_bytes),
+                                    ts,
+                                );
+                                let _ = self.ingest_wifi_chunk(
+                                    &Self::build_wifi_plain_slices_from(0, 10),
+                                    ts,
+                                );
+                            }
                         }
                     }
                     WifiSoftApAction::Cancel => {

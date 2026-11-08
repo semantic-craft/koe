@@ -1398,7 +1398,7 @@ impl KoeDesktopApp {
         }
 
         let mut custom_list = div().flex().flex_col().gap_1p5();
-        for (idx, sec) in proj.formats.custom_sections.iter().enumerate() {
+        for sec in &proj.formats.custom_sections {
             let first_claim = sec
                 .points
                 .first()
@@ -1410,7 +1410,7 @@ impl KoeDesktopApp {
                 .flat_map(|p| p.citations.iter().map(|c| format!("[{c}]")))
                 .collect();
             let heading_for_rm = sec.heading.clone();
-            let rm_id: SharedString = format!("btn-rm-custom-sec-{idx}").into();
+            let rm_id: SharedString = format!("btn-rm-custom-sec-{}", sec.heading).into();
             custom_list = custom_list.child(
                 div()
                     .p_2()

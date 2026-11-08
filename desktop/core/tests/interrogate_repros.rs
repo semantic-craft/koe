@@ -441,3 +441,141 @@ fn repro_6_slice_r_coarse_place_trash_sync_dynamic_date_speaker_and_1a07_tx() {
         "RetriggerRealtimeStream did not queue the 1A/07 outbound BLE frame!"
     );
 }
+
+#[test]
+fn repro_7_slice_s_wifi_resume_from_transferring_cancel_cleanup_builtin_section_remove_empty_spine_and_settings_merge(
+) {
+    use koe_desktop_core::{
+        BuiltinTemplateId, WifiBatchPhase, WifiSoftApAction, WorkspaceCommand,
+    };
+
+    let dir = temp_dir("repro-7");
+    let mut host_empty = DesktopBeanHost::new(&dir);
+    let proj_fresh = host_empty.workspace_projection(1_796_260_000);
+    let fresh_custom_citations_valid = proj_fresh
+        .formats
+        .custom_sections
+        .iter()
+        .flat_map(|s| s.points.iter())
+        .flat_map(|p| p.citations.iter())
+        .all(|&c| proj_fresh.active_aggregate.spine.validate_citation(c));
+
+    let proj_after_tpl = host_empty.dispatch(
+        WorkspaceCommand::SelectMinuteTemplate(BuiltinTemplateId::Fishbone),
+        1_796_260_001,
+    );
+    let host_spine_synced = !host_empty.spine().is_empty()
+        && proj_after_tpl
+            .active_aggregate
+            .visual_cards
+            .iter()
+            .all(|c| c.validate_citations(host_empty.spine()))
+        && host_empty.minutes().latest_minutes.is_some();
+
+    let proj_after_rm_builtin = host_empty.dispatch(
+        WorkspaceCommand::RemoveCustomMinuteSection {
+            heading: "根因假设".to_string(),
+        },
+        1_796_260_002,
+    );
+    let still_has_removed_builtin = proj_after_rm_builtin
+        .formats
+        .custom_sections
+        .iter()
+        .any(|s| s.heading == "根因假设");
+
+    let mut host_wifi = DesktopBeanHost::new(&dir);
+    let _ = host_wifi.dispatch(WorkspaceCommand::AddSliceMark(5_000), 1_796_260_010);
+    let _ = host_wifi.dispatch(
+        WorkspaceCommand::ControlWifiSoftApBatch {
+            action: WifiSoftApAction::StartDefaultSoftAp,
+            now_epoch_sec: 1_796_260_011,
+        },
+        1_796_260_011,
+    );
+    let proj_direct_complete = host_wifi.dispatch(
+        WorkspaceCommand::ControlWifiSoftApBatch {
+            action: WifiSoftApAction::ResumeAndComplete,
+            now_epoch_sec: 1_796_260_012,
+        },
+        1_796_260_012,
+    );
+    let stale_bookmark_leaked = proj_direct_complete
+        .active_aggregate
+        .bookmarks
+        .contains(&5_000);
+
+    let proj_cancelled = host_wifi.dispatch(
+        WorkspaceCommand::ControlWifiSoftApBatch {
+            action: WifiSoftApAction::Cancel,
+            now_epoch_sec: 1_796_260_013,
+        },
+        1_796_260_013,
+    );
+
+    let settings_dir = temp_dir("repro-7-settings");
+    fs::write(
+        settings_dir.join("settings.json"),
+        r#"{"auto_launch_enabled":"true","keep_alive_enabled":false,"custom_theme":"warm_paper"}"#,
+    )
+    .unwrap();
+    let mut host_cfg = DesktopBeanHost::new(&settings_dir);
+    let loaded_string_bool = host_cfg.projection().settings.auto_launch_enabled;
+    let _ = host_cfg.dispatch(WorkspaceCommand::SetKeepAlive(true), 1_796_260_020);
+    let saved_raw = fs::read_to_string(settings_dir.join("settings.json")).unwrap();
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&settings_dir);
+
+    assert!(
+        fresh_custom_citations_valid,
+        "workspace_projection on fresh empty host fabricated [S1] citations against an empty spine!"
+    );
+    assert!(
+        host_spine_synced,
+        "SelectMinuteTemplate on empty host left host.spine() empty or minutes.latest_minutes None!"
+    );
+    assert!(
+        !still_has_removed_builtin,
+        "RemoveCustomMinuteSection on built-in heading '客户需求' was a silent no-op!"
+    );
+    assert_eq!(
+        proj_direct_complete.wifi_batch.phase,
+        WifiBatchPhase::Completed,
+        "StartDefaultSoftAp -> ResumeAndComplete (without Interrupt) got stuck in {:?}!",
+        proj_direct_complete.wifi_batch.phase
+    );
+    assert_eq!(
+        proj_direct_complete.wifi_batch.finalized_count, 2,
+        "Direct ResumeAndComplete finalized {} files instead of 2!",
+        proj_direct_complete.wifi_batch.finalized_count
+    );
+    assert!(
+        !stale_bookmark_leaked,
+        "persist_finalized leaked bookmark 5000ms from previous aggregate into finalized file {:?}!",
+        proj_direct_complete.active_aggregate.bookmarks
+    );
+    assert_eq!(
+        proj_cancelled.wifi_batch.finalized_count, 0,
+        "Cancel left stale finalized_count={}!",
+        proj_cancelled.wifi_batch.finalized_count
+    );
+    assert_eq!(
+        proj_cancelled.wifi_batch.salvaged_count, 0,
+        "Cancel left stale salvaged_count={}!",
+        proj_cancelled.wifi_batch.salvaged_count
+    );
+    assert!(
+        proj_cancelled.wifi_endpoint.is_none(),
+        "Cancel left stale wifi_endpoint={:?}!",
+        proj_cancelled.wifi_endpoint
+    );
+    assert!(
+        loaded_string_bool,
+        "load_desktop_settings ignored string boolean \"true\"!"
+    );
+    assert!(
+        saved_raw.contains("warm_paper"),
+        "save_desktop_settings clobbered extra key custom_theme in settings.json: {saved_raw}"
+    );
+}
