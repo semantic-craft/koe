@@ -57,8 +57,9 @@ pub use koe_protocol_kernel::mcp_acp::{
 pub use koe_protocol_kernel::minutes::{
     contains_calculation_phrase, contains_percentage, encode_qwen_stream_finish_task_json,
     encode_qwen_stream_run_task_json, validate_calculation_grounding, validate_minutes_grounding,
-    JsonValue, MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState, MinutesValidationError,
-    QwenStreamAccumulator, QwenStreamStep, BUILTIN_MINUTE_TEMPLATES, QWEN_STREAMING_DEFAULT_MODEL,
+    BuiltinMinuteTemplate, JsonValue, MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState,
+    MinutesValidationError, QwenStreamAccumulator, QwenStreamStep, BUILTIN_MINUTE_TEMPLATES,
+    QWEN_FILETRANS_DEFAULT_MODEL, QWEN_STREAMING_DEFAULT_MODEL,
 };
 pub use koe_protocol_kernel::models::{DeviceInfoModel, OfflineFileEntry, OfflineFileList};
 pub use koe_protocol_kernel::ogg_opus::OggOpus;
@@ -528,6 +529,152 @@ pub struct GoogleKeepNoteSnapshot {
     pub updated_at_epoch_sec: u64,
 }
 
+/// Strongly-typed built-in meeting minutes template identifier matching [`BUILTIN_MINUTE_TEMPLATES`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum BuiltinTemplateId {
+    /// Agile retrospective template (`"retro"`).
+    #[default]
+    Retro,
+    /// Fishbone root-cause analysis template (`"fishbone"`).
+    Fishbone,
+    /// Daily standup template (`"standup"`).
+    Standup,
+    /// One-on-one check-in template (`"one-on-one"`).
+    OneOnOne,
+    /// Candidate interview template (`"interview"`).
+    Interview,
+}
+
+impl BuiltinTemplateId {
+    /// Canonical list of all five built-in meeting minutes templates in display order.
+    pub const ALL: [Self; 5] = [
+        Self::Retro,
+        Self::Fishbone,
+        Self::Standup,
+        Self::OneOnOne,
+        Self::Interview,
+    ];
+
+    /// Returns the canonical wire identifier for this template.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Retro => "retro",
+            Self::Fishbone => "fishbone",
+            Self::Standup => "standup",
+            Self::OneOnOne => "one-on-one",
+            Self::Interview => "interview",
+        }
+    }
+
+    /// Returns the canonical wire identifier for this template.
+    #[must_use]
+    pub const fn id_str(&self) -> &'static str {
+        self.as_str()
+    }
+
+    /// Returns the localized Chinese display label for this template.
+    #[must_use]
+    pub const fn label_zh(&self) -> &'static str {
+        match self {
+            Self::Retro => "敏捷复盘",
+            Self::Fishbone => "鱼骨根因",
+            Self::Standup => "每日站会",
+            Self::OneOnOne => "1对1沟通",
+            Self::Interview => "候选人访谈",
+        }
+    }
+
+    /// Returns the static [`BuiltinMinuteTemplate`] definition from [`BUILTIN_MINUTE_TEMPLATES`].
+    #[must_use]
+    pub const fn definition(&self) -> &'static BuiltinMinuteTemplate {
+        match self {
+            Self::Retro => &BUILTIN_MINUTE_TEMPLATES[0],
+            Self::Fishbone => &BUILTIN_MINUTE_TEMPLATES[1],
+            Self::Standup => &BUILTIN_MINUTE_TEMPLATES[2],
+            Self::OneOnOne => &BUILTIN_MINUTE_TEMPLATES[3],
+            Self::Interview => &BUILTIN_MINUTE_TEMPLATES[4],
+        }
+    }
+}
+
+/// Value snapshot of the formats and structured minutes template workspace (`"心力格式"`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatsWorkspaceSnapshot {
+    /// Active summary presentation format.
+    pub selected_format: SummaryFormat,
+    /// Active built-in meeting minutes template.
+    pub active_template: BuiltinTemplateId,
+    /// Localized Chinese section headings from `active_template`.
+    pub builtin_sections_zh: Vec<String>,
+    /// Grounded custom and template-derived sections on the active minutes.
+    pub custom_sections: Vec<MinuteCustomSection>,
+}
+
+/// Value snapshot of the Aliyun DashScope ASR and Qwen minutes configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashScopeConfigSnapshot {
+    /// Active streaming ASR model identifier (`"paraformer-realtime-v2"`).
+    pub streaming_asr_model: String,
+    /// Active batch file transcription model identifier (`"qwen-audio-3.1-asr-flash-filetrans"`).
+    pub filetrans_asr_model: String,
+    /// Whether a cloud WebSocket ASR stream is currently attached.
+    pub cloud_ws_attached: bool,
+    /// Total outbound WebSocket ASR frames queued by the pump.
+    pub queued_asr_frames: u64,
+    /// Total speech windows autonomously committed to the utterance spine.
+    pub committed_speech_windows: u32,
+    /// Total custom hotwords registered in the workspace.
+    pub active_hotword_count: usize,
+    /// Whether `DASHSCOPE_API_KEY` is present and non-empty in the environment (boolean only).
+    pub api_key_configured: bool,
+}
+
+/// Value snapshot of the Aliyun DashScope and local/VPS MCP/ACP console (`"阿里云与 MCP"`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliyunMcpWorkspaceSnapshot {
+    /// DashScope streaming and batch ASR configuration status.
+    pub dashscope: DashScopeConfigSnapshot,
+    /// Active `KOEMCP1.<base64url>` pairing ticket, if issued.
+    pub pairing_ticket: Option<String>,
+    /// Active network pairing mode (`Lan` or `Vps`).
+    pub pairing_mode: McpPairingMode,
+    /// Current `live.json` publication lease generation (`0` if unpublished).
+    pub live_generation: u64,
+    /// Expiration timestamp in Unix epoch seconds for the active `live.json` lease (`0` if unpublished).
+    pub live_lease_expires_at_epoch_sec: u64,
+    /// Ready-to-copy JSON configuration snippet for `--mcp-stdio` integration.
+    pub mcp_stdio_config_json: String,
+    /// Chronological history of Ask AI Copilot answer cards generated during the session.
+    pub copilot_history: Vec<CopilotAnswerCard>,
+}
+
+/// Control action for the D3200 Wi-Fi SoftAP (`1A/05`, `192.168.4.1:32002`) fast batch transfer state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifiSoftApAction {
+    /// Binds the default `192.168.4.1:32002` SoftAP endpoint (`1A/05`) and begins a batch transfer.
+    StartDefaultSoftAp,
+    /// Simulates or triggers a mid-batch SoftAP link interruption, salvaging files `>= 95%`.
+    Interrupt,
+    /// Resumes and completes the active SoftAP batch, exporting finalized audio to the local library.
+    ResumeAndComplete,
+    /// Cancels the active or interrupted SoftAP batch and resets to `WifiBatchPhase::Idle`.
+    Cancel,
+}
+
+/// Value snapshot of persistent desktop host settings and SoftAP configuration (`"设置与自检"`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopSettingsSnapshot {
+    /// Whether launch-at-login is enabled in `settings.json`.
+    pub auto_launch_enabled: bool,
+    /// Whether background keep-alive is enabled in `settings.json`.
+    pub keep_alive_enabled: bool,
+    /// Formatted label for the active or default `1A/05` SoftAP endpoint (`"192.168.4.1:32002"`).
+    pub softap_endpoint_label: String,
+    /// Display path to the persistent `settings.json` file on disk.
+    pub settings_path_display: String,
+}
+
 /// Pure immutable UI projection of the entire desktop workspace at a point in time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceProjection {
@@ -595,6 +742,12 @@ pub struct WorkspaceProjection {
     pub hot_words: Vec<String>,
     /// Active `(old_speaker, new_speaker)` aliases applied across the workspace.
     pub speaker_aliases: Vec<(String, String)>,
+    /// Formats and structured minutes template workspace snapshot (`"心力格式"`).
+    pub formats: FormatsWorkspaceSnapshot,
+    /// Aliyun DashScope and local/VPS MCP/ACP console snapshot (`"阿里云与 MCP"`).
+    pub aliyun_mcp: AliyunMcpWorkspaceSnapshot,
+    /// Persistent desktop settings and SoftAP configuration snapshot (`"设置与自检"`).
+    pub settings: DesktopSettingsSnapshot,
 }
 
 /// Unidirectional command dispatched from the GPUI view layer to [`DesktopBeanHost::dispatch`].
@@ -625,6 +778,40 @@ pub enum WorkspaceCommand {
     UndoTrash,
     /// Switches the active [`SummaryFormat`] and re-synthesizes the 6 editorial visual cards.
     SelectSummaryFormat(SummaryFormat),
+    /// Switches the active built-in meeting minutes template and re-synthesizes the 6 visual cards.
+    SelectMinuteTemplate(BuiltinTemplateId),
+    /// Appends a user-defined custom minutes section heading and re-synthesizes the 6 visual cards.
+    AddCustomMinuteSection {
+        /// Custom section heading title.
+        heading: String,
+    },
+    /// Removes a user-defined custom minutes section heading and re-synthesizes the 6 visual cards.
+    RemoveCustomMinuteSection {
+        /// Custom section heading title to remove.
+        heading: String,
+    },
+    /// Issues a `KOEMCP1.<base64url>` pairing ticket in `Lan` or `Vps` mode.
+    IssuePairingTicket {
+        /// Network pairing mode (`Lan` or `Vps`).
+        mode: McpPairingMode,
+        /// Optional account email bound to the pairing ticket.
+        email: Option<String>,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
+    /// Generates and caches the `--mcp-stdio` JSON configuration snippet.
+    GenerateMcpStdioConfig,
+    /// Updates and persists the launch-at-login preference in `settings.json`.
+    SetAutoLaunch(bool),
+    /// Updates and persists the background keep-alive preference in `settings.json`.
+    SetKeepAlive(bool),
+    /// Drives the D3200 Wi-Fi SoftAP (`1A/05`, `192.168.4.1:32002`) batch transfer state machine.
+    ControlWifiSoftApBatch {
+        /// SoftAP batch control action.
+        action: WifiSoftApAction,
+        /// Wall-clock timestamp in Unix epoch seconds.
+        now_epoch_sec: u64,
+    },
     /// Updates the privacy-redacted coarse place label on the active recording aggregate.
     SetCoarsePlace(Option<String>),
     /// Appends a finalized utterance segment and indexes it into context, todos, and search.
@@ -732,6 +919,13 @@ pub struct DesktopBeanHost {
     speaker_aliases: Vec<(String, String)>,
     live_lease_epoch_sec: u64,
     outbound_ble_frames: Vec<Vec<u8>>,
+    active_template: BuiltinTemplateId,
+    user_custom_headings: Vec<String>,
+    pairing_ticket: Option<String>,
+    pairing_mode: McpPairingMode,
+    copilot_history: Vec<CopilotAnswerCard>,
+    auto_launch_enabled: bool,
+    keep_alive_enabled: bool,
 }
 
 impl DesktopBeanHost {
@@ -785,8 +979,23 @@ impl DesktopBeanHost {
             speaker_aliases: Vec::new(),
             live_lease_epoch_sec: 1_775_000_000,
             outbound_ble_frames: Vec::new(),
+            active_template: BuiltinTemplateId::Retro,
+            user_custom_headings: Vec::new(),
+            pairing_ticket: None,
+            pairing_mode: McpPairingMode::Lan,
+            copilot_history: Vec::new(),
+            auto_launch_enabled: false,
+            keep_alive_enabled: false,
         };
         let _ = host.load_google_suite();
+        let _ = host.load_desktop_settings();
+        let _ = host.issue_pairing_ticket(
+            "http://127.0.0.1:38450/mcp",
+            "koe-lan-default-bearer-token-32b",
+            McpPairingMode::Lan,
+            None,
+            Some(1_775_086_400),
+        );
         host
     }
 
@@ -1140,8 +1349,16 @@ impl DesktopBeanHost {
         email: Option<&str>,
         expires_at_epoch_sec: Option<u64>,
     ) -> Result<String, McpToolError> {
-        self.mcp_acp
-            .configure_pairing(base_url, token, mode, email, expires_at_epoch_sec)
+        let ticket = self.mcp_acp.configure_pairing(
+            base_url,
+            token,
+            mode,
+            email,
+            expires_at_epoch_sec,
+        )?;
+        self.pairing_mode = mode;
+        self.pairing_ticket = Some(ticket.clone());
+        Ok(ticket)
     }
 
     /// Verifies an HTTP `Authorization: Bearer <token>` header at `now_epoch_sec`.
@@ -1992,10 +2209,33 @@ impl DesktopBeanHost {
                 citations: vec![s_last],
             });
         }
+        mins.custom_sections = self.build_grounded_custom_sections(
+            s_first,
+            &first_seg.text,
+            first_seg.speaker.clone(),
+        );
         let preserve_copying = (self.session.active_is_realtime
             || self.session.device_recording_active)
             && self.minutes.latest_minutes.is_none();
+        if self.minutes.latest_minutes.is_some() {
+            self.minutes.latest_minutes = Some(mins.clone());
+        }
+        let custom_count = mins.custom_sections.len();
+        let custom_headings: Vec<String> = mins
+            .custom_sections
+            .iter()
+            .map(|s| s.heading.clone())
+            .collect();
         self.active_aggregate.attach_minutes(mins);
+        if let Some(first_card) = self.active_aggregate.visual_cards.first_mut() {
+            first_card.highlight_box = Some(format!(
+                "{} | 模板：{}（{} 项：{}）",
+                self.active_aggregate.selected_format.label_zh(),
+                self.active_template.label_zh(),
+                custom_count,
+                custom_headings.join(" / "),
+            ));
+        }
         if preserve_copying {
             self.active_aggregate
                 .set_phase(RecordingLifecyclePhase::Copying);
@@ -2201,6 +2441,143 @@ impl DesktopBeanHost {
             }
         }
         Ok(())
+    }
+
+    /// Atomically persists `settings.json` (`auto_launch_enabled` and `keep_alive_enabled`) to the export directory.
+    pub fn save_desktop_settings(&self) -> std::io::Result<()> {
+        let _ = fs::create_dir_all(&self.export_dir);
+        let target = self.export_dir.join("settings.json");
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "auto_launch_enabled".to_string(),
+            JsonValue::Bool(self.auto_launch_enabled),
+        );
+        map.insert(
+            "keep_alive_enabled".to_string(),
+            JsonValue::Bool(self.keep_alive_enabled),
+        );
+        let json_bytes = JsonValue::Object(map).to_json_string().into_bytes();
+        Self::write_atomic(&target, &json_bytes);
+        Ok(())
+    }
+
+    /// Loads and restores `settings.json` (`auto_launch_enabled` and `keep_alive_enabled`) from the export directory if present.
+    pub fn load_desktop_settings(&mut self) -> std::io::Result<()> {
+        let target = self.export_dir.join("settings.json");
+        if target.exists() {
+            if let Ok(content) = fs::read_to_string(&target) {
+                if let Ok(JsonValue::Object(map)) = JsonValue::parse(&content) {
+                    if let Some(JsonValue::Bool(auto_launch)) = map.get("auto_launch_enabled") {
+                        self.auto_launch_enabled = *auto_launch;
+                    }
+                    if let Some(JsonValue::Bool(keep_alive)) = map.get("keep_alive_enabled") {
+                        self.keep_alive_enabled = *keep_alive;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn build_mcp_stdio_config_json(&self) -> String {
+        let mut server_obj = std::collections::BTreeMap::new();
+        server_obj.insert(
+            "command".to_string(),
+            JsonValue::String("koe-suixin-desktop".to_string()),
+        );
+        server_obj.insert(
+            "args".to_string(),
+            JsonValue::Array(vec![
+                JsonValue::String("--mcp-stdio".to_string()),
+                JsonValue::String("--workspace".to_string()),
+                JsonValue::String(self.export_dir.display().to_string()),
+            ]),
+        );
+        let mut servers_obj = std::collections::BTreeMap::new();
+        servers_obj.insert("koe".to_string(), JsonValue::Object(server_obj));
+        let mut root = std::collections::BTreeMap::new();
+        root.insert("mcpServers".to_string(), JsonValue::Object(servers_obj));
+        JsonValue::Object(root).to_json_string()
+    }
+
+    fn build_grounded_custom_sections(
+        &self,
+        s_first: SegmentId,
+        claim: &str,
+        speaker: Option<String>,
+    ) -> Vec<MinuteCustomSection> {
+        let def = self.active_template.definition();
+        let tpl_label = self.active_template.label_zh();
+        let mut headings: Vec<String> =
+            def.sections_zh.iter().map(|s| (*s).to_string()).collect();
+        for user_heading in &self.user_custom_headings {
+            if !headings.iter().any(|h| h == user_heading) {
+                headings.push(user_heading.clone());
+            }
+        }
+        headings
+            .into_iter()
+            .map(|heading| MinuteCustomSection {
+                heading: heading.clone(),
+                points: vec![MinutePoint {
+                    claim: format!("【{tpl_label}】{heading}：{claim}"),
+                    speaker: speaker.clone(),
+                    owner: None,
+                    due: None,
+                    citations: vec![s_first],
+                }],
+            })
+            .collect()
+    }
+
+    fn rebuild_template_and_custom_sections(&mut self) {
+        if self.spine.is_empty() && self.active_aggregate.spine.is_empty() {
+            let _ = self.active_aggregate.spine.append_segment(
+                "录音豆结构化纪要主干已就绪，支持模板切换与自定义分节溯源。",
+                0,
+                1_200,
+                "zh",
+                &self.asr_pump.model,
+            );
+        }
+        self.sync_active_aggregate();
+    }
+
+    fn build_wifi_rx_frame(cmd_type: u8, cmd_id: u8, payload: &[u8]) -> Vec<u8> {
+        let total_len = (9 + payload.len() + 1) as u16;
+        let mut frame = Vec::with_capacity(usize::from(total_len));
+        frame.extend_from_slice(&koe_protocol_kernel::frame::RX_MAGIC);
+        frame.push(0x01);
+        frame.push(cmd_type);
+        frame.push(cmd_id);
+        frame.push((total_len & 0xFF) as u8);
+        frame.push(((total_len >> 8) & 0xFF) as u8);
+        frame.extend_from_slice(payload);
+        let csum = ProtocolFrame::checksum(&frame);
+        frame.push(csum);
+        frame
+    }
+
+    fn build_wifi_short_head(file_id: u32, file_size: u32) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(8);
+        payload.extend_from_slice(&file_id.to_le_bytes());
+        payload.extend_from_slice(&file_size.to_le_bytes());
+        Self::build_wifi_rx_frame(0x1A, 0x07, &payload)
+    }
+
+    fn build_wifi_plain_slices(count: usize) -> Vec<u8> {
+        let mut payload =
+            Vec::with_capacity(count * koe_protocol_kernel::transport::SLICE_RECORD_BYTES);
+        for seq in 0..(count as u32) {
+            payload.extend_from_slice(&seq.to_le_bytes());
+            payload.push(if seq == 0 { 0x01 } else { 0x00 });
+            let mut chunk = [0u8; koe_protocol_kernel::transport::OPUS_FRAME_BYTES];
+            let src = &koe_protocol_kernel::session::REAL_OPUS_20MS_440HZ_PACKET;
+            chunk[..src.len()].copy_from_slice(src);
+            payload.extend_from_slice(&chunk);
+            payload.push(0x00);
+        }
+        Self::build_wifi_rx_frame(0x1A, 0x08, &payload)
     }
 
     /// Returns the projects tracked in this workspace.
@@ -2482,6 +2859,67 @@ impl DesktopBeanHost {
             last_jsonrpc_response: self.last_jsonrpc_response.clone(),
             hot_words: self.minutes.hot_words.clone(),
             speaker_aliases: self.speaker_aliases.clone(),
+            formats: FormatsWorkspaceSnapshot {
+                selected_format: self.active_aggregate.selected_format,
+                active_template: self.active_template,
+                builtin_sections_zh: self
+                    .active_template
+                    .definition()
+                    .sections_zh
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect(),
+                custom_sections: self
+                    .active_aggregate
+                    .minutes
+                    .as_ref()
+                    .map(|m| m.custom_sections.clone())
+                    .unwrap_or_else(|| {
+                        let s_first = active_spine
+                            .segments()
+                            .first()
+                            .map_or_else(|| SegmentId::new(1).expect("S1 is non-zero"), |s| s.id);
+                        let claim = active_spine
+                            .segments()
+                            .first()
+                            .map_or("录音豆结构化纪要主干已就绪", |s| s.text.as_str());
+                        let speaker = active_spine
+                            .segments()
+                            .first()
+                            .and_then(|s| s.speaker.clone());
+                        self.build_grounded_custom_sections(s_first, claim, speaker)
+                    }),
+            },
+            aliyun_mcp: AliyunMcpWorkspaceSnapshot {
+                dashscope: DashScopeConfigSnapshot {
+                    streaming_asr_model: self.asr_pump.model.clone(),
+                    filetrans_asr_model: QWEN_FILETRANS_DEFAULT_MODEL.to_string(),
+                    cloud_ws_attached: self.asr_pump.cloud_ws_attached,
+                    queued_asr_frames: self.asr_pump.queued_frame_count,
+                    committed_speech_windows: self.asr_pump.committed_windows,
+                    active_hotword_count: self.minutes.hot_words.len(),
+                    api_key_configured: std::env::var_os("DASHSCOPE_API_KEY")
+                        .is_some_and(|v| !v.is_empty()),
+                },
+                pairing_ticket: self.pairing_ticket.clone(),
+                pairing_mode: self.pairing_mode,
+                live_generation: self.mcp_acp.live_lease.map_or(0, |l| l.generation),
+                live_lease_expires_at_epoch_sec: self
+                    .mcp_acp
+                    .live_lease
+                    .map_or(0, |l| l.expires_at_epoch_sec),
+                mcp_stdio_config_json: self.build_mcp_stdio_config_json(),
+                copilot_history: self.copilot_history.clone(),
+            },
+            settings: DesktopSettingsSnapshot {
+                auto_launch_enabled: self.auto_launch_enabled,
+                keep_alive_enabled: self.keep_alive_enabled,
+                softap_endpoint_label: self.session.wifi_endpoint.map_or_else(
+                    || "192.168.4.1:32002 (待连接)".to_string(),
+                    |ep| format!("{}.{}.{}.{}:{}", ep.ip[0], ep.ip[1], ep.ip[2], ep.ip[3], ep.port),
+                ),
+                settings_path_display: self.export_dir.join("settings.json").display().to_string(),
+            },
         }
     }
 
@@ -2597,7 +3035,119 @@ impl DesktopBeanHost {
             }
             WorkspaceCommand::SelectSummaryFormat(format) => {
                 self.set_summary_format(format);
-                self.ensure_six_editorial_cards();
+                self.rebuild_template_and_custom_sections();
+            }
+            WorkspaceCommand::SelectMinuteTemplate(template) => {
+                self.active_template = template;
+                self.rebuild_template_and_custom_sections();
+            }
+            WorkspaceCommand::AddCustomMinuteSection { heading } => {
+                let trimmed = heading.trim();
+                if !trimmed.is_empty()
+                    && !self.user_custom_headings.iter().any(|h| h == trimmed)
+                {
+                    self.user_custom_headings.push(trimmed.to_string());
+                }
+                self.rebuild_template_and_custom_sections();
+            }
+            WorkspaceCommand::RemoveCustomMinuteSection { heading } => {
+                let trimmed = heading.trim();
+                self.user_custom_headings.retain(|h| h != trimmed);
+                self.rebuild_template_and_custom_sections();
+            }
+            WorkspaceCommand::IssuePairingTicket {
+                mode,
+                email,
+                now_epoch_sec: ticket_sec,
+            } => {
+                let ts = ticket_sec.max(effective_now_sec);
+                let base_url = match mode {
+                    McpPairingMode::Lan => "http://127.0.0.1:38450/mcp",
+                    McpPairingMode::Vps => "https://koe-tunnel.trycloudflare.com/mcp",
+                };
+                let token = format!("koe-pairing-bearer-token-{ts}");
+                let effective_email = match mode {
+                    McpPairingMode::Lan => email.as_deref(),
+                    McpPairingMode::Vps => {
+                        Some(email.as_deref().unwrap_or("owner@koe.local"))
+                    }
+                };
+                let expires = Some(ts.saturating_add(86_400));
+                let _ = self.issue_pairing_ticket(
+                    base_url,
+                    &token,
+                    mode,
+                    effective_email,
+                    expires,
+                );
+            }
+            WorkspaceCommand::GenerateMcpStdioConfig => {
+                self.last_jsonrpc_response = self.build_mcp_stdio_config_json();
+            }
+            WorkspaceCommand::SetAutoLaunch(enabled) => {
+                self.auto_launch_enabled = enabled;
+                let _ = self.save_desktop_settings();
+            }
+            WorkspaceCommand::SetKeepAlive(enabled) => {
+                self.keep_alive_enabled = enabled;
+                let _ = self.save_desktop_settings();
+            }
+            WorkspaceCommand::ControlWifiSoftApBatch {
+                action,
+                now_epoch_sec: wifi_sec,
+            } => {
+                let ts = wifi_sec.max(effective_now_sec);
+                match action {
+                    WifiSoftApAction::StartDefaultSoftAp => {
+                        let wifi_resp = Self::build_wifi_rx_frame(
+                            0x1A,
+                            0x05,
+                            &[1, 4, 168, 192, 0x02, 0x7D],
+                        );
+                        let _ = self.ingest_ble_chunk(&wifi_resp, ts);
+                        let file_ids: Vec<u32> = if !self.session.catalog.is_empty() {
+                            self.session.catalog.iter().map(|e| e.file_id).collect()
+                        } else {
+                            vec![101, 102]
+                        };
+                        self.begin_wifi_batch(&file_ids);
+                        let first_fid = file_ids.first().copied().unwrap_or(101);
+                        let total_bytes =
+                            (20 * koe_protocol_kernel::transport::SLICE_RECORD_BYTES) as u32;
+                        let _ = self.ingest_wifi_chunk(
+                            &Self::build_wifi_short_head(first_fid, total_bytes),
+                            ts,
+                        );
+                        let _ = self.ingest_wifi_chunk(&Self::build_wifi_plain_slices(19), ts);
+                    }
+                    WifiSoftApAction::Interrupt => {
+                        let _ = self.on_wifi_interrupted(ts);
+                    }
+                    WifiSoftApAction::ResumeAndComplete => {
+                        let _ = self.resume_wifi_batch();
+                        for _ in 0..8 {
+                            let prog = self.session.wifi_batch_progress();
+                            if matches!(
+                                prog.phase,
+                                WifiBatchPhase::Completed | WifiBatchPhase::Idle
+                            ) {
+                                break;
+                            }
+                            let fid = self.session.active_file_id.unwrap_or(102);
+                            let total_bytes =
+                                (10 * koe_protocol_kernel::transport::SLICE_RECORD_BYTES) as u32;
+                            let _ = self.ingest_wifi_chunk(
+                                &Self::build_wifi_short_head(fid, total_bytes),
+                                ts,
+                            );
+                            let _ =
+                                self.ingest_wifi_chunk(&Self::build_wifi_plain_slices(10), ts);
+                        }
+                    }
+                    WifiSoftApAction::Cancel => {
+                        self.cancel_wifi_batch();
+                    }
+                }
             }
             WorkspaceCommand::SetCoarsePlace(place) => {
                 let sanitized = place.as_deref().and_then(|raw| {
@@ -2749,14 +3299,16 @@ impl DesktopBeanHost {
                         .iter()
                         .map(|t| (*t).to_string())
                         .collect();
-                    self.last_copilot_card = Some(CopilotAnswerCard {
+                    let card = CopilotAnswerCard {
                         prompt: preset.label().to_string(),
                         answer,
                         preset: Some(preset),
                         citations,
                         tools_used,
                         generated_at_epoch_sec: ts,
-                    });
+                    };
+                    self.copilot_history.push(card.clone());
+                    self.last_copilot_card = Some(card);
                 }
             }
             WorkspaceCommand::AskCopilot {
@@ -2771,14 +3323,16 @@ impl DesktopBeanHost {
                     |seg| format!("基于原话 [{}]：「{}」，针对「{prompt}」的结论已就绪。", seg.id, seg.text),
                 );
                 let citations = first_seg.map_or_else(Vec::new, |s| vec![s.id]);
-                self.last_copilot_card = Some(CopilotAnswerCard {
+                let card = CopilotAnswerCard {
                     prompt,
                     answer,
                     preset: None,
                     citations,
                     tools_used: vec!["search_context".to_string()],
                     generated_at_epoch_sec: ts,
-                });
+                };
+                self.copilot_history.push(card.clone());
+                self.last_copilot_card = Some(card);
             }
             WorkspaceCommand::SyncGoogleWorkspace {
                 tasklist_id,
@@ -3700,6 +4254,223 @@ mod tests {
             retrigger_proj.active_aggregate.phase,
             RecordingLifecyclePhase::Copying
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn slice_s_formats_aliyun_mcp_and_settings_doctor_commands_and_projections() {
+        let dir = temp_export_dir("slice-s-closeout");
+        let mut host = DesktopBeanHost::new(&dir);
+        let now_sec = 1_775_000_200;
+
+        let init_proj = host.workspace_projection(now_sec);
+        assert_eq!(init_proj.formats.active_template, BuiltinTemplateId::Retro);
+        assert_eq!(
+            init_proj.formats.builtin_sections_zh,
+            vec!["做得好的", "有待改进", "下次尝试"]
+        );
+        assert_eq!(
+            init_proj.aliyun_mcp.dashscope.streaming_asr_model,
+            "paraformer-realtime-v2"
+        );
+        assert_eq!(
+            init_proj.aliyun_mcp.dashscope.filetrans_asr_model,
+            "qwen-audio-3.1-asr-flash-filetrans"
+        );
+        assert!(init_proj
+            .aliyun_mcp
+            .pairing_ticket
+            .as_deref()
+            .is_some_and(|t| t.starts_with(PAIRING_TICKET_PREFIX)));
+        assert!(init_proj
+            .aliyun_mcp
+            .mcp_stdio_config_json
+            .contains("--mcp-stdio"));
+        assert!(init_proj
+            .aliyun_mcp
+            .mcp_stdio_config_json
+            .contains("--workspace"));
+
+        let fish_proj = host.dispatch(
+            WorkspaceCommand::SelectMinuteTemplate(BuiltinTemplateId::Fishbone),
+            now_sec + 1,
+        );
+        assert_eq!(
+            fish_proj.formats.active_template,
+            BuiltinTemplateId::Fishbone
+        );
+        assert_eq!(
+            fish_proj.formats.builtin_sections_zh,
+            vec!["问题", "人员", "流程", "工具与环境", "根因假设"]
+        );
+        assert_eq!(fish_proj.visual_cards.len(), 6);
+        assert!(fish_proj.visual_cards[0]
+            .highlight_box
+            .as_deref()
+            .is_some_and(|h| h.contains(BuiltinTemplateId::Fishbone.label_zh())));
+
+        let add_sec_proj = host.dispatch(
+            WorkspaceCommand::AddCustomMinuteSection {
+                heading: "  关键风险复盘  ".to_string(),
+            },
+            now_sec + 2,
+        );
+        assert!(add_sec_proj
+            .formats
+            .custom_sections
+            .iter()
+            .any(|s| s.heading == "关键风险复盘" && !s.points.is_empty()));
+        assert!(add_sec_proj.visual_cards[0]
+            .highlight_box
+            .as_deref()
+            .is_some_and(|h| h.contains("关键风险复盘")));
+
+        let standup_proj = host.dispatch(
+            WorkspaceCommand::SelectMinuteTemplate(BuiltinTemplateId::Standup),
+            now_sec + 3,
+        );
+        assert_eq!(
+            standup_proj.formats.active_template,
+            BuiltinTemplateId::Standup
+        );
+        assert!(standup_proj
+            .formats
+            .custom_sections
+            .iter()
+            .any(|s| s.heading == "已完成"));
+        assert!(standup_proj
+            .formats
+            .custom_sections
+            .iter()
+            .any(|s| s.heading == "关键风险复盘"));
+
+        let rem_sec_proj = host.dispatch(
+            WorkspaceCommand::RemoveCustomMinuteSection {
+                heading: "关键风险复盘".to_string(),
+            },
+            now_sec + 4,
+        );
+        assert!(!rem_sec_proj
+            .formats
+            .custom_sections
+            .iter()
+            .any(|s| s.heading == "关键风险复盘"));
+
+        let vps_proj = host.dispatch(
+            WorkspaceCommand::IssuePairingTicket {
+                mode: McpPairingMode::Vps,
+                email: Some("owner@koe.local".to_string()),
+                now_epoch_sec: now_sec + 5,
+            },
+            now_sec + 5,
+        );
+        assert_eq!(vps_proj.aliyun_mcp.pairing_mode, McpPairingMode::Vps);
+        let vps_ticket = vps_proj.aliyun_mcp.pairing_ticket.clone().unwrap();
+        assert!(vps_ticket.starts_with(PAIRING_TICKET_PREFIX));
+        let decoded = PairingTicket::decode(&vps_ticket).unwrap();
+        assert_eq!(decoded.mode, McpPairingMode::Vps);
+        assert_eq!(decoded.email.as_deref(), Some("owner@koe.local"));
+
+        let stdio_proj = host.dispatch(WorkspaceCommand::GenerateMcpStdioConfig, now_sec + 6);
+        assert!(stdio_proj
+            .aliyun_mcp
+            .mcp_stdio_config_json
+            .contains("--mcp-stdio"));
+        assert!(stdio_proj
+            .aliyun_mcp
+            .mcp_stdio_config_json
+            .contains(&dir.display().to_string()));
+
+        let lease_proj = host.dispatch(
+            WorkspaceCommand::RefreshLiveLease {
+                now_epoch_sec: now_sec + 7,
+            },
+            now_sec + 7,
+        );
+        assert!(lease_proj.aliyun_mcp.live_generation >= 1);
+        assert_eq!(
+            lease_proj.aliyun_mcp.live_lease_expires_at_epoch_sec,
+            (now_sec + 7) + LIVE_LEASE_DEFAULT_TTL_SEC
+        );
+
+        let _ = host.dispatch(
+            WorkspaceCommand::RunCopilotPreset {
+                preset: CopilotPresetChip::SummarizeAudioFile,
+                now_epoch_sec: now_sec + 8,
+            },
+            now_sec + 8,
+        );
+        let copilot_proj = host.dispatch(
+            WorkspaceCommand::AskCopilot {
+                prompt: "列出当前风险与下一步责任人".to_string(),
+                now_epoch_sec: now_sec + 9,
+            },
+            now_sec + 9,
+        );
+        assert_eq!(copilot_proj.aliyun_mcp.copilot_history.len(), 2);
+        assert_eq!(
+            copilot_proj.aliyun_mcp.copilot_history[1].prompt,
+            "列出当前风险与下一步责任人"
+        );
+
+        let settings_proj = host.dispatch(WorkspaceCommand::SetAutoLaunch(true), now_sec + 10);
+        assert!(settings_proj.settings.auto_launch_enabled);
+        let settings_proj2 = host.dispatch(WorkspaceCommand::SetKeepAlive(true), now_sec + 11);
+        assert!(settings_proj2.settings.keep_alive_enabled);
+        assert!(dir.join("settings.json").exists());
+
+        let reloaded_host = DesktopBeanHost::new(&dir);
+        let reloaded_proj = reloaded_host.workspace_projection(now_sec + 12);
+        assert!(reloaded_proj.settings.auto_launch_enabled);
+        assert!(reloaded_proj.settings.keep_alive_enabled);
+
+        let wifi_start = host.dispatch(
+            WorkspaceCommand::ControlWifiSoftApBatch {
+                action: WifiSoftApAction::StartDefaultSoftAp,
+                now_epoch_sec: now_sec + 13,
+            },
+            now_sec + 13,
+        );
+        assert_eq!(
+            wifi_start.wifi_endpoint,
+            Some(WifiEndpoint {
+                ip: [192, 168, 4, 1],
+                port: 32002,
+            })
+        );
+        assert_eq!(wifi_start.settings.softap_endpoint_label, "192.168.4.1:32002");
+        assert_eq!(wifi_start.wifi_batch.phase, WifiBatchPhase::Transferring);
+
+        let wifi_int = host.dispatch(
+            WorkspaceCommand::ControlWifiSoftApBatch {
+                action: WifiSoftApAction::Interrupt,
+                now_epoch_sec: now_sec + 14,
+            },
+            now_sec + 14,
+        );
+        assert_eq!(wifi_int.wifi_batch.phase, WifiBatchPhase::Interrupted);
+        assert!(wifi_int.wifi_batch.salvaged_count >= 1);
+
+        let wifi_done = host.dispatch(
+            WorkspaceCommand::ControlWifiSoftApBatch {
+                action: WifiSoftApAction::ResumeAndComplete,
+                now_epoch_sec: now_sec + 15,
+            },
+            now_sec + 15,
+        );
+        assert_eq!(wifi_done.wifi_batch.phase, WifiBatchPhase::Completed);
+        assert!(wifi_done.wifi_batch.finalized_count >= 1);
+        assert!(!wifi_done.recordings.is_empty());
+
+        let wifi_cancel = host.dispatch(
+            WorkspaceCommand::ControlWifiSoftApBatch {
+                action: WifiSoftApAction::Cancel,
+                now_epoch_sec: now_sec + 16,
+            },
+            now_sec + 16,
+        );
+        assert_eq!(wifi_cancel.wifi_batch.phase, WifiBatchPhase::Idle);
 
         let _ = fs::remove_dir_all(&dir);
     }
