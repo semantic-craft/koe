@@ -75,9 +75,11 @@ pub use context::{
     RANK_BACKGROUND_THRESHOLD_CHARS, STOP_PAIRS,
 };
 pub use domain::{
-    AiProviderCommand, ContextItem, ContextKind, ContextSource, MeetingMinutesV2, MinuteCause,
-    MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm, MinuteTermAdoption, MinuteTopic,
-    SegmentId, TodoItem, TodoKind, TodoStatus, UtteranceSegment, UtteranceSpine,
+    AiProviderCommand, ContextItem, ContextKind, ContextSource, EditorialCardRole, KoePackSummary,
+    MeetingMinutesV2, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm,
+    MinuteTermAdoption, MinuteTopic, RecordingAggregate, RecordingLifecyclePhase, SegmentId,
+    SummaryFormat, TodoItem, TodoKind, TodoStatus, UtteranceSegment, UtteranceSpine,
+    VisualSummaryCard,
 };
 pub use mcp_acp::{
     compute_pack_sync_delta, constant_time_eq, format_epoch_sec_iso8601, is_supported_mcp_tool,

@@ -33,6 +33,24 @@ impl DeviceCommands {
         ProtocolFrame::encode(0x18, 0x82, &[0x01])
     }
 
+    /// Enables realtime recording notification mode on the device (`0x18 0x81`, payload `[0x01]`).
+    #[must_use]
+    pub fn start_realtime_record_81() -> Vec<u8> {
+        ProtocolFrame::encode(0x18, 0x81, &[0x01])
+    }
+
+    /// Starts app-initiated recording on the device (`0x18 0x82`, payload `[0x01]`).
+    #[must_use]
+    pub fn start_app_recording() -> Vec<u8> {
+        ProtocolFrame::encode(0x18, 0x82, &[0x01])
+    }
+
+    /// Queries the current recording status on the device (`0x18 0x81`, empty payload).
+    #[must_use]
+    pub fn query_recording_status() -> Vec<u8> {
+        ProtocolFrame::encode(0x18, 0x81, &[])
+    }
+
     /// Pauses recording on the device (`0x18 0x82`, payload `[0x02]`).
     #[must_use]
     pub fn pause_record() -> Vec<u8> {
@@ -189,6 +207,8 @@ impl RxCmd {
 
     /// Audio control command family (`0x18`).
     pub const AUDIO_TYPE: u8 = 0x18;
+    /// Realtime recording status / start notification id (`0x81`).
+    pub const AUDIO_REALTIME_START_ID: u8 = 0x81;
     /// Start/pause recording command id (`0x82`).
     pub const AUDIO_CONTROL_ID: u8 = 0x82;
 

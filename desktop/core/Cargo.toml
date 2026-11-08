@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 koe_protocol_kernel = { package = "koe_core", path = "../../rust/koe_core" }
+koe_core_ffi = { path = "../../rust/koe_core_ffi" }

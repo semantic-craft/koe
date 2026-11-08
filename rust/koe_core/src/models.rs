@@ -440,7 +440,7 @@ impl OfflineFileList {
             };
             let duration_ms = read_u32_le(payload, o);
             o += 4;
-            if duration_ms > 0 {
+            if file_id > 0 && (duration_ms > 0 || end_time == Some(0)) {
                 files.push(OfflineFileEntry {
                     file_id,
                     duration_ms,

@@ -1,6 +1,6 @@
 # Koe 开发入口
 
-- **PStack 自动接力约定（A → B → C 跨对话推进）**：全景切片队列在 [docs/pstack-relay.md](docs/pstack-relay.md)，决策账本在 `.scratch/pstack-relay/decisions.tsv`。每次对话完成一个切片并通过验证后，必须运行 `scripts/pstack-relay advance <SLICE_ID> --evidence "<sha/receipt>" --copy`（若仅查询状态则运行 `scripts/pstack-relay status --copy`），并在回复末尾附上生成的 `## Next Chat Prompt (Copy & Paste)` 代码块，供用户直接粘贴到下一个新对话。
+- **PStack 动态接力约定（跨对话最优上下文推进）**：全景方向与滚动切片在 [docs/pstack-relay.md](docs/pstack-relay.md)，决策账本在 `.scratch/pstack-relay/decisions.tsv`。下一棒提示词**禁止死板预写**，必须根据当前会话真实完成的代码、新发现的约束与剩余路线动态合成：每次完成一个可验证单元（或上下文接近最优阈值需切分窗口）时，运行 `scripts/pstack-relay advance <SLICE_ID> --evidence "<sha/receipt>" --learned "<本轮沉淀的事实与改动>" --next-goal "<基于当前现场动态合成的下一棒目标>" --next-done "<下一棒可证伪验收命令>" --watchouts "<架构红线与防呆提醒>" --copy`（若因上下文上限提前交棒则加 `--partial` 自动裂变续接切片），并在回复末尾附上生成的 `## Next Chat Prompt (Copy & Paste)` 代码块。
 
 Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundcore Work（D3200）录音豆：BLE 连接、取回录音、指定模型转写与分析，并逐步做成手机优先的个人记录与持续事项工具（录音 + 地点 + 待办 + 日记，可交给 AI）。产品身份以 [pubspec.yaml](pubspec.yaml) 和 [README](README.md) 为准；当前做什么、冻结什么见 [ROADMAP](ROADMAP.md)。
 
