@@ -134,12 +134,42 @@ struct RecordDto {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CaptureSpanDto {
+    epoch: u64,
+    start_ns: u64,
+    sample_offset: u64,
+    sample_count: u64,
+}
+impl From<&CaptureSpan> for CaptureSpanDto {
+    fn from(s: &CaptureSpan) -> Self {
+        Self {
+            epoch: s.epoch,
+            start_ns: s.start_ns,
+            sample_offset: s.sample_offset,
+            sample_count: s.sample_count,
+        }
+    }
+}
+impl From<CaptureSpanDto> for CaptureSpan {
+    fn from(s: CaptureSpanDto) -> Self {
+        Self {
+            epoch: s.epoch,
+            start_ns: s.start_ns,
+            sample_offset: s.sample_offset,
+            sample_count: s.sample_count,
+        }
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CaptureLaneDto {
     lane: String,
     asset_id: Option<String>,
     sample_rate: Option<u32>,
     duration_ms: u64,
     interruption: Option<String>,
+    #[serde(default)]
+    timeline: Vec<CaptureSpanDto>,
 }
 impl From<&CaptureLaneRecord> for CaptureLaneDto {
     fn from(l: &CaptureLaneRecord) -> Self {
@@ -149,6 +179,7 @@ impl From<&CaptureLaneRecord> for CaptureLaneDto {
             sample_rate: l.sample_rate,
             duration_ms: l.duration_ms,
             interruption: l.interruption.clone(),
+            timeline: l.timeline.iter().map(Into::into).collect(),
         }
     }
 }
@@ -160,6 +191,7 @@ impl From<CaptureLaneDto> for CaptureLaneRecord {
             sample_rate: l.sample_rate,
             duration_ms: l.duration_ms,
             interruption: l.interruption,
+            timeline: l.timeline.into_iter().map(Into::into).collect(),
         }
     }
 }

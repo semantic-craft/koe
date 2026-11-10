@@ -13,6 +13,13 @@ pub(crate) enum Page {
     Settings,
 }
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CaptureTiming {
+    pub epoch: u64,
+    pub captured_start_ns: u64,
+}
+
 #[derive(Deserialize)]
 #[serde(
     tag = "type",
@@ -21,14 +28,58 @@ pub(crate) enum Page {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
-    StartMicrophone { input_id: String, #[serde(default)] include_system: bool },
+    StartMicrophone {
+        input_id: String,
+        #[serde(default)]
+        include_system: bool,
+        #[serde(default)]
+        clock_ns: Option<u64>,
+    },
+    PauseMicrophone,
+    ResumeMicrophone {
+        clock_ns: u64,
+    },
+    MicrophonePaused {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        sequence: u64,
+        epoch: u64,
+    },
     StopMicrophone,
     CancelMicrophone,
     RetryMicrophoneSave,
-    MicrophoneStarted { record_id: String, session_id: String, lane: String, sample_rate: u32 },
-    MicrophoneChunk { record_id: String, session_id: String, lane: String, sequence: u64, samples: Vec<i16> },
-    MicrophoneStopped { record_id: String, session_id: String, lane: String, sequence: u64 },
-    MicrophoneFailed { record_id: String, session_id: String, lane: String, message: String },
+    MicrophoneStarted {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        sample_rate: u32,
+    },
+    MicrophoneChunk {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        sequence: u64,
+        samples: Vec<i16>,
+        #[serde(default)]
+        timing: Option<CaptureTiming>,
+    },
+    MicrophoneStopped {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        sequence: u64,
+        #[serde(default)]
+        epoch: Option<u64>,
+    },
+    MicrophoneFailed {
+        record_id: String,
+        session_id: String,
+        lane: String,
+        message: String,
+        #[serde(default)]
+        epoch: Option<u64>,
+    },
     RequestQuit,
     CancelQuit,
     Navigate {

@@ -13,6 +13,8 @@ pub struct CaptureLaneRecord {
     pub duration_ms: u64,
     /// Explicit partial-result reason; survives reopening the record.
     pub interruption: Option<String>,
+    /// Sparse common-clock mapping; empty for older untimed recordings.
+    pub timeline: Vec<CaptureSpan>,
 }
 impl ProductRecord {
     /// Validates restored capture outcomes before they enter the product workspace.
@@ -22,6 +24,12 @@ impl ProductRecord {
     ) -> Result<(), ProductError> {
         let mut names = BTreeSet::new();
         for l in &lanes {
+            super::capture_timeline::validate_timeline(
+                &l.timeline,
+                l.sample_rate,
+                l.duration_ms,
+                l.asset_id.is_some(),
+            )?;
             let expected = match l.lane.as_str() {
                 "microphone" => self.aggregate.recording_id.clone(),
                 "system" => format!("{}-system", self.aggregate.recording_id),

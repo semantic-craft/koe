@@ -16,9 +16,9 @@ mod device;
 mod flutter_import;
 mod legacy;
 mod lifecycle;
-mod microphone;
 #[cfg(test)]
 mod lifecycle_tests;
+mod microphone;
 #[cfg(test)]
 mod navigation_tests;
 mod processing;
@@ -170,26 +170,76 @@ impl KoeRuntime {
     }
 
     fn dispatch(&mut self, command: Command, now: u64) -> Result<(), String> {
-        if self.is_quitting() && !matches!(command,
-            Command::RequestQuit | Command::CancelQuit | Command::ClearError
-            | Command::Navigate { .. } | Command::Back | Command::SelectRecord { .. }
-            | Command::OpenSource { .. } | Command::DeviceEvent { .. }
-            | Command::PlaybackProgress { .. }
-            | Command::MicrophoneStarted { .. } | Command::MicrophoneChunk { .. }
-            | Command::MicrophoneStopped { .. } | Command::MicrophoneFailed { .. }
-            | Command::RetryMicrophoneSave
-        ) {
+        if self.is_quitting()
+            && !matches!(
+                command,
+                Command::RequestQuit
+                    | Command::CancelQuit
+                    | Command::ClearError
+                    | Command::Navigate { .. }
+                    | Command::Back
+                    | Command::SelectRecord { .. }
+                    | Command::OpenSource { .. }
+                    | Command::DeviceEvent { .. }
+                    | Command::PlaybackProgress { .. }
+                    | Command::MicrophoneStarted { .. }
+                    | Command::MicrophoneChunk { .. }
+                    | Command::MicrophonePaused { .. }
+                    | Command::MicrophoneStopped { .. }
+                    | Command::MicrophoneFailed { .. }
+                    | Command::RetryMicrophoneSave
+            )
+        {
             return Err("正在退出，请先取消退出再开始新操作".into());
         }
         match command {
-            Command::StartMicrophone { input_id, include_system } => self.start_microphone(input_id, include_system, now)?,
+            Command::StartMicrophone {
+                input_id,
+                include_system,
+                clock_ns,
+            } => self.start_microphone(input_id, include_system, clock_ns, now)?,
+            Command::PauseMicrophone => self.pause_microphone()?,
+            Command::ResumeMicrophone { clock_ns } => self.resume_microphone(clock_ns)?,
+            Command::MicrophonePaused {
+                record_id,
+                session_id,
+                lane,
+                sequence,
+                epoch,
+            } => self.microphone_paused(&record_id, &session_id, &lane, sequence, epoch)?,
             Command::StopMicrophone => self.stop_microphone(false)?,
             Command::CancelMicrophone => self.stop_microphone(true)?,
             Command::RetryMicrophoneSave => self.save_microphone()?,
-            Command::MicrophoneStarted { record_id, session_id, lane, sample_rate } => self.microphone_started(&record_id,&session_id,&lane,sample_rate)?,
-            Command::MicrophoneChunk { record_id, session_id, lane, sequence, samples } => self.microphone_chunk(&record_id,&session_id,&lane,sequence,&samples)?,
-            Command::MicrophoneStopped { record_id, session_id, lane, sequence } => self.microphone_stopped(&record_id,&session_id,&lane,sequence)?,
-            Command::MicrophoneFailed { record_id, session_id, lane, message } => self.microphone_failed(&record_id,&session_id,&lane,message),
+            Command::MicrophoneStarted {
+                record_id,
+                session_id,
+                lane,
+                sample_rate,
+            } => self.microphone_started(&record_id, &session_id, &lane, sample_rate)?,
+            Command::MicrophoneChunk {
+                record_id,
+                session_id,
+                lane,
+                sequence,
+                samples,
+                timing,
+            } => {
+                self.microphone_chunk((&record_id, &session_id, &lane), sequence, &samples, timing)?
+            }
+            Command::MicrophoneStopped {
+                record_id,
+                session_id,
+                lane,
+                sequence,
+                epoch,
+            } => self.microphone_stopped(&record_id, &session_id, &lane, sequence, epoch)?,
+            Command::MicrophoneFailed {
+                record_id,
+                session_id,
+                lane,
+                message,
+                epoch,
+            } => self.microphone_failed(&record_id, &session_id, &lane, message, epoch),
             Command::RequestQuit => self.request_quit(),
             Command::CancelQuit => self.quit = lifecycle::QuitState::Running,
             Command::ImportFlutterLibrary { path } => {
@@ -450,12 +500,15 @@ impl KoeRuntime {
         let revision = self.workspace().revision();
         let error = self.error.clone();
         let mut changed = self.device.ingest(bytes, now);
-        if let Err(error) = self.save_captures(now)
-        {
+        if let Err(error) = self.save_captures(now) {
             self.error = Some(error);
         }
         changed |= self.maybe_start_auto_offline_pull();
-        if changed || revision != self.workspace().revision() || error != self.error || lifecycle != self.lifecycle_json() {
+        if changed
+            || revision != self.workspace().revision()
+            || error != self.error
+            || lifecycle != self.lifecycle_json()
+        {
             self.generation = self.generation.saturating_add(1);
         }
     }
@@ -472,24 +525,30 @@ impl KoeRuntime {
                 true
             }
         };
-        if let Err(error) = self.save_captures(now)
-        {
+        if let Err(error) = self.save_captures(now) {
             self.error = Some(error);
         }
         let mut completed = self.poll_provider() | self.poll_captures();
         self.drive_analysis_queue();
         completed |= self.maybe_start_auto_offline_pull();
-        if changed || completed || revision != self.workspace().revision() || error != self.error || lifecycle != self.lifecycle_json() {
+        if changed
+            || completed
+            || revision != self.workspace().revision()
+            || error != self.error
+            || lifecycle != self.lifecycle_json()
+        {
             self.generation = self.generation.saturating_add(1);
         }
     }
 
     fn ensure_device_idle(&self) -> Result<(), String> {
         use koe_engine::session::TransferPhaseTag;
-        if self.device.awaiting_stop || matches!(
-            self.device.session.transfer.phase,
-            TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
-        ) || self.device.session.is_offline_pull_suspended()
+        if self.device.awaiting_stop
+            || matches!(
+                self.device.session.transfer.phase,
+                TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
+            )
+            || self.device.session.is_offline_pull_suspended()
             || self.device.session.device_recording_active
         {
             Err("请等待当前录音取回或录制结束".into())
