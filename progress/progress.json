@@ -52,9 +52,9 @@
       },
       {
         "number": 607,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T08:47:01Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T08:58:05Z"
       },
       {
         "number": 608,
@@ -63,7 +63,7 @@
         "updated_at": "2026-11-10T08:47:15Z"
       }
     ],
-    "main": "1c06bf080fd020237fc5de577424a8028f9c0e2d",
+    "main": "ca9222a4921e80b3580678adda9c2edb754b64c7",
     "open_pulls": [],
     "pulls": [
       {
@@ -97,12 +97,20 @@
         "merged": true,
         "number": 605,
         "state": "closed"
+      },
+      {
+        "base": "1c06bf080fd020237fc5de577424a8028f9c0e2d",
+        "head": "8b741cb5ea136e165a8a5f3143e6be1384f11f01",
+        "merge_commit": "ca9222a4921e80b3580678adda9c2edb754b64c7",
+        "merged": true,
+        "number": 609,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T08:52:41.025300Z",
+  "observed_at": "2026-11-10T08:58:43.375284Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -252,6 +260,11 @@
         {
           "evidence": [
             {
+              "kind": "pull",
+              "note": "独立评审 PASS+NOTES，14 项策略与 7 项采集独立复跑通过，CI success，已 squash 合并。",
+              "ref": 609
+            },
+            {
               "kind": "issue",
               "note": "本轮实现与自动验收范围。",
               "ref": 607
@@ -268,9 +281,9 @@
             }
           ],
           "id": "meeting-audio-policy",
-          "next": "完成独立评审、PR CI 与 squash 交付；签名版和真实设备另按 #608 验收。",
-          "status": "in_progress",
-          "summary": "N4A 已实现持久上传策略，默认本机；Rust 阻断实时和文件音频，切换取消待发音频并隔离旧结果。文字纪要与问答仍可使用云服务；本机 ASR 尚未接入。 本轮本地 HTTP/WS、全量 scripts/check 和 progress live 校验通过；尚未合并或安装。",
+          "next": "签名版与真实设备验收按 #608 执行；本机 ASR 后续接入，不自动回退云端。",
+          "status": "done",
+          "summary": "N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。本机 ASR 尚未接入，未安装新签名版。",
           "title": "会议音频只留本机"
         }
       ],
@@ -425,7 +438,8 @@
       589,
       595,
       600,
-      605
+      605,
+      609
     ]
   }
 }
