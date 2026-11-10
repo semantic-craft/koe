@@ -324,13 +324,20 @@ impl KoeRuntime {
             Command::DeviceEvent {
                 event,
                 connection_id,
+                device_name,
             } => {
-                self.device.event(&event, &connection_id)?;
+                self.device
+                    .event(&event, &connection_id, device_name.as_deref())?;
                 self.process_capture_events(now)?;
                 self.save_device_recordings(now)?;
             }
+            Command::DeviceOpenGuide => self.device.open_guide(),
+            Command::DeviceOnboardingNext => self.device.onboarding_next(),
+            Command::DeviceCloseGuide => self.device.close_guide(),
+            Command::DeviceRefresh => self.device.refresh(),
+            Command::DeviceDisconnect => self.device.disconnect(),
             Command::DeviceDownload { file_id } => {
-                if self.device.session.session_key.is_none() {
+                if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }
                 self.ensure_device_idle()?;
@@ -348,7 +355,7 @@ impl KoeRuntime {
                 self.device.outbound.push(frame);
             }
             Command::DeviceStart => {
-                if self.device.session.session_key.is_none() {
+                if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }
                 self.ensure_device_idle()?;

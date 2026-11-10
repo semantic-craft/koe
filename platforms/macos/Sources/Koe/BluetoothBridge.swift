@@ -2,14 +2,127 @@ import CoreBluetooth
 import Foundation
 import KoeAppleShared
 
+public struct BleAdvertisementCandidate: Equatable, Sendable {
+    public let displayName: String
+    public let macAddress: String
+    public let matchedByServiceUUID: Bool
+    public let matchedByManufacturerData: Bool
+    public let matchedByName: Bool
+
+    public static func match(
+        peripheralName: String?,
+        advertisementData: [String: Any]
+    ) -> BleAdvertisementCandidate? {
+        var serviceUUIDStrings: [String] = []
+        if let uuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
+            serviceUUIDStrings.append(contentsOf: uuids.map { $0.uuidString.lowercased() })
+        }
+        if let overflow = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
+            serviceUUIDStrings.append(contentsOf: overflow.map { $0.uuidString.lowercased() })
+        }
+        if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
+            serviceUUIDStrings.append(contentsOf: serviceData.keys.map { $0.uuidString.lowercased() })
+        }
+        let matchedByService = serviceUUIDStrings.contains { uuid in
+            uuid.contains("020cf5da") || uuid.contains("daf50c02") || uuid.contains("f5da")
+        }
+
+        let advName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? ""
+        let rawName = (peripheralName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? peripheralName!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : advName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchedByName = rawName.localizedCaseInsensitiveContains("soundcore")
+            || rawName.localizedCaseInsensitiveContains("d3200")
+            || rawName.localizedCaseInsensitiveContains("work")
+
+        var matchedByMfg = false
+        var macAddress = ""
+        if let mfg = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data {
+            let bytes = [UInt8](mfg)
+            var macBase = 0
+            if bytes.count >= 16 {
+                let mark = String(decoding: bytes[10..<16], as: UTF8.self).lowercased()
+                if mark.contains("sound") || mark.contains("scor") {
+                    matchedByMfg = true
+                    macBase = 2
+                }
+            }
+            if !matchedByMfg && bytes.count >= 14 {
+                let mark = String(decoding: bytes[8..<14], as: UTF8.self).lowercased()
+                if mark.contains("sound") || mark.contains("scor") {
+                    matchedByMfg = true
+                    macBase = 0
+                }
+            }
+            if !matchedByMfg && bytes.count >= 7 {
+                for i in 0..<(bytes.count - 1) {
+                    if (bytes[i] == 0xF5 && bytes[i + 1] == 0xDA)
+                        || (bytes[i] == 0xDA && bytes[i + 1] == 0xF5)
+                    {
+                        matchedByMfg = true
+                        break
+                    }
+                }
+            }
+            if bytes.count >= macBase + 6 && (matchedByMfg || matchedByService || matchedByName) {
+                macAddress = formatMac(Array(bytes[macBase..<(macBase + 6)]))
+            }
+        }
+
+        guard matchedByService || matchedByMfg || matchedByName else { return nil }
+
+        let displayName: String
+        if !rawName.isEmpty {
+            displayName = rawName
+        } else if macAddress.count >= 5 {
+            displayName = "soundcore Work (\(macAddress.suffix(5)))"
+        } else {
+            displayName = "soundcore Work"
+        }
+
+        return BleAdvertisementCandidate(
+            displayName: displayName,
+            macAddress: macAddress,
+            matchedByServiceUUID: matchedByService,
+            matchedByManufacturerData: matchedByMfg,
+            matchedByName: matchedByName
+        )
+    }
+
+    private static func formatMac(_ bytes: [UInt8]) -> String {
+        guard bytes.count >= 6 else { return "" }
+        let first = bytes[0]
+        if bytes[0..<6].allSatisfy({ $0 == first }) || bytes[0..<6].allSatisfy({ $0 == 0 }) {
+            return ""
+        }
+        return bytes[0..<6].map { String(format: "%02X", $0) }.joined(separator: ":")
+    }
+}
+
 @MainActor
 public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    nonisolated public static var writeCharacteristicUUID: CBUUID { CBUUID(string: "7777") }
-    nonisolated public static var notifyCharacteristicUUID: CBUUID { CBUUID(string: "8888") }
+    nonisolated public static var d3200ServiceUUID: CBUUID {
+        CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB")
+    }
+    nonisolated public static var writeCharacteristicUUID: CBUUID {
+        CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB")
+    }
+    nonisolated public static var notifyCharacteristicUUID: CBUUID {
+        CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB")
+    }
+    nonisolated public static func isWriteCharacteristic(_ uuid: CBUUID) -> Bool {
+        uuid.uuidString.lowercased().contains("7777")
+    }
+    nonisolated public static func isNotifyCharacteristic(_ uuid: CBUUID) -> Bool {
+        uuid.uuidString.lowercased().contains("8888")
+    }
+
+    private static let savedPeripheralKey = "koe.ble.lastPeripheralUUID"
     public weak var store: HostSessionStore?
     public private(set) var isScanRequested = false
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
+    private var reconnectingPeripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
     private var pendingWrites: [Data] = []
     private var notifyReady = false
@@ -18,20 +131,98 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     private var reportedReady = false
     private var awaitingWrite = false
     private var connectionID = ""
+    private var discoveredName: String?
 
     public init(store: HostSessionStore? = nil) { self.store = store; super.init() }
 
     public func startScanningIfPoweredOn() {
-        guard peripheral == nil else { return }
+        if reportedReady, peripheral?.state == .connected {
+            store?.send("device_refresh")
+            flushOutboundFrames()
+            return
+        }
+        if let stale = peripheral {
+            central?.cancelPeripheralConnection(stale)
+            resetLinkState()
+        }
+        if let staleReconnect = reconnectingPeripheral {
+            central?.cancelPeripheralConnection(staleReconnect)
+            reconnectingPeripheral = nil
+        }
         isScanRequested = true
         connectionID = UUID().uuidString
         emit("scanning")
         if central == nil { central = CBCentralManager(delegate: self, queue: .main) }
-        if central?.state == .poweredOn { central?.scanForPeripherals(withServices: nil) }
+        if let central, central.state == .poweredOn {
+            beginDiscoveryAndReconnect(central)
+        }
     }
 
-    private func emit(_ event: String) {
-        store?.send("device_event", ["event": event, "connectionId": connectionID])
+    public func reconnectKnownIfAvailable() {
+        guard !reportedReady, peripheral == nil, reconnectingPeripheral == nil else { return }
+        guard let savedString = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+              UUID(uuidString: savedString) != nil else { return }
+        isScanRequested = true
+        connectionID = UUID().uuidString
+        if central == nil { central = CBCentralManager(delegate: self, queue: .main) }
+        if let central, central.state == .poweredOn {
+            beginDiscoveryAndReconnect(central)
+        }
+    }
+
+    public func disconnect() {
+        central?.stopScan()
+        if let active = peripheral {
+            central?.cancelPeripheralConnection(active)
+        }
+        if let pending = reconnectingPeripheral {
+            central?.cancelPeripheralConnection(pending)
+        }
+        resetLinkState()
+        isScanRequested = false
+        store?.send("device_disconnect")
+    }
+
+    private func beginDiscoveryAndReconnect(_ central: CBCentralManager) {
+        let connectedPeripherals = central.retrieveConnectedPeripherals(withServices: [
+            Self.d3200ServiceUUID,
+            CBUUID(string: "F5DA")
+        ])
+        if let existing = connectedPeripherals.first {
+            attachAndConnect(existing, on: central, displayName: existing.name ?? "soundcore Work")
+            return
+        }
+        if let savedString = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
+           let savedUUID = UUID(uuidString: savedString),
+           let known = central.retrievePeripherals(withIdentifiers: [savedUUID]).first
+        {
+            reconnectingPeripheral = known
+            known.delegate = self
+            central.connect(known, options: nil)
+        }
+        central.scanForPeripherals(
+            withServices: nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+        )
+    }
+
+    private func attachAndConnect(_ target: CBPeripheral, on central: CBCentralManager, displayName: String) {
+        peripheral = target
+        reconnectingPeripheral = nil
+        discoveredName = displayName
+        connectionID = "\(target.identifier.uuidString):\(UUID().uuidString)"
+        emit("connecting", deviceName: displayName)
+        target.delegate = self
+        central.stopScan()
+        central.connect(target, options: nil)
+    }
+
+    private func emit(_ event: String, deviceName: String? = nil) {
+        var fields: [String: Any] = ["event": event, "connectionId": connectionID]
+        if let name = deviceName ?? discoveredName {
+            fields["deviceName"] = name
+        }
+        store?.send("device_event", fields)
     }
 
     private func checkReady() {
@@ -67,8 +258,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
     }
 
-    private func disconnected(_ message: String? = nil) {
-        emit("disconnected")
+    private func resetLinkState() {
         peripheral = nil
         writeCharacteristic = nil
         notifyReady = false
@@ -77,6 +267,12 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         reportedReady = false
         awaitingWrite = false
         pendingWrites.removeAll()
+    }
+
+    private func disconnected(_ message: String? = nil) {
+        emit("disconnected")
+        resetLinkState()
+        reconnectingPeripheral = nil
         isScanRequested = false
         if let message { store?.reportNativeError(message) }
     }
@@ -98,7 +294,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         Task { @MainActor in
             switch central.state {
             case .poweredOn:
-                if self.isScanRequested { central.scanForPeripherals(withServices: nil) }
+                if self.isScanRequested { self.beginDiscoveryAndReconnect(central) }
             case .poweredOff:
                 self.disconnected("蓝牙已关闭，请在系统设置中打开。")
             case .unauthorized:
@@ -110,32 +306,52 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
     }
 
-    nonisolated public func centralManager(_ central: CBCentralManager, didDiscover discovered: CBPeripheral,
-                                           advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        let name = discovered.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? ""
-        guard name.localizedCaseInsensitiveContains("soundcore") || name.localizedCaseInsensitiveContains("D3200") else { return }
+    nonisolated public func centralManager(
+        _ central: CBCentralManager,
+        didDiscover discovered: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi RSSI: NSNumber
+    ) {
+        guard let candidate = BleAdvertisementCandidate.match(
+            peripheralName: discovered.name,
+            advertisementData: advertisementData
+        ) else { return }
         Task { @MainActor in
             guard self.isScanRequested, self.peripheral == nil else { return }
-            self.peripheral = discovered
-            self.connectionID = "\(discovered.identifier.uuidString):\(UUID().uuidString)"
-            self.emit("connecting")
-            discovered.delegate = self
-            central.stopScan()
-            central.connect(discovered)
+            if let pending = self.reconnectingPeripheral, pending !== discovered {
+                central.cancelPeripheralConnection(pending)
+                self.reconnectingPeripheral = nil
+            }
+            self.attachAndConnect(discovered, on: central, displayName: candidate.displayName)
         }
     }
 
     nonisolated public func centralManager(_ central: CBCentralManager, didConnect connected: CBPeripheral) {
         Task { @MainActor in
+            if self.peripheral == nil, self.reconnectingPeripheral === connected {
+                self.peripheral = connected
+                self.reconnectingPeripheral = nil
+                let name = connected.name ?? "soundcore Work"
+                self.discoveredName = name
+                self.connectionID = "\(connected.identifier.uuidString):\(UUID().uuidString)"
+                self.emit("connecting", deviceName: name)
+                central.stopScan()
+            }
             guard self.peripheral === connected else { return }
+            UserDefaults.standard.set(connected.identifier.uuidString, forKey: Self.savedPeripheralKey)
+            connected.delegate = self
             connected.discoverServices(nil)
         }
     }
 
     nonisolated public func centralManager(_ central: CBCentralManager, didFailToConnect failed: CBPeripheral, error: (any Error)?) {
         Task { @MainActor in
+            if self.reconnectingPeripheral === failed {
+                self.reconnectingPeripheral = nil
+                return
+            }
             guard self.peripheral === failed else { return }
-            self.disconnected("无法连接录音豆，请确认设备已开机且未被其他应用占用。")
+            self.disconnected("无法连接录音豆，请确认设备已放入充电仓并短按下方按钮。")
         }
     }
 
@@ -157,13 +373,13 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             }
             self.pendingServices = services.count
             for service in services {
-                source.discoverCharacteristics([Self.writeCharacteristicUUID, Self.notifyCharacteristicUUID], for: service)
+                source.discoverCharacteristics(nil, for: service)
             }
         }
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
-                                      error: (any Error)?) {
+                                       error: (any Error)?) {
         Task { @MainActor in
             guard self.peripheral === source else { return }
             guard error == nil else {
@@ -173,8 +389,10 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             }
             self.pendingServices = max(0, self.pendingServices - 1)
             for characteristic in service.characteristics ?? [] {
-                if characteristic.uuid == Self.writeCharacteristicUUID { self.writeCharacteristic = characteristic }
-                if characteristic.uuid == Self.notifyCharacteristicUUID {
+                if Self.isWriteCharacteristic(characteristic.uuid) {
+                    self.writeCharacteristic = characteristic
+                }
+                if Self.isNotifyCharacteristic(characteristic.uuid) {
                     self.notifyFound = true
                     source.setNotifyValue(true, for: characteristic)
                 }
@@ -189,9 +407,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
-                                      error: (any Error)?) {
+                                       error: (any Error)?) {
         Task { @MainActor in
-            guard self.peripheral === source, characteristic.uuid == Self.notifyCharacteristicUUID else { return }
+            guard self.peripheral === source, Self.isNotifyCharacteristic(characteristic.uuid) else { return }
             guard error == nil, characteristic.isNotifying else {
                 self.store?.reportNativeError("无法订阅录音豆通知，请重新连接。")
                 self.central?.cancelPeripheralConnection(source)
@@ -203,8 +421,8 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
-                                      error: (any Error)?) {
-        guard error == nil, characteristic.uuid == Self.notifyCharacteristicUUID, let data = characteristic.value else { return }
+                                       error: (any Error)?) {
+        guard error == nil, Self.isNotifyCharacteristic(characteristic.uuid), let data = characteristic.value else { return }
         Task { @MainActor in
             guard self.peripheral === source, self.reportedReady else { return }
             self.store?.ingestBleChunk(data)
@@ -220,7 +438,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     nonisolated public func peripheral(_ source: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic,
-                                      error: (any Error)?) {
+                                       error: (any Error)?) {
         Task { @MainActor in
             guard self.peripheral === source, self.awaitingWrite else { return }
             self.awaitingWrite = false

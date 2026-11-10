@@ -86,12 +86,116 @@ public struct DeviceFileSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let durationMs: UInt64
 }
 
+public struct DeviceGuideSnapshot: Codable, Equatable, Sendable {
+    public let mode: String
+    public let step: Int
+    public let totalSteps: Int
+    public let title: String
+    public let subtitle: String
+    public let imageName: String
+    public let highlightTarget: String
+    public let primaryLabel: String
+
+    public init(
+        mode: String, step: Int, totalSteps: Int, title: String, subtitle: String,
+        imageName: String, highlightTarget: String, primaryLabel: String
+    ) {
+        self.mode = mode
+        self.step = step
+        self.totalSteps = totalSteps
+        self.title = title
+        self.subtitle = subtitle
+        self.imageName = imageName
+        self.highlightTarget = highlightTarget
+        self.primaryLabel = primaryLabel
+    }
+}
+
 public struct DeviceSnapshot: Codable, Equatable, Sendable {
+    public let phase: String
     public let state: String
+    public let statusDetail: String
     public let connected: Bool
     public let busy: Bool
+    public let recording: Bool
+    public let deviceName: String
+    public let batteryPercent: Int?
+    public let charging: Bool
+    public let boxBatteryPercent: Int?
+    public let boxCharging: Bool
+    public let serialNumber: String
+    public let firmwareVersion: String
+    public let storageLabel: String
     public let files: [DeviceFileSnapshot]
     public let progress: Double
+    public let guide: DeviceGuideSnapshot?
+
+    public init(
+        phase: String = "disconnected",
+        state: String,
+        statusDetail: String = "将麦克风放入充电仓，短按下方按钮开启广播",
+        connected: Bool,
+        busy: Bool,
+        recording: Bool = false,
+        deviceName: String = "Soundcore Work",
+        batteryPercent: Int? = nil,
+        charging: Bool = false,
+        boxBatteryPercent: Int? = nil,
+        boxCharging: Bool = false,
+        serialNumber: String = "",
+        firmwareVersion: String = "",
+        storageLabel: String = "—",
+        files: [DeviceFileSnapshot],
+        progress: Double,
+        guide: DeviceGuideSnapshot? = nil
+    ) {
+        self.phase = phase
+        self.state = state
+        self.statusDetail = statusDetail
+        self.connected = connected
+        self.busy = busy
+        self.recording = recording
+        self.deviceName = deviceName
+        self.batteryPercent = batteryPercent
+        self.charging = charging
+        self.boxBatteryPercent = boxBatteryPercent
+        self.boxCharging = boxCharging
+        self.serialNumber = serialNumber
+        self.firmwareVersion = firmwareVersion
+        self.storageLabel = storageLabel
+        self.files = files
+        self.progress = progress
+        self.guide = guide
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case phase, state, statusDetail, connected, busy, recording, deviceName
+        case batteryPercent, charging, boxBatteryPercent, boxCharging
+        case serialNumber, firmwareVersion, storageLabel, files, progress, guide
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let connected = try c.decode(Bool.self, forKey: .connected)
+        self.phase = try c.decodeIfPresent(String.self, forKey: .phase) ?? (connected ? "connected" : "disconnected")
+        self.state = try c.decode(String.self, forKey: .state)
+        self.statusDetail = try c.decodeIfPresent(String.self, forKey: .statusDetail)
+            ?? (connected ? "已就绪" : "将麦克风放入充电仓，短按下方按钮开启广播")
+        self.connected = connected
+        self.busy = try c.decode(Bool.self, forKey: .busy)
+        self.recording = try c.decodeIfPresent(Bool.self, forKey: .recording) ?? false
+        self.deviceName = try c.decodeIfPresent(String.self, forKey: .deviceName) ?? "Soundcore Work"
+        self.batteryPercent = try c.decodeIfPresent(Int.self, forKey: .batteryPercent)
+        self.charging = try c.decodeIfPresent(Bool.self, forKey: .charging) ?? false
+        self.boxBatteryPercent = try c.decodeIfPresent(Int.self, forKey: .boxBatteryPercent)
+        self.boxCharging = try c.decodeIfPresent(Bool.self, forKey: .boxCharging) ?? false
+        self.serialNumber = try c.decodeIfPresent(String.self, forKey: .serialNumber) ?? ""
+        self.firmwareVersion = try c.decodeIfPresent(String.self, forKey: .firmwareVersion) ?? ""
+        self.storageLabel = try c.decodeIfPresent(String.self, forKey: .storageLabel) ?? "—"
+        self.files = try c.decodeIfPresent([DeviceFileSnapshot].self, forKey: .files) ?? []
+        self.progress = try c.decodeIfPresent(Double.self, forKey: .progress) ?? 0.0
+        self.guide = try c.decodeIfPresent(DeviceGuideSnapshot.self, forKey: .guide)
+    }
 }
 
 public struct ProviderSnapshot: Codable, Equatable, Sendable {

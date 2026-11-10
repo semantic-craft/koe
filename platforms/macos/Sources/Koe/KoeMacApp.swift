@@ -3,12 +3,6 @@ import Foundation
 import KoeAppleShared
 import SwiftUI
 
-/// AppKit window activation & presentation helper modeled after `metasequoiaime/msime`
-/// (`platforms/macos/src/core/WindowPresentation.h`).
-///
-/// While SwiftUI declaratively renders the workspace layout in `KoeAppleShared`, AppKit owns
-/// macOS process activation policy (`.regular` Dock presence vs. `.accessory` background menu-bar
-/// agent), window focus (`makeKeyAndOrderFront` + `orderFrontRegardless`), and `NSStatusItem`.
 @MainActor
 public enum KoeWindowPresenter {
     private static var cachedWorkspaceWindow: NSWindow?
@@ -63,6 +57,9 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             bluetoothBridge.store = store
             files.store = store
             playback.store = store
+            if store != nil {
+                bluetoothBridge.reconnectKnownIfAvailable()
+            }
         }
     }
     public let bluetoothBridge = BluetoothBridge()
@@ -81,6 +78,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         item.menu = buildStatusMenu()
         statusItem = item
         NotificationCenter.default.addObserver(self, selector: #selector(scan), name: Notification.Name("KoeRequestBleScan"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(disconnectBle), name: Notification.Name("KoeRequestBleDisconnect"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(flushBle), name: Notification.Name("KoeFlushBleOutbound"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.willCloseNotification, object: nil)
         lastTick = ProcessInfo.processInfo.systemUptime
@@ -150,7 +149,13 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         if let section = item.representedObject as? String { store?.send("navigate", ["section": section]) }
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
     }
-    @objc private func scan() { bluetoothBridge.startScanningIfPoweredOn() }
+    @objc private func scan() {
+        store?.send("device_open_guide")
+        bluetoothBridge.startScanningIfPoweredOn()
+        KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+    }
+    @objc private func disconnectBle() { bluetoothBridge.disconnect() }
+    @objc private func flushBle() { bluetoothBridge.flushOutboundFrames() }
     @objc private func openWindow() { KoeWindowPresenter.presentPrimaryWorkspaceWindow() }
     @objc private func quit() { NSApp?.terminate(nil) }
 }

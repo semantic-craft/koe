@@ -35,6 +35,16 @@ public struct KoeWorkspaceRootView: View {
         }
         .foregroundStyle(AppColors.textPrimary).tint(AppColors.accent)
         .preferredColorScheme(.dark).frame(minWidth: 1040, minHeight: 680)
+        .overlay {
+            if store.snapshot.device.guide != nil {
+                ZStack {
+                    Color.black.opacity(0.58)
+                        .ignoresSafeArea()
+                        .onTapGesture { store.send("device_close_guide") }
+                    ConnectGuideSheet(store: store)
+                }
+            }
+        }
         .sheet(isPresented: $showNewNote) { NewNoteSheet(store: store) }
     }
     private var toolbar: some View {
