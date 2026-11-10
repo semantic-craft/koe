@@ -61,8 +61,8 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/capture_playback.rs">file crates/koe-runtime/tests/capture_playback.rs: 分路样本寻址、system-only、请求fence与完整重开。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativePlaybackTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativePlaybackTests.swift: 真实PCM逐样本回读与无时间轴旧录音尾部。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/627">pull 627: 分路回放子单元squash 135f831已合并。完整门禁与CI通过；独立复验运行Rust及6项原生真实媒体回归。未安装，完整GUI与听感未验。</a></li>
-<li>note macOS 27.2 独立授权边界原型: 基于638f5e5，以独立ad-hoc应用经LaunchServices运行。tap、aggregate、I/O启动及清理返回0，317次回调共649216字节均为零；没有可靠记录系统授权选择，因此不是允许、拒绝或静音状态的验收。生产双路入口保持关闭，未安装签名版。</li>
-</ul><p>Next: 先取得公开API可识别的系统音频授权完成判据，再接Core Audio与原生双路。独立限时原型的HAL成功与317次全零回调仍只能判定授权未知；不启用伪就绪入口。允许、拒绝、延迟、取消及签名真机矩阵仍待#620。</p></article>
+<li>note macOS 27.2 独立授权边界原型: 基于638f5e5，以独立ad-hoc应用经LaunchServices运行。tap、aggregate、I/O启动及清理返回0，317次回调累计报告649216字节，nonzeroBuffers=0；没有可靠记录系统授权选择，因此不是允许、拒绝或静音状态的验收。生产双路入口保持关闭，未安装签名版。</li>
+</ul><p>Next: 先取得公开API可识别的系统音频授权完成判据，再接Core Audio与原生双路。独立限时原型的HAL成功与317次未检出非零数据的回调仍只能判定授权未知；不启用伪就绪入口。允许、拒绝、延迟、取消及签名真机矩阵仍待#620。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>N3A 完整 check 通过 249 项 Rust、32 项 Python 和 29 项 Swift 测试，PR CI 与独立复核通过。独立评审发现的启动失败、部分写入和容量上限问题已修复；故障注入验证了保存结果不确定时阻退出及重开读回。此前切片的验收记录保留在各自条目。</p><ul>
