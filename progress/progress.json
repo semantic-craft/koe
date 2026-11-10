@@ -21,7 +21,7 @@
         "updated_at": "2026-11-10T06:58:00Z"
       }
     ],
-    "main": "60ca380db8aba06a99b793754b4751b45096c423",
+    "main": "8cfab13debe8d32e4012ffd36f7d5dddce07fa59",
     "open_pulls": [],
     "pulls": [
       {
@@ -31,12 +31,20 @@
         "merged": true,
         "number": 589,
         "state": "closed"
+      },
+      {
+        "base": "60ca380db8aba06a99b793754b4751b45096c423",
+        "head": "714725921acdd0764df9bb8f8da819fb98afed9f",
+        "merge_commit": "8cfab13debe8d32e4012ffd36f7d5dddce07fa59",
+        "merged": true,
+        "number": 595,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T06:59:00.278763Z",
+  "observed_at": "2026-11-10T07:05:07.696589Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -185,6 +193,11 @@
               "kind": "issue",
               "note": "图标安装、签名与轮廓已验；Dock 专属截图尚未取得。",
               "ref": 594
+            },
+            {
+              "kind": "pull",
+              "note": "系统图标大小修复已 squash 合并，CI 通过；安装与 GUI 重启验证完成。",
+              "ref": 595
             }
           ],
           "id": "merge-install",
@@ -225,7 +238,8 @@
       594
     ],
     "pulls": [
-      589
+      589,
+      595
     ]
   }
 }
