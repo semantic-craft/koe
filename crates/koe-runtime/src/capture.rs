@@ -11,12 +11,14 @@ pub(super) struct Capture {
     saved: bool,
     terminal: bool,
     success: bool,
+    pub(super) captured_pcm_bytes: u64,
 }
 
 #[derive(Default)]
 pub(super) struct Captures {
-    active: BTreeMap<u32, String>,
-    sessions: BTreeMap<String, Capture>,
+    pub(super) active: BTreeMap<u32, String>,
+    pub(super) records_by_file_id: BTreeMap<u32, String>,
+    pub(super) sessions: BTreeMap<String, Capture>,
     pub targets: VecDeque<Option<String>>,
 }
 
@@ -24,13 +26,19 @@ impl KoeRuntime {
     pub(super) fn process_capture_events(&mut self, now: u64) -> Result<(), String> {
         while let Some(event) = self.device.captures.front().cloned() {
             match event {
+                CaptureEvent::Started { file_id } => {
+                    let _ = self.ensure_capture(file_id, now)?;
+                }
                 CaptureEvent::Audio { file_id, pcm16 } => {
                     let id = self.ensure_capture(file_id, now)?;
+                    self.ensure_live_stream(&id)?;
                     let capture = self
                         .captures
                         .sessions
                         .get_mut(&id)
                         .ok_or("实时记录状态不可用")?;
+                    capture.captured_pcm_bytes =
+                        capture.captured_pcm_bytes.saturating_add(pcm16.len() as u64);
                     if let Some(stream) = &mut capture.stream {
                         for chunk in pcm16.chunks(64 * 1024) {
                             if let Err(error) = stream.push_audio(chunk.to_vec()) {
@@ -52,6 +60,8 @@ impl KoeRuntime {
                             if let Err(error) = stream.finish() {
                                 capture.results.push_back(LiveEvent::Failed(error));
                             }
+                        } else if capture.key.is_none() {
+                            capture.terminal = true;
                         }
                     }
                     self.captures.targets.push_back(id);
@@ -67,8 +77,7 @@ impl KoeRuntime {
             return Ok(id.clone());
         }
         let id = format!("live-{file_id}-{now}-{}", self.workspace().revision() + 1);
-        let configured = !self.settings.key.is_empty();
-        let key = self.commit(|w| {
+        self.commit(|w| {
             w.insert_record(
                 id.clone(),
                 format!("录音 {file_id}"),
@@ -76,21 +85,45 @@ impl KoeRuntime {
                 file_id,
                 now,
                 0,
-            )?;
-            if configured {
-                w.begin_analysis(&id, AnalysisStage::Transcribing).map(Some)
-            } else {
-                Ok(None)
-            }
+            )
         })?;
-        let mut capture = Capture {
-            key,
+        let capture = Capture {
+            key: None,
             stream: None,
             results: VecDeque::new(),
             saved: false,
-            terminal: !configured,
+            terminal: false,
             success: false,
+            captured_pcm_bytes: 0,
         };
+        self.captures.active.insert(file_id, id.clone());
+        self.captures.records_by_file_id.insert(file_id, id.clone());
+        self.captures.sessions.insert(id.clone(), capture);
+        Ok(id)
+    }
+
+    fn ensure_live_stream(&mut self, id: &str) -> Result<(), String> {
+        let needs_start = self
+            .captures
+            .sessions
+            .get(id)
+            .is_some_and(|c| c.key.is_none() && !c.terminal);
+        if !needs_start {
+            return Ok(());
+        }
+        let configured = !self.settings.key.is_empty();
+        let key = if configured {
+            Some(self.commit(|w| w.begin_analysis(id, AnalysisStage::Transcribing))?)
+        } else {
+            None
+        };
+        let capture = self
+            .captures
+            .sessions
+            .get_mut(id)
+            .ok_or("实时记录状态不可用")?;
+        capture.key = key;
+        capture.terminal = !configured;
         if configured {
             match LiveTranscription::start(ProviderConfig::new(
                 self.settings.asr_endpoint.clone(),
@@ -101,9 +134,7 @@ impl KoeRuntime {
                 Err(error) => capture.results.push_back(LiveEvent::Failed(error)),
             }
         }
-        self.captures.active.insert(file_id, id.clone());
-        self.captures.sessions.insert(id.clone(), capture);
-        Ok(id)
+        Ok(())
     }
 
     pub(super) fn capture_saved(&mut self, id: &str) -> bool {

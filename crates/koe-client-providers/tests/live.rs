@@ -54,6 +54,79 @@ fn final_sentence(id: &str, text: &str) -> Message {
     }).to_string().into())
 }
 
+fn interim_sentence(id: &str, text: &str, begin_time: u64, end_time: u64) -> Message {
+    Message::Text(json!({"header":{"task_id":id,"event":"result-generated"},
+        "payload":{"output":{"sentence":{"sentence_id":7,"sentence_end":false,"begin_time":begin_time,"end_time":end_time,"text":text}}}
+    }).to_string().into())
+}
+
+#[test]
+fn interim_sentences_stream_as_live_events_before_sentence_end() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
+                let (mut socket, id) = ready(stream).await;
+                assert!(matches!(
+                    socket.next().await.unwrap().unwrap(),
+                    Message::Binary(_)
+                ));
+                socket
+                    .send(interim_sentence(&id, "   ", 0, 20))
+                    .await
+                    .unwrap();
+                socket
+                    .send(interim_sentence(&id, "partial words", 0, 60))
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    socket.next().await.unwrap().unwrap(),
+                    Message::Binary(_)
+                ));
+                socket
+                    .send(final_sentence(&id, "partial words complete"))
+                    .await
+                    .unwrap();
+                let finish: Value =
+                    serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                        .unwrap();
+                assert_eq!(finish["header"]["action"], "finish-task");
+                socket.send(event(&id, "task-finished")).await.unwrap();
+            });
+    });
+    let mut live = LiveTranscription::start(config(endpoint)).unwrap();
+    live.push_audio(vec![1; 3200]).unwrap();
+    match wait_event(&mut live) {
+        LiveEvent::Final { sequence, segment } => {
+            assert_eq!(sequence, 7);
+            assert_eq!(segment.text, "partial words");
+            assert_eq!(segment.start_ms, 0);
+            assert_eq!(segment.end_ms, 60);
+        }
+        other => panic!("expected interim sentence, got {other:?}"),
+    }
+    live.push_audio(vec![2; 3200]).unwrap();
+    match wait_event(&mut live) {
+        LiveEvent::Final { sequence, segment } => {
+            assert_eq!(sequence, 7);
+            assert_eq!(segment.text, "partial words complete");
+            assert_eq!(segment.start_ms, 0);
+            assert_eq!(segment.end_ms, 100);
+        }
+        other => panic!("expected final sentence, got {other:?}"),
+    }
+    live.finish().unwrap();
+    assert_eq!(wait_event(&mut live), LiveEvent::Finished);
+    server.join().unwrap();
+}
+
 #[test]
 fn finalized_sentences_and_corrections_arrive_before_finish() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

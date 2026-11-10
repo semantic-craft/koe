@@ -414,13 +414,14 @@ impl KoeRuntime {
     pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
         let revision = self.workspace().revision();
         let error = self.error.clone();
-        let changed = self.device.ingest(bytes, now);
+        let mut changed = self.device.ingest(bytes, now);
         if let Err(error) = self
             .process_capture_events(now)
             .and_then(|()| self.save_device_recordings(now))
         {
             self.error = Some(error);
         }
+        changed |= self.maybe_start_auto_offline_pull();
         if changed || revision != self.workspace().revision() || error != self.error {
             self.generation = self.generation.saturating_add(1);
         }
@@ -442,8 +443,9 @@ impl KoeRuntime {
         {
             self.error = Some(error);
         }
-        let completed = self.poll_provider() | self.poll_captures();
+        let mut completed = self.poll_provider() | self.poll_captures();
         self.drive_analysis_queue();
+        completed |= self.maybe_start_auto_offline_pull();
         if changed || completed || revision != self.workspace().revision() || error != self.error {
             self.generation = self.generation.saturating_add(1);
         }

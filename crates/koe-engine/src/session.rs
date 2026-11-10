@@ -217,6 +217,11 @@ pub struct SessionIngestOutcome {
 /// Ordered capture events keep audio attached to its device file across batched notifications.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureEvent {
+    /// A realtime stream has started or switched to `file_id`.
+    Started {
+        /// Device file identity at stream start.
+        file_id: u32,
+    },
     /// Decoded realtime audio, before a possible file switch in the same notification.
     Audio {
         /// Device file identity at decode time.
@@ -660,6 +665,7 @@ impl TransportSession {
         if file_id == 0 {
             return None;
         }
+        let is_new_stream = self.active_file_id != Some(file_id) || !self.active_is_realtime;
         if self.active_file_id != Some(file_id) {
             if self.active_is_realtime
                 && self.active_file_id.is_some()
@@ -675,6 +681,10 @@ impl TransportSession {
             if let Some(dec) = self.live_decoder_16k.as_mut() {
                 dec.reset();
             }
+        }
+        if is_new_stream {
+            self.capture_events
+                .push_back(CaptureEvent::Started { file_id });
         }
         let offset = self
             .received_slice_count()
@@ -826,8 +836,11 @@ impl TransportSession {
                 if *waited >= REALTIME_QUIET_DRAIN_MS {
                     if let Some(fin) = self.finalize_active_transfer(now_epoch_sec) {
                         outcome.finalized = Some(fin);
-                        outcome.transfer_updated = true;
                     }
+                    outcome.transfer_updated = true;
+                    outcome
+                        .outbound_tx_frames
+                        .push(DeviceCommands::list_files_with_end_time(0));
                 }
             }
             _ => {}
@@ -1230,9 +1243,14 @@ impl TransportSession {
                                         quiet_drain_elapsed_ms: Some(0),
                                     };
                                     self.transfer.quiet_draining = true;
-                                    outcome.transfer_updated = true;
                                 }
                             }
+                            if state == 0 {
+                                outcome
+                                    .outbound_tx_frames
+                                    .push(DeviceCommands::list_files_with_end_time(0));
+                            }
+                            outcome.transfer_updated = true;
                         }
                     }
                 }
@@ -1290,9 +1308,15 @@ impl TransportSession {
                     }
                 }
                 (0x1A, 0x06) => {
-                    if pkt.payload.len() >= 5 {
+                    if pkt.payload.len() >= 4 {
                         let fid = read_u32_le(&pkt.payload, 0);
-                        let state = pkt.payload[4];
+                        let state = if pkt.payload.len() == 5 && pkt.payload[4] <= 2 {
+                            pkt.payload[4]
+                        } else if fid > 0 {
+                            1
+                        } else {
+                            0
+                        };
                         if state == 1 {
                             self.device_recording_active = true;
                             if fid > 0 {
@@ -1331,19 +1355,14 @@ impl TransportSession {
                                         quiet_drain_elapsed_ms: Some(0),
                                     };
                                     self.transfer.quiet_draining = true;
-                                    outcome.transfer_updated = true;
                                 }
                             }
-                        }
-                    } else if pkt.payload.len() == 4 {
-                        let fid = read_u32_le(&pkt.payload, 0);
-                        if fid > 0 {
-                            if let Some(tx) =
-                                self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
-                            {
-                                outcome.outbound_tx_frames.push(tx);
-                                outcome.transfer_updated = true;
+                            if state == 0 {
+                                outcome
+                                    .outbound_tx_frames
+                                    .push(DeviceCommands::list_files_with_end_time(0));
                             }
+                            outcome.transfer_updated = true;
                         }
                     } else if pkt.payload.len() == 1 {
                         let state = pkt.payload[0];
@@ -1376,9 +1395,14 @@ impl TransportSession {
                                         quiet_drain_elapsed_ms: Some(0),
                                     };
                                     self.transfer.quiet_draining = true;
-                                    outcome.transfer_updated = true;
                                 }
                             }
+                            if state == 0 {
+                                outcome
+                                    .outbound_tx_frames
+                                    .push(DeviceCommands::list_files_with_end_time(0));
+                            }
+                            outcome.transfer_updated = true;
                         }
                     }
                 }
@@ -1447,6 +1471,18 @@ impl TransportSession {
                                 dec.reset();
                             }
                         }
+                        let was_realtime_for_file = self.active_is_realtime
+                            && self.active_file_id == Some(head.secret.file_id);
+                        let starting_realtime_for_file = self.device_recording_active
+                            && (self.active_file_id == Some(head.secret.file_id)
+                                || self.pending_realtime_subscribe);
+                        let is_realtime =
+                            head.unfinished || was_realtime_for_file || starting_realtime_for_file;
+                        if is_realtime && !was_realtime_for_file {
+                            self.capture_events.push_back(CaptureEvent::Started {
+                                file_id: head.secret.file_id,
+                            });
+                        }
                         self.active_file_id = Some(head.secret.file_id);
                         self.active_file_key = head.file_key;
                         self.active_nonce = if head.file_key.is_some() {
@@ -1454,11 +1490,12 @@ impl TransportSession {
                         } else {
                             None
                         };
-                        self.active_is_realtime = head.unfinished;
+                        self.active_is_realtime = is_realtime;
                         let received_wire = self
                             .received_slice_count()
                             .saturating_mul(SLICE_RECORD_BYTES as u32);
-                        if head.unfinished {
+                        if is_realtime {
+                            self.pending_realtime_subscribe = false;
                             self.runtime_state = TransferRuntimeState::StreamingRealtime {
                                 file_id: head.secret.file_id,
                                 quiet_drain_elapsed_ms: None,
@@ -1649,6 +1686,8 @@ impl TransportSession {
     pub fn finalize_active_transfer(&mut self, now_epoch_sec: u64) -> Option<FinalizedRecording> {
         let fid = self.active_file_id?;
         if self.opus_buffer.is_empty() {
+            self.capture_events
+                .push_back(CaptureEvent::Finished { file_id: fid });
             self.reset_active_transfer();
             return None;
         }
@@ -2444,5 +2483,48 @@ mod tests {
             .request_reclaim_bean_file(20_261_109)
             .expect("custody verified must permit 0x1A/0x10 delete command");
         assert_eq!(delete_cmd, DeviceCommands::delete_file(20_261_109));
+    }
+
+    #[test]
+    fn realtime_lifecycle_emits_started_finished_preserves_stream_on_head_and_refreshes_catalog_on_stop()
+     {
+        let mut session = TransportSession::new();
+        let sk = [0x51u8; 32];
+        let fk = [0x52u8; 32];
+        let fn_iv = [0x53u8; 16];
+        session.set_session_key(sk);
+
+        let start_rx = TransportSession::build_rx_frame(0x1A, 0x06, &7001u32.to_le_bytes());
+        let _ = session.ingest_ble_chunk(&start_rx, 1_700_001_000);
+        assert_eq!(
+            Vec::from(session.take_capture_events()),
+            vec![CaptureEvent::Started { file_id: 7001 }]
+        );
+
+        let head_finite = build_test_head_frame(&sk, 7001, 10 * 166, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head_finite, 1_700_001_001);
+        assert!(session.active_is_realtime);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::StreamingRealtime);
+        assert!(session.take_capture_events().is_empty());
+
+        let stop_rx = TransportSession::build_rx_frame(0x18, 0x82, &[0x00]);
+        let stop_out = session.ingest_ble_chunk(&stop_rx, 1_700_001_002);
+        assert!(stop_out.transfer_updated);
+        assert_eq!(
+            stop_out.outbound_tx_frames,
+            vec![DeviceCommands::list_files_with_end_time(0)]
+        );
+        assert!(session.is_realtime_quiet_draining());
+
+        let drain_out = session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_001_004);
+        assert!(drain_out.transfer_updated);
+        assert_eq!(
+            drain_out.outbound_tx_frames,
+            vec![DeviceCommands::list_files_with_end_time(0)]
+        );
+        assert_eq!(
+            Vec::from(session.take_capture_events()),
+            vec![CaptureEvent::Finished { file_id: 7001 }]
+        );
     }
 }

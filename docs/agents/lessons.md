@@ -225,3 +225,11 @@
 - 修复：ProductWorkspace/Store 作为唯一事实；按 record + attempt + input revision 回写；云结果保存成功才消费；有序采集事件、内容版本音频和统一导航。
 - 验证点：`cargo test -p koe-runtime` 覆盖本地真实 HTTP/WS、stop 前 final、切换记录、落盘故障恢复及旧格式迁移；完整原生应用另走实际点击与磁盘回读，不以构建替代。
 - Seen 1x (2026-11-10)
+
+### 实时录音订阅 `1A/07` 文件头不可用 `file_size == 0xFFFFFFFF` 覆盖实时流状态，且停录必须自动刷新 `1B/0E` 并拉取未同步文件
+
+- 出处：2026-11-10 用户真机连接 D3200 录音豆按下录音键说话再关掉后，macOS 端既无实时状态/字幕显示，关掉开关后也未出现任何录音文件。排查发现：(1) `session.rs` 处理 `1A/07` 文件头时用 `self.active_is_realtime = head.unfinished`（仅当 `file_size == 0xFFFFFFFF` 为真）无条件覆盖了实时流状态，真机在录音刚启动返回 `file_size == 0` 或当前字节数时把 `active_is_realtime` 覆写为 `false`，导致后续 `1A/08` 语音分片全部跳过 `CaptureEvent::Audio` 且停录不进入 2s 静默收尾；(2) 硬件停录（`18/81`、`18/82`、`1A/06` 的 `state == 0`）未自动下发 `1B/0E` 刷新目录，`koe-runtime` 也无自动 `1A/07` 离线取回闭环；(3) `live.rs` 丢弃了 `sentence_end: false` 的 `asr::Event::Interim` 流式中间句，且 `BluetoothBridge.swift` 以 0ms 间隔连发 BLE 写帧，易被固件丢包。
+- 修复：(1) `session.rs` 在 `active_is_realtime` 或 `device_recording_active` 期间收到对应 `file_id` 的 `1A/07` 文件头时保持 `StreamingRealtime` 并派发 `CaptureEvent::Started`，硬件停录与 2s 静默收尾自动排队 `1B/0E`（`list_files_with_end_time(0)`）；(2) `koe-runtime` 按 `file_id` 绑定实时记录、收到 `Started` 立即落盘创建 `live-{file_id}` 记录，并在空闲时通过 `maybe_start_auto_offline_pull` 自动取回目录中未同步的已完成文件；(3) `live.rs` 转发非空 `Interim` 中间句并在 `UtteranceSpine::update_segment` 中原地更新文本与起止时间戳；(4) `BluetoothBridge.swift` 引入 `BleOutboundQueue` 按 300ms 节流发送 BLE 指令，并在 `TodayView.swift`/`SidebarView.swift` 展示实时录音时长、字节流与流式字幕预览。
+- 验证点：`cargo test -p koe-engine -p koe-client-providers -p koe-runtime`（含 `realtime_lifecycle_emits_started_finished_preserves_stream_on_head_and_refreshes_catalog_on_stop`、`live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finalizes_audio`、`hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record`、`interim_sentences_stream_as_live_events_before_sentence_end`）及 `swift test --package-path platforms/macos`（含 `bleOutboundQueuePacing`）全绿。
+- Seen 1x (2026-11-10)
+

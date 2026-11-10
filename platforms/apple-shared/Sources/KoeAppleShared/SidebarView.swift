@@ -63,8 +63,11 @@ public struct SidebarView: View {
         }
         .padding(12).frame(width: 220).background(AppColors.bgPanel)
     }
-    private var deviceSummaryText: String {
+    public var deviceSummaryText: String {
         let dev = store.snapshot.device
+        if dev.recording {
+            return "正在录音  \(TimeLabel.duration(dev.liveDurationMs))"
+        }
         if dev.connected {
             if let mic = dev.batteryPercent {
                 return "已连接  \(mic)%"
@@ -76,8 +79,9 @@ public struct SidebarView: View {
         }
         return dev.state
     }
-    private var deviceDotColor: Color {
+    public var deviceDotColor: Color {
         let dev = store.snapshot.device
+        if dev.recording { return KoeColors.danger }
         if dev.connected { return AppColors.success }
         if dev.phase == "disconnected" { return AppColors.textMuted }
         return AppColors.warning

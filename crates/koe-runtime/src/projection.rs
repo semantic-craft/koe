@@ -3,6 +3,7 @@ use chrono::{DateTime, Local};
 use koe_engine::{
     context::{AskRole, AskStatus},
     session::{ConnectionPhaseTag, TransferPhaseTag},
+    transport::OPUS_FRAME_BYTES,
 };
 use serde_json::json;
 
@@ -15,12 +16,43 @@ impl KoeRuntime {
                 r.aggregate.recording_id.clone(),
             ))
         });
+        let device = &self.device.session;
+        let live_record_id = device
+            .active_file_id
+            .and_then(|fid| self.captures.active.get(&fid))
+            .or_else(|| self.captures.active.values().next())
+            .map(String::as_str);
+        let live_duration_ms = if device.device_recording_active
+            || matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime)
+        {
+            let opus_ms = ((device.opus_buffer.len() / OPUS_FRAME_BYTES) as u64) * 20;
+            let pcm_ms = live_record_id
+                .and_then(|id| self.captures.sessions.get(id))
+                .map_or(0, |c| c.captured_pcm_bytes / 32);
+            let record_ms = live_record_id
+                .and_then(|id| self.workspace().record(id))
+                .map_or(0, |r| r.aggregate.duration_ms);
+            opus_ms.max(pcm_ms).max(record_ms)
+        } else {
+            0
+        };
         let today = local_date(now);
         let rows: Vec<_> = records.iter().map(|record| {
+            let is_live = Some(record.aggregate.recording_id.as_str()) == live_record_id;
+            let duration_ms = if is_live {
+                record.aggregate.duration_ms.max(live_duration_ms)
+            } else {
+                record.aggregate.duration_ms
+            };
+            let preview = if is_live {
+                record.aggregate.spine.segments().last().map(|s| s.text.chars().take(100).collect::<String>()).unwrap_or_default()
+            } else {
+                record.aggregate.spine.segments().first().map(|s| s.text.chars().take(100).collect::<String>()).unwrap_or_default()
+            };
             json!({"id":record.aggregate.recording_id,"title":record.title,
-                "createdAtEpochSec":record.aggregate.created_at_epoch_sec,"durationMs":record.aggregate.duration_ms,
+                "createdAtEpochSec":record.aggregate.created_at_epoch_sec,"durationMs":duration_ms,
                 "source":origin(record.origin),"status":status(record),"segmentCount":record.aggregate.spine.len(),
-                "preview":record.aggregate.spine.segments().first().map(|s| s.text.chars().take(100).collect::<String>()).unwrap_or_default()})
+                "preview":preview})
         }).collect();
         let today_ids: Vec<_> = records
             .iter()
@@ -32,7 +64,7 @@ impl KoeRuntime {
             .record
             .as_deref()
             .and_then(|id| self.workspace().record(id))
-            .map(|r| self.detail(r));
+            .map(|r| self.detail(r, live_record_id, live_duration_ms));
         let mut tasks = Vec::new();
         let mut memories = Vec::new();
         for item in self.workspace().items().values() {
@@ -117,6 +149,16 @@ impl KoeRuntime {
         } else {
             0.0
         };
+        let transfer_phase = if device.is_offline_pull_suspended() {
+            "suspended"
+        } else {
+            match device.transfer.phase {
+                TransferPhaseTag::Idle | TransferPhaseTag::QueryingCatalog => "idle",
+                TransferPhaseTag::StreamingRealtime => "streaming_realtime",
+                TransferPhaseTag::PullingOffline => "pulling_offline",
+                TransferPhaseTag::Failed => "failed",
+            }
+        };
         json!({"version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"detail":detail,"tasks":tasks,"memories":memories,
@@ -128,6 +170,10 @@ impl KoeRuntime {
                 "connected":connected,
                 "busy":matches!(device.transfer.phase,TransferPhaseTag::PullingOffline|TransferPhaseTag::StreamingRealtime) || device.device_recording_active,
                 "recording":device.device_recording_active,
+                "transferPhase":transfer_phase,
+                "liveDurationMs":live_duration_ms,
+                "liveBytes":device.transfer.received_wire_bytes,
+                "liveRecordId":live_record_id,
                 "deviceName":device_name,
                 "batteryPercent":battery_pct,
                 "charging":telemetry.is_some_and(|t| t.charging),
@@ -145,8 +191,18 @@ impl KoeRuntime {
             "error":self.error,"notice":self.notice})
     }
 
-    fn detail(&self, record: &ProductRecord) -> Value {
+    fn detail(
+        &self,
+        record: &ProductRecord,
+        live_record_id: Option<&str>,
+        live_duration_ms: u64,
+    ) -> Value {
         let aggregate = &record.aggregate;
+        let duration_ms = if Some(aggregate.recording_id.as_str()) == live_record_id {
+            aggregate.duration_ms.max(live_duration_ms)
+        } else {
+            aggregate.duration_ms
+        };
         let segments: Vec<_> = aggregate.spine.segments().iter().map(|s| json!({"id":s.id.to_string(),"text":s.text,"startMs":s.start_ms,"endMs":s.end_ms,"speaker":s.speaker})).collect();
         let mut summary = Vec::new();
         let source_values = |ids: &[SegmentId]| -> Vec<Value> {
@@ -199,7 +255,7 @@ impl KoeRuntime {
                 AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. }
             );
         json!({"id":aggregate.recording_id,"title":record.title,"createdAtEpochSec":aggregate.created_at_epoch_sec,
-            "durationMs":aggregate.duration_ms,"source":origin(record.origin),"status":status(record),"segments":segments,
+            "durationMs":duration_ms,"source":origin(record.origin),"status":status(record),"segments":segments,
             "summary":summary,"highlights":highlights,"audioPath":audio.map(|p|p.to_string_lossy().to_string()),
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
     }

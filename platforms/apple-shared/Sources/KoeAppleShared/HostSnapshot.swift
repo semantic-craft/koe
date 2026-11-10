@@ -17,6 +17,8 @@ public struct SegmentSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let speaker: String?
 }
 
+public typealias KoeColors = AppColors
+
 public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String
@@ -26,6 +28,8 @@ public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let status: String
     public let segmentCount: Int
     public let preview: String
+    public var isTranscribing: Bool { status == "转写中" || status == "等待转写" }
+    public var audioFile: String? { nil }
 }
 
 public struct SummarySnapshot: Codable, Equatable, Sendable {
@@ -84,6 +88,7 @@ public struct DeviceFileSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let id: UInt32
     public let title: String
     public let durationMs: UInt64
+    public var fileId: UInt32 { id }
 }
 
 public struct DeviceGuideSnapshot: Codable, Equatable, Sendable {
@@ -129,6 +134,10 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     public let files: [DeviceFileSnapshot]
     public let progress: Double
     public let guide: DeviceGuideSnapshot?
+    public var transferPhase: String
+    public var liveDurationMs: UInt64
+    public var liveBytes: UInt64
+    public var liveRecordId: String?
 
     public init(
         phase: String = "disconnected",
@@ -147,7 +156,11 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         storageLabel: String = "—",
         files: [DeviceFileSnapshot],
         progress: Double,
-        guide: DeviceGuideSnapshot? = nil
+        guide: DeviceGuideSnapshot? = nil,
+        transferPhase: String = "idle",
+        liveDurationMs: UInt64 = 0,
+        liveBytes: UInt64 = 0,
+        liveRecordId: String? = nil
     ) {
         self.phase = phase
         self.state = state
@@ -166,12 +179,17 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         self.files = files
         self.progress = progress
         self.guide = guide
+        self.transferPhase = transferPhase
+        self.liveDurationMs = liveDurationMs
+        self.liveBytes = liveBytes
+        self.liveRecordId = liveRecordId
     }
 
     private enum CodingKeys: String, CodingKey {
         case phase, state, statusDetail, connected, busy, recording, deviceName
         case batteryPercent, charging, boxBatteryPercent, boxCharging
         case serialNumber, firmwareVersion, storageLabel, files, progress, guide
+        case transferPhase, liveDurationMs, liveBytes, liveRecordId
     }
 
     public init(from decoder: Decoder) throws {
@@ -195,6 +213,10 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         self.files = try c.decodeIfPresent([DeviceFileSnapshot].self, forKey: .files) ?? []
         self.progress = try c.decodeIfPresent(Double.self, forKey: .progress) ?? 0.0
         self.guide = try c.decodeIfPresent(DeviceGuideSnapshot.self, forKey: .guide)
+        self.transferPhase = try c.decodeIfPresent(String.self, forKey: .transferPhase) ?? "idle"
+        self.liveDurationMs = try c.decodeIfPresent(UInt64.self, forKey: .liveDurationMs) ?? 0
+        self.liveBytes = try c.decodeIfPresent(UInt64.self, forKey: .liveBytes) ?? 0
+        self.liveRecordId = try c.decodeIfPresent(String.self, forKey: .liveRecordId)
     }
 }
 
@@ -227,6 +249,14 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let playback: PlaybackSnapshot
     public let error: String?
     public let notice: String?
+
+    public var activeLiveRecord: RecordSnapshot? {
+        if let liveId = device.liveRecordId,
+           let matched = records.first(where: { $0.id == liveId }) {
+            return matched
+        }
+        return records.first(where: { $0.isTranscribing && $0.audioFile == nil })
+    }
 
     public static let empty = HostSnapshot(
         version: 2, generation: 0, section: "today", canGoBack: false,

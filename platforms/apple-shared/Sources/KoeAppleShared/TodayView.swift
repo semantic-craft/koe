@@ -16,15 +16,31 @@ struct TodayView: View {
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         PageHeading(title: "今天", subtitle: "让值得记住的事，有个去处。")
                     }
-                    if store.snapshot.device.busy {
+                    if store.snapshot.device.recording || store.snapshot.device.transferPhase == "streaming_realtime" {
+                        liveRecordingCard
+                    } else if store.snapshot.device.busy {
                         KoeCard {
                             VStack(alignment: .leading, spacing: 10) {
-                                Label("正在取回录音", systemImage: "arrow.down.circle")
+                                HStack {
+                                    Label("正在取回录音", systemImage: "arrow.down.circle")
+                                        .font(.system(size: AppFontSizes.sm, weight: .medium))
+                                    Spacer()
+                                    Text("\(Int((store.snapshot.device.progress * 100).rounded()))%")
+                                        .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                                        .foregroundStyle(KoeColors.textSecondary)
+                                }
                                 ProgressView(value: store.snapshot.device.progress)
                                 Text("取回完成后，记录会出现在这里。")
                                     .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                             }
                         }
+                    }
+                    if store.snapshot.device.connected
+                        && !store.snapshot.device.recording
+                        && !store.snapshot.device.busy
+                        && !store.snapshot.device.files.isEmpty
+                    {
+                        deviceFilesCard
                     }
                     VStack(alignment: .leading, spacing: 12) {
                         sectionHeader("需要你确认", count: proposedTasks.count + proposedMemories.count)
@@ -84,6 +100,96 @@ struct TodayView: View {
                     }
                 }.frame(width: 235).padding(.top, 7)
             }.padding(30)
+        }
+    }
+    private var liveRecordingCard: some View {
+        let liveRecord = store.snapshot.activeLiveRecord
+        return KoeCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Circle().fill(KoeColors.danger).frame(width: 8, height: 8)
+                    Text("录音豆正在录音")
+                        .font(.system(size: AppFontSizes.sm, weight: .medium))
+                        .foregroundStyle(KoeColors.textPrimary)
+                    Spacer()
+                    Text(TimeLabel.duration(store.snapshot.device.liveDurationMs))
+                        .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                        .foregroundStyle(KoeColors.textSecondary)
+                    Button {
+                        store.send("device_stop")
+                        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                    } label: {
+                        Text("停止录音")
+                            .font(.system(size: AppFontSizes.xs, weight: .medium))
+                            .foregroundStyle(KoeColors.danger)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(KoeColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+                            .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(KoeColors.border))
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                }
+                if let liveRecord, !liveRecord.preview.isEmpty {
+                    Text(liveRecord.preview)
+                        .font(.system(size: AppFontSizes.sm))
+                        .foregroundStyle(KoeColors.textPrimary)
+                        .lineLimit(3)
+                } else {
+                    Text(
+                        store.snapshot.device.liveBytes > 0
+                            ? "正在接收实时语音流 (\(store.snapshot.device.liveBytes) B)..."
+                            : "正在等待录音豆语音帧..."
+                    )
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(KoeColors.textSecondary)
+                }
+                if let liveRecord {
+                    Button {
+                        store.send("select_record", ["recordId": liveRecord.id])
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text("查看实时字幕")
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.system(size: AppFontSizes.xs, weight: .medium))
+                        .foregroundStyle(KoeColors.accent)
+                        .contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
+    }
+    private var deviceFilesCard: some View {
+        KoeCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("录音豆文件 (\(store.snapshot.device.files.count))")
+                    .font(.system(size: AppFontSizes.sm, weight: .medium))
+                    .foregroundStyle(KoeColors.textPrimary)
+                ForEach(store.snapshot.device.files.prefix(3)) { file in
+                    HStack(spacing: 10) {
+                        Text("#\(file.fileId)")
+                            .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                            .foregroundStyle(KoeColors.textPrimary)
+                        Text(TimeLabel.duration(file.durationMs))
+                            .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                            .foregroundStyle(KoeColors.textSecondary)
+                        Spacer()
+                        Button {
+                            store.send("device_download", ["fileId": file.fileId])
+                            NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                        } label: {
+                            Text("取回")
+                                .font(.system(size: AppFontSizes.xs, weight: .medium))
+                                .foregroundStyle(KoeColors.textPrimary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(KoeColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+                                .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(KoeColors.border))
+                                .contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
     private func sectionHeader(_ title: String, count: Int) -> some View {

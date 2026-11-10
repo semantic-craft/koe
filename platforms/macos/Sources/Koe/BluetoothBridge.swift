@@ -71,51 +71,67 @@ public struct BleAdvertisementCandidate: Equatable, Sendable {
 
         guard matchedByService || matchedByMfg || matchedByName else { return nil }
 
-        let displayName: String
-        if !rawName.isEmpty {
-            displayName = rawName
-        } else if macAddress.count >= 5 {
-            displayName = "soundcore Work (\(macAddress.suffix(5)))"
-        } else {
-            displayName = "soundcore Work"
-        }
-
+        let displayName = !rawName.isEmpty
+            ? rawName
+            : (macAddress.count >= 5 ? "soundcore Work (\(macAddress.suffix(5)))" : "soundcore Work")
         return BleAdvertisementCandidate(
-            displayName: displayName,
-            macAddress: macAddress,
+            displayName: displayName, macAddress: macAddress,
             matchedByServiceUUID: matchedByService,
-            matchedByManufacturerData: matchedByMfg,
-            matchedByName: matchedByName
+            matchedByManufacturerData: matchedByMfg, matchedByName: matchedByName
         )
     }
 
     private static func formatMac(_ bytes: [UInt8]) -> String {
         guard bytes.count >= 6 else { return "" }
         let first = bytes[0]
-        if bytes[0..<6].allSatisfy({ $0 == first }) || bytes[0..<6].allSatisfy({ $0 == 0 }) {
-            return ""
-        }
+        if bytes[0..<6].allSatisfy({ $0 == first }) || bytes[0..<6].allSatisfy({ $0 == 0 }) { return "" }
         return bytes[0..<6].map { String(format: "%02X", $0) }.joined(separator: ":")
+    }
+}
+
+public struct BleOutboundQueue: Sendable {
+    public var spacingSeconds: TimeInterval
+    public private(set) var pendingFrames: [Data] = []
+    public private(set) var lastWriteDate: Date?
+
+    public init(spacingSeconds: TimeInterval = 0.30) { self.spacingSeconds = spacingSeconds }
+    public mutating func enqueue(_ frames: [Data]) { pendingFrames.append(contentsOf: frames) }
+
+    public mutating func popReady(now: Date) -> Data? {
+        guard !pendingFrames.isEmpty else { return nil }
+        if let last = lastWriteDate, now.timeIntervalSince(last) + 1e-6 < spacingSeconds { return nil }
+        lastWriteDate = now
+        return pendingFrames.removeFirst()
+    }
+
+    public func delayUntilNextReady(now: Date) -> TimeInterval? {
+        guard !pendingFrames.isEmpty else { return nil }
+        guard let last = lastWriteDate else { return 0 }
+        return max(0, spacingSeconds - now.timeIntervalSince(last))
+    }
+
+    public mutating func reset() {
+        pendingFrames.removeAll()
+        lastWriteDate = nil
     }
 }
 
 @MainActor
 public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    nonisolated public static var d3200ServiceUUID: CBUUID {
-        CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB")
+    nonisolated public static var d3200ServiceUUID: CBUUID { CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB") }
+    nonisolated public static var writeCharacteristicUUID: CBUUID { CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB") }
+    nonisolated public static var notifyCharacteristicUUID: CBUUID { CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB") }
+    nonisolated public static func isWriteCharacteristic(_ uuid: CBUUID) -> Bool { uuid.uuidString.lowercased().contains("7777") }
+    nonisolated public static func isNotifyCharacteristic(_ uuid: CBUUID) -> Bool { uuid.uuidString.lowercased().contains("8888") }
+    nonisolated public static func isPrimaryD3200Service(_ uuid: CBUUID) -> Bool {
+        let s = uuid.uuidString.lowercased()
+        return uuid == d3200ServiceUUID || s.contains("020cf5da") || s == "f5da"
     }
-    nonisolated public static var writeCharacteristicUUID: CBUUID {
-        CBUUID(string: "00007777-0000-1000-8000-00805F9B34FB")
+    nonisolated public static func shouldPreferWriteCharacteristic(existingServiceUUID: CBUUID?, candidateServiceUUID: CBUUID) -> Bool {
+        guard let existingServiceUUID else { return true }
+        return isPrimaryD3200Service(existingServiceUUID) ? isPrimaryD3200Service(candidateServiceUUID) : true
     }
-    nonisolated public static var notifyCharacteristicUUID: CBUUID {
-        CBUUID(string: "00008888-0000-1000-8000-00805F9B34FB")
-    }
-    nonisolated public static func isWriteCharacteristic(_ uuid: CBUUID) -> Bool {
-        uuid.uuidString.lowercased().contains("7777")
-    }
-    nonisolated public static func isNotifyCharacteristic(_ uuid: CBUUID) -> Bool {
-        uuid.uuidString.lowercased().contains("8888")
-    }
+    nonisolated public static func secondaryServiceUUIDForTest(_ string: String) -> CBUUID { CBUUID(string: string) }
 
     private static let savedPeripheralKey = "koe.ble.lastPeripheralUUID"
     public weak var store: HostSessionStore?
@@ -124,12 +140,12 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     private var peripheral: CBPeripheral?
     private var reconnectingPeripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
-    private var pendingWrites: [Data] = []
+    private var outboundQueue = BleOutboundQueue()
+    private var outboundFlushTimer: Timer?
     private var notifyReady = false
     private var notifyFound = false
     private var pendingServices = 0
     private var reportedReady = false
-    private var awaitingWrite = false
     private var connectionID = ""
     private var discoveredName: String?
 
@@ -234,39 +250,52 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     public func flushOutboundFrames() {
         guard reportedReady, let peripheral, let characteristic = writeCharacteristic else { return }
+        let mode: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+        let limit = max(peripheral.maximumWriteValueLength(for: mode), 1)
+        var frames: [Data] = []
         for hex in store?.drainOutboundBleFramesHex() ?? [] {
             guard let data = Self.decodeHex(hex) else {
                 store?.reportNativeError("设备指令格式无效，请重新连接。")
                 continue
             }
-            let mode: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
-            let limit = max(peripheral.maximumWriteValueLength(for: mode), 1)
             var offset = 0
             while offset < data.count {
                 let end = min(offset + limit, data.count)
-                pendingWrites.append(data.subdata(in: offset..<end))
+                frames.append(data.subdata(in: offset..<end))
                 offset = end
             }
         }
-        if characteristic.properties.contains(.writeWithoutResponse) {
-            while peripheral.canSendWriteWithoutResponse, !pendingWrites.isEmpty {
-                peripheral.writeValue(pendingWrites.removeFirst(), for: characteristic, type: .withoutResponse)
+        outboundQueue.enqueue(frames)
+        pumpOutboundQueue()
+    }
+
+    private func pumpOutboundQueue() {
+        outboundFlushTimer?.invalidate()
+        outboundFlushTimer = nil
+        guard reportedReady, let peripheral, let writeChar = writeCharacteristic else { return }
+        let writeType: CBCharacteristicWriteType = writeChar.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+        while let frame = outboundQueue.popReady(now: Date()) {
+            peripheral.writeValue(frame, for: writeChar, type: writeType)
+        }
+        if let delay = outboundQueue.delayUntilNextReady(now: Date()) {
+            let timer = Timer.scheduledTimer(withTimeInterval: max(0.01, delay), repeats: false) { [weak self] _ in
+                Task { @MainActor in self?.pumpOutboundQueue() }
             }
-        } else if !awaitingWrite, let frame = pendingWrites.first {
-            awaitingWrite = true
-            peripheral.writeValue(frame, for: characteristic, type: .withResponse)
+            RunLoop.main.add(timer, forMode: .common)
+            outboundFlushTimer = timer
         }
     }
 
     private func resetLinkState() {
+        outboundFlushTimer?.invalidate()
+        outboundFlushTimer = nil
+        outboundQueue.reset()
         peripheral = nil
         writeCharacteristic = nil
         notifyReady = false
         notifyFound = false
         pendingServices = 0
         reportedReady = false
-        awaitingWrite = false
-        pendingWrites.removeAll()
     }
 
     private func disconnected(_ message: String? = nil) {
@@ -390,7 +419,12 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             self.pendingServices = max(0, self.pendingServices - 1)
             for characteristic in service.characteristics ?? [] {
                 if Self.isWriteCharacteristic(characteristic.uuid) {
-                    self.writeCharacteristic = characteristic
+                    if Self.shouldPreferWriteCharacteristic(
+                        existingServiceUUID: self.writeCharacteristic?.service?.uuid,
+                        candidateServiceUUID: service.uuid
+                    ) {
+                        self.writeCharacteristic = characteristic
+                    }
                 }
                 if Self.isNotifyCharacteristic(characteristic.uuid) {
                     self.notifyFound = true
@@ -440,14 +474,12 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     nonisolated public func peripheral(_ source: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic,
                                        error: (any Error)?) {
         Task { @MainActor in
-            guard self.peripheral === source, self.awaitingWrite else { return }
-            self.awaitingWrite = false
+            guard self.peripheral === source else { return }
             guard error == nil else {
                 self.store?.reportNativeError("设备指令发送失败，请重新连接。")
                 self.central?.cancelPeripheralConnection(source)
                 return
             }
-            if !self.pendingWrites.isEmpty { self.pendingWrites.removeFirst() }
             self.flushOutboundFrames()
         }
     }

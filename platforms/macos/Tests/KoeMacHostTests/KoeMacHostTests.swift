@@ -65,6 +65,47 @@ struct KoeMacHostTests {
         #expect(BluetoothBridge.isNotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID))
     }
 
+    @Test("BLE outbound queue paces frames at 300ms intervals and resets on disconnect")
+    @MainActor
+    func bleOutboundQueuePacing() {
+        var queue = BleOutboundQueue(spacingSeconds: 0.30)
+        let f1 = Data([0x09, 0xFF, 0x00, 0x01])
+        let f2 = Data([0x09, 0xFF, 0x00, 0x02])
+        let f3 = Data([0x09, 0xFF, 0x00, 0x03])
+        queue.enqueue([f1, f2, f3])
+
+        let t0 = Date(timeIntervalSince1970: 1_000.0)
+        #expect(queue.delayUntilNextReady(now: t0) == 0)
+        #expect(queue.popReady(now: t0) == f1)
+        #expect(queue.lastWriteDate == t0)
+
+        let t100ms = t0.addingTimeInterval(0.10)
+        #expect(queue.popReady(now: t100ms) == nil)
+        let delayAt100ms = queue.delayUntilNextReady(now: t100ms) ?? -1
+        #expect(abs(delayAt100ms - 0.20) < 0.001)
+
+        let t300ms = t0.addingTimeInterval(0.30)
+        #expect(queue.popReady(now: t300ms) == f2)
+        #expect(queue.popReady(now: t300ms) == nil)
+
+        queue.reset()
+        #expect(queue.delayUntilNextReady(now: t300ms) == nil)
+        #expect(queue.popReady(now: t300ms) == nil)
+        #expect(queue.lastWriteDate == nil)
+    }
+
+    @Test("D3200 primary service write characteristic is not overwritten by secondary service")
+    @MainActor
+    func writeCharacteristicServicePriority() {
+        let primary = BluetoothBridge.d3200ServiceUUID
+        let secondary = BluetoothBridge.secondaryServiceUUIDForTest("00007000-0000-1000-8000-00805F9B34FB")
+
+        #expect(BluetoothBridge.shouldPreferWriteCharacteristic(existingServiceUUID: nil, candidateServiceUUID: secondary))
+        #expect(BluetoothBridge.shouldPreferWriteCharacteristic(existingServiceUUID: secondary, candidateServiceUUID: primary))
+        #expect(!BluetoothBridge.shouldPreferWriteCharacteristic(existingServiceUUID: primary, candidateServiceUUID: secondary))
+        #expect(BluetoothBridge.shouldPreferWriteCharacteristic(existingServiceUUID: primary, candidateServiceUUID: primary))
+    }
+
     @Test("Closing and reopening restores the workspace instead of a panel")
     @MainActor
     func windowCloseAndReopen() {
