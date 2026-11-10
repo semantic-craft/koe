@@ -112,12 +112,12 @@
       },
       {
         "number": 629,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T12:39:53Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T13:02:15Z"
       }
     ],
-    "main": "1e6132adc88345479e44e4affc2a22008f076bec",
+    "main": "22334d2dc6d0b8b623a52e4cf36262565443c7f0",
     "open_pulls": [],
     "pulls": [
       {
@@ -199,12 +199,20 @@
         "merged": true,
         "number": 627,
         "state": "closed"
+      },
+      {
+        "base": "1e6132adc88345479e44e4affc2a22008f076bec",
+        "head": "440b058e1ef1348b194e5e0b76f83ae9bf93e79d",
+        "merge_commit": "22334d2dc6d0b8b623a52e4cf36262565443c7f0",
+        "merged": true,
+        "number": 630,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T12:46:57.072825Z",
+  "observed_at": "2026-11-10T13:03:16.304363Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -413,13 +421,18 @@
             },
             {
               "kind": "issue",
-              "ref": 629,
-              "note": "原生麦克风真实时刻与暂停子单元；265 Rust、32 Python、50 Swift完整本地门禁通过。系统双路、签名安装与真实权限仍未验收。"
+              "note": "原生麦克风真实时刻与暂停子单元；265 Rust、32 Python、50 Swift完整本地门禁通过。系统双路、签名安装与真实权限仍未验收。",
+              "ref": 629
             },
             {
               "kind": "file",
-              "ref": "platforms/macos/Tests/KoeMacHostTests/NativeCaptureTimelineTests.swift",
-              "note": "隔离权限、暂停尾块、恢复代次、队列溢出及最终WAV/时间轴回读。"
+              "note": "隔离权限、暂停尾块、恢复代次、队列溢出及最终WAV/时间轴回读。",
+              "ref": "platforms/macos/Tests/KoeMacHostTests/NativeCaptureTimelineTests.swift"
+            },
+            {
+              "kind": "pull",
+              "note": "squash 22334d2；265 Rust、32 Python、50 Swift完整门禁与CI通过；独立worktree15 Rust+24 NativeCapture实运行PASS+NOTES。未安装、未在真实环境验证。",
+              "ref": 630
             }
           ],
           "id": "mac-microphone-capture",
@@ -484,7 +497,7 @@
           "id": "mac-dual-capture",
           "next": "系统音频授权完成边界仍未解决：本机SDK与Apple样例未找到独立公开回调。不得把HAL成功、静音或录屏权限当作AudioCapture获准。后续接Core Audio与原生双路、输出变化；签名版和真实验收见#620。",
           "status": "in_progress",
-          "summary": "Rust 分路资产保管（PR #621）、共同时间轴与暂停协议（PR #624）及分路回放（PR #627）已合并。原生单路麦克风补接真实首样本时刻、权限后clock及暂停恢复，隔离行为验证见#629；本轮未安装签名版。Core Audio与原生双路入口仍未恢复，不把单路子单元视为完整N3B。真实GUI、权限和听感继续#620。",
+          "summary": "Rust 分路资产保管（PR #621）、共同时间轴与暂停协议（PR #624）及分路回放（PR #627）已合并。原生单路麦克风补接真实首样本时刻、权限后clock及暂停恢复，PR #630已squash 22334d2，完整门禁、CI和独立实运行通过；本轮未安装签名版。Core Audio与原生双路入口仍未恢复，不把单路子单元视为完整N3B。真实GUI、权限和听感继续#620。",
           "title": "Mac 系统音频双路恢复"
         }
       ],
@@ -687,7 +700,8 @@
       617,
       621,
       624,
-      627
+      627,
+      630
     ]
   }
 }
