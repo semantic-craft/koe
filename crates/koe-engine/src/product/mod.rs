@@ -1,6 +1,8 @@
 //! Recording-owned product state shared by native hosts and the CLI.
 
 mod ask;
+mod migration;
+pub use migration::{ImportedSummary, MigrationReceipt};
 mod record;
 mod state;
 
@@ -240,6 +242,8 @@ impl std::error::Error for ProductError {}
 /// Pure serializable value state used by the persistence boundary, not a wire schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceState {
+    /// Completed imports, including preserved material that has not been mapped.
+    pub migrations: Vec<MigrationReceipt>,
     /// Committed revision.
     pub revision: u64,
     /// Next operation identity.
@@ -261,6 +265,7 @@ pub struct WorkspaceState {
 /// Single owner of recording content, sourced review items, and conversation state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductWorkspace {
+    migrations: Vec<MigrationReceipt>,
     revision: u64,
     next_operation: u64,
     records: BTreeMap<RecordId, ProductRecord>,
@@ -282,6 +287,7 @@ impl ProductWorkspace {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            migrations: Vec::new(),
             revision: 0,
             next_operation: 1,
             records: BTreeMap::new(),

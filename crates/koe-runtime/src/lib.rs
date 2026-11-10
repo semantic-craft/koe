@@ -9,6 +9,7 @@ mod capture;
 mod capture_tests;
 mod command;
 mod device;
+mod flutter_import;
 mod legacy;
 #[cfg(test)]
 mod navigation_tests;
@@ -147,6 +148,9 @@ impl KoeRuntime {
 
     fn dispatch(&mut self, command: Command, now: u64) -> Result<(), String> {
         match command {
+            Command::ImportFlutterLibrary { path } => {
+                self.import_flutter_library(Path::new(&path))?
+            }
             Command::Navigate { section } => self.go(Location {
                 page: section,
                 ..self.location.clone()
