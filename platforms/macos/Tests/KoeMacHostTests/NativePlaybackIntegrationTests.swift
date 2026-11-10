@@ -1,0 +1,141 @@
+import AVFoundation
+import KoeAppleShared
+import XCTest
+@testable import Koe
+
+@MainActor
+final class NativePlaybackIntegrationTests: XCTestCase {
+    private func fixture(_ body: @MainActor (HostSessionStore) async throws -> Void) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("koe-player-integration-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = HostSessionStore(workspacePath: root.path)
+        defer { store.shutdown(); try? FileManager.default.removeItem(at: root) }
+        store.send("start_microphone", ["inputId": "fixture", "includeSystem": true, "clockNs": 1_000_000_000])
+        let ticket = try XCTUnwrap(store.snapshot.microphone)
+        func event(_ type: String, _ lane: String, _ fields: [String: Any] = [:]) {
+            var payload = fields
+            payload["recordId"] = ticket.recordId; payload["sessionId"] = ticket.sessionId; payload["lane"] = lane
+            store.send(type, payload)
+            XCTAssertNil(store.snapshot.error)
+        }
+        for lane in ["microphone", "system"] { event("microphone_started", lane, ["sampleRate": 16000]) }
+        for (lane, seq, ns) in [("microphone", 0, 1_000_000_000), ("microphone", 1, 1_100_000_000), ("system", 0, 1_050_000_000)] {
+            event("microphone_chunk", lane, ["sequence": seq, "samples": [Int16](repeating: 100, count: 160), "timing": ["epoch": 0, "capturedStartNs": ns]])
+        }
+        store.send("stop_microphone")
+        event("microphone_stopped", "microphone", ["sequence": 2, "epoch": 0])
+        event("microphone_stopped", "system", ["sequence": 1, "epoch": 0])
+        try await body(store)
+    }
+
+    private func until(_ label: String, _ predicate: @MainActor () -> Bool, tick: @MainActor () -> Void = {}) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !predicate(), ContinuousClock.now < deadline { tick(); await Task.yield() }
+        guard predicate() else { XCTFail(label); throw CaptureError(label) }
+    }
+
+    func testLateAssetLoadCannotReplaceNewLane() async throws {
+        try await fixture { store in
+            let pending = PendingPlaybackItems()
+            let player = AVPlayer()
+            let playback = NativePlayback(player: player, makeItem: pending.make)
+            playback.store = store
+            defer { playback.stop(); pending.cancelRemaining() }
+            playback.tick()
+            try await self.until("microphone load pending", { pending.waiters.count == 1 })
+            store.send("select_playback_lane", ["lane": "system"])
+            playback.tick()
+            try await self.until("system load pending", { pending.waiters.count == 2 })
+            let selected = AVPlayerItem(url: URL(fileURLWithPath: try XCTUnwrap(store.snapshot.playback.asset?.audioPath)))
+            pending.resolve(1, selected)
+            try await self.until("system item installed", { player.currentItem === selected })
+            pending.resolve(0, AVPlayerItem(asset: AVMutableComposition()))
+            try await self.until("old load completed", { pending.completed == 2 })
+            XCTAssertTrue(player.currentItem === selected)
+            XCTAssertEqual(store.snapshot.playback.lane, "system")
+        }
+    }
+
+    func testSeekInsideGapAndLaneSwitchUseCommonPositionWithoutPlayingAudio() async throws {
+        try await fixture { store in
+            let player = AVPlayer()
+            let playback = NativePlayback(player: player)
+            playback.store = store
+            defer { playback.stop() }
+            store.send("seek", ["positionMs": 90])
+            try await self.until("seek in microphone gap", { player.currentTime().isNumeric && abs(player.currentTime().seconds - 0.09) < 0.0001 }, tick: playback.tick)
+            let previous = player.currentItem
+            store.send("select_playback_lane", ["lane": "system"])
+            try await self.until("system lane common position", {
+                player.currentItem !== previous && player.currentTime().isNumeric && abs(player.currentTime().seconds - 0.09) < 0.0001
+            }, tick: playback.tick)
+            store.send("seek", ["positionMs": 55]); playback.tick()
+            store.send("seek", ["positionMs": 100]); playback.tick()
+            try await self.until("latest seek wins", { player.currentTime().isNumeric && abs(player.currentTime().seconds - 0.1) < 0.0001 }, tick: playback.tick)
+            playback.tick()
+            XCTAssertEqual(store.snapshot.playback.positionMs, 100)
+            XCTAssertFalse(store.snapshot.playback.isPlaying)
+            XCTAssertEqual(player.rate, 0)
+        }
+    }
+
+    func testExplicitPlaybackRequestRetriesFailedLoad() async throws {
+        try await fixture { store in
+            let player = AVPlayer()
+            var attempts = 0
+            let playback = NativePlayback(player: player, makeItem: { plan in
+                attempts += 1
+                if attempts == 1 { throw CaptureError("injected transient read error") }
+                return try await NativePlaybackItem.make(plan)
+            })
+            playback.store = store
+            defer { playback.stop() }
+            playback.tick()
+            try await self.until("load failure reported", { store.nativeError != nil })
+            for _ in 0..<10 { playback.tick() }
+            XCTAssertEqual(attempts, 1)
+            store.send("seek", ["positionMs": 100])
+            try await self.until("explicit request reloads audio", { player.currentItem != nil }, tick: playback.tick)
+            XCTAssertEqual(attempts, 2)
+            XCTAssertNil(store.nativeError)
+        }
+    }
+
+    func testChangedLaneBeforeNextTickRejectsLateLoadFailure() async throws {
+        try await fixture { store in
+            let pending = PendingPlaybackItems()
+            let player = AVPlayer()
+            let playback = NativePlayback(player: player, makeItem: pending.make)
+            playback.store = store
+            defer { playback.stop(); pending.cancelRemaining() }
+            playback.tick()
+            try await self.until("old load pending", { pending.waiters.count == 1 })
+            store.send("select_playback_lane", ["lane": "system"])
+            store.send("seek", ["positionMs": 90])
+            store.send("playback", ["isPlaying": true])
+            let desired = store.snapshot.playback
+            pending.reject(0)
+            try await self.until("old load failed", { pending.completed == 1 })
+            XCTAssertEqual(store.snapshot.playback, desired)
+            XCTAssertNil(store.nativeError)
+            XCTAssertNil(player.currentItem)
+        }
+    }
+
+}
+
+@MainActor
+private final class PendingPlaybackItems {
+    var waiters: [CheckedContinuation<AVPlayerItem, Error>?] = []
+    var completed = 0
+    func make(_ plan: PlaybackAssetSnapshot) async throws -> AVPlayerItem {
+        defer { completed += 1 }
+        let item: AVPlayerItem = try await withCheckedThrowingContinuation { waiters.append($0) }
+        return item
+    }
+    func resolve(_ index: Int, _ item: AVPlayerItem) { waiters[index]?.resume(returning: item); waiters[index] = nil }
+    func reject(_ index: Int) { waiters[index]?.resume(throwing: CaptureError("old load failed")); waiters[index] = nil }
+    func cancelRemaining() {
+        for index in waiters.indices { waiters[index]?.resume(throwing: CancellationError()); waiters[index] = nil }
+    }
+}

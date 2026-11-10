@@ -99,6 +99,9 @@ struct KoeAppleSharedTests {
         #expect(decoded.device.liveDurationMs == 0)
         #expect(decoded.device.liveBytes == 0)
         #expect(decoded.device.liveRecordId == nil)
+        #expect(decoded.playback.requestId == 0)
+        #expect(decoded.playback.lanes.isEmpty)
+        #expect(decoded.playback.asset == nil)
 
         let liveJSON = """
         {

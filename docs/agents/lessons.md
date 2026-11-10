@@ -288,3 +288,10 @@
 - 修复：带时钟会话的 stopped/failed 同样要求当前 epoch；未标记或过期终止事件不改变状态。
 - 验证点：`cargo test -p koe-runtime --test capture_timeline`，包括未标记终止回调先红后绿、恢复后旧 epoch 失败/停止回调与当前代次继续收样。
 - Seen 1x（2026-11-10）。
+
+### 稀疏音频回放要验证系统媒体输出和异步完成边界
+
+- 出处：2026-11-10 N3B 分路回放子单元，AVFoundation 会丢弃 composition 末尾的空白区间，轨道 preferredVolume 也不能代替 AVAudioMix 的显式静音。只核对插入操作或时长不能证明真实输出静音。
+- 修复：Rust 输出共同时间上的精确样本片段；原生用同源、显式静音的末尾播放标记保持共同末尾，不改原始 WAV。异步加载成功和失败都核对实时快照身份，显式新请求可重试读取失败。
+- 验证点：`swift test --package-path platforms/macos --filter NativePlayback` 逐样本回读真实 PCM 的首部、内部与尾部静音，核对完整原文件不变；延迟加载失败、失败重试与无时间轴旧录音的回归均先红后绿。签名安装版听感和系统授权仍见 #620。
+- Seen 1x（2026-11-10）。

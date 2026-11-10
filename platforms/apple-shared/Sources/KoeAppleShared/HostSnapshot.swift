@@ -265,12 +265,6 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-public struct PlaybackSnapshot: Codable, Equatable, Sendable {
-    public let recordId: String?
-    public let positionMs: UInt64
-    public let isPlaying: Bool
-}
-
 public struct MigrationReportSnapshot: Codable, Equatable, Sendable, Identifiable {
     public var id: String { fingerprint }
     public let fingerprint: String
@@ -340,7 +334,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
         ask: AskSnapshot(scope: "all", recordId: nil, phase: "idle", messages: []),
         device: DeviceSnapshot(state: "未连接", connected: false, busy: false, files: [], progress: 0),
         provider: ProviderSnapshot(configured: false, model: ""),
-        playback: PlaybackSnapshot(recordId: nil, positionMs: 0, isPlaying: false),
+        playback: PlaybackSnapshot(recordId: nil, positionMs: 0, isPlaying: false, requestId: 0, lane: nil, lanes: [], asset: nil),
         error: nil, notice: nil
     )
 }
