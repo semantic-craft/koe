@@ -4,9 +4,9 @@
     "issues": [
       {
         "number": 587,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T01:12:36Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T01:35:29Z"
       },
       {
         "number": 588,
@@ -15,18 +15,27 @@
         "updated_at": "2026-11-10T01:27:49Z"
       }
     ],
-    "main": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
+    "main": "4cfb0052638e08ea7389cc818da8f208538089da",
     "open_pulls": [
       {
         "head": "e8676498b47a73d1588f329834bbef22a11048c3",
         "number": 551
       }
     ],
-    "pulls": [],
+    "pulls": [
+      {
+        "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
+        "head": "3947fb097297c70dffa6c1a32f9450eda47a1ce6",
+        "merge_commit": "4cfb0052638e08ea7389cc818da8f208538089da",
+        "merged": true,
+        "number": 589,
+        "state": "closed"
+      }
+    ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T01:28:47.518842Z",
+  "observed_at": "2026-11-10T01:35:50.674270Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -55,6 +64,11 @@
               "kind": "file",
               "note": "唯一存储入口",
               "ref": "crates/koe-client-services/src/product_store.rs"
+            },
+            {
+              "kind": "pull",
+              "note": "实现已 squash 合并，PR CI 通过。",
+              "ref": 589
             }
           ],
           "id": "workspace-domain",
@@ -100,8 +114,8 @@
           "evidence": [
             {
               "kind": "file",
-              "ref": "crates/koe-runtime/src/lib.rs",
-              "note": "启动时迁移旧工作区的统一入口"
+              "note": "启动时迁移旧工作区的统一入口",
+              "ref": "crates/koe-runtime/src/lib.rs"
             }
           ],
           "id": "old-data-restore",
@@ -132,7 +146,7 @@
           "id": "automated-check",
           "next": "后续改动运行统一门禁。",
           "status": "done",
-          "summary": "完整 scripts/check 通过：175 项 Rust 测试及文档测试、7 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查通过。独立代码复核无剩余阻塞。",
+          "summary": "完整 scripts/check 通过：175 项 Rust 测试及文档测试、7 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查通过。独立代码复核无剩余阻塞。 PR #589 的远端 CI 已通过。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -193,6 +207,8 @@
       587,
       588
     ],
-    "pulls": []
+    "pulls": [
+      589
+    ]
   }
 }
