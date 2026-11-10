@@ -281,3 +281,10 @@
 - 修复：工作区重建保留并重新验证 `capture_lanes`，测试直接检查重开后的业务对象、资产身份与时长。
 - 验证点：`cargo test -p koe-runtime --test dual_capture independent_sequences_tail_barrier_and_reopen_preserve_both_assets`，改前重开 lanes 数为0、改后为2；不以codec序列化成功替代完整Runtime重开。
 - Seen 1x（2026-11-10）。
+
+### 采集代次必须覆盖终止和失败事件
+
+- 出处：2026-11-10 N3B 时间轴子单元（#623）独立评审和行为回归发现，只给 PCM 块加 epoch 不能隔离暂停前的旧源；恢复后尚未出新块时，旧 stopped 序号恰好匹配，会把新代次提前终止，旧 failed 也会中断新录音。
+- 修复：带时钟会话的 stopped/failed 同样要求当前 epoch；未标记或过期终止事件不改变状态。
+- 验证点：`cargo test -p koe-runtime --test capture_timeline`，包括未标记终止回调先红后绿、恢复后旧 epoch 失败/停止回调与当前代次继续收样。
+- Seen 1x（2026-11-10）。

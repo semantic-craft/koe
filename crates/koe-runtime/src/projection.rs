@@ -263,7 +263,7 @@ impl KoeRuntime {
             .filter(|p| p.exists());
         let capture_lanes: Vec<_> = record.capture_lanes.iter().map(|l| {
             let path = l.asset_id.as_ref().and_then(|id| recording_assets::audio_path(&self.root, id).ok()).filter(|p| p.is_file());
-            json!({"lane":l.lane,"audioPath":path.map(|p|p.to_string_lossy().into_owned()),"sampleRate":l.sample_rate,"durationMs":l.duration_ms,"interruption":l.interruption})
+            json!({"lane":l.lane,"audioPath":path.map(|p|p.to_string_lossy().into_owned()),"sampleRate":l.sample_rate,"durationMs":l.duration_ms,"interruption":l.interruption,"timeline":l.timeline.iter().map(|s| json!({"epoch":s.epoch,"startNs":s.start_ns,"sampleOffset":s.sample_offset,"sampleCount":s.sample_count})).collect::<Vec<_>>()})
         }).collect();
         let can_retranscribe = audio.is_some()
             && matches!(
@@ -313,7 +313,13 @@ fn status(record: &ProductRecord) -> &'static str {
         } => "整理中",
         AnalysisState::Failed { .. } => "处理失败",
         AnalysisState::Interrupted { .. } => "处理已中断",
-        _ if record.capture_lanes.iter().any(|l| l.interruption.is_some()) => "采集不完整",
+        _ if record
+            .capture_lanes
+            .iter()
+            .any(|l| l.interruption.is_some()) =>
+        {
+            "采集不完整"
+        }
         _ if record.aggregate.spine.is_empty() => "等待转写",
         _ if record.aggregate.minutes.is_some() => "已整理",
         _ => "已有文字",

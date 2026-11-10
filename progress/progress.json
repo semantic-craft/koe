@@ -97,9 +97,15 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T10:56:02Z"
+      },
+      {
+        "number": 623,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T11:35:45Z"
       }
     ],
-    "main": "d5fd132ccd068fe773113f42e372415636bde144",
+    "main": "eeaaeb41df8cdfdf3e605c57455826eda268ffe1",
     "open_pulls": [],
     "pulls": [
       {
@@ -170,7 +176,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T11:03:10.132103Z",
+  "observed_at": "2026-11-10T11:37:17.737848Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -400,12 +406,22 @@
               "kind": "file",
               "note": "分路尾块、取消、发布重试和持久结果的行为回归。",
               "ref": "crates/koe-runtime/tests/dual_capture.rs"
+            },
+            {
+              "kind": "issue",
+              "note": "Rust 共同时间轴与暂停子单元，非完整原生双路交付。",
+              "ref": 623
+            },
+            {
+              "kind": "file",
+              "note": "启动时差、不同速率、旧epoch、停止尾块、两次重开及44.1kHz长流发布重试。",
+              "ref": "crates/koe-runtime/tests/capture_timeline.rs"
             }
           ],
           "id": "mac-dual-capture",
-          "next": "完成共同采样时钟与暂停 epoch 回归，再接系统音频适配及分路回放；真机验收见 #620。",
+          "next": "完成本轮 Rust 时间轴子单元 PR；随后接 Core Audio 与原生双路权限/暂停/分路回放。权限结束后再建立共同单调时钟；真实验收见 #620。",
           "status": "in_progress",
-          "summary": "Rust 分路资产保管子单元已通过 PR #621 squash 合并（d5fd132）：各路序号、原件与停止确认独立，全部排空后统一提交；缺失音轨与中断原因持久保存。共同采样时钟、暂停时间轴、Core Audio process tap 和原生双路入口尚未实现，不能视为双路录音功能已恢复。",
+          "summary": "Rust 分路资产保管已由 PR #621 合并；共同采样时间轴与暂停协议已实现并通过本地全量门禁及独立复验，等待本轮 PR 交付。时间轴保持真实样本、启动时差及间隙，暂停等两路排空并以 epoch 隔离旧回调，保存重试和重开保留映射。原生仍是单路，Core Audio、双路入口和分路回放尚未恢复。",
           "title": "Mac 系统音频双路恢复"
         }
       ],
@@ -593,7 +609,8 @@
       615,
       616,
       619,
-      620
+      620,
+      623
     ],
     "pulls": [
       589,

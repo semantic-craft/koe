@@ -5,9 +5,11 @@ mod provider;
 pub use provider::{valid_reference, CredentialBinding, MeetingAudioPolicy, ProviderConfiguration};
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};
-mod record;
 mod capture;
+mod record;
 pub use capture::CaptureLaneRecord;
+mod capture_timeline;
+pub use capture_timeline::{place_capture_span, CaptureSpan};
 mod state;
 
 use std::collections::{BTreeMap, BTreeSet};
