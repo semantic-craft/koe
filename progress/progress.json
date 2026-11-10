@@ -88,9 +88,9 @@
       },
       {
         "number": 619,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T10:54:25Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T11:02:29Z"
       },
       {
         "number": 620,
@@ -99,7 +99,7 @@
         "updated_at": "2026-11-10T10:56:02Z"
       }
     ],
-    "main": "330baea5cc6a71dd1d35d520d855658802b4756e",
+    "main": "d5fd132ccd068fe773113f42e372415636bde144",
     "open_pulls": [],
     "pulls": [
       {
@@ -157,12 +157,20 @@
         "merged": true,
         "number": 617,
         "state": "closed"
+      },
+      {
+        "base": "330baea5cc6a71dd1d35d520d855658802b4756e",
+        "head": "56020922d2173cd7f3d5ed55e20ccb6b2ae59d38",
+        "merge_commit": "d5fd132ccd068fe773113f42e372415636bde144",
+        "merged": true,
+        "number": 621,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T10:56:37.597494Z",
+  "observed_at": "2026-11-10T11:03:10.132103Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -379,6 +387,11 @@
         {
           "evidence": [
             {
+              "kind": "pull",
+              "note": "仅资产保管基础；255 Rust、32 Python、29 Swift完整门禁及CI通过，独立复核PASS+NOTES；未安装或真机验收。",
+              "ref": 621
+            },
+            {
               "kind": "issue",
               "note": "本轮仅 Rust 分路保管基础。",
               "ref": 619
@@ -392,7 +405,7 @@
           "id": "mac-dual-capture",
           "next": "完成共同采样时钟与暂停 epoch 回归，再接系统音频适配及分路回放；真机验收见 #620。",
           "status": "in_progress",
-          "summary": "Rust 分路资产保管子单元正在交付：各路序号、原件与停止确认独立，全部排空后统一提交；缺失音轨与中断原因持久保存。共同采样时钟、暂停时间轴、Core Audio process tap 和原生双路入口尚未实现，不能视为双路录音功能已恢复。",
+          "summary": "Rust 分路资产保管子单元已通过 PR #621 squash 合并（d5fd132）：各路序号、原件与停止确认独立，全部排空后统一提交；缺失音轨与中断原因持久保存。共同采样时钟、暂停时间轴、Core Audio process tap 和原生双路入口尚未实现，不能视为双路录音功能已恢复。",
           "title": "Mac 系统音频双路恢复"
         }
       ],
@@ -589,7 +602,8 @@
       605,
       609,
       613,
-      617
+      617,
+      621
     ]
   }
 }
