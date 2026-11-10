@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-10T04:05:16.473960Z</p>
-<p>Main: <code>main: 69fc39a6c5e682eaf4ff4e4e32daf367c6456c9b</code></p>
+<p>Observed: 2026-11-10T06:59:00.278763Z</p>
+<p>Main: <code>main: 60ca380db8aba06a99b793754b4751b45096c423</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -32,9 +32,10 @@
 <article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
 </ul><p>Next: 按 #588 继续验收完整取回、边录边转写与真实云服务。</p></article>
-<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-10 已 Developer ID 签名并安装 /Applications/Koe.app；verify-self、smoke-test 通过，正式界面已打开旧记录并停留在首页。</p><ul>
+<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/587">issue 587: 实现范围与验收入口</a></li>
-</ul><p>Next: 真实 D3200 与付费服务验收见 #588。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/issues/594">issue 594: 图标安装、签名与轮廓已验；Dock 专属截图尚未取得。</a></li>
+</ul><p>Next: Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、系统麦克风全天监听、Google 写回与 ACP 不计入当前 macOS 已接通功能；保留的底层模块不等于界面已实现。</p><ul>

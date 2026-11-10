@@ -72,3 +72,8 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: 今天、记录详情和全局问答共用一个持久化领域工作区；真实设备采集、离线/实时转写、证据纪要、待办/记忆审核、来源跳转与旧数据迁移接通原生宿主；故障恢复不串记录、不丢已完成结果。
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test
 - **Evidence**: scripts/check PASS; installed /Applications/Koe.app; issue #587
+
+### [x] Slice H: Dock 图标大小与系统对齐
+- **Outcome**: 保留现有插画，校正打包留白并使用系统处理后的运行图标；更新本机日常安装版。
+- **Done Predicate**: ./scripts/check && swift scripts/verify-app-icon.swift build/macos/AppIcon.iconset && codesign --verify --strict /Applications/Koe.app
+- **Evidence**: /Applications/Koe.app; scripts/check PASS; issue #594; installed ICNS opaque frame 824px
