@@ -281,3 +281,80 @@ fn fractional_rate_long_stream_survives_pause_save_retry_and_reopen() {
     );
     assert_eq!(lane.timeline.last().unwrap().epoch, 1);
 }
+
+#[test]
+fn permission_preparation_sets_session_clock_once_before_audio_starts() {
+    let p = Sandbox::new();
+    let mut r = KoeRuntime::open(&p.0).unwrap();
+    let t = ok(send(
+        &mut r,
+        json!({"type":"start_microphone","inputId":"fixture"}),
+    ))["microphone"]
+        .clone();
+    let prepared = json!({"type":"microphone_prepared","recordId":t["recordId"],"sessionId":t["sessionId"],"epoch":0,"clockNs":30_000_000_000u64});
+    for (field, value) in [
+        ("recordId", json!("old")),
+        ("sessionId", json!("old")),
+        ("epoch", json!(1)),
+    ] {
+        let mut stale = prepared.clone();
+        stale[field] = value;
+        assert!(ok(send(&mut r, stale))["microphone"]["clockNs"].is_null());
+    }
+    assert_eq!(
+        ok(send(&mut r, prepared.clone()))["microphone"]["clockNs"],
+        30_000_000_000u64
+    );
+    ok(send(&mut r, prepared.clone()));
+    let mut changed = prepared.clone();
+    changed["clockNs"] = json!(40_000_000_000u64);
+    let rejected = send(&mut r, changed);
+    assert!(rejected["error"].is_string());
+    assert_eq!(rejected["microphone"]["clockNs"], 30_000_000_000u64);
+    let started = ok(event(
+        &mut r,
+        &t,
+        "microphone",
+        json!({"type":"microphone_started","sampleRate":16000}),
+    ));
+    assert_eq!(
+        started["microphone"]["lanes"]["microphone"]["sampleRate"],
+        16000
+    );
+    ok(chunk(&mut r, &t, "microphone", 0, 0, 30_010_000_000, 160));
+    ok(send(&mut r, json!({"type":"pause_microphone"})));
+    ok(event(
+        &mut r,
+        &t,
+        "microphone",
+        json!({"type":"microphone_paused","epoch":0,"sequence":1}),
+    ));
+    assert_eq!(r.snapshot(100)["microphone"]["phase"], "paused");
+    ok(send(&mut r, json!({"type":"request_quit"})));
+    ok(stop(&mut r, &t, "microphone", 1));
+    assert_eq!(r.snapshot(100)["lifecycle"]["quitPhase"], "ready");
+    assert_eq!(r.snapshot(100)["detail"]["durationMs"], 20);
+}
+
+#[test]
+fn late_permission_preparation_cannot_revive_cancelled_or_quitting_capture() {
+    for command in ["cancel_microphone", "request_quit"] {
+        let p = Sandbox::new();
+        let mut r = KoeRuntime::open(&p.0).unwrap();
+        let t = ok(send(
+            &mut r,
+            json!({"type":"start_microphone","inputId":"fixture"}),
+        ))["microphone"]
+            .clone();
+        ok(send(&mut r, json!({"type":command})));
+        let prepared = json!({"type":"microphone_prepared","recordId":t["recordId"],"sessionId":t["sessionId"],"epoch":0,"clockNs":30_000_000_000u64});
+        assert!(ok(send(&mut r, prepared.clone()))["microphone"]["clockNs"].is_null());
+        ok(stop(&mut r, &t, "microphone", 0));
+        let final_state = ok(send(&mut r, prepared));
+        assert!(final_state["microphone"].is_null());
+        assert!(r.workspace().records().is_empty());
+        if command == "request_quit" {
+            assert_eq!(final_state["lifecycle"]["quitPhase"], "ready");
+        }
+    }
+}

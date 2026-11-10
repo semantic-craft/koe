@@ -36,6 +36,12 @@ pub(crate) enum Command {
         clock_ns: Option<u64>,
     },
     PauseMicrophone,
+    MicrophonePrepared {
+        record_id: String,
+        session_id: String,
+        epoch: u64,
+        clock_ns: u64,
+    },
     ResumeMicrophone {
         clock_ns: u64,
     },

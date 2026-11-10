@@ -295,3 +295,10 @@
 - 修复：Rust 输出共同时间上的精确样本片段；原生用同源、显式静音的末尾播放标记保持共同末尾，不改原始 WAV。异步加载成功和失败都核对实时快照身份，显式新请求可重试读取失败。
 - 验证点：`swift test --package-path platforms/macos --filter NativePlayback` 逐样本回读真实 PCM 的首部、内部与尾部静音，核对完整原文件不变；延迟加载失败、失败重试与无时间轴旧录音的回归均先红后绿。签名安装版听感和系统授权仍见 #620。
 - Seen 1x（2026-11-10）。
+
+### 暂停确认须纳入停源等待期间发生的失败
+
+- 出处：2026-11-10 #629 原生暂停接线。进入停源前检查一次失败仍会漏掉 fence 等待期间的设备故障，随后误报 paused，WAV 未发布。
+- 修复：设备变化通知与音频回调共用 fence；停源返回后再次交付本代次失败，再根据 Rust 最新阶段选择暂停确认或最终停止。
+- 验证点：`swift test --package-path platforms/macos --filter NativeCaptureIntegrationTests/testFailureDuringPauseFenceSavesTailAndCannotBecomePaused`，最小逆补丁复现 paused 且无 WAV，修复后尾块字节落盘、保留中断事实并允许退出。日志在本轮 `n3b-platform/red-stop-failure.log` 与 `green-stop-failure.log`，仅隔离适配器验收，真实设备变化仍待 #620。
+- Seen 1x（2026-11-10）。

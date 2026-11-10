@@ -96,6 +96,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.willCloseNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(importFlutterLibrary), name: Notification.Name("KoeImportFlutterLibrary"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(startMicrophone), name: Notification.Name("KoeStartMicrophone"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(resumeMicrophone), name: Notification.Name("KoeResumeMicrophone"), object: nil)
         lastTick = ProcessInfo.processInfo.systemUptime
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -115,6 +116,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
 
     @objc private func startMicrophone() { capture.chooseInput() }
+    @objc private func resumeMicrophone() { capture.resume() }
     @objc private func importFlutterLibrary() { files.importFlutterLibrary() }
     @objc private func rememberWindow(_ notification: Notification) {
         KoeWindowPresenter.rememberWindow(notification.object as? NSWindow)

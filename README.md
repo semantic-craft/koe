@@ -27,7 +27,7 @@ Koe 让安克 soundcore Work（D3200）录音豆脱离飞书使用。Mac 通过�
 
 未配置模型时，文字记录、浏览、审核、播放和本地检索仍可使用。“问 Koe”会明确返回原文检索结果；语音转写和生成式整理需要配置云端服务。
 
-Mac 麦克风录音先保存本机 WAV，停止时排空已接收音频；输入设备变化会停止并保存已收到的部分。保存失败可重试，退出会等待保存。系统权限、真实音源切换与回放仍待 [#616](https://github.com/semantic-craft/koe/issues/616) 验收。系统双路、暂停与崩溃恢复尚未接入。
+Mac 麦克风录音先保存本机 WAV，停止时排空已接收音频；输入设备变化会停止并保存已收到的部分。保存失败可重试，退出会等待保存。系统权限、真实音源切换与回放仍待 [#616](https://github.com/semantic-craft/koe/issues/616) 验收。支持暂停和继续，暂停会排空尾块，继续后接续原录音并排除暂停间隔。系统双路与崩溃恢复尚未接入。
 
 ## 数据与服务边界
 
@@ -94,7 +94,7 @@ cargo run --package koe-cli -- mcp-stdio
 | 运行时与接口 | [koe-runtime](crates/koe-runtime/)、[koe-host-api](crates/koe-host-api/) | 协调设备、异步任务和持久化，生成版本 2 的快照与意图接口 |
 | 原生宿主与 CLI | [apple-shared](platforms/apple-shared/)、[macos](platforms/macos/)、[koe-cli](crates/koe-cli/) | SwiftUI 页面、窗口、CoreBluetooth、文件选择与播放；共享运行时的命令行入口 |
 
-架构约束与数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，后续范围见 [ROADMAP.md](ROADMAP.md)。iOS/Android 宿主、屏幕或麦克风采集、翻译、Google 同步、自动备份与 ACP 接入不属于当前已接通的 macOS 产品流程。
+架构约束与数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，后续范围见 [ROADMAP.md](ROADMAP.md)。iOS/Android 宿主、屏幕与系统音频采集、麦克风全天监听、翻译、Google 同步、自动备份与 ACP 接入不属于当前已接通的 macOS 产品流程。
 
 ## 参考与致谢
 

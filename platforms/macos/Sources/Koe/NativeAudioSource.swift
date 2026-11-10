@@ -18,7 +18,7 @@ final class NativeAudioSource: MicrophoneSource {
         default: completion(false)
         }
     }
-    func start(inputID: String, receive: @escaping ([Int16]) -> Void, failed: @escaping (String) -> Void) throws -> UInt32 {
+    func start(inputID: String, expectedSampleRate: UInt32?, receive: @escaping (CapturedPCM) -> Void, failed: @escaping (String) -> Void) throws -> UInt32 {
         let engine = AVAudioEngine()
         let node = engine.inputNode
         if !inputID.isEmpty {
@@ -33,35 +33,47 @@ final class NativeAudioSource: MicrophoneSource {
               format.commonFormat == .pcmFormatFloat32, !format.isInterleaved else {
             throw CaptureError("麦克风没有可用的 PCM 输入格式。")
         }
+        let rate = UInt32(format.sampleRate)
+        guard expectedSampleRate == nil || expectedSampleRate == rate else {
+            throw CaptureError("麦克风采样率发生变化，已保留此前收到的音频。")
+        }
         let fence = AudioCallbackFence()
         self.fence = fence
-        node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, when in
             guard fence.enter() else { return }
             defer { fence.leave() }
-            guard let channels = buffer.floatChannelData else {
-                failed("麦克风输入格式已改变。")
-                return
-            }
-            let count = Int(buffer.frameLength)
-            guard count > 0, count <= 8192 else {
-                failed("麦克风音频块超过接收上限。")
-                return
-            }
-            let channelCount = Int(buffer.format.channelCount)
-            var samples = [Int16](repeating: 0, count: count)
-            for frame in 0..<count {
-                var value: Float = 0
-                for channel in 0..<channelCount { value += channels[channel][frame] / Float(channelCount) }
-                samples[frame] = value.isFinite ? Int16(max(-1, min(1, value)) * 32767) : 0
-            }
-            receive(samples)
+            do { receive(try Self.capture(buffer, when: when, expectedSampleRate: rate)) }
+            catch { failed(error.localizedDescription) }
         }
         observer = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-        ) { _ in failed("输入设备发生变化，已停止采集。请检查设备后重新开始。") }
+        ) { _ in
+            guard fence.enter() else { return }
+            defer { fence.leave() }
+            failed("输入设备发生变化，已停止采集。请检查设备后重新开始。")
+        }
         self.engine = engine
         do { try engine.start() } catch { stop(); throw error }
         return UInt32(format.sampleRate)
+    }
+    static func capture(_ buffer: AVAudioPCMBuffer, when: AVAudioTime,
+                        expectedSampleRate: UInt32) throws -> CapturedPCM {
+        guard when.isHostTimeValid else { throw CaptureError("音频缺少有效采样时钟。") }
+        guard buffer.format.sampleRate == Double(expectedSampleRate),
+              buffer.format.channelCount > 0, buffer.format.commonFormat == .pcmFormatFloat32,
+              !buffer.format.isInterleaved, let channels = buffer.floatChannelData else {
+            throw CaptureError("麦克风输入格式已改变。")
+        }
+        let count = Int(buffer.frameLength)
+        guard count > 0, count <= 8192 else { throw CaptureError("麦克风音频块超过接收上限。") }
+        let channelCount = Int(buffer.format.channelCount)
+        var samples = [Int16](repeating: 0, count: count)
+        for frame in 0..<count {
+            var value: Float = 0
+            for channel in 0..<channelCount { value += channels[channel][frame] / Float(channelCount) }
+            samples[frame] = value.isFinite ? Int16(max(-1, min(1, value)) * 32767) : 0
+        }
+        return CapturedPCM(samples: samples, capturedStartNs: try HostAudioClock.nanoseconds(when.hostTime))
     }
     func stop() {
         if let observer { NotificationCenter.default.removeObserver(observer) }

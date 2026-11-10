@@ -18,7 +18,14 @@ struct MicrophoneCard: View {
                         if microphone.phase != "saving" {
                             Button("取消录音", role: .destructive) { store.send("cancel_microphone") }
                         }
-                    } else if microphone.phase == "recording" || microphone.phase == "starting" {
+                    } else if ["recording", "starting", "pausing", "paused"].contains(microphone.phase) {
+                        if microphone.phase == "recording" {
+                            Button("暂停") { store.send("pause_microphone") }
+                        } else if microphone.phase == "paused" {
+                            Button("继续") {
+                                NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
+                            }
+                        }
                         Button("停止并保存") { store.send("stop_microphone") }
                         Button("取消录音", role: .destructive) { store.send("cancel_microphone") }
                     }
@@ -39,6 +46,8 @@ struct MicrophoneCard: View {
         switch phase {
         case "starting": return "等待麦克风权限"
         case "recording": return "正在录音"
+        case "pausing": return "正在暂停并保存尾音"
+        case "paused": return "已暂停"
         case "cancelling": return "正在取消录音"
         case "saving": return "正在保存"
         default: return "正在停止并保存"
