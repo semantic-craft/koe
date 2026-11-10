@@ -22,9 +22,9 @@
       },
       {
         "number": 597,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T07:05:58Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T07:26:25Z"
       },
       {
         "number": 598,
@@ -33,7 +33,7 @@
         "updated_at": "2026-11-10T07:05:59Z"
       }
     ],
-    "main": "be10aef45bb5ad541653672120c80a3c2c9866f5",
+    "main": "8e1f49a2e5b34b8befa1bc424e25f190fc1ebdcc",
     "open_pulls": [],
     "pulls": [
       {
@@ -51,12 +51,20 @@
         "merged": true,
         "number": 595,
         "state": "closed"
+      },
+      {
+        "base": "be10aef45bb5ad541653672120c80a3c2c9866f5",
+        "head": "969f5c06e5b37836ecdff8fb349799ff4b7b1d93",
+        "merge_commit": "8e1f49a2e5b34b8befa1bc424e25f190fc1ebdcc",
+        "merged": true,
+        "number": 600,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T07:24:17.344206Z",
+  "observed_at": "2026-11-10T07:26:51.628840Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -166,6 +174,11 @@
               "kind": "file",
               "note": "真实旧格式迁入、原件保全与幂等校验入口。",
               "ref": "crates/koe-runtime/src/flutter_import.rs"
+            },
+            {
+              "kind": "pull",
+              "note": "已通过 squash 合并；CI 与本地门禁通过，不代表签名安装或真机验收。",
+              "ref": 600
             }
           ],
           "id": "flutter-migration",
@@ -286,7 +299,8 @@
     ],
     "pulls": [
       589,
-      595
+      595,
+      600
     ]
   }
 }
