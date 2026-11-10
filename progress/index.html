@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-10T08:58:43.375284Z</p>
-<p>Main: <code>main: ca9222a4921e80b3580678adda9c2edb754b64c7</code></p>
+<p>Observed: 2026-11-10T09:54:03.874472Z</p>
+<p>Main: <code>main: 225681cea7f207913e60ca5bd794b2ad8f415dfb</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -39,6 +39,10 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/audio_policy.rs">file crates/koe-runtime/src/audio_policy.rs: 持久策略切换、音频取消与保存失败阻断。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/audio_policy_tests.rs">file crates/koe-runtime/src/audio_policy_tests.rs: 本地 HTTP/WS 计数、持久与旧结果回归。</a></li>
 </ul><p>Next: 签名版与真实设备验收按 #608 执行；本机 ASR 后续接入，不自动回退云端。</p></article>
+<article id="activity-quit-drain"><h3>活动断言与退出排空</h3><span class="badge">done</span><p>Rust 从录音、取回和处理队列推导活动与退出状态；Swift 持有系统活动并延后退出。保存失败阻止退出，可取消；停止确认丢失支持重连与重试，过期结果不影响新请求。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/613">pull 613: squash 225681c 已合并；完整本地门禁、CI 和独立复核通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/lifecycle.rs">file crates/koe-runtime/src/lifecycle.rs: 退出与活动状态由 Rust 统一派生。</a></li>
+</ul><p>Next: 真实系统断言、锁屏和录音中退出重开按 #612 验收。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>N1 的 17 项 Rust 持久化回归、2 项 Swift 原生桥接回归、完整 check 和 PR CI 通过。独立审查修复了未知提交恢复、授权目标与待删项清理问题。F1 已有的 15 项迁移回归验收保留；签名安装升级仍待真机验证。</p><ul>
@@ -63,6 +67,9 @@
 <article id="meeting-audio-device-acceptance"><h3>会议音频策略的签名版与真机验收</h3><span class="badge">unverified</span><p>本轮仅验证隔离工作区和本地 HTTP/WS 服务。尚未安装签名版，未用真实云账户或录音豆验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/608">issue 608: 独立真机验收，不以模拟协议通过替代。</a></li>
 </ul><p>Next: 按 #608 验证实时、离线取回、文件重转写、录制中切换、重启与文字云服务；本机 ASR 未接入不得暗转云。</p></article>
+<article id="activity-quit-device-acceptance"><h3>活动与退出真机验收</h3><span class="badge">unverified</span><p>本轮隔离 C ABI 协议音频、保存重开和活动计数通过；未安装签名版，未运行真实 pmset、锁屏、D3200 和云端场景。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/612">issue 612: 独立真机验收，仍开放未验。</a></li>
+</ul><p>Next: 在签名安装版核对活动重叠释放、锁屏、停止确认恢复及录音中退出重开。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、系统麦克风全天监听、Google 写回与 ACP 不计入当前 macOS 已接通功能；保留的底层模块不等于界面已实现。</p><ul>

@@ -61,9 +61,21 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T08:47:15Z"
+      },
+      {
+        "number": 611,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T09:53:21Z"
+      },
+      {
+        "number": 612,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T09:40:33Z"
       }
     ],
-    "main": "ca9222a4921e80b3580678adda9c2edb754b64c7",
+    "main": "225681cea7f207913e60ca5bd794b2ad8f415dfb",
     "open_pulls": [],
     "pulls": [
       {
@@ -105,12 +117,20 @@
         "merged": true,
         "number": 609,
         "state": "closed"
+      },
+      {
+        "base": "a4e028b3e60b5286dee5244f88c4e731ab172b89",
+        "head": "bd88c7ed945e4da452648e9b8f0a4567a322c241",
+        "merge_commit": "225681cea7f207913e60ca5bd794b2ad8f415dfb",
+        "merged": true,
+        "number": 613,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T08:58:43.375284Z",
+  "observed_at": "2026-11-10T09:54:03.874472Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -285,6 +305,25 @@
           "status": "done",
           "summary": "N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。本机 ASR 尚未接入，未安装新签名版。",
           "title": "会议音频只留本机"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash 225681c 已合并；完整本地门禁、CI 和独立复核通过。",
+              "ref": 613
+            },
+            {
+              "kind": "file",
+              "note": "退出与活动状态由 Rust 统一派生。",
+              "ref": "crates/koe-runtime/src/lifecycle.rs"
+            }
+          ],
+          "id": "activity-quit-drain",
+          "next": "真实系统断言、锁屏和录音中退出重开按 #612 验收。",
+          "status": "done",
+          "summary": "Rust 从录音、取回和处理队列推导活动与退出状态；Swift 持有系统活动并延后退出。保存失败阻止退出，可取消；停止确认丢失支持重连与重试，过期结果不影响新请求。",
+          "title": "活动断言与退出排空"
         }
       ],
       "title": "当前产品实现"
@@ -395,6 +434,20 @@
           "status": "unverified",
           "summary": "本轮仅验证隔离工作区和本地 HTTP/WS 服务。尚未安装签名版，未用真实云账户或录音豆验收。",
           "title": "会议音频策略的签名版与真机验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机验收，仍开放未验。",
+              "ref": 612
+            }
+          ],
+          "id": "activity-quit-device-acceptance",
+          "next": "在签名安装版核对活动重叠释放、锁屏、停止确认恢复及录音中退出重开。",
+          "status": "unverified",
+          "summary": "本轮隔离 C ABI 协议音频、保存重开和活动计数通过；未安装签名版，未运行真实 pmset、锁屏、D3200 和云端场景。",
+          "title": "活动与退出真机验收"
         }
       ],
       "title": "验收与交付"
@@ -432,14 +485,17 @@
       603,
       604,
       607,
-      608
+      608,
+      611,
+      612
     ],
     "pulls": [
       589,
       595,
       600,
       605,
-      609
+      609,
+      613
     ]
   }
 }
