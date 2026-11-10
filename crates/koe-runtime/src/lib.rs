@@ -15,6 +15,9 @@ pub mod credentials;
 mod device;
 mod flutter_import;
 mod legacy;
+mod lifecycle;
+#[cfg(test)]
+mod lifecycle_tests;
 #[cfg(test)]
 mod navigation_tests;
 mod processing;
@@ -65,6 +68,8 @@ pub struct KoeRuntime {
     error: Option<String>,
     notice: Option<String>,
     audio_policy_error: Option<String>,
+    quit: lifecycle::QuitState,
+    drain_error: Option<String>,
 }
 
 impl KoeRuntime {
@@ -101,6 +106,8 @@ impl KoeRuntime {
             error: None,
             notice: None,
             audio_policy_error: None,
+            quit: Default::default(),
+            drain_error: None,
         };
         if !existed {
             runtime.restore_legacy()?;
@@ -160,7 +167,17 @@ impl KoeRuntime {
     }
 
     fn dispatch(&mut self, command: Command, now: u64) -> Result<(), String> {
+        if self.is_quitting() && !matches!(command,
+            Command::RequestQuit | Command::CancelQuit | Command::ClearError
+            | Command::Navigate { .. } | Command::Back | Command::SelectRecord { .. }
+            | Command::OpenSource { .. } | Command::DeviceEvent { .. }
+            | Command::PlaybackProgress { .. }
+        ) {
+            return Err("正在退出，请先取消退出再开始新操作".into());
+        }
         match command {
+            Command::RequestQuit => self.request_quit(),
+            Command::CancelQuit => self.quit = lifecycle::QuitState::Running,
             Command::ImportFlutterLibrary { path } => {
                 self.import_flutter_library(Path::new(&path))?
             }
@@ -335,8 +352,7 @@ impl KoeRuntime {
             } => {
                 self.device
                     .event(&event, &connection_id, device_name.as_deref())?;
-                self.process_capture_events(now)?;
-                self.save_device_recordings(now)?;
+                self.save_captures(now)?;
             }
             Command::DeviceOpenGuide => self.device.open_guide(),
             Command::DeviceOnboardingNext => self.device.onboarding_next(),
@@ -372,10 +388,7 @@ impl KoeRuntime {
                     .start_realtime_recording(None, now.saturating_mul(1000));
                 self.device.accept(outcome);
             }
-            Command::DeviceStop => {
-                let outcome = self.device.session.stop_realtime_recording();
-                self.device.accept(outcome);
-            }
+            Command::DeviceStop => self.device.stop_recording(),
         }
         Ok(())
     }
@@ -419,24 +432,25 @@ impl KoeRuntime {
 
     /// Feeds real platform notifications into the existing protocol engine.
     pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
+        let lifecycle = self.lifecycle_json();
         let revision = self.workspace().revision();
         let error = self.error.clone();
         let mut changed = self.device.ingest(bytes, now);
-        if let Err(error) = self
-            .process_capture_events(now)
-            .and_then(|()| self.save_device_recordings(now))
+        if let Err(error) = self.save_captures(now)
         {
             self.error = Some(error);
         }
         changed |= self.maybe_start_auto_offline_pull();
-        if changed || revision != self.workspace().revision() || error != self.error {
+        if changed || revision != self.workspace().revision() || error != self.error || lifecycle != self.lifecycle_json() {
             self.generation = self.generation.saturating_add(1);
         }
     }
     /// Advances protocol deadlines and consumes completed provider work.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now: u64) {
+        let lifecycle = self.lifecycle_json();
         let revision = self.workspace().revision();
         let error = self.error.clone();
+        self.drain_error = None;
         let changed = match self.device.tick(elapsed_ms.min(60_000), now) {
             Ok(changed) => changed,
             Err(error) => {
@@ -444,23 +458,21 @@ impl KoeRuntime {
                 true
             }
         };
-        if let Err(error) = self
-            .process_capture_events(now)
-            .and_then(|()| self.save_device_recordings(now))
+        if let Err(error) = self.save_captures(now)
         {
             self.error = Some(error);
         }
         let mut completed = self.poll_provider() | self.poll_captures();
         self.drive_analysis_queue();
         completed |= self.maybe_start_auto_offline_pull();
-        if changed || completed || revision != self.workspace().revision() || error != self.error {
+        if changed || completed || revision != self.workspace().revision() || error != self.error || lifecycle != self.lifecycle_json() {
             self.generation = self.generation.saturating_add(1);
         }
     }
 
     fn ensure_device_idle(&self) -> Result<(), String> {
         use koe_engine::session::TransferPhaseTag;
-        if matches!(
+        if self.device.awaiting_stop || matches!(
             self.device.session.transfer.phase,
             TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
         ) || self.device.session.is_offline_pull_suspended()

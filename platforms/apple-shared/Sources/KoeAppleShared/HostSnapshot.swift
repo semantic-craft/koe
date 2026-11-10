@@ -275,7 +275,20 @@ public struct MigrationReportSnapshot: Codable, Equatable, Sendable, Identifiabl
     public let pending: [String]
 }
 
+public struct LifecycleSnapshot: Codable, Equatable, Sendable {
+    public let keepAwake: Bool
+    public let quitPhase: String
+    public let message: String?
+
+    public init(keepAwake: Bool, quitPhase: String, message: String? = nil) {
+        self.keepAwake = keepAwake
+        self.quitPhase = quitPhase
+        self.message = message
+    }
+}
+
 public struct HostSnapshot: Codable, Equatable, Sendable {
+    public var lifecycle: LifecycleSnapshot? = nil
     public let version: UInt32
     public let generation: UInt64
     public let section: String

@@ -21,6 +21,8 @@ pub(crate) enum Page {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
+    RequestQuit,
+    CancelQuit,
     Navigate {
         section: Page,
     },

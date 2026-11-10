@@ -37,7 +37,8 @@ impl KoeRuntime {
             .catalog
             .iter()
             .find(|entry| {
-                entry.duration_ms > 0
+                (!self.is_quitting() || self.captures.records_by_file_id.contains_key(&entry.file_id))
+                    && entry.duration_ms > 0
                     && entry.end_time != Some(0)
                     && !self.device.auto_pull_attempted.contains(&entry.file_id)
                     && !self.is_device_file_synced(entry.file_id)

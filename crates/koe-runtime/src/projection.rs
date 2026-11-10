@@ -159,7 +159,7 @@ impl KoeRuntime {
                 TransferPhaseTag::Failed => "failed",
             }
         };
-        json!({"version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
+        json!({"lifecycle": self.lifecycle_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"detail":detail,"tasks":tasks,"memories":memories,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
