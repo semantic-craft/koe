@@ -1,0 +1,235 @@
+use super::*;
+use koe_client_providers::{LiveEvent, LiveTranscription, ProviderConfig, DASHSCOPE_ASR_MODEL};
+use koe_client_services::product_store::StoreError;
+use koe_engine::session::CaptureEvent;
+use std::collections::{BTreeMap, VecDeque};
+
+pub(super) struct Capture {
+    key: Option<RequestKey>,
+    stream: Option<LiveTranscription>,
+    results: VecDeque<LiveEvent>,
+    saved: bool,
+    terminal: bool,
+    success: bool,
+}
+
+#[derive(Default)]
+pub(super) struct Captures {
+    active: BTreeMap<u32, String>,
+    sessions: BTreeMap<String, Capture>,
+    pub targets: VecDeque<Option<String>>,
+}
+
+impl KoeRuntime {
+    pub(super) fn process_capture_events(&mut self, now: u64) -> Result<(), String> {
+        while let Some(event) = self.device.captures.front().cloned() {
+            match event {
+                CaptureEvent::Audio { file_id, pcm16 } => {
+                    let id = self.ensure_capture(file_id, now)?;
+                    let capture = self
+                        .captures
+                        .sessions
+                        .get_mut(&id)
+                        .ok_or("实时记录状态不可用")?;
+                    if let Some(stream) = &mut capture.stream {
+                        for chunk in pcm16.chunks(64 * 1024) {
+                            if let Err(error) = stream.push_audio(chunk.to_vec()) {
+                                capture.results.extend(stream.poll());
+                                capture.results.push_back(LiveEvent::Failed(error));
+                                capture.stream = None;
+                                break;
+                            }
+                        }
+                    }
+                }
+                CaptureEvent::Finished { file_id } => {
+                    let id = self.captures.active.remove(&file_id);
+                    if let Some(capture) = id
+                        .as_ref()
+                        .and_then(|id| self.captures.sessions.get_mut(id))
+                    {
+                        if let Some(stream) = &capture.stream {
+                            if let Err(error) = stream.finish() {
+                                capture.results.push_back(LiveEvent::Failed(error));
+                            }
+                        }
+                    }
+                    self.captures.targets.push_back(id);
+                }
+            }
+            self.device.captures.pop_front();
+        }
+        Ok(())
+    }
+
+    fn ensure_capture(&mut self, file_id: u32, now: u64) -> Result<String, String> {
+        if let Some(id) = self.captures.active.get(&file_id) {
+            return Ok(id.clone());
+        }
+        let id = format!("live-{file_id}-{now}-{}", self.workspace().revision() + 1);
+        let configured = !self.settings.key.is_empty();
+        let key = self.commit(|w| {
+            w.insert_record(
+                id.clone(),
+                format!("录音 {file_id}"),
+                RecordOrigin::Bean,
+                file_id,
+                now,
+                0,
+            )?;
+            if configured {
+                w.begin_analysis(&id, AnalysisStage::Transcribing).map(Some)
+            } else {
+                Ok(None)
+            }
+        })?;
+        let mut capture = Capture {
+            key,
+            stream: None,
+            results: VecDeque::new(),
+            saved: false,
+            terminal: !configured,
+            success: false,
+        };
+        if configured {
+            match LiveTranscription::start(ProviderConfig::new(
+                self.settings.asr_endpoint.clone(),
+                DASHSCOPE_ASR_MODEL.into(),
+                self.settings.key.clone(),
+            )) {
+                Ok(stream) => capture.stream = Some(stream),
+                Err(error) => capture.results.push_back(LiveEvent::Failed(error)),
+            }
+        }
+        self.captures.active.insert(file_id, id.clone());
+        self.captures.sessions.insert(id.clone(), capture);
+        Ok(id)
+    }
+
+    pub(super) fn capture_saved(&mut self, id: &str) -> bool {
+        if let Some(capture) = self.captures.sessions.get_mut(id) {
+            capture.saved = true;
+            return capture.key.is_some();
+        }
+        false
+    }
+
+    pub(super) fn poll_captures(&mut self) -> bool {
+        let mut sessions = std::mem::take(&mut self.captures.sessions);
+        let mut changed = false;
+        for (id, capture) in &mut sessions {
+            if let Some(stream) = &mut capture.stream {
+                capture.results.extend(stream.poll());
+            }
+            while let Some(event) = capture.results.front() {
+                let Some(key) = &capture.key else {
+                    break;
+                };
+                let result = self.store.transact(|w| match event {
+                    LiveEvent::Final { sequence, segment } => w
+                        .accept_transcript(
+                            key,
+                            &sequence.to_string(),
+                            &segment.text,
+                            segment.start_ms,
+                            segment.end_ms,
+                            "dashscope-live",
+                        )
+                        .map(|_| ()),
+                    LiveEvent::Finished => {
+                        if w.record(id).is_some_and(|r| !r.aggregate.spine.is_empty()) {
+                            w.finish_transcription(key)
+                        } else {
+                            w.fail_analysis(key, "未识别到语音，原始录音已保留")
+                        }
+                    }
+                    LiveEvent::Failed(error) => w.fail_analysis(key, error),
+                });
+                match result {
+                    Ok(()) => {
+                        changed = true;
+                        self.error = None;
+                        match event {
+                            LiveEvent::Finished => {
+                                capture.success = self
+                                    .workspace()
+                                    .record(id)
+                                    .is_some_and(|r| !r.aggregate.spine.is_empty());
+                                capture.terminal = true;
+                                capture.stream = None;
+                            }
+                            LiveEvent::Failed(error) => {
+                                self.error = Some(error.clone());
+                                capture.terminal = true;
+                                capture.stream = None;
+                            }
+                            LiveEvent::Final { .. } => {}
+                        }
+                        capture.results.pop_front();
+                    }
+                    Err(StoreError::Domain(ProductError::StaleRequest)) => {
+                        capture.terminal = true;
+                        capture.stream = None;
+                        capture.results.clear();
+                        break;
+                    }
+                    Err(error) => {
+                        self.error = Some(format!("实时文字等待保存：{error}"));
+                        break;
+                    }
+                }
+            }
+            if capture.saved && capture.terminal && capture.success {
+                self.auto_summarize.insert(id.clone());
+            }
+        }
+        sessions.retain(|_, capture| {
+            !(capture.saved && capture.terminal && capture.results.is_empty())
+        });
+        self.captures.sessions = sessions;
+        changed
+    }
+
+    pub(super) fn drive_analysis_queue(&mut self) {
+        if !self.pending.is_empty() || !self.completed.is_empty() || self.settings.key.is_empty() {
+            return;
+        }
+        let summary = !self.auto_summarize.is_empty();
+        let Some(id) = (if summary {
+            self.auto_summarize.first()
+        } else {
+            self.auto_transcribe.first()
+        })
+        .cloned() else {
+            return;
+        };
+        let needed = self.workspace().record(&id).is_some_and(|record| {
+            if summary {
+                !record.aggregate.spine.is_empty() && record.aggregate.minutes.is_none()
+            } else {
+                record.aggregate.spine.is_empty()
+            }
+        });
+        let result = if !needed {
+            Ok(())
+        } else if summary {
+            self.try_start_summary(&id)
+        } else {
+            self.try_start_transcription(&id)
+        };
+        let started = self.pending.values().any(|work| match work {
+            PendingWork::Transcription(key) | PendingWork::Summary(key) => key.record_id == id,
+            PendingWork::Ask(_) => false,
+        });
+        if result.is_ok() || result.as_ref().is_err_and(|e| !e.retryable()) || started {
+            if summary {
+                self.auto_summarize.remove(&id);
+            } else {
+                self.auto_transcribe.remove(&id);
+            }
+        }
+        if let Err(error) = result {
+            self.error = Some(error.message());
+        }
+    }
+}

@@ -1,50 +1,46 @@
 # Koe 开发入口
 
-- **PStack 动态接力约定（跨对话最优上下文推进）**：全景方向与滚动切片在 [docs/pstack-relay.md](docs/pstack-relay.md)，决策账本在 `.scratch/pstack-relay/decisions.tsv`。下一棒提示词**禁止死板预写**，必须根据当前会话真实完成的代码、新发现的约束与剩余路线动态合成：每次完成一个可验证单元（或上下文接近最优阈值需切分窗口）时，运行 `scripts/pstack-relay advance <SLICE_ID> --evidence "<sha/receipt>" --learned "<本轮沉淀的事实与改动>" --next-goal "<基于当前现场动态合成的下一棒目标>" --next-done "<下一棒可证伪验收命令>" --watchouts "<架构红线与防呆提醒>" --copy`（若因上下文上限提前交棒则加 `--partial` 自动裂变续接切片），并在回复末尾附上生成的 `## Next Chat Prompt (Copy & Paste)` 代码块。
+- **PStack 动态接力约定（跨对话最优上下文推进）**：全景方向与滚动切片在 [docs/pstack-relay.md](docs/pstack-relay.md)，决策账本在 `.scratch/pstack-relay/decisions.tsv`。下一棒提示词**禁止死板预写**，必须根据当前会话真实完成的代码、新发现的约束与剩余路线动态合成。每次完成一个可验证单元（或上下文接近最优阈值需切分窗口）时，运行 `scripts/pstack-relay advance <SLICE_ID> --evidence "<sha/receipt>" --learned "<本轮沉淀的事实与改动>" --next-goal "<基于当前现场动态合成的下一棒目标>" --next-done "<下一棒可证伪验收命令>" --watchouts "<架构红线与防呆提醒>" --copy`（若因上下文上限提前交棒则加 `--partial` 自动裂变续接切片），并在回复末尾附上生成的 `## Next Chat Prompt (Copy & Paste)` 代码块。
 
-Koe 是 Flutter 写的 iOS/macOS 应用，脱离飞书直接管理安克 soundcore Work（D3200）录音豆：BLE 连接、取回录音、指定模型转写与分析，并逐步做成手机优先的个人记录与持续事项工具（录音 + 地点 + 待办 + 日记，可交给 AI）。产品身份以 [pubspec.yaml](pubspec.yaml) 和 [README](README.md) 为准；当前做什么、冻结什么见 [ROADMAP](ROADMAP.md)。
+Koe 是对标 [`metasequoiaime/msime`](https://github.com/metasequoiaime/msime)「纯 Rust 内核 + 全原生平台宿主」四层分离架构的 macOS 应用（iOS 为后续宿主），脱离飞书直接管理安克 soundcore Work（D3200）录音豆，完成 BLE 连接、录音取回、真实云端流式转写、结构化纪要与个人上下文索引。架构权威规范见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，产品身份以根 [Cargo.toml](Cargo.toml) 和 [README.md](README.md) 为准，当前路线见 [ROADMAP.md](ROADMAP.md)。
 
-开发进度在 `progress/`（progress.json + 生成的自包含 index.html），更新时按 progress-page 技能 `python3 progress/progress.py refresh|render|check`，生成物不手改。
+开发进度在 `progress/`（`progress.json` 与生成的自包含 `index.html`），更新时按 progress-page 技能运行 `python3 progress/progress.py refresh|render|check`，生成物不手改。
 
-## 目录
+## 四层架构与目录
 
-| 改动 | 入口 |
-| --- | --- |
-| BLE/Wi-Fi 通信、帧协议与解密 | [PROTOCOL](PROTOCOL.md)、[lib/ble](lib/ble/)、[lib/wifi](lib/wifi/)、[lib/protocol](lib/protocol/)、[lib/crypto](lib/crypto/) |
-| 录音、转写与状态 | [lib/audio](lib/audio/)、[lib/ai](lib/ai/)、[lib/state](lib/state/) |
-| RecorderController 的各块功能 | [lib/state/recorder](lib/state/recorder/)：每块一个 part 文件（播放、本机录音库、地点、Mac 归档、主题、转写任务、转写文字、实时转写、设置、录音豆连接、录音豆文件），类本体、构造与共享状态留在 [recorder_controller.dart](lib/state/recorder_controller.dart)。用到别块的成员，在该 mixin 顶部「Provided by…」段加抽象声明 |
-| 个人记录：时间线条目、待办、项目、日记、问答 | [lib/state/context](lib/state/context/)，控制器接线在 [lib/state/recorder/context.dart](lib/state/recorder/context.dart)；真机项按硬规则 7 写进 PR 的 `## 需要真机` 小节并开工单 |
-| 界面与平台接入 | [lib/ui](lib/ui/)、[lib/platform](lib/platform/)，再读 [ios](ios/)、[macos](macos/)、[darwin](darwin/) |
-| 签名、安装脚本、系统 Keychain 凭据 | [scripts/sign-macos.sh](scripts/sign-macos.sh)、[scripts/install-macos.sh](scripts/install-macos.sh)、[darwin](darwin/)；验收含真实安装升级后的读取（见 [CONTRIBUTING](CONTRIBUTING.md) 规则 3） |
-| 测试 | [test](test/) |
-| 术语、ADR、工单与标签 | [GLOSSARY](GLOSSARY.md)、[docs/adr](docs/adr/)、[docs/agents](docs/agents/) |
+| 层级 | 目录 | 职责与边界 |
+| --- | --- | --- |
+| 第一层 Engine | [crates/koe-engine](crates/koe-engine/)、[crates/koe-opus](crates/koe-opus/)、[PROTOCOL.md](PROTOCOL.md) | 无 I/O 的协议与领域规则：D3200、按文件排序的采集事件、`ProductWorkspace`、`ProductRecord`、`RequestKey`、`SourceRef`、纪要证据验证、待办/记忆审核与 BM25。Opus 包装静态链接锁定源码构建的 libopus |
+| 第二层 Client | [crates/koe-client-base](crates/koe-client-base/)、[crates/koe-client-core](crates/koe-client-core/)、[crates/koe-client-providers](crates/koe-client-providers/)、[crates/koe-client-services](crates/koe-client-services/) | `base` 提供文件锁和原子写；`core` 提供资料包与共享格式；`providers` 负责真实 HTTP/WS、实时转写和有界任务；`services` 的 `ProductStore` 是唯一可写工作区，音频文件独立保管 |
+| 第三层 Runtime & Host API | [crates/koe-runtime](crates/koe-runtime/)、[crates/koe-host-api](crates/koe-host-api/) | `KoeRuntime` 接收意图，绑定录音/请求身份、安排 I/O、持久化后发布。`KOE_HOST_API_VERSION = 2`，10 个 C ABI 函数，panic 隔离、句柄管理、`generation` 不可变快照 |
+| 第四层 Native Hosts & CLI | [platforms/apple-shared](platforms/apple-shared/)、[platforms/macos](platforms/macos/)、[crates/koe-cli](crates/koe-cli/) | SwiftUI 实现今天、记录详情、待办、记忆、问答与设置；Swift 仅保留界面草稿和平台句柄，单文件 `<= 500` 行。CoreBluetooth、文件选择器与 AVPlayer 作为平台适配器。CLI/MCP 使用同一 `KoeRuntime` 与存储，工作区为单写者 |
+| 构建、签名与门禁脚本 | [scripts/check](scripts/check)、[scripts/verify-local.sh](scripts/verify-local.sh)、[scripts/verify-ui-principles.py](scripts/verify-ui-principles.py)、[scripts/install-macos.sh](scripts/install-macos.sh)、[scripts/sign-macos.sh](scripts/sign-macos.sh) | 本地快速增量校验、全量测试、原生 SwiftUI 界面原则门禁、Developer ID 签名与 `/Applications/Koe.app` 安装自检 |
+| 术语、ADR、工单与标签 | [GLOSSARY.md](GLOSSARY.md)、[docs/adr](docs/adr/)、[docs/agents](docs/agents/) | 领域术语、架构决策记录与协作规范 |
 
 ## 运行与测试
 
-- `flutter pub get`、`flutter analyze`、`flutter test`；CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在每个 PR 和 main 推送上跑这三步，Flutter 3.47.7，运行在用户自己的 Mac（自托管运行机，见 [ci-runner](docs/agents/ci-runner.md)）。
-- 要逐文件确认跑过哪些测试，用 `flutter test --reporter expanded`；终端默认 compact 输出会覆盖进度行（见 [CONTRIBUTING](CONTRIBUTING.md) 规则 8）。
-- 验证：`check`（运行 `scripts/check`：`flutter analyze` 与 `flutter test`；依赖先按上条 `flutter pub get` 装好，真机、签名与安装验收不在其中）。
-- 性能：`scripts/perf-check`（约 2 分钟，不在 `check` 里）在本机以 profile 模式跑 [integration_test/perf](integration_test/perf/) 的场景，按 `thresholds.json` 判定（超标退出码 1）；Koe 窗口要在屏幕上，否则 macOS 不出帧，场景 30 秒没帧就以退出码 3 停下，不算超标；`KOE_PERF_FOREGROUND=1` 在 Koe 启动后把窗口拉到前台（会抢走正在用的 app 的焦点）。改动 BLE、播放、音频转换、JSON 存储或问答检索时跑一次，把数字写进 PR。
-- Android：`scripts/android-check`（不在 `check` 里）在 adb 连着的 Pixel 上构建、安装（预授予运行时权限）并无人值守跑 [integration_test/android](integration_test/android/) 的场景：每个文件单独跑，调 `leaveAndLockScreen` 锁屏的场景排最后。新场景加 `*_test.dart` 即可，要 Koe 在屏幕上的场景开头调 `skipIfLocked`，手机有 PIN 锁着就跳过。设备离线或有场景跳过时以 77 退出，不算通过。SDK 与 JDK 21 用 Homebrew 装，release 签名读仓库外的 `~/.config/koe/android-signing.properties`（或 `KOE_ANDROID_SIGNING`），缺失时回落 debug 签名。
-- 构建、真机运行与安装脚本按 [README](README.md)；[scripts](scripts/) 运行前核对目标设备和副作用。
-- 实现、评审或验收前先读 [CONTRIBUTING](CONTRIBUTING.md) 的十条规则。
-- 写 BLE、录音、音频或记忆/待办类代码前，先用 `scripts/ref search` 检索上游、omi 和锁定版本依赖的同类实现，引用 `路径:行号` 再写；何时用、语料和存放位置见 [reference-code](docs/agents/reference-code.md)。
+- 快速增量验证：`./scripts/verify-local.sh --quick`（编译、Clippy、脚本契约与 UI 原则）；默认执行全量测试。
+- 全量门禁：`check`（运行 `./scripts/check`：Python 脚本契约测试、`verify-ui-principles.py`、全量 `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `swift test --package-path platforms/macos`）。CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在每个 PR 和 `main` 推送上运行此入口。
+- 构建并安装签名版 macOS 应用：`./scripts/install-macos.sh`（静态链接 `libkoe_host_api.a` 构建通用/原生二进制，打包并 Developer ID 签名为 `/Applications/Koe.app`，自动执行 `--verify-self` 与 `--smoke-test`）。
+- 实现、评审或验收前先读 [CONTRIBUTING.md](CONTRIBUTING.md) 的十条规则。
+- 写 BLE、录音、音频或记忆/待办类代码前，先用 `scripts/ref search` 检索上游、omi 和锁定版本依赖的同类实现，引用 `路径:行号` 再写；细则见 [docs/agents/reference-code.md](docs/agents/reference-code.md)。
 
 ## 硬规则
 
-1. **只经分支 + PR 交付，只用 squash 合并。** 不直接推 main，不用 merge commit；中断留下的 WIP 提交留在分支上，合并时 squash 掉。
+1. **只经分支 + PR 交付，只用 squash 合并。** 不直接推 `main`，不用 merge commit；中断留下的 WIP 提交留在分支上，合并时 squash 掉。
 2. **禁止 force push。** 不 rebase、不改写已推送历史、不改别人的分支；要更新就追加提交。
 3. **每个 commit 正文和 PR 都写三项验收：** ①回退测试：哪条测试改动前失败、改动后通过，没有就说明为什么；②真实使用情况：在真机、真实数据或真实界面上跑了什么、结果如何，没跑就写「未在真实环境验证」；③没跑到的项目：跳过的检查、没覆盖的场景和原因。只写「测试通过」不算验收，旧记录不能充当这次的证据；squash 时把三项带进合并提交正文。
 4. **不碰密钥。** 不读、不写、不打印任何密钥、token、`.env`/`.envrc`；不把密钥写进代码、日志、评论或 PR。
 5. **测试必须在修复前失败。** 只加改动前会失败、能拦住真实回归的行为测试；不加凑数、重复覆盖或只测实现细节（内部常量、调用次数、源码字符串）的测试。
 6. **一个文件同一时间只有一个写入者。** 一个工单只有一个在做的 PR；并行工作不得改同一文件，开工前查开放 PR 有无同文件冲突。
 7. **需要真机的步骤单独开工单。** 要 iPhone/Mac 真机、安装包、GUI、硬件或录音的验收写进 PR 的 `## 需要真机` 小节，并拆成独立「需要真机」工单；代码评审通过就先合并，不让真机闸住后续工作。
-8. 新教训先记进 [docs/agents/lessons.md](docs/agents/lessons.md)（出处、修复、Seen 计数），够分量的再补进 [CONTRIBUTING](CONTRIBUTING.md) 的十条规则；同一条教训在 3 个不同日子出现，就升为本节规则。
-9. **异步测试和真机场景都等确定的完成状态再断言。** 要读的结果如果在 I/O 或另一段异步流程之后才写出，就等到那个结果本身出现（轮询读回、Completer、等界面上的文字），不拿中间状态（「已停」「已保存」、一次 `pumpEventQueue`/`pumpAndSettle`）当完成信号；修这类问题要在改前把失败稳定复现出来。来由见 [docs/agents/lessons.md](docs/agents/lessons.md)「异步测试要等真实 I/O 结束的确定状态」（Seen 3x：2026-10-16、10-19、10-22）。
+8. 新教训先记进 [docs/agents/lessons.md](docs/agents/lessons.md)（出处、修复、Seen 计数），够分量的再补进 [CONTRIBUTING.md](CONTRIBUTING.md) 的十条规则；同一条教训在 3 个不同日子出现，就升为本节规则。
+9. **异步测试和真机场景都等确定的完成状态再断言。** 要读的结果如果在 I/O 或另一段异步流程之后才写出，就等到那个结果本身出现，不拿中间状态当完成信号；修这类问题要在改前把失败稳定复现出来。
+10. **零生产假数据与零跨层胶水。** 生产态禁止用本地 RMS 音量拼凑伪造中文句子，禁止用 `/usr/bin/curl` 子进程发请求，禁止在 SwiftUI 宿主复制业务规则或状态字段；宿主只渲染 `koe_host_snapshot_json` 返回的带 `generation` 视图快照并发送单向命令。
 
-完整原文（含阻塞链所有权、本机待办清单规则）见 [docs/agents/delivery-rules.md](docs/agents/delivery-rules.md)。
+完整原文见 [docs/agents/delivery-rules.md](docs/agents/delivery-rules.md)。
 
 ## 工单与 agent 协作
 
-- 工单统一用 semantic-craft/koe 的 GitHub Issues（[issue-tracker](docs/agents/issue-tracker.md)），分流标签见 [triage-labels](docs/agents/triage-labels.md)，领域文档布局见 [domain](docs/agents/domain.md)。
-- 贡献流程、PR 模板与安全报告：[CONTRIBUTING](CONTRIBUTING.md)、[PR 模板](.github/PULL_REQUEST_TEMPLATE.md)、[SECURITY](SECURITY.md)。
+- 工单统一用 `semantic-craft/koe` 的 GitHub Issues（[docs/agents/issue-tracker.md](docs/agents/issue-tracker.md)），分流标签见 [docs/agents/triage-labels.md](docs/agents/triage-labels.md)，领域文档布局见 [docs/agents/domain.md](docs/agents/domain.md)。
+- 贡献流程、PR 模板与安全报告：[CONTRIBUTING.md](CONTRIBUTING.md)、[PR 模板](.github/PULL_REQUEST_TEMPLATE.md)、[SECURITY.md](SECURITY.md)。

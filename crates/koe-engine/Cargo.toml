@@ -1,0 +1,17 @@
+[package]
+name = "koe-engine"
+version = "2.0.0"
+edition = "2021"
+publish = false
+description = "Pure deterministic Rust domain & protocol engine for Koe: D3200 BLE framing, HKDF/AES-CTR decryption, Ogg Opus/WAV framing, UtteranceSpine (S1..Sn), anti-hallucination minutes grounding, and BM25 retrieval."
+license = "MIT"
+
+[lints]
+workspace = true
+
+[dependencies]
+koe-client-base = { path = "../koe-client-base" }
+
+[lib]
+name = "koe_engine"
+path = "src/lib.rs"

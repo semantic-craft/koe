@@ -1,16 +1,16 @@
 # CI 运行机（自己的 Mac）
 
-CI（[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）只在带 `self-hosted, macOS, ARM64` 标签的运行机上跑，不用 GitHub 托管机器，也就不花 GitHub 托管分钟。运行机就是装好 Flutter 3.47.7 的这台 Mac（Homebrew 装在 `/opt/homebrew/bin/flutter`）。代码检查中版本不对会直接失败并提示。
+CI（[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）只在带 `self-hosted, macOS, ARM64` 标签的运行机上跑，不用 GitHub 托管机器，也就不花 GitHub 托管分钟。运行机就是装好 Rust 工具链（`cargo` / `rustc`）与 Xcode Command Line Tools（`swift`）的这台 Mac。
 
 ## 按改动分流
 
 必过检查名仍为 `test`，所有 PR 和 main 推送都会产生结果。`scripts/ci.py` 只将根目录 Markdown、`docs/` 下的 Markdown、`progress/progress.json` 和 `progress/index.html` 视为轻量改动。
 
 - 纯文档检查改动中的空白错误。涉及进度文件时，再运行 `python3 progress/progress.py check`，验证生成一致性和本地链接，不访问 GitHub。
-- 其他文件，包括 `progress/progress.py`、工作流和脚本，先检查进度生成，再运行 Flutter 版本检查、依赖安装及 `scripts/check --reporter expanded`。进度脚本或生成器改动也不会漏掉生成校验。
+- 其他文件，包括 `progress/progress.py`、工作流和脚本，先检查进度生成，再运行 `cargo --version` 及 `./scripts/check`（Python 契约测试、`verify-ui-principles.py`、全量 `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `swift test --package-path platforms/macos`）。进度脚本或生成器改动也不会漏掉生成校验。
 - PR 从共同祖先计算改动；main 推送检查整个推送范围。重命名同时检查旧、新路径，删除同样参与分流。手动触发、空范围或无法确定改动时运行完整检查。
 
-CI 不按路径跳过整个工作流，避免必过检查一直等待。没有代码改动时不启动 Flutter；代码检查保留 Python、Swift 和 Flutter 覆盖。本地已通过的定向检查无需重复运行，最终完整门禁由 CI 执行一次。
+CI 不按路径跳过整个工作流，避免必过检查一直等待。没有代码改动时不启动 Rust / Swift 全量编译；代码检查保留 Python、Rust 四层工作区与 Apple 原生宿主（AppKit + SwiftUI）完整覆盖。
 
 ## 注册（一次）
 

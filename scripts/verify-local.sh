@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Local verification gate for Koe (aligned with metasequoiaime/msime).
+#
+# Usage:
+#   scripts/verify-local.sh --quick   compile, lint, and fast contract checks
+#   scripts/verify-local.sh           full verification including workspace tests
+
+set -euo pipefail
+export MACOSX_DEPLOYMENT_TARGET=14.0
+
+unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_API_KEY DOUBAO_TTS_API_KEY
+root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+cd "$root"
+
+quick=0
+for arg in "$@"; do
+  case "$arg" in
+    --quick) quick=1 ;;
+    --with-tests) quick=0 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+note() { printf '\n=== %s ===\n' "$1"; }
+
+note "contracts & tooling tests"
+python3 scripts/test_cleanup_app_registrations.py
+python3 scripts/test_ci.py
+python3 scripts/test_verify_ui_principles.py
+python3 scripts/verify-ui-principles.py --mode all
+python3 progress/progress.py check
+./scripts/pstack-relay selftest
+
+note "compile & clippy: rust workspace"
+cargo check --workspace --all-targets --offline --quiet
+cargo clippy --workspace --all-targets --offline -- -D warnings
+
+if [[ "$quick" -eq 1 ]]; then
+  echo "verify-local (--quick): all compile and contract gates passed."
+  exit 0
+fi
+
+note "test: rust workspace"
+cargo test --workspace --offline --quiet
+
+if [[ -d "$root/platforms/macos" && -f "$root/platforms/macos/Package.swift" && "$(uname -s)" == "Darwin" ]]; then
+  note "native host: platforms/apple-shared & platforms/macos"
+  cargo build --package koe-host-api --offline --quiet
+  cargo build --release --package koe-host-api --offline --quiet
+  swift test --package-path "$root/platforms/apple-shared"
+  swift test --package-path "$root/platforms/macos"
+fi
+
+echo "verify-local (full): all gates passed."

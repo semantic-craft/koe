@@ -1,0 +1,23 @@
+[package]
+name = "koe-host-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Versioned C ABI and session lifecycle table for Koe native SwiftUI hosts (aligned with msime host-api)."
+
+[lib]
+name = "koe_host_api"
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+koe-client-base = { path = "../koe-client-base" }
+koe-client-core = { path = "../koe-client-core" }
+koe-client-providers = { path = "../koe-client-providers" }
+koe-client-services = { path = "../koe-client-services" }
+koe-engine = { path = "../koe-engine" }
+koe-runtime = { path = "../koe-runtime" }
+
+[lints]
+workspace = true

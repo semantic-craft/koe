@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- quick_actions looks the shortcut icon up by name at run time, which the
-     release resource shrinker cannot see. -->
-<resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@drawable/ic_shortcut_record" />

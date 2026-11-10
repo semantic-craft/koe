@@ -16,8 +16,6 @@ jobs:
   test:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
-    env:
-      FLUTTER_VERSION: 3.47.7
     steps:
       - uses: actions/checkout@v4
         with:

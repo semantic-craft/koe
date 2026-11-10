@@ -1,0 +1,23 @@
+[package]
+name = "koe-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Koe personal memory, protocol verification, and MCP CLI"
+
+[[bin]]
+name = "koe"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+koe-client-base = { path = "../koe-client-base" }
+koe-client-providers = { path = "../koe-client-providers" }
+koe-engine = { path = "../koe-engine" }
+koe-opus = { path = "../koe-opus" }
+koe-runtime = { path = "../koe-runtime" }
+serde_json = "1"

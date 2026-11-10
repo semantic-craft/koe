@@ -14,11 +14,10 @@
 //                                        field whose label starts with LABEL
 //
 // A modal panel (such as the file picker) blocks presses in the window
-// behind it; close it first. `type` changes what the accessibility API
-// reports but not the Flutter text field behind it: saving keeps the old
-// text, so type with System Events keystrokes instead. While Koe is in the
-// background the tree can lag the screen; activate Koe before dumping. PID defaults to the running /Applications/Koe.app. The calling process
-// needs Accessibility permission (System Settings → Privacy & Security).
+// behind it; close it first. While Koe is in the background the accessibility
+// tree can lag the screen; activate Koe before dumping. PID defaults to the
+// running /Applications/Koe.app. The calling process needs Accessibility
+// permission (System Settings -> Privacy & Security).
 import AppKit
 import ApplicationServices
 

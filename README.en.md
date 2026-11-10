@@ -1,225 +1,93 @@
-<p align="center">
-  <img src="macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_128.png" alt="Koe" width="96" height="96">
-</p>
-
 <h1 align="center">Koe</h1>
 
-<p align="center"><strong>Record and transcribe with the Anker soundcore Work recorder without Feishu, and turn each day into a personal record you can hand to AI.</strong></p>
+<p align="center"><strong>A Rust recording and personal-memory core with a native macOS interface.</strong></p>
 
 <p align="center">
-  <a href="https://flutter.dev"><img alt="Flutter 3.47.7" src="https://img.shields.io/badge/Flutter-3.47.7-02569B?style=flat-square&logo=flutter&logoColor=white"></a>
-  <img alt="iOS 15+" src="https://img.shields.io/badge/iOS-15%2B-000000?style=flat-square&logo=apple&logoColor=white">
-  <img alt="macOS 12+" src="https://img.shields.io/badge/macOS-12%2B-000000?style=flat-square&logo=apple&logoColor=white">
-  <img alt="Android 17 (Pixel 11 Pro)" src="https://img.shields.io/badge/Android-17%20%C2%B7%20Pixel%2011%20Pro-3DDC84?style=flat-square&logo=android&logoColor=white">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white">
+  <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-5.10%2B-F05138?style=flat-square&logo=swift&logoColor=white">
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white">
   <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <img alt="License pending" src="https://img.shields.io/badge/License-pending-lightgrey?style=flat-square">
 </p>
 
-<p align="center">
-  <a href="README.md">简体中文</a> · <strong>English</strong>
-</p>
+<p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
----
+Koe connects directly to an Anker soundcore Work (D3200) recorder without Feishu. It keeps recordings and transcripts on your Mac, then organizes discussions into minutes, tasks, and memories. You can also import files or create text notes.
 
-> [!IMPORTANT]
-> Koe is built on the original D3200 app and protocol reverse-engineering in [tacshi/Soundcore](https://github.com/tacshi/Soundcore). The upstream project has no license yet, so this repository will not be published until the original author grants permission. See [Acknowledgements](#acknowledgements) and [License](#license).
+The product starts on macOS. **Today reviews the day, recording details preserve the original material, and Ask Koe searches across records.** Rust owns the data and processing state; SwiftUI presents it and handles native system interactions.
 
-## Why Koe
+## Workflow
 
-The Anker soundcore Work (model D3200) is a small clip-on voice recorder. Officially it lives inside Feishu (Lark): recordings must be uploaded to Feishu Minutes to be transcribed, and the results stay in Feishu.
+1. **Capture a record.** Retrieve a D3200 recording, import WAV, UTF-8 TXT, Markdown, or a `.koepack` containing text, or write a note. A new workspace starts empty.
+2. **Transcribe and organize.** Alibaba DashScope handles speech recognition and Qwen generates structured minutes. Live device audio and saved audio enter the same Rust recording pipeline. Completed transcription proceeds to minutes generation.
+3. **Review tasks and memories.** Generated candidates wait for review. Accept, dismiss, edit, or restore them; task completion and memory decisions persist locally.
+4. **Follow the source.** Minutes, tasks, memories, and answers retain recording and utterance references. Open a source and return to the conversation. Audio records support playback and seeking; records export to Markdown.
 
-Koe lets the recorder work on its own. Your iPhone or Mac connects to it over Bluetooth, pulls the original recordings, and transcribes and organizes them with the model you choose (Apple on-device, Alibaba Qwen, or ByteDance Doubao). The original audio stays on your device, and every sentence links back to the moment it was spoken.
+Today gathers the day's records, pending decisions, and next actions. All Records holds the complete library. Each record owns its transcript, minutes, highlights, and processing state. Questions can target one record or the whole library.
 
-On top of that, Koe is growing into a phone-first personal record: recordings, places, to-dos and a diary gathered by day, followed up by project, and finally exported as files for an external AI.
+Without cloud configuration, text notes, browsing, review, playback, and local retrieval remain available. Ask Koe labels retrieved original passages accordingly. Speech recognition and generated minutes require a configured provider.
 
-## Features
+## Data and service boundaries
 
-### Recording and transcription
+- The signed app uses the macOS sandbox. Its default workspace is `~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace`. `product-workspace.json` stores records, review decisions, and conversation history; `audio/` stores audio separately.
+- The API key entered in Settings stays **in the current application process only**. It is not written to the workspace or loaded automatically from personal `.env`, `.envrc`, or Keychain entries. Optional endpoint fields use the provider defaults when left blank.
+- Request state is saved before cloud work begins. Completion requires saving the returned result. Restarted applications mark unfinished work as interrupted; they do not automatically resend paid requests. Configure the provider again and explicitly retry.
+- A workspace has one writer. Only one GUI, CLI, or MCP process can open it at a time. Closing the window keeps the app running; quit Koe with `⌘Q` before using the CLI.
 
-- Scan, pair and bind the recorder over Bluetooth; see recorder and charging-case battery; start and pause recording remotely, and end recording with the recorder's physical button
-- Live transcription while you record, with optional live translation (Apple on-device)
-- Pull recordings from the recorder (Bluetooth, or Wi‑Fi direct batch export); recordings that grew after a resumed session are fetched again automatically
-- Record with the phone microphone too (iPhone or Pixel); keeps recording when locked, pauses on incoming calls and recovers after the app is killed
-- File transcription: chunked uploads for long Qwen recordings, Doubao turbo; submitted jobs keep being polled after a restart
-- Start the recorder from the iPhone Action button or a Shortcut; on Android, long-press the Koe icon and pick Start recording
+## Build and run
 
-### Playback and correction
-
-- Tap any sentence in the transcript to hear the original audio, including from the lock screen
-- Corrected text and speaker labels keep their link to the audio
-- Clip notes and bookmarks; a continuous listening queue
-- Speaker distribution: see how long each person spoke on a timeline and jump to the sentence
-- Sentence-aligned translation: tap a translated line to hear the source sentence
-- Summaries, custom analysis, structured minutes (topics / decisions / to-dos) and mind maps, each pointing back to its source in the transcript
-
-### Today · Projects · To-dos
-
-- A "Today" timeline of the day's recordings and notes, with correctable topic assignment
-- Projects followed across days; per-topic notes and topic summaries
-- To-dos generated from commitments in conversations, exportable to iPhone Reminders and Calendar (on Android, to the system calendar)
-- Approximate place recorded automatically for recordings, or added by hand
-- New recordings are processed automatically (transcribe → summarize → extract to-dos) and resume after interruption
-
-### Diary · Ask Koe · Morning brief
-
-- A diary and weekly summary where every entry cites its sources
-- "Ask Koe": ask follow-up questions about your own records on the phone, by typing or push-to-talk, with optional read-aloud answers
-- Morning brief: key points from yesterday, generated on demand
-
-### Export to AI
-
-- Export Markdown by day, project or topic for the AI you already use
-- Material packs (`.koepack`): export and re-import on another device or after a reinstall, restoring corrections, timestamps, speakers, bookmarks, places and topics, with the original audio included only if you choose
-- Automatic archive of phone originals to your own Mac (encrypted LAN connection, confirmed only after verification)
-
-## Screenshots
-
-> Screenshots pending: they will be retaken with demo data before any public release, never with real recordings or places.
-
-| Today | Recording detail | Ask Koe |
-| --- | --- | --- |
-| _pending_ | _pending_ | _pending_ |
-
-## Supported hardware
-
-| Device | Model | Status |
-| --- | --- | --- |
-| Anker soundcore Work (AI voice recorder) | D3200 | Supported: Bluetooth connection and control, live audio, offline file pull, Wi‑Fi SoftAP batch export |
-
-Other soundcore recorders are untested. Protocol details are in [PROTOCOL.md](PROTOCOL.md).
-
-| Platform | Status |
-| --- | --- |
-| iOS 15+ | Primary platform. Apple on-device transcription and translation need iOS 26+ |
-| macOS 12+ | Meeting-notes client and archive for originals; meeting-notes features are being built in phases (see [ROADMAP](ROADMAP.md)); Apple on-device transcription needs macOS 26+ |
-| Android 17 | Pixel 11 Pro only. Code merged, device acceptance pending (#345). No Apple on-device transcription or translation, Reminders or Mac archiving |
-
-## Quick start
-
-### Prerequisites
-
-- macOS with Xcode (including the iOS platform) and CocoaPods
-- Android: the Android SDK (compileSdk 37) and JDK 21
-- Flutter 3.47.7 (same as CI)
-- A soundcore Work D3200 recorder (without one you can still record on the phone, import audio and use everything else)
-- Optional: an API key for [Alibaba Qwen (DashScope)](https://dashscope.aliyun.com/) or [Doubao Speech](https://www.volcengine.com/product/voice-tech)
-
-### Install dependencies and run
+Requirements: macOS 14+, Xcode Command Line Tools with Swift 5.10+, a Rust toolchain, and CMake. Opus is statically built from the pinned dependency source; no system `libopus` installation is required. Rust, C, and Swift use the same macOS 14 deployment target.
 
 ```bash
-git clone https://github.com/semantic-craft/koe.git
-cd koe
-flutter pub get
+cargo build --package koe-host-api
+swift build --package-path platforms/macos
 ```
 
-```bash
-flutter run -d macos
-```
-
-```bash
-flutter run -d ios
-```
-
-```bash
-flutter run -d pixel
-```
-
-On a physical iPhone, choose your own development team for `ios/Runner.xcworkspace` in Xcode. `scripts/install-ios.sh`, `scripts/install-macos.sh` and `scripts/build-dmg.sh` are the maintainer's install and packaging scripts; check the target device and signing identity before running them.
-
-If you switch from an old SPM build and see `local binary target opus ... does not contain a binary artifact`, run `flutter clean` and then `flutter pub get`.
-
-### Install on a Mac
+To install a signed local application:
 
 ```bash
 ./scripts/install-macos.sh
 ```
 
-Builds a Release app and installs it to `/Applications/Koe.app` (needs a Developer ID signing identity). `./scripts/build-dmg.sh` packages `dist/koe-<version>-macos.dmg`.
-
-### iPhone Action button
-
-After installing Koe and connecting the recorder at least once:
-
-1. On the iPhone, open Settings → Action Button → Shortcut.
-2. Choose **Koe → 开始录音** (the action is titled 「用 Koe 开始录音」, "Start recording with Koe").
-3. Press and hold the Action button: Koe opens, reconnects the recorder if needed, and starts recording.
-
-### Configure Qwen / Doubao API keys
-
-1. In Koe, open Settings → 语音服务 (Speech service).
-2. Choose a provider:
-   - **Qwen**: enter the API key; the Workspace ID is optional. Summaries, minutes, Ask Koe and the other organizing features also use Qwen.
-   - **Doubao**: enter the API key only (turbo file transcription and streaming recognition).
-   - **Apple on-device**: no key needed; available on iOS 26+, with all processing on the device.
-3. The provider is enabled once saved. Endpoints and models are chosen by the app.
-
-Keys are stored in the system Keychain (on Android, in Keystore-encrypted storage), never in the settings file. Development and debug builds use an isolated in-memory store and never read or write keys in your personal Keychain.
-
-### Tests
+The installer uses the configured Developer ID identity, installs `/Applications/Koe.app`, and runs `--verify-self` and `--smoke-test`. Those checks exercise the product workflow in isolated workspaces. Physical-device and long-running cloud use have separate acceptance checks.
 
 ```bash
-flutter analyze
+./scripts/verify-local.sh --quick
+./scripts/check
 ```
+
+The quick gate checks script, UI, progress, and Rust compile/lint contracts. The full gate adds Rust and macOS Swift tests. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## CLI and MCP
+
+The CLI uses the same `KoeRuntime` and workspace as the native application. After quitting the GUI:
 
 ```bash
-flutter test
+cargo run --package koe-cli -- status
+cargo run --package koe-cli -- search "product decisions"
+cargo run --package koe-cli -- ask "what should happen next"
+cargo run --package koe-cli -- mcp-stdio
 ```
 
-With a Pixel connected, `scripts/android-check` builds and installs a debug build and runs the unattended scenarios in [integration_test/android](integration_test/android/) on the phone. Unlock the phone first and leave it alone: the script keeps the screen on and runs the scenarios that lock the screen last; while the phone is locked, scenarios that need Koe on screen are skipped. It exits 77 (skipped) when the device is offline or a scenario was skipped.
+Use `--workspace <directory>` for another library and `--record <ID>` to scope `search` or `ask`. MCP stdio exposes `search`, `get_record`, and `ask`; `ask` also saves conversation history. A separate CLI/MCP process does not inherit the GUI's temporary credentials and currently uses local source retrieval. Stop the MCP process before reopening that workspace in the GUI.
 
 ## Architecture
 
-Koe is a Flutter app. A Provider-managed `RecorderController` coordinates state and is split into one part file per feature; the personal record (timeline, to-dos, projects, diary, Q&A) is a separate set of JSON stores.
+| Layer | Paths | Responsibility |
+| --- | --- | --- |
+| Domain and protocol | [koe-engine](crates/koe-engine/), [koe-opus](crates/koe-opus/) | `ProductWorkspace`, per-record aggregates, review and source rules, retrieval, D3200 protocol, and an isolated libopus wrapper |
+| Client services | [base](crates/koe-client-base/), [core](crates/koe-client-core/), [providers](crates/koe-client-providers/), [services](crates/koe-client-services/) | File locking, atomic persistence, data formats, network transport, audio import, and workspace storage |
+| Runtime and API | [koe-runtime](crates/koe-runtime/), [koe-host-api](crates/koe-host-api/) | Device and asynchronous task coordination, persistence, version 2 snapshots and commands |
+| Native host and CLI | [apple-shared](platforms/apple-shared/), [macos](platforms/macos/), [koe-cli](crates/koe-cli/) | SwiftUI, windows, CoreBluetooth, file selection, playback, and the shared-runtime command line |
 
-```
-D3200 recorder ──BLE/Wi‑Fi──▶ ble/ wifi/ protocol/ crypto/
-                                   │  pulled Opus audio
-                                   ▼
-                               audio/ ──▶ ai/ (Apple / Qwen / Doubao transcription)
-                                   │
-                                   ▼
-               state/ (library, transcription jobs, personal record) ──▶ ui/
-                                   │
-                                   ▼
-                  Markdown / material-pack export · Mac archive (archive/)
-```
-
-| Folder | Contents |
-| --- | --- |
-| [lib/ble](lib/ble/) | Advertisement parsing, GATT service, offline file pull, live audio stream |
-| [lib/protocol](lib/protocol/) | Frame format, command codes, data models |
-| [lib/crypto](lib/crypto/) | Device ECDH / AES session crypto |
-| [lib/wifi](lib/wifi/) | SoftAP connection and batch export |
-| [lib/audio](lib/audio/) | Ogg/Opus muxing, Opus→PCM decoding, audio conversion |
-| [lib/ai](lib/ai/) | Transcription providers: Apple on-device, Qwen, Doubao |
-| [lib/state](lib/state/) | Controller and persistence; [recorder/](lib/state/recorder/) is split by feature, [context/](lib/state/context/) is the personal record |
-| [lib/archive](lib/archive/) | Phone-to-Mac archive of originals |
-| [lib/platform](lib/platform/) | Keychain and Keystore, location, Reminders and calendar, Shortcuts, the Android foreground service and other platform bridges |
-| [lib/ui](lib/ui/) | Screens and widgets |
-| [darwin](darwin/), [ios](ios/), [macos](macos/) | Native Apple code |
-| [android](android/) | Native Android code: foreground service and notification, launcher shortcut |
-| [test](test/), [integration_test](integration_test/) | Unit, widget and performance tests |
-
-Terms are in [GLOSSARY](GLOSSARY.md), design decisions in [docs/adr](docs/adr/), UI rules in [docs/design/ui-guidelines.md](docs/design/ui-guidelines.md). Project docs are written in Chinese.
-
-## Roadmap
-
-What is being built now, what comes next and what is on hold: [ROADMAP.md](ROADMAP.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
-
-## Contributing
-
-Issues and PRs are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first: changes land only through branches and PRs, and every PR states three acceptance items (regression test, real-world use, what was not covered). Report security issues privately as described in [SECURITY.md](SECURITY.md), and **never paste an API key into an issue**.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md). iOS/Android hosts, screen or microphone capture, translation, Google synchronization, automatic backup, and ACP are outside the current connected macOS product workflow.
 
 ## Acknowledgements
 
-**Koe started from [tacshi/Soundcore](https://github.com/tacshi/Soundcore) by [tacshi](https://github.com/tacshi) (Rocky Shi).** That project first built an app that uses the D3200 without Feishu and reverse-engineered the recorder's Bluetooth and Wi‑Fi protocol: service and characteristic UUIDs, frame format and command codes, the ECDH handshake and AES decryption, offline file pull and SoftAP batch export. [PROTOCOL.md](PROTOCOL.md) is the record of that work. Without it there would be no Koe.
+The D3200 protocol builds on [tacshi/Soundcore](https://github.com/tacshi/Soundcore); see [PROTOCOL.md](PROTOCOL.md). Architecture and product references include [metasequoiaime/msime](https://github.com/metasequoiaime/msime) for native-host boundaries, [BasedHardware/omi](https://github.com/BasedHardware/omi) for personal-memory workflows, and [screenpipe/screenpipe](https://github.com/screenpipe/screenpipe) for organizing records over time. Reference versions are documented in [reference-code.md](docs/agents/reference-code.md).
 
-A substantial part of Koe's Bluetooth, protocol, crypto, audio and Wi‑Fi modules still derives from the upstream code.
-
-The structured-minutes rules are adapted from Meetily and Ownscribe (MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Structured-minutes prompts also draw from Meetily and Ownscribe. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-**License pending: the upstream project has no license yet; this repository will not be published until the original author grants permission.**
-
-Until then, all rights in the upstream code remain with its author. This repository is for private use only; please do not redistribute it.
+The repository retains its **license-pending, no-public-distribution policy until upstream authorization is confirmed**. Rights in upstream code remain with its authors. Until authorization is resolved, use is personal and redistribution is not permitted. Cargo package metadata does not substitute for authorization of upstream code.
