@@ -106,7 +106,12 @@
       }
     ],
     "main": "eeaaeb41df8cdfdf3e605c57455826eda268ffe1",
-    "open_pulls": [],
+    "open_pulls": [
+      {
+        "head": "162d4a697520ec1a558b2c85564e3d5b19f1b921",
+        "number": 624
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -171,12 +176,20 @@
         "merged": true,
         "number": 621,
         "state": "closed"
+      },
+      {
+        "base": "eeaaeb41df8cdfdf3e605c57455826eda268ffe1",
+        "head": "162d4a697520ec1a558b2c85564e3d5b19f1b921",
+        "merge_commit": "4a88b2fcd95c95e123bc3b15c6e1ee090bd3413c",
+        "merged": false,
+        "number": 624,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T11:37:17.737848Z",
+  "observed_at": "2026-11-10T11:38:42.500886Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -416,6 +429,11 @@
               "kind": "file",
               "note": "启动时差、不同速率、旧epoch、停止尾块、两次重开及44.1kHz长流发布重试。",
               "ref": "crates/koe-runtime/tests/capture_timeline.rs"
+            },
+            {
+              "kind": "pull",
+              "note": "Rust共同时间轴与暂停协议；本地260 Rust/32 Python/29 Swift、独立复验通过；尚未合并，原生仍单路。",
+              "ref": 624
             }
           ],
           "id": "mac-dual-capture",
@@ -620,7 +638,8 @@
       609,
       613,
       617,
-      621
+      621,
+      624
     ]
   }
 }
