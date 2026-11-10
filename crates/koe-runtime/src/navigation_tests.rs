@@ -35,11 +35,17 @@ fn pending_recording_start_blocks_conflicting_commands_and_times_out() {
         command(&mut runtime, json!({"type":"device_download","fileId":7}))["error"].is_string()
     );
     runtime.poll_timers(15_000, 1800000015);
-    assert_eq!(runtime.snapshot(1800000015)["device"]["busy"], false);
+    assert_eq!(runtime.snapshot(1800000015)["device"]["busy"], true);
+    assert_eq!(runtime.snapshot(1800000015)["device"]["stopping"], true);
     assert!(runtime.snapshot(1800000015)["error"]
         .as_str()
         .unwrap()
         .contains("未确认"));
+    let mut stopped = vec![0x09, 0xff, 0, 0, 1, 0x18, 0x82, 11, 0, 0];
+    stopped.push(koe_engine::frame::ProtocolFrame::checksum(&stopped));
+    runtime.ingest_ble_chunk(&stopped, 1800000015);
+    assert_eq!(runtime.snapshot(1800000015)["device"]["busy"], false);
+    assert_eq!(runtime.snapshot(1800000015)["device"]["stopping"], false);
 }
 
 #[test]

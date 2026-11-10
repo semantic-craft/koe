@@ -257,7 +257,9 @@ impl KoeRuntime {
             let succeeded = result.is_ok();
             match result {
                 Err(CompletionError::Save(error)) if !matches!(error, StoreError::Domain(_)) => {
-                    self.error = Some(format!("结果等待保存，正在保留本次云端返回：{error}"));
+                    let message = format!("结果等待保存，正在保留本次云端返回：{error}");
+                    self.drain_error = Some(message.clone());
+                    self.error = Some(message);
                     break;
                 }
                 Err(CompletionError::Save(StoreError::Domain(ProductError::StaleRequest))) => {
@@ -285,17 +287,24 @@ impl KoeRuntime {
                     };
                     let recorded = match &work {
                         PendingWork::Transcription(key) | PendingWork::Summary(key) => {
-                            self.commit(|w| w.fail_analysis(key, &error))
+                            self.store.transact(|w| w.fail_analysis(key, &error))
                         }
                         PendingWork::Ask(operation) => {
-                            self.commit(|w| w.fail_ask(*operation, &error))
+                            self.store.transact(|w| w.fail_ask(*operation, &error))
                         }
                     };
-                    if let Err(save_error) = recorded {
-                        self.error = Some(save_error);
-                        break;
+                    match recorded {
+                        Err(StoreError::Domain(ProductError::StaleRequest)) => {
+                            self.notice = Some("已忽略过期请求的失败结果".into());
+                        }
+                        Err(save_error) => {
+                            let message = save_error.to_string();
+                            self.drain_error = Some(message.clone());
+                            self.error = Some(message);
+                            break;
+                        }
+                        Ok(()) => self.error = Some(error),
                     }
-                    self.error = Some(error);
                 }
                 Ok(()) => {
                     self.error = None;

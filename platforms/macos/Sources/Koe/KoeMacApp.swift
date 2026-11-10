@@ -54,6 +54,9 @@ public enum KoeWindowPresenter {
 public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     public var store: HostSessionStore? {
         didSet {
+            oldValue?.onSnapshotChanged = nil
+            store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
+            if let store { applyLifecycle(store.snapshot) }
             bluetoothBridge.store = store
             files.store = store
             playback.store = store
@@ -65,6 +68,15 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     public let bluetoothBridge = BluetoothBridge()
     let files = NativeFileActions()
     private let playback = NativePlayback()
+    private lazy var lifecycle = NativeQuitCoordinator(
+        send: { [weak self] in self?.store?.send($0) },
+        reply: { [weak self] allowed in
+            self?.quitPanel?.close()
+            self?.quitPanel = nil
+            NSApp?.reply(toApplicationShouldTerminate: allowed)
+        }
+    )
+    private var quitPanel: NativeQuitPanel?
     private var statusItem: NSStatusItem?
     private var timer: Timer?
     private var lastTick = ProcessInfo.processInfo.systemUptime
@@ -107,9 +119,34 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
         return true
     }
+    private func applyLifecycle(_ snapshot: HostSnapshot) {
+        lifecycle.apply(snapshot.lifecycle)
+        quitPanel?.update(snapshot.lifecycle)
+    }
+    public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let store, store.handle != 0 else { return .terminateNow }
+        if quitPanel != nil { return .terminateLater }
+        if store.snapshot.lifecycle?.keepAwake == true {
+            let alert = NSAlert()
+            alert.messageText = "Koe 仍有进行中的工作，要退出吗？"
+            alert.informativeText = "录音将停止，已开始的处理和保存会完成后再退出。"
+            alert.addButton(withTitle: "保存后退出")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        }
+        let result = lifecycle.request()
+        bluetoothBridge.flushOutboundFrames()
+        if result == .terminateLater {
+            let panel = NativeQuitPanel { [weak self] in self?.lifecycle.cancel() }
+            quitPanel = panel
+            panel.show(store.snapshot.lifecycle)
+        }
+        return result
+    }
     public func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
         playback.stop()
+        lifecycle.shutdown()
         store?.shutdown()
     }
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { buildStatusMenu() }

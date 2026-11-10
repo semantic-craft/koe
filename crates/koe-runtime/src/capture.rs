@@ -243,7 +243,9 @@ impl KoeRuntime {
                         break;
                     }
                     Err(error) => {
-                        self.error = Some(format!("实时文字等待保存：{error}"));
+                        let message = format!("实时文字等待保存：{error}");
+                        self.drain_error = Some(message.clone());
+                        self.error = Some(message);
                         break;
                     }
                 }
@@ -260,7 +262,7 @@ impl KoeRuntime {
     }
 
     pub(super) fn drive_analysis_queue(&mut self) {
-        if !self.pending.is_empty() || !self.completed.is_empty() || self.settings.key.is_empty() {
+        if self.is_quitting() || !self.pending.is_empty() || !self.completed.is_empty() || self.settings.key.is_empty() {
             return;
         }
         let summary = !self.auto_summarize.is_empty();

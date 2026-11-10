@@ -19,6 +19,7 @@ public final class HostSessionStore {
     public private(set) var snapshot: HostSnapshot = .empty
     public private(set) var nativeError: String?
     @ObservationIgnored public private(set) var handle: UInt64 = 0
+    @ObservationIgnored public var onSnapshotChanged: ((HostSnapshot) -> Void)?
     @ObservationIgnored private var requestGate = ViewRequestGeneration()
 
     @ObservationIgnored private let credentials: HostCredentials?
@@ -138,7 +139,10 @@ public final class HostSessionStore {
                 return
             }
             guard requestGate.acceptRustGeneration(decoded.generation) else { return }
-            if decoded != snapshot { snapshot = decoded }
+            if decoded != snapshot {
+                snapshot = decoded
+                onSnapshotChanged?(decoded)
+            }
         } catch {
             nativeError = "无法读取数据引擎的回应，请重新打开应用。"
         }

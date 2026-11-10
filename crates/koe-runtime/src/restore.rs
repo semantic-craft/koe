@@ -23,6 +23,7 @@ impl KoeRuntime {
 
     pub(crate) fn maybe_start_auto_offline_pull(&mut self) -> bool {
         if !self.device.is_connected()
+            || self.device.awaiting_stop
             || self.device.session.device_recording_active
             || self.device.session.pending_realtime_subscribe
             || self.device.session.active_file_id.is_some()
@@ -37,7 +38,8 @@ impl KoeRuntime {
             .catalog
             .iter()
             .find(|entry| {
-                entry.duration_ms > 0
+                (!self.is_quitting() || self.captures.records_by_file_id.contains_key(&entry.file_id))
+                    && entry.duration_ms > 0
                     && entry.end_time != Some(0)
                     && !self.device.auto_pull_attempted.contains(&entry.file_id)
                     && !self.is_device_file_synced(entry.file_id)

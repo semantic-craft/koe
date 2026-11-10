@@ -159,7 +159,7 @@ impl KoeRuntime {
                 TransferPhaseTag::Failed => "failed",
             }
         };
-        json!({"version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
+        json!({"lifecycle": self.lifecycle_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"detail":detail,"tasks":tasks,"memories":memories,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
@@ -168,7 +168,8 @@ impl KoeRuntime {
                 "state":device_state,
                 "statusDetail":status_detail,
                 "connected":connected,
-                "busy":matches!(device.transfer.phase,TransferPhaseTag::PullingOffline|TransferPhaseTag::StreamingRealtime) || device.device_recording_active,
+                "busy":matches!(device.transfer.phase,TransferPhaseTag::PullingOffline|TransferPhaseTag::StreamingRealtime) || device.device_recording_active || self.device.awaiting_stop,
+                "stopping":self.device.awaiting_stop,
                 "recording":device.device_recording_active,
                 "transferPhase":transfer_phase,
                 "liveDurationMs":live_duration_ms,

@@ -67,6 +67,7 @@ pub(crate) const ONBOARDING_STEPS: [OnboardingStepSpec; 5] = [
 
 pub(crate) struct DeviceRuntime {
     pub session: TransportSession,
+    pub awaiting_stop: bool,
     pub connection: Option<String>,
     pub device_name: Option<String>,
     pub modal: DeviceModalState,
@@ -86,6 +87,7 @@ impl Default for DeviceRuntime {
     fn default() -> Self {
         Self {
             session: TransportSession::with_decoder_factory(Some(koe_opus::create_libopus_decoder)),
+            awaiting_stop: false,
             connection: None,
             device_name: None,
             modal: DeviceModalState::Hidden,
@@ -104,6 +106,18 @@ impl Default for DeviceRuntime {
 }
 
 impl DeviceRuntime {
+    pub fn stop_recording(&mut self) {
+        if self.awaiting_stop {
+            self.outbound.push(DeviceCommands::pause_record());
+            return;
+        }
+        self.awaiting_stop |= self.session.device_recording_active
+            || self.session.pending_realtime_subscribe
+            || (self.session.active_is_realtime && !self.session.transfer.quiet_draining);
+        let outcome = self.session.stop_realtime_recording();
+        self.accept(outcome);
+    }
+
     pub fn is_connected(&self) -> bool {
         self.session.session_key.is_some()
             && self.session.connection_phase != ConnectionPhaseTag::Handshaking
@@ -251,8 +265,7 @@ impl DeviceRuntime {
         if self.session.pending_realtime_subscribe && self.session.active_file_id.is_none() {
             self.pending_start_ms = self.pending_start_ms.saturating_add(elapsed_ms);
             if self.pending_start_ms >= 15_000 {
-                let outcome = self.session.stop_realtime_recording();
-                self.accept(outcome);
+                self.stop_recording();
                 self.pending_start_ms = 0;
                 return Err("录音豆未确认开始录音，已发送停止指令；请检查设备后重试".into());
             }
@@ -310,6 +323,11 @@ impl DeviceRuntime {
 
     pub fn accept(&mut self, outcome: SessionIngestOutcome) -> bool {
         let changed = outcome != SessionIngestOutcome::default();
+        if outcome.recording_stopped {
+            self.awaiting_stop = false;
+        } else if outcome.session_key_established && self.awaiting_stop {
+            self.outbound.push(DeviceCommands::pause_record());
+        }
         self.outbound.extend(outcome.outbound_tx_frames);
         if (outcome.telemetry_updated || outcome.session_key_established)
             && self.is_connected()

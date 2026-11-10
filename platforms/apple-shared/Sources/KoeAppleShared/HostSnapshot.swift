@@ -124,6 +124,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     public let connected: Bool
     public let busy: Bool
     public let recording: Bool
+    public let stopping: Bool
     public let deviceName: String
     public let batteryPercent: Int?
     public let charging: Bool
@@ -147,6 +148,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         connected: Bool,
         busy: Bool,
         recording: Bool = false,
+        stopping: Bool = false,
         deviceName: String = "Soundcore Work",
         batteryPercent: Int? = nil,
         charging: Bool = false,
@@ -169,6 +171,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         self.connected = connected
         self.busy = busy
         self.recording = recording
+        self.stopping = stopping
         self.deviceName = deviceName
         self.batteryPercent = batteryPercent
         self.charging = charging
@@ -187,7 +190,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case phase, state, statusDetail, connected, busy, recording, deviceName
+        case phase, state, statusDetail, connected, busy, recording, stopping, deviceName
         case batteryPercent, charging, boxBatteryPercent, boxCharging
         case serialNumber, firmwareVersion, storageLabel, files, progress, guide
         case transferPhase, liveDurationMs, liveBytes, liveRecordId
@@ -203,6 +206,7 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         self.connected = connected
         self.busy = try c.decode(Bool.self, forKey: .busy)
         self.recording = try c.decodeIfPresent(Bool.self, forKey: .recording) ?? false
+        self.stopping = try c.decodeIfPresent(Bool.self, forKey: .stopping) ?? false
         self.deviceName = try c.decodeIfPresent(String.self, forKey: .deviceName) ?? "Soundcore Work"
         self.batteryPercent = try c.decodeIfPresent(Int.self, forKey: .batteryPercent)
         self.charging = try c.decodeIfPresent(Bool.self, forKey: .charging) ?? false
@@ -275,7 +279,20 @@ public struct MigrationReportSnapshot: Codable, Equatable, Sendable, Identifiabl
     public let pending: [String]
 }
 
+public struct LifecycleSnapshot: Codable, Equatable, Sendable {
+    public let keepAwake: Bool
+    public let quitPhase: String
+    public let message: String?
+
+    public init(keepAwake: Bool, quitPhase: String, message: String? = nil) {
+        self.keepAwake = keepAwake
+        self.quitPhase = quitPhase
+        self.message = message
+    }
+}
+
 public struct HostSnapshot: Codable, Equatable, Sendable {
+    public var lifecycle: LifecycleSnapshot? = nil
     public let version: UInt32
     public let generation: UInt64
     public let section: String

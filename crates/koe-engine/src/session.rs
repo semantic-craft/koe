@@ -198,6 +198,8 @@ pub struct SessionIngestOutcome {
     pub telemetry_updated: bool,
     /// Whether `2E/01` session key was established during this step.
     pub session_key_established: bool,
+    /// The device explicitly reported that recording stopped.
+    pub recording_stopped: bool,
     /// Whether `1A/01`/`1A/0D`/`1B/0E` catalog was updated during this step.
     pub catalog_updated: bool,
     /// Whether active transfer progress changed during this step.
@@ -1235,6 +1237,7 @@ impl TransportSession {
                             }
                         } else if state == 0 || state == 2 {
                             self.device_recording_active = false;
+                            outcome.recording_stopped = true;
                             self.pending_realtime_subscribe = false;
                             if self.active_is_realtime {
                                 if let Some(active_fid) = self.active_file_id.filter(|&id| id > 0) {
@@ -1345,6 +1348,7 @@ impl TransportSession {
                             }
                         } else if state == 0 || state == 2 {
                             self.device_recording_active = false;
+                            outcome.recording_stopped = true;
                             self.pending_realtime_subscribe = false;
                             if self.active_is_realtime {
                                 if let Some(active_fid) =
@@ -1387,6 +1391,7 @@ impl TransportSession {
                             }
                         } else if state == 0 || state == 2 {
                             self.device_recording_active = false;
+                            outcome.recording_stopped = true;
                             self.pending_realtime_subscribe = false;
                             if self.active_is_realtime {
                                 if let Some(fid) = self.active_file_id {
