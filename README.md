@@ -30,7 +30,8 @@ Koe 让安克 soundcore Work（D3200）录音豆脱离飞书使用。Mac 通过�
 ## 数据与服务边界
 
 - 签名安装版使用 macOS 沙盒，默认工作区为 `~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace`。记录、审核结果和问答历史保存在 `product-workspace.json`，音频单独保存在 `audio/`。
-- 云端密钥在设置页输入，**仅供当前应用进程使用**，不写入工作区，不从个人 `.env`、`.envrc` 或系统钥匙串自动读取。可选服务地址留空时使用默认地址。
+- 签名安装版将云端密钥保存在 macOS Keychain，模型和服务地址由 Rust 工作区持久保存。工作区与页面快照不含密钥；清除后不会恢复旧版值。地址留空可重置为默认值，地址不接受账户、密码、查询参数或片段。
+- 开发构建、指定工作区或设置了 `KOE_CREDENTIAL_SOURCE` 的运行使用隔离凭据；密钥仅保留当前会话，默认开发工作区为 `KoeWorkspaceDevelopment`。不读取个人 `.env` 或 `.envrc`，不回退到系统凭据。签名安装升级后的真实读取仍待 [#603](https://github.com/semantic-craft/koe/issues/603) 验收。
 - 发起云端任务前保存请求状态，收到结果并完成本地保存后才显示完成。应用重启会将未完成任务标为中断；重新配置服务后，由用户明确重试，不在后台自动重发付费请求。
 - 工作区采用单写锁。同一资料库同时由一个 GUI、CLI 或 MCP 进程打开。关闭窗口会保留应用进程；使用 CLI 前请通过“退出 Koe”或 `⌘Q` 退出 GUI。
 
@@ -79,7 +80,7 @@ cargo run --package koe-cli -- ask "接下来要做什么"
 cargo run --package koe-cli -- mcp-stdio
 ```
 
-`--workspace <目录>` 指定其他资料库；`search` 和 `ask` 支持 `--record <ID>` 限定记录。MCP stdio 暴露 `search`、`get_record`、`ask` 三个工具，其中 `ask` 会保留问答历史。独立 CLI/MCP 进程不继承 GUI 的临时密钥，当前使用本地来源检索。停止 MCP 进程后，GUI 才能重新打开同一工作区。
+`--workspace <目录>` 指定其他资料库；`search` 和 `ask` 支持 `--record <ID>` 限定记录。MCP stdio 暴露 `search`、`get_record`、`ask` 三个工具，其中 `ask` 会保留问答历史。独立 CLI/MCP 进程使用隔离凭据，不读取 GUI 的系统密钥，当前使用本地来源检索。停止 MCP 进程后，GUI 才能重新打开同一工作区。
 
 ## 架构
 

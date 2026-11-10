@@ -91,12 +91,18 @@ pub(crate) enum Command {
         record_id: String,
     },
     ConfigureProvider {
-        api_key: String,
+        #[serde(default)]
+        api_key: Option<String>,
         model: String,
         #[serde(default)]
         asr_endpoint: Option<String>,
         #[serde(default)]
         chat_endpoint: Option<String>,
+    },
+    ClearProviderCredential,
+    RetryProviderCredentials {
+        #[serde(default)]
+        authorize: bool,
     },
     ClearError,
     Seek {

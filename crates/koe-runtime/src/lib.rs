@@ -8,6 +8,7 @@ mod capture;
 #[cfg(test)]
 mod capture_tests;
 mod command;
+pub mod credentials;
 mod device;
 mod flutter_import;
 mod legacy;
@@ -15,13 +16,13 @@ mod legacy;
 mod navigation_tests;
 mod processing;
 mod projection;
+mod provider_settings;
+use provider_settings::ProviderSettings;
 mod restore;
 
 use command::{Command, Location, Page, Playback};
 use device::DeviceRuntime;
-use koe_client_providers::{
-    ProviderWorker, DASHSCOPE_ASR_ENDPOINT, DASHSCOPE_CHAT_ENDPOINT, DASHSCOPE_CHAT_MODEL,
-};
+use koe_client_providers::ProviderWorker;
 use koe_client_services::{product_store::ProductStore, recording_assets};
 use koe_engine::{domain::SegmentId, product::*};
 use serde_json::Value;
@@ -33,22 +34,6 @@ use std::{
 /// Version of the native JSON snapshot and command contract.
 pub const KOE_HOST_SNAPSHOT_VERSION: u32 = 2;
 
-struct ProviderSettings {
-    key: String,
-    model: String,
-    asr_endpoint: String,
-    chat_endpoint: String,
-}
-impl Default for ProviderSettings {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-            model: DASHSCOPE_CHAT_MODEL.into(),
-            asr_endpoint: DASHSCOPE_ASR_ENDPOINT.into(),
-            chat_endpoint: DASHSCOPE_CHAT_ENDPOINT.into(),
-        }
-    }
-}
 #[derive(Clone)]
 enum PendingWork {
     Transcription(RequestKey),
@@ -67,6 +52,7 @@ pub struct KoeRuntime {
     device: DeviceRuntime,
     provider: ProviderWorker,
     settings: ProviderSettings,
+    credentials: Box<dyn credentials::CredentialStore>,
     pending: BTreeMap<u64, PendingWork>,
     completed: std::collections::VecDeque<koe_client_providers::ProviderEvent>,
     captures: capture::Captures,
@@ -80,6 +66,14 @@ pub struct KoeRuntime {
 impl KoeRuntime {
     /// Opens durable state, rejecting corrupted storage and concurrent writers.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
+        Self::open_with_credentials(path, Box::<credentials::IsolatedCredentials>::default())
+    }
+
+    /// Opens with a platform secure storage adapter.
+    pub fn open_with_credentials(
+        path: impl AsRef<Path>,
+        credentials: Box<dyn credentials::CredentialStore>,
+    ) -> Result<Self, String> {
         let root = path.as_ref().to_path_buf();
         let existed = root.join("product-workspace.json").exists();
         let store = ProductStore::open(&root).map_err(|e| e.to_string())?;
@@ -93,6 +87,7 @@ impl KoeRuntime {
             device: DeviceRuntime::default(),
             provider: ProviderWorker::new()?,
             settings: ProviderSettings::default(),
+            credentials,
             pending: BTreeMap::new(),
             completed: std::collections::VecDeque::new(),
             captures: Default::default(),
@@ -104,6 +99,9 @@ impl KoeRuntime {
         };
         if !existed {
             runtime.restore_legacy()?;
+        }
+        if let Err(error) = runtime.load_credentials() {
+            runtime.error = Some(error);
         }
         Ok(runtime)
     }
@@ -143,7 +141,17 @@ impl KoeRuntime {
         &mut self,
         change: impl FnOnce(&mut ProductWorkspace) -> Result<T, ProductError>,
     ) -> Result<T, String> {
-        self.store.transact(change).map_err(|e| e.to_string())
+        self.store.transact(change).map_err(|e| {
+            if matches!(
+                e,
+                koe_client_services::product_store::StoreError::CommitUncertain(_)
+                    | koe_client_services::product_store::StoreError::Unavailable
+            ) {
+                self.settings.key.clear();
+                self.settings.unavailable = true;
+            }
+            e.to_string()
+        })
     }
 
     fn dispatch(&mut self, command: Command, now: u64) -> Result<(), String> {
@@ -277,20 +285,9 @@ impl KoeRuntime {
                 model,
                 asr_endpoint,
                 chat_endpoint,
-            } => {
-                if api_key.len() > 4096 || model.trim().is_empty() || model.len() > 200 {
-                    return Err("请检查模型配置".into());
-                }
-                self.settings.key = api_key.trim().to_string();
-                self.settings.model = model.trim().to_string();
-                if let Some(endpoint) = asr_endpoint {
-                    self.settings.asr_endpoint = endpoint;
-                }
-                if let Some(endpoint) = chat_endpoint {
-                    self.settings.chat_endpoint = endpoint;
-                }
-                self.notice = Some("模型配置已用于当前会话".into());
-            }
+            } => self.configure_provider(api_key, model, asr_endpoint, chat_endpoint)?,
+            Command::ClearProviderCredential => self.clear_credential()?,
+            Command::RetryProviderCredentials { authorize } => self.retry_credentials(authorize)?,
             Command::ClearError => {}
             Command::Seek { position_ms } => {
                 let id = self.location.record.clone().ok_or("先选择一条录音")?;

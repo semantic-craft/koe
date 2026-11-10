@@ -2,6 +2,8 @@
 #![allow(unsafe_code)]
 #![deny(missing_docs)]
 
+mod credentials;
+pub use credentials::KoeCredentialCallback;
 use koe_runtime::KoeRuntime;
 use std::{
     collections::BTreeMap,
@@ -68,6 +70,45 @@ pub unsafe extern "C" fn koe_host_session_create(directory: *const c_char) -> u6
             return 0;
         };
         let Ok(runtime) = KoeRuntime::open(path) else {
+            return 0;
+        };
+        let Ok(mut table) = sessions().lock() else {
+            return 0;
+        };
+        table.next = table.next.saturating_add(1);
+        let handle = table.next;
+        table.runtimes.insert(handle, runtime);
+        handle
+    })
+}
+
+/// Opens with a synchronous platform secure-storage adapter.
+/// # Safety
+/// `directory` must be terminated UTF-8. The callback and context must remain
+/// valid until session destruction, support serialized calls on any thread,
+/// and obey `KoeCredentialCallback`'s buffer and non-reentrancy contract.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn koe_host_session_create_with_credentials(
+    directory: *const c_char,
+    callback: Option<KoeCredentialCallback>,
+    context: *mut std::ffi::c_void,
+    isolated: bool,
+) -> u64 {
+    guarded(|| {
+        // SAFETY: Forwarded caller contract.
+        let Some(path) = (unsafe { read_string(directory) }).filter(|s| !s.trim().is_empty())
+        else {
+            return 0;
+        };
+        let Some(callback) = callback else {
+            return 0;
+        };
+        let adapter = credentials::PlatformCredentials {
+            callback,
+            context: context as usize,
+            isolated,
+        };
+        let Ok(runtime) = KoeRuntime::open_with_credentials(path, Box::new(adapter)) else {
             return 0;
         };
         let Ok(mut table) = sessions().lock() else {

@@ -88,6 +88,12 @@ impl ProductStore {
         Ok(store)
     }
 
+    /// An uncertain durability barrier requires reopening before further operations.
+    #[must_use]
+    pub fn requires_reopen(&self) -> bool {
+        self.uncertain
+    }
+
     /// Immutable committed state; callers cannot mutate it outside a transaction.
     #[must_use]
     pub fn workspace(&self) -> &ProductWorkspace {

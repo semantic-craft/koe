@@ -30,7 +30,8 @@ Without cloud configuration, text notes, browsing, review, playback, and local r
 ## Data and service boundaries
 
 - The signed app uses the macOS sandbox. Its default workspace is `~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace`. `product-workspace.json` stores records, review decisions, and conversation history; `audio/` stores audio separately.
-- The API key entered in Settings stays **in the current application process only**. It is not written to the workspace or loaded automatically from personal `.env`, `.envrc`, or Keychain entries. Optional endpoint fields use the provider defaults when left blank.
+- Signed installations store API keys in macOS Keychain. Rust persists models and endpoints without secrets in the workspace. Clearing credentials prevents legacy values from returning. Empty endpoint fields reset to provider defaults; embedded accounts, passwords, queries, and fragments are rejected.
+- Development builds, explicit workspaces, and any `KOE_CREDENTIAL_SOURCE` override use session-only isolated credentials. The default development workspace is `KoeWorkspaceDevelopment`. No personal `.env` or `.envrc` is read. Real signed upgrade verification remains pending in [#603](https://github.com/semantic-craft/koe/issues/603).
 - Request state is saved before cloud work begins. Completion requires saving the returned result. Restarted applications mark unfinished work as interrupted; they do not automatically resend paid requests. Configure the provider again and explicitly retry.
 - A workspace has one writer. Only one GUI, CLI, or MCP process can open it at a time. Closing the window keeps the app running; quit Koe with `⌘Q` before using the CLI.
 
@@ -69,7 +70,7 @@ cargo run --package koe-cli -- ask "what should happen next"
 cargo run --package koe-cli -- mcp-stdio
 ```
 
-Use `--workspace <directory>` for another library and `--record <ID>` to scope `search` or `ask`. MCP stdio exposes `search`, `get_record`, and `ask`; `ask` also saves conversation history. A separate CLI/MCP process does not inherit the GUI's temporary credentials and currently uses local source retrieval. Stop the MCP process before reopening that workspace in the GUI.
+Use `--workspace <directory>` for another library and `--record <ID>` to scope `search` or `ask`. MCP stdio exposes `search`, `get_record`, and `ask`; `ask` also saves conversation history. A separate CLI/MCP process uses isolated credentials and does not read the GUI's system credentials and currently uses local source retrieval. Stop the MCP process before reopening that workspace in the GUI.
 
 ## Architecture
 

@@ -162,7 +162,10 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
 
 struct KoeNativeSceneApp: App {
     @NSApplicationDelegateAdaptor(KoeAppDelegate.self) private var appDelegate
-    @State private var store = HostSessionStore(workspacePath: KoeMainEntry.workspacePath)
+    @State private var store = HostSessionStore(
+        workspacePath: KoeMainEntry.workspacePath,
+        credentials: NativeCredentials(workspaceOverride: KoeMainEntry.workspacePath != nil)
+    )
     var body: some Scene {
         WindowGroup("Koe") {
             KoeWorkspaceRootView(store: store, onImport: { appDelegate.files.importFile() }, onExport: { appDelegate.files.exportRecord($0) })

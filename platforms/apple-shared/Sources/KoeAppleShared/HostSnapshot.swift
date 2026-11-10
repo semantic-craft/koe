@@ -224,6 +224,32 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
 public struct ProviderSnapshot: Codable, Equatable, Sendable {
     public let configured: Bool
     public let model: String
+    public let asrEndpoint: String
+    public let chatEndpoint: String
+    public let credentialState: String
+    public let isolated: Bool
+
+    init(configured: Bool, model: String) {
+        self.configured = configured
+        self.model = model
+        asrEndpoint = ""
+        chatEndpoint = ""
+        credentialState = configured ? "ready" : "missing"
+        isolated = true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case configured, model, asrEndpoint, chatEndpoint, credentialState, isolated
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        configured = try values.decode(Bool.self, forKey: .configured)
+        model = try values.decode(String.self, forKey: .model)
+        asrEndpoint = try values.decodeIfPresent(String.self, forKey: .asrEndpoint) ?? ""
+        chatEndpoint = try values.decodeIfPresent(String.self, forKey: .chatEndpoint) ?? ""
+        credentialState = try values.decodeIfPresent(String.self, forKey: .credentialState) ?? (configured ? "ready" : "missing")
+        isolated = try values.decodeIfPresent(Bool.self, forKey: .isolated) ?? true
+    }
 }
 
 public struct PlaybackSnapshot: Codable, Equatable, Sendable {

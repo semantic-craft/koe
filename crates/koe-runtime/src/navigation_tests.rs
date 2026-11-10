@@ -84,7 +84,11 @@ fn analysis_queue_retains_storage_failure_but_consumes_permanent_rejection() {
     );
     let id = note["selectedRecordId"].as_str().unwrap().to_string();
     runtime.settings.key = "local-test".into();
-    runtime.settings.chat_endpoint = "invalid://endpoint".into();
+    let mut configuration = runtime.workspace().provider_configuration().clone();
+    configuration.chat_endpoint = "http://remote.invalid/chat".into();
+    runtime
+        .commit(|w| w.configure_provider(configuration))
+        .unwrap();
     runtime.auto_summarize.insert(id.clone());
     let path = dir.0.join("product-workspace.json");
     let saved = dir.0.join("saved.json");
@@ -206,7 +210,10 @@ fn scanning_resets_stale_connecting_and_handshake_watchdog_retries() {
         &mut runtime,
         json!({"type": "device_event", "event": "connecting", "connectionId": "stale-conn"}),
     );
-    assert_eq!(runtime.snapshot(1800000000)["device"]["phase"], "connecting");
+    assert_eq!(
+        runtime.snapshot(1800000000)["device"]["phase"],
+        "connecting"
+    );
 
     let rescan = command(
         &mut runtime,

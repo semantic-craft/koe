@@ -9,6 +9,14 @@
 extern "C" {
 #endif
 
+/* Synchronous, serialized callback. No host API reentry or retained pointers.
+ * op: 0 read, 1 create, 2 delete, 3 read legacy, 4 authorize.
+ * Return 0 success, 1 missing, -1 failure. Write terminated UTF-8 into output.
+ * Context and callback remain valid until session destruction. */
+typedef int32_t (*KoeCredentialCallback)(void *context, uint32_t operation,
+    const char *reference, const char *value, char *output, size_t capacity);
+uint64_t koe_host_session_create_with_credentials(const char *workspace_dir,
+    KoeCredentialCallback callback, void *context, bool isolated);
 uint32_t koe_host_api_version(void);
 uint64_t koe_host_session_create(const char *workspace_dir);
 bool koe_host_session_destroy(uint64_t handle);

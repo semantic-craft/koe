@@ -12,6 +12,8 @@ use super::StoreError;
 #[serde(deny_unknown_fields)]
 struct WorkspaceDto {
     #[serde(default)]
+    provider: Option<ProviderDto>,
+    #[serde(default)]
     migrations: Vec<MigrationDto>,
     version: u32,
     revision: u64,
@@ -19,6 +21,58 @@ struct WorkspaceDto {
     records: Vec<RecordDto>,
     items: Vec<ItemDto>,
     ask: AskDto,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderDto {
+    model: String,
+    asr_endpoint: String,
+    chat_endpoint: String,
+    credential: BindingDto,
+    retired_credentials: Vec<String>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(
+    tag = "state",
+    content = "reference",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum BindingDto {
+    Uninitialized,
+    Saved(String),
+    Cleared,
+}
+impl From<ProviderConfiguration> for ProviderDto {
+    fn from(p: ProviderConfiguration) -> Self {
+        Self {
+            model: p.model,
+            asr_endpoint: p.asr_endpoint,
+            chat_endpoint: p.chat_endpoint,
+            retired_credentials: p.retired_credentials,
+            credential: match p.credential {
+                CredentialBinding::Uninitialized => BindingDto::Uninitialized,
+                CredentialBinding::Saved(r) => BindingDto::Saved(r),
+                CredentialBinding::Cleared => BindingDto::Cleared,
+            },
+        }
+    }
+}
+impl From<ProviderDto> for ProviderConfiguration {
+    fn from(p: ProviderDto) -> Self {
+        Self {
+            model: p.model,
+            asr_endpoint: p.asr_endpoint,
+            chat_endpoint: p.chat_endpoint,
+            retired_credentials: p.retired_credentials,
+            credential: match p.credential {
+                BindingDto::Uninitialized => CredentialBinding::Uninitialized,
+                BindingDto::Saved(r) => CredentialBinding::Saved(r),
+                BindingDto::Cleared => CredentialBinding::Cleared,
+            },
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -174,6 +228,7 @@ struct EvidenceDto {
 pub(super) fn encode(workspace: &ProductWorkspace) -> Result<String, StoreError> {
     let state = workspace.export_state();
     let dto = WorkspaceDto {
+        provider: Some(state.provider_configuration.into()),
         migrations: state
             .migrations
             .iter()
@@ -244,6 +299,7 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
         return Err(invalid("unsupported workspace version"));
     }
     let state = WorkspaceState {
+        provider_configuration: dto.provider.map(Into::into).unwrap_or_default(),
         migrations: dto
             .migrations
             .into_iter()

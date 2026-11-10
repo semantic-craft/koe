@@ -103,7 +103,10 @@ impl KoeRuntime {
             .store
             .transact(|w| w.begin_analysis(id, AnalysisStage::Transcribing))?;
         let config = ProviderConfig::new(
-            self.settings.asr_endpoint.clone(),
+            self.workspace()
+                .provider_configuration()
+                .asr_endpoint
+                .clone(),
             DASHSCOPE_ASR_MODEL.into(),
             self.settings.key.clone(),
         );
@@ -195,8 +198,11 @@ impl KoeRuntime {
 
     fn chat_config(&self) -> ProviderConfig {
         ProviderConfig::new(
-            self.settings.chat_endpoint.clone(),
-            self.settings.model.clone(),
+            self.workspace()
+                .provider_configuration()
+                .chat_endpoint
+                .clone(),
+            self.workspace().provider_configuration().model.clone(),
             self.settings.key.clone(),
         )
     }

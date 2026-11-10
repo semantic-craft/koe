@@ -21,13 +21,23 @@ public final class HostSessionStore {
     @ObservationIgnored public private(set) var handle: UInt64 = 0
     @ObservationIgnored private var requestGate = ViewRequestGeneration()
 
-    public init(workspacePath: String? = nil) {
+    @ObservationIgnored private let credentials: HostCredentials?
+
+    public init(workspacePath: String? = nil, credentials: HostCredentials? = nil) {
+        self.credentials = credentials
         guard Self.apiVersion() == 2 else {
             nativeError = "应用与数据引擎版本不一致，请重新构建应用。"
             return
         }
-        let directory = workspacePath ?? Self.defaultWorkspacePath()
-        handle = directory.withCString { koe_host_session_create($0) }
+        let directory = workspacePath ?? Self.defaultWorkspacePath(isolated: credentials?.isolated == true)
+        if let credentials {
+            let context = Unmanaged.passUnretained(credentials as AnyObject).toOpaque()
+            handle = directory.withCString {
+                koe_host_session_create_with_credentials($0, hostCredentialCallback, context, credentials.isolated)
+            }
+        } else {
+            handle = directory.withCString { koe_host_session_create($0) }
+        }
         guard handle != 0 else {
             nativeError = "无法打开工作区，请检查文件夹的访问权限。"
             return
@@ -35,12 +45,14 @@ public final class HostSessionStore {
         refreshSnapshot()
     }
 
+    deinit { if handle != 0 { _ = koe_host_session_destroy(handle) } }
+
     public static func apiVersion() -> UInt32 { koe_host_api_version() }
 
-    public static func defaultWorkspacePath() -> String {
+    public static func defaultWorkspacePath(isolated: Bool = false) -> String {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return base.appendingPathComponent("KoeWorkspace", isDirectory: true).path
+        return base.appendingPathComponent(isolated ? "KoeWorkspaceDevelopment" : "KoeWorkspace", isDirectory: true).path
     }
 
     public func shutdown() {
