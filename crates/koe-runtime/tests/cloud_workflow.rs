@@ -40,6 +40,12 @@ impl Drop for Sandbox {
 }
 
 fn command(runtime: &mut KoeRuntime, command: Value) -> Value {
+    if command["type"] == "configure_provider" {
+        runtime.dispatch_json(
+            r#"{"type":"set_meeting_audio_policy","policy":"cloud_allowed"}"#,
+            NOW,
+        );
+    }
     let result: Value =
         serde_json::from_str(&runtime.dispatch_json(&command.to_string(), NOW)).unwrap();
     assert!(result["error"].is_null(), "{}", result["error"]);
@@ -64,6 +70,7 @@ fn poll_until(runtime: &mut KoeRuntime, completed: impl Fn(&KoeRuntime) -> bool)
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Value {
+    stream.set_nonblocking(false).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();

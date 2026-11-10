@@ -106,6 +106,16 @@ public struct SettingsDoctorView: View {
                         }
                         Text("使用阿里云百炼完成转写、整理与问答。未配置时，原文、待办、记忆和本地检索仍可使用。")
                             .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary).lineSpacing(5)
+                        HStack {
+                            Toggle("会议录音只留本机", isOn: Binding(
+                                get: { store.snapshot.provider.meetingAudioPolicy == "local_only" },
+                                set: { store.send("set_meeting_audio_policy", ["policy": $0 ? "local_only" : "cloud_allowed"]) }
+                            ))
+                            InfoTip("开启后停止会议音频云端转写，保留本地录音。此前已发送的音频无法撤回。文字纪要与问答仍可发云；关闭后需手动重试已取消的任务。")
+                        }
+                        if let status = store.snapshot.provider.meetingAudioStatus {
+                            Text(status).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
+                        }
                         SecureField("API Key", text: $apiKey).textFieldStyle(.roundedBorder).onSubmit { configure() }
                         TextField("文本模型", text: $model).textFieldStyle(.roundedBorder).onSubmit { configure() }
                         DisclosureGroup("自定义服务地址（可选）") {

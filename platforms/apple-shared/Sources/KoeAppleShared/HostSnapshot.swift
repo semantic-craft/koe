@@ -222,6 +222,9 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
 }
 
 public struct ProviderSnapshot: Codable, Equatable, Sendable {
+    public let meetingAudioPolicy: String
+    public let meetingAudioStatus: String?
+    public let meetingAudioPolicyError: String?
     public let configured: Bool
     public let model: String
     public let asrEndpoint: String
@@ -230,6 +233,9 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
     public let isolated: Bool
 
     init(configured: Bool, model: String) {
+        meetingAudioPolicy = "local_only"
+        meetingAudioStatus = nil
+        meetingAudioPolicyError = nil
         self.configured = configured
         self.model = model
         asrEndpoint = ""
@@ -239,10 +245,13 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case configured, model, asrEndpoint, chatEndpoint, credentialState, isolated
+        case configured, model, asrEndpoint, chatEndpoint, credentialState, isolated, meetingAudioPolicy, meetingAudioStatus, meetingAudioPolicyError
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        meetingAudioPolicy = try values.decodeIfPresent(String.self, forKey: .meetingAudioPolicy) ?? "local_only"
+        meetingAudioStatus = try values.decodeIfPresent(String.self, forKey: .meetingAudioStatus)
+        meetingAudioPolicyError = try values.decodeIfPresent(String.self, forKey: .meetingAudioPolicyError)
         configured = try values.decode(Bool.self, forKey: .configured)
         model = try values.decode(String.self, forKey: .model)
         asrEndpoint = try values.decodeIfPresent(String.self, forKey: .asrEndpoint) ?? ""

@@ -1,5 +1,24 @@
 use super::{ProductError, ProductWorkspace};
 
+/// Whether meeting audio may be sent to a remote speech service.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MeetingAudioPolicy {
+    /// Use the configured cloud speech service.
+    CloudAllowed,
+    /// Keep meeting audio on this device; text services remain available.
+    #[default]
+    LocalOnly,
+}
+impl MeetingAudioPolicy {
+    /// Stable persisted and host-facing identifier.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CloudAllowed => "cloud_allowed",
+            Self::LocalOnly => "local_only",
+        }
+    }
+}
+
 /// Durable reference to a secret held outside the workspace.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CredentialBinding {
@@ -15,6 +34,8 @@ pub enum CredentialBinding {
 /// Non-sensitive provider preferences and secure-item lifecycle metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderConfiguration {
+    /// Upload policy for meeting audio, independent of text services.
+    pub meeting_audio_policy: MeetingAudioPolicy,
     /// Text model identifier.
     pub model: String,
     /// Complete speech service endpoint, without embedded credentials.
@@ -29,6 +50,7 @@ pub struct ProviderConfiguration {
 impl Default for ProviderConfiguration {
     fn default() -> Self {
         Self {
+            meeting_audio_policy: MeetingAudioPolicy::default(),
             model: "qwen-plus".into(),
             asr_endpoint: "wss://dashscope.aliyuncs.com/api-ws/v1/inference".into(),
             chat_endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"

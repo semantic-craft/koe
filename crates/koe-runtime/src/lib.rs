@@ -4,6 +4,9 @@
 
 #[cfg(test)]
 mod ask_tests;
+mod audio_policy;
+#[cfg(test)]
+mod audio_policy_tests;
 mod capture;
 #[cfg(test)]
 mod capture_tests;
@@ -61,6 +64,7 @@ pub struct KoeRuntime {
     next_job: u64,
     error: Option<String>,
     notice: Option<String>,
+    audio_policy_error: Option<String>,
 }
 
 impl KoeRuntime {
@@ -96,6 +100,7 @@ impl KoeRuntime {
             next_job: 1,
             error: None,
             notice: None,
+            audio_policy_error: None,
         };
         if !existed {
             runtime.restore_legacy()?;
@@ -279,6 +284,7 @@ impl KoeRuntime {
                 self.commit(|w| w.set_ask_scope(scope))?;
             }
             Command::Transcribe { record_id } => self.start_transcription(&record_id)?,
+            Command::SetMeetingAudioPolicy { policy } => self.set_meeting_audio_policy(&policy)?,
             Command::Summarize { record_id } => self.start_summary(&record_id)?,
             Command::ConfigureProvider {
                 api_key,

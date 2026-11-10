@@ -49,9 +49,21 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T08:24:01Z"
+      },
+      {
+        "number": 607,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T08:47:01Z"
+      },
+      {
+        "number": 608,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T08:47:15Z"
       }
     ],
-    "main": "5605c8f52b03282c9fcb69680ca9bc459bcf3ce0",
+    "main": "1c06bf080fd020237fc5de577424a8028f9c0e2d",
     "open_pulls": [],
     "pulls": [
       {
@@ -90,7 +102,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T08:29:18.480448Z",
+  "observed_at": "2026-11-10T08:52:41.025300Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -236,6 +248,30 @@
           "status": "done",
           "summary": "非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；macOS 平台适配与开发隔离已接通。17 项 Rust 回归、2 项 Swift 桥接回归、check、独立评审与 PR CI 通过，已 squash 合并。",
           "title": "服务凭据与非敏感配置持久化"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "本轮实现与自动验收范围。",
+              "ref": 607
+            },
+            {
+              "kind": "file",
+              "note": "持久策略切换、音频取消与保存失败阻断。",
+              "ref": "crates/koe-runtime/src/audio_policy.rs"
+            },
+            {
+              "kind": "file",
+              "note": "本地 HTTP/WS 计数、持久与旧结果回归。",
+              "ref": "crates/koe-runtime/src/audio_policy_tests.rs"
+            }
+          ],
+          "id": "meeting-audio-policy",
+          "next": "完成独立评审、PR CI 与 squash 交付；签名版和真实设备另按 #608 验收。",
+          "status": "in_progress",
+          "summary": "N4A 已实现持久上传策略，默认本机；Rust 阻断实时和文件音频，切换取消待发音频并隔离旧结果。文字纪要与问答仍可使用云服务；本机 ASR 尚未接入。 本轮本地 HTTP/WS、全量 scripts/check 和 progress live 校验通过；尚未合并或安装。",
+          "title": "会议音频只留本机"
         }
       ],
       "title": "当前产品实现"
@@ -257,8 +293,8 @@
             },
             {
               "kind": "pull",
-              "ref": 605,
-              "note": "N1 独立评审与 CI 通过，未运行真实安装升级。"
+              "note": "N1 独立评审与 CI 通过，未运行真实安装升级。",
+              "ref": 605
             }
           ],
           "id": "automated-check",
@@ -332,6 +368,20 @@
           "status": "unverified",
           "summary": "本轮仅核对旧凭据标识源码、现有签名元数据，并运行隔离原生桥接测试。未运行真实签名安装升级、个人 Keychain 读回或系统授权交互。",
           "title": "凭据跨签名安装升级验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机验收，不以模拟协议通过替代。",
+              "ref": 608
+            }
+          ],
+          "id": "meeting-audio-device-acceptance",
+          "next": "按 #608 验证实时、离线取回、文件重转写、录制中切换、重启与文字云服务；本机 ASR 未接入不得暗转云。",
+          "status": "unverified",
+          "summary": "本轮仅验证隔离工作区和本地 HTTP/WS 服务。尚未安装签名版，未用真实云账户或录音豆验收。",
+          "title": "会议音频策略的签名版与真机验收"
         }
       ],
       "title": "验收与交付"
@@ -367,7 +417,9 @@
       598,
       602,
       603,
-      604
+      604,
+      607,
+      608
     ],
     "pulls": [
       589,

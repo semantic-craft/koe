@@ -60,6 +60,7 @@ impl KoeRuntime {
         self.try_start_transcription(id).map_err(|e| e.message())
     }
     pub(super) fn try_start_transcription(&mut self, id: &str) -> Result<(), StartError> {
+        self.ensure_meeting_audio_upload()?;
         self.ensure_configured()?;
         let record = self.workspace().record(id).ok_or("记录不存在")?;
         if matches!(record.analysis, AnalysisState::Pending { .. }) {

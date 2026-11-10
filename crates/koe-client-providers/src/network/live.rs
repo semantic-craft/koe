@@ -41,6 +41,7 @@ pub struct LiveTranscription {
     finishing: watch::Sender<bool>,
     cancel: watch::Sender<bool>,
     accepting: AtomicBool,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl LiveTranscription {
@@ -56,7 +57,7 @@ impl LiveTranscription {
         let (terminal_tx, terminal) = watch::channel(None);
         let (finishing, finish) = watch::channel(false);
         let (cancel, mut cancellation) = watch::channel(false);
-        std::thread::Builder::new().name("koe-live-asr".into()).spawn(move || {
+        let thread = std::thread::Builder::new().name("koe-live-asr".into()).spawn(move || {
             runtime.block_on(async {
                 let result = tokio::select! {
                     biased;
@@ -80,6 +81,7 @@ impl LiveTranscription {
             finishing,
             cancel,
             accepting: AtomicBool::new(true),
+            thread: Some(thread),
         })
     }
 
@@ -135,6 +137,9 @@ impl LiveTranscription {
 impl Drop for LiveTranscription {
     fn drop(&mut self) {
         let _ = self.cancel.send(true);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 

@@ -36,6 +36,12 @@ impl Drop for Sandbox {
 }
 
 fn command(runtime: &mut KoeRuntime, value: Value) -> Value {
+    if value["type"] == "configure_provider" {
+        runtime.dispatch_json(
+            r#"{"type":"set_meeting_audio_policy","policy":"cloud_allowed"}"#,
+            NOW,
+        );
+    }
     let value: Value =
         serde_json::from_str(&runtime.dispatch_json(&value.to_string(), NOW)).unwrap();
     assert!(value["error"].is_null(), "{}", value["error"]);
@@ -538,6 +544,12 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
 fn hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    command(
+        &mut runtime,
+        json!({"type":"configure_provider","apiKey":"fixture","model":"fixture","asrEndpoint":format!("ws://{}",listener.local_addr().unwrap())}),
+    );
     runtime.device.session.set_session_key([0x55; 32]);
     command(&mut runtime, json!({"type":"device_start"}));
     runtime.drain_outbound_ble_frames();
@@ -578,4 +590,52 @@ fn hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record
         .unwrap()
         .exists());
     assert!(runtime.device.session.has_disk_custody(802));
+    runtime.drive_analysis_queue();
+    assert!(
+        !runtime.pending.is_empty(),
+        "offline audio needs transcription when no live PCM arrived"
+    );
+    let stream = accept_before_deadline(&listener);
+    drop(stream);
+}
+
+#[test]
+fn local_capture_is_not_uploaded_automatically_when_cloud_is_enabled_before_stop() {
+    let dir = Sandbox::new();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    command(
+        &mut runtime,
+        json!({"type":"configure_provider","apiKey":"fixture","model":"fixture","asrEndpoint":format!("ws://{}",listener.local_addr().unwrap())}),
+    );
+    command(
+        &mut runtime,
+        json!({"type":"set_meeting_audio_policy","policy":"local_only"}),
+    );
+    prepare_capture(&mut runtime, 703, true);
+    runtime.ingest_ble_chunk(&slices(0..2), NOW);
+    let id = runtime.workspace().records().keys().next().unwrap().clone();
+    command(
+        &mut runtime,
+        json!({"type":"set_meeting_audio_policy","policy":"cloud_allowed"}),
+    );
+    command(&mut runtime, json!({"type":"device_stop"}));
+    runtime.poll_timers(2_000, NOW + 2);
+    poll_until(&mut runtime, |runtime| {
+        recording_assets::audio_path(&dir.0, &id).unwrap().exists()
+            && runtime.captures.sessions.is_empty()
+    });
+    assert!(
+        runtime.pending.is_empty(),
+        "cancelled capture was automatically queued for cloud transcription"
+    );
+    drop(runtime);
+    assert_eq!(
+        listener
+            .accept()
+            .expect_err("local capture was uploaded after enabling cloud")
+            .kind(),
+        std::io::ErrorKind::WouldBlock
+    );
 }
