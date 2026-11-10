@@ -21,7 +21,7 @@ pub(crate) enum Page {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
-    StartMicrophone { input_id: String },
+    StartMicrophone { input_id: String, #[serde(default)] include_system: bool },
     StopMicrophone,
     CancelMicrophone,
     RetryMicrophoneSave,

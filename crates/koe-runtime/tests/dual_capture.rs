@@ -1,0 +1,236 @@
+use koe_runtime::KoeRuntime;
+use serde_json::{json, Value};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
+struct Sandbox(PathBuf);
+impl Sandbox {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let p = std::env::temp_dir().join(format!(
+            "koe-dual-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&p).unwrap();
+        Self(p)
+    }
+}
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn send(r: &mut KoeRuntime, v: Value) -> Value {
+    serde_json::from_str(&r.dispatch_json(&v.to_string(), 100)).unwrap()
+}
+fn begin(r: &mut KoeRuntime) -> Value {
+    let s = send(
+        r,
+        json!({"type":"start_microphone","inputId":"fixture","includeSystem":true}),
+    );
+    assert!(s["error"].is_null(), "{}", s["error"]);
+    s["microphone"].clone()
+}
+fn event(r: &mut KoeRuntime, t: &Value, lane: &str, mut v: Value) -> Value {
+    v["recordId"] = t["recordId"].clone();
+    v["sessionId"] = t["sessionId"].clone();
+    v["lane"] = json!(lane);
+    send(r, v)
+}
+fn start(r: &mut KoeRuntime, t: &Value, lane: &str) {
+    let s = event(
+        r,
+        t,
+        lane,
+        json!({"type":"microphone_started","sampleRate":16000}),
+    );
+    assert!(s["error"].is_null(), "{}", s["error"]);
+}
+fn chunk(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64, n: i16) -> Value {
+    event(
+        r,
+        t,
+        lane,
+        json!({"type":"microphone_chunk","sequence":seq,"samples":vec![n;160]}),
+    )
+}
+fn stop(r: &mut KoeRuntime, t: &Value, lane: &str, seq: u64) -> Value {
+    event(
+        r,
+        t,
+        lane,
+        json!({"type":"microphone_stopped","sequence":seq}),
+    )
+}
+fn audio(p: &Sandbox, id: &str) -> Vec<u8> {
+    fs::read(p.0.join("audio").join(format!("{id}.wav"))).unwrap()[44..].to_vec()
+}
+#[test]
+fn independent_sequences_tail_barrier_and_reopen_preserve_both_assets() {
+    let p = Sandbox::new();
+    let mut r = KoeRuntime::open(&p.0).unwrap();
+    let t = begin(&mut r);
+    start(&mut r, &t, "system");
+    start(&mut r, &t, "microphone");
+    assert!(chunk(&mut r, &t, "system", 1, 9)["error"].is_string());
+    chunk(&mut r, &t, "system", 0, 2);
+    chunk(&mut r, &t, "microphone", 0, 1);
+    send(&mut r, json!({"type":"request_quit"}));
+    stop(&mut r, &t, "microphone", 1);
+    assert!(r.workspace().records().is_empty());
+    assert_eq!(r.snapshot(100)["lifecycle"]["quitPhase"], "draining");
+    assert!(stop(&mut r, &t, "system", 2)["error"].is_string());
+    chunk(&mut r, &t, "system", 1, 3);
+    stop(&mut r, &t, "system", 2);
+    assert_eq!(r.snapshot(100)["lifecycle"]["quitPhase"], "ready");
+    let id = t["recordId"].as_str().unwrap();
+    assert_eq!(audio(&p, id), vec![1i16.to_le_bytes(); 160].concat());
+    assert_eq!(
+        audio(&p, &format!("{id}-system")),
+        [
+            vec![2i16.to_le_bytes(); 160].concat(),
+            vec![3i16.to_le_bytes(); 160].concat()
+        ]
+        .concat()
+    );
+    drop(r);
+    let r = KoeRuntime::open(&p.0).unwrap();
+    let data: Value =
+        serde_json::from_str(&fs::read_to_string(p.0.join("product-workspace.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        data["records"][0]["capture_lanes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let record = r.workspace().record(id).unwrap();
+    assert_eq!(record.capture_lanes.len(), 2);
+    assert_eq!(record.capture_lanes[0].asset_id.as_deref(), Some(id));
+    assert_eq!(
+        record.capture_lanes[1].asset_id.as_deref(),
+        Some(format!("{id}-system").as_str())
+    );
+    assert_eq!(record.capture_lanes[1].duration_ms, 20);
+}
+#[test]
+fn failed_lane_is_persisted_as_incomplete_and_old_callbacks_are_isolated() {
+    let p = Sandbox::new();
+    let mut r = KoeRuntime::open(&p.0).unwrap();
+    let t = begin(&mut r);
+    start(&mut r, &t, "microphone");
+    chunk(&mut r, &t, "microphone", 0, 1);
+    event(
+        &mut r,
+        &t,
+        "system",
+        json!({"type":"microphone_failed","message":"permission denied"}),
+    );
+    stop(&mut r, &t, "system", 0);
+    assert!(r.workspace().records().is_empty());
+    stop(&mut r, &t, "microphone", 1);
+    let data: Value =
+        serde_json::from_str(&fs::read_to_string(p.0.join("product-workspace.json")).unwrap())
+            .unwrap();
+    let lanes = data["records"][0]["capture_lanes"].as_array().unwrap();
+    let system = lanes.iter().find(|l| l["lane"] == "system").unwrap();
+    assert_eq!(system["interruption"], "permission denied");
+    assert!(system["asset_id"].is_null());
+    assert_eq!(r.snapshot(100)["detail"]["status"], "采集不完整");
+    assert_eq!(
+        r.snapshot(100)["detail"]["captureLanes"][1]["interruption"],
+        "permission denied"
+    );
+    let new = begin(&mut r);
+    start(&mut r, &new, "microphone");
+    start(&mut r, &new, "system");
+    chunk(&mut r, &t, "system", 0, 9);
+    stop(&mut r, &t, "system", 0);
+    assert_eq!(
+        r.snapshot(100)["microphone"]["lanes"]["system"]["nextSequence"],
+        0
+    );
+    send(&mut r, json!({"type":"cancel_microphone"}));
+    stop(&mut r, &new, "system", 0);
+    stop(&mut r, &new, "microphone", 0);
+    assert_eq!(r.workspace().records().len(), 1);
+}
+#[test]
+fn publication_retry_keeps_each_lane_and_cancel_quit_keeps_session() {
+    let p = Sandbox::new();
+    let mut r = KoeRuntime::open(&p.0).unwrap();
+    let t = begin(&mut r);
+    for lane in ["microphone", "system"] {
+        start(&mut r, &t, lane);
+        chunk(&mut r, &t, lane, 0, 4);
+    }
+    let id = t["recordId"].as_str().unwrap();
+    let target = p.0.join("audio").join(format!("{id}-system.wav"));
+    fs::create_dir(&target).unwrap();
+    send(&mut r, json!({"type":"request_quit"}));
+    stop(&mut r, &t, "microphone", 1);
+    stop(&mut r, &t, "system", 1);
+    assert!(r.workspace().records().is_empty());
+    assert_eq!(r.snapshot(100)["lifecycle"]["quitPhase"], "blocked");
+    send(&mut r, json!({"type":"cancel_quit"}));
+    assert_eq!(r.snapshot(100)["microphone"]["recordId"], t["recordId"]);
+    assert!(send(&mut r, json!({"type":"cancel_microphone"}))["error"].is_string());
+    fs::remove_dir(&target).unwrap();
+    let s = send(&mut r, json!({"type":"retry_microphone_save"}));
+    assert!(s["error"].is_null(), "{}", s["error"]);
+    assert_eq!(r.workspace().records().len(), 1);
+    assert_eq!(audio(&p, id), audio(&p, &format!("{id}-system")));
+}
+#[test]
+fn cancellation_waits_for_both_producers_and_allows_a_new_session() {
+    let p = Sandbox::new();
+    let mut r = KoeRuntime::open(&p.0).unwrap();
+    let t = begin(&mut r);
+    for lane in ["microphone", "system"] {
+        start(&mut r, &t, lane);
+        chunk(&mut r, &t, lane, 0, 7);
+    }
+    send(&mut r, json!({"type":"cancel_microphone"}));
+    stop(&mut r, &t, "system", 1);
+    assert!(r.snapshot(100)["microphone"].is_object());
+    chunk(&mut r, &t, "microphone", 1, 8);
+    stop(&mut r, &t, "microphone", 2);
+    assert!(r.workspace().records().is_empty());
+    assert!(r.snapshot(100)["microphone"].is_null());
+    assert_eq!(fs::read_dir(p.0.join("audio")).unwrap().count(), 0);
+    begin(&mut r);
+}
+
+#[test]
+fn empty_failed_capture_preserves_actionable_permission_reason() {
+    let p = Sandbox::new();
+    let mut r = KoeRuntime::open(&p.0).unwrap();
+    let t = begin(&mut r);
+    event(
+        &mut r,
+        &t,
+        "microphone",
+        json!({"type":"microphone_failed","message":"microphone permission denied"}),
+    );
+    event(
+        &mut r,
+        &t,
+        "system",
+        json!({"type":"microphone_failed","message":"system permission denied"}),
+    );
+    stop(&mut r, &t, "microphone", 0);
+    let s = stop(&mut r, &t, "system", 0);
+    assert!(s["notice"]
+        .as_str()
+        .unwrap()
+        .contains("system permission denied"));
+    assert!(s["notice"]
+        .as_str()
+        .unwrap()
+        .contains("microphone permission denied"));
+    assert!(r.workspace().records().is_empty());
+}

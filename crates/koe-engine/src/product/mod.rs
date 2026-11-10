@@ -6,6 +6,8 @@ pub use provider::{valid_reference, CredentialBinding, MeetingAudioPolicy, Provi
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};
 mod record;
+mod capture;
+pub use capture::CaptureLaneRecord;
 mod state;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -181,6 +183,8 @@ pub struct ProductRecord {
     pub content_revision: u64,
     /// Explicit highlighted utterances, including text with no audio timestamp.
     pub highlighted_segments: BTreeSet<SegmentId>,
+    /// Expected native lanes, including explicitly interrupted or empty lanes.
+    pub capture_lanes: Vec<CaptureLaneRecord>,
     final_keys: BTreeMap<String, SegmentId>,
     completed_request: Option<RequestKey>,
 }
