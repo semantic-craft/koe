@@ -369,3 +369,213 @@ fn recovering_disk_write_during_idle_poll_publishes_a_new_generation() {
         1
     );
 }
+
+fn rx_cmd(group: u8, command: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = RX_MAGIC.to_vec();
+    frame.extend_from_slice(&[1, group, command]);
+    frame.extend_from_slice(&u16::try_from(payload.len() + 10).unwrap().to_le_bytes());
+    frame.extend_from_slice(payload);
+    frame.push(ProtocolFrame::checksum(&frame));
+    frame
+}
+
+fn file_head_rx(file_id: u32, file_size: u32) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(87);
+    payload.extend_from_slice(&file_id.to_le_bytes());
+    payload.extend_from_slice(&file_size.to_le_bytes());
+    payload.extend_from_slice(&[0u8; 78]);
+    payload.push(0);
+    rx_cmd(0x1a, 0x07, &payload)
+}
+
+fn catalog_1b0e_rx(file_id: u32, duration_ms: u32, end_time: u32) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(14);
+    payload.extend_from_slice(&1u16.to_le_bytes());
+    payload.extend_from_slice(&file_id.to_le_bytes());
+    payload.extend_from_slice(&duration_ms.to_le_bytes());
+    payload.extend_from_slice(&end_time.to_le_bytes());
+    rx_cmd(0x1b, 0x0e, &payload)
+}
+
+#[test]
+fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finalizes_audio() {
+    let dir = Sandbox::new();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let stream = accept_before_deadline(&listener);
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut socket = accept(stream).unwrap();
+        let run: Value = serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        let task = run["header"]["task_id"].as_str().unwrap();
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"task-started","task_id":task},"payload":{}})
+                    .to_string()
+                    .into(),
+            ))
+            .unwrap();
+        let Message::Binary(_) = socket.read().unwrap() else {
+            panic!("expected first live PCM chunk");
+        };
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"result-generated","task_id":task},
+                    "payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":false,
+                        "begin_time":0,"end_time":20,"text":FIRST}}}})
+                .to_string()
+                .into(),
+            ))
+            .unwrap();
+        let Message::Binary(_) = socket.read().unwrap() else {
+            panic!("expected second live PCM chunk");
+        };
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"result-generated","task_id":task},
+                    "payload":{"output":{"sentence":{"sentence_id":1,"sentence_end":true,
+                        "begin_time":0,"end_time":40,"text":REVISED}}}})
+                .to_string()
+                .into(),
+            ))
+            .unwrap();
+        let finish: Value =
+            serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(finish["header"]["action"], "finish-task");
+        socket
+            .send(Message::Text(
+                json!({"header":{"event":"task-finished","task_id":task},"payload":{}})
+                    .to_string()
+                    .into(),
+            ))
+            .unwrap();
+    });
+
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.device.session.set_session_key([0x55; 32]);
+    command(
+        &mut runtime,
+        json!({"type":"configure_provider","apiKey":"local-capture-fixture","model":"fixture","asrEndpoint":endpoint}),
+    );
+    command(&mut runtime, json!({"type":"device_start"}));
+    runtime.drain_outbound_ble_frames();
+
+    runtime.ingest_ble_chunk(&file_head_rx(801, 0), NOW);
+    let snap_after_head = runtime.snapshot(NOW);
+    assert_eq!(snap_after_head["records"].as_array().unwrap().len(), 1);
+    let live_id = snap_after_head["device"]["liveRecordId"]
+        .as_str()
+        .expect("liveRecordId must be populated immediately on 1A/07 head")
+        .to_owned();
+    assert_eq!(
+        snap_after_head["device"]["transferPhase"],
+        "streaming_realtime"
+    );
+
+    runtime.ingest_ble_chunk(&slices(0..1), NOW);
+    poll_until(&mut runtime, |runtime| {
+        runtime
+            .workspace()
+            .record(&live_id)
+            .is_some_and(|r| !r.aggregate.spine.is_empty())
+    });
+    let snap_interim = runtime.snapshot(NOW);
+    assert_eq!(snap_interim["records"][0]["preview"], FIRST);
+    assert!(snap_interim["device"]["liveDurationMs"].as_u64().unwrap() >= 20);
+
+    runtime.ingest_ble_chunk(&slices(1..2), NOW);
+    poll_until(&mut runtime, |runtime| {
+        runtime
+            .workspace()
+            .record(&live_id)
+            .unwrap()
+            .aggregate
+            .spine
+            .segments()[0]
+            .text
+            == REVISED
+    });
+    let seg = &runtime
+        .workspace()
+        .record(&live_id)
+        .unwrap()
+        .aggregate
+        .spine
+        .segments()[0];
+    assert_eq!(seg.end_ms, 40);
+
+    command(
+        &mut runtime,
+        json!({"type":"configure_provider","apiKey":"","model":"fixture"}),
+    );
+    runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x82, &[0x00]), NOW + 1);
+    let tx_after_stop = runtime.drain_outbound_ble_frames();
+    assert!(
+        tx_after_stop
+            .iter()
+            .any(|f| f.len() >= 7 && f[5] == 0x1b && f[6] == 0x0e),
+        "hardware stop must queue 1B/0E catalog refresh"
+    );
+
+    runtime.poll_timers(2_000, NOW + 3);
+    poll_until(&mut runtime, |_runtime| {
+        recording_assets::audio_path(&dir.0, &live_id)
+            .unwrap()
+            .exists()
+    });
+    server.join().unwrap();
+    assert!(runtime.device.session.has_disk_custody(801));
+}
+
+#[test]
+fn hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.device.session.set_session_key([0x55; 32]);
+    command(&mut runtime, json!({"type":"device_start"}));
+    runtime.drain_outbound_ble_frames();
+
+    runtime.ingest_ble_chunk(&file_head_rx(802, 0), NOW);
+    assert_eq!(runtime.workspace().records().len(), 1);
+    let live_id = runtime.workspace().records().keys().next().unwrap().clone();
+
+    runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x82, &[0x00]), NOW + 1);
+    let tx_stop = runtime.drain_outbound_ble_frames();
+    assert!(
+        tx_stop
+            .iter()
+            .any(|f| f.len() >= 7 && f[5] == 0x1b && f[6] == 0x0e),
+        "hardware stop must request 1B/0E catalog"
+    );
+
+    runtime.ingest_ble_chunk(&catalog_1b0e_rx(802, 40, NOW as u32 + 1), NOW + 1);
+    runtime.poll_timers(2_000, NOW + 3);
+    let tx_auto_pull = runtime.drain_outbound_ble_frames();
+    assert!(
+        tx_auto_pull
+            .iter()
+            .any(|f| f.len() >= 7 && f[5] == 0x1a && f[6] == 0x07),
+        "receiving un-synced catalog entry after stop must auto-trigger 1A/07 offline pull"
+    );
+
+    runtime.ingest_ble_chunk(&file_head_rx(802, 332), NOW + 2);
+    runtime.ingest_ble_chunk(&slices(0..2), NOW + 2);
+    runtime.ingest_ble_chunk(&rx(0x0a, &802u32.to_le_bytes()), NOW + 2);
+
+    assert_eq!(
+        runtime.workspace().records().len(),
+        1,
+        "offline pull after empty live stream must reuse the live record"
+    );
+    assert!(recording_assets::audio_path(&dir.0, &live_id)
+        .unwrap()
+        .exists());
+    assert!(runtime.device.session.has_disk_custody(802));
+}

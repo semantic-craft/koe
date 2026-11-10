@@ -23,7 +23,7 @@ pub(super) enum Event {
         sequence: u64,
         segment: TranscriptSegment,
     },
-    Interim,
+    Interim(Option<(u64, TranscriptSegment)>),
     Finished,
 }
 
@@ -130,7 +130,7 @@ pub(super) async fn transcribe(
                     Event::Final { sequence, segment } => {
                         segments.insert(sequence, segment);
                     }
-                    Event::Interim => {}
+                    Event::Interim(_) => {}
                     Event::Finished => {
                         if !finished_sending.load(std::sync::atomic::Ordering::Acquire) {
                             return Err("语音服务在音频发送完成前结束任务".into());
@@ -185,10 +185,39 @@ fn parse_sentence(value: &Value) -> Result<Event, String> {
     let sentence = value
         .pointer("/payload/output/sentence")
         .ok_or("语音结果缺少句子")?;
-    if sentence.get("heartbeat").and_then(Value::as_bool) == Some(true)
-        || sentence.get("sentence_end").and_then(Value::as_bool) != Some(true)
-    {
-        return Ok(Event::Interim);
+    if sentence.get("heartbeat").and_then(Value::as_bool) == Some(true) {
+        return Ok(Event::Interim(None));
+    }
+    if sentence.get("sentence_end").and_then(Value::as_bool) != Some(true) {
+        let Some(id) = sentence.get("sentence_id").and_then(Value::as_u64) else {
+            return Ok(Event::Interim(None));
+        };
+        let start_ms = sentence
+            .get("begin_time")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let end_ms = sentence
+            .get("end_time")
+            .and_then(Value::as_u64)
+            .unwrap_or(start_ms)
+            .max(start_ms);
+        let Some(text) = sentence.get("text").and_then(Value::as_str) else {
+            return Ok(Event::Interim(None));
+        };
+        if text.len() > 64 * 1024 {
+            return Err("语音结果单句超过 64 KiB 限制".into());
+        }
+        if text.trim().is_empty() {
+            return Ok(Event::Interim(None));
+        }
+        return Ok(Event::Interim(Some((
+            id,
+            TranscriptSegment {
+                start_ms,
+                end_ms,
+                text: text.to_owned(),
+            },
+        ))));
     }
     let id = sentence
         .get("sentence_id")
@@ -213,7 +242,7 @@ fn parse_sentence(value: &Value) -> Result<Event, String> {
         return Err("语音结果单句超过 64 KiB 限制".into());
     }
     if text.trim().is_empty() {
-        return Ok(Event::Interim);
+        return Ok(Event::Interim(None));
     }
     Ok(Event::Final {
         sequence: id,

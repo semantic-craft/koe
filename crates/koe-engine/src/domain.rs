@@ -397,6 +397,41 @@ impl UtteranceSpine {
         true
     }
 
+    /// Updates the source text and timestamps of segment `id`. When the source text changes,
+    /// clears any existing translation on that segment. Increments segment and spine revisions
+    /// and marks the spine stale whenever text, `start_ms`, or `end_ms` changes.
+    pub fn update_segment(
+        &mut self,
+        id: SegmentId,
+        new_text: impl Into<String>,
+        start_ms: u64,
+        end_ms: u64,
+    ) -> bool {
+        let clean = new_text.into().trim().to_string();
+        if clean.is_empty() || end_ms < start_ms {
+            return false;
+        }
+        let Some(seg) = self.segments.get_mut(id.zero_based_index()) else {
+            return false;
+        };
+        let text_changed = seg.text != clean;
+        let time_changed = seg.start_ms != start_ms || seg.end_ms != end_ms;
+        if !text_changed && !time_changed {
+            return false;
+        }
+        if text_changed {
+            seg.text = clean;
+            seg.translation = None;
+            seg.target_language = None;
+        }
+        seg.start_ms = start_ms;
+        seg.end_ms = end_ms;
+        seg.revision = seg.revision.saturating_add(1);
+        self.revision = self.revision.saturating_add(1);
+        self.stale = true;
+        true
+    }
+
     /// Sets or clears the speaker label on segment `id`.
     pub fn set_speaker(&mut self, id: SegmentId, speaker: Option<String>) -> bool {
         let Some(seg) = self.segments.get_mut(id.zero_based_index()) else {

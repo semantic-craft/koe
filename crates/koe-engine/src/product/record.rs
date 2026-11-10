@@ -200,15 +200,16 @@ impl ProductWorkspace {
         record.require_pending(key, AnalysisStage::Transcribing)?;
         let delivery = format!("{}:{final_id}", key.attempt);
         let segment = if let Some(&id) = record.final_keys.get(&delivery) {
-            if record
-                .aggregate
-                .spine
-                .get(id)
-                .is_some_and(|s| s.text == clean)
-            {
+            if record.aggregate.spine.get(id).is_some_and(|s| {
+                s.text == clean && s.start_ms == start_ms && s.end_ms == end_ms
+            }) {
                 return Ok(id);
             }
-            if !record.aggregate.spine.update_segment_text(id, clean) {
+            if !record
+                .aggregate
+                .spine
+                .update_segment(id, clean, start_ms, end_ms)
+            {
                 return Err(ProductError::InvalidSource);
             }
             id
@@ -443,5 +444,50 @@ impl ProductRecord {
             final_keys,
             completed_request,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accept_transcript_updates_text_and_timestamps_for_same_delivery_id() {
+        let mut ws = ProductWorkspace::new();
+        ws.insert_record(
+            "rec-1".into(),
+            "Test".into(),
+            RecordOrigin::Bean,
+            101,
+            1_700_000_000,
+            0,
+        )
+        .unwrap();
+        let key = ws.begin_analysis("rec-1", AnalysisStage::Transcribing).unwrap();
+
+        let seg_id = ws
+            .accept_transcript(&key, "7", "你好", 0, 400, "dashscope")
+            .unwrap();
+        let rev1 = ws.revision();
+
+        let same_id = ws
+            .accept_transcript(&key, "7", "你好世界", 10, 950, "dashscope")
+            .unwrap();
+        assert_eq!(same_id, seg_id);
+        let rev2 = ws.revision();
+        assert!(rev2 > rev1);
+
+        let rec = ws.record("rec-1").unwrap();
+        let seg = rec.aggregate.spine.get(seg_id).unwrap();
+        assert_eq!(seg.text, "你好世界");
+        assert_eq!(seg.start_ms, 10);
+        assert_eq!(seg.end_ms, 950);
+        assert_eq!(rec.aggregate.duration_ms, 950);
+
+        let noop_id = ws
+            .accept_transcript(&key, "7", "你好世界", 10, 950, "dashscope")
+            .unwrap();
+        assert_eq!(noop_id, seg_id);
+        assert_eq!(ws.revision(), rev2);
     }
 }

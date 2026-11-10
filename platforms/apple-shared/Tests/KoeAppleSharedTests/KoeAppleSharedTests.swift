@@ -95,6 +95,62 @@ struct KoeAppleSharedTests {
         #expect(decoded.device.phase == "disconnected")
         #expect(decoded.device.deviceName == "Soundcore Work")
         #expect(decoded.device.guide == nil)
+        #expect(decoded.device.transferPhase == "idle")
+        #expect(decoded.device.liveDurationMs == 0)
+        #expect(decoded.device.liveBytes == 0)
+        #expect(decoded.device.liveRecordId == nil)
+
+        let liveJSON = """
+        {
+          "version": 2,
+          "generation": 11,
+          "section": "today",
+          "canGoBack": false,
+          "selectedRecordId": null,
+          "focusSegmentId": null,
+          "records": [
+            {
+              "id": "rec-live-1",
+              "title": "实时录音",
+              "createdAtEpochSec": 1700000000,
+              "durationMs": 15000,
+              "source": "录音豆",
+              "status": "转写中",
+              "segmentCount": 1,
+              "preview": "正在讨论实时转写进度"
+            }
+          ],
+          "todayRecordIds": ["rec-live-1"],
+          "detail": null,
+          "tasks": [],
+          "memories": [],
+          "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
+          "device": {
+            "state": "正在录音",
+            "connected": true,
+            "busy": true,
+            "recording": true,
+            "transferPhase": "streaming_realtime",
+            "liveDurationMs": 15000,
+            "liveBytes": 4800,
+            "liveRecordId": "rec-live-1",
+            "files": [{ "id": 7, "title": "录音 7", "durationMs": 62000 }],
+            "progress": 0.0
+          },
+          "provider": { "configured": true, "model": "qwen-plus" },
+          "playback": { "recordId": null, "positionMs": 0, "isPlaying": false },
+          "error": null,
+          "notice": null
+        }
+        """
+        let liveDecoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(liveJSON.utf8))
+        #expect(liveDecoded.device.transferPhase == "streaming_realtime")
+        #expect(liveDecoded.device.liveDurationMs == 15000)
+        #expect(liveDecoded.device.liveBytes == 4800)
+        #expect(liveDecoded.device.liveRecordId == "rec-live-1")
+        #expect(liveDecoded.device.files.first?.fileId == 7)
+        #expect(liveDecoded.activeLiveRecord?.id == "rec-live-1")
+        #expect(liveDecoded.activeLiveRecord?.preview == "正在讨论实时转写进度")
 
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

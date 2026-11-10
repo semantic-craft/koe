@@ -75,9 +75,11 @@ pub(crate) struct DeviceRuntime {
     pub outbound: Vec<Vec<u8>>,
     pub finalized: Vec<FinalizedRecording>,
     pub captures: std::collections::VecDeque<CaptureEvent>,
+    pub auto_pull_attempted: std::collections::BTreeSet<u32>,
     pending_start_ms: u64,
     handshake_retry_ms: u64,
     handshake_retried: bool,
+    status_poll_elapsed_ms: u64,
 }
 
 impl Default for DeviceRuntime {
@@ -92,9 +94,11 @@ impl Default for DeviceRuntime {
             outbound: Vec::new(),
             finalized: Vec::new(),
             captures: Default::default(),
+            auto_pull_attempted: Default::default(),
             pending_start_ms: 0,
             handshake_retry_ms: 0,
             handshake_retried: false,
+            status_poll_elapsed_ms: 0,
         }
     }
 }
@@ -133,6 +137,7 @@ impl DeviceRuntime {
     }
 
     pub fn refresh(&mut self) {
+        self.auto_pull_attempted.clear();
         if self.session.session_key.is_some() {
             self.outbound.push(DeviceCommands::get_device_info());
             self.outbound
@@ -143,8 +148,10 @@ impl DeviceRuntime {
     pub fn disconnect(&mut self) {
         self.connection = None;
         self.outbound.clear();
+        self.auto_pull_attempted.clear();
         self.handshake_retry_ms = 0;
         self.handshake_retried = false;
+        self.status_poll_elapsed_ms = 0;
         self.session.on_disconnected();
         self.modal = DeviceModalState::Hidden;
         self.guide_user_requested = false;
@@ -222,8 +229,10 @@ impl DeviceRuntime {
             "disconnected" if self.connection.as_deref() == Some(connection) => {
                 self.connection = None;
                 self.outbound.clear();
+                self.auto_pull_attempted.clear();
                 self.handshake_retry_ms = 0;
                 self.handshake_retried = false;
+                self.status_poll_elapsed_ms = 0;
                 self.session.on_transport_interrupted();
                 self.collect_finalized();
             }
@@ -276,7 +285,27 @@ impl DeviceRuntime {
         }
 
         let outcome = self.session.poll_timers(elapsed_ms, now);
-        Ok(self.accept(outcome) || handshake_retried_now)
+        let mut changed = self.accept(outcome) || handshake_retried_now;
+        if self.connection.is_some()
+            && self.is_connected()
+            && self.outbound.is_empty()
+            && !self.session.pending_realtime_subscribe
+            && self.session.active_file_id.is_none()
+            && matches!(
+                self.session.transfer.phase,
+                koe_engine::session::TransferPhaseTag::Idle
+            )
+        {
+            self.status_poll_elapsed_ms = self.status_poll_elapsed_ms.saturating_add(elapsed_ms);
+            if self.status_poll_elapsed_ms >= 5_000 {
+                self.status_poll_elapsed_ms = 0;
+                self.outbound.push(DeviceCommands::get_device_info());
+                changed = true;
+            }
+        } else {
+            self.status_poll_elapsed_ms = 0;
+        }
+        Ok(changed)
     }
 
     pub fn accept(&mut self, outcome: SessionIngestOutcome) -> bool {

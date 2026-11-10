@@ -199,7 +199,8 @@ async fn stream(
                 Message::Text(text) => {
                     // Results are released to the consumer; only each wire message is retained here.
                     match asr::decode_event(&text, &task_id, &mut 0)? {
-                        asr::Event::Final { sequence, segment } => {
+                        asr::Event::Final { sequence, segment }
+                        | asr::Event::Interim(Some((sequence, segment))) => {
                             tokio::time::timeout(
                                 IDLE_TIMEOUT,
                                 output.send(LiveEvent::Final { sequence, segment }),
@@ -208,7 +209,7 @@ async fn stream(
                             .map_err(|_| "实时转写结果超过一分钟未被接收")?
                             .map_err(|_| "实时转写结果接收者已关闭")?;
                         }
-                        asr::Event::Interim => {}
+                        asr::Event::Interim(None) => {}
                         asr::Event::Finished if finished_sending.load(Ordering::Acquire) => {
                             return Ok::<_, String>(())
                         }
