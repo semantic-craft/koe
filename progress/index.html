@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-10T07:26:51.628840Z</p>
-<p>Main: <code>main: 8e1f49a2e5b34b8befa1bc424e25f190fc1ebdcc</code></p>
+<p>Observed: 2026-11-10T08:29:18.480448Z</p>
+<p>Main: <code>main: 5605c8f52b03282c9fcb69680ca9bc459bcf3ce0</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -28,23 +28,32 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/flutter_import.rs">file crates/koe-runtime/src/flutter_import.rs: 真实旧格式迁入、原件保全与幂等校验入口。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/600">pull 600: 已通过 squash 合并；CI 与本地门禁通过，不代表签名安装或真机验收。</a></li>
 </ul><p>Next: 签名安装版验收见 #598；未支持领域随后续切片补迁。</p></article>
+<article id="provider-persistence"><h3>服务凭据与非敏感配置持久化</h3><span class="badge">done</span><p>非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；macOS 平台适配与开发隔离已接通。17 项 Rust 回归、2 项 Swift 桥接回归、check、独立评审与 PR CI 通过，已 squash 合并。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 实现已合并，包含配置与安全存储故障回归。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/provider_persistence.rs">file crates/koe-runtime/tests/provider_persistence.rs: 重启、故障、清除、授权与隔离行为回归。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/604">issue 604: 新安全项创建后、引用提交前崩溃可能留下无引用项，尚未自动回收。</a></li>
+</ul><p>Next: 跨版本安装升级与系统授权仍待 #603；无引用安全项回收见 #604。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
-<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>F1 的 15 项旧资料恢复回归、完整 scripts/check、Clippy、Python 契约、Swift 测试和进度校验通过；独立审查发现的微秒身份、裸音频及别名问题已修复并复核。未运行签名安装版迁移验收。</p><ul>
+<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>N1 的 17 项 Rust 持久化回归、2 项 Swift 原生桥接回归、完整 check 和 PR CI 通过。独立审查修复了未知提交恢复、授权目标与待删项清理问题。F1 已有的 15 项迁移回归验收保留；签名安装升级仍待真机验证。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 统一门禁</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/cloud_workflow.rs">file crates/koe-runtime/tests/cloud_workflow.rs: 本地真实协议流程</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 独立评审与 CI 通过，未运行真实安装升级。</a></li>
 </ul><p>Next: 后续改动运行统一门禁。</p></article>
 <article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
 </ul><p>Next: 按 #588 继续验收完整取回、边录边转写与真实云服务。</p></article>
-<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。</p><ul>
+<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。 此条为 #595 的安装证据；本轮 N1 未安装，不能据此视为 #605 已部署。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/587">issue 587: 实现范围与验收入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/594">issue 594: 图标安装、签名与轮廓已验；Dock 专属截图尚未取得。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/595">pull 595: 系统图标大小修复已 squash 合并，CI 通过；安装与 GUI 重启验证完成。</a></li>
-</ul><p>Next: Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。</p></article>
+</ul><p>Next: Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。 N1 跨版本安装升级见 #603。</p></article>
 <article id="flutter-device-acceptance"><h3>旧 Flutter 库真机验收</h3><span class="badge">unverified</span><p>本轮未运行签名安装版目录导入、真实音频播放及退出重启读回。自动回归不能替代真机结果。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/598">issue 598: 独立真机验收工单，保持未验。</a></li>
 </ul><p>Next: 使用授权旧库副本在签名版逐项核对。</p></article>
+<article id="provider-upgrade-acceptance"><h3>凭据跨签名安装升级验收</h3><span class="badge">unverified</span><p>本轮仅核对旧凭据标识源码、现有签名元数据，并运行隔离原生桥接测试。未运行真实签名安装升级、个人 Keychain 读回或系统授权交互。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/603">issue 603: 覆盖升级后静默读取、授权次数、清除重启与开发隔离的独立真机工单。</a></li>
+</ul><p>Next: 用受控测试凭据在真实 Developer ID 交付版本间升级，记录前后构建、签名与读取结果；不以同构建重启替代升级。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、系统麦克风全天监听、Google 写回与 ACP 不计入当前 macOS 已接通功能；保留的底层模块不等于界面已实现。</p><ul>

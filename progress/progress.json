@@ -31,9 +31,27 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T07:05:59Z"
+      },
+      {
+        "number": 602,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T08:28:36Z"
+      },
+      {
+        "number": 603,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T08:05:58Z"
+      },
+      {
+        "number": 604,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T08:24:01Z"
       }
     ],
-    "main": "8e1f49a2e5b34b8befa1bc424e25f190fc1ebdcc",
+    "main": "5605c8f52b03282c9fcb69680ca9bc459bcf3ce0",
     "open_pulls": [],
     "pulls": [
       {
@@ -59,12 +77,20 @@
         "merged": true,
         "number": 600,
         "state": "closed"
+      },
+      {
+        "base": "97f44c1c9b5684a8ccd5bc37cb1d14827addbad6",
+        "head": "92550e125e0dbed14d7bbdc68e49617ea27cb177",
+        "merge_commit": "5605c8f52b03282c9fcb69680ca9bc459bcf3ce0",
+        "merged": true,
+        "number": 605,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T07:26:51.628840Z",
+  "observed_at": "2026-11-10T08:29:18.480448Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -186,6 +212,30 @@
           "status": "done",
           "summary": "显式选择旧目录，迁入基础录音、可见原文、说话人与未验证来源的旧纪要；一次事务保存迁移回执，重复快照不覆盖编辑。原件保全与未迁清单持久保存，不表示完整迁移。整批上限 256 MB，增量合并未支持。",
           "title": "旧 Flutter 基础资料迁移"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "N1 实现已合并，包含配置与安全存储故障回归。",
+              "ref": 605
+            },
+            {
+              "kind": "file",
+              "note": "重启、故障、清除、授权与隔离行为回归。",
+              "ref": "crates/koe-runtime/tests/provider_persistence.rs"
+            },
+            {
+              "kind": "issue",
+              "note": "新安全项创建后、引用提交前崩溃可能留下无引用项，尚未自动回收。",
+              "ref": 604
+            }
+          ],
+          "id": "provider-persistence",
+          "next": "跨版本安装升级与系统授权仍待 #603；无引用安全项回收见 #604。",
+          "status": "done",
+          "summary": "非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；macOS 平台适配与开发隔离已接通。17 项 Rust 回归、2 项 Swift 桥接回归、check、独立评审与 PR CI 通过，已 squash 合并。",
+          "title": "服务凭据与非敏感配置持久化"
         }
       ],
       "title": "当前产品实现"
@@ -204,12 +254,17 @@
               "kind": "file",
               "note": "本地真实协议流程",
               "ref": "crates/koe-runtime/tests/cloud_workflow.rs"
+            },
+            {
+              "kind": "pull",
+              "ref": 605,
+              "note": "N1 独立评审与 CI 通过，未运行真实安装升级。"
             }
           ],
           "id": "automated-check",
           "next": "后续改动运行统一门禁。",
           "status": "done",
-          "summary": "F1 的 15 项旧资料恢复回归、完整 scripts/check、Clippy、Python 契约、Swift 测试和进度校验通过；独立审查发现的微秒身份、裸音频及别名问题已修复并复核。未运行签名安装版迁移验收。",
+          "summary": "N1 的 17 项 Rust 持久化回归、2 项 Swift 原生桥接回归、完整 check 和 PR CI 通过。独立审查修复了未知提交恢复、授权目标与待删项清理问题。F1 已有的 15 项迁移回归验收保留；签名安装升级仍待真机验证。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -245,9 +300,9 @@
             }
           ],
           "id": "merge-install",
-          "next": "Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。",
+          "next": "Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。 N1 跨版本安装升级见 #603。",
           "status": "done",
-          "summary": "2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。",
+          "summary": "2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。 此条为 #595 的安装证据；本轮 N1 未安装，不能据此视为 #605 已部署。",
           "title": "本机签名安装"
         },
         {
@@ -263,6 +318,20 @@
           "status": "unverified",
           "summary": "本轮未运行签名安装版目录导入、真实音频播放及退出重启读回。自动回归不能替代真机结果。",
           "title": "旧 Flutter 库真机验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "覆盖升级后静默读取、授权次数、清除重启与开发隔离的独立真机工单。",
+              "ref": 603
+            }
+          ],
+          "id": "provider-upgrade-acceptance",
+          "next": "用受控测试凭据在真实 Developer ID 交付版本间升级，记录前后构建、签名与读取结果；不以同构建重启替代升级。",
+          "status": "unverified",
+          "summary": "本轮仅核对旧凭据标识源码、现有签名元数据，并运行隔离原生桥接测试。未运行真实签名安装升级、个人 Keychain 读回或系统授权交互。",
+          "title": "凭据跨签名安装升级验收"
         }
       ],
       "title": "验收与交付"
@@ -295,12 +364,16 @@
       588,
       594,
       597,
-      598
+      598,
+      602,
+      603,
+      604
     ],
     "pulls": [
       589,
       595,
-      600
+      600,
+      605
     ]
   }
 }
