@@ -103,9 +103,15 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-10T11:41:32Z"
+      },
+      {
+        "number": 626,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T12:10:18Z"
       }
     ],
-    "main": "f9680b4790c28866a33dfff0afe5ee057f59a894",
+    "main": "7a8b34e0391b38999dd30ca75f405a9be4ffd825",
     "open_pulls": [],
     "pulls": [
       {
@@ -184,7 +190,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T11:42:13.187339Z",
+  "observed_at": "2026-11-10T12:11:24.822485Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -429,12 +435,27 @@
               "kind": "pull",
               "note": "squash f9680b4已合并；共同时间轴/暂停Rust子单元完整门禁、CI与独立复验通过；未安装，原生双路未接。",
               "ref": 624
+            },
+            {
+              "kind": "issue",
+              "note": "分路回放子单元，非完整N3B。",
+              "ref": 626
+            },
+            {
+              "kind": "file",
+              "note": "分路样本寻址、system-only、请求fence与完整重开。",
+              "ref": "crates/koe-runtime/tests/capture_playback.rs"
+            },
+            {
+              "kind": "file",
+              "note": "真实PCM逐样本回读与无时间轴旧录音尾部。",
+              "ref": "platforms/macos/Tests/KoeMacHostTests/NativePlaybackTests.swift"
             }
           ],
           "id": "mac-dual-capture",
-          "next": "接 Core Audio 与原生双路权限/暂停/分路回放；权限结束后再建立共同单调时钟，实际首样本时间进入Rust映射。真实验收见#620。",
+          "next": "接 Core Audio 与原生双路权限、真实首样本时间和暂停恢复；授权完成后建立共同clock，不能把启动成功或静音回调当成授权完成。签名版回放与双路真实验收见#620。",
           "status": "in_progress",
-          "summary": "Rust 分路资产保管（PR #621）及共同采样时间轴/暂停协议（PR #624，squash f9680b4）已合并，后者通过260 Rust、32 Python、29 Swift完整门禁、CI与独立复验。时间轴保留真实样本、启动时差及间隙，暂停等两路排空并以epoch隔离旧回调，发布重试和完整重开保留映射。原生仍是单路，Core Audio、双路入口和分路回放尚未恢复。",
+          "summary": "Rust 分路资产保管（PR #621）及共同时间轴/暂停协议（PR #624）已合并。本轮分路回放子单元已实现，通过263 Rust、32 Python、35 Swift完整本地门禁；Rust输出选路和精确样本片段，Swift按计划播放并保留共同空档，系统单路可播放。真实PCM、旧录音、共同位置跳转、异步失败重试及来源请求隔离已验证，待PR交付。原生采集仍单路，Core Audio、双路入口和暂停接线未恢复；未安装或真机验收。",
           "title": "Mac 系统音频双路恢复"
         }
       ],
@@ -623,7 +644,8 @@
       616,
       619,
       620,
-      623
+      623,
+      626
     ],
     "pulls": [
       589,

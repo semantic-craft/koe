@@ -75,9 +75,28 @@ fn back_and_background_playback_keep_navigation_and_errors_consistent() {
     assert!(failed["error"].is_string());
     let tick = command(
         &mut runtime,
-        json!({"type":"playback_progress","positionMs":40,"isPlaying":true}),
+        json!({"type":"playback_progress","recordId":ids[0],"requestId":back["playback"]["requestId"],"positionMs":40,"isPlaying":true}),
     );
     assert_eq!(tick["error"], failed["error"]);
+}
+
+#[test]
+fn opening_source_in_current_record_invalidates_old_playback_progress() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.commit(|w| {
+        w.insert_record("timed".into(), "Timed".into(), RecordOrigin::Microphone, 0, 100, 100)?;
+        w.append_transcript("timed", "target", 50, 75, "fixture")?;
+        Ok(())
+    }).unwrap();
+    let selected = command(&mut runtime, json!({"type":"select_record","recordId":"timed"}));
+    let before = command(&mut runtime, json!({"type":"seek","positionMs":90}));
+    let opened = command(&mut runtime, json!({"type":"open_source","recordId":"timed","segmentId":selected["detail"]["segments"][0]["id"]}));
+    assert!(opened["error"].is_null(), "{}", opened["error"]);
+    assert_eq!(opened["playback"]["positionMs"], 50);
+    assert_ne!(opened["playback"]["requestId"], before["playback"]["requestId"]);
+    let late = command(&mut runtime, json!({"type":"playback_progress","recordId":"timed","requestId":before["playback"]["requestId"],"positionMs":90,"isPlaying":false}));
+    assert_eq!(late["playback"]["positionMs"], 50);
 }
 
 #[test]

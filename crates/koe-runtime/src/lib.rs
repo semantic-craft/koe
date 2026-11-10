@@ -21,6 +21,7 @@ mod lifecycle_tests;
 mod microphone;
 #[cfg(test)]
 mod navigation_tests;
+mod playback;
 mod processing;
 mod projection;
 mod provider_settings;
@@ -264,7 +265,7 @@ impl KoeRuntime {
                     .resolve_source(&source_ref(&record_id, &segment_id)?)
                     .map_err(|e| e.to_string())?;
                 self.open_record(&record_id, Some(segment_id))?;
-                self.playback.position_ms = source.start_ms;
+                self.seek_playback(source.start_ms)?;
             }
             Command::CreateNote { title, text } => {
                 if text.trim().is_empty() {
@@ -376,38 +377,16 @@ impl KoeRuntime {
             Command::ClearProviderCredential => self.clear_credential()?,
             Command::RetryProviderCredentials { authorize } => self.retry_credentials(authorize)?,
             Command::ClearError => {}
-            Command::Seek { position_ms } => {
-                let id = self.location.record.clone().ok_or("先选择一条录音")?;
-                let duration = self
-                    .workspace()
-                    .record(&id)
-                    .ok_or("录音不存在")?
-                    .aggregate
-                    .duration_ms;
-                self.playback.record = Some(id);
-                self.playback.position_ms = position_ms.min(duration);
-            }
-            Command::Playback { is_playing } => {
-                let id = self.location.record.clone().ok_or("先选择一条录音")?;
-                if !recording_assets::audio_path(&self.root, &id)?.exists() {
-                    return Err("这条记录没有可播放的音频".into());
-                }
-                if self.playback.record.as_ref() != Some(&id) {
-                    self.playback.position_ms = 0;
-                }
-                self.playback.record = Some(id);
-                self.playback.playing = is_playing;
-            }
+            Command::Seek { position_ms } => self.seek_playback(position_ms)?,
+            Command::Playback { is_playing } => self.set_playback(is_playing)?,
+            Command::SelectPlaybackLane { lane } => self.select_playback_lane(lane)?,
             Command::PlaybackProgress {
+                record_id,
+                request_id,
                 position_ms,
                 is_playing,
             } => {
-                if let Some(id) = &self.playback.record {
-                    if let Some(record) = self.workspace().record(id) {
-                        self.playback.position_ms = position_ms.min(record.aggregate.duration_ms);
-                        self.playback.playing = is_playing;
-                    }
-                }
+                self.playback_progress(&record_id, request_id, position_ms, is_playing);
             }
             Command::DeviceEvent {
                 event,
@@ -467,6 +446,8 @@ impl KoeRuntime {
     fn set_location(&mut self, location: Location) {
         if self.playback.record != location.record {
             self.playback.record = location.record.clone();
+            self.playback.lane = None;
+            self.playback.request_id = self.playback.request_id.saturating_add(1);
             self.playback.position_ms = 0;
             self.playback.playing = false;
         }

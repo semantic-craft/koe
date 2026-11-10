@@ -30,7 +30,8 @@ public struct KoeWorkspaceRootView: View {
                         .foregroundStyle(AppColors.textSecondary).padding(12).background(AppColors.surface1)
                 }
                 page.frame(maxWidth: .infinity, maxHeight: .infinity)
-                if store.snapshot.detail?.audioPath != nil { PlayerBarView(store: store) }
+                if store.snapshot.playback.asset != nil,
+                   store.snapshot.playback.recordId == store.snapshot.detail?.id { PlayerBarView(store: store) }
             }.background(AppColors.surface0)
         }
         .foregroundStyle(AppColors.textPrimary).tint(AppColors.accent)

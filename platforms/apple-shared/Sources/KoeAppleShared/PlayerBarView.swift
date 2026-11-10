@@ -11,6 +11,16 @@ public struct PlayerBarView: View {
             }.buttonStyle(.plain).help(store.snapshot.playback.isPlaying ? "暂停" : "播放")
             Text(store.snapshot.detail?.title ?? "录音").lineLimit(1)
                 .font(.system(size: AppFontSizes.xs)).frame(maxWidth: 180, alignment: .leading)
+            if store.snapshot.playback.lanes.count > 1 {
+                Picker("音源", selection: Binding(
+                    get: { store.snapshot.playback.lane ?? "" },
+                    set: { store.send("select_playback_lane", ["lane": $0]) }
+                )) {
+                    ForEach(store.snapshot.playback.lanes) { lane in
+                        Text(lane.label).tag(lane.id).disabled(!lane.available)
+                    }
+                }.frame(maxWidth: 150)
+            }
             Text(TimeLabel.duration(store.snapshot.playback.positionMs))
                 .font(.system(size: AppFontSizes.xs)).monospacedDigit().foregroundStyle(AppColors.textMuted)
             Slider(value: Binding(

@@ -175,7 +175,12 @@ pub(crate) enum Command {
     Playback {
         is_playing: bool,
     },
+    SelectPlaybackLane {
+        lane: String,
+    },
     PlaybackProgress {
+        record_id: String,
+        request_id: u64,
         position_ms: u64,
         is_playing: bool,
     },
@@ -207,6 +212,8 @@ pub(crate) struct Location {
 #[derive(Default)]
 pub(crate) struct Playback {
     pub record: Option<String>,
+    pub lane: Option<String>,
+    pub request_id: u64,
     pub position_ms: u64,
     pub playing: bool,
 }
