@@ -374,6 +374,7 @@ impl RecordDto {
             id: a.recording_id.clone(),
             title: record.title.clone(),
             origin: match record.origin {
+                RecordOrigin::Microphone => "microphone",
                 RecordOrigin::Bean => "bean",
                 RecordOrigin::ImportedAudio => "audio",
                 RecordOrigin::ImportedText => "text",
@@ -421,6 +422,7 @@ impl RecordDto {
 
     fn into_record(self) -> Result<ProductRecord, StoreError> {
         let origin = match self.origin.as_str() {
+            "microphone" => RecordOrigin::Microphone,
             "bean" => RecordOrigin::Bean,
             "audio" => RecordOrigin::ImportedAudio,
             "text" => RecordOrigin::ImportedText,

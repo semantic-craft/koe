@@ -291,7 +291,20 @@ public struct LifecycleSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
+    public let recordId: String
+    public let sessionId: String
+    public let lane: String
+    public let inputId: String
+    public let phase: String
+    public let nextSequence: UInt64
+    public let durationMs: UInt64
+    public let error: String?
+    public let interruption: String?
+}
+
 public struct HostSnapshot: Codable, Equatable, Sendable {
+    public var microphone: MicrophoneSnapshot? = nil
     public var lifecycle: LifecycleSnapshot? = nil
     public let version: UInt32
     public let generation: UInt64
