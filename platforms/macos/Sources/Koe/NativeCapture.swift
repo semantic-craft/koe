@@ -32,6 +32,12 @@ final class MicrophoneMailbox: @unchecked Sendable {
         closed = true
     }
     func close() { lock.lock(); defer { lock.unlock() }; closed = true }
+    func discardUnstarted() {
+        lock.lock(); defer { lock.unlock() }
+        closed = true
+        blocks.removeAll()
+        sequence = 0
+    }
     func peek() -> Block? { lock.lock(); defer { lock.unlock() }; return blocks.first }
     func acknowledge(_ sequence: UInt64) {
         lock.lock(); defer { lock.unlock() }
@@ -127,7 +133,11 @@ final class NativeCapture {
             if store?.snapshot.microphone?.phase != "recording" {
                 mailbox.fail(store?.snapshot.error ?? "无法创建麦克风音频文件。")
             }
-        } catch { mailbox.fail(error.localizedDescription) }
+        } catch {
+            source.stop()
+            mailbox.discardUnstarted()
+            mailbox.fail("麦克风启动失败，未保存录音：\(error.localizedDescription)")
+        }
         apply()
     }
     private func send(_ type: String, _ fields: [String: Any]) {

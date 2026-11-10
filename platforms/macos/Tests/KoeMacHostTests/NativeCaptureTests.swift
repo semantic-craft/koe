@@ -34,10 +34,12 @@ private final class FakeMicrophone: MicrophoneSource {
     var starts = 0
     var tail: [Int16] = []
     var startSamples: [Int16] = []
+    var throwAfterStartSamples = false
     func requestPermission(_ completion: @escaping (Bool) -> Void) { permission = completion }
     func start(inputID: String, receive: @escaping ([Int16]) -> Void, failed: @escaping (String) -> Void) throws -> UInt32 {
         starts += 1; self.receive = receive; failure = failed
         if !startSamples.isEmpty { receive(startSamples) }
+        if throwAfterStartSamples { throw CaptureError("injected start failure after callback") }
         return 16000
     }
     func stop() {
@@ -141,10 +143,13 @@ extension NativeCaptureIntegrationTests {
             capture.apply()
             XCTAssertNotNil(store.snapshot.microphone?.error)
             XCTAssertTrue(store.snapshot.records.isEmpty)
+            let id = try XCTUnwrap(store.snapshot.microphone?.recordId)
             try FileManager.default.removeItem(at: audio)
             store.send("retry_microphone_save")
             capture.apply()
             XCTAssertNil(store.snapshot.microphone)
+            let bytes = try Data(contentsOf: root.appendingPathComponent("audio/\(id).wav"))
+            XCTAssertEqual(Array(bytes.dropFirst(44)), [7, 0, 8, 0])
         }
     }
 }
@@ -174,5 +179,25 @@ extension NativeCaptureTests {
         XCTAssertEqual(stopped.wait(timeout: .now() + 2), .success)
         XCTAssertEqual(box.peek()?.samples, [42])
         XCTAssertFalse(fence.enter())
+    }
+}
+
+
+extension NativeCaptureIntegrationTests {
+    func testStartFailureAfterCallbackDoesNotStrandQuit() async throws {
+        try await fixture { store, source, capture, _ in
+            source.startSamples = [7, 8]
+            source.tail = [9, 10]
+            source.throwAfterStartSamples = true
+            store.send("start_microphone", ["inputId": "fixture"])
+            source.permission?(true)
+            for _ in 0..<100 where source.starts == 0 { await Task.yield() }
+            capture.apply()
+            store.send("request_quit")
+            for _ in 0..<10 { capture.apply() }
+            XCTAssertTrue(store.snapshot.records.isEmpty)
+            XCTAssertEqual(store.snapshot.lifecycle?.quitPhase, "ready")
+            XCTAssertNil(store.snapshot.microphone)
+        }
     }
 }

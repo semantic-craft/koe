@@ -1,5 +1,5 @@
 use super::*;
-use koe_client_services::capture_asset::CaptureAsset;
+use koe_client_services::capture_asset::{AppendOutcome, CaptureAsset};
 use serde_json::json;
 
 #[derive(PartialEq, Eq)]
@@ -7,6 +7,7 @@ pub(super) enum Phase {
     Starting,
     Recording,
     Stopping,
+    CapacityReached,
     Cancelling,
     Saving,
 }
@@ -66,7 +67,7 @@ impl KoeRuntime {
             }
             if cancel {
                 m.phase = Phase::Cancelling;
-            } else if m.phase != Phase::Cancelling {
+            } else if !matches!(m.phase, Phase::Cancelling | Phase::CapacityReached) {
                 m.phase = Phase::Stopping;
             }
         }
@@ -125,16 +126,25 @@ impl KoeRuntime {
         if samples.is_empty() || samples.len() > 8192 {
             return Err("麦克风音频块无效或过大".into());
         }
-        if m.phase != Phase::Cancelling {
+        if !matches!(m.phase, Phase::Cancelling | Phase::CapacityReached) {
             let result = m
                 .asset
                 .as_mut()
                 .ok_or("麦克风音频尚未就绪")?
                 .append(samples);
-            if let Err(error) = result {
-                m.save_error = Some(error.clone());
-                m.phase = Phase::Stopping;
-                return Err(error);
+            match result {
+                Ok(AppendOutcome::Written) => {}
+                Ok(AppendOutcome::CapacityReached) => {
+                    m.phase = Phase::CapacityReached;
+                    m.interruption = Some(
+                        "录音达到 WAV 长度上限，已保留此前收到的音频。请新建录音继续。".into(),
+                    );
+                }
+                Err(error) => {
+                    m.save_error = Some(error.clone());
+                    m.phase = Phase::Stopping;
+                    return Err(error);
+                }
             }
         }
         m.next_sequence += 1;
@@ -155,7 +165,10 @@ impl KoeRuntime {
             return;
         }
         m.interruption = Some(message.chars().take(500).collect());
-        if m.phase != Phase::Cancelling && m.phase != Phase::Saving {
+        if !matches!(
+            m.phase,
+            Phase::Cancelling | Phase::Saving | Phase::CapacityReached
+        ) {
             m.phase = Phase::Stopping;
         }
     }
@@ -247,7 +260,7 @@ impl KoeRuntime {
             return Value::Null;
         };
         json!({"recordId":m.record_id,"sessionId":m.session_id,"lane":"microphone","inputId":m.input_id,
-            "phase":match m.phase {Phase::Starting=>"starting",Phase::Recording=>"recording",Phase::Stopping=>"stopping",Phase::Cancelling=>"cancelling",Phase::Saving=>"saving"},
+            "phase":match m.phase {Phase::Starting=>"starting",Phase::Recording=>"recording",Phase::Stopping | Phase::CapacityReached=>"stopping",Phase::Cancelling=>"cancelling",Phase::Saving=>"saving"},
             "nextSequence":m.next_sequence,"durationMs":m.asset.as_ref().map_or(0,|a|a.duration_ms()),"error":m.save_error,"interruption":m.interruption})
     }
 }

@@ -6,6 +6,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// The result of admitting one block to a finite WAV container.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AppendOutcome {
+    /// The entire block was written.
+    Written,
+    /// The accepted prefix is intact; stop instead of retrying this block.
+    CapacityReached,
+}
+
 /// One native mono PCM16 stream. Its unpublished file is never a successful record.
 pub struct CaptureAsset {
     file: File,
@@ -24,13 +33,12 @@ impl CaptureAsset {
         let target = audio_path(root, id)?;
         fs::create_dir_all(target.parent().ok_or("无效音频目录")?).map_err(io_error)?;
         let staging = target.with_extension("capture");
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create_new(true)
             .open(&staging)
             .map_err(io_error)?;
-        file.write_all(&[0; 44]).map_err(io_error)?;
         Ok(Self {
             file,
             staging,
@@ -41,13 +49,13 @@ impl CaptureAsset {
         })
     }
     /// Appends one bounded block. Retrying rewinds any incomplete previous write.
-    pub fn append(&mut self, samples: &[i16]) -> Result<(), String> {
+    pub fn append(&mut self, samples: &[i16]) -> Result<AppendOutcome, String> {
         if self.published || samples.is_empty() || samples.len() > 8192 {
             return Err("麦克风音频块无效或过大".into());
         }
         let next = self.samples + samples.len() as u64;
         if next * 2 > u32::MAX as u64 - 36 {
-            return Err("录音已达到 WAV 长度上限，请停止后新建录音".into());
+            return Ok(AppendOutcome::CapacityReached);
         }
         let offset = 44 + self.samples * 2;
         self.file.set_len(offset).map_err(io_error)?;
@@ -55,7 +63,7 @@ impl CaptureAsset {
         let bytes: Vec<u8> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
         self.file.write_all(&bytes).map_err(io_error)?;
         self.samples = next;
-        Ok(())
+        Ok(AppendOutcome::Written)
     }
     /// Duration derived from accepted frames, never from host timers.
     pub fn duration_ms(&self) -> u64 {
@@ -114,4 +122,24 @@ impl CaptureAsset {
 }
 fn io_error(e: std::io::Error) -> String {
     format!("麦克风录音保存失败：{e}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn wav_capacity_stops_without_overwriting_the_accepted_prefix() {
+        let root = std::env::temp_dir().join(format!("koe-wav-limit-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut asset = CaptureAsset::create(&root, "mic-capacity", 16000).unwrap();
+        asset.append(&[7, 8]).unwrap();
+        let original = fs::read(&asset.staging).unwrap();
+        asset.samples = (u32::MAX as u64 - 36) / 2 - 1;
+        let result = asset.append(&[9, 10]);
+        let after = fs::read(&asset.staging).unwrap();
+        asset.discard().unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(after, original);
+        assert_eq!(result.unwrap(), AppendOutcome::CapacityReached);
+    }
 }
