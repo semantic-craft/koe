@@ -7,6 +7,7 @@ impl ProductWorkspace {
     #[must_use]
     pub fn export_state(&self) -> WorkspaceState {
         WorkspaceState {
+            provider_configuration: self.provider_configuration.clone(),
             migrations: self.migrations.clone(),
             revision: self.revision,
             next_operation: self.next_operation,
@@ -21,6 +22,7 @@ impl ProductWorkspace {
 
     /// Restores validated value state; malformed identities or references are rejected.
     pub fn restore(state: WorkspaceState) -> Result<Self, ProductError> {
+        state.provider_configuration.validate()?;
         let mut records = BTreeMap::new();
         for record in state.records {
             let id = record.aggregate.recording_id.clone();
@@ -39,6 +41,7 @@ impl ProductWorkspace {
             }
         }
         let mut workspace = Self {
+            provider_configuration: state.provider_configuration,
             migrations: state.migrations,
             revision: state.revision,
             next_operation: state.next_operation,

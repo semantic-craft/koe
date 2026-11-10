@@ -71,7 +71,17 @@ CoreBluetooth 将连接、订阅完成、断开和通知字节交给 Rust，执�
 
 每次分析先保存 `RequestKey(record_id, attempt, input_revision)`。结果只允许写回原请求的记录与内容版本；过期结果被拒绝。同一最终句子的重复回调需要幂等处理。必须等目标结果完成保存，才能显示处理完成。
 
-未配置服务时保留本机输入，提示配置后处理。密钥和 endpoint 配置只用于当前进程，不读取个人环境文件或自动恢复个人凭据。重启后未完成任务进入 `Interrupted`；由于原请求可能已经计费且结果未知，重新配置后仍由用户明确重试。
+未配置服务时保留本机输入，提示配置后处理。模型与 endpoint 配置经 `ProductWorkspace` 和 `ProductStore` 持久保存。密钥只存在于安全存储和 runtime 会话内存，不进入工作区或快照。重启后未完成任务进入 `Interrupted`；由于原请求可能已经计费且结果未知，重新配置后仍由用户明确重试。
+
+### 服务配置与安全凭据
+
+`ProviderConfiguration` 保存非敏感参数、`CredentialBinding` 和待删除引用。`Uninitialized` 允许一次旧版兼容读取，`Saved(reference)` 只读取指定新项，`Cleared` 阻止旧值复活。Swift 的 `NativeCredentials` 只执行创建、读取、删除和显式授权，Rust 决定绑定、错误状态与事务顺序。
+
+保存先创建不可变安全项并校验读回，再原子提交配置与引用。确定的工作区写入失败删除新项，原配置保持；落盘结果不确定时保留新项并停用云端凭据，必须关闭重开，重试读取不能解除该状态。替换与清除将旧引用写入待删除清单，删除失败会明确报告，并在重启或显式重试时继续。崩溃发生在新项创建与工作区提交之间可能留下未引用安全项；不得按全服务枚举删除，以免影响其他工作区，后续回收见 [#604](https://github.com/semantic-craft/koe/issues/604)。
+
+新项使用 `com.semanticcraft.koe.provider.credentials` 服务和 UUID account。旧版 `com.semanticcraft.soundcore.credentials` / `engines-v1` 仅仅读取 `qwen`，保留旧整包和其中的其他服务值；不读取旧 JSON 文件中的秘密。新项缺失、不可读与显式清除分别显示，不自动回退旧项。
+
+仅非 Debug、无凭据来源覆盖、无显式工作区且满足 Developer ID、`com.anker.ankerRecorder` 与 Team `LQAVR62TK2` 签名要求的 macOS 宿主使用系统 Keychain。其他运行默认隔离，原生开发默认目录为 `KoeWorkspaceDevelopment`。启动读写禁止系统授权弹窗，设置中的显式重试每次最多授权一个当前项或待删除项，并恢复原有系统交互开关。真实跨签名安装升级与静默读回由 [#603](https://github.com/semantic-craft/koe/issues/603) 验收，隔离测试不替代该证据。
 
 ### 问答和证据
 
@@ -83,9 +93,11 @@ CoreBluetooth 将连接、订阅完成、断开和通知字节交给 Rust，执�
 
 `koe-host-api` 的接口版本和快照版本均为 **2**。Swift 通过 `koe_host_session_dispatch_json` 发送意图，通过 `koe_host_session_snapshot_json` 获取带 `generation` 的不可变快照。宿主拒绝旧代次或不兼容版本，并显示命令或解码错误。
 
+`koe_host_session_create_with_credentials` 是兼容版本 2 的新增创建入口，注入同步、不可重入的凭据回调；原创建入口继续使用隔离内存适配器。回调上下文必须存活到 session 销毁，所有临时字符串只在调用期间借用。
+
 `HostSessionStore` 只持有一份快照。Swift 可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，不能自行提取待办、拼接转写时间、修补引用或改变处理阶段。AppKit 管理窗口和菜单，`NativeFileActions` 管理系统文件选择，`NativePlayback` 执行音频播放并回报实际进度。
 
-CLI 直接使用同一个 runtime。MCP stdio 的 `search`、`get_record`、`ask` 调用同一份记录与检索逻辑；`ask` 会保存会话。CLI/MCP 当前不继承 GUI 的临时云端凭据，也不提供另一套独立的记录库。
+CLI 直接使用同一个 runtime。MCP stdio 的 `search`、`get_record`、`ask` 调用同一份记录与检索逻辑；`ask` 会保存会话。CLI/MCP 使用隔离凭据，不读取 GUI 的系统密钥，也不提供另一套独立的记录库。
 
 ## 构建约束与当前边界
 

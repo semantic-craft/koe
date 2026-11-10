@@ -101,7 +101,7 @@ public struct SettingsDoctorView: View {
                         HStack {
                             Label("AI 服务", systemImage: "sparkles").font(.system(size: AppFontSizes.md, weight: .medium))
                             Spacer()
-                            KoeBadge(store.snapshot.provider.configured ? "当前会话已配置" : "未配置",
+                            KoeBadge(store.snapshot.provider.configured ? "已配置" : "未配置",
                                      tint: store.snapshot.provider.configured ? AppColors.success : AppColors.textMuted)
                         }
                         Text("使用阿里云百炼完成转写、整理与问答。未配置时，原文、待办、记忆和本地检索仍可使用。")
@@ -117,11 +117,30 @@ public struct SettingsDoctorView: View {
                             }.padding(.top, 10)
                         }.font(.system(size: AppFontSizes.xs))
                         HStack {
-                            Text("密钥只在本次运行期间使用，退出后清除。")
+                            Text(store.snapshot.provider.isolated ? "隔离运行，密钥仅在本次会话使用。" : "密钥保存在系统安全存储中，留空保留已存密钥。")
                                 .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                             Spacer()
-                            KoeActionButton("用于当前会话", isPrimary: true) { configure() }
-                                .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            KoeActionButton("保存配置", isPrimary: true) { configure() }
+
+                        }
+                        HStack {
+                            KoeActionButton("清除密钥") {
+                                apiKey = ""
+                                store.send("clear_provider_credential")
+                            }
+                            KoeActionButton("重试读取安全配置") { store.send("retry_provider_credentials", ["authorize": true]) }
+                        }
+                        if store.snapshot.provider.credentialState == "reopen_required" {
+                            Text("工作区保存结果尚未确认，请退出并重新打开 Koe。")
+                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
+                        }
+                        if store.snapshot.provider.credentialState == "missing_saved" {
+                            Text("已保存的密钥在当前安全存储中不存在，请重新输入或清除。")
+                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
+                        }
+                        if store.snapshot.provider.credentialState == "unavailable" {
+                            Text("安全凭据暂不可读取，云端处理已停用。")
+                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
                         }
                     }
                 }
@@ -147,16 +166,20 @@ public struct SettingsDoctorView: View {
             }.padding(30).frame(maxWidth: 850, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear { if !store.snapshot.provider.model.isEmpty { model = store.snapshot.provider.model } }
+        .onAppear {
+            model = store.snapshot.provider.model
+            chatEndpoint = store.snapshot.provider.chatEndpoint
+            asrEndpoint = store.snapshot.provider.asrEndpoint
+        }
         .onDisappear { apiKey = "" }
     }
     private func configure() {
-        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        var fields: [String: Any] = ["apiKey": apiKey, "model": model]
+        var fields: [String: Any] = ["model": model]
+        if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["apiKey"] = apiKey }
         let chat = chatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let asr = asrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !chat.isEmpty { fields["chatEndpoint"] = chat }
-        if !asr.isEmpty { fields["asrEndpoint"] = asr }
+        fields["chatEndpoint"] = chat
+        fields["asrEndpoint"] = asr
         store.send("configure_provider", fields)
         apiKey = ""
     }

@@ -37,8 +37,9 @@ impl KoeRuntime {
                         .sessions
                         .get_mut(&id)
                         .ok_or("实时记录状态不可用")?;
-                    capture.captured_pcm_bytes =
-                        capture.captured_pcm_bytes.saturating_add(pcm16.len() as u64);
+                    capture.captured_pcm_bytes = capture
+                        .captured_pcm_bytes
+                        .saturating_add(pcm16.len() as u64);
                     if let Some(stream) = &mut capture.stream {
                         for chunk in pcm16.chunks(64 * 1024) {
                             if let Err(error) = stream.push_audio(chunk.to_vec()) {
@@ -126,7 +127,11 @@ impl KoeRuntime {
         capture.terminal = !configured;
         if configured {
             match LiveTranscription::start(ProviderConfig::new(
-                self.settings.asr_endpoint.clone(),
+                self.store
+                    .workspace()
+                    .provider_configuration()
+                    .asr_endpoint
+                    .clone(),
                 DASHSCOPE_ASR_MODEL.into(),
                 self.settings.key.clone(),
             )) {

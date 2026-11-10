@@ -1,6 +1,8 @@
 //! Recording-owned product state shared by native hosts and the CLI.
 
 mod ask;
+mod provider;
+pub use provider::{valid_reference, CredentialBinding, ProviderConfiguration};
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};
 mod record;
@@ -242,6 +244,8 @@ impl std::error::Error for ProductError {}
 /// Pure serializable value state used by the persistence boundary, not a wire schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceState {
+    /// Non-sensitive provider configuration.
+    pub provider_configuration: ProviderConfiguration,
     /// Completed imports, including preserved material that has not been mapped.
     pub migrations: Vec<MigrationReceipt>,
     /// Committed revision.
@@ -265,6 +269,7 @@ pub struct WorkspaceState {
 /// Single owner of recording content, sourced review items, and conversation state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductWorkspace {
+    provider_configuration: ProviderConfiguration,
     migrations: Vec<MigrationReceipt>,
     revision: u64,
     next_operation: u64,
@@ -287,6 +292,7 @@ impl ProductWorkspace {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            provider_configuration: ProviderConfiguration::default(),
             migrations: Vec::new(),
             revision: 0,
             next_operation: 1,
