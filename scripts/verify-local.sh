@@ -45,6 +45,8 @@ cargo test --workspace --offline --quiet
 
 if [[ -d "$root/platforms/macos" && -f "$root/platforms/macos/Package.swift" && "$(uname -s)" == "Darwin" ]]; then
   note "native host: platforms/apple-shared & platforms/macos"
+  swift scripts/generate-app-icons.swift
+  swift scripts/verify-app-icon.swift build/macos/AppIcon.iconset
   cargo build --package koe-host-api --offline --quiet
   cargo build --release --package koe-host-api --offline --quiet
   swift test --package-path "$root/platforms/apple-shared"

@@ -23,12 +23,13 @@ func renderMacIcon(pixels: Int) -> Data {
     context.interpolationQuality = .high
     let side = CGFloat(pixels)
     let canvas = CGRect(x: 0, y: 0, width: side, height: side)
-    let bounds = canvas.insetBy(dx: side * 0.05, dy: side * 0.05)
+    // Match the legacy macOS 824 px artwork frame on a 1024 px canvas.
+    let bounds = canvas.insetBy(dx: side * 100 / 1024, dy: side * 100 / 1024)
     context.addPath(
         CGPath(
             roundedRect: bounds,
-            cornerWidth: side * 0.20,
-            cornerHeight: side * 0.20,
+            cornerWidth: bounds.width * 2 / 9,
+            cornerHeight: bounds.height * 2 / 9,
             transform: nil
         )
     )

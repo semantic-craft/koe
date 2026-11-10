@@ -1,5 +1,13 @@
 # 教训台账（内部）
 
+### Dock 图标要核对不透明轮廓，启动时保留系统处理
+
+- 出处：2026-11-10 用户发现 Koe 与 Micro Input 在 Dock 中比相邻图标大一圈；两者的图案占画布 90%，启动时直接加载原始 ICNS。
+- 修复：保留原图，将打包轮廓改为 1024 画布中的 824 像素，并按原比例缩放圆角；启动时经 `NSWorkspace.icon(forFile:)` 获取系统图标。
+- 验证点：`swift scripts/verify-app-icon.swift build/macos/AppIcon.iconset` 比较 128/256/512/1024 四档轮廓与系统 Mail 图标，改前四档失败、改后通过；安装包 ICNS 再读回确认边界为 (100,100)–(924,924)。GUI 能启动不代表已截图核对 Dock。
+- Seen 1x（2026-11-10）。
+
+
 只给 agent 用：记每条教训的出处、修复、验证点和复发次数（Seen N×）；验证点写明之后怎么核对这条已改到位（看哪个文件、跑什么命令、查什么结果）。对外的十条规则在 [CONTRIBUTING](../../CONTRIBUTING.md)；同一条教训在 3 个不同日子出现，就升为 [AGENTS.md](../../AGENTS.md) 交付规则，能写成测试或检查的写成测试或检查。
 #286 开源准备时根目录 `lessons.md` 并入了 CONTRIBUTING，Seen 计数随归档一起删了；本文件从 2026-10-19 起接着记，旧条目原文在 git 历史 `ae0cfa5^:lessons.md`（#286 删除前的最后一版）。
 

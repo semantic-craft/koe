@@ -13,9 +13,15 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T01:27:49Z"
+      },
+      {
+        "number": 594,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T06:58:00Z"
       }
     ],
-    "main": "69fc39a6c5e682eaf4ff4e4e32daf367c6456c9b",
+    "main": "60ca380db8aba06a99b793754b4751b45096c423",
     "open_pulls": [],
     "pulls": [
       {
@@ -30,7 +36,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T04:05:16.473960Z",
+  "observed_at": "2026-11-10T06:59:00.278763Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -174,12 +180,17 @@
               "kind": "issue",
               "note": "实现范围与验收入口",
               "ref": 587
+            },
+            {
+              "kind": "issue",
+              "note": "图标安装、签名与轮廓已验；Dock 专属截图尚未取得。",
+              "ref": 594
             }
           ],
           "id": "merge-install",
-          "next": "真实 D3200 与付费服务验收见 #588。",
+          "next": "Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。",
           "status": "done",
-          "summary": "2026-11-10 已 Developer ID 签名并安装 /Applications/Koe.app；verify-self、smoke-test 通过，正式界面已打开旧记录并停留在首页。",
+          "summary": "2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。",
           "title": "本机签名安装"
         }
       ],
@@ -210,7 +221,8 @@
   "tracked": {
     "issues": [
       587,
-      588
+      588,
+      594
     ],
     "pulls": [
       589
