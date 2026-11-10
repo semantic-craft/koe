@@ -240,3 +240,10 @@
 - 修复：(1) `session.rs` 在 `active_is_realtime` 或 `device_recording_active` 期间收到对应 `file_id` 的 `1A/07` 文件头时保持 `StreamingRealtime` 并派发 `CaptureEvent::Started`，硬件停录与 2s 静默收尾自动排队 `1B/0E`（`list_files_with_end_time(0)`）；(2) `koe-runtime` 按 `file_id` 绑定实时记录、收到 `Started` 立即落盘创建 `live-{file_id}` 记录，并在空闲时通过 `maybe_start_auto_offline_pull` 自动取回目录中未同步的已完成文件；(3) `live.rs` 转发非空 `Interim` 中间句并在 `UtteranceSpine::update_segment` 中原地更新文本与起止时间戳；(4) `BluetoothBridge.swift` 引入 `BleOutboundQueue` 按 300ms 节流发送 BLE 指令，并在 `TodayView.swift`/`SidebarView.swift` 展示实时录音时长、字节流与流式字幕预览。
 - 验证点：`cargo test -p koe-engine -p koe-client-providers -p koe-runtime`（含 `realtime_lifecycle_emits_started_finished_preserves_stream_on_head_and_refreshes_catalog_on_stop`、`live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finalizes_audio`、`hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record`、`interim_sentences_stream_as_live_events_before_sentence_end`）及 `swift test --package-path platforms/macos`（含 `bleOutboundQueuePacing`）全绿。
 - Seen 1x (2026-11-10)
+
+### 迁移身份和音频格式须沿旧版真实写入链核对
+
+- 出处：2026-11-10 F1 独立审查发现，初版按 u32 解析所有数字文件名前缀，漏掉旧本地导入的 16 位微秒身份；又把设备裸 Opus 当成 Ogg 容器。简单 WAV 夹具通过不足以证明旧库可迁。
+- 修复：保留 u64 历史身份，设备编号单独转换；识别 Ogg 与裸帧，裸帧直接用真实 libopus 完整解码，不能借 Ogg 包装器的 pre-skip 裁掉开头。人工原文按旧版行首规则应用说话人别名。
+- 验证点：`cargo test -p koe-runtime --test legacy_restore` 的微秒身份、裸 Opus、人工别名回归分别在修复前失败、修复后通过。夹具来源见 `crates/koe-runtime/tests/fixtures/flutter/README.md`。签名安装版仍需 #598 验收。
+- Seen 1x (2026-11-10)。

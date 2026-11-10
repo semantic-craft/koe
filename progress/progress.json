@@ -19,9 +19,21 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T06:58:00Z"
+      },
+      {
+        "number": 597,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T07:05:58Z"
+      },
+      {
+        "number": 598,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T07:05:59Z"
       }
     ],
-    "main": "60ca380db8aba06a99b793754b4751b45096c423",
+    "main": "be10aef45bb5ad541653672120c80a3c2c9866f5",
     "open_pulls": [],
     "pulls": [
       {
@@ -36,7 +48,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T06:59:00.278763Z",
+  "observed_at": "2026-11-10T07:18:09.409257Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -133,7 +145,26 @@
           "next": "升级后的真实录音长期使用继续在 #588 记录。",
           "status": "done",
           "summary": "保留说话人、硬件重点与只有 Opus 的录音；真实解码失败保留原始文件并提示。",
-          "title": "旧记录迁移"
+          "title": "旧 Rust 工作区恢复"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "F1 实现范围。",
+              "ref": 597
+            },
+            {
+              "kind": "file",
+              "ref": "crates/koe-runtime/src/flutter_import.rs",
+              "note": "真实旧格式迁入、原件保全与幂等校验入口。"
+            }
+          ],
+          "id": "flutter-migration",
+          "next": "签名安装版验收见 #598；未支持领域随后续切片补迁。",
+          "status": "done",
+          "summary": "显式选择旧目录，迁入基础录音、可见原文、说话人与未验证来源的旧纪要；一次事务保存迁移回执，重复快照不覆盖编辑。原件保全与未迁清单持久保存，不表示完整迁移。整批上限 256 MB，增量合并未支持。",
+          "title": "旧 Flutter 基础资料迁移"
         }
       ],
       "title": "当前产品实现"
@@ -157,7 +188,7 @@
           "id": "automated-check",
           "next": "后续改动运行统一门禁。",
           "status": "done",
-          "summary": "完整 scripts/check 通过：178 项 Rust 测试及文档测试、9 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查（23 文件 0 违规）通过。",
+          "summary": "F1 的 15 项旧资料恢复回归、完整 scripts/check、Clippy、Python 契约、Swift 测试和进度校验通过；独立审查发现的微秒身份、裸音频及别名问题已修复并复核。未运行签名安装版迁移验收。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -192,6 +223,20 @@
           "status": "done",
           "summary": "2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。",
           "title": "本机签名安装"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机验收工单，保持未验。",
+              "ref": 598
+            }
+          ],
+          "id": "flutter-device-acceptance",
+          "next": "使用授权旧库副本在签名版逐项核对。",
+          "status": "unverified",
+          "summary": "本轮未运行签名安装版目录导入、真实音频播放及退出重启读回。自动回归不能替代真机结果。",
+          "title": "旧 Flutter 库真机验收"
         }
       ],
       "title": "验收与交付"
@@ -222,7 +267,9 @@
     "issues": [
       587,
       588,
-      594
+      594,
+      597,
+      598
     ],
     "pulls": [
       589

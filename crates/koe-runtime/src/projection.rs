@@ -188,6 +188,7 @@ impl KoeRuntime {
             },
             "provider":{"configured":!self.settings.key.is_empty(),"model":self.settings.model},
             "playback":{"recordId":self.playback.record,"positionMs":self.playback.position_ms,"isPlaying":self.playback.playing},
+            "migrationReports": self.workspace().migrations().iter().map(|m|json!({"fingerprint":m.fingerprint,"archivePath":self.root.join(&m.archive).to_string_lossy(),"pending":m.pending,"recordCount":m.record_ids.len()})).collect::<Vec<_>>(),
             "error":self.error,"notice":self.notice})
     }
 
@@ -203,8 +204,17 @@ impl KoeRuntime {
         } else {
             aggregate.duration_ms
         };
-        let segments: Vec<_> = aggregate.spine.segments().iter().map(|s| json!({"id":s.id.to_string(),"text":s.text,"startMs":s.start_ms,"endMs":s.end_ms,"speaker":s.speaker})).collect();
+        let segments: Vec<_> = aggregate.spine.segments().iter().map(|s| json!({"id":s.id.to_string(),"text":s.text,"startMs":s.start_ms,"endMs":s.end_ms,"timed":s.end_ms>s.start_ms,"speaker":s.speaker})).collect();
         let mut summary = Vec::new();
+        for imported in self
+            .workspace()
+            .migrations()
+            .iter()
+            .flat_map(|m| &m.summaries)
+            .filter(|s| s.record_id == aggregate.recording_id)
+        {
+            summary.push(json!({"title":format!("旧版纪要（未验证来源） · {}", imported.slot),"text":imported.text,"sources":[]}));
+        }
         let source_values = |ids: &[SegmentId]| -> Vec<Value> {
             ids.iter()
                 .filter_map(|s| {

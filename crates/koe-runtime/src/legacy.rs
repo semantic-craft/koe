@@ -221,7 +221,7 @@ fn modified_epoch(path: &Path) -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-fn decode_ogg_opus(bytes: &[u8]) -> Result<Vec<u8>, String> {
+pub(super) fn decode_ogg_opus(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut reader = PacketReader::new(Cursor::new(bytes));
     let head = reader.read_packet_expected().map_err(|e| e.to_string())?;
     let header = &head.data;
