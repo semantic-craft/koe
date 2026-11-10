@@ -1,23 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Keep unconfigured-provider tests independent of the caller's credentials.
-unset DASHSCOPE_API_KEY ARK_API_KEY DOUBAO_API_KEY DOUBAO_TTS_API_KEY
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
-# Static analysis and unit tests. Device, install and signing acceptance use separate entry points (see AGENTS.md).
-python3 scripts/test_cleanup_app_registrations.py
-python3 scripts/test_android_check.py
-python3 scripts/test_ci.py
-python3 scripts/test_verify_minutes_flow.py
-python3 scripts/test_verify_ui_principles.py
-python3 scripts/verify-ui-principles.py --mode all
-python3 tools/koe-mcp/test_server.py
-python3 progress/progress.py check
-if [[ "$(uname)" == "Darwin" ]]; then scripts/test-input-device-lease; fi
-cargo run --manifest-path rust/Cargo.toml --bin gen_bindings --quiet -- --check
-cargo check --manifest-path rust/Cargo.toml --workspace --all-targets --offline --quiet
-cargo clippy --manifest-path desktop/Cargo.toml --package koe-desktop --all-targets --offline -- -D warnings
-cargo test --manifest-path rust/Cargo.toml --workspace --offline --quiet
-cargo test --manifest-path desktop/Cargo.toml --workspace --offline --quiet
-cargo run --manifest-path desktop/Cargo.toml --bin koe-desktop --offline --quiet -- --verify-self
-cargo build --manifest-path rust/Cargo.toml --package koe_core_ffi --release --offline --quiet
-if [[ "$(uname)" == "Darwin" ]]; then scripts/test-koe-core-swift; fi
+exec ./scripts/verify-local.sh "$@"

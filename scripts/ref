@@ -17,21 +17,15 @@ ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 # The koe index always tracks the main checkout: an autoindex journal is bound to one root.
 MAIN="$(git -C "$ROOT" worktree list --porcelain | awk 'NR==1{print $2}')"
 
-# name  url  pinned commit  sparse path ("" = whole repo)
+# name  url  pinned commit  sparse path ("-" = whole repo)
 REPOS=(
   "soundcore-upstream https://github.com/tacshi/Soundcore f01a19c227aac0cee9a7c851b3f6b69cf5540a24 -"
-  "omi https://github.com/BasedHardware/omi def12bf04e2abdacc03c5c0281ec7a21fffc6b1f app"
-)
-# Locked packages copied from the pub cache at the version in pubspec.lock.
-DEPS=(
-  flutter_blue_plus flutter_blue_plus_darwin flutter_blue_plus_platform_interface
-  record record_ios record_macos record_platform_interface
-  just_audio just_audio_background audio_service audio_session
-  opus_codec opus_codec_dart opus_codec_ios opus_codec_macos
-  flutter_blue_plus_android record_android
-  flutter_secure_storage flutter_secure_storage_darwin audio_decoder flutter_tts
-  device_calendar_plus device_calendar_plus_android device_calendar_plus_ios
-  quick_actions quick_actions_android quick_actions_ios
+  "omi https://github.com/BasedHardware/omi 82357c8224ef13627f4e88eff1338afee0ab02b5 -"
+  "screenpipe https://github.com/screenpipe/screenpipe 2eee9acea41857146cb76a297756ea2d659b0e4b -"
+  "taosheng https://github.com/0xCoach/TaoSheng 23907c46415828342b51a296332dd97db25243c4 -"
+  "msime https://github.com/metasequoiaime/msime main -"
+  "vecta https://github.com/nitishagar/vecta 5e0c028047314ef82c98718d354f4fd63cc35ec2 -"
+  "cicada https://github.com/tpn/cicada e427a8bc8cb99f44483bc790cf97d22a6619d61d -"
 )
 
 die() { echo "ref: $*" >&2; exit 1; }
@@ -54,10 +48,6 @@ stop() {
   rm -f "$HOME_DIR/node.pid"
 }
 
-locked_version() {
-  awk -v p="  $1:" '$0==p{f=1} f&&/^    version:/{gsub(/"/,"",$2); print $2; exit}' "$ROOT/pubspec.lock"
-}
-
 index() { # folder prefix
   local rc=0
   "$XERJ" autoindex "$1" --url "$URL" --prefix "$2" --state-dir "$HOME_DIR/state/$2" || rc=$?
@@ -65,7 +55,8 @@ index() { # folder prefix
 }
 
 sync() {
-  mkdir -p "$CACHE/repos" "$CACHE/deps"
+  mkdir -p "$CACHE/repos"
+  rm -rf "$CACHE/deps"
   for entry in "${REPOS[@]}"; do
     read -r name url sha sparse <<<"$entry"
     local dir="$CACHE/repos/$name"
@@ -83,15 +74,6 @@ sync() {
     fi
     echo "repo $name @ ${sha:0:12}"
   done
-  rm -rf "$CACHE/deps" && mkdir -p "$CACHE/deps"
-  for pkg in "${DEPS[@]}"; do
-    local v; v="$(locked_version "$pkg")"
-    [ -n "$v" ] || { echo "skip $pkg (not in pubspec.lock)"; continue; }
-    local src="${PUB_CACHE:-$HOME/.pub-cache}/hosted/pub.dev/$pkg-$v"
-    [ -d "$src" ] || die "$src missing; run flutter pub get"
-    cp -R "$src" "$CACHE/deps/$pkg-$v"   # autoindex does not follow symlinks
-  done
-  echo "deps ${#DEPS[@]} packages at locked versions"
   start
   index "$CACHE" ref
 }

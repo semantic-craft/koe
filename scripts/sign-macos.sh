@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEAM_ID="${TEAM_ID:-LQAVR62TK2}"
 BUNDLE_ID="${BUNDLE_ID:-com.anker.ankerRecorder}"
 IDENTITY="${MACOS_SIGN_IDENTITY:-}"
-ENTITLEMENTS="${MACOS_SIGN_ENTITLEMENTS:-$ROOT/desktop/Release.entitlements}"
+ENTITLEMENTS="${MACOS_SIGN_ENTITLEMENTS:-$ROOT/platforms/macos/Release.entitlements}"
 VERIFY_ONLY=0
 APP=""
 

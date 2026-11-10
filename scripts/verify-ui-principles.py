@@ -12,41 +12,9 @@ from typing import Any
 
 ALLOWED_FONT_SIZES = {12.0, 14.0, 16.0, 22.0}
 
-REQUIRED_EDITORIAL_FILLS = (
-    "0xFFFCEEE5",
-    "0xFFDFEFCD",
-    "0xFFFAECEF",
-    "0xFFFAF7EB",
-    "0xFFECF6FA",
-    "0xFFECEFFA",
-)
-
-SLICE_SCOPES = {
-    "slice-b": [
-        "desktop/app/src/theme.rs",
-        "desktop/app/src/main.rs",
-    ],
-    "slice-c": [
-        "desktop/app/src/theme.rs",
-        "desktop/app/src/main.rs",
-    ],
-    "slice-d": [
-        "desktop/app/src/theme.rs",
-        "desktop/app/src/main.rs",
-    ],
-    "slice-r": [
-        "desktop/app/src/theme.rs",
-        "desktop/app/src/main.rs",
-    ],
-}
-
 RUST_TOKEN_KEY_MAP = {
     "ACCENT": "accent",
-    "ORANGE_BRAND": "orangeBrand",
-    "ORANGE_ACTION": "orangeAction",
-    "ORANGE_DEEP": "orangeDeep",
-    "ORANGE_TINT": "orangeTint",
-    "ORANGE_BORDER": "orangeBorder",
+    "ON_ACCENT": "onAccent",
     "SURFACE_0": "surface0",
     "SURFACE_1": "surface1",
     "BG_CARD": "bgCard",
@@ -61,6 +29,13 @@ RUST_TOKEN_KEY_MAP = {
     "TEXT_PRIMARY": "textPrimary",
     "TEXT_SECONDARY": "textSecondary",
     "TEXT_MUTED": "textMuted",
+}
+
+TOKEN_FONT_SIZES = {
+    "xs": 12.0,
+    "sm": 14.0,
+    "md": 16.0,
+    "lg": 22.0,
 }
 
 
@@ -99,162 +74,78 @@ def check_palette(theme_text: str) -> dict[str, Any]:
     violations: list[str] = []
     tokens: dict[str, str] = {}
     for m in re.finditer(
-        r"static\s+const\s+(?:Color\s+)?([a-zA-Z0-9_]+)\s*=\s*Color\((0x[0-9A-Fa-f]{8})\);",
-        theme_text,
-    ):
-        tokens[m.group(1)] = m.group(2)
-    for m in re.finditer(
         r"pub\s+const\s+([A-Z0-9_]+)\s*:\s*u32\s*=\s*(0x[0-9A-Fa-f_]{8,10});",
         theme_text,
     ):
         key = RUST_TOKEN_KEY_MAP.get(m.group(1), m.group(1).lower())
         tokens[key] = m.group(2).replace("_", "")
 
-    if re.search(r"0x[fF]{2}[aA]4472[bB]\b", theme_text):
-        violations.append("Principle 6 violation: theme contains legacy terracotta 0xFFA4472B")
-    if re.search(r"0x[fF]{2}0066[cC]{2}\b", theme_text):
-        violations.append("Principle 6 violation: theme contains legacy bright blue 0xFF0066CC")
-
     accent_hex = tokens.get("accent")
     accent_info: dict[str, Any] = {}
     if not accent_hex:
-        violations.append("missing AppColors.accent constant")
+        violations.append("missing AppColors::ACCENT constant")
     else:
         rgb = parse_hex_color(accent_hex)
         hue, sat, val = hue_sat_val(rgb)
-        white_contrast = round(contrast_ratio(rgb, (255, 255, 255)), 2)
-        accent_info = {
-            "hex": accent_hex,
-            "hue_deg": round(hue, 1),
-            "saturation": round(sat, 3),
-            "value": round(val, 3),
-            "white_contrast": white_contrast,
-        }
-        if accent_hex.upper() == "0XFFA4472B":
-            violations.append(
-                f"Principle 6 violation: AppColors.accent ({accent_hex}) is legacy terracotta"
-            )
-        if 200.0 <= hue <= 230.0 and sat > 0.60:
-            violations.append(
-                f"Principle 6 violation: AppColors.accent ({accent_hex}, hue={hue:.1f} deg, sat={sat:.2f}) is legacy bright blue"
-            )
-        if not (10.0 <= hue <= 28.0 and sat >= 0.70):
-            violations.append(
-                f"Principle 6 violation: AppColors.accent ({accent_hex}, hue={hue:.1f} deg, sat={sat:.2f}) is not Vecta Illinois Orange"
-            )
-        if white_contrast < 4.25:
-            violations.append(
-                f"Principle 7 violation: white on AppColors.accent ({accent_hex}) contrast is {white_contrast}:1 (< 4.25:1 action orange floor)"
-            )
+        foreground_hex = tokens.get("onAccent")
+        if accent_hex.upper() != "0XFFC4B5FD":
+            violations.append("Palette violation: ACCENT must use approved violet 0xFFC4B5FD")
+        if foreground_hex is None:
+            violations.append("Palette violation: missing ON_ACCENT foreground")
+        else:
+            foreground_contrast = round(contrast_ratio(rgb, parse_hex_color(foreground_hex)), 2)
+            accent_info = {
+                "hex": accent_hex, "hue_deg": round(hue, 1),
+                "saturation": round(sat, 3), "value": round(val, 3),
+                "foreground_contrast": foreground_contrast,
+            }
+            if foreground_contrast < 4.5:
+                violations.append(f"Contrast violation: ON_ACCENT contrast is {foreground_contrast}:1 (< 4.5:1)")
 
-    brand_hex = tokens.get("orangeBrand")
-    if not brand_hex:
-        violations.append("Principle 6 violation: missing AppColors::ORANGE_BRAND constant")
-    else:
-        b_rgb = parse_hex_color(brand_hex)
-        b_hue, b_sat, _ = hue_sat_val(b_rgb)
-        if brand_hex.upper() != "0XFFFF5F05" or not (15.0 <= b_hue <= 28.0 and b_sat >= 0.85):
-            violations.append(
-                f"Principle 6 violation: ORANGE_BRAND ({brand_hex}) must be Illinois Orange 0xFFFF5F05"
-            )
+    for key, approved in (("surface0", "0XFF1A1A1D"), ("bgPanel", "0XFF141416"), ("surface1", "0XFF202024")):
+        if tokens.get(key, "").upper() != approved:
+            violations.append(f"Palette violation: {key} must use approved dark surface {approved}")
 
-    if tokens.get("surface0", "").upper() != "0XFFFAFAFA":
-        violations.append(
-            f"Principle 6 violation: SURFACE_0 ({tokens.get('surface0')}) must be 0xFFFAFAFA"
-        )
-    if tokens.get("bgPanel", "").upper() != "0XFFF0F0F2":
-        violations.append(
-            f"Principle 6 violation: BG_PANEL ({tokens.get('bgPanel')}) must be 0xFFF0F0F2"
-        )
-
-    neutral_keys = [
-        "surface0",
-        "bgPanel",
-        "surface1",
-        "bgSubtle",
-        "bgCardHover",
-        "bgMuted",
-        "border",
-        "borderSoft",
-        "textPrimary",
-        "textSecondary",
-        "textMuted",
-    ]
+    neutral_keys = ["surface0", "bgPanel", "surface1", "bgSubtle", "bgCardHover", "bgMuted",
+                    "border", "borderSoft", "textPrimary", "textSecondary", "textMuted"]
     for key in neutral_keys:
-        hx = tokens.get(key)
-        if not hx:
-            violations.append(f"Principle 6 violation: missing neutral token {key}")
+        value = tokens.get(key)
+        if value is None:
+            violations.append(f"Palette violation: missing neutral token {key}")
             continue
-        r, g, b = parse_hex_color(hx)
-        if abs(r - b) > 12 or abs(r - g) > 12:
-            violations.append(
-                f"Principle 6 violation: {key} ({hx}) is not a Vecta neutral gray (R={r}, G={g}, B={b})"
-            )
+        channels = parse_hex_color(value)
+        if max(channels) - min(channels) > 20:
+            violations.append(f"Palette violation: {key} is not a neutral surface or text color")
 
-    for surf_key in ("surface0", "surface1"):
+    for surf_key in ("surface0", "surface1", "bgPanel"):
         if surf_key not in tokens:
             continue
-        s_rgb = parse_hex_color(tokens[surf_key])
-        for txt_key in ("textPrimary", "textSecondary", "textMuted"):
-            if txt_key not in tokens:
+        for text_key in ("textPrimary", "textSecondary", "textMuted"):
+            if text_key not in tokens:
                 continue
-            t_rgb = parse_hex_color(tokens[txt_key])
-            cr = round(contrast_ratio(s_rgb, t_rgb), 2)
-            if cr < 4.5:
-                violations.append(
-                    f"Principle 7 violation: {txt_key} on {surf_key} contrast is {cr}:1 (< 4.5:1)"
-                )
+            ratio = round(contrast_ratio(parse_hex_color(tokens[surf_key]), parse_hex_color(tokens[text_key])), 2)
+            if ratio < 4.5:
+                violations.append(f"Contrast violation: {text_key} on {surf_key} contrast is {ratio}:1 (< 4.5:1)")
 
-    if "AIVisualEditorialPalette" not in theme_text:
-        violations.append("Principle 6 violation: missing AIVisualEditorialPalette in theme file")
-    else:
-        text_primary_rgb = parse_hex_color(tokens.get("textPrimary", "0xFF171719"))
-        upper_theme = theme_text.upper()
-        for fill_hex in REQUIRED_EDITORIAL_FILLS:
-            if fill_hex.upper() not in upper_theme:
-                violations.append(
-                    f"Principle 6 violation: AIVisualEditorialPalette missing soft role fill {fill_hex}"
-                )
-            else:
-                fill_rgb = parse_hex_color(fill_hex)
-                cr = round(contrast_ratio(fill_rgb, text_primary_rgb), 2)
-                if cr < 7.0:
-                    violations.append(
-                        f"Principle 7 violation: editorial fill {fill_hex} vs TEXT_PRIMARY contrast is {cr}:1 (< 7.0:1)"
-                    )
-
-    if "class AppFontSizes" not in theme_text and "pub struct AppFontSizes" not in theme_text:
+    if "pub struct AppFontSizes" not in theme_text:
         violations.append("Principle 7 violation: missing AppFontSizes 4-size scale in theme file")
 
-    if (
-        "static double concentric(" not in theme_text
-        and "pub const fn concentric(" not in theme_text
-    ):
-        violations.append("Principle 9 violation: missing AppRadii.concentric helper in theme file")
+    if "pub const fn concentric(" not in theme_text:
+        violations.append("Principle 9 violation: missing AppRadii::concentric helper in theme file")
 
-    card_shadow_match = re.search(
-        r"static\s+(?:const\s+)?List<BoxShadow>\s+(?:get\s+)?cardShadow\s*(?:=>|=)\s*(?:const\s+)?(\[[^\]]*\]);",
-        theme_text,
-        re.DOTALL,
-    )
     rust_shadow_match = re.search(
         r"pub\s+const\s+CARD_SHADOW\s*:\s*&\[u32\]\s*=\s*&(\[[^\]]*\]);",
         theme_text,
         re.DOTALL,
     )
-    if card_shadow_match:
-        if "BoxShadow(" in card_shadow_match.group(1):
-            violations.append(
-                "Principle 9 violation: AppColors.cardShadow must be empty by default so inline cards stay flat"
-            )
-    elif rust_shadow_match:
+    if rust_shadow_match:
         if rust_shadow_match.group(1).strip() != "[]":
             violations.append(
                 "Principle 9 violation: AppColors::CARD_SHADOW must be empty by default so inline cards stay flat"
             )
     else:
         violations.append(
-            "Principle 9 violation: AppColors.cardShadow must be empty by default so inline cards stay flat"
+            "Principle 9 violation: AppColors::CARD_SHADOW must be empty by default so inline cards stay flat"
         )
 
     return {
@@ -267,58 +158,31 @@ def check_theme_file(theme_text: str) -> dict[str, Any]:
     return check_palette(theme_text)
 
 
-TOKEN_FONT_SIZES = {
-    "xs": 12.0,
-    "sm": 14.0,
-    "md": 16.0,
-    "lg": 22.0,
-}
-
-TEXT_THEME_SLOT_SIZES = {
-    "displayLarge": 22.0,
-    "displayMedium": 22.0,
-    "displaySmall": 22.0,
-    "headlineLarge": 22.0,
-    "headlineMedium": 22.0,
-    "headlineSmall": 16.0,
-    "titleLarge": 22.0,
-    "titleMedium": 16.0,
-    "titleSmall": 14.0,
-    "bodyLarge": 14.0,
-    "bodyMedium": 14.0,
-    "bodySmall": 12.0,
-    "labelLarge": 14.0,
-    "labelMedium": 12.0,
-    "labelSmall": 12.0,
-}
-
-
 def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[str, Any]:
     violations: list[str] = []
-    raw_sizes = [float(m.group(1)) for m in re.finditer(r"fontSize:\s*([0-9.]+)", text)]
-    raw_sizes.extend(
-        float(m.group(1)) for m in re.finditer(r"\.text_size\(px\(([0-9.]+)\)\)", text)
-    )
-    font_size_exprs = [
-        m.group(1).strip() for m in re.finditer(r"fontSize:\s*([^,\n)]+)", text)
+    line_count = len(text.splitlines())
+    if (
+        path_str.endswith(".swift") or path_str.endswith("crates/koe-host-api/src/lib.rs")
+    ) and line_count > 500:
+        violations.append(
+            f"Architecture violation: {path_str} has {line_count} lines (max is 500 lines)"
+        )
+
+    raw_sizes = [
+        float(m.group(1)) for m in re.finditer(r"\.font\(\.system\(size:\s*([0-9.]+)", text)
     ]
-    gpui_size_exprs = [
-        m.group(1).strip() for m in re.finditer(r"\.text_size\(px\(([^)]+)\)\)", text)
+    swift_size_exprs = [
+        m.group(1).strip() for m in re.finditer(r"\.font\(\.system\(size:\s*([^,\n)]+)", text)
     ]
     token_sizes = [
         TOKEN_FONT_SIZES[t.lower()]
-        for expr in (font_size_exprs + gpui_size_exprs)
+        for expr in swift_size_exprs
         for t in re.findall(r"AppFontSizes(?:\.|::)([a-zA-Z0-9_]+)", expr)
         if t.lower() in TOKEN_FONT_SIZES
     ]
-    slot_sizes = [
-        TEXT_THEME_SLOT_SIZES[m.group(1)]
-        for m in re.finditer(r"textTheme\.([a-zA-Z0-9_]+)\b", text)
-        if m.group(1) in TEXT_THEME_SLOT_SIZES
-    ]
     dynamic_font_exprs = [
         expr
-        for expr in (font_size_exprs + gpui_size_exprs)
+        for expr in swift_size_exprs
         if not re.fullmatch(
             r"(?:[0-9.]+|AppFontSizes(?:\.|::)[a-zA-Z0-9_]+|[a-zA-Z_][a-zA-Z0-9_]*\s*\?\s*AppFontSizes\.[a-zA-Z0-9_]+\s*:\s*AppFontSizes\.[a-zA-Z0-9_]+)",
             expr,
@@ -331,7 +195,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
     unknown_tokens = [
         m.group(1)
         for m in re.finditer(
-            r"(?:fontSize:\s*|\.text_size\(px\()AppFontSizes(?:\.|::)([a-zA-Z0-9_]+)",
+            r"\.font\(\.system\(size:\s*AppFontSizes(?:\.|::)([a-zA-Z0-9_]+)",
             text,
         )
         if m.group(1).lower() not in TOKEN_FONT_SIZES
@@ -340,7 +204,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         violations.append(
             f"Principle 7 violation: {path_str} uses unknown AppFontSizes token(s): {unknown_tokens}"
         )
-    distinct_sizes = sorted(set(raw_sizes + token_sizes + slot_sizes))
+    distinct_sizes = sorted(set(raw_sizes + token_sizes))
 
     if len(distinct_sizes) > 4:
         violations.append(
@@ -360,18 +224,18 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
             f"Principle 8 violation: {path_str} contains {middle_dots} middle dot '·' connector(s)"
         )
 
-    italics = len(re.findall(r"FontStyle\.italic", text))
+    italics = len(re.findall(r"\.italic\(\)", text))
     if italics > 0:
         violations.append(
-            f"Principle 8 violation: {path_str} contains {italics} FontStyle.italic usage(s)"
+            f"Principle 8 violation: {path_str} contains {italics} .italic() usage(s)"
         )
 
     uppercases = len(
-        re.findall(r"\.(?:toUpperCase|to_uppercase|to_ascii_uppercase)\(", text)
+        re.findall(r"\.(?:uppercased|to_uppercase|to_ascii_uppercase)\(", text)
     )
     if uppercases > 0:
         violations.append(
-            f"Principle 8 violation: {path_str} contains {uppercases} .toUpperCase() call(s)"
+            f"Principle 8 violation: {path_str} contains {uppercases} .uppercased() call(s)"
         )
 
     pushy_verbs = re.findall(r"立即(?:购买|体验|开启|升级|绑定|转写|同步|隐藏|执行|前往)", text)
@@ -386,36 +250,46 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         )
 
     legacy_palette_hits = re.findall(
-        r"0x[fF]{2}(?:b66c50|f0d9cc|a4472b|f6ebe6)\b|Colors\.(?:green|red)\b",
+        r"0x[fF]{2}(?:b66c50|f0d9cc|a4472b|f6ebe6)\b",
         text,
+        re.IGNORECASE,
     )
     if legacy_palette_hits:
         violations.append(
-            f"Principle 6 violation: {path_str} uses legacy terracotta or unstyled Material color(s): {legacy_palette_hits}"
+            f"Principle 6 violation: {path_str} uses legacy terracotta color(s): {legacy_palette_hits}"
         )
 
-    full_red_buttons = len(
-        re.findall(
-            r"FilledButton(?:\.icon)?\([^;]*?backgroundColor:\s*(?:AppColors|tokens)\.coral",
-            text,
-            re.DOTALL,
+    if path_str.endswith(".swift"):
+        plain_count = text.count(".buttonStyle(.plain)")
+        inner_shape_before_plain = len(
+            re.findall(r"\.contentShape\(Rectangle\(\)\)\s*\}\s*\.buttonStyle\(\.plain\)", text)
         )
-    )
-    if full_red_buttons > 0:
-        violations.append(
-            f"Principle 5 violation: {path_str} uses {full_red_buttons} full-red destructive FilledButton(s)"
-        )
-
-    if path_str.endswith("home_screen.dart"):
-        if "点「扫描」查找安克录音豆" in text or "tooltip: '扫描'" in text:
+        if plain_count > 0 and inner_shape_before_plain < plain_count:
             violations.append(
-                "Principle 1/3/8 violation: home_screen.dart uses radar icon + '扫描' instead of unified '连接录音豆' button"
+                f"Principle 10 violation: {path_str} has {plain_count} .buttonStyle(.plain) button(s) "
+                f"but only {inner_shape_before_plain} wrap .contentShape(Rectangle()) inside the label closure before .buttonStyle(.plain)"
             )
 
-    if path_str.endswith("widgets/widgets.dart"):
-        if re.search(r"class\s+BatteryRing[\s\S]*?tokens\.amber[\s\S]*?tokens\.coral", text):
+        textfield_count = len(re.findall(r"\bTextField\s*\(", text))
+        onsubmit_count = len(re.findall(r"\.onSubmit\b", text))
+        if textfield_count > onsubmit_count:
             violations.append(
-                "Principle 6 violation: BatteryRing mixes amber and coral multi-accents on the same widget"
+                f"UX violation: {path_str} has {textfield_count} TextField(s) but only {onsubmit_count} .onSubmit handler(s)"
+            )
+
+        if path_str.endswith("AskView.swift") and "ask.messages" not in text:
+            violations.append(
+                f"UX violation: {path_str} must render ask.messages so submitted prompts display sourced answers"
+            )
+
+        if path_str.endswith("KoeMacApp.swift") and "NSApp?.windows.first" in text and "isWorkspaceWindow" not in text:
+            violations.append(
+                f"UX violation: {path_str} must filter workspace windows via isWorkspaceWindow instead of falling back to NSApp?.windows.first (which matches NSStatusBarWindow)"
+            )
+
+        if path_str.endswith("PlayerBarView.swift") and re.search(r"durationMs\s*\+\s*1000", text):
+            violations.append(
+                f"UX violation: {path_str} must mark playheadMs instead of inflating durationMs + 1000 on add_slice_mark"
             )
 
     return {
@@ -424,36 +298,74 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
         "middle_dots": middle_dots,
         "italics": italics,
         "uppercases": uppercases,
-        "full_red_buttons": full_red_buttons,
+        "full_red_buttons": 0,
         "violations": violations,
     }
 
 
-def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
-    rust_theme = root / "desktop" / "app" / "src" / "theme.rs"
-    dart_theme = root / "lib" / "theme" / "app_theme.dart"
-    theme_path = rust_theme if rust_theme.exists() else dart_theme
-    theme_res = check_theme_file(theme_path.read_text(encoding="utf-8")) if theme_path.exists() else {
-        "accent": {},
-        "violations": ["missing desktop/app/src/theme.rs"],
-    }
+REQUIRED_INSTALL_PLIST_KEYS = (
+    "AppIcon.icns",
+    "NSBluetoothAlwaysUsageDescription",
+    "NSBluetoothPeripheralUsageDescription",
+    "NSMicrophoneUsageDescription",
+    "NSAudioCaptureUsageDescription",
+    "NSSpeechRecognitionUsageDescription",
+    "NSLocalNetworkUsageDescription",
+    "NSCalendarsUsageDescription",
+    "NSCalendarsFullAccessUsageDescription",
+    "NSRemindersUsageDescription",
+    "NSRemindersFullAccessUsageDescription",
+    "--verify-self",
+    "--smoke-test",
+)
 
-    if mode in SLICE_SCOPES:
-        rel_files = SLICE_SCOPES[mode]
-    elif (root / "desktop" / "app" / "src").exists():
-        rel_files = sorted(
-            str(p.relative_to(root))
-            for p in (root / "desktop" / "app" / "src").rglob("*.rs")
-        )
-    else:
-        rel_files = sorted(
-            str(p.relative_to(root))
-            for p in list((root / "lib" / "theme").rglob("*.dart"))
-            + list((root / "lib" / "ui").rglob("*.dart"))
+
+def check_install_script(script_text: str) -> list[str]:
+    violations: list[str] = []
+    for key in REQUIRED_INSTALL_PLIST_KEYS:
+        if key not in script_text:
+            violations.append(
+                f"Packaging violation: scripts/install-macos.sh is missing required key/check '{key}'"
+            )
+    return violations
+
+
+def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
+    candidates = [
+        root / "crates" / "koe-client-core" / "src" / "theme.rs",
+        root / "crates" / "koe-engine" / "src" / "theme.rs",
+    ]
+    theme_path = next((p for p in candidates if p.exists()), candidates[-1])
+    theme_res = (
+        check_theme_file(theme_path.read_text(encoding="utf-8"))
+        if theme_path.exists()
+        else {
+            "accent": {},
+            "violations": ["missing shared Rust theme.rs"],
+        }
+    )
+
+    rel_files: list[str] = []
+    if theme_path.exists():
+        rel_files.append(str(theme_path.relative_to(root)))
+    host_api_lib = root / "crates" / "koe-host-api" / "src" / "lib.rs"
+    if host_api_lib.exists():
+        rel_files.append(str(host_api_lib.relative_to(root)))
+    if (root / "platforms").exists():
+        rel_files.extend(
+            sorted(
+                str(p.relative_to(root))
+                for p in (root / "platforms").rglob("*.swift")
+                if ".build" not in p.parts and "DerivedData" not in p.parts
+            )
         )
 
     file_reports: list[dict[str, Any]] = []
     all_violations: list[str] = list(theme_res["violations"])
+
+    install_script = root / "scripts" / "install-macos.sh"
+    if install_script.exists():
+        all_violations.extend(check_install_script(install_script.read_text(encoding="utf-8")))
 
     for rel in rel_files:
         fp = root / rel
@@ -478,7 +390,7 @@ def analyze_repository(root: Path, mode: str) -> dict[str, Any]:
             "files_over_4_font_sizes": files_over_4_sizes,
             "total_uppercases": sum(r["uppercases"] for r in file_reports),
             "total_italics": sum(r["italics"] for r in file_reports),
-            "total_full_red_buttons": sum(r["full_red_buttons"] for r in file_reports),
+            "total_full_red_buttons": 0,
         },
         "violations": all_violations,
         "files": file_reports,
@@ -490,9 +402,9 @@ def main() -> int:
     parser.add_argument("--root", default=".", help="Repository root path")
     parser.add_argument(
         "--mode",
-        choices=["audit", "slice-b", "slice-c", "slice-d", "slice-r", "all"],
+        choices=["audit", "all"],
         default="audit",
-        help="Verification mode (`audit` exits 0 and writes baseline/report; slice modes enforce 0 violations)",
+        help="Verification mode (`audit` exits 0 and writes baseline/report; `all` enforces 0 violations)",
     )
     parser.add_argument("--output", help="Optional JSON receipt output path")
     args = parser.parse_args()

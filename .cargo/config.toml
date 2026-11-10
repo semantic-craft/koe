@@ -1,0 +1,7 @@
+[env]
+# audiopus_sys otherwise prefers a system libopus even with its static feature.
+LIBOPUS_NO_PKG = { value = "1", force = true }
+# Both Rust and the bundled C build target the same minimum as the Swift host.
+MACOSX_DEPLOYMENT_TARGET = { value = "14.0", force = true }
+# The bundled Opus release predates CMake 4's removal of pre-3.5 policies.
+CMAKE_POLICY_VERSION_MINIMUM = { value = "3.5", force = true }

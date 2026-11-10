@@ -1,0 +1,190 @@
+import AppKit
+import Foundation
+import KoeAppleShared
+import SwiftUI
+
+/// AppKit window activation & presentation helper modeled after `metasequoiaime/msime`
+/// (`platforms/macos/src/core/WindowPresentation.h`).
+///
+/// While SwiftUI declaratively renders the workspace layout in `KoeAppleShared`, AppKit owns
+/// macOS process activation policy (`.regular` Dock presence vs. `.accessory` background menu-bar
+/// agent), window focus (`makeKeyAndOrderFront` + `orderFrontRegardless`), and `NSStatusItem`.
+@MainActor
+public enum KoeWindowPresenter {
+    private static var cachedWorkspaceWindow: NSWindow?
+
+    public static func isWorkspaceWindow(_ window: NSWindow) -> Bool {
+        let className = String(describing: type(of: window))
+        if className.contains("StatusBar") || className.contains("Popup") || window is NSPanel {
+            return false
+        }
+        return window.styleMask.contains(.titled) || window.styleMask.contains(.closable)
+    }
+
+    public static func rememberWindow(_ window: NSWindow?) {
+        guard let window, isWorkspaceWindow(window) else { return }
+        window.isReleasedWhenClosed = false
+        cachedWorkspaceWindow = window
+    }
+
+    public static func presentWindow(_ window: NSWindow?) {
+        guard let window else { return }
+        rememberWindow(window)
+        if let app = NSApp, app.activationPolicy() != .regular {
+            _ = app.setActivationPolicy(.regular)
+        }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        NSApp?.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+    }
+
+    public static func presentPrimaryWorkspaceWindow() {
+        if let app = NSApp, app.activationPolicy() != .regular {
+            _ = app.setActivationPolicy(.regular)
+        }
+        NSApp?.activate(ignoringOtherApps: true)
+        let target = NSApp?.windows.first(where: { isWorkspaceWindow($0) && $0.isVisible })
+            ?? NSApp?.windows.first(where: { isWorkspaceWindow($0) })
+            ?? cachedWorkspaceWindow
+        if let target {
+            presentWindow(target)
+        }
+    }
+
+}
+
+@MainActor
+public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    public var store: HostSessionStore? {
+        didSet {
+            bluetoothBridge.store = store
+            files.store = store
+            playback.store = store
+        }
+    }
+    public let bluetoothBridge = BluetoothBridge()
+    let files = NativeFileActions()
+    private let playback = NativePlayback()
+    private var statusItem: NSStatusItem?
+    private var timer: Timer?
+    private var lastTick = ProcessInfo.processInfo.systemUptime
+
+    public func applicationDidFinishLaunching(_ notification: Notification) {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"), let image = NSImage(contentsOf: url) {
+            NSApp?.applicationIconImage = image
+        }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.title = "Koe"
+        item.menu = buildStatusMenu()
+        statusItem = item
+        NotificationCenter.default.addObserver(self, selector: #selector(scan), name: Notification.Name("KoeRequestBleScan"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.willCloseNotification, object: nil)
+        lastTick = ProcessInfo.processInfo.systemUptime
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        if let timer { RunLoop.main.add(timer, forMode: .common) }
+        KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+    }
+
+    private func tick() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsed = UInt64(max(0, now - lastTick) * 1000)
+        lastTick = now
+        store?.pollTimers(elapsedMs: elapsed)
+        bluetoothBridge.flushOutboundFrames()
+        playback.tick()
+    }
+
+    @objc private func rememberWindow(_ notification: Notification) {
+        KoeWindowPresenter.rememberWindow(notification.object as? NSWindow)
+    }
+    public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+        return true
+    }
+    public func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        playback.stop()
+        store?.shutdown()
+    }
+    public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { buildStatusMenu() }
+    public func menuNeedsUpdate(_ menu: NSMenu) { populate(menu) }
+    public func buildStatusMenu() -> NSMenu {
+        let menu = NSMenu(title: "Koe")
+        menu.delegate = self
+        populate(menu)
+        return menu
+    }
+    private func populate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let status = NSMenuItem(title: store?.snapshot.device.state ?? "未连接录音豆", action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        menu.addItem(status)
+        menu.addItem(.separator())
+        for (id, title) in [("today", "今天"), ("records", "所有记录"), ("tasks", "待办"), ("memory", "记忆"), ("ask", "问 Koe"), ("settings", "设置")] {
+            let item = NSMenuItem(title: title, action: #selector(navigate(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = id
+            item.state = store?.snapshot.section == id ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let scanItem = NSMenuItem(title: "查找录音豆", action: #selector(scan), keyEquivalent: "")
+        scanItem.target = self
+        menu.addItem(scanItem)
+        let open = NSMenuItem(title: "打开 Koe", action: #selector(openWindow), keyEquivalent: "o")
+        open.target = self
+        menu.addItem(open)
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "退出 Koe", action: #selector(quit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+    @objc private func navigate(_ item: NSMenuItem) {
+        if let section = item.representedObject as? String { store?.send("navigate", ["section": section]) }
+        KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+    }
+    @objc private func scan() { bluetoothBridge.startScanningIfPoweredOn() }
+    @objc private func openWindow() { KoeWindowPresenter.presentPrimaryWorkspaceWindow() }
+    @objc private func quit() { NSApp?.terminate(nil) }
+}
+
+struct KoeNativeSceneApp: App {
+    @NSApplicationDelegateAdaptor(KoeAppDelegate.self) private var appDelegate
+    @State private var store = HostSessionStore(workspacePath: KoeMainEntry.workspacePath)
+    var body: some Scene {
+        WindowGroup("Koe") {
+            KoeWorkspaceRootView(store: store, onImport: { appDelegate.files.importFile() }, onExport: { appDelegate.files.exportRecord($0) })
+                .onAppear {
+                    appDelegate.store = store
+                    KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+                }
+        }
+        .windowResizability(.contentMinSize)
+    }
+}
+
+@main
+public enum KoeMainEntry {
+    @MainActor static var workspacePath: String?
+    @MainActor
+    public static func main() {
+        let args = CommandLine.arguments
+        if args.contains("--verify-self") { exit(KoeSelfCheckRunner.runVerifySelf()) }
+        if args.contains("--smoke-test") { exit(KoeSelfCheckRunner.runSmokeTest()) }
+        if let index = args.firstIndex(of: "--workspace-root") {
+            guard args.indices.contains(index + 1), args[index + 1].hasPrefix("/") else {
+                fputs("--workspace-root requires an absolute directory path\n", stderr)
+                exit(2)
+            }
+            workspacePath = args[index + 1]
+        }
+        KoeNativeSceneApp.main()
+    }
+}

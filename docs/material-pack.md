@@ -1,6 +1,6 @@
 # Koe 资料包格式（`.koepack`）
 
-资料详情「更多 → 导出…」生成，「新记录 → 导入资料包」恢复（#145）。一个包只装一条资料。代码在 [lib/state/material_pack.dart](../lib/state/material_pack.dart)（格式、读写、校验）和 [lib/state/recorder/material_pack.dart](../lib/state/recorder/material_pack.dart)（导出内容、导入去重与合并）。
+资料详情「更多 → 导出…」生成，「新记录 → 导入资料包」恢复（#145）。一个包只装一条资料。代码在 [crates/koe-engine/src/cicada.rs](../crates/koe-engine/src/cicada.rs)（`KOEPACK1\n` 帧格式、SHA-256 校验、导出与导入去重）及 [crates/koe-client-core/src/lib.rs](../crates/koe-client-core/src/lib.rs)（客户端重导出）。
 
 ## 两种导出
 
@@ -86,4 +86,4 @@ KOEPACK1\n
 
 文件 framing 仍为 `KOEPACK1`。无纪要的包写 manifest version 1，携带纪要写 version 2，避免旧 App 静默忽略纪要。新版读整数1/2；版本1夹带 minutes、非正整数或未来版本均拒绝。读写两端都限制 manifest 为32 MiB；超限导出失败，不留下看似完成的包。
 
-原音频补缺使用既有 `archiveAtomicLinkNoReplace` 的 `link(2)`，目标已存在时失败而不覆盖；Android 使用 bionic `libc.so`。接口依据 [AOSP unistd.h 的 link 声明](https://android.googlesource.com/platform/bionic/+/refs/heads/main/libc/include/unistd.h)。Android 文件系统实际发布及分享仍需 #514 真机验收。
+原音频补缺使用原子落盘与内容哈希校验，目标已存在时失败而不覆盖。

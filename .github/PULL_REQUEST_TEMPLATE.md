@@ -18,7 +18,7 @@ Closes #
 
 ## 检查
 
-- [ ] `scripts/check`（`flutter analyze` + `flutter test`）通过
-- [ ] 改动 BLE、播放、音频转换、JSON 存储或问答检索时已跑 `scripts/perf-check`，数字写在上面
+- [ ] `./scripts/check`（Python 契约测试 + `verify-ui-principles.py` + `cargo test/clippy --workspace` + `swift test`）通过
+- [ ] 改动 BLE、播放、音频转换、JSON 存储或问答检索时已跑 `cargo run -p koe-cli -- benchmark`，数字写在上面
 - [ ] 没有提交任何密钥、token 或个人数据
 - [ ] 改动了 ROADMAP 里的行或用户可见行为时，已同步更新 ROADMAP / CHANGELOG

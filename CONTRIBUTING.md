@@ -1,32 +1,44 @@
 # 参与贡献
 
-谢谢你愿意改进 Koe。本文说明怎么开工、怎么交付，以及我们踩过坑后定下的十条规则。项目文档以中文为主，代码、命令和标识符用英文。
+谢谢你愿意改进 Koe。本文说明怎么开工、怎么验证、怎么交付，以及我们定下的十条工程规则。项目文档以中文为主，代码、命令和标识符用英文。
 
 ## 开工前
 
-1. 先读 [README](README.md) 跑起来，再读 [ROADMAP](ROADMAP.md)：冻结区里的功能（P3、外部 AI 接入、Mac 双端同步等）暂不接 PR。Android 已按 [#331](https://github.com/semantic-craft/koe/issues/331) 解冻，范围限 Pixel 11 Pro / Android 17，子工单 #336–#345；Android 改动用 `scripts/android-check` 在 Pixel 上跑 [integration_test/android](integration_test/android/) 的场景。
+1. 先读 [README.md](README.md) 与 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 了解四层纯 Rust + 原生 SwiftUI 架构，再读 [ROADMAP.md](ROADMAP.md) 确认当前范围。
 2. 改动较大时先开 Issue 讨论范围和验收条件。工单与标签约定见 [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) 和 [docs/agents/triage-labels.md](docs/agents/triage-labels.md)。
-3. 开工前查一下有没有开放 PR 在改同一个工单或同一批文件：一个工单同一时间只有一个在做的 PR。
-4. 领域术语见 [GLOSSARY](GLOSSARY.md)，设计决策见 [docs/adr](docs/adr/)，界面规范见 [docs/design/ui-guidelines.md](docs/design/ui-guidelines.md)，设备协议见 [PROTOCOL](PROTOCOL.md)。
+3. 开工前查一下有没有开放 PR 在改同一个工单或同一批文件，一个工单同一时间只有一个在做的 PR。
+4. 领域术语见 [GLOSSARY.md](GLOSSARY.md)，设计决策见 [docs/adr](docs/adr/)，设备协议见 [PROTOCOL.md](PROTOCOL.md)。
 
 ## 开发与验证
 
-```bash
-flutter pub get
-```
+日常快速增量检查：
 
 ```bash
-scripts/check
+./scripts/verify-local.sh
 ```
 
-`scripts/check` 运行 Python 脚本回归、Mac 输入租约夹具、`flutter analyze` 和 `flutter test`。要逐文件确认跑了哪些测试，用 `scripts/check --reporter expanded`。CI 对代码改动运行此入口；纯文档和进度更新的分流见 [CI 运行机](docs/agents/ci-runner.md)。改动 BLE、播放、音频转换、JSON 存储或问答检索时，再跑一次 `scripts/perf-check` 并把数字写进 PR。
+提交与 PR 前的全量门禁：
+
+```bash
+./scripts/check
+```
+
+`./scripts/check` 会依次运行 Python 脚本契约测试、`scripts/verify-ui-principles.py` 原生 SwiftUI 界面原则门禁、`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `swift test --package-path platforms/macos`。CI 对代码改动运行同一入口；纯文档和进度更新的分流见 [docs/agents/ci-runner.md](docs/agents/ci-runner.md)。
+
+涉及 macOS 宿主、C ABI、签名或安装包改动时，还需运行：
+
+```bash
+./scripts/install-macos.sh
+/Applications/Koe.app/Contents/MacOS/Koe --verify-self
+/Applications/Koe.app/Contents/MacOS/Koe --smoke-test
+```
 
 ## 交付
 
-- 只经分支 + PR 交付，只用 squash 合并；不直接推 main，不 force push，不改写已推送的历史。
-- PR 正文按 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md) 写三项验收：**①回退测试**（哪条测试改动前失败、改动后通过，没有就说明原因）；**②真实使用情况**（在真机、真实数据或真实界面上跑了什么、结果如何，没跑就写「未在真实环境验证」）；**③没跑到的项目**（跳过的检查、没覆盖的场景和原因）。只写「测试通过」不算验收。
+- 只经分支 + PR 交付，只用 squash 合并；不直接推 `main`，不 force push，不改写已推送的历史。
+- PR 正文按 [PR 模板](.github/PULL_REQUEST_TEMPLATE.md) 写三项验收：①回退测试（哪条测试改动前失败、改动后通过，没有就说明原因）；②真实使用情况（在真机、真实数据或真实界面上跑了什么、结果如何，没跑就写「未在真实环境验证」）；③没跑到的项目（跳过的检查、没覆盖的场景和原因）。只写「测试通过」不算验收。
 - 只加改动前会失败、能拦住真实回归的行为测试；不加凑数、重复覆盖或只测实现细节的测试。
-- 需要 iPhone/Mac 真机、安装包或录音豆的验收，写进 PR 的 `## 需要真机` 小节，并拆成独立工单；代码评审通过就先合并。
+- 需要 D3200 物理录音豆或 iPhone/Mac 真机硬件环境的验收，写进 PR 的 `## 需要真机` 小节，并拆成独立工单；代码评审通过就先合并。
 - **不要提交任何密钥。** 不把 API Key、token、`.env`/`.envrc` 写进代码、日志、Issue 或 PR。安全问题按 [SECURITY.md](SECURITY.md) 私下报告。
 
 完整交付规则见 [docs/agents/delivery-rules.md](docs/agents/delivery-rules.md)。
@@ -38,15 +50,15 @@ scripts/check
 1. **只经分支 + PR 交付，只用 squash 合并，PR 和提交正文写三项验收。**
 2. **一个工单同一时间只有一个在做的 PR。** 开工前查 `gh pr list -R semantic-craft/koe --state open --search "#<工单号>"`，PR 正文写 `Closes #N`。
 3. **开发与验证构建不得触达个人 Keychain；签名或凭据改动必须验一次真实安装升级后的读取。**
-4. **付费任务在请求前记录状态，结果持久保存后才算完成；结果未知时不盲目重发。**
-5. **云端上传要检查序列化后的真实字节，并至少用授权测试音频跑一次真实服务。**
-6. **首次配置要从「没有任何密钥」的用户状态点击走通。**
-7. **异步测试要覆盖真实时序：** 带 I/O 的对象在 `runAsync` 里构造；模拟重启前等前一实例写完；并发用 Completer 控制交错；原生流失败后不能按输入帧立即重试，旧请求收尾不得清除新请求的失败状态。
-8. **判断哪些测试文件跑过，用 `--reporter expanded` 或 json，不看 compact 日志。** compact 输出会覆盖进度行，日志里缺文件不等于没跑。
+4. **付费云端任务在请求前记录状态，结果持久保存后才算完成；结果未知时不盲目重发。**
+5. **云端流式与文件上传必须遵守真实协议（如 RFC 6455 客户端掩码帧），严禁在生产环境用本地 RMS 音量伪造回退句子。**
+6. **首次配置要从「没有任何密钥」的用户状态走通，未配密钥时在 Doctor 自检面板显式提示。**
+7. **跨层严格遵守单向依赖与快照代次：** SwiftUI 宿主只通过 `koe_host_snapshot_json` 消费带 `generation` 的不可变快照并通过 `koe_host_dispatch_json` 发送单向命令，不在宿主层复制业务状态。
+8. **SwiftUI 视图模块保持精简：** `platforms/` 下单个 `.swift` 源文件不超过 500 行，设置项说明收敛至 `InfoTip`（「?」气泡），由 `scripts/verify-ui-principles.py` 强制门禁。
 9. **删除、覆盖、移动类脚本的路径保护要一次列全相等、互相包含、符号链接、大小写五种关系。**
 10. **阻塞项要追到根因并清障；真机验收拆成独立工单，不闸住已过审的合并。**
 
-新教训补进上面的列表；同一条教训在 3 个不同日子出现，就升为 [AGENTS.md](AGENTS.md) 的硬规则。
+新教训先记进 [docs/agents/lessons.md](docs/agents/lessons.md)，同一条教训在 3 个不同日子出现就升为 [AGENTS.md](AGENTS.md) 的硬规则。
 
 ## AI 编程助手
 

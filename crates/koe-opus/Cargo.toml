@@ -1,0 +1,13 @@
+[package]
+name = "koe-opus"
+version = "2.0.0"
+edition = "2021"
+publish = false
+description = "Narrow FFI wrapper around libopus implementing koe_engine::wav::OpusStreamDecoder."
+
+[lints]
+workspace = true
+
+[dependencies]
+audiopus_sys = { version = "=0.2.2", features = ["static"] }
+koe-engine = { path = "../koe-engine" }

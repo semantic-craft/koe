@@ -1,0 +1,4 @@
+module CKoeHostApi {
+    header "koe_host_api.h"
+    export *
+}

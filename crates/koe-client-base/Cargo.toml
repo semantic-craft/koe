@@ -1,0 +1,13 @@
+[package]
+name = "koe-client-base"
+version = "2.0.0"
+edition = "2021"
+publish = false
+description = "Network-free foundational primitives for Koe: FIPS 180-4 SHA-256, HKDF-SHA256, deterministic SplitMix64/FNV-1a, and atomic file persistence with advisory lockfiles."
+
+[lints]
+workspace = true
+
+[dependencies]
+fs2 = "0.4.3"
+libc = "0.2"

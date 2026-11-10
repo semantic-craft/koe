@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install with a stable Developer ID identity so upgrades can read Keychain.
 set -euo pipefail
+export MACOSX_DEPLOYMENT_TARGET=14.0
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEAM_ID="${TEAM_ID:-LQAVR62TK2}"
 TARGET="${MACOS_INSTALL_PATH:-/Applications/Koe.app}"
@@ -25,21 +26,25 @@ designated_requirement() {
 }
 
 # Do not replace files while the installed process is still running.
-if pgrep -f "^${TARGET}/Contents/MacOS/${APP_NAME}$" >/dev/null; then
+if pgrep -f "^${TARGET}/Contents/MacOS/${APP_NAME}([[:space:]]|$)" >/dev/null; then
   echo "Quit ${APP_NAME} before installing." >&2
   exit 1
 fi
-# The pre-rename bundle shares the Bundle ID; it must not be running either.
-# It also refuses when the install target is the old bundle path.
-MACOS_INSTALL_PATH="$TARGET" "$ROOT/scripts/retire-legacy-macos-app.sh" --check-running
+if [[ -x "$ROOT/scripts/retire-legacy-macos-app.sh" ]]; then
+  MACOS_INSTALL_PATH="$TARGET" "$ROOT/scripts/retire-legacy-macos-app.sh" --check-running
+fi
 SOURCE="$ROOT/build/macos/Build/Products/Release/${APP_NAME}.app"
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  cargo build --manifest-path "$ROOT/desktop/Cargo.toml" --package koe-desktop --release --offline \
-    || cargo build --manifest-path "$ROOT/desktop/Cargo.toml" --package koe-desktop --release
+  cargo build --manifest-path "$ROOT/Cargo.toml" --package koe-host-api --release --offline \
+    || cargo build --manifest-path "$ROOT/Cargo.toml" --package koe-host-api --release
+  swift build --package-path "$ROOT/platforms/macos" -c release
   rm -rf "$SOURCE"
   mkdir -p "$SOURCE/Contents/MacOS" "$SOURCE/Contents/Resources"
-  cp "$ROOT/desktop/target/release/koe-desktop" "$SOURCE/Contents/MacOS/${APP_NAME}"
+  cp "$ROOT/platforms/macos/.build/release/${APP_NAME}" "$SOURCE/Contents/MacOS/${APP_NAME}"
   chmod +x "$SOURCE/Contents/MacOS/${APP_NAME}"
+  swift "$ROOT/scripts/generate-app-icons.swift" >/dev/null
+  iconutil -c icns "$ROOT/build/macos/AppIcon.iconset" -o "$SOURCE/Contents/Resources/AppIcon.icns"
+  cp "$ROOT/assets/artwork/koe-schoolgirl-b-cheerful.png" "$SOURCE/Contents/Resources/AppIcon.png"
   printf 'APPL????' > "$SOURCE/Contents/PkgInfo"
   cat > "$SOURCE/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -52,6 +57,10 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   <string>Koe</string>
   <key>CFBundleExecutable</key>
   <string>Koe</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
   <string>com.anker.ankerRecorder</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -70,8 +79,24 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   <true/>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>Koe 需要蓝牙权限以连接 Soundcore Work D3200 录音豆。</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>Koe 需要蓝牙外设权限以与 Soundcore Work D3200 录音豆通信。</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Koe 需要麦克风权限以进行实时语音同传与本地录音。</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Koe 需要音频采集权限以同步录制会议与系统音频。</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Koe 需要语音识别权限以提供端侧离线语音转写。</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Koe 需要本地网络权限以连接录音豆 Wi-Fi SoftAP 快传热点与局域网 MCP 服务。</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Koe 需要日历权限以关联顺带会议与 21 天日历待办。</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Koe 需要完整日历访问权限以同步会议议程与待办截止时间。</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>Koe 需要提醒事项权限以双向同步随心记待办。</string>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>Koe 需要完整提醒事项访问权限以创建与勾选随心记待办。</string>
 </dict>
 </plist>
 PLIST
@@ -119,11 +144,12 @@ if [[ "$TARGET" == "/Applications/Koe.app" && -d "/Applications/KoeSwiftUI.app" 
 fi
 ditto "$APP" "$TARGET"
 "$ROOT/scripts/sign-macos.sh" --verify-only "$TARGET"
+"$TARGET/Contents/MacOS/$APP_NAME" --verify-self
+"$TARGET/Contents/MacOS/$APP_NAME" --smoke-test
 
-# Keep a single launchable copy: archive, then remove the pre-rename bundle.
 if [[ "$KEEP_LEGACY" -eq 1 ]]; then
   echo 'NOTE: --keep-legacy left the old Soundcore Manager.app in place; it shares the Bundle ID and may still be launched.'
-else
+elif [[ -x "$ROOT/scripts/retire-legacy-macos-app.sh" ]]; then
   MACOS_INSTALL_PATH="$TARGET" "$ROOT/scripts/retire-legacy-macos-app.sh"
 fi
 echo 'Installed signed macOS Release; existing app data retained.'

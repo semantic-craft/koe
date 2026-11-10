@@ -203,3 +203,25 @@
 - 修复：生产转写写入显式调度发布，授权每个 await 后复核关闭状态，撤销清空发布及旧内容错误。
 - 验证：test/mcp_live_publication_test.dart 直接调用生产续写/校订/纪要动作，以持续 stdio 客户端读回；改前失败证据在 .scratch/pstack-relay/slice-d-auto-update-before.log、slice-d-dispose-before.log 和 slice-d-revoke-error-before.log。
 - Seen 1x (2026-11-05)。
+
+
+### macOS SwiftUI `.buttonStyle(.plain)` 必须显式指定 `.contentShape(Rectangle())` 且安装包必须打包 `AppIcon.icns` 与 `applicationDockMenu`
+
+- 出处：2026-11-09 用户在 `/Applications/Koe.app` 真机界面体验时反馈左侧栏切换极卡、点击经常无响应，且 Dock 栏图标退化为系统默认白格占位图、Dock 右键菜单缺失。
+- 修复：(1) 为 `SidebarView.swift`、`DesignKit.swift`、`InfoTip.swift`、`TodayBentoView.swift` 与 `PlayerBarView.swift` 中所有 `.buttonStyle(.plain)` 按钮补齐 `.contentShape(Rectangle())` 与 `.frame(maxWidth: .infinity)`，消除 AppKit 对 `Color.clear` 和 `Spacer()` 空白区域丢弃点击事件的热区死角；(2) 在 `HostSessionStore` 增加直达属性 `activeSection` 并在 `CopilotDrawerView` 绑定 `.id(store.activeSection)` 与独立「心力格式 / 顺带会议」视图分支；(3) 在 `scripts/install-macos.sh` 调用 `scripts/generate-app-icons.swift` 与 `iconutil -c icns` 将 `assets/artwork/koe-schoolgirl-b-cheerful.png` 打包为 `Contents/Resources/AppIcon.icns` 并写入 `Info.plist` `CFBundleIconFile`，同时在 `KoeAppDelegate` 实现 `applicationDockMenu(_:)` 与 `applyBundledApplicationIcon()`。
+- 验证点：`swift test --package-path platforms/macos` 断言 `applicationDockMenu` 返回 13 项菜单且 5 个侧边栏分栏切换立即同步 `activeSection`；`/Applications/Koe.app/Contents/Resources/AppIcon.icns` 存在且签名验证通过。
+- Seen 1x (2026-11-09)。
+
+### macOS SwiftUI + AppKit + `@Observable` 必须做右侧空白像素点击验收、按切片解耦观测、过滤状态栏/气泡窗口且 `⌘W` 不退出进程
+
+- 出处：2026-11-09 对抗式排查（`/interrogate` + `/correct`）发现多处「编译与语义 `AXPress` 全绿但真人上手残缺」隐患：(1) `.contentShape(Rectangle())` 若写在 `.buttonStyle(.plain)` 外层或尺寸过小（如 16pt `?` 气泡、无右侧留白的短时间轴标签），空白像素点击仍会漏点；(2) `HostSessionStore` 所有视图直读单一 `store.snapshot` 且 Rust `poll_timers`/`ingest_ble_chunk` 空转也递增 `generation`，导致时间轴拖拽或定时器空转触发整树重绘；(3) `KoeWindowPresenter` 未过滤 `NSStatusBarWindow`/`NSPanel`、弱引用 `cachedWorkspaceWindow` 未设置 `isReleasedWhenClosed = false`，且 `applicationShouldTerminateAfterLastWindowClosed` 在默认 `keepAliveEnabled == false` 时返回 `true`，导致按 `⌘W` 直接杀死进程或点 Dock 无法恢复原窗口；(4) `CopilotDrawerView` 未渲染 `copilotAnswer`、输入框缺 `.onSubmit`、`PlayerBarView` 打重点标记误传 `durationMs + 1000`、`心力格式` 与 `顺带会议` 页面内容重复、跨重启未持久化 `workspace_session.json`。
+- 修复：(1) `verify-ui-principles.py` 强制校验每个 `.buttonStyle(.plain)` 的 `label` 闭包内部含 `.contentShape(Rectangle())`、每个 `TextField` 含 `.onSubmit`、`KoeMacApp.swift` 含 `isWorkspaceWindow`；(2) `HostSessionStore` 拆分为按域细粒度 `@Observable` 属性，Rust 空转不递增 `generation`；(3) `KoeWindowPresenter` 强持有 `cachedWorkspaceWindow`、监听 `didBecomeKeyNotification`/`willCloseNotification` 设置 `isReleasedWhenClosed = false`，`applicationShouldTerminateAfterLastWindowClosed` 恒返回 `false`；(4) 补齐 `CopilotDrawerView` 回答展示、拆分 `FormatsView` 双页、修复 `SliceMark` 游标与 `AudioOnly` 时间轴槽位、实现 `workspace_session.json` 自动落盘与恢复。
+- 验证点：`./scripts/check`（含 `scripts/test_verify_ui_principles.py` 32 项静态门禁单测、`KoeAppleSharedTests`、`KoeMacHostTests`）全绿，且在 `/Applications/Koe.app` 上通过真实像素坐标点击各行/标签/时间轴右侧空白区域与 `⌘W` 后 `open -a` 恢复同一 `window_id` 验证。
+- Seen 1x (2026-11-09)。
+
+### 领域快照通过不等于产品管线已接通
+
+- 出处：2026-11-10 #587 梳理既有 Rust 迁移，原门禁通过但实时 PCM 被丢弃、已返回云结果在保存失败时丢失，旧 UI 投影混用当前记录。
+- 修复：ProductWorkspace/Store 作为唯一事实；按 record + attempt + input revision 回写；云结果保存成功才消费；有序采集事件、内容版本音频和统一导航。
+- 验证点：`cargo test -p koe-runtime` 覆盖本地真实 HTTP/WS、stop 前 final、切换记录、落盘故障恢复及旧格式迁移；完整原生应用另走实际点击与磁盘回读，不以构建替代。
+- Seen 1x (2026-11-10)

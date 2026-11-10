@@ -4,15 +4,15 @@
 
 ## 什么时候用
 
-- **用**：录音豆协议与上游改法、flutter_blue_plus / record / just_audio / opus_codec 在**当前锁定版本**里的真实行为（原生 Darwin 侧尤其），以及 omi 怎么处理同类问题（BLE 音频流、断线重连、转写管线、记忆与待办）。
-- **不用**：Flutter / Dart 常见 API 和已经能准确写出的写法。对模型记得住的公开代码，检索只增加成本（XERJ 的研究里这一类检索反而更差）。
+- **用**：录音豆 D3200 BLE 协议、Omi 穿戴设备断线 WAL（`PendantRingCustody`）、TaoSheng 全天候语音记忆与五栏信息架构（日历查表、寻物共乘、`AskEngine` 多轮工具检索与 `[^n]` 引用自愈、CAM++ 声纹识别）、Vecta 扫描线说话人对齐、Cicada 原地润色与 `msime` 四层 Rust FFI 桥接。
+- **不用**：Rust / Swift 标准库与常见 API。对模型记得住的公开代码，检索只增加成本（XERJ 的研究里这一类检索反而更差）。
 
 ## 命令
 
 ```bash
 scripts/ref search "reconnect after disconnect restore state" -k 5   # 参考项目
-scripts/ref def "startRecording"                                      # 参考项目里的定义位置
-scripts/ref self "transcription job resume"                           # Koe 自身
+scripts/ref def "AskEngine"                                           # 参考项目里的定义位置
+scripts/ref self "PendantRingCustody"                                 # Koe 自身
 scripts/ref status                                                    # 节点与索引条数
 ```
 
@@ -22,13 +22,17 @@ scripts/ref status                                                    # 节点�
 
 | 名称 | 内容 | 版本 | 许可 |
 | --- | --- | --- | --- |
-| `repos/soundcore-upstream` | 上游 tacshi/Soundcore，Koe 的来源 | 固定 commit | 无许可，仅私用参考，不复制进其他项目 |
-| `repos/omi` | BasedHardware/omi 的 `app/`（Flutter 硬件录音 App），稀疏检出 | 固定 commit | MIT |
-| `deps/<包>-<版本>` | 从 `~/.pub-cache` 复制的锁定依赖：flutter_blue_plus 系、record 系、just_audio / audio_service / audio_session、opus_codec 系 | 跟随 `pubspec.lock` | 各包 LICENSE；flutter_blue_plus 是自有许可，只读不抄 |
+| `repos/soundcore-upstream` | 上游 tacshi/Soundcore，D3200 协议参考 | 固定 commit `f01a19c227aa` | 无许可，仅私用参考，不复制进其他项目 |
+| `repos/omi` | `BasedHardware/omi`（穿戴设备 BLE/WAL、双端导航壳、`knowledge_ledger.v1`、Review 确认卡、Agent/MCP） | 固定 commit `82357c8224ef` | MIT |
+| `repos/screenpipe` | `screenpipe/screenpipe`（24/7 本地音画捕获、UTC 时间戳 `BTreeMap` 多模态时间轴、`SubtitleBar`、`pipe.md` 技能） | 固定 commit `2eee9acea418` | MIT |
+| `repos/taosheng` | `0xCoach/TaoSheng`（全天候随身语音记忆、21 天日历消歧、寻物共乘、Ask 引用自愈、CAM++ 声纹） | 固定 commit `23907c464158` | 仅架构与交互参考，Rust/SwiftUI 独立实现 |
+| `repos/msime` | `metasequoiaime/msime`（纯 Rust 内核 + 全原生 Apple 宿主四层架构） | `main` | MIT / Apache-2.0 |
+| `repos/vecta` | `nitishagar/vecta`（扫描线说话人对齐与 20s 断点队列参考） | 固定 commit `5e0c02804731` | MIT |
+| `repos/cicada` | `tpn/cicada`（单遍润色与 12 话题预算参考） | 固定 commit `e427a8bc8cb9` | MIT |
 
 默认只借思路自己写。确要照抄 MIT 代码时，在文件头和 [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md) 注明出处。
 
-升级依赖或改固定 commit 后运行 `scripts/ref sync`；main 有较多新提交后运行 `scripts/ref koe` 刷新自身索引（固定索引主工作区，worktree 里的未合并改动不在其中）。新增语料：在 `REPOS` 或 `DEPS` 里加一行；稀疏路径要写，避免把整仓资产拉下来。
+升级参考仓库 commit 后运行 `scripts/ref sync`；main 有较多新提交后运行 `scripts/ref koe` 刷新自身索引（固定索引主工作区，worktree 里的未合并改动不在其中）。新增语料：在 `REPOS` 里加一行；稀疏路径要写，避免把整仓资产拉下来。
 
 ## 放在哪里
 

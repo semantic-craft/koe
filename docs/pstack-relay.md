@@ -1,165 +1,74 @@
-# Koe macOS 与 iOS 11 条 UI 原则重设计接力队列
+# Koe: Rust 产品管线接力
 
-本文件是 PStack 跨对话自动接力的唯一全景队列（对应 `pstack` 的 `figure-it-out`、`sequence-verifiable-units` 与 `Session pickup`）。
-只维护每个对话切片（Slice）的用户可感知效果（Outcome）与可证伪验收条件（Done Predicate）。
+A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产品行为验收。当前以 Slice G、README 与架构文档为准。
 
-- 总目标：以 `olgvroe/Vecta` 的原生双栏轻盈界面（90% `#FAFAFA`/`#F0F0F2` 灰白画布 + 8% `AIVisualEditorialPalette` 6 色柔彩卡片 + 2% 伊利诺伊橙 `#FF5F05`/`#D9480F` 点睛）和 `wquguru/cicada` 的实时同传与滚动纪要引擎为基准，将 Koe 全面塑造为纯 Rust + GPUI 的「安克随心记」（日常心力豆工作台，顺带覆盖会议纪要），通过私有阿里云百炼（DashScope ASR/LLM）与本机原生 MCP/ACP 对外服务，并彻底根治 D3200 真机「对着豆子说话不出字」的三处链路断点。
-- 架构主线：三层零胶水统一架构，包含 (1) 单一录音生命周期聚合根 `RecordingAggregate`（以 `UtteranceSpine S1..Sn` 为唯一事实源，统一承载音频分片、双击 `SliceMark`、双语同传、6 宫格视觉卡片、根因鱼骨图、个人承诺与 `.koepack v2`），(2) 自驱流水线运行时 `SuixinRuntime`（对标 Vecta `NativeAppRuntime` + `NativeAnalysisQueue` 与 Cicada `ListenEngine`，在 `desktop/core` 内部闭环驱动 `BLE/Wi-Fi -> 16kHz Opus -> DashScope 流式 ASR -> 滚动纪要 -> BM25/MCP`，无需 UI 手写胶水串联），(3) 纯投影视图与单向意图 `WorkspaceProjection + WorkspaceCommand`（`desktop/app` GPUI 只渲染不可变投影并发射命令）。
-- 自动验收入口：`scripts/verify-ui-principles.py` + `scripts/check`
-- 视觉与架构原型画板：`.scratch/koe-ui-options/export/koe-uiuc-plaud-mcp-cli.html`
+本文件是 PStack 跨对话动态接力的全景路线图（对应 Lauren Tan `pstack` 的 `figure-it-out`、`sequence-verifiable-units`、`guard-the-context-window` 与动态 `Session pickup`）。
+前序 V1/V2 队列不参与当前产品验收。
+本队列只维护每个切片的用户/工程可感知结果（Outcome）与可证伪验收条件（Done Predicate）；**下一棒提示词绝不静态预写**，必须在每一棒收尾时根据真实代码变更、新发现的约束与上下文水位，通过 `scripts/pstack-relay advance` 动态合成。
+
+- 总目标：以 Rust 持有录音、原文、纪要、待办、记忆和问答的完整状态，接通 macOS 今天、记录详情与全局问答；保留真实输入和原文证据。
+- 架构主线：纯领域 ProductWorkspace → 唯一 ProductStore → KoeRuntime 编排 → C ABI v2 → SwiftUI 快照与意图；网络和平台 I/O 经适配器完成，按 record/request 身份回写。
+- 参考实现/材料：`metasequoiaime/msime` 与 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 自动验收入口：`scripts/check`（及重构后对齐 `msime` 的 `scripts/verify-local.sh`）
 - 决策账本（`show-me-your-work`）：`.scratch/pstack-relay/decisions.tsv`
 - 动态交接胶囊：`.scratch/pstack-relay/handoff_capsule.json`
 - 下一棒提示词快照：`.scratch/pstack-relay/NEXT_PROMPT.md`
 
 ---
 
-## 现状 vs 11 条原则差距基线（62 个 UI/Theme 文件实测）
+## 现状病灶 vs MSIME 全原生目标架构对表（全仓盘点基线）
 
-基线由 `scripts/verify-ui-principles.py --mode audit` 实测采集（回执 `.scratch/pstack-relay/ui-baseline-receipt.json`）：
-
-| 原则 | 改动前实测问题（62 个文件） | 结构化门禁与修复目标 |
+| 维度 | 当前 Koe 现状病灶（实测定位） | 对标 `metasequoiaime/msime` 的破坏性重构目标 |
 | --- | --- | --- |
-| 1 & 3. 小白主链路与去啰嗦说明 | 首页未连接时写「点『扫描』查找安克录音豆」却配无字雷达图标；资料页/项目页顶栏堆砌解释句 | 未连接处直接给「连接录音豆」按钮；界面自明处删除解释副标题，仅保留真实状态 |
-| 2 & 8. 母语词藻、标点与统一动词 | 全仓 `·` 中间点连接符 **94 处**；`SectionLabel` 强制 `.toUpperCase()`；「扫描 / 连接 / 重连」动词混用 | 清零 `·` 连接符与 `.toUpperCase()`；统一动词为「连接录音豆」「开始录音」「移到回收站」 |
-| 4. 数字单位与校验 | 电量、时长、存储空间、时间轴部分缺少单位上下文或混用散落格式 | 统一等宽数字（`tabularFigures`）与单位表达（`时长 42:18`、`电量 86%`、明确字节/条数校验） |
-| 5. 克制确认与去大片红 | 弹窗引用 **137 处**、`coral` 红色引用 **70 处**，多处使用红底实心按钮 | 可恢复操作（移入回收站、断开设备）免弹窗；不可逆操作保留确认但不用大片红底实心按钮 |
-| 6. 单一中国传统强调色与暖灰 | 原 `accent` 为 `#A4472B`（色相 `13.9°`，属陶土/砖橙色系）；`BatteryRing` 等混用红黄多色 | 切换为中国传统色「竹青」`#2E5E4E`（白字对比度 `7.42:1`；备选「靛青」`#2B4C65`、「松烟墨」`#2C2B29`）与宣纸暖灰（`R ≥ G ≥ B`） |
-| 7. 单页最多 4 种字号 | 全仓散落 **19 种不同字号**（`10.5`–`44`），12 个页面单页超过 4 种字号 | 收敛至 `AppFontSizes` 四级阶梯（`12 / 14 / 16 / 22`），单页严格 `<= 4` 种字号 |
-| 9. 纯平表面、同心圆角、禁套卡片 | `AppColors.cardShadow` 默认带两层阴影，37 处阴影/高度引用，存在卡片套卡片 | `AppColors.cardShadow` 默认置空（纯平），阴影仅留给 `floatingShadow` 浮层；新增 `AppRadii.concentric(outer, gap)` |
-| 10 & 11. 多尺寸测试与三方案演进 | 部分状态栏与长文案靠省略号截断 | 320/390/430/1280 × 1.0x/2.0x 字号全覆盖；提供 3 套交互 HTML 画板供随时切换 |
+| 1. UI 技术栈与宿主形态 | Slice O–T 引入 `gpui-kit = "=0.9.0"`，带来 **8,922 行** `desktop/Cargo.lock`、Rust edition 2024 锁死、4,435 行单文件手绘 UI（`desktop/app/src/main.rs`），缺乏原生输入法组合、原生 Popover、无障碍支持，且无法复用到 iOS | 对齐 `msime` `2026-11-03-all-native-ui.md`，**彻底下线并删除 GPUI**；采用 `platforms/apple-shared` + `platforms/macos` AppKit + SwiftUI 原生宿主（macOS 14+ / iOS 17+ 共用视图包），经 `crates/koe-host-api` 静态链接 Rust |
+| 2. 跨代死代码与旧壳层 | 残留 16,000+ 行无生产调用方的历史产物：`rust/koe_core_ffi`（4,368 行旧 C-ABI + 2,218 行 JNI + 3,461 行 `gen_bindings` 仅因 129 行 `opus_ffi.rs` 被引用）、`android/`（6,800 行坏掉的 Flutter 插件壳）、`darwin/`（旧生成桥）、`test/native/`、`tools/koe-mcp/`（2,200 行旧 Python MCP）及 12 个失效脚本 | 遵循 `subtract-before-you-add` 一次性物理清退全部废弃目录与失效脚本；保留 129 行 `opus` 安全桥，仿照 `msime/crates/host-api` 新建 `<= 500` 行的版本化 `crates/koe-host-api` |
+| 3. Workspace 与 Crate 边界 | `rust/Cargo.toml` 与 `desktop/Cargo.toml` 双 workspace 割裂；`desktop/core/src/lib.rs` 单文件 **5,418 行**（零子模块），混合了协议重导出、存储、假 ASR、UI 页签枚举、Google 内存 mock 与 30 分支巨型 `dispatch` | 合并为根级单一纯 Rust `Cargo.toml`（零 UI 依赖，`unsafe_code = "deny"`，`[profile.dev] debug = 0, incremental = false`）；按 `msime` 状态所有权拆分为 `crates/koe-engine`、`koe-client-base`、`koe-client-core`、`koe-client-providers`、`koe-client-services`、`koe-runtime` 与 `koe-host-api` |
+| 4. 领域模型重复与三层深拷贝 | 录音有 `OfflineFileEntry` / `RecordingEntry` / `RecordingAggregate` 三套；时间线有 `ContextItem` / `TimelineEntry` 两套；问答有 `AskSession` / `CopilotSession` 两套；`DesktopBeanHost` 与 `RecordingAggregate` 与 `WorkspaceProjection` 持三份重复状态，每次命令深拷贝 38 个字段；残留 `V2` 后缀 | 以 `RecordingAggregate`（含 `UtteranceSpine S1..Sn`）为唯一录音事实源，合并单一 `TimelineEntry` 与单一 `AssistantSession`，去掉全部 `V2` 历史后缀；`koe-runtime` 输出带 `generation: u64` 的轻量不可变快照 |
+| 5. 生产路径混入假桩代码 | ① `StreamingAsrPump` 无真实 WebSocket，说话时按 RMS 能量生成 `"随心实时转写 #N: 语音能量 RMS=..."` 假句子写入用户文稿；② 空目录启动自动灌入合成法律/Rust 样例句；③ Wi-Fi SoftAP 按钮注入硬编码假字节帧；④ Copilot 在视图层调 `/usr/bin/curl` | 破坏性回退全部生产态假桩：未配凭据或断网时明确处于 `Unconfigured` / `OfflineBuffered`（只落盘真实音频，不造假字）；样例数据仅限 `--demo-seed` 或测试夹具；真实网络传输全部收进 `koe-client-providers` |
+| 6. 原生 UI 组织与说明规范 | 4,435 行单文件手绘界面，50ms 定时器轮询 BLE；设置与控制台残存常驻解释文字 | 按 `msime` 的 `DesignKit.swift` + `SettingsRouter.swift` + 独立页面模块（单文件 `<= 500` 行）组织 SwiftUI；CoreBluetooth 委托直接通过 `koe-host-api` 触发代次快照更新；设置说明一律收进标题旁原生 Popover `?`（`InfoTip`） |
 
 ---
 
-## 全景切片队列（A → E）
+## 动态接力切片队列（Slice A → F）
 
-### [x] Slice A: 62 文件基线盘点、11 原则自动验证门禁与三套视觉方案画板
+### [x] Slice A: 全仓现状深潜、放弃 GPUI 确立 MSIME 全原生路线与 V3 动态接力队列就位
 - **Playbook**: `Investigation` + `figure-it-out`
-- **Outcome**: 完成 `lib/theme/` 与 `lib/ui/` 62 个文件的量化基线盘点；建立可重跑门禁 `scripts/verify-ui-principles.py` 与含负向对照的单元测试 `scripts/test_verify_ui_principles.py`；按原则 6 与 11 产出 3 套中国传统色 + macOS/iOS 双端布局画板（松烟竹青 `#2E5E4E`、靛青书卷 `#2B4C65`、玄墨素笺 `#2C2B29`）并通过 `check_canvas.py` 导出单文件 HTML。
-- **Done Predicate**: `python3 -B scripts/test_verify_ui_principles.py`、`python3 /Users/xianweizhang/.gemini/config/skills/xw-design/scripts/check_canvas.py .scratch/pstack-relay/koe-ui-proposals` 与 `scripts/pstack-relay selftest` 全部通过。
-- **Evidence**: .scratch/pstack-relay/ui-baseline-receipt.json;scripts/verify-ui-principles.py;scripts/test_verify_ui_principles.py;.scratch/pstack-relay/koe-ui-proposals/export/koe-macos-ios-11.html
+- **Outcome**: 完成 `rust/`、`desktop/`、脚本与根文档的三路代码级审计，剖析 `metasequoiaime/msime` 的内核与全原生 UI 路线（`2026-11-03-all-native-ui.md`），确立**放弃 GPUI、采用纯 Rust `crates/*` + `koe-host-api` + Apple 共享 SwiftUI 与 AppKit 原生宿主**的 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，将旧 20 切片归档至 `docs/pstack-relay-archive-v1-v2.md`，并在 `docs/pstack-relay.md` 激活 V3 破坏性重构接力队列（Slice A → F）。
+- **Done Predicate**: `test -f docs/ARCHITECTURE.md && test -f docs/pstack-relay-archive-v1-v2.md && scripts/pstack-relay selftest`
+- **Evidence**: docs/ARCHITECTURE.md;docs/pstack-relay.md;docs/pstack-relay-archive-v1-v2.md
 
-### [x] Slice B: 传统色竹青令牌、四级字号、纯平同心圆角与桌面/手机壳层落地
+### [x] Slice B: 大减法（Subtract First）——彻底移除 GPUI (`desktop/app`) 与 1.6 万行旧 FFI/Android/Python 死代码，建立根级单一纯 Rust Workspace
+- **Playbook**: `Refactoring`
+- **Outcome**: 按 subtract-before-you-add 执行 Slice B 大减法：彻底删除 GPUI 应用层 desktop/app、desktop/ble 与 desktop/Cargo.lock，将 129 行 opus_ffi.rs 独立为 crates/koe-opus 后物理删除 rust/koe_core_ffi 其余 1 万行旧 FFI/JNI/gen_bindings，删除 android/、darwin/、test/native/、tools/koe-mcp/ 与 12 个失效旧脚本，合并为仓库根级单一纯 Rust Cargo.toml 并跑通全量测试
+- **Done Predicate**: test ! -d desktop/app && test ! -d android && test ! -d tools/koe-mcp && test ! -d rust/koe_core_ffi && cargo test --workspace --offline && ./scripts/check
+- **Evidence**: Cargo.toml;crates/koe-opus/src/lib.rs;rust/koe_core/src/theme.rs;scripts/verify-local.sh;scripts/check
+
+### [x] Slice C: 领域模型大一统与 `crates/koe-engine` + `crates/koe-client-{base,core}` 拆分（消除三套重复结构与 V2 后缀）
+- **Playbook**: `Refactoring`
+- **Outcome**: 执行 Slice C 领域模型大一统与核心 Crate 边界重构：(1) 按 docs/ARCHITECTURE.md 将 rust/koe_core 重组拆分为 crates/koe-client-base（hash、prng、原子文件读写与锁）、crates/koe-client-core（theme 令牌、偏好配置、MaterialPack）与 crates/koe-engine（协议、加密、音频、领域状态机），删除旧 rust/ 目录；(2) 消除重复领域模型与历史后缀：去掉 MeetingMinutesV2 / MaterialPackV2 / PackMinutesV2 的 V2 后缀，合并 ContextItem 与 TimelineEntry，收敛 RecordingEntry 冗余结构，清理 McpAcpOwnedRuntime、SliceMarkProbe、ScannedDevice 等死符号，同步更新 desktop/core 调用方并通过全工作区 Clippy 与测试
+- **Done Predicate**: test ! -d rust && test -d crates/koe-engine && test -d crates/koe-client-base && test -d crates/koe-client-core && cargo clippy --workspace --all-targets --offline -- -D warnings && cargo test --workspace --offline && ./scripts/check
+- **Evidence**: crates/koe-client-base/src/lib.rs;crates/koe-client-core/src/lib.rs;crates/koe-engine/src/lib.rs;scripts/verify-local.sh
+
+### [x] Slice D: 拆解 `desktop/core` 为 `koe-client-{providers,services}`、`koe-runtime` 与 `koe-host-api`（版本化 C ABI），并回退全部生产假桩
+- **Playbook**: `Feature` + `Refactoring`
+- **Outcome**: 执行 Slice D 拆解 5,418 行 desktop/core 巨石并回退生产假桩：(1) 建立 crates/koe-client-providers（DashScope ASR/Qwen、OpenAI/DeepSeek、Google Tasks/Keep/Notebooks 真实协议与凭据探测）与 crates/koe-client-services（个人上下文时间线、晨报日记、待办同步与本机 MCP/ACP 服务）；(2) 建立 crates/koe-runtime（持有单一权威会话状态，输出带 generation: u64 的不可变视图快照）与对齐 msime/crates/host-api 的 crates/koe-host-api（<= 500 行版本化 C ABI）；(3) 彻底回退生产假桩（删除 StreamingAsrPump 的 RMS 假中文字句生成、删除 Wi-Fi SoftAP 假字节帧注入、删除新目录启动自动灌入假样例句）并物理删除 desktop/ 目录
+- **Done Predicate**: test ! -d desktop && test -d crates/koe-client-providers && test -d crates/koe-client-services && test -d crates/koe-runtime && test -d crates/koe-host-api && cargo clippy --workspace --all-targets --offline -- -D warnings && cargo test --workspace --offline && ./scripts/check
+- **Evidence**: crates/koe-client-providers/src/lib.rs;crates/koe-client-services/src/lib.rs;crates/koe-runtime/src/lib.rs;crates/koe-host-api/src/lib.rs
+
+### [x] Slice E: 对标 MSIME 全原生 SwiftUI 宿主（`platforms/apple-shared` + `platforms/macos`）：`DesignKit`、`ViewRequestGeneration` 与「?」`InfoTip` 落地
 - **Playbook**: `Feature`
-- **Outcome**: 在 `lib/theme/app_theme.dart`、`lib/ui/widgets/widgets.dart`、`lib/ui/shell.dart`、`lib/ui/screens/home_screen.dart` 与 `docs/design/ui-guidelines.md` 落地推荐方案一（松烟竹青 `#2E5E4E` + 宣纸暖灰 `#F5F4F0`）：建立 `AppFontSizes`（`12 / 14 / 16 / 22`）与 `AppRadii.concentric`，清空内联卡片阴影，去掉 `SectionLabel` 全大写与 `BatteryRing` 红黄混色，清零 `shell.dart` 中间点 `·`，将首页未连接雷达图标改为自明的「连接录音豆」按钮。
-- **Done Predicate**: `python3 -B scripts/verify-ui-principles.py --mode slice-b`、`flutter test test/ui_principles_foundation_test.dart test/theme_tokens_test.dart test/dialog_title_visible_test.dart test/mobile_navigation_test.dart` 与 `scripts/check` 全部通过。
-- **Evidence**: .scratch/pstack-relay/slice-b-ui-after.json;lib/theme/app_theme.dart;lib/ui/widgets/widgets.dart;lib/ui/shell.dart;lib/ui/screens/home_screen.dart;test/ui_principles_foundation_test.dart
+- **Outcome**: 执行 Slice E 构建对标 MSIME 的 Apple 全原生 SwiftUI 宿主（platforms/apple-shared 与 platforms/macos）：(1) 建立 platforms/apple-shared Swift Package 与 platforms/macos 原生 App 容器，静态链接 libkoe_host_api.a 并桥接 crates/koe-host-api 版本化 C ABI；(2) 按单文件 <= 500 行模块化实现 DesignKit.swift、InfoTip.swift（标题旁 ? 原生 Popover，消除页面常驻解释灰字）、HostSessionStore.swift（ViewRequestGeneration 代次守卫）、SidebarView.swift、PlayerBarView.swift、TodayBentoView.swift、FormatsView.swift、AliyunMcpView.swift、SettingsDoctorView.swift、CopilotDrawerView.swift；(3) 支持 --verify-self 与 --smoke-test 原生自检命令，更新 scripts/install-macos.sh 与 scripts/verify-ui-principles.py，编译签名安装 /Applications/Koe.app 并通过全部门禁
+- **Done Predicate**: python3 -B scripts/verify-ui-principles.py --mode all && ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && ./scripts/check
+- **Evidence**: platforms/apple-shared/Package.swift;platforms/macos/Package.swift;scripts/install-macos.sh;scripts/verify-ui-principles.py
 
-### [x] Slice C: iOS 核心主链路（今日页、资料页、项目页、新建录音与配对引导）去啰嗦与规范统一
-- **Playbook**: `Feature`
-- **Outcome**: 重整 `today_screen.dart`、`library_screen.dart`、`projects_screen.dart`、`new_recording_sheet.dart`、`connect_onboarding.dart`、`scan_sheet.dart`、`morning_brief_card.dart` 与 `context_timeline.dart`：单页字号严格 `<= 4` 档（`12 / 14 / 16 / 22`），清零中间点 `·`，删除与搜索框/列表重复的解释性副标题，消除卡片套卡片，确保小白从「连接/录音 → 阶段摘要 → 纪要查看」零卡点，且在 `320/390/430` × `1.0x/2.0x` 大字号下不缩字、不截断关键语义。
-- **Done Predicate**: `python3 -B scripts/verify-ui-principles.py --mode slice-c` 与 `scripts/check` 全部通过。
-- **Evidence**: .scratch/pstack-relay/slice-c-ui-after.json;.scratch/pstack-relay/slice-c-full-check.log;lib/ui/screens/today_screen.dart;lib/ui/screens/library_screen.dart;lib/ui/screens/projects_screen.dart;lib/ui/screens/new_recording_sheet.dart;lib/ui/widgets/connect_onboarding.dart;lib/ui/widgets/scan_sheet.dart;lib/ui/widgets/morning_brief_card.dart;lib/ui/widgets/context_timeline.dart;test/ui_principles_slice_c_test.dart
-
-### [x] Slice D: 录音库、录音详情、结构化纪要、设备页与设置页减负（去大片红、克制弹窗、数据单位规范）
-- **Playbook**: `Feature`
-- **Outcome**: 重整 `files_screen.dart`、`recording_detail_screen.dart`、`minutes_document_screen.dart`、`device_screen.dart`、`settings_screen.dart` 与 `minutes_panel.dart`：移除常规可逆操作的多余确认弹窗，将危险操作的大片红底实心按钮改为克制的文字/描边危险态，清零中间点 `·` 与非标字号，统一时长/电量/文件大小/时间轴的数字单位与校验。
-- **Done Predicate**: `python3 -B scripts/verify-ui-principles.py --mode slice-d`、`scripts/check` 与 `KOE_PERF_FOREGROUND=1 scripts/perf-check` 全部通过。
-- **Evidence**: .scratch/pstack-relay/slice-d-ui-after.json;.scratch/pstack-relay/slice-d-full-check.log;.scratch/pstack-relay/slice-d-perf-check.log;lib/ui/screens/files_screen.dart;lib/ui/screens/recording_detail_screen.dart;lib/ui/screens/minutes_document_screen.dart;lib/ui/screens/device_screen.dart;lib/ui/screens/settings_screen.dart;lib/ui/widgets/minutes_panel.dart;lib/state/recorder_controller.dart;test/ui_principles_slice_d_test.dart;test/ui_principles_slice_c_test.dart;test/mobile_navigation_test.dart;test/translation_source_playback_test.dart;test/recording_place_test.dart;test/meeting_minutes_test.dart;test/minutes_quality_and_glossary_test.dart;scripts/check
-
-### [x] Slice E: 全仓剩余次级页面收口、多尺寸/多语言真实截图复验与交付
+### [x] Slice F: 全仓文档同源重写（`AGENTS.md` / `README.md` / `ROADMAP.md`）、对抗审查（`interrogate`）、性能基准与终局收口
 - **Playbook**: `Shipping`
-- **Outcome**: 完成剩余次级页面与组件的 11 原则收口，使 `python3 -B scripts/verify-ui-principles.py --mode all` 全仓 62 个文件零违规；在 macOS 与 iOS 模拟器抓取真实界面截图核对视觉、字号、对比度与长文案排布，运行 `interrogate` / `deslop` / `no-comments` 并更新 PR 与进度页。
-- **Done Predicate**: `python3 -B scripts/verify-ui-principles.py --mode all`、`scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
-- **Evidence**: .scratch/pstack-relay/slice-e-ui-after.json;.scratch/pstack-relay/slice-e-full-check.log;.scratch/pstack-relay/screenshots/shell-mac-1280x900.png;.scratch/pstack-relay/screenshots/today-ios-390x844.png;.scratch/pstack-relay/screenshots/library-ios-390x844.png;.scratch/pstack-relay/screenshots/detail-ios-390x844.png;.scratch/pstack-relay/screenshots/detail-ios-320x740-2x.png;.scratch/pstack-relay/screenshots/settings-ios-390x844.png;scripts/verify-ui-principles.py;scripts/test_verify_ui_principles.py;test/ui_principles_slice_e_test.dart;progress/progress.json;progress/index.html
-
----
-
-## 全景切片队列（F → I：Rust + SwiftUI + Compose/GPUI 三端高性能录音豆内核收口）
-
-### [x] Slice F: 真实 Opus 语音解码器下沉至 Rust 内核并替换谐波合成预览
-- **Playbook**: `Feature`
-- **Outcome**: 将 160 字节定长 Opus 帧尾部零填充裁剪（`trim_opus_packet`）与真实 `libopus` 16 kHz / 48 kHz 单声道 PCM16 LE 解码能力接入 `rust/koe_core` 与 `rust/koe_core_ffi`（保持 `rust/koe_core` 100% `#![forbid(unsafe_code)]`，通过回调或 FFI 桥接静态链接 `libopus`），使 `TransportSession::finalize_active_transfer` 与新增的 C-ABI / Swift / Kotlin JNI 接口直接产出真实人声 PCM16 与 WAV，并在包含真实 `libopus` 1.5.2 编码帧（样本 130 为 `-4130`）时解码出精确语音波形。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift`、`./scripts/build-swiftui-macos.sh --install`、`/Applications/KoeSwiftUI.app/Contents/MacOS/KoeSwiftUI --verify-self` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: 5a569a9;rust/koe_core/src/wav.rs;rust/koe_core/src/session.rs;rust/koe_core_ffi/src/opus_ffi.rs;rust/koe_core_ffi/build.rs;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
-
-### [x] Slice G: BLE 字节级断点续传、超时重试看门狗、2 秒静默收尾与后台恢复
-- **Playbook**: `Feature`
-- **Outcome**: 将 D3200 离线拉流的 `already_transferred`（`received_slices * 166`）字节级断点续传、看门狗超时重试状态机（每文件最多重试 2 次、单帧 5 秒超时）与实时流停止后的 2 秒静默排空窗口收进 `rust/koe_core::session::TransportSession`，并在 `darwin/KoeNativeTransport.swift` 补齐 `CBCentralManagerOptionRestoreIdentifierKey` 与外设自动重连。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: 0e9f09c;rust/koe_core/src/session.rs;rust/koe_core/src/transport.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeNativeTransport.swift;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
-
-### [x] Slice H: Wi-Fi SoftAP 高速批量同步（1A/05 配网 + WSS 控制流 + UDP :32003 切片拉流）下沉至 Rust
-- **Playbook**: `Feature`
-- **Outcome**: 将 D3200 Wi-Fi 快传模式（`0x1A/0x05` 热点开启应答解析、`wss://<bean_ip>:32002/` 控制帧编解码与 `UDP :32003` 高吞吐 `0x1A/0x08` 切片流重组解密）收进 `rust/koe_core`，通过 C-ABI / Swift / Kotlin JNI 统一暴露给三端宿主。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: 10f6d8f;rust/koe_core/src/wifi.rs;rust/koe_core/src/commands.rs;rust/koe_core/src/session.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeNativeTransport.swift;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
-
-### [x] Slice I: 三端原生生产宿主接线（iOS SwiftUI + Android Compose JNI + 桌面 GPUI 共享 koe_core）与最终收口
-- **Playbook**: `Shipping`
-- **Outcome**: 将 `rust/koe_core` 接入桌面端 `desktop/core`、补齐 iOS/macOS SwiftUI 与 Android `KoeCore.kt` 全链路接线，完成对抗审查（`interrogate`）、代码精简（`deslop` / `no-comments`）、性能基准（`scripts/perf-check`）与晨间审计（`show-me-your-work` + `ketchup`）。
-- **Done Predicate**: `./scripts/test-koe-core-swift`、`./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
-- **Evidence**: ca50e76;desktop/core/src/lib.rs;darwin/KoeNativeTransport.swift;darwin/KoeNativeHost.swift;darwin/KoeNativeAppMain.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;scripts/test-koe-core-swift;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;progress/progress.json;progress/index.html
-
----
-
-## 全景切片队列（J → O：千问闪记 + Cicada 同步翻译 + 心力豆个人图谱 + Rust 原生 MCP/ACP 全量下沉 + 纯 Rust GPUI 桌面端与存量 Flutter/SwiftUI 彻底退役）
-
-### [x] Slice J: 统一句子主干 `UtteranceSpine`（`S1..Sn`）与四模块纯 Rust 领域骨架
-- **Playbook**: `Feature`
-- **Outcome**: 在 `rust/koe_core`（100% `#![forbid(unsafe_code)]`、`#![deny(missing_docs)]`）建立 `domain.rs`（`SegmentId` `S1..Sn`、`UtteranceSegment`、`UtteranceSpine`、`MeetingMinutesV2`、`MinuteTopic`、`MinuteFishbone`、`MinuteTerm`、`ContextItem`、`TodoItem`、`AiProviderCommand`）并预分配 `minutes.rs`、`cicada.rs`、`context.rs` 与 `mcp_acp.rs` 四个零冲突独立模块入口，跑通 `S1..Sn` 不可变追加、修订号递增与原句溯源基线单测，并通过 C-ABI / Swift / Kotlin JNI 暴露 `UtteranceSpine` 基础操作。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: `d7fab08;cargo test 41 passed;desktop 4 passed;swift+jni+dart parity passed`
-
-### [x] Slice K: 千问闪记 ASR 协议、分块归并纪要状态机、`S1..Sn` 防幻觉校验与 `qwennote-minutes` 热词模板下沉
-- **Playbook**: `Feature`
-- **Outcome**: 在 `rust/koe_core/src/minutes.rs` 完整实现 DashScope 语音转写任务与流式识别协议编解码、千问大模型二阶段分块归并纪要生成状态机、`S1..Sn` 严格原句证据校验器（拒绝跨句拼接工资与百分比、拒绝无基数比例与未引用数字），以及千问听记 `qwennote-minutes` 热词表、说话人替换与自定义模板注入，通过 Dart vs Rust 纪要校验差分对拍测试。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: 2f1523a;rust/koe_core/src/minutes.rs;rust/koe_core/src/domain.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
-
-### [x] Slice L: Cicada 同步双语翻译、有界实时滚动纪要（120次/时）、`.koepack v2` 资料包与同传路由下沉
-- **Playbook**: `Feature`
-- **Outcome**: 在 `rust/koe_core/src/cicada.rs` 完整实现对齐 `wquguru/cicada` 的句段增量双语翻译队列、有界实时滚动纪要调度器（每小时最多 120 次、满 200 字或 30 秒触发、手改保留）、30 秒麦克风静默自动收尾检测、无音频 `.koepack v2` 资料包（当前纪要 + 最多 10 版历史 + SHA-256 校验）编解码，并在 `darwin/` 原生 SwiftUI 宿主挂载 CoreAudio + BlackHole 按住同传路由。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: f48c2a3;rust/koe_core/src/cicada.rs;rust/koe_core/src/domain.rs;rust/koe_core/src/hash.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;darwin/KoeNativeHost.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
-
-### [x] Slice M: 心力豆（Sweetpea）个人上下文时间线、待办/项目/日记沉淀与中文双字 BM25 离线问答检索下沉
-- **Playbook**: `Feature`
-- **Outcome**: 在 `rust/koe_core/src/context.rs` 完整实现随心随力记录时间线（录音、地点、随手记、承诺提取、待办事项、项目归类、每日晨报与日记聚合）以及零云端向量依赖的中文双字（Bigram）+ 拉丁词根 BM25/TF-IDF 离线问答检索引擎與多轮溯源对话状态机，40 万字语料单次检索延迟 `< 5 ms`。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`./scripts/test-koe-core-swift` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: 0930e7d;rust/koe_core/src/context.rs;rust/koe_core/src/domain.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
-
-### [x] Slice N: Rust 原生 MCP + ACP 服务端、三端原生宿主全量接线与最终收口
-- **Playbook**: `Shipping`
-- **Outcome**: 在 `rust/koe_core/src/mcp_acp.rs` 与 `desktop/core` 实现原生 JSON-RPC 2.0 MCP（`list_recordings`、`get_transcript`、`get_minutes`、`search_context`、`qwennote` 热词/模板同步与 `.koepack v2` `/sync/packs`）及 ACP（Agent Communication Protocol）协议栈，将 `minutes`、`cicada`、`context`、`mcp_acp` 全链路接入 `desktop/core`、`darwin/` SwiftUI 与 Android `KoeCore.kt`，完成对抗审查（`interrogate`）、代码清理（`deslop` / `no-comments`）、性能基准与早间审计。
-- **Done Predicate**: `./scripts/test-koe-core-swift`、`./scripts/check`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
-- **Evidence**: 3d50ef5;b899fca;rust/koe_core/src/mcp_acp.rs;desktop/core/src/lib.rs;rust/koe_core_ffi/src/lib.rs;rust/koe_core_ffi/src/jni.rs;rust/koe_core_ffi/src/bin/gen_bindings.rs;darwin/KoeCore.swift;darwin/KoeNativeHost.swift;android/app/src/main/kotlin/com/anker/anker_recorder/KoeCore.kt;lib/native/koe_core_ffi.dart;test/native/koe_core_swift_test.swift;test/native/KoeCoreJniTest.java;test/rust_core_parity_test.dart
-
-### [x] Slice O: 纯 Rust GPUI 桌面端（`desktop/app`）挂载 `DesktopBeanHost` 与存量 8.8 万行 Flutter/SwiftUI 彻底退役
-- **Playbook**: `Shipping`
-- **Outcome**: 在 `desktop/app` 使用纯 Rust `gpui`（`gpui-kit = "=0.9.0"`）直接挂载 `desktop/core`（`DesktopBeanHost` over `rust/koe_core` 2.0.0），实现 5 页签（今日时间线、本机录音库与千问闪记纪要、Cicada 双语实时翻译与 `.koepack v2`、心力豆 BM25 离线问答、MCP/ACP 代理接口）与竹青色 `#2E5E4E` + 暖纸灰 `#F5F4F0` 视觉规范；将 `/Applications/Koe.app` 编译并签名为纯 Rust 二进制（同时清理 `/Applications/KoeSwiftUI.app`）；物理删除 `lib/`、`pubspec.yaml`、全部 Dart 测试与 Flutter/SwiftUI 宿主壳层，将 `scripts/check`、`scripts/verify-ui-principles.py`、`scripts/install-macos.sh` 与 CI 门禁全面收敛至纯 Rust。
-- **Done Predicate**: `find lib test integration_test -name '*.dart' 2>/dev/null | wc -l` 为 `0`、`./scripts/check`、`./scripts/install-macos.sh`、`/Applications/Koe.app/Contents/MacOS/Koe --verify-self`、`/Applications/Koe.app/Contents/MacOS/Koe --smoke-test`、`python3 progress/progress.py check` 与 `scripts/pstack-relay status --require-all-done` 全部 `PASS`。
-- **Evidence**: e150335;d9b54ed;87e60f6;desktop/app/src/main.rs;desktop/app/src/theme.rs;desktop/ble/src/lib.rs;scripts/install-macos.sh;scripts/check;/Applications/Koe.app
-
----
-
-## 全景滚动切片队列（P → T：「安克随心记」Vecta × Cicada 零胶水三层架构与真机实时流闭环）
-
-### [x] Slice P: 「安克随心记」Vecta × Cicada 三层零胶水架构确立、4 屏原型画板、三处实时流断点定位与 `pstack-relay` 动态合成升级
-- **Playbook**: `Investigation` + `figure-it-out`
-- **Outcome**: 深度剖析 `olgvroe/Vecta` 与 `wquguru/cicada` 源码，确立「安克随心记」三层零胶水架构（`RecordingAggregate` 聚合根 + `SuixinRuntime` 自驱管道 + `WorkspaceProjection/WorkspaceCommand` 纯投影视图）；完成 Vecta 90-8-2 伊利诺伊橙 4 屏交互画板（`.scratch/koe-ui-options/export/koe-uiuc-plaud-mcp-cli.html`）；定位「对着豆子说话不出字」的三处代码级断点；将 `pstack-relay` 升级为根据每棒真实进展与上下文水位动态合成下一棒提示词的滚动引擎。
-- **Done Predicate**: `python3 /Users/xianweizhang/.gemini/config/skills/xw-design/scripts/check_canvas.py .scratch/koe-ui-options`、`python3 /Users/xianweizhang/Projects/xw-skills/xw-tooling/skills/pstack-relay/tests/test_pstack_relay.py` 与 `scripts/pstack-relay selftest` 全部 `PASS`。
-- **Evidence**: .scratch/koe-ui-options/export/koe-uiuc-plaud-mcp-cli.html;scripts/pstack-relay;docs/pstack-relay.md
-
-### [x] Slice Q: 第一与第二层收口 (`RecordingAggregate` + 自驱实时流管道，修复 `1A/06`->`1A/07`、注入 16kHz Opus 解码与 DashScope 流式 ASR 泵)
-- **Playbook**: `Feature`
-- **Outcome**: 在 `rust/koe_core` 与 `desktop/core` 消除散装状态拼接，落地自驱实时流与分析管道：(1) 在 `rust/koe_core/src/session.rs` 补齐 `(0x01, 0x01)` 录音中状态及 `(0x1A, 0x06)` `state == 1`（机身按下开始录音）自动排队下发 `1A/07 (realtimeFlag=1)`，并提供 `start_realtime_recording()` (`18/81`)；(2) 在 `desktop/core` 为 `DesktopBeanHost` 默认注入真实 16kHz/48kHz Opus 解码器工厂，使 `ingest_ble_chunk` 实时产出 640B/20ms `live_pcm16_16khz`；(3) 在 `desktop/core` 建立自驱流式转写与 Cicada 滚动提炼泵（支持私有阿里云 DashScope `paraformer-realtime-v2` / 本地流式识别回退），自动将 `live_pcm16_16khz` 转为 `UtteranceSpine (S1..Sn)` 原句、双语同传、个人承诺与五阶自检遥测（`PipelineDoctorSnapshot`），无需 GPUI 层手写胶水逻辑。
-- **Done Predicate**: `cargo test --manifest-path rust/Cargo.toml`、`cargo test --manifest-path desktop/Cargo.toml` 与 `./scripts/check` 全部 `PASS`。
-- **Evidence**: 6f0eb12;rust/koe_core/src/domain.rs;rust/koe_core/src/session.rs;desktop/core/src/lib.rs;desktop/core/tests/interrogate_repros.rs;.scratch/pstack-relay/slice-q-check.log
-
-### [x] Slice R: 第三层收口（上），Vecta 90-8-2 伊利诺伊橙主题令牌、`WorkspaceProjection` 纯投影模型与双栏主工作台（随心记录 + 声波书签 + 逐字声纹同传 + 6 宫格视觉总结）
-- **Playbook**: `Feature`
-- **Outcome**: 在 desktop/core 暴露单一不可变视图投影 WorkspaceProjection 与单向意图枚举 WorkspaceCommand（消费 active_aggregate()、visual_cards、pipeline_doctor()、MorningBrief、ProjectProgress、DiaryEntry 与 UtteranceSpine S1..Sn）；将 desktop/app/src/theme.rs 与 scripts/verify-ui-principles.py 升级为 Vecta 90-8-2 配色（90% #FAFAFA/#F0F0F2 灰白画布 + 8% AIVisualEditorialPalette 6 色柔彩卡片 + 2% 伊利诺伊橙 #FF5F05/#D9480F 点睛，保留 12/14/16/22 四级字号与零中间点门禁）；在 desktop/app/src/main.rs 消除分散子引擎胶水调用，落地 Vecta 双栏主工作台（左侧五项导航与底部安克心力豆 D3200 状态卡、右侧顶部日常心力概览条、带橙色已播声波与 ±10s 双击书签的横向播放器、心智总结 6 宫格柔彩卡片 + Cicada 根因鱼骨图、逐字原话与声纹双语同传标签页）。
-- **Done Predicate**: python3 -B scripts/verify-ui-principles.py --mode all && cargo test --manifest-path desktop/Cargo.toml && ./scripts/check
-- **Evidence**: 94799fd;desktop/app/src/theme.rs;desktop/app/src/main.rs;desktop/core/src/lib.rs;desktop/core/tests/interrogate_repros.rs;scripts/verify-ui-principles.py;scripts/test_verify_ui_principles.py;.scratch/pstack-relay/slice-r-check.log
-
-### [x] Slice S: 第三层收口（下），心力格式库（`Formats`）、私有阿里云与本机 MCP/ACP 控制台、设置与心力豆五阶自检（`Bean Doctor` + Wi-Fi `1A/05` 快传）
-- **Playbook**: `Feature`
-- **Outcome**: 通过 WorkspaceProjection 与 WorkspaceCommand 深度收口 Slice S 剩余三屏专页交互与 macOS 真机安装包自检：(1) 心力格式 (Formats) 专页接入 BUILTIN_MINUTE_TEMPLATES 5 套预置模板切换、MinuteCustomSection 自定义分区增删与 6 宫格即时重算；(2) 阿里云与 MCP (AliyunMcp) 专页接入私有阿里云百炼 DashScope 配置状态与热词同步、KOEMCP1 配对票据签发、15s live.json 租约刷新、--mcp-stdio 配置一键生成与 BM25 多轮溯源问答；(3) 设置与自检 (SettingsDoctor) 专页完善五阶 Bean Doctor 诊断、一键重发 1A/07 实时流测音、开机自启/后台常驻开关与 Wi-Fi SoftAP (192.168.4.1:32002) 批量快传进度控制，并跑通 ./scripts/install-macos.sh 及 /Applications/Koe.app --verify-self / --smoke-test。
-- **Done Predicate**: cargo test --manifest-path desktop/Cargo.toml && ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && ./scripts/check
-- **Evidence**: 618349f;desktop/core/src/lib.rs;desktop/app/src/main.rs;desktop/core/tests/interrogate_repros.rs;rust/koe_core/src/session.rs;.scratch/pstack-relay/slice-s-check.log
-
-### [x] Slice T: 全链路对抗审查（`interrogate`）、零胶水代码精简（`deslop` / `no-comments`）、进度页更新与交付收口
-- **Playbook**: `Shipping`
-- **Outcome**: 完成 Slice T 终局交付收口：对照「安克随心记」Vecta × Cicada 三层零胶水架构（Layer 1 RecordingAggregate + Layer 2 SuixinRuntime + Layer 3 WorkspaceProjection/WorkspaceCommand）执行全链路对抗复核（interrogate）与代码精简（deslop / no-comments），运行 5 轮交替 Release/Debug 性能基准并解释瓶颈，同步 progress/progress.json 与 progress/index.html，跑通 ./scripts/check、python3 progress/progress.py check 与 scripts/pstack-relay status --require-all-done，并完成跨模型账本审计与 Ketchup 汇报。
+- **Outcome**: 执行 Slice F 全仓文档同源重写（AGENTS.md / README.md / README.en.md / ROADMAP.md / CONTRIBUTING.md / GLOSSARY.md）、对抗审查（interrogate）、性能基准与终局收口：清除所有过时的 Flutter/Dart 与 GPUI 描述，与 docs/ARCHITECTURE.md（msime 全原生架构）完全对齐；更新 progress/progress.json 与 progress/index.html，确保 scripts/pstack-relay status --require-all-done 零警告通过
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && ./scripts/pstack-relay status --require-all-done
-- **Evidence**: desktop/core/src/lib.rs;desktop/app/src/main.rs;desktop/core/tests/interrogate_repros.rs;rust/koe_core/src/minutes.rs;rust/koe_core/src/session.rs;rust/koe_core/src/mcp_acp.rs;progress/progress.json;progress/index.html;.scratch/pstack-relay/slice-t-benchmark.log;.scratch/pstack-relay/slice-t-check.log
+- **Evidence**: AGENTS.md;README.md;README.en.md;ROADMAP.md;CONTRIBUTING.md;GLOSSARY.md;progress/progress.json;progress/index.html
+
+### [x] Slice G: 接通 Rust 产品工作区与 macOS 三块主流程
+- **Playbook**: `Feature` + `Refactoring` + `Shipping`
+- **Outcome**: 今天、记录详情和全局问答共用一个持久化领域工作区；真实设备采集、离线/实时转写、证据纪要、待办/记忆审核、来源跳转与旧数据迁移接通原生宿主；故障恢复不串记录、不丢已完成结果。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test
+- **Evidence**: scripts/check PASS; installed /Applications/Koe.app; issue #587
