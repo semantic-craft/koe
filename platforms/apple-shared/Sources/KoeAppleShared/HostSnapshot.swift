@@ -285,6 +285,15 @@ public struct LifecycleSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct CaptureLaneSnapshot: Codable, Equatable, Sendable {
+    public let nextSequence: UInt64
+    public let sampleRate: UInt32?
+    public let started: Bool
+    public let stopped: Bool
+    public let error: String?
+    public let interruption: String?
+}
+
 public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let recordId: String
     public let sessionId: String
@@ -295,6 +304,11 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let durationMs: UInt64
     public let error: String?
     public let interruption: String?
+    public let epoch: UInt64
+    public let clockNs: UInt64?
+    public let lanes: [String: CaptureLaneSnapshot]
+
+
 }
 
 public struct HostSnapshot: Codable, Equatable, Sendable {

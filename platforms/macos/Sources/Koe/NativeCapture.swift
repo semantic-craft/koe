@@ -2,62 +2,38 @@ import AppKit
 import Foundation
 import KoeAppleShared
 
-protocol MicrophoneSource: AnyObject {
-    func requestPermission(_ completion: @escaping (Bool) -> Void)
-    func start(inputID: String, receive: @escaping ([Int16]) -> Void, failed: @escaping (String) -> Void) throws -> UInt32
-    func stop()
-}
-
-final class MicrophoneMailbox: @unchecked Sendable {
-    struct Block { let sequence: UInt64; let samples: [Int16] }
-    private let lock = NSLock()
-    private var blocks: [Block] = []
-    private var sequence: UInt64 = 0
-    private var closed = false
-    private var failure: String?
-    func append(_ samples: [Int16]) {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed else { return }
-        guard !samples.isEmpty, samples.count <= 8192, blocks.count < 64 else {
-            failure = "音频处理未能跟上采集，已停止并保留已接收的音频。"
-            closed = true
-            return
-        }
-        blocks.append(Block(sequence: sequence, samples: samples))
-        sequence += 1
-    }
-    func fail(_ message: String) {
-        lock.lock(); defer { lock.unlock() }
-        failure = failure ?? message
-        closed = true
-    }
-    func close() { lock.lock(); defer { lock.unlock() }; closed = true }
-    func discardUnstarted() {
-        lock.lock(); defer { lock.unlock() }
-        closed = true
-        blocks.removeAll()
-        sequence = 0
-    }
-    func peek() -> Block? { lock.lock(); defer { lock.unlock() }; return blocks.first }
-    func acknowledge(_ sequence: UInt64) {
-        lock.lock(); defer { lock.unlock() }
-        if blocks.first?.sequence == sequence { blocks.removeFirst() }
-    }
-    var error: String? { lock.lock(); defer { lock.unlock() }; return failure }
-    var finalSequence: UInt64 { lock.lock(); defer { lock.unlock() }; return sequence }
-}
-
 @MainActor
 final class NativeCapture {
+    private final class EpochRun {
+        let identity: CaptureIdentity
+        let mailbox: MicrophoneMailbox
+        let initialSequence: UInt64
+        var fenced = false
+        var pausedSent = false
+        var stoppedSent = false
+        var failureSent = false
+        init(_ snapshot: MicrophoneSnapshot, lane: CaptureLaneSnapshot) {
+            identity = CaptureIdentity(snapshot)
+            initialSequence = lane.nextSequence
+            mailbox = MicrophoneMailbox(nextSequence: initialSequence)
+        }
+    }
+    private struct PermissionRequest: Equatable {
+        let token = UUID()
+        let identity: CaptureIdentity
+        let resuming: Bool
+    }
     weak var store: HostSessionStore?
     private let source: MicrophoneSource
-    private var ticket: MicrophoneSnapshot?
-    private var mailbox: MicrophoneMailbox?
-    private var stopped = false
-    private var terminalSent = false
-    private var failureSent = false
+    private let nowNanoseconds: () throws -> UInt64
+    private var run: EpochRun?
+    private var pendingPermission: PermissionRequest?
     private var applying = false
-    init(source: MicrophoneSource = NativeAudioSource()) { self.source = source }
+    init(source: MicrophoneSource = NativeAudioSource(),
+         nowNanoseconds: @escaping () throws -> UInt64 = HostAudioClock.nowNanoseconds) {
+        self.source = source
+        self.nowNanoseconds = nowNanoseconds
+    }
 
     func chooseInput() {
         guard let store, store.snapshot.microphone == nil else { return }
@@ -76,76 +52,156 @@ final class NativeCapture {
         store.send("start_microphone", ["inputId": index > 0 ? inputs[index - 1].id : ""])
         apply()
     }
+    func resume() {
+        guard let current = store?.snapshot.microphone, current.phase == "paused",
+              pendingPermission == nil, run?.identity == CaptureIdentity(current) else { return }
+        requestPermission(for: current, resuming: true)
+    }
+
     func apply() {
         guard !applying, let store else { return }
         applying = true
         defer { applying = false }
         guard let current = store.snapshot.microphone else {
-            if ticket != nil { source.stop(); mailbox?.close() }
-            ticket = nil; mailbox = nil
+            if let run { stop(run) }
+            run = nil
+            pendingPermission = nil
             return
         }
-        if ticket?.sessionId != current.sessionId {
-            source.stop(); mailbox?.close()
-            ticket = current; mailbox = MicrophoneMailbox()
-            stopped = false; terminalSent = false; failureSent = false
-            if current.phase == "starting" {
-                let sessionID = current.sessionId
-                source.requestPermission { [weak self] allowed in
-                    Task { @MainActor in self?.permission(allowed, sessionID: sessionID) }
-                }
-            }
+        guard let lane = current.lanes[current.lane] else {
+            if let run { stop(run) }
+            store.reportNativeError("录音快照缺少当前音轨，无法继续采集。")
+            return
         }
-        guard let mailbox else { return }
-        if let error = mailbox.error, !failureSent {
-            failureSent = true
-            send("microphone_failed", ["message": error])
+        if run?.identity != CaptureIdentity(current) {
+            if let run { stop(run) }
+            pendingPermission = nil
+            run = EpochRun(current, lane: lane)
+            if current.phase == "starting" { requestPermission(for: current, resuming: false) }
         }
-        let phase = store.snapshot.microphone?.phase
-        if phase == "stopping" || phase == "cancelling" || mailbox.error != nil {
-            if !stopped { source.stop(); mailbox.close(); stopped = true }
+        guard let run else { return }
+        reportFailure(run)
+        if ["pausing", "stopping", "cancelling", "saving"].contains(store.snapshot.microphone?.phase ?? "") {
+            pendingPermission = nil
+            stop(run)
+            reportFailure(run)
         }
         for _ in 0..<64 {
-            guard let block = mailbox.peek() else { break }
-            send("microphone_chunk", ["sequence": block.sequence, "samples": block.samples])
-            guard store.snapshot.microphone?.sessionId == current.sessionId,
-                  store.snapshot.microphone?.nextSequence == block.sequence + 1 else { return }
-            mailbox.acknowledge(block.sequence)
+            guard let block = run.mailbox.peek() else { break }
+            send("microphone_chunk", run, ["sequence": block.sequence, "samples": block.pcm.samples,
+                "timing": ["epoch": run.identity.epoch, "capturedStartNs": block.pcm.capturedStartNs]])
+            guard let latest = store.snapshot.microphone, CaptureIdentity(latest) == run.identity,
+                  let lane = latest.lanes[run.identity.lane] else { return }
+            if lane.nextSequence == block.sequence + 1 {
+                run.mailbox.acknowledge(block.sequence)
+            } else {
+                stop(run)
+                if lane.error != nil { return }
+                run.mailbox.fail(store.snapshot.error ?? "音频块未被接纳，已停止并保留此前收到的音频。")
+                reportFailure(run)
+                run.mailbox.discardUnaccepted(nextSequence: lane.nextSequence)
+                break
+            }
         }
-        if stopped, mailbox.peek() == nil, !terminalSent {
-            terminalSent = true
-            send("microphone_stopped", ["sequence": mailbox.finalSequence])
+        guard run.fenced, run.mailbox.peek() == nil,
+              let latest = store.snapshot.microphone, CaptureIdentity(latest) == run.identity else { return }
+        if latest.phase == "pausing", !run.pausedSent {
+            run.pausedSent = true
+            send("microphone_paused", run, ["sequence": run.mailbox.finalSequence, "epoch": run.identity.epoch])
+        } else if ["stopping", "cancelling", "saving"].contains(latest.phase), !run.stoppedSent {
+            run.stoppedSent = true
+            send("microphone_stopped", run, ["sequence": run.mailbox.finalSequence, "epoch": run.identity.epoch])
         }
     }
-    private func permission(_ allowed: Bool, sessionID: String) {
-        guard ticket?.sessionId == sessionID,
-              store?.snapshot.microphone?.sessionId == sessionID,
-              store?.snapshot.microphone?.phase == "starting", !stopped,
-              let mailbox else { return }
+
+    private func requestPermission(for snapshot: MicrophoneSnapshot, resuming: Bool) {
+        let request = PermissionRequest(identity: CaptureIdentity(snapshot), resuming: resuming)
+        pendingPermission = request
+        source.requestPermission { [weak self] allowed in
+            Task { @MainActor in self?.permission(allowed, request: request) }
+        }
+    }
+
+    private func permission(_ allowed: Bool, request: PermissionRequest) {
+        guard pendingPermission == request, !applying,
+              let current = store?.snapshot.microphone, CaptureIdentity(current) == request.identity,
+              current.phase == (request.resuming ? "paused" : "starting"), let previous = run else { return }
+        pendingPermission = nil
+        applying = true
+        defer { applying = false; apply() }
         guard allowed else {
-            mailbox.fail("未获得麦克风权限，请在系统设置中允许 Koe 使用麦克风。")
-            apply()
+            previous.mailbox.fail("未获得麦克风权限，请在系统设置中允许 Koe 使用麦克风。")
             return
         }
         do {
-            let rate = try source.start(inputID: ticket?.inputId ?? "", receive: { mailbox.append($0) }, failed: { mailbox.fail($0) })
-            send("microphone_started", ["sampleRate": rate])
+            let clock = try nowNanoseconds()
+            if request.resuming {
+                store?.send("resume_microphone", ["clockNs": clock])
+            } else {
+                store?.send("microphone_prepared", ["recordId": request.identity.recordId,
+                    "sessionId": request.identity.sessionId, "epoch": request.identity.epoch, "clockNs": clock])
+            }
+            guard let prepared = store?.snapshot.microphone,
+                  prepared.recordId == current.recordId, prepared.sessionId == current.sessionId,
+                  prepared.epoch == current.epoch + (request.resuming ? 1 : 0),
+                  prepared.clockNs == clock,
+                  prepared.phase == (request.resuming ? "recording" : "starting") else {
+                previous.mailbox.fail(store?.snapshot.error ?? "无法确认音频采样时钟。")
+                return
+            }
+            guard let lane = prepared.lanes[prepared.lane] else {
+                throw CaptureError("录音快照缺少当前音轨，无法开始采集。")
+            }
+            let active: EpochRun
+            if request.resuming {
+                active = EpochRun(prepared, lane: lane)
+                run = active
+            } else {
+                active = previous
+            }
+            start(active, snapshot: prepared, expectedRate: lane.sampleRate)
+        } catch {
+            previous.mailbox.fail(error.localizedDescription)
+        }
+    }
+
+    private func start(_ run: EpochRun, snapshot: MicrophoneSnapshot, expectedRate: UInt32?) {
+        let mailbox = run.mailbox
+        do {
+            let rate = try source.start(inputID: snapshot.inputId, expectedSampleRate: expectedRate,
+                receive: { mailbox.append($0) }, failed: { mailbox.fail($0) })
+            guard expectedRate == nil || expectedRate == rate else {
+                throw CaptureError("麦克风采样率发生变化，已保留此前收到的音频。")
+            }
+            send("microphone_started", run, ["sampleRate": rate])
             if store?.snapshot.microphone?.phase != "recording" {
                 mailbox.fail(store?.snapshot.error ?? "无法创建麦克风音频文件。")
             }
         } catch {
-            source.stop()
-            mailbox.discardUnstarted()
-            mailbox.fail("麦克风启动失败，未保存录音：\(error.localizedDescription)")
+            stop(run)
+            mailbox.discardUnaccepted(nextSequence: run.initialSequence)
+            mailbox.fail("麦克风启动失败：\(error.localizedDescription)")
         }
-        apply()
     }
-    private func send(_ type: String, _ fields: [String: Any]) {
-        guard let ticket else { return }
+
+    private func stop(_ run: EpochRun) {
+        guard !run.fenced else { return }
+        source.stop()
+        run.mailbox.close()
+        run.fenced = true
+    }
+
+    private func reportFailure(_ run: EpochRun) {
+        guard let error = run.mailbox.error, !run.failureSent else { return }
+        run.failureSent = true
+        send("microphone_failed", run, ["message": error, "epoch": run.identity.epoch])
+    }
+
+    private func send(_ type: String, _ run: EpochRun, _ fields: [String: Any]) {
         var payload = fields
-        payload["recordId"] = ticket.recordId
-        payload["sessionId"] = ticket.sessionId
-        payload["lane"] = ticket.lane
+        payload["recordId"] = run.identity.recordId
+        payload["sessionId"] = run.identity.sessionId
+        payload["lane"] = run.identity.lane
         store?.send(type, payload)
     }
 }

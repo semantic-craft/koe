@@ -65,21 +65,23 @@ CoreBluetooth 将连接、订阅完成、断开和通知字节交给 Rust，执�
 
 ### Mac 单路麦克风
 
-Runtime 持有一个采集操作，以 `record_id / session_id / microphone / sequence` 绑定所有回调。Swift 的 AVAudioEngine 只选择输入、提供原生采样率的单声道 PCM16；固定 64 块队列每块最多 8192 样本。队列满或输入格式变化明确停止，不静默丢块后冒充完整录音。停止等待已进入的音频回调完成，再排空已接纳块，Rust 核对最终序号后收尾。
+Runtime 持有一个采集操作，以 `record_id / session_id / microphone / sequence` 绑定所有回调。Swift 的 AVAudioEngine 只选择输入、提供原生采样率的单声道 PCM16 和有效 hostTime 对应的首样本时刻；固定 64 块队列每块最多 8192 样本。队列满或输入格式变化明确停止，不静默丢块后冒充完整录音。停止等待已进入的音频回调完成，再排空已接纳块，Rust 核对最终序号后收尾。
 
 `CaptureAsset` 增量写入 `.capture` 文件，封口、文件持久屏障及目录持久屏障完成后，才由 ProductStore 插入一条 `Microphone` 记录。保存失败保留采集所有权并阻止退出，恢复存储后可重试；取消退出不清除待保存音频。权限被拒、空音频或确认取消不生成成功记录。新采集不自动发云，手动转写走现有会议音频策略。
 
-启动时不把遗留 `.capture` 文件当成成功录音；崩溃恢复、暂停和系统双路不在本片。系统权限、真实输入切换、回放与签名版退出重开见 [#616](https://github.com/semantic-craft/koe/issues/616)。
+暂停会停止生产、等待回调并排空尾块，Rust 确认后才显示已暂停；恢复重新核对权限，以新 epoch 接续原序号，采样率变化明确中断并保留已收音频。启动时不把遗留 `.capture` 文件当成成功录音；崩溃恢复和系统双路仍未接入。系统权限、真实输入切换、回放与签名版退出重开见 [#616](https://github.com/semantic-craft/koe/issues/616)。
 
 ### Rust 双路时间轴与暂停协议
 
-双路资产保管仍由同一个 Runtime 会话和 ProductStore 提交。带 `clockNs` 的 `start_microphone` 启用共同单调时钟；每块 `timing` 提供 `epoch` 和实际首样本时刻 `capturedStartNs`，不得用回调到达时间替代。宿主须先完成权限申请，再在实际启动两路前建立共同基准；未带时钟的既有单路路径保持不变。
+双路资产保管仍由同一个 Runtime 会话和 ProductStore 提交。带 `clockNs` 的 `start_microphone` 启用共同单调时钟；每块 `timing` 提供 `epoch` 和实际首样本时刻 `capturedStartNs`，不得用回调到达时间替代。原生开始意图先建立 Rust `starting` 会话，权限完成后通过绑定 `recordId/sessionId/epoch` 的 `microphone_prepared(clockNs)` 确认一次共同基准，再启动采集。权限等待期间仍可取消或退出；旧准备回调不能改变新会话。未带时钟的已有调用保持原契约。
 
 Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 `start_ns`。原始样本连续保管，时间空隙仅记录在映射中，不补静音或静默裁掉重叠。相邻时刻允许一个样本周期的量化误差并合并连续区间；较大的重叠、超过 10 秒的间隙（含首块）、超过 24 小时的活动时间或超过 4096 个不连续区间会拒绝该块，序号不推进。每块仍限 8192 样本；映射只在字节写入成功后更新，写入重试不重复计时。
 
 `pause_microphone` 进入 `pausing`，仍接收当前代次尾块；各路停止回调生产、排空队列后发送带最终 `sequence/epoch` 的 `microphone_paused`。全部确认才进入 `paused`。`resume_microphone(clockNs)` 以已接受音频的共同末尾作为新活动时间起点，移除暂停间隔并递增 epoch。块和终止/失败事件均受代次约束，带时钟会话的 `microphone_stopped/microphone_failed` 必须携带当前 epoch；旧源迟到回调不能终止恢复后的录音。
 
-活动快照和记录时长由 Rust 输出共同末尾；分路 `durationMs` 仍表示实际样本时长。稀疏时间轴随 `capture_lanes` 经 codec 和工作区重建验证，保存重试及重开后保留。该协议已可隔离测试，但原生宿主仍是单路：Core Audio process tap、双路权限/音源变化、暂停入口及依据映射的分路回放尚未接通，真实验收保留在 [#620](https://github.com/semantic-craft/koe/issues/620)。
+活动快照和记录时长由 Rust 输出共同末尾；分路 `durationMs` 仍表示实际样本时长。稀疏时间轴随 `capture_lanes` 经 codec 和工作区重建验证，保存重试及重开后保留。原生单路麦克风已接真实采样时刻和暂停恢复。分路回放由 Rust 输出样本计划，原生执行共同空档与末尾。Core Audio process tap、原生双路权限及输出变化仍未接通，真实验收保留在 [#620](https://github.com/semantic-craft/koe/issues/620)。
+
+系统音频授权仍有未解决的边界。[Apple 官方样例](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps)在启动含 tap 的聚合设备时触发授权，但本轮 SDK 与样例调查未找到独立的授权完成或取消回调。`AudioDeviceStart` 成功与静音都不能当作授权完成，录屏权限也不能替代系统音频权限；系统双路入口保持未启用。
 
 ### 转写、整理与重试
 

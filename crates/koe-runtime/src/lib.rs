@@ -184,6 +184,7 @@ impl KoeRuntime {
                     | Command::DeviceEvent { .. }
                     | Command::PlaybackProgress { .. }
                     | Command::MicrophoneStarted { .. }
+                    | Command::MicrophonePrepared { .. }
                     | Command::MicrophoneChunk { .. }
                     | Command::MicrophonePaused { .. }
                     | Command::MicrophoneStopped { .. }
@@ -200,6 +201,12 @@ impl KoeRuntime {
                 clock_ns,
             } => self.start_microphone(input_id, include_system, clock_ns, now)?,
             Command::PauseMicrophone => self.pause_microphone()?,
+            Command::MicrophonePrepared {
+                record_id,
+                session_id,
+                epoch,
+                clock_ns,
+            } => self.microphone_prepared(&record_id, &session_id, epoch, clock_ns)?,
             Command::ResumeMicrophone { clock_ns } => self.resume_microphone(clock_ns)?,
             Command::MicrophonePaused {
                 record_id,

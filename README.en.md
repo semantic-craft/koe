@@ -18,7 +18,7 @@ The product starts on macOS. **Today reviews the day, recording details preserve
 
 ## Workflow
 
-1. **Capture a record.** Retrieve a D3200 recording, import WAV, UTF-8 TXT, Markdown, or a `.koepack` containing text, or write a note. A new workspace starts empty.
+1. **Capture a record.** Record with a selected Mac microphone, retrieve a D3200 recording, import WAV, UTF-8 TXT, Markdown, or a `.koepack` containing text, or write a note. A new workspace starts empty.
 2. **Transcribe and organize.** Alibaba DashScope handles speech recognition and Qwen generates structured minutes. Live device audio and saved audio enter the same Rust recording pipeline. Completed transcription proceeds to minutes generation.
 3. **Review tasks and memories.** Generated candidates wait for review. Accept, dismiss, edit, or restore them; task completion and memory decisions persist locally.
 4. **Follow the source.** Minutes, tasks, memories, and answers retain recording and utterance references. Open a source and return to the conversation. Audio records support playback and seeking; records export to Markdown.
@@ -26,6 +26,8 @@ The product starts on macOS. **Today reviews the day, recording details preserve
 Today gathers the day's records, pending decisions, and next actions. All Records holds the complete library. Each record owns its transcript, minutes, highlights, and processing state. Questions can target one record or the whole library.
 
 Without cloud configuration, text notes, browsing, review, playback, and local retrieval remain available. Ask Koe labels retrieved original passages accordingly. Speech recognition and generated minutes require a configured provider.
+
+Mac microphone recording supports pause and resume. Pausing drains accepted audio before confirmation; resuming continues the same recording without adding the pause interval. Audio stays local by default. Real permission, device switching, playback, and signed-app restart checks remain in [#616](https://github.com/semantic-craft/koe/issues/616) and [#620](https://github.com/semantic-craft/koe/issues/620). System audio capture and crash recovery are not connected yet.
 
 ## Data and service boundaries
 
@@ -82,7 +84,7 @@ Use `--workspace <directory>` for another library and `--record <ID>` to scope `
 | Runtime and API | [koe-runtime](crates/koe-runtime/), [koe-host-api](crates/koe-host-api/) | Device and asynchronous task coordination, persistence, version 2 snapshots and commands |
 | Native host and CLI | [apple-shared](platforms/apple-shared/), [macos](platforms/macos/), [koe-cli](crates/koe-cli/) | SwiftUI, windows, CoreBluetooth, file selection, playback, and the shared-runtime command line |
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md). iOS/Android hosts, screen or microphone capture, translation, Google synchronization, automatic backup, and ACP are outside the current connected macOS product workflow.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md). iOS/Android hosts, screen and system audio capture, continuous microphone listening, translation, Google synchronization, automatic backup, and ACP are outside the current connected macOS product workflow.
 
 ## Acknowledgements
 

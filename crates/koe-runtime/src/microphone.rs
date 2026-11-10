@@ -108,6 +108,30 @@ impl KoeRuntime {
         });
         Ok(())
     }
+    pub(super) fn microphone_prepared(
+        &mut self,
+        record: &str,
+        session: &str,
+        epoch: u64,
+        clock_ns: u64,
+    ) -> Result<(), String> {
+        let Some(m) = &mut self.microphone else {
+            return Ok(());
+        };
+        if m.record_id != record || m.session_id != session || m.epoch != epoch {
+            return Ok(());
+        }
+        if m.phase != Phase::Starting || m.lanes.values().any(|l| l.sample_rate.is_some()) {
+            return Ok(());
+        }
+        match m.clock_ns {
+            Some(previous) if previous != clock_ns => Err("采集时钟已经确认，不能覆盖".into()),
+            _ => {
+                m.clock_ns = Some(clock_ns);
+                Ok(())
+            }
+        }
+    }
     pub(super) fn pause_microphone(&mut self) -> Result<(), String> {
         let m = self.microphone.as_mut().ok_or("没有活动录音")?;
         if m.phase != Phase::Recording || m.clock_ns.is_none() {
@@ -506,7 +530,7 @@ impl KoeRuntime {
         let Some(m) = &self.microphone else {
             return Value::Null;
         };
-        let lanes: BTreeMap<_,_> = m.lanes.iter().map(|(name,l)| (name, json!({"nextSequence":l.next_sequence,"durationMs":l.asset.as_ref().map_or(0,|a|a.duration_ms()),"stopped":l.producer_stopped,"error":l.save_error,"interruption":l.interruption,"started":l.sample_rate.is_some()}))).collect();
+        let lanes: BTreeMap<_,_> = m.lanes.iter().map(|(name,l)| (name, json!({"nextSequence":l.next_sequence,"sampleRate":l.sample_rate,"durationMs":l.asset.as_ref().map_or(0,|a|a.duration_ms()),"stopped":l.producer_stopped,"error":l.save_error,"interruption":l.interruption,"started":l.sample_rate.is_some()}))).collect();
         let mic = &m.lanes["microphone"];
         let duration_ms = m
             .lanes
