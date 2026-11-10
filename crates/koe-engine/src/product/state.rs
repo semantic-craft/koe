@@ -7,6 +7,7 @@ impl ProductWorkspace {
     #[must_use]
     pub fn export_state(&self) -> WorkspaceState {
         WorkspaceState {
+            migrations: self.migrations.clone(),
             revision: self.revision,
             next_operation: self.next_operation,
             records: self.records.values().cloned().collect(),
@@ -38,6 +39,7 @@ impl ProductWorkspace {
             }
         }
         let mut workspace = Self {
+            migrations: state.migrations,
             revision: state.revision,
             next_operation: state.next_operation,
             records,
@@ -47,6 +49,9 @@ impl ProductWorkspace {
             pending_ask: state.pending_ask,
             last_ask_operation: state.last_ask_operation,
         };
+        for receipt in &workspace.migrations {
+            workspace.validate_migration(receipt)?;
+        }
         workspace.validate_scope(&workspace.ask_scope)?;
         let mut max_operation = workspace.last_ask_operation.unwrap_or(0);
         for record in workspace.records.values() {

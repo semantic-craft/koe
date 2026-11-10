@@ -125,6 +125,23 @@ public struct SettingsDoctorView: View {
                         }
                     }
                 }
+                KoeCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("旧版资料迁移").font(.system(size: AppFontSizes.md, weight: .medium))
+                        KoeActionButton("选择旧版资料目录", systemImage: "folder") {
+                            NotificationCenter.default.post(name: Notification.Name("KoeImportFlutterLibrary"), object: nil)
+                        }
+                        ForEach(store.snapshot.migrationReports ?? []) { report in
+                            Text("已迁入 \(report.recordCount) 条基础记录，尚未完成全部迁移。")
+                                .font(.system(size: AppFontSizes.sm))
+                            Text("保全副本：\(report.archivePath)").textSelection(.enabled)
+                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                            ForEach(report.pending, id: \.self) { item in
+                                Text(item).font(.system(size: AppFontSizes.xs))
+                            }
+                        }
+                    }
+                }
                 Text("记录与确认结果保存在本机工作区。导出时可选择保存位置。")
                     .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
             }.padding(30).frame(maxWidth: 850, alignment: .leading)

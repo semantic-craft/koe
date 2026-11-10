@@ -14,6 +14,7 @@ public struct SegmentSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let text: String
     public let startMs: UInt64
     public let endMs: UInt64
+    public var timed: Bool? = nil
     public let speaker: String?
 }
 
@@ -231,6 +232,14 @@ public struct PlaybackSnapshot: Codable, Equatable, Sendable {
     public let isPlaying: Bool
 }
 
+public struct MigrationReportSnapshot: Codable, Equatable, Sendable, Identifiable {
+    public var id: String { fingerprint }
+    public let fingerprint: String
+    public let archivePath: String
+    public let recordCount: Int
+    public let pending: [String]
+}
+
 public struct HostSnapshot: Codable, Equatable, Sendable {
     public let version: UInt32
     public let generation: UInt64
@@ -248,6 +257,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let provider: ProviderSnapshot
     public let playback: PlaybackSnapshot
     public let error: String?
+    public var migrationReports: [MigrationReportSnapshot]? = nil
     public let notice: String?
 
     public var activeLiveRecord: RecordSnapshot? {

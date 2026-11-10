@@ -32,6 +32,9 @@ pub(crate) enum Command {
         record_id: String,
         segment_id: String,
     },
+    ImportFlutterLibrary {
+        path: String,
+    },
     ImportFile {
         path: String,
     },

@@ -111,7 +111,7 @@ struct RecordDetailView: View {
         ForEach(detail.segments) { segment in
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
-                    Text(TimeLabel.duration(segment.startMs)).monospacedDigit().foregroundStyle(AppColors.accent)
+                    Text(segment.timed == false ? "无时码" : TimeLabel.duration(segment.startMs)).monospacedDigit().foregroundStyle(AppColors.accent)
                     Text(segment.speaker ?? "原文").foregroundStyle(AppColors.textMuted)
                     Spacer()
                     Menu {

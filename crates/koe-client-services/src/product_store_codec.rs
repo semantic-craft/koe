@@ -11,12 +11,31 @@ use super::StoreError;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceDto {
+    #[serde(default)]
+    migrations: Vec<MigrationDto>,
     version: u32,
     revision: u64,
     next_operation: u64,
     records: Vec<RecordDto>,
     items: Vec<ItemDto>,
     ask: AskDto,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MigrationDto {
+    fingerprint: String,
+    archive: String,
+    record_ids: Vec<String>,
+    pending: Vec<String>,
+    summaries: Vec<ImportedSummaryDto>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportedSummaryDto {
+    record_id: String,
+    slot: String,
+    text: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -155,6 +174,25 @@ struct EvidenceDto {
 pub(super) fn encode(workspace: &ProductWorkspace) -> Result<String, StoreError> {
     let state = workspace.export_state();
     let dto = WorkspaceDto {
+        migrations: state
+            .migrations
+            .iter()
+            .map(|m| MigrationDto {
+                fingerprint: m.fingerprint.clone(),
+                archive: m.archive.clone(),
+                record_ids: m.record_ids.clone(),
+                pending: m.pending.clone(),
+                summaries: m
+                    .summaries
+                    .iter()
+                    .map(|s| ImportedSummaryDto {
+                        record_id: s.record_id.clone(),
+                        slot: s.slot.clone(),
+                        text: s.text.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
         version: 1,
         revision: state.revision,
         next_operation: state.next_operation,
@@ -206,6 +244,25 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
         return Err(invalid("unsupported workspace version"));
     }
     let state = WorkspaceState {
+        migrations: dto
+            .migrations
+            .into_iter()
+            .map(|m| MigrationReceipt {
+                fingerprint: m.fingerprint,
+                archive: m.archive,
+                record_ids: m.record_ids,
+                pending: m.pending,
+                summaries: m
+                    .summaries
+                    .into_iter()
+                    .map(|s| ImportedSummary {
+                        record_id: s.record_id,
+                        slot: s.slot,
+                        text: s.text,
+                    })
+                    .collect(),
+            })
+            .collect(),
         revision: dto.revision,
         next_operation: dto.next_operation,
         records: dto
