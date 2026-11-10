@@ -60,6 +60,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             bluetoothBridge.store = store
             files.store = store
             playback.store = store
+            capture.store = store
             if store != nil {
                 bluetoothBridge.reconnectKnownIfAvailable()
             }
@@ -68,6 +69,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     public let bluetoothBridge = BluetoothBridge()
     let files = NativeFileActions()
     private let playback = NativePlayback()
+    private let capture = NativeCapture()
     private lazy var lifecycle = NativeQuitCoordinator(
         send: { [weak self] in self?.store?.send($0) },
         reply: { [weak self] allowed in
@@ -93,6 +95,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.willCloseNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(importFlutterLibrary), name: Notification.Name("KoeImportFlutterLibrary"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(startMicrophone), name: Notification.Name("KoeStartMicrophone"), object: nil)
         lastTick = ProcessInfo.processInfo.systemUptime
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -108,8 +111,10 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         store?.pollTimers(elapsedMs: elapsed)
         bluetoothBridge.flushOutboundFrames()
         playback.tick()
+        capture.apply()
     }
 
+    @objc private func startMicrophone() { capture.chooseInput() }
     @objc private func importFlutterLibrary() { files.importFlutterLibrary() }
     @objc private func rememberWindow(_ notification: Notification) {
         KoeWindowPresenter.rememberWindow(notification.object as? NSWindow)
@@ -120,8 +125,10 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         return true
     }
     private func applyLifecycle(_ snapshot: HostSnapshot) {
-        lifecycle.apply(snapshot.lifecycle)
-        quitPanel?.update(snapshot.lifecycle)
+        capture.apply()
+        let current = store?.snapshot.lifecycle ?? snapshot.lifecycle
+        lifecycle.apply(current)
+        quitPanel?.update(current)
     }
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store, store.handle != 0 else { return .terminateNow }

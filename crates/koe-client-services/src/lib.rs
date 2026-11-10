@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 
 pub mod analysis_queue;
+pub mod capture_asset;
 pub mod mcp_acp;
 pub mod product_store;
 pub mod recording_assets;

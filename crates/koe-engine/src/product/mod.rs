@@ -20,6 +20,8 @@ pub type RecordId = String;
 /// Origin of a real recording or explicit text input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordOrigin {
+    /// Native Mac microphone audio.
+    Microphone,
     /// D3200 recording.
     Bean,
     /// User-imported audio.

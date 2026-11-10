@@ -16,6 +16,7 @@ mod device;
 mod flutter_import;
 mod legacy;
 mod lifecycle;
+mod microphone;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
@@ -62,6 +63,7 @@ pub struct KoeRuntime {
     pending: BTreeMap<u64, PendingWork>,
     completed: std::collections::VecDeque<koe_client_providers::ProviderEvent>,
     captures: capture::Captures,
+    microphone: Option<microphone::Microphone>,
     auto_transcribe: std::collections::BTreeSet<String>,
     auto_summarize: std::collections::BTreeSet<String>,
     next_job: u64,
@@ -100,6 +102,7 @@ impl KoeRuntime {
             pending: BTreeMap::new(),
             completed: std::collections::VecDeque::new(),
             captures: Default::default(),
+            microphone: None,
             auto_transcribe: Default::default(),
             auto_summarize: Default::default(),
             next_job: 1,
@@ -172,10 +175,21 @@ impl KoeRuntime {
             | Command::Navigate { .. } | Command::Back | Command::SelectRecord { .. }
             | Command::OpenSource { .. } | Command::DeviceEvent { .. }
             | Command::PlaybackProgress { .. }
+            | Command::MicrophoneStarted { .. } | Command::MicrophoneChunk { .. }
+            | Command::MicrophoneStopped { .. } | Command::MicrophoneFailed { .. }
+            | Command::RetryMicrophoneSave
         ) {
             return Err("正在退出，请先取消退出再开始新操作".into());
         }
         match command {
+            Command::StartMicrophone { input_id } => self.start_microphone(input_id, now)?,
+            Command::StopMicrophone => self.stop_microphone(false)?,
+            Command::CancelMicrophone => self.stop_microphone(true)?,
+            Command::RetryMicrophoneSave => self.save_microphone()?,
+            Command::MicrophoneStarted { record_id, session_id, lane, sample_rate } => self.microphone_started(&record_id,&session_id,&lane,sample_rate)?,
+            Command::MicrophoneChunk { record_id, session_id, lane, sequence, samples } => self.microphone_chunk(&record_id,&session_id,&lane,sequence,&samples)?,
+            Command::MicrophoneStopped { record_id, session_id, lane, sequence } => self.microphone_stopped(&record_id,&session_id,&lane,sequence)?,
+            Command::MicrophoneFailed { record_id, session_id, lane, message } => self.microphone_failed(&record_id,&session_id,&lane,message),
             Command::RequestQuit => self.request_quit(),
             Command::CancelQuit => self.quit = lifecycle::QuitState::Running,
             Command::ImportFlutterLibrary { path } => {

@@ -21,6 +21,14 @@ pub(crate) enum Page {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
+    StartMicrophone { input_id: String },
+    StopMicrophone,
+    CancelMicrophone,
+    RetryMicrophoneSave,
+    MicrophoneStarted { record_id: String, session_id: String, lane: String, sample_rate: u32 },
+    MicrophoneChunk { record_id: String, session_id: String, lane: String, sequence: u64, samples: Vec<i16> },
+    MicrophoneStopped { record_id: String, session_id: String, lane: String, sequence: u64 },
+    MicrophoneFailed { record_id: String, session_id: String, lane: String, message: String },
     RequestQuit,
     CancelQuit,
     Navigate {

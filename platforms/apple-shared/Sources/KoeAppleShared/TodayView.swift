@@ -16,6 +16,7 @@ struct TodayView: View {
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         PageHeading(title: "今天", subtitle: "让值得记住的事，有个去处。")
                     }
+                    MicrophoneCard(store: store)
                     if store.snapshot.device.recording || store.snapshot.device.stopping || store.snapshot.device.transferPhase == "streaming_realtime" {
                         liveRecordingCard
                     } else if store.snapshot.device.busy {
