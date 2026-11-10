@@ -100,18 +100,13 @@
       },
       {
         "number": 623,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T11:35:45Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T11:41:32Z"
       }
     ],
-    "main": "eeaaeb41df8cdfdf3e605c57455826eda268ffe1",
-    "open_pulls": [
-      {
-        "head": "162d4a697520ec1a558b2c85564e3d5b19f1b921",
-        "number": 624
-      }
-    ],
+    "main": "f9680b4790c28866a33dfff0afe5ee057f59a894",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -179,17 +174,17 @@
       },
       {
         "base": "eeaaeb41df8cdfdf3e605c57455826eda268ffe1",
-        "head": "162d4a697520ec1a558b2c85564e3d5b19f1b921",
-        "merge_commit": "4a88b2fcd95c95e123bc3b15c6e1ee090bd3413c",
-        "merged": false,
+        "head": "10ed11048a93517e83a6a2403dd734a0a556e77b",
+        "merge_commit": "f9680b4790c28866a33dfff0afe5ee057f59a894",
+        "merged": true,
         "number": 624,
-        "state": "open"
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T11:38:42.500886Z",
+  "observed_at": "2026-11-10T11:42:13.187339Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -432,14 +427,14 @@
             },
             {
               "kind": "pull",
-              "note": "Rust共同时间轴与暂停协议；本地260 Rust/32 Python/29 Swift、独立复验通过；尚未合并，原生仍单路。",
+              "note": "squash f9680b4已合并；共同时间轴/暂停Rust子单元完整门禁、CI与独立复验通过；未安装，原生双路未接。",
               "ref": 624
             }
           ],
           "id": "mac-dual-capture",
-          "next": "完成本轮 Rust 时间轴子单元 PR；随后接 Core Audio 与原生双路权限/暂停/分路回放。权限结束后再建立共同单调时钟；真实验收见 #620。",
+          "next": "接 Core Audio 与原生双路权限/暂停/分路回放；权限结束后再建立共同单调时钟，实际首样本时间进入Rust映射。真实验收见#620。",
           "status": "in_progress",
-          "summary": "Rust 分路资产保管已由 PR #621 合并；共同采样时间轴与暂停协议已实现并通过本地全量门禁及独立复验，等待本轮 PR 交付。时间轴保持真实样本、启动时差及间隙，暂停等两路排空并以 epoch 隔离旧回调，保存重试和重开保留映射。原生仍是单路，Core Audio、双路入口和分路回放尚未恢复。",
+          "summary": "Rust 分路资产保管（PR #621）及共同采样时间轴/暂停协议（PR #624，squash f9680b4）已合并，后者通过260 Rust、32 Python、29 Swift完整门禁、CI与独立复验。时间轴保留真实样本、启动时差及间隙，暂停等两路排空并以epoch隔离旧回调，发布重试和完整重开保留映射。原生仍是单路，Core Audio、双路入口和分路回放尚未恢复。",
           "title": "Mac 系统音频双路恢复"
         }
       ],
