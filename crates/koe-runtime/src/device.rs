@@ -107,6 +107,10 @@ impl Default for DeviceRuntime {
 
 impl DeviceRuntime {
     pub fn stop_recording(&mut self) {
+        if self.awaiting_stop {
+            self.outbound.push(DeviceCommands::pause_record());
+            return;
+        }
         self.awaiting_stop |= self.session.device_recording_active
             || self.session.pending_realtime_subscribe
             || (self.session.active_is_realtime && !self.session.transfer.quiet_draining);
@@ -321,6 +325,8 @@ impl DeviceRuntime {
         let changed = outcome != SessionIngestOutcome::default();
         if outcome.recording_stopped {
             self.awaiting_stop = false;
+        } else if outcome.session_key_established && self.awaiting_stop {
+            self.outbound.push(DeviceCommands::pause_record());
         }
         self.outbound.extend(outcome.outbound_tx_frames);
         if (outcome.telemetry_updated || outcome.session_key_established)

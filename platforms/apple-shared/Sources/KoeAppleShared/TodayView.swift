@@ -16,7 +16,7 @@ struct TodayView: View {
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         PageHeading(title: "今天", subtitle: "让值得记住的事，有个去处。")
                     }
-                    if store.snapshot.device.recording || store.snapshot.device.transferPhase == "streaming_realtime" {
+                    if store.snapshot.device.recording || store.snapshot.device.stopping || store.snapshot.device.transferPhase == "streaming_realtime" {
                         liveRecordingCard
                     } else if store.snapshot.device.busy {
                         KoeCard {
@@ -108,7 +108,7 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     Circle().fill(KoeColors.danger).frame(width: 8, height: 8)
-                    Text("录音豆正在录音")
+                    Text(store.snapshot.device.stopping ? "正在等待录音豆停止" : "录音豆正在录音")
                         .font(.system(size: AppFontSizes.sm, weight: .medium))
                         .foregroundStyle(KoeColors.textPrimary)
                     Spacer()
@@ -119,7 +119,7 @@ struct TodayView: View {
                         store.send("device_stop")
                         NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                     } label: {
-                        Text("停止录音")
+                        Text(store.snapshot.device.stopping ? "重试停止" : "停止录音")
                             .font(.system(size: AppFontSizes.xs, weight: .medium))
                             .foregroundStyle(KoeColors.danger)
                             .padding(.horizontal, 10)

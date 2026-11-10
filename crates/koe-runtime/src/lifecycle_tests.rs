@@ -485,3 +485,64 @@ fn quit_after_manual_stop_still_waits_for_device_confirmation() {
     runtime.ingest_ble_chunk(&rx(0x18, 0x82, &[0]), NOW + 2);
     assert_eq!(quit_phase(&runtime), "ready");
 }
+
+#[test]
+fn lost_stop_reply_is_retried_after_reconnect_and_cancel_remains_usable() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.device.connection = Some("fixture".into());
+    runtime.device.session.set_session_key([0x55; 32]);
+    live(&mut runtime);
+    dispatch(&mut runtime, json!({"type":"request_quit"}));
+    runtime.drain_outbound_ble_frames();
+    dispatch(
+        &mut runtime,
+        json!({"type":"device_event","event":"disconnected","connectionId":"fixture"}),
+    );
+    runtime.poll_timers(0, NOW);
+    assert_eq!(quit_phase(&runtime), "blocked");
+    dispatch(&mut runtime, json!({"type":"cancel_quit"}));
+    runtime.device.connection = Some("reconnected".into());
+    runtime.device.session.set_session_key([0x55; 32]);
+    runtime
+        .device
+        .accept(koe_engine::session::SessionIngestOutcome {
+            session_key_established: true,
+            ..Default::default()
+        });
+    let retried = runtime.drain_outbound_ble_frames();
+    assert!(
+        retried.iter().any(|f| f.get(5..7) == Some(&[0x18, 0x82])),
+        "reconnect must resend unconfirmed stop"
+    );
+    assert_eq!(
+        runtime.snapshot(NOW)["device"]["stopping"],
+        true,
+        "native host must expose the stop/retry action until confirmation"
+    );
+    runtime.ingest_ble_chunk(&rx(0x18, 0x82, &[0]), NOW);
+    let started = dispatch(&mut runtime, json!({"type":"device_start"}));
+    assert!(started["error"].is_null(), "{started}");
+}
+
+#[test]
+fn retrying_unconfirmed_stop_does_not_reset_audio_drain() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    live(&mut runtime);
+    dispatch(&mut runtime, json!({"type":"device_stop"}));
+    runtime.drain_outbound_ble_frames();
+    runtime.poll_timers(1_500, NOW + 1);
+    dispatch(&mut runtime, json!({"type":"device_stop"}));
+    let frames = runtime.drain_outbound_ble_frames();
+    assert!(frames.iter().any(|f| f.get(5..7) == Some(&[0x18, 0x82])));
+    runtime.poll_timers(500, NOW + 2);
+    assert!(
+        runtime.device.session.has_disk_custody(912),
+        "retry must not postpone saving captured audio"
+    );
+    dispatch(&mut runtime, json!({"type":"request_quit"}));
+    assert_ne!(quit_phase(&runtime), "ready");
+    runtime.ingest_ble_chunk(&rx(0x18, 0x82, &[0]), NOW + 2);
+    assert_eq!(quit_phase(&runtime), "ready");
+}

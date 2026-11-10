@@ -20,7 +20,8 @@ impl KoeRuntime {
         }
         self.quit = QuitState::Draining;
         let session = &self.device.session;
-        if session.device_recording_active
+        if self.device.awaiting_stop
+            || session.device_recording_active
             || session.pending_realtime_subscribe
             || (session.active_is_realtime && !session.transfer.quiet_draining)
         {
