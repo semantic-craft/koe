@@ -163,4 +163,3 @@ fn system_only_record_is_playable_and_late_progress_cannot_undo_seek_or_lane_cha
     );
     assert_eq!(wrong_record["playback"], switched["playback"]);
 }
-
