@@ -14,21 +14,70 @@ public struct SettingsDoctorView: View {
                 KoeCard {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Label("Soundcore Work D3200", systemImage: "waveform.badge.mic")
+                            Label(store.snapshot.device.deviceName, systemImage: "waveform.badge.mic")
                                 .font(.system(size: AppFontSizes.md, weight: .medium))
                             Spacer()
-                            KoeBadge(store.snapshot.device.state,
-                                     tint: store.snapshot.device.connected ? AppColors.success : AppColors.textMuted)
+                            KoeBadge(store.snapshot.device.state, tint: deviceStatusTint)
                         }
-                        Text("连接后可以查看设备中的录音，并将它们取回到这台 Mac。")
+                        Text(store.snapshot.device.statusDetail)
                             .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
-                        HStack {
-                            KoeActionButton("查找录音豆", systemImage: "antenna.radiowaves.left.and.right", isPrimary: true) {
-                                NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
-                            }.disabled(store.snapshot.device.busy)
-                            if store.snapshot.device.connected {
-                                KoeActionButton("开始录音", systemImage: "record.circle") { store.send("device_start") }
-                                KoeActionButton("结束录音", systemImage: "stop.circle") { store.send("device_stop") }
+                        if store.snapshot.device.connected {
+                            HStack(spacing: 12) {
+                                telemetryTile(
+                                    label: "麦克风电量",
+                                    value: store.snapshot.device.batteryPercent.map {
+                                        store.snapshot.device.charging ? "\($0)% 充电中" : "\($0)%"
+                                    } ?? "—"
+                                )
+                                telemetryTile(
+                                    label: "充电仓电量",
+                                    value: store.snapshot.device.boxBatteryPercent.map {
+                                        store.snapshot.device.boxCharging ? "\($0)% 充电中" : "\($0)%"
+                                    } ?? "—"
+                                )
+                                telemetryTile(
+                                    label: "设备存储",
+                                    value: store.snapshot.device.storageLabel
+                                )
+                                telemetryTile(
+                                    label: "固件版本",
+                                    value: store.snapshot.device.firmwareVersion.isEmpty ? "—" : store.snapshot.device.firmwareVersion
+                                )
+                            }
+                            HStack(spacing: 10) {
+                                if store.snapshot.device.recording {
+                                    KoeActionButton("结束录音", systemImage: "stop.circle", isPrimary: true) {
+                                        store.send("device_stop")
+                                        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                                    }
+                                } else {
+                                    KoeActionButton("开始录音", systemImage: "record.circle", isPrimary: true) {
+                                        store.send("device_start")
+                                        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                                    }.disabled(store.snapshot.device.busy)
+                                }
+                                KoeActionButton("刷新状态", systemImage: "arrow.clockwise") {
+                                    store.send("device_refresh")
+                                    NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                                }.disabled(store.snapshot.device.busy)
+                                KoeActionButton("使用引导", systemImage: "questionmark.circle") {
+                                    store.send("device_open_guide")
+                                }
+                                KoeActionButton("断开连接", systemImage: "xmark.circle") {
+                                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleDisconnect"), object: nil)
+                                }
+                            }
+                        } else {
+                            Text("将麦克风放入充电仓，短按充电仓下方按钮开启蓝牙广播后点击连接。")
+                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                            HStack(spacing: 10) {
+                                KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right", isPrimary: true) {
+                                    store.send("device_open_guide")
+                                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                                }.disabled(store.snapshot.device.busy)
+                                KoeActionButton("重新扫描", systemImage: "arrow.clockwise") {
+                                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                                }.disabled(store.snapshot.device.busy)
                             }
                         }
                         if store.snapshot.device.busy { ProgressView(value: store.snapshot.device.progress) }
@@ -38,8 +87,11 @@ public struct SettingsDoctorView: View {
                                 Text(TimeLabel.duration(file.durationMs)).font(.system(size: AppFontSizes.xs))
                                     .foregroundStyle(AppColors.textMuted)
                                 Spacer()
-                                KoeActionButton("取回") { store.send("device_download", ["fileId": file.id]) }
-                                    .disabled(store.snapshot.device.busy)
+                                KoeActionButton("取回") {
+                                    store.send("device_download", ["fileId": file.id])
+                                    NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                                }
+                                .disabled(store.snapshot.device.busy)
                             }.padding(.vertical, 5)
                         }
                     }
@@ -90,5 +142,19 @@ public struct SettingsDoctorView: View {
         if !asr.isEmpty { fields["asrEndpoint"] = asr }
         store.send("configure_provider", fields)
         apiKey = ""
+    }
+    private func telemetryTile(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+            Text(value).font(.system(size: AppFontSizes.sm, weight: .medium)).foregroundStyle(AppColors.textPrimary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+    }
+    private var deviceStatusTint: Color {
+        if store.snapshot.device.connected { return AppColors.success }
+        if store.snapshot.device.phase == "disconnected" { return AppColors.textMuted }
+        return AppColors.warning
     }
 }

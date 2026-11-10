@@ -30,6 +30,41 @@ struct KoeMacHostTests {
         #expect(BluetoothBridge.decodeHex("gg") == nil)
     }
 
+    @Test("D3200 BLE advertisement matching recognizes service UUID, manufacturer data, and 128-bit characteristics")
+    @MainActor
+    func bleAdvertisementAndCharacteristicMatching() {
+        let serviceMatch = BleAdvertisementCandidate.match(
+            peripheralName: nil,
+            advertisementData: [
+                "kCBAdvDataServiceUUIDs": [BluetoothBridge.d3200ServiceUUID]
+            ]
+        )
+        #expect(serviceMatch != nil)
+
+        let mfgBytes = Data([0x00, 0x7F, 0x1D, 0x04, 0xCC, 0xA3, 0x90, 0x00, 0x73, 0x6F, 0x75, 0x6E, 0x64, 0x63])
+        let mfgMatch = BleAdvertisementCandidate.match(
+            peripheralName: nil,
+            advertisementData: [
+                "kCBAdvDataManufacturerData": mfgBytes
+            ]
+        )
+        #expect(mfgMatch?.macAddress == "00:7F:1D:04:CC:A3")
+        #expect(mfgMatch?.displayName == "soundcore Work (CC:A3)")
+
+        let prefixedMfgBytes = Data([0xFF, 0xFF, 0x00, 0x7F, 0x1D, 0x04, 0xCC, 0xA3, 0x90, 0x00, 0x73, 0x6F, 0x75, 0x6E, 0x64, 0x63])
+        let prefixedMatch = BleAdvertisementCandidate.match(
+            peripheralName: nil,
+            advertisementData: [
+                "kCBAdvDataManufacturerData": prefixedMfgBytes
+            ]
+        )
+        #expect(prefixedMatch?.macAddress == "00:7F:1D:04:CC:A3")
+        #expect(prefixedMatch?.displayName == "soundcore Work (CC:A3)")
+
+        #expect(BluetoothBridge.isWriteCharacteristic(BluetoothBridge.writeCharacteristicUUID))
+        #expect(BluetoothBridge.isNotifyCharacteristic(BluetoothBridge.notifyCharacteristicUUID))
+    }
+
     @Test("Closing and reopening restores the workspace instead of a panel")
     @MainActor
     func windowCloseAndReopen() {

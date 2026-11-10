@@ -66,4 +66,48 @@ struct KoeAppleSharedTests {
         #expect(restored.snapshot.error == nil)
         #expect(restored.nativeError == nil)
     }
+
+    @Test("Connect guide, backward-compatible device snapshot, and product WebP assets")
+    @MainActor
+    func connectGuideAndProductAssets() throws {
+        let legacyJSON = """
+        {
+          "version": 2,
+          "generation": 10,
+          "section": "today",
+          "canGoBack": false,
+          "selectedRecordId": null,
+          "focusSegmentId": null,
+          "records": [],
+          "todayRecordIds": [],
+          "detail": null,
+          "tasks": [],
+          "memories": [],
+          "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
+          "device": { "state": "未连接", "connected": false, "busy": false, "files": [], "progress": 0.0 },
+          "provider": { "configured": false, "model": "qwen-plus" },
+          "playback": { "recordId": null, "positionMs": 0, "isPlaying": false },
+          "error": null,
+          "notice": null
+        }
+        """
+        let decoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(legacyJSON.utf8))
+        #expect(decoded.device.phase == "disconnected")
+        #expect(decoded.device.deviceName == "Soundcore Work")
+        #expect(decoded.device.guide == nil)
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+        store.send("device_open_guide")
+        #expect(store.snapshot.device.guide?.mode == "connect_guide")
+        #expect(store.snapshot.device.guide?.highlightTarget == "case_button")
+        store.send("device_close_guide")
+        #expect(store.snapshot.device.guide == nil)
+
+        for asset in ["guide_connect_case", "guide_connect_device", "guide_record", "guide_mark", "guide_wear", "guide_sync"] {
+            #expect(ProductAssetImage.resolveImageURL(named: asset) != nil)
+        }
+    }
 }

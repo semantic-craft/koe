@@ -3,17 +3,19 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-10T01:35:50.674270Z</p>
-<p>Main: <code>main: 4cfb0052638e08ea7389cc818da8f208538089da</code></p>
+<p>Observed: 2026-11-10T04:05:16.473960Z</p>
+<p>Main: <code>main: 69fc39a6c5e682eaf4ff4e4e32daf367c6456c9b</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-client-services/src/product_store.rs">file crates/koe-client-services/src/product_store.rs: 唯一存储入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/589">pull 589: 实现已 squash 合并，PR CI 通过。</a></li>
 </ul><p>Next: 维持单一领域所有者，按实际反馈演进。</p></article>
-<article id="native-flow"><h3>今天、记录详情和全局问答</h3><span class="badge">done</span><p>今天、记录详情、待办、记忆和问答使用 C ABI v2 快照。隔离签名应用已实际走通创建、审核、全局检索及来源返回；正式安装版已恢复并打开旧记录。</p><ul>
+<article id="native-flow"><h3>今天、记录详情、全局问答与连接引导</h3><span class="badge">done</span><p>今天、记录详情、待办、记忆、问答与录音豆连接引导使用 C ABI v2 快照。已恢复充电仓按键脉冲引导动画与连接成功双电量 5 步引导，真机 D3200（固件 04.92）已实测自动重连并同步双端电量与设备录音目录。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift">file platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift: 原生界面入口</a></li>
-</ul><p>Next: 按 #588 验收真实设备与服务。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/ConnectGuideSheet.swift">file platforms/apple-shared/Sources/KoeAppleShared/ConnectGuideSheet.swift: 连接引导与 5 步使用说明模态卡片</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Sources/Koe/BluetoothBridge.swift">file platforms/macos/Sources/Koe/BluetoothBridge.swift: D3200 蓝牙广播识别与自动重连</a></li>
+</ul><p>Next: 按 #588 继续验收取回与真实云服务。</p></article>
 <article id="audio-analysis"><h3>真实采集与云端分析通路</h3><span class="badge">done</span><p>复用 D3200 协议，按文件绑定实时 PCM 和逐句结果；HTTP/WS 实现、内容版本音频、来源校验与保存恢复已实现。本地协议服务器测试不等于真实服务验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/capture.rs">file crates/koe-runtime/src/capture.rs: 实时会话编排</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/processing.rs">file crates/koe-runtime/src/processing.rs: 离线转写、纪要与问答</a></li>
@@ -23,13 +25,13 @@
 </ul><p>Next: 升级后的真实录音长期使用继续在 #588 记录。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
-<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>完整 scripts/check 通过：175 项 Rust 测试及文档测试、7 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查通过。独立代码复核无剩余阻塞。 PR #589 的远端 CI 已通过。</p><ul>
+<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>完整 scripts/check 通过：178 项 Rust 测试及文档测试、9 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查（23 文件 0 违规）通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 统一门禁</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/cloud_workflow.rs">file crates/koe-runtime/tests/cloud_workflow.rs: 本地真实协议流程</a></li>
 </ul><p>Next: 后续改动运行统一门禁。</p></article>
-<article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">unverified</span><p>本轮没有操作实体 D3200，也没有使用真实服务密钥；这些行为不以合成样本、协议服务器或 UI 测试代替。</p><ul>
+<article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
-</ul><p>Next: 按 #588 在最终安装版逐项验收。</p></article>
+</ul><p>Next: 按 #588 继续验收完整取回、边录边转写与真实云服务。</p></article>
 <article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-10 已 Developer ID 签名并安装 /Applications/Koe.app；verify-self、smoke-test 通过，正式界面已打开旧记录并停留在首页。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/587">issue 587: 实现范围与验收入口</a></li>
 </ul><p>Next: 真实 D3200 与付费服务验收见 #588。</p></article>
@@ -40,6 +42,5 @@
 </ul><p>Next: 先验证当前 macOS 产品流程，再选择下一阶段功能。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/551">#551</a> <code>e8676498b47a73d1588f329834bbef22a11048c3</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

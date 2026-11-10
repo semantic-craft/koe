@@ -15,13 +15,8 @@
         "updated_at": "2026-11-10T01:27:49Z"
       }
     ],
-    "main": "4cfb0052638e08ea7389cc818da8f208538089da",
-    "open_pulls": [
-      {
-        "head": "e8676498b47a73d1588f329834bbef22a11048c3",
-        "number": 551
-      }
-    ],
+    "main": "69fc39a6c5e682eaf4ff4e4e32daf367c6456c9b",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -35,7 +30,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T01:35:50.674270Z",
+  "observed_at": "2026-11-10T04:05:16.473960Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -83,13 +78,23 @@
               "kind": "file",
               "note": "原生界面入口",
               "ref": "platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "连接引导与 5 步使用说明模态卡片",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/ConnectGuideSheet.swift"
+            },
+            {
+              "kind": "file",
+              "note": "D3200 蓝牙广播识别与自动重连",
+              "ref": "platforms/macos/Sources/Koe/BluetoothBridge.swift"
             }
           ],
           "id": "native-flow",
-          "next": "按 #588 验收真实设备与服务。",
+          "next": "按 #588 继续验收取回与真实云服务。",
           "status": "done",
-          "summary": "今天、记录详情、待办、记忆和问答使用 C ABI v2 快照。隔离签名应用已实际走通创建、审核、全局检索及来源返回；正式安装版已恢复并打开旧记录。",
-          "title": "今天、记录详情和全局问答"
+          "summary": "今天、记录详情、待办、记忆、问答与录音豆连接引导使用 C ABI v2 快照。已恢复充电仓按键脉冲引导动画与连接成功双电量 5 步引导，真机 D3200（固件 04.92）已实测自动重连并同步双端电量与设备录音目录。",
+          "title": "今天、记录详情、全局问答与连接引导"
         },
         {
           "evidence": [
@@ -146,7 +151,7 @@
           "id": "automated-check",
           "next": "后续改动运行统一门禁。",
           "status": "done",
-          "summary": "完整 scripts/check 通过：175 项 Rust 测试及文档测试、7 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查通过。独立代码复核无剩余阻塞。 PR #589 的远端 CI 已通过。",
+          "summary": "完整 scripts/check 通过：178 项 Rust 测试及文档测试、9 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查（23 文件 0 违规）通过。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -158,9 +163,9 @@
             }
           ],
           "id": "hardware-cloud",
-          "next": "按 #588 在最终安装版逐项验收。",
-          "status": "unverified",
-          "summary": "本轮没有操作实体 D3200，也没有使用真实服务密钥；这些行为不以合成样本、协议服务器或 UI 测试代替。",
+          "next": "按 #588 继续验收完整取回、边录边转写与真实云服务。",
+          "status": "in_progress",
+          "summary": "实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。",
           "title": "真实设备与付费服务"
         },
         {

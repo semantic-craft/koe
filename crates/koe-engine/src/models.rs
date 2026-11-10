@@ -3,6 +3,141 @@
 
 use crate::frame::{read_u16_le, read_u32_le, to_hex};
 
+/// Canonical 128-bit BLE GATT service UUID advertised by the soundcore Work (D3200).
+pub const D3200_SERVICE_UUID_128: &str = "020cf5da-0000-1000-8000-00805f9b34fb";
+
+/// Matched BLE advertisement identity for a soundcore Work (D3200) recording bean or charging case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BleAdvertisementMatch {
+    /// Human-readable display name (for example `"soundcore Work"` or `"soundcore Work (CC:A3)"`).
+    pub display_name: String,
+    /// Uppercase 6-byte BLE MAC (`AA:BB:CC:DD:EE:FF`) parsed from manufacturer data when available.
+    pub ble_mac: String,
+    /// Whether bit 7 (`0x80`) of manufacturer byte 6 indicates an existing binding.
+    pub is_bound_advertised: bool,
+    /// Whether the peripheral matched via a D3200 service UUID (`020cf5da` / `f5da`).
+    pub matched_service_uuid: bool,
+    /// Whether the peripheral matched via D3200 manufacturer payload (`soundc` mark or `f5da` signature).
+    pub matched_manufacturer_data: bool,
+    /// Whether the peripheral matched via advertised local name (`soundcore` / `d3200` / `work`).
+    pub matched_local_name: bool,
+}
+
+impl BleAdvertisementMatch {
+    /// Returns `true` when `uuid` matches the D3200 primary service UUID (`020cf5da` / `daf50c02` / `f5da`).
+    #[must_use]
+    pub fn is_d3200_service_uuid(uuid: &str) -> bool {
+        let lower = uuid.trim().to_ascii_lowercase();
+        lower.contains("020cf5da") || lower.contains("daf50c02") || lower.contains("f5da")
+    }
+
+    /// Returns `true` when `uuid` matches the D3200 GATT write characteristic (`0x7777`).
+    #[must_use]
+    pub fn is_write_characteristic_uuid(uuid: &str) -> bool {
+        uuid.trim().to_ascii_lowercase().contains("7777")
+    }
+
+    /// Returns `true` when `uuid` matches the D3200 GATT notify characteristic (`0x8888`).
+    #[must_use]
+    pub fn is_notify_characteristic_uuid(uuid: &str) -> bool {
+        uuid.trim().to_ascii_lowercase().contains("8888")
+    }
+
+    /// Evaluates BLE advertisement fields against the D3200 discovery rules (`PROTOCOL.md` §3.1).
+    #[must_use]
+    pub fn parse(
+        local_name: Option<&str>,
+        service_uuids: &[&str],
+        manufacturer_payloads: &[&[u8]],
+    ) -> Option<Self> {
+        let matched_service_uuid = service_uuids
+            .iter()
+            .any(|uuid| Self::is_d3200_service_uuid(uuid));
+
+        let trimmed_name = local_name.map(str::trim).unwrap_or("");
+        let lower_name = trimmed_name.to_ascii_lowercase();
+        let matched_local_name = lower_name.contains("soundcore")
+            || lower_name.contains("d3200")
+            || lower_name.contains("work");
+
+        let mut matched_manufacturer_data = false;
+        let mut ble_mac = String::new();
+        let mut is_bound_advertised = false;
+
+        for bytes in manufacturer_payloads {
+            let offset_10_mark = if bytes.len() >= 16 {
+                let mark = String::from_utf8_lossy(&bytes[10..16]).to_ascii_lowercase();
+                mark.contains("sound") || mark.contains("scor")
+            } else {
+                false
+            };
+            let offset_8_mark = if bytes.len() >= 14 {
+                let mark = String::from_utf8_lossy(&bytes[8..14]).to_ascii_lowercase();
+                mark.contains("sound") || mark.contains("scor")
+            } else {
+                false
+            };
+            let has_uuid_bytes = bytes.windows(4).any(|w| {
+                w == [0x02, 0x0c, 0xf5, 0xda] || w == [0xda, 0xf5, 0x0c, 0x02]
+            }) || (bytes.len() >= 7
+                && bytes
+                    .windows(2)
+                    .any(|w| w == [0xf5, 0xda] || w == [0xda, 0xf5]));
+
+            if offset_10_mark || offset_8_mark || has_uuid_bytes {
+                matched_manufacturer_data = true;
+                let base = if offset_10_mark { 2usize } else { 0usize };
+                if bytes.len() >= base + 6 {
+                    let candidate_mac = DeviceInfoModel::format_mac(&bytes[base..base + 6]);
+                    if !candidate_mac.is_empty() {
+                        ble_mac = candidate_mac;
+                    }
+                }
+                if let Some(&flags) = bytes.get(base + 6) {
+                    is_bound_advertised = (flags & 0x80) != 0;
+                }
+                break;
+            }
+        }
+
+        if !matched_service_uuid && !matched_manufacturer_data && !matched_local_name {
+            return None;
+        }
+
+        if ble_mac.is_empty() {
+            for bytes in manufacturer_payloads {
+                if bytes.len() >= 6 {
+                    let candidate_mac = DeviceInfoModel::format_mac(&bytes[0..6]);
+                    if !candidate_mac.is_empty() {
+                        ble_mac = candidate_mac;
+                        if let Some(&flags) = bytes.get(6) {
+                            is_bound_advertised = (flags & 0x80) != 0;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        let display_name = if !trimmed_name.is_empty() {
+            trimmed_name.replace('·', " ")
+        } else if ble_mac.len() >= 5 {
+            format!("soundcore Work ({})", &ble_mac[ble_mac.len() - 5..])
+        } else {
+            "soundcore Work".to_string()
+        };
+
+        Some(Self {
+            display_name,
+            ble_mac,
+            is_bound_advertised,
+            matched_service_uuid,
+            matched_manufacturer_data,
+            matched_local_name,
+        })
+    }
+}
+
 /// Parsed telemetry and identity state for a connected soundcore Work (D3200).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DeviceInfoModel {
@@ -506,5 +641,42 @@ mod tests {
         assert_eq!(page.files[0].duration_ms, 300);
         assert_eq!(page.current_transport_timestamp, Some(400));
         assert_eq!(page.current_transport_duration, Some(500));
+    }
+
+    #[test]
+    fn ble_advertisement_matches_service_uuid_manufacturer_and_local_name() {
+        let by_uuid = BleAdvertisementMatch::parse(
+            None,
+            &["020cf5da-0000-1000-8000-00805f9b34fb"],
+            &[],
+        )
+        .expect("should match D3200 128-bit service UUID even without local name");
+        assert!(by_uuid.matched_service_uuid);
+        assert_eq!(by_uuid.display_name, "soundcore Work");
+
+        let mfg: [u8; 14] = [
+            0x00, 0x7F, 0x1D, 0x04, 0xCC, 0xA3, 0x90, 0x00, b's', b'o', b'u', b'n', b'd', b'c',
+        ];
+        let by_mfg = BleAdvertisementMatch::parse(None, &[], &[&mfg])
+            .expect("should match D3200 manufacturer data with soundc mark");
+        assert!(by_mfg.matched_manufacturer_data);
+        assert_eq!(by_mfg.ble_mac, "00:7F:1D:04:CC:A3");
+        assert!(by_mfg.is_bound_advertised);
+        assert_eq!(by_mfg.display_name, "soundcore Work (CC:A3)");
+
+        let by_name = BleAdvertisementMatch::parse(Some("Anker Soundcore Work"), &[], &[])
+            .expect("should match local name");
+        assert!(by_name.matched_local_name);
+
+        assert!(BleAdvertisementMatch::parse(Some("AirPods Pro"), &["180A"], &[]).is_none());
+        assert!(BleAdvertisementMatch::is_d3200_service_uuid(
+            "020CF5DA-0000-1000-8000-00805F9B34FB"
+        ));
+        assert!(BleAdvertisementMatch::is_write_characteristic_uuid(
+            "00007777-0000-1000-8000-00805F9B34FB"
+        ));
+        assert!(BleAdvertisementMatch::is_notify_characteristic_uuid(
+            "00008888-0000-1000-8000-00805F9B34FB"
+        ));
     }
 }

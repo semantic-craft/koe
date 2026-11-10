@@ -36,16 +36,22 @@ public struct SidebarView: View {
                 }
             }
             Spacer(minLength: 30)
-            Button { store.send("navigate", ["section": "settings"]) } label: {
+            Button {
+                store.send("navigate", ["section": "settings"])
+                if !store.snapshot.device.connected {
+                    store.send("device_open_guide")
+                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                }
+            } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "waveform.badge.mic").foregroundStyle(AppColors.accent)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Soundcore Work").foregroundStyle(AppColors.textPrimary)
-                        Text(store.snapshot.device.state).foregroundStyle(AppColors.textMuted).lineLimit(2)
+                        Text(store.snapshot.device.deviceName).foregroundStyle(AppColors.textPrimary).lineLimit(1)
+                        Text(deviceSummaryText).foregroundStyle(AppColors.textMuted).lineLimit(2)
                     }
                     Spacer(minLength: 0)
-                    Circle().fill(store.snapshot.device.connected ? AppColors.success : AppColors.textMuted)
-                        .frame(width: 5, height: 5)
+                    Circle().fill(deviceDotColor)
+                        .frame(width: 6, height: 6)
                 }
                 .font(.system(size: AppFontSizes.xs)).padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -56,6 +62,25 @@ public struct SidebarView: View {
             navigationRow("settings", title: "设置", icon: "gearshape")
         }
         .padding(12).frame(width: 220).background(AppColors.bgPanel)
+    }
+    private var deviceSummaryText: String {
+        let dev = store.snapshot.device
+        if dev.connected {
+            if let mic = dev.batteryPercent {
+                return "已连接  \(mic)%"
+            }
+            return dev.state
+        }
+        if dev.phase == "disconnected" {
+            return "未连接  点击连接"
+        }
+        return dev.state
+    }
+    private var deviceDotColor: Color {
+        let dev = store.snapshot.device
+        if dev.connected { return AppColors.success }
+        if dev.phase == "disconnected" { return AppColors.textMuted }
+        return AppColors.warning
     }
     private func navigationRow(_ id: String, title: String, icon: String) -> some View {
         let selected = store.snapshot.section == id || (id == "records" && store.snapshot.section == "detail")

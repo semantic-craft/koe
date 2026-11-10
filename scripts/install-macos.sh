@@ -39,12 +39,13 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
     || cargo build --manifest-path "$ROOT/Cargo.toml" --package koe-host-api --release
   swift build --package-path "$ROOT/platforms/macos" -c release
   rm -rf "$SOURCE"
-  mkdir -p "$SOURCE/Contents/MacOS" "$SOURCE/Contents/Resources"
+  mkdir -p "$SOURCE/Contents/MacOS" "$SOURCE/Contents/Resources/product"
   cp "$ROOT/platforms/macos/.build/release/${APP_NAME}" "$SOURCE/Contents/MacOS/${APP_NAME}"
   chmod +x "$SOURCE/Contents/MacOS/${APP_NAME}"
   swift "$ROOT/scripts/generate-app-icons.swift" >/dev/null
   iconutil -c icns "$ROOT/build/macos/AppIcon.iconset" -o "$SOURCE/Contents/Resources/AppIcon.icns"
   cp "$ROOT/assets/artwork/koe-schoolgirl-b-cheerful.png" "$SOURCE/Contents/Resources/AppIcon.png"
+  cp "$ROOT/assets/product/"*.webp "$ROOT/assets/product/"*.png "$SOURCE/Contents/Resources/product/"
   printf 'APPL????' > "$SOURCE/Contents/PkgInfo"
   cat > "$SOURCE/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

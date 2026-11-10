@@ -1119,6 +1119,15 @@ impl TransportSession {
                             ) {
                                 if self.accept_ecdh_reply(&pkt.payload, &shared) {
                                     outcome.session_key_established = true;
+                                    if self.telemetry.is_some()
+                                        && self.connection_phase == ConnectionPhaseTag::Handshaking
+                                    {
+                                        self.connection_phase = ConnectionPhaseTag::Connected;
+                                    } else if self.telemetry.is_none() {
+                                        outcome
+                                            .outbound_tx_frames
+                                            .push(DeviceCommands::get_device_info());
+                                    }
                                     if self.is_offline_pull_suspended()
                                         && self.connection_phase == ConnectionPhaseTag::Connected
                                     {
@@ -1154,7 +1163,11 @@ impl TransportSession {
                         }
                     }
                     self.telemetry = Some(info);
-                    self.connection_phase = ConnectionPhaseTag::Connected;
+                    if self.ecdh_private_key.is_some() && self.session_key.is_none() {
+                        self.connection_phase = ConnectionPhaseTag::Handshaking;
+                    } else {
+                        self.connection_phase = ConnectionPhaseTag::Connected;
+                    }
                     outcome.telemetry_updated = true;
                     outcome
                         .outbound_tx_frames

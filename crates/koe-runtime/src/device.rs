@@ -1,15 +1,83 @@
-use koe_engine::session::{
-    CaptureEvent, FinalizedRecording, SessionIngestOutcome, TransportSession,
+use koe_engine::{
+    commands::DeviceCommands,
+    crypto::DeviceCrypto,
+    session::{
+        CaptureEvent, ConnectionPhaseTag, FinalizedRecording, SessionIngestOutcome,
+        TransportSession,
+    },
 };
+use serde_json::{json, Value};
 use std::{fs::File, io::Read};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DeviceModalState {
+    #[default]
+    Hidden,
+    ConnectGuide,
+    Onboarding {
+        step: u8,
+    },
+}
+
+pub(crate) struct OnboardingStepSpec {
+    pub title: &'static str,
+    pub subtitle: &'static str,
+    pub image_name: &'static str,
+    pub highlight_target: &'static str,
+    pub primary_label: &'static str,
+}
+
+pub(crate) const ONBOARDING_STEPS: [OnboardingStepSpec; 5] = [
+    OnboardingStepSpec {
+        title: "连接成功",
+        subtitle: "录音豆与充电仓已就绪",
+        image_name: "guide_connect_device",
+        highlight_target: "none",
+        primary_label: "继续",
+    },
+    OnboardingStepSpec {
+        title: "开始录音",
+        subtitle: "按一下录音豆侧边按键即可开始或结束录音",
+        image_name: "guide_record",
+        highlight_target: "record_button",
+        primary_label: "下一步",
+    },
+    OnboardingStepSpec {
+        title: "标记重点",
+        subtitle: "录音过程中双击录音豆正面面板，自动标记关键时刻",
+        image_name: "guide_mark",
+        highlight_target: "center",
+        primary_label: "下一步",
+    },
+    OnboardingStepSpec {
+        title: "佩戴麦克风",
+        subtitle: "支持衣领夹持或磁吸佩戴，保持麦克风朝向说话人",
+        image_name: "guide_wear",
+        highlight_target: "none",
+        primary_label: "下一步",
+    },
+    OnboardingStepSpec {
+        title: "下载录音",
+        subtitle: "连接 Koe 后自动同步录音目录并取回音频生成纪要",
+        image_name: "guide_sync",
+        highlight_target: "none",
+        primary_label: "我知道了",
+    },
+];
 
 pub(crate) struct DeviceRuntime {
     pub session: TransportSession,
     pub connection: Option<String>,
+    pub device_name: Option<String>,
+    pub modal: DeviceModalState,
+    pub guide_user_requested: bool,
+    pub onboarding_shown_in_session: bool,
     pub outbound: Vec<Vec<u8>>,
     pub finalized: Vec<FinalizedRecording>,
     pub captures: std::collections::VecDeque<CaptureEvent>,
     pending_start_ms: u64,
+    handshake_retry_ms: u64,
+    handshake_retried: bool,
 }
 
 impl Default for DeviceRuntime {
@@ -17,21 +85,125 @@ impl Default for DeviceRuntime {
         Self {
             session: TransportSession::with_decoder_factory(Some(koe_opus::create_libopus_decoder)),
             connection: None,
+            device_name: None,
+            modal: DeviceModalState::Hidden,
+            guide_user_requested: false,
+            onboarding_shown_in_session: false,
             outbound: Vec::new(),
             finalized: Vec::new(),
             captures: Default::default(),
             pending_start_ms: 0,
+            handshake_retry_ms: 0,
+            handshake_retried: false,
         }
     }
 }
 
 impl DeviceRuntime {
-    pub fn event(&mut self, event: &str, connection: &str) -> Result<(), String> {
+    pub fn is_connected(&self) -> bool {
+        self.session.session_key.is_some()
+            && self.session.connection_phase != ConnectionPhaseTag::Handshaking
+    }
+
+    pub fn open_guide(&mut self) {
+        if self.is_connected() {
+            self.modal = DeviceModalState::Onboarding { step: 0 };
+            self.outbound.push(DeviceCommands::get_device_info());
+        } else {
+            self.modal = DeviceModalState::ConnectGuide;
+            self.guide_user_requested = true;
+        }
+    }
+
+    pub fn onboarding_next(&mut self) {
+        self.modal = match self.modal {
+            DeviceModalState::Onboarding { step }
+                if usize::from(step) + 1 < ONBOARDING_STEPS.len() =>
+            {
+                DeviceModalState::Onboarding { step: step + 1 }
+            }
+            _ => DeviceModalState::Hidden,
+        };
+        self.guide_user_requested = false;
+    }
+
+    pub fn close_guide(&mut self) {
+        self.modal = DeviceModalState::Hidden;
+        self.guide_user_requested = false;
+    }
+
+    pub fn refresh(&mut self) {
+        if self.session.session_key.is_some() {
+            self.outbound.push(DeviceCommands::get_device_info());
+            self.outbound
+                .push(DeviceCommands::list_files_with_end_time(0));
+        }
+    }
+
+    pub fn disconnect(&mut self) {
+        self.connection = None;
+        self.outbound.clear();
+        self.handshake_retry_ms = 0;
+        self.handshake_retried = false;
+        self.session.on_disconnected();
+        self.modal = DeviceModalState::Hidden;
+        self.guide_user_requested = false;
+    }
+
+    pub fn guide_json(&self) -> Value {
+        match self.modal {
+            DeviceModalState::Hidden => Value::Null,
+            DeviceModalState::ConnectGuide => json!({
+                "mode": "connect_guide",
+                "step": 0,
+                "totalSteps": ONBOARDING_STEPS.len(),
+                "title": "连接 Soundcore Work",
+                "subtitle": "将麦克风放入充电仓，短按充电仓下方按钮完成连接",
+                "imageName": "guide_connect_case",
+                "highlightTarget": "case_button",
+                "primaryLabel": "重新扫描"
+            }),
+            DeviceModalState::Onboarding { step } => {
+                let idx = usize::from(step).min(ONBOARDING_STEPS.len() - 1);
+                let spec = &ONBOARDING_STEPS[idx];
+                json!({
+                    "mode": "onboarding",
+                    "step": idx,
+                    "totalSteps": ONBOARDING_STEPS.len(),
+                    "title": spec.title,
+                    "subtitle": spec.subtitle,
+                    "imageName": spec.image_name,
+                    "highlightTarget": spec.highlight_target,
+                    "primaryLabel": spec.primary_label
+                })
+            }
+        }
+    }
+
+    pub fn event(
+        &mut self,
+        event: &str,
+        connection: &str,
+        device_name: Option<&str>,
+    ) -> Result<(), String> {
+        if let Some(name) = device_name.map(str::trim).filter(|s| !s.is_empty()) {
+            self.device_name = Some(name.replace('·', " "));
+        }
         match event {
-            "scanning" => self.session.on_scanning(),
+            "scanning" => {
+                if !self.is_connected() {
+                    self.connection = None;
+                    self.outbound.clear();
+                    self.handshake_retry_ms = 0;
+                    self.handshake_retried = false;
+                    self.session.on_scanning();
+                }
+            }
             "connecting" => {
                 self.connection = Some(connection.to_string());
                 self.outbound.clear();
+                self.handshake_retry_ms = 0;
+                self.handshake_retried = false;
                 self.session.on_connecting();
             }
             "ready" if self.connection.as_deref() == Some(connection) => {
@@ -43,11 +215,15 @@ impl DeviceRuntime {
                     .session
                     .on_gatt_ready(private_key)
                     .ok_or("设备握手未能启动")?;
+                self.handshake_retry_ms = 0;
+                self.handshake_retried = false;
                 self.outbound.extend(frames);
             }
             "disconnected" if self.connection.as_deref() == Some(connection) => {
                 self.connection = None;
                 self.outbound.clear();
+                self.handshake_retry_ms = 0;
+                self.handshake_retried = false;
                 self.session.on_transport_interrupted();
                 self.collect_finalized();
             }
@@ -74,14 +250,56 @@ impl DeviceRuntime {
         } else {
             self.pending_start_ms = 0;
         }
+
+        let mut handshake_retried_now = false;
+        if self.session.connection_phase == ConnectionPhaseTag::Handshaking {
+            self.handshake_retry_ms = self.handshake_retry_ms.saturating_add(elapsed_ms);
+            if self.handshake_retry_ms >= 2_000 && !self.handshake_retried {
+                self.handshake_retried = true;
+                if self.session.session_key.is_none() {
+                    if let Some(priv_key) = self.session.ecdh_private_key {
+                        if let Some(pub_key) = DeviceCrypto::p256_public_key(&priv_key) {
+                            self.outbound
+                                .push(DeviceCommands::notify_encrypt_public_key(&pub_key));
+                            handshake_retried_now = true;
+                        }
+                    }
+                }
+                if self.session.telemetry.is_none() {
+                    self.outbound.push(DeviceCommands::get_device_info());
+                    handshake_retried_now = true;
+                }
+            }
+        } else {
+            self.handshake_retry_ms = 0;
+            self.handshake_retried = false;
+        }
+
         let outcome = self.session.poll_timers(elapsed_ms, now);
-        Ok(self.accept(outcome))
+        Ok(self.accept(outcome) || handshake_retried_now)
     }
 
     pub fn accept(&mut self, outcome: SessionIngestOutcome) -> bool {
         let changed = outcome != SessionIngestOutcome::default();
         self.outbound.extend(outcome.outbound_tx_frames);
-        if outcome.session_key_established && self.session.is_offline_pull_suspended() {
+        if (outcome.telemetry_updated || outcome.session_key_established)
+            && self.is_connected()
+            && self.session.telemetry.is_some()
+        {
+            self.handshake_retry_ms = 0;
+            self.handshake_retried = false;
+            if self.modal == DeviceModalState::ConnectGuide
+                || (self.guide_user_requested && !self.onboarding_shown_in_session)
+            {
+                self.modal = DeviceModalState::Onboarding { step: 0 };
+                self.onboarding_shown_in_session = true;
+                self.guide_user_requested = false;
+            }
+        }
+        if outcome.session_key_established
+            && self.is_connected()
+            && self.session.is_offline_pull_suspended()
+        {
             if let Some(frame) = self.session.resume_offline_pull() {
                 self.outbound.push(frame);
             }

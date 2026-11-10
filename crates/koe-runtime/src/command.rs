@@ -109,7 +109,14 @@ pub(crate) enum Command {
     DeviceEvent {
         event: String,
         connection_id: String,
+        #[serde(default)]
+        device_name: Option<String>,
     },
+    DeviceOpenGuide,
+    DeviceOnboardingNext,
+    DeviceCloseGuide,
+    DeviceRefresh,
+    DeviceDisconnect,
     DeviceDownload {
         file_id: u32,
     },
