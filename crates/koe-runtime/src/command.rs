@@ -87,6 +87,9 @@ pub(crate) enum Command {
     Transcribe {
         record_id: String,
     },
+    SetMeetingAudioPolicy {
+        policy: String,
+    },
     Summarize {
         record_id: String,
     },

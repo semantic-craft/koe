@@ -4,8 +4,14 @@ use koe_client_services::product_store::StoreError;
 use koe_engine::session::CaptureEvent;
 use std::collections::{BTreeMap, VecDeque};
 
+enum CaptureTranscription {
+    Unstarted,
+    Revoked,
+    Started(RequestKey),
+}
+
 pub(super) struct Capture {
-    key: Option<RequestKey>,
+    transcription: CaptureTranscription,
     stream: Option<LiveTranscription>,
     results: VecDeque<LiveEvent>,
     saved: bool,
@@ -61,7 +67,8 @@ impl KoeRuntime {
                             if let Err(error) = stream.finish() {
                                 capture.results.push_back(LiveEvent::Failed(error));
                             }
-                        } else if capture.key.is_none() {
+                        } else if !matches!(capture.transcription, CaptureTranscription::Started(_))
+                        {
                             capture.terminal = true;
                         }
                     }
@@ -88,8 +95,16 @@ impl KoeRuntime {
                 0,
             )
         })?;
+        let upload_error = self.ensure_meeting_audio_upload().err();
+        if let Some(error) = &upload_error {
+            self.notice = Some(error.clone());
+        }
         let capture = Capture {
-            key: None,
+            transcription: if upload_error.is_none() {
+                CaptureTranscription::Unstarted
+            } else {
+                CaptureTranscription::Revoked
+            },
             stream: None,
             results: VecDeque::new(),
             saved: false,
@@ -104,12 +119,17 @@ impl KoeRuntime {
     }
 
     fn ensure_live_stream(&mut self, id: &str) -> Result<(), String> {
-        let needs_start = self
-            .captures
-            .sessions
-            .get(id)
-            .is_some_and(|c| c.key.is_none() && !c.terminal);
+        let needs_start = self.captures.sessions.get(id).is_some_and(|c| {
+            matches!(c.transcription, CaptureTranscription::Unstarted) && !c.terminal
+        });
         if !needs_start {
+            return Ok(());
+        }
+        if let Err(error) = self.ensure_meeting_audio_upload() {
+            let capture = self.captures.sessions.get_mut(id).unwrap();
+            capture.terminal = true;
+            capture.transcription = CaptureTranscription::Revoked;
+            self.notice = Some(error);
             return Ok(());
         }
         let configured = !self.settings.key.is_empty();
@@ -123,7 +143,10 @@ impl KoeRuntime {
             .sessions
             .get_mut(id)
             .ok_or("实时记录状态不可用")?;
-        capture.key = key;
+        capture.transcription = key.map_or(
+            CaptureTranscription::Unstarted,
+            CaptureTranscription::Started,
+        );
         capture.terminal = !configured;
         if configured {
             match LiveTranscription::start(ProviderConfig::new(
@@ -145,9 +168,19 @@ impl KoeRuntime {
     pub(super) fn capture_saved(&mut self, id: &str) -> bool {
         if let Some(capture) = self.captures.sessions.get_mut(id) {
             capture.saved = true;
-            return capture.key.is_some();
+            return !matches!(capture.transcription, CaptureTranscription::Unstarted);
         }
         false
+    }
+
+    pub(super) fn cancel_meeting_captures(&mut self) {
+        for capture in self.captures.sessions.values_mut() {
+            capture.stream = None;
+            capture.transcription = CaptureTranscription::Revoked;
+            capture.results.clear();
+            capture.terminal = true;
+            capture.success = false;
+        }
     }
 
     pub(super) fn poll_captures(&mut self) -> bool {
@@ -158,7 +191,7 @@ impl KoeRuntime {
                 capture.results.extend(stream.poll());
             }
             while let Some(event) = capture.results.front() {
-                let Some(key) = &capture.key else {
+                let CaptureTranscription::Started(key) = &capture.transcription else {
                     break;
                 };
                 let result = self.store.transact(|w| match event {

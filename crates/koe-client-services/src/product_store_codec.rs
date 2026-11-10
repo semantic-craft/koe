@@ -26,11 +26,20 @@ struct WorkspaceDto {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProviderDto {
+    #[serde(default)]
+    meeting_audio_policy: AudioPolicyDto,
     model: String,
     asr_endpoint: String,
     chat_endpoint: String,
     credential: BindingDto,
     retired_credentials: Vec<String>,
+}
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AudioPolicyDto {
+    CloudAllowed,
+    #[default]
+    LocalOnly,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(
@@ -47,6 +56,10 @@ enum BindingDto {
 impl From<ProviderConfiguration> for ProviderDto {
     fn from(p: ProviderConfiguration) -> Self {
         Self {
+            meeting_audio_policy: match p.meeting_audio_policy {
+                MeetingAudioPolicy::CloudAllowed => AudioPolicyDto::CloudAllowed,
+                MeetingAudioPolicy::LocalOnly => AudioPolicyDto::LocalOnly,
+            },
             model: p.model,
             asr_endpoint: p.asr_endpoint,
             chat_endpoint: p.chat_endpoint,
@@ -62,6 +75,10 @@ impl From<ProviderConfiguration> for ProviderDto {
 impl From<ProviderDto> for ProviderConfiguration {
     fn from(p: ProviderDto) -> Self {
         Self {
+            meeting_audio_policy: match p.meeting_audio_policy {
+                AudioPolicyDto::CloudAllowed => MeetingAudioPolicy::CloudAllowed,
+                AudioPolicyDto::LocalOnly => MeetingAudioPolicy::LocalOnly,
+            },
             model: p.model,
             asr_endpoint: p.asr_endpoint,
             chat_endpoint: p.chat_endpoint,

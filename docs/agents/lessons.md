@@ -254,3 +254,10 @@
 - 修复：`ProductStore.requires_reopen()` 保持不可由安全存储重试解除的门闩，只有关闭重开可恢复；删除清单保存实际剩余引用，显式重试每次最多授权一个当前或退休项，退休项失败不废弃仍有效的当前凭据。
 - 验证点：`cargo test -p koe-runtime --test provider_persistence` 用目录权限制造 rename 成功后的真实持久化屏障失败，并覆盖多个退休项的授权与删除恢复；这不替代 #603 的签名安装升级验收。
 - Seen 1x (2026-11-10)。
+
+### 本地 HTTP 夹具的接收连接须显式恢复阻塞读取
+
+- 出处：2026-11-10 N4A（#607）首次全量门禁，`cloud_workflow` 的 HTTP 读取在 0.34 秒内返回 WouldBlock，未到设置的 5 秒读取期限。
+- 修复：监听器保留非阻塞 accept 与总期限，接受的连接在读取 HTTP 正文前显式 `set_nonblocking(false)`，再设置读写期限。
+- 验证点：`cargo test -p koe-runtime --test cloud_workflow` 与 `scripts/check`；读取必须等到完整 Content-Length，不能把刚 accept 当成正文已经到齐。
+- Seen 1x（2026-11-10）。

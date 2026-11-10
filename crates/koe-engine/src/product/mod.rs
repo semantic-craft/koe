@@ -2,7 +2,7 @@
 
 mod ask;
 mod provider;
-pub use provider::{valid_reference, CredentialBinding, ProviderConfiguration};
+pub use provider::{valid_reference, CredentialBinding, MeetingAudioPolicy, ProviderConfiguration};
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};
 mod record;

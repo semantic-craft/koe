@@ -32,6 +32,7 @@ Koe 让安克 soundcore Work（D3200）录音豆脱离飞书使用。Mac 通过�
 - 签名安装版使用 macOS 沙盒，默认工作区为 `~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace`。记录、审核结果和问答历史保存在 `product-workspace.json`，音频单独保存在 `audio/`。
 - 签名安装版将云端密钥保存在 macOS Keychain，模型和服务地址由 Rust 工作区持久保存。工作区与页面快照不含密钥；清除后不会恢复旧版值。地址留空可重置为默认值，地址不接受账户、密码、查询参数或片段。
 - 开发构建、指定工作区或设置了 `KOE_CREDENTIAL_SOURCE` 的运行使用隔离凭据；密钥仅保留当前会话，默认开发工作区为 `KoeWorkspaceDevelopment`。不读取个人 `.env` 或 `.envrc`，不回退到系统凭据。签名安装升级后的真实读取仍待 [#603](https://github.com/semantic-craft/koe/issues/603) 验收。
+- 默认开启“会议录音只留本机”，旧工作区缺少该字段时也采用本机策略。录音豆实时音频、取回录音和导入文件均不上传；本机语音识别尚未接入时明确不可用。设置中关闭后才允许云端转写，已取消的任务须手动重试。文字纪要与问答仍可发云；此前已经上传的音频无法撤回。签名版与真实设备验收见 [#608](https://github.com/semantic-craft/koe/issues/608)。
 - 发起云端任务前保存请求状态，收到结果并完成本地保存后才显示完成。应用重启会将未完成任务标为中断；重新配置服务后，由用户明确重试，不在后台自动重发付费请求。
 - 工作区采用单写锁。同一资料库同时由一个 GUI、CLI 或 MCP 进程打开。关闭窗口会保留应用进程；使用 CLI 前请通过“退出 Koe”或 `⌘Q` 退出 GUI。
 

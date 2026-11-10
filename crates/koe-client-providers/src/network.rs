@@ -130,6 +130,8 @@ pub struct ProviderWorker {
     events: mpsc::Receiver<ProviderEvent>,
     cancel: watch::Sender<bool>,
     busy: AtomicBool,
+    audio_request: AtomicBool,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl ProviderWorker {
@@ -142,7 +144,7 @@ impl ProviderWorker {
         let (requests, mut input) = mpsc::channel::<ProviderRequest>(1);
         let (output, events) = mpsc::channel(1);
         let (cancel, mut cancellation) = watch::channel(false);
-        std::thread::Builder::new().name("koe-provider".into()).spawn(move || {
+        let thread = std::thread::Builder::new().name("koe-provider".into()).spawn(move || {
             runtime.block_on(async {
                 loop {
                     let request = tokio::select! {
@@ -170,7 +172,27 @@ impl ProviderWorker {
             events,
             cancel,
             busy: AtomicBool::new(false),
+            audio_request: AtomicBool::new(false),
+            thread: Some(thread),
         })
+    }
+
+    /// Cancels only an accepted audio request and waits until its transport has stopped.
+    /// Text requests remain active; later explicit requests use a fresh worker.
+    pub fn cancel_audio(&mut self) -> Result<(), String> {
+        if !self.audio_request.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.stop();
+        *self = Self::new()?;
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        let _ = self.cancel.send(true);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 
     /// Accepts one task or returns a validation/busy error without sending a request.
@@ -183,8 +205,13 @@ impl ProviderWorker {
         {
             return Err("已有云端任务正在处理，请稍后重试".into());
         }
+        self.audio_request.store(
+            matches!(request.task, ProviderTask::TranscribePcm16 { .. }),
+            Ordering::Release,
+        );
         if self.requests.try_send(request).is_err() {
             self.busy.store(false, Ordering::Release);
+            self.audio_request.store(false, Ordering::Release);
             return Err("云端工作线程不可用".into());
         }
         Ok(())
@@ -196,6 +223,7 @@ impl ProviderWorker {
         while let Ok(result) = self.events.try_recv() {
             results.push(result);
             self.busy.store(false, Ordering::Release);
+            self.audio_request.store(false, Ordering::Release);
         }
         results
     }
@@ -203,7 +231,7 @@ impl ProviderWorker {
 
 impl Drop for ProviderWorker {
     fn drop(&mut self) {
-        let _ = self.cancel.send(true);
+        self.stop();
     }
 }
 
