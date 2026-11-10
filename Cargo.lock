@@ -647,6 +647,7 @@ dependencies = [
  "koe-client-services",
  "koe-engine",
  "koe-opus",
+ "libc",
  "ogg",
  "serde",
  "serde_json",

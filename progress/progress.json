@@ -85,9 +85,21 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T10:13:03Z"
+      },
+      {
+        "number": 619,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T10:54:25Z"
+      },
+      {
+        "number": 620,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T10:56:02Z"
       }
     ],
-    "main": "5efab6a5d3a3c27c3a936df55dee10e57b598acb",
+    "main": "330baea5cc6a71dd1d35d520d855658802b4756e",
     "open_pulls": [],
     "pulls": [
       {
@@ -150,7 +162,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T10:25:56.945380Z",
+  "observed_at": "2026-11-10T10:56:37.597494Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -363,6 +375,25 @@
           "status": "done",
           "summary": "今天页可选择输入设备录音，Rust 按会话和序号有界写入 WAV。停止排空末块后提交记录，保存失败阻退出并可重试；权限或启动失败不造成功记录。容量耗尽明确保存此前音频，默认只留本机。",
           "title": "Mac 单路麦克风采集"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "本轮仅 Rust 分路保管基础。",
+              "ref": 619
+            },
+            {
+              "kind": "file",
+              "note": "分路尾块、取消、发布重试和持久结果的行为回归。",
+              "ref": "crates/koe-runtime/tests/dual_capture.rs"
+            }
+          ],
+          "id": "mac-dual-capture",
+          "next": "完成共同采样时钟与暂停 epoch 回归，再接系统音频适配及分路回放；真机验收见 #620。",
+          "status": "in_progress",
+          "summary": "Rust 分路资产保管子单元正在交付：各路序号、原件与停止确认独立，全部排空后统一提交；缺失音轨与中断原因持久保存。共同采样时钟、暂停时间轴、Core Audio process tap 和原生双路入口尚未实现，不能视为双路录音功能已恢复。",
+          "title": "Mac 系统音频双路恢复"
         }
       ],
       "title": "当前产品实现"
@@ -547,7 +578,9 @@
       611,
       612,
       615,
-      616
+      616,
+      619,
+      620
     ],
     "pulls": [
       589,

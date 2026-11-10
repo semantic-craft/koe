@@ -67,6 +67,7 @@ impl ProductWorkspace {
                 analysis: AnalysisState::Idle,
                 content_revision: 0,
                 highlighted_segments: BTreeSet::new(),
+                capture_lanes: Vec::new(),
                 final_keys: BTreeMap::new(),
                 completed_request: None,
             },
@@ -441,6 +442,7 @@ impl ProductRecord {
             analysis,
             content_revision,
             highlighted_segments,
+            capture_lanes: Vec::new(),
             final_keys,
             completed_request,
         })

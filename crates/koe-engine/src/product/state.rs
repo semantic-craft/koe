@@ -26,7 +26,8 @@ impl ProductWorkspace {
         let mut records = BTreeMap::new();
         for record in state.records {
             let id = record.aggregate.recording_id.clone();
-            let record = ProductRecord::restore(
+            let lanes = record.capture_lanes;
+            let mut record = ProductRecord::restore(
                 record.aggregate,
                 record.title,
                 record.origin,
@@ -36,6 +37,7 @@ impl ProductWorkspace {
                 record.final_keys,
                 record.completed_request,
             )?;
+            record.restore_capture_lanes(lanes)?;
             if records.insert(id, record).is_some() {
                 return Err(ProductError::InvalidEvidence);
             }

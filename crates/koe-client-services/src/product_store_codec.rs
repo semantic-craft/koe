@@ -112,6 +112,8 @@ struct ImportedSummaryDto {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RecordDto {
+    #[serde(default)]
+    capture_lanes: Vec<CaptureLaneDto>,
     id: String,
     title: String,
     origin: String,
@@ -128,6 +130,38 @@ struct RecordDto {
     analysis: AnalysisDto,
     final_keys: BTreeMap<String, u32>,
     completed_request: Option<KeyDto>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureLaneDto {
+    lane: String,
+    asset_id: Option<String>,
+    sample_rate: Option<u32>,
+    duration_ms: u64,
+    interruption: Option<String>,
+}
+impl From<&CaptureLaneRecord> for CaptureLaneDto {
+    fn from(l: &CaptureLaneRecord) -> Self {
+        Self {
+            lane: l.lane.clone(),
+            asset_id: l.asset_id.clone(),
+            sample_rate: l.sample_rate,
+            duration_ms: l.duration_ms,
+            interruption: l.interruption.clone(),
+        }
+    }
+}
+impl From<CaptureLaneDto> for CaptureLaneRecord {
+    fn from(l: CaptureLaneDto) -> Self {
+        Self {
+            lane: l.lane,
+            asset_id: l.asset_id,
+            sample_rate: l.sample_rate,
+            duration_ms: l.duration_ms,
+            interruption: l.interruption,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -371,6 +405,7 @@ impl RecordDto {
     fn from_record(record: &ProductRecord) -> Self {
         let a = &record.aggregate;
         Self {
+            capture_lanes: record.capture_lanes.iter().map(Into::into).collect(),
             id: a.recording_id.clone(),
             title: record.title.clone(),
             origin: match record.origin {
@@ -499,7 +534,7 @@ impl RecordDto {
             .into_iter()
             .map(|id| SegmentId::new(id).ok_or_else(|| invalid("invalid highlight segment id")))
             .collect::<Result<_, _>>()?;
-        ProductRecord::restore(
+        let mut record = ProductRecord::restore(
             a,
             self.title,
             origin,
@@ -509,7 +544,11 @@ impl RecordDto {
             final_keys,
             self.completed_request.map(KeyDto::into_key),
         )
-        .map_err(|e| invalid(e.to_string()))
+        .map_err(|e| invalid(e.to_string()))?;
+        record
+            .restore_capture_lanes(self.capture_lanes.into_iter().map(Into::into).collect())
+            .map_err(|e| invalid(e.to_string()))?;
+        Ok(record)
     }
 }
 

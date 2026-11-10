@@ -182,7 +182,7 @@ impl KoeRuntime {
             return Err("正在退出，请先取消退出再开始新操作".into());
         }
         match command {
-            Command::StartMicrophone { input_id } => self.start_microphone(input_id, now)?,
+            Command::StartMicrophone { input_id, include_system } => self.start_microphone(input_id, include_system, now)?,
             Command::StopMicrophone => self.stop_microphone(false)?,
             Command::CancelMicrophone => self.stop_microphone(true)?,
             Command::RetryMicrophoneSave => self.save_microphone()?,

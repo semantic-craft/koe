@@ -1,6 +1,8 @@
 use super::*;
 use koe_client_services::capture_asset::{AppendOutcome, CaptureAsset};
+use koe_engine::product::CaptureLaneRecord;
 use serde_json::json;
+use std::collections::BTreeMap;
 
 #[derive(PartialEq, Eq)]
 pub(super) enum Phase {
@@ -11,28 +13,41 @@ pub(super) enum Phase {
     Cancelling,
     Saving,
 }
+struct Lane {
+    asset_id: String,
+    next_sequence: u64,
+    asset: Option<CaptureAsset>,
+    sample_rate: Option<u32>,
+    producer_stopped: bool,
+    interruption: Option<String>,
+    save_error: Option<String>,
+}
 pub(super) struct Microphone {
     record_id: String,
     session_id: String,
     input_id: String,
     created_at: u64,
     phase: Phase,
-    next_sequence: u64,
-    asset: Option<CaptureAsset>,
-    sample_rate: Option<u32>,
-    producer_stopped: bool,
+    lanes: BTreeMap<String, Lane>,
     pub(super) save_error: Option<String>,
-    interruption: Option<String>,
 }
 impl Microphone {
     fn matches(&self, record: &str, session: &str, lane: &str) -> bool {
-        self.record_id == record && self.session_id == session && lane == "microphone"
+        self.record_id == record && self.session_id == session && self.lanes.contains_key(lane)
+    }
+    fn refresh_error(&mut self) {
+        self.save_error = self.lanes.values().find_map(|l| l.save_error.clone());
     }
 }
 impl KoeRuntime {
-    pub(super) fn start_microphone(&mut self, input_id: String, now: u64) -> Result<(), String> {
+    pub(super) fn start_microphone(
+        &mut self,
+        input_id: String,
+        include_system: bool,
+        now: u64,
+    ) -> Result<(), String> {
         if self.microphone.is_some() {
-            return Err("请先结束当前麦克风录音并完成保存".into());
+            return Err("请先结束当前录音并完成保存".into());
         }
         if self.store.requires_reopen() {
             return Err("工作区保存结果未知，请重新打开后录音".into());
@@ -45,18 +60,37 @@ impl KoeRuntime {
             .map_err(|e| e.to_string())?
             .as_nanos();
         let id = format!("mic-{now}-{nonce}");
+        let mut lanes = BTreeMap::new();
+        for lane in if include_system {
+            &["microphone", "system"][..]
+        } else {
+            &["microphone"][..]
+        } {
+            lanes.insert(
+                (*lane).into(),
+                Lane {
+                    asset_id: if *lane == "microphone" {
+                        id.clone()
+                    } else {
+                        format!("{id}-system")
+                    },
+                    next_sequence: 0,
+                    asset: None,
+                    sample_rate: None,
+                    producer_stopped: false,
+                    interruption: None,
+                    save_error: None,
+                },
+            );
+        }
         self.microphone = Some(Microphone {
             record_id: id.clone(),
             session_id: format!("{id}-session"),
             input_id,
             created_at: now,
             phase: Phase::Starting,
-            next_sequence: 0,
-            asset: None,
-            sample_rate: None,
-            producer_stopped: false,
+            lanes,
             save_error: None,
-            interruption: None,
         });
         Ok(())
     }
@@ -86,19 +120,31 @@ impl KoeRuntime {
         if !m.matches(record, session, lane) {
             return Ok(());
         }
-        if m.phase != Phase::Starting {
+        if !matches!(m.phase, Phase::Starting | Phase::Recording) {
             return Ok(());
         }
-        m.sample_rate = Some(rate);
-        match CaptureAsset::create(&self.root, &m.record_id, rate) {
+        let l = m.lanes.get_mut(lane).unwrap();
+        if l.sample_rate.is_some() || l.producer_stopped {
+            return Ok(());
+        }
+        if !(8000..=96000).contains(&rate) {
+            l.interruption = Some("音频格式不受支持，未保存该路录音".into());
+            m.phase = Phase::Stopping;
+            return Err("音频采样率不受支持".into());
+        }
+        l.sample_rate = Some(rate);
+        match CaptureAsset::create(&self.root, &l.asset_id, rate) {
             Ok(asset) => {
-                m.asset = Some(asset);
-                m.phase = Phase::Recording;
+                l.asset = Some(asset);
+                if m.lanes.values().all(|l| l.asset.is_some()) {
+                    m.phase = Phase::Recording;
+                }
                 Ok(())
             }
             Err(error) => {
+                l.save_error = Some(error.clone());
+                m.refresh_error();
                 m.phase = Phase::Stopping;
-                m.save_error = Some(error.clone());
                 Err(error)
             }
         }
@@ -117,38 +163,47 @@ impl KoeRuntime {
         if !m.matches(record, session, lane) {
             return Ok(());
         }
-        if m.producer_stopped || m.phase == Phase::Starting {
-            return Err("采集会话尚未就绪或已经结束".into());
+        let l = m.lanes.get_mut(lane).unwrap();
+        if l.producer_stopped {
+            return Err("采集会话已经结束".into());
         }
-        if sequence != m.next_sequence {
-            return Err("麦克风音频块顺序不连续".into());
+        if sequence != l.next_sequence {
+            return Err("音频块顺序不连续".into());
         }
         if samples.is_empty() || samples.len() > 8192 {
-            return Err("麦克风音频块无效或过大".into());
+            return Err("音频块无效或过大".into());
         }
         if !matches!(m.phase, Phase::Cancelling | Phase::CapacityReached) {
-            let result = m
-                .asset
-                .as_mut()
-                .ok_or("麦克风音频尚未就绪")?
-                .append(samples);
+            let result = l.asset.as_mut().ok_or("音频尚未就绪")?.append(samples);
             match result {
                 Ok(AppendOutcome::Written) => {}
                 Ok(AppendOutcome::CapacityReached) => {
-                    m.phase = Phase::CapacityReached;
-                    m.interruption = Some(
+                    l.interruption = Some(
                         "录音达到 WAV 长度上限，已保留此前收到的音频。请新建录音继续。".into(),
                     );
+                    m.phase = Phase::CapacityReached;
+                    // Every lane will lose further callbacks after the shared stop request.
+                    for other in m.lanes.values_mut() {
+                        other
+                            .interruption
+                            .get_or_insert_with(|| "另一路达到 WAV 长度上限，会话已中断".into());
+                    }
                 }
                 Err(error) => {
-                    m.save_error = Some(error.clone());
+                    // Retrying custody repairs the bytes, not the prematurely ended capture.
+                    l.interruption
+                        .get_or_insert_with(|| error.chars().take(500).collect());
+                    l.save_error = Some(error.clone());
+                    m.refresh_error();
                     m.phase = Phase::Stopping;
                     return Err(error);
                 }
             }
         }
-        m.next_sequence += 1;
-        m.save_error = None;
+        let l = m.lanes.get_mut(lane).unwrap();
+        l.next_sequence += 1;
+        l.save_error = None;
+        m.refresh_error();
         Ok(())
     }
     pub(super) fn microphone_failed(
@@ -164,7 +219,18 @@ impl KoeRuntime {
         if !m.matches(record, session, lane) {
             return;
         }
-        m.interruption = Some(message.chars().take(500).collect());
+        let l = m.lanes.get_mut(lane).unwrap();
+        if l.producer_stopped {
+            return;
+        }
+        l.interruption.get_or_insert_with(|| {
+            let text: String = message.trim().chars().take(500).collect();
+            if text.is_empty() {
+                "音源中断".into()
+            } else {
+                text
+            }
+        });
         if !matches!(
             m.phase,
             Phase::Cancelling | Phase::Saving | Phase::CapacityReached
@@ -185,10 +251,23 @@ impl KoeRuntime {
         if !m.matches(record, session, lane) {
             return Ok(());
         }
-        if sequence != m.next_sequence {
-            return Err("仍有麦克风音频等待保存".into());
+        let l = m.lanes.get_mut(lane).unwrap();
+        if sequence != l.next_sequence {
+            return Err("仍有音频等待保存".into());
         }
-        m.producer_stopped = true;
+        if !matches!(
+            m.phase,
+            Phase::Stopping | Phase::CapacityReached | Phase::Cancelling | Phase::Saving
+        ) {
+            l.interruption.get_or_insert_with(|| "音源意外停止".into());
+        }
+        l.producer_stopped = true;
+        if m.phase != Phase::Cancelling {
+            m.phase = Phase::Stopping;
+        }
+        if !m.lanes.values().all(|l| l.producer_stopped) {
+            return Ok(());
+        }
         if m.phase != Phase::Cancelling {
             m.phase = Phase::Saving;
         }
@@ -198,59 +277,108 @@ impl KoeRuntime {
         let Some(mut m) = self.microphone.take() else {
             return Ok(());
         };
-        if !m.producer_stopped {
-            let result = if m.asset.is_none() {
-                m.sample_rate
-                    .ok_or_else(|| "正在等待麦克风权限或输入格式".to_string())
-                    .and_then(|rate| {
-                        m.asset = Some(CaptureAsset::create(&self.root, &m.record_id, rate)?);
-                        m.save_error = None;
-                        Ok(())
-                    })
-            } else {
-                Err("正在等待麦克风停止并排空音频".into())
-            };
-            if let Err(error) = &result {
-                m.save_error = Some(error.clone());
-            }
-            self.microphone = Some(m);
-            return result;
-        }
         let result: Result<(), String> = (|| {
-            if m.phase == Phase::Cancelling || m.asset.as_ref().is_none_or(|a| a.is_empty()) {
-                if let Some(asset) = &mut m.asset {
-                    asset.discard()?;
+            if !m.lanes.values().all(|l| l.producer_stopped) {
+                let mut recreated = false;
+                for l in m
+                    .lanes
+                    .values_mut()
+                    .filter(|l| !l.producer_stopped && l.asset.is_none())
+                {
+                    if let Some(rate) = l.sample_rate {
+                        l.asset = Some(CaptureAsset::create(&self.root, &l.asset_id, rate)?);
+                        l.save_error = None;
+                        recreated = true;
+                    }
                 }
-                self.notice = Some(
-                    m.interruption
-                        .clone()
-                        .unwrap_or_else(|| "未保存空录音或已取消的录音".into()),
-                );
+                m.refresh_error();
+                return if recreated {
+                    Ok(())
+                } else {
+                    Err("正在等待音源停止并排空音频".into())
+                };
+            }
+            if m.phase == Phase::Cancelling
+                || m.lanes
+                    .values()
+                    .all(|l| l.asset.as_ref().is_none_or(|a| a.is_empty()))
+            {
+                for l in m.lanes.values_mut() {
+                    if let Some(asset) = &mut l.asset {
+                        asset.discard()?;
+                    }
+                }
+                let reasons: Vec<_> = m
+                    .lanes
+                    .iter()
+                    .filter_map(|(name, l)| {
+                        l.interruption
+                            .as_ref()
+                            .map(|reason| format!("{name}: {reason}"))
+                    })
+                    .collect();
+                self.notice = Some(if m.phase == Phase::Cancelling || reasons.is_empty() {
+                    "未保存空录音或已取消的录音".into()
+                } else {
+                    format!("未保存录音：{}", reasons.join("；"))
+                });
                 return Ok(());
             }
-            let asset = m.asset.as_mut().ok_or("麦克风音频尚未就绪")?;
-            asset.publish()?;
-            let duration = asset.duration_ms();
+            let mut outcomes = Vec::new();
+            for (name, l) in &mut m.lanes {
+                let nonempty = l.asset.as_ref().is_some_and(|a| !a.is_empty());
+                if let Some(asset) = &mut l.asset {
+                    if nonempty {
+                        asset.publish()?;
+                    } else {
+                        asset.discard()?;
+                    }
+                }
+                outcomes.push(CaptureLaneRecord {
+                    lane: name.clone(),
+                    asset_id: nonempty.then(|| l.asset_id.clone()),
+                    sample_rate: l.sample_rate,
+                    duration_ms: l.asset.as_ref().map_or(0, |a| a.duration_ms()),
+                    interruption: l
+                        .interruption
+                        .clone()
+                        .or_else(|| (!nonempty).then(|| "该路没有收到音频".into())),
+                });
+            }
+            let duration = outcomes.iter().map(|l| l.duration_ms).max().unwrap_or(0);
+            let partial = outcomes.iter().any(|l| l.interruption.is_some());
             self.commit(|w| {
                 w.insert_record(
                     m.record_id.clone(),
-                    "Mac 麦克风录音".into(),
+                    if m.lanes.len() > 1 {
+                        "Mac 双路录音".into()
+                    } else {
+                        "Mac 麦克风录音".into()
+                    },
                     RecordOrigin::Microphone,
                     0,
                     m.created_at,
                     duration,
-                )
+                )?;
+                w.set_capture_lanes(&m.record_id, outcomes)
             })?;
-            asset.release_staging();
+            for l in m.lanes.values() {
+                if let Some(asset) = &l.asset {
+                    asset.release_staging();
+                }
+            }
             self.open_record(&m.record_id, None)?;
-            self.notice = Some(match &m.interruption {
-                Some(reason) => format!("采集中断，已保存收到的音频：{reason}"),
-                None => "麦克风录音已保存到本机".into(),
+            self.notice = Some(if partial {
+                "采集中断，已保存收到的分路音频".into()
+            } else {
+                "录音已保存到本机".into()
             });
             Ok(())
         })();
-        if let Err(error) = &result {
-            m.save_error = Some(error.clone());
+        if result.is_err() || !m.lanes.values().all(|l| l.producer_stopped) {
+            if let Err(error) = &result {
+                m.save_error = Some(error.clone());
+            }
             self.microphone = Some(m);
         }
         result
@@ -259,8 +387,10 @@ impl KoeRuntime {
         let Some(m) = &self.microphone else {
             return Value::Null;
         };
+        let lanes: BTreeMap<_,_> = m.lanes.iter().map(|(name,l)| (name, json!({"nextSequence":l.next_sequence,"durationMs":l.asset.as_ref().map_or(0,|a|a.duration_ms()),"stopped":l.producer_stopped,"error":l.save_error,"interruption":l.interruption,"started":l.sample_rate.is_some()}))).collect();
+        let mic = &m.lanes["microphone"];
         json!({"recordId":m.record_id,"sessionId":m.session_id,"lane":"microphone","inputId":m.input_id,
             "phase":match m.phase {Phase::Starting=>"starting",Phase::Recording=>"recording",Phase::Stopping | Phase::CapacityReached=>"stopping",Phase::Cancelling=>"cancelling",Phase::Saving=>"saving"},
-            "nextSequence":m.next_sequence,"durationMs":m.asset.as_ref().map_or(0,|a|a.duration_ms()),"error":m.save_error,"interruption":m.interruption})
+            "nextSequence":mic.next_sequence,"durationMs":mic.asset.as_ref().map_or(0,|a|a.duration_ms()),"error":m.save_error,"interruption":mic.interruption,"lanes":lanes})
     }
 }

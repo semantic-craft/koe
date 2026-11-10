@@ -267,3 +267,17 @@
 - 出处：2026-11-10，N2 独立评审发现停止回应丢失后，断线重连仍保留等待标记，却没有重发停止；取消退出后界面只给开始入口，Rust 拒绝开始，用户无法恢复。Seen 1。
 - 修复：握手恢复后重发未确认的停止指令；快照明确正在停止并保留重试入口。重试只发指令，不重启已有尾音静默计时，仍须设备真实停止回应才能解除限制。
 - 验证点：`cargo test -p koe-runtime lifecycle_tests` 中丢回应/重连/取消后重新开始，以及重复停止不延迟音频落盘的回归均先红后绿。证据见 PR #613。
+
+### 重试修复音频字节不能抹去提前停录的事实
+
+- 出处：2026-11-10 N3B 分路保管独立评审用 RLIMIT_FSIZE 复现部分写入失败；重试同块成功后，保存错误清除，提前停止的录音却被标为完整。全空收尾也曾覆盖权限拒绝的具体原因。
+- 修复：分开保存错误与采集中断事实；每路中断随 ProductRecord 持久化，重试仅清保存错误；无记录可保存时保留各路失败原因。
+- 验证点：`cargo test -p koe-runtime --test dual_capture_fault --test dual_capture`；真实短写只在独立子进程中注入，恢复限制后重试同一序号和字节，仍标记采集不完整。两个缺陷均有改前红灯，证据见 #619。
+- Seen 1x（2026-11-10）。
+
+### 新持久字段须穿过工作区重建全链路
+
+- 出处：2026-11-10 N3B 补强重启测试后，磁盘 JSON 已有分路资产，但 `ProductWorkspace::restore` 二次重建 `ProductRecord` 时丢掉新字段；只查 JSON 和记录存在会漏验。
+- 修复：工作区重建保留并重新验证 `capture_lanes`，测试直接检查重开后的业务对象、资产身份与时长。
+- 验证点：`cargo test -p koe-runtime --test dual_capture independent_sequences_tail_barrier_and_reopen_preserve_both_assets`，改前重开 lanes 数为0、改后为2；不以codec序列化成功替代完整Runtime重开。
+- Seen 1x（2026-11-10）。
