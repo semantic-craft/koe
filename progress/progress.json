@@ -73,9 +73,21 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-10T09:40:33Z"
+      },
+      {
+        "number": 615,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-10T10:24:50Z"
+      },
+      {
+        "number": 616,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-10T10:13:03Z"
       }
     ],
-    "main": "225681cea7f207913e60ca5bd794b2ad8f415dfb",
+    "main": "5efab6a5d3a3c27c3a936df55dee10e57b598acb",
     "open_pulls": [],
     "pulls": [
       {
@@ -125,12 +137,20 @@
         "merged": true,
         "number": 613,
         "state": "closed"
+      },
+      {
+        "base": "44bb5cd86c2867238555dce5f52e8edc2c0fa558",
+        "head": "9bc5749619d8fed2a1079d6d77f4d578fd1bf88f",
+        "merge_commit": "5efab6a5d3a3c27c3a936df55dee10e57b598acb",
+        "merged": true,
+        "number": 617,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T09:54:03.874472Z",
+  "observed_at": "2026-11-10T10:25:56.945380Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -324,6 +344,25 @@
           "status": "done",
           "summary": "Rust 从录音、取回和处理队列推导活动与退出状态；Swift 持有系统活动并延后退出。保存失败阻止退出，可取消；停止确认丢失支持重连与重试，过期结果不影响新请求。",
           "title": "活动断言与退出排空"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash 5efab6a 已合并，完整门禁、CI 与独立复核通过。",
+              "ref": 617
+            },
+            {
+              "kind": "file",
+              "note": "Rust 采集与持久收尾。",
+              "ref": "crates/koe-runtime/src/microphone.rs"
+            }
+          ],
+          "id": "mac-microphone-capture",
+          "next": "真实权限、输入切换、回放与退出重开按 #616 验收；系统音频双路另片推进。",
+          "status": "done",
+          "summary": "今天页可选择输入设备录音，Rust 按会话和序号有界写入 WAV。停止排空末块后提交记录，保存失败阻退出并可重试；权限或启动失败不造成功记录。容量耗尽明确保存此前音频，默认只留本机。",
+          "title": "Mac 单路麦克风采集"
         }
       ],
       "title": "当前产品实现"
@@ -347,12 +386,17 @@
               "kind": "pull",
               "note": "N1 独立评审与 CI 通过，未运行真实安装升级。",
               "ref": 605
+            },
+            {
+              "kind": "pull",
+              "note": "N3A 完整门禁、CI 及 gpt-6-astra 独立 PASS+NOTES；真实麦克风未验。",
+              "ref": 617
             }
           ],
           "id": "automated-check",
           "next": "后续改动运行统一门禁。",
           "status": "done",
-          "summary": "N1 的 17 项 Rust 持久化回归、2 项 Swift 原生桥接回归、完整 check 和 PR CI 通过。独立审查修复了未知提交恢复、授权目标与待删项清理问题。F1 已有的 15 项迁移回归验收保留；签名安装升级仍待真机验证。",
+          "summary": "N3A 完整 check 通过 249 项 Rust、32 项 Python 和 29 项 Swift 测试，PR CI 与独立复核通过。独立评审发现的启动失败、部分写入和容量上限问题已修复；故障注入验证了保存结果不确定时阻退出及重开读回。此前切片的验收记录保留在各自条目。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -390,7 +434,7 @@
           "id": "merge-install",
           "next": "Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。 N1 跨版本安装升级见 #603。",
           "status": "done",
-          "summary": "2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。 此条为 #595 的安装证据；本轮 N1 未安装，不能据此视为 #605 已部署。",
+          "summary": "2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。 此条为 #595 的安装证据；本轮 N1 未安装，不能据此视为 #605 已部署。 N3A 同样未安装，不能据此视为 #617 已部署。",
           "title": "本机签名安装"
         },
         {
@@ -448,6 +492,20 @@
           "status": "unverified",
           "summary": "本轮隔离 C ABI 协议音频、保存重开和活动计数通过；未安装签名版，未运行真实 pmset、锁屏、D3200 和云端场景。",
           "title": "活动与退出真机验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机工单，保持开放未验。",
+              "ref": 616
+            }
+          ],
+          "id": "microphone-device-acceptance",
+          "next": "按 #616 在签名安装版逐项验收。系统双路、本机 ASR、暂停与崩溃恢复不属于本片。",
+          "status": "unverified",
+          "summary": "本轮以隔离音源、真实 C ABI 与磁盘验证，不使用真实麦克风或个人 Keychain，未安装签名版。系统授权、物理音源切换、人耳回放和实际退出重开仍未验。",
+          "title": "麦克风签名版与真机验收"
         }
       ],
       "title": "验收与交付"
@@ -487,7 +545,9 @@
       607,
       608,
       611,
-      612
+      612,
+      615,
+      616
     ],
     "pulls": [
       589,
@@ -495,7 +555,8 @@
       600,
       605,
       609,
-      613
+      613,
+      617
     ]
   }
 }
