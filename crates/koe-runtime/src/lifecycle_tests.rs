@@ -520,7 +520,16 @@ fn lost_stop_reply_is_retried_after_reconnect_and_cancel_remains_usable() {
         true,
         "native host must expose the stop/retry action until confirmation"
     );
+    runtime.ingest_ble_chunk(&catalog(999), NOW);
+    assert!(
+        runtime.device.session.active_file_id.is_none(),
+        "automatic pull must also wait for stop confirmation"
+    );
     runtime.ingest_ble_chunk(&rx(0x18, 0x82, &[0]), NOW);
+    assert_eq!(runtime.device.session.active_file_id, Some(999));
+    runtime.ingest_ble_chunk(&file_head(999, 166), NOW);
+    runtime.ingest_ble_chunk(&audio(0), NOW);
+    runtime.ingest_ble_chunk(&rx(0x1a, 0x0a, &999u32.to_le_bytes()), NOW);
     let started = dispatch(&mut runtime, json!({"type":"device_start"}));
     assert!(started["error"].is_null(), "{started}");
 }
