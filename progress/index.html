@@ -3,12 +3,13 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-10T01:28:47.518842Z</p>
-<p>Main: <code>main: 78cd184a62217f7f70d3b3b043c09ded1f4a2a7a</code></p>
+<p>Observed: 2026-11-10T01:35:50.674270Z</p>
+<p>Main: <code>main: 4cfb0052638e08ea7389cc818da8f208538089da</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-client-services/src/product_store.rs">file crates/koe-client-services/src/product_store.rs: 唯一存储入口</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/589">pull 589: 实现已 squash 合并，PR CI 通过。</a></li>
 </ul><p>Next: 维持单一领域所有者，按实际反馈演进。</p></article>
 <article id="native-flow"><h3>今天、记录详情和全局问答</h3><span class="badge">done</span><p>今天、记录详情、待办、记忆和问答使用 C ABI v2 快照。隔离签名应用已实际走通创建、审核、全局检索及来源返回；正式安装版已恢复并打开旧记录。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift">file platforms/apple-shared/Sources/KoeAppleShared/WorkspaceRootView.swift: 原生界面入口</a></li>
@@ -22,7 +23,7 @@
 </ul><p>Next: 升级后的真实录音长期使用继续在 #588 记录。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
-<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>完整 scripts/check 通过：175 项 Rust 测试及文档测试、7 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查通过。独立代码复核无剩余阻塞。</p><ul>
+<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>完整 scripts/check 通过：175 项 Rust 测试及文档测试、7 项 Swift 测试、32 项 Python 契约测试，Clippy 与 UI 原则检查通过。独立代码复核无剩余阻塞。 PR #589 的远端 CI 已通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 统一门禁</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/cloud_workflow.rs">file crates/koe-runtime/tests/cloud_workflow.rs: 本地真实协议流程</a></li>
 </ul><p>Next: 后续改动运行统一门禁。</p></article>
