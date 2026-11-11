@@ -305,6 +305,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
 
 REQUIRED_INSTALL_PLIST_KEYS = (
     "AppIcon.icns",
+    "CFBundleIconFile",
     "NSBluetoothAlwaysUsageDescription",
     "NSBluetoothPeripheralUsageDescription",
     "NSMicrophoneUsageDescription",
@@ -327,6 +328,24 @@ def check_install_script(script_text: str) -> list[str]:
             violations.append(
                 f"Packaging violation: scripts/install-macos.sh is missing required key/check '{key}'"
             )
+    if "CFBundleIconName" in script_text and "Assets.car" not in script_text:
+        violations.append(
+            "Packaging violation: scripts/install-macos.sh sets CFBundleIconName without bundling Assets.car"
+        )
+    if re.search(
+        r"Contents/Resources[^\n]*AppIcon\.png|AppIcon\.png[^\n]*Contents/Resources",
+        script_text,
+    ):
+        violations.append(
+            "Packaging violation: scripts/install-macos.sh must not copy unpadded AppIcon.png into Contents/Resources"
+        )
+    if "lsregister" not in script_text or not re.search(
+        r'(?:lsregister|\$\{?LSREGISTER\}?)"?(?:\s+-[A-Za-z]+)*\s+-f(?:\s+-[A-Za-z]+)*\s+\S+',
+        script_text,
+    ):
+        violations.append(
+            "Packaging violation: scripts/install-macos.sh must register the installed bundle with lsregister -f"
+        )
     return violations
 
 

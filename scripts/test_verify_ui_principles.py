@@ -268,6 +268,40 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             install_violations,
         )
 
+    def test_install_script_icon_and_lsregister_contracts(self) -> None:
+        valid_lines = [
+            "#!/usr/bin/env bash",
+            'LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"',
+            *verifier.REQUIRED_INSTALL_PLIST_KEYS,
+            '"$LSREGISTER" -f "$TARGET"',
+        ]
+        valid_script = "\n".join(valid_lines) + "\n"
+        self.assertEqual(verifier.check_install_script(valid_script), [])
+
+        assetless_icon_name = valid_script + "<key>CFBundleIconName</key><string>AppIcon</string>\n"
+        violations = verifier.check_install_script(assetless_icon_name)
+        self.assertTrue(
+            any("CFBundleIconName without bundling Assets.car" in v for v in violations),
+            violations,
+        )
+
+        with_asset_catalog = assetless_icon_name + 'cp Assets.car "$SOURCE/Contents/Resources/Assets.car"\n'
+        self.assertEqual(verifier.check_install_script(with_asset_catalog), [])
+
+        with_unpadded_png = valid_script + 'cp icon.png "$SOURCE/Contents/Resources/AppIcon.png"\n'
+        violations = verifier.check_install_script(with_unpadded_png)
+        self.assertTrue(
+            any("AppIcon.png into Contents/Resources" in v for v in violations),
+            violations,
+        )
+
+        without_lsregister_force = valid_script.replace('"$LSREGISTER" -f "$TARGET"', '"$LSREGISTER" -u "$SOURCE"')
+        violations = verifier.check_install_script(without_lsregister_force)
+        self.assertTrue(
+            any("lsregister -f" in v for v in violations),
+            violations,
+        )
+
     def test_repository_shared_theme_passes_all_principles(self) -> None:
         root = Path(__file__).resolve().parent.parent
         report = verifier.analyze_repository(root, "all")

@@ -25,6 +25,7 @@ note() { printf '\n=== %s ===\n' "$1"; }
 
 note "contracts & tooling tests"
 python3 scripts/test_cleanup_app_registrations.py
+python3 scripts/test_install_macos.py
 python3 scripts/test_ci.py
 python3 scripts/test_verify_ui_principles.py
 python3 scripts/verify-ui-principles.py --mode all
