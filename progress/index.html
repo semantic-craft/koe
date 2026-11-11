@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-11T01:51:59.735584Z</p>
-<p>Main: <code>main: 3308931d70c92c0c0bce69cb40985f05a810decd</code></p>
+<p>Observed: 2026-11-11T05:18:38.316285Z</p>
+<p>Main: <code>main: d832ec83411e4e5be13320c839af2eb8e31cb361</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -63,22 +63,32 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/627">pull 627: 分路回放子单元squash 135f831已合并。完整门禁与CI通过；独立复验运行Rust及6项原生真实媒体回归。未安装，完整GUI与听感未验。</a></li>
 <li>note macOS 27.2 独立授权边界原型: 基于638f5e5，以独立ad-hoc应用经LaunchServices运行。tap、aggregate、I/O启动及清理返回0，317次回调累计报告649216字节，nonzeroBuffers=0；没有可靠记录系统授权选择，因此不是允许、拒绝或静音状态的验收。生产双路入口保持关闭，未安装签名版。</li>
 </ul><p>Next: 先取得公开API可识别的系统音频授权完成判据，再接Core Audio与原生双路。独立限时原型的HAL成功与317次未检出非零数据的回调仍只能判定授权未知；不启用伪就绪入口。允许、拒绝、延迟、取消及签名真机矩阵仍待#620。</p></article>
+<article id="record-trash-archive"><h3>记录归档防误删与 30 天回收站</h3><span class="badge">done</span><p>Slice R1（PR #635）在 ProductWorkspace 新增互斥保留态 RecordRetention（Active / Archived / Trashed），软删即刻生效并附 8 秒底部撤销条，软删记录自动移出今天、待办、记忆、BM25 与全局问答，30 天内恢复零损归位；已归档、采集中或排空中的记录拒绝删除；彻底清除或到期先原子落盘元数据再按白名单清理主音频与分路音频，录音豆已清除文件写入墓碑阻断自动重建并保留手动重下恢复。实体 D3200 蓝牙同步墓碑行为继续归入 #588。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/634">issue 634: Slice R1 实现范围与验收条件。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: squash d832ec8 已合并；281 Rust、44 Python、53 Swift 完整门禁、三模型对抗审查加固与 CI 通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/trash.rs">file crates/koe-engine/src/product/trash.rs: RecordRetention 和类型、30 天到期收敛、问答引用降级与 D3200 墓碑。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/trash.rs">file crates/koe-runtime/src/trash.rs: 录音与处理删除守卫、8 秒撤销条、同步停播与先落盘后删音频编排。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/TrashView.swift">file platforms/apple-shared/Sources/KoeAppleShared/TrashView.swift: 原生回收站列表、恢复与不可逆彻底清除二次确认。</a></li>
+</ul><p>Next: 推进 Slice R2 转写原文分段编辑与说话人重命名合并；实体 D3200 墓碑同步按 #588 验收。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
-<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>N3A 完整 check 通过 249 项 Rust、32 项 Python 和 29 项 Swift 测试，PR CI 与独立复核通过。独立评审发现的启动失败、部分写入和容量上限问题已修复；故障注入验证了保存结果不确定时阻退出及重开读回。此前切片的验收记录保留在各自条目。</p><ul>
+<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 281 项 Rust、44 项 Python 契约、44 文件 verify-ui-principles 零违规与 53 项 Swift 测试，PR #635 CI 与三模型独立对抗审查（pro / flash / inherit）通过，7 项审查加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 统一门禁</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/cloud_workflow.rs">file crates/koe-runtime/tests/cloud_workflow.rs: 本地真实协议流程</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 独立评审与 CI 通过，未运行真实安装升级。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/617">pull 617: N3A 完整门禁、CI 及 gpt-6-astra 独立 PASS+NOTES；真实麦克风未验。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: Slice R1 完整门禁（281 Rust、44 Python、53 Swift）、koe-cli benchmark（66.389 ms）、三模型对抗审查及 PR CI 通过。</a></li>
 </ul><p>Next: 后续改动运行统一门禁。</p></article>
 <article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
 </ul><p>Next: 按 #588 继续验收完整取回、边录边转写与真实云服务。</p></article>
-<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-11 已重装最新 Developer ID 签名版 /Applications/Koe.app（CDHash 4665f09f7d0353513efc1acab745f2dbfb8d3a25，designated requirement 与旧版一致，Keychain 授权保持有效），将 PR #600 至 #630 连同静态 Dock 图标注册修复一并部署到位；verify-self 与 smoke-test 通过，lsregister 记为 relative-icon-path (0x1) 且无构建目录残留注册，未运行态重启 Dock 后与 Responsay、Sonori、Micro Input、Kotone 并排截图轮廓对齐（#594）。签名安装完成不替代各独立工单的真机交互验收。</p><ul>
+<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-11 已重装包含 PR #635（Slice R1 归档锁与 30 天回收站）的最新 Developer ID 签名版 /Applications/Koe.app（CDHash 220aaafcf38da26f2da3e1b26072c03914d8f5f6，designated requirement 与旧版一致），真实二进制 --verify-self（含归档拦截、软删撤销、恢复与彻底清除）及 --smoke-test 全部通过；此前 #633 已在未运行态完成 Dock 并排图标轮廓验收（#594）。签名安装完成不替代各独立工单的真机交互验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/587">issue 587: 实现范围与验收入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/594">issue 594: 未运行态下已在同一 Dock 并排截图确认 Responsay、Sonori、Koe、Micro Input、Kotone 视觉轮廓对齐。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/595">pull 595: 系统图标大小修复已 squash 合并，CI 通过；安装与 GUI 重启验证完成。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/install-macos.sh">file scripts/install-macos.sh: 移除无 Assets.car 时的 CFBundleIconName，同卷 renamex_np 原子互换后执行 lsregister -f 并清理 Dock 图标缓存。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/633">pull 633: 静态 Dock 图标注册与原子重装修复已 squash 合并。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: 含归档锁与 30 天回收站的签名版已重装并通过 verify-self 与 smoke-test。</a></li>
 </ul><p>Next: 真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 推进。</p></article>
 <article id="flutter-device-acceptance"><h3>旧 Flutter 库真机验收</h3><span class="badge">unverified</span><p>本轮未运行签名安装版目录导入、真实音频播放及退出重启读回。自动回归不能替代真机结果。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/598">issue 598: 独立真机验收工单，保持未验。</a></li>
