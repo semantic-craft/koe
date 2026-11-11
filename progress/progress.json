@@ -117,7 +117,7 @@
         "updated_at": "2026-11-10T13:02:15Z"
       }
     ],
-    "main": "22334d2dc6d0b8b623a52e4cf36262565443c7f0",
+    "main": "3308931d70c92c0c0bce69cb40985f05a810decd",
     "open_pulls": [],
     "pulls": [
       {
@@ -212,7 +212,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-10T13:03:16.304363Z",
+  "observed_at": "2026-11-11T01:51:59.735584Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -563,19 +563,24 @@
             },
             {
               "kind": "issue",
-              "note": "图标安装、签名与轮廓已验；Dock 专属截图尚未取得。",
+              "note": "未运行态下已在同一 Dock 并排截图确认 Responsay、Sonori、Koe、Micro Input、Kotone 视觉轮廓对齐。",
               "ref": 594
             },
             {
               "kind": "pull",
               "note": "系统图标大小修复已 squash 合并，CI 通过；安装与 GUI 重启验证完成。",
               "ref": 595
+            },
+            {
+              "kind": "file",
+              "note": "移除无 Assets.car 时的 CFBundleIconName，同卷 renamex_np 原子互换后执行 lsregister -f 并清理 Dock 图标缓存。",
+              "ref": "scripts/install-macos.sh"
             }
           ],
           "id": "merge-install",
-          "next": "Dock 并排截图复核见 #594；真实 D3200 与付费服务全面验收见 #588。 N1 跨版本安装升级见 #603。",
+          "next": "真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 推进。",
           "status": "done",
-          "summary": "2026-11-10 已更新 Developer ID 签名安装版 /Applications/Koe.app；verify-self、smoke-test 通过，原有四条记录保留，正式界面重启并恢复 BLE 连接。图标 ICNS 轮廓为 1024 画布中的 824 像素，四档图标回归通过。 此条为 #595 的安装证据；本轮 N1 未安装，不能据此视为 #605 已部署。 N3A 同样未安装，不能据此视为 #617 已部署。",
+          "summary": "2026-11-11 已重装最新 Developer ID 签名版 /Applications/Koe.app（CDHash 4665f09f7d0353513efc1acab745f2dbfb8d3a25，designated requirement 与旧版一致，Keychain 授权保持有效），将 PR #600 至 #630 连同静态 Dock 图标注册修复一并部署到位；verify-self 与 smoke-test 通过，lsregister 记为 relative-icon-path (0x1) 且无构建目录残留注册，未运行态重启 Dock 后与 Responsay、Sonori、Micro Input、Kotone 并排截图轮廓对齐（#594）。签名安装完成不替代各独立工单的真机交互验收。",
           "title": "本机签名安装"
         },
         {

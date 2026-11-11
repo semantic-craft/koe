@@ -6,6 +6,7 @@ import colorsys
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import plistlib
 import re
 import sys
 from typing import Any
@@ -305,6 +306,7 @@ def check_ui_file(path_str: str, text: str, strict_scale: bool = True) -> dict[s
 
 REQUIRED_INSTALL_PLIST_KEYS = (
     "AppIcon.icns",
+    "CFBundleIconFile",
     "NSBluetoothAlwaysUsageDescription",
     "NSBluetoothPeripheralUsageDescription",
     "NSMicrophoneUsageDescription",
@@ -322,11 +324,70 @@ REQUIRED_INSTALL_PLIST_KEYS = (
 
 def check_install_script(script_text: str) -> list[str]:
     violations: list[str] = []
+    active_lines: list[str] = []
+    for line in script_text.splitlines():
+        if re.match(r"^\s*#", line):
+            continue
+        if not line.lstrip().startswith("<"):
+            line = re.sub(r"\s+#.*$", "", line)
+        active_lines.append(line)
+    active_text = "\n".join(active_lines)
+
     for key in REQUIRED_INSTALL_PLIST_KEYS:
-        if key not in script_text:
+        if key not in active_text:
             violations.append(
                 f"Packaging violation: scripts/install-macos.sh is missing required key/check '{key}'"
             )
+    if "CFBundleIconName" in active_text and "Assets.car" not in active_text:
+        violations.append(
+            "Packaging violation: scripts/install-macos.sh sets CFBundleIconName without bundling Assets.car"
+        )
+    if re.search(
+        r"Contents/Resources[^\n]*AppIcon\.png|AppIcon\.png[^\n]*Contents/Resources",
+        active_text,
+    ):
+        violations.append(
+            "Packaging violation: scripts/install-macos.sh must not copy unpadded AppIcon.png into Contents/Resources"
+        )
+    if "lsregister" not in active_text or not re.search(
+        r'(?:lsregister|\$\{?LSREGISTER\}?)"?(?:\s+-[A-Za-z]+)*\s+-f(?:\s+-[A-Za-z]+)*\s+\S+',
+        active_text,
+    ):
+        violations.append(
+            "Packaging violation: scripts/install-macos.sh must register the installed bundle with lsregister -f"
+        )
+
+    plist_match = re.search(r"<plist\b[\s\S]*?</plist>", active_text)
+    if plist_match is not None:
+        raw_plist = plist_match.group(0)
+        xml_doc = (
+            raw_plist
+            if raw_plist.lstrip().startswith("<?xml")
+            else '<?xml version="1.0" encoding="UTF-8"?>\n' + raw_plist
+        )
+        try:
+            plist_data = plistlib.loads(xml_doc.encode("utf-8"))
+        except Exception as exc:
+            violations.append(
+                f"Packaging violation: scripts/install-macos.sh contains invalid Info.plist XML ({exc})"
+            )
+            plist_data = None
+        if isinstance(plist_data, dict):
+            if plist_data.get("CFBundleIconFile") != "AppIcon":
+                violations.append(
+                    "Packaging violation: scripts/install-macos.sh Info.plist must set CFBundleIconFile to AppIcon"
+                )
+            if "CFBundleIconName" in plist_data and "Assets.car" not in active_text:
+                msg = "Packaging violation: scripts/install-macos.sh sets CFBundleIconName without bundling Assets.car"
+                if msg not in violations:
+                    violations.append(msg)
+            for key in REQUIRED_INSTALL_PLIST_KEYS:
+                if key.startswith("NS"):
+                    val = plist_data.get(key)
+                    if not isinstance(val, str) or not val.strip():
+                        violations.append(
+                            f"Packaging violation: scripts/install-macos.sh Info.plist must set non-empty '{key}'"
+                        )
     return violations
 
 

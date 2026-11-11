@@ -302,3 +302,10 @@
 - 修复：设备变化通知与音频回调共用 fence；停源返回后再次交付本代次失败，再根据 Rust 最新阶段选择暂停确认或最终停止。
 - 验证点：`swift test --package-path platforms/macos --filter NativeCaptureIntegrationTests/testFailureDuringPauseFenceSavesTailAndCannotBecomePaused`，最小逆补丁复现 paused 且无 WAV，修复后尾块字节落盘、保留中断事实并允许退出。日志在本轮 `n3b-platform/red-stop-failure.log` 与 `green-stop-failure.log`，仅隔离适配器验收，真实设备变化仍待 #620。
 - Seen 1x（2026-11-10）。
+
+### 未运行态 Dock 图标不能靠 `NSApp.applicationIconImage` 掩盖，无 `Assets.car` 时禁写 `CFBundleIconName` 且须同卷 `renamex_np` 原子互换后 `lsregister -f`
+
+- 出处，2026-11-11 用户在 macOS 27.2 退出 `/Applications/Koe.app` 后发现 Dock 常驻图标退化为系统默认白格占位图，应用运行期因启动后设置了 `NSApp.applicationIconImage` 遮住了问题。实证根因有四处：(1) `scripts/install-macos.sh` 未编译 `Assets.car` 却在 `Info.plist` 写入 `CFBundleIconName = AppIcon`（LaunchServices 记为 `supports-asset-catalog (0x5)`）并向 `Contents/Resources/` 复制未留白的 `AppIcon.png`；(2) 安装时原地 `rm -rf "$TARGET"` 再非原子 `ditto "$APP" "$TARGET"`，把缺失或半成品包暴露给 Dock 目录监听；(3) 未注销 `build/` 下未签名产物且未对安装目标执行 `lsregister -f`；(4) 一旦占位图写入 `DARWIN_USER_CACHE_DIR/com.apple.dock.iconcache`，单独重启 Dock 仍会从磁盘读回旧位图缓存。
+- 修复，(1) `scripts/install-macos.sh` 抽离 `write_info_plist()`，移除 `CFBundleIconName`（仅保留 `CFBundleIconFile = AppIcon`），构建时校验 `verify-app-icon.swift`、写入 `.metadata_never_index` 且不再复制 `Contents/Resources/AppIcon.png`；(2) 在 `scripts/cleanup_app_registrations.py` 统一收敛五种路径保护关系（含禁止 `..` 与软链越界、APFS 大小写及 Unicode NFD 归一化等价）、`libproc` `proc_pidpath` 进程拦截与 `renamex_np(RENAME_SWAP)` 同卷单系统调用原子互换及异常回滚；(3) 互换后执行 `lsregister -f "$TARGET"` 并在正式目录安装时清理 `com.apple.dock.iconcache*`，在 `verify-ui-principles.py` 剥离注释并解析内嵌 `Info.plist` 固守静态门禁。
+- 验证点，`python3 scripts/test_install_macos.py`、`python3 scripts/test_cleanup_app_registrations.py` 与 `python3 scripts/verify-ui-principles.py --mode all` 通过；正式安装退出进程后查 `lsregister -dump` 确认 `/Applications/Koe.app` 的 `icon flags` 为 `relative-icon-path (0x1)` 且 `build/` 下无残留注册，重启 Dock 后在未运行态截图核对 Koe 与相邻应用圆角边界一致。
+- Seen 1x（2026-11-11）。
