@@ -29,8 +29,32 @@ public struct RecordSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let status: String
     public let segmentCount: Int
     public let preview: String
+    public let archived: Bool
     public var isTranscribing: Bool { status == "转写中" || status == "等待转写" }
     public var audioFile: String? { nil }
+
+    public init(
+        id: String, title: String, createdAtEpochSec: UInt64, durationMs: UInt64,
+        source: String, status: String, segmentCount: Int, preview: String, archived: Bool = false
+    ) {
+        self.id = id; self.title = title; self.createdAtEpochSec = createdAtEpochSec
+        self.durationMs = durationMs; self.source = source; self.status = status
+        self.segmentCount = segmentCount; self.preview = preview; self.archived = archived
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, createdAtEpochSec, durationMs, source, status, segmentCount, preview, archived
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); title = try c.decode(String.self, forKey: .title)
+        createdAtEpochSec = try c.decode(UInt64.self, forKey: .createdAtEpochSec)
+        durationMs = try c.decode(UInt64.self, forKey: .durationMs)
+        source = try c.decode(String.self, forKey: .source); status = try c.decode(String.self, forKey: .status)
+        segmentCount = try c.decode(Int.self, forKey: .segmentCount); preview = try c.decode(String.self, forKey: .preview)
+        archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+    }
 }
 
 public struct SummarySnapshot: Codable, Equatable, Sendable {
@@ -46,12 +70,80 @@ public struct RecordDetailSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let durationMs: UInt64
     public let source: String
     public let status: String
+    public let archived: Bool
     public let segments: [SegmentSnapshot]
     public let summary: [SummarySnapshot]
     public let highlights: [SourceSnapshot]
     public let audioPath: String?
     public let canRetranscribe: Bool
     public let isProcessing: Bool
+
+    public init(
+        id: String, title: String, createdAtEpochSec: UInt64, durationMs: UInt64,
+        source: String, status: String, archived: Bool = false, segments: [SegmentSnapshot],
+        summary: [SummarySnapshot], highlights: [SourceSnapshot], audioPath: String?,
+        canRetranscribe: Bool, isProcessing: Bool
+    ) {
+        self.id = id; self.title = title; self.createdAtEpochSec = createdAtEpochSec
+        self.durationMs = durationMs; self.source = source; self.status = status
+        self.archived = archived; self.segments = segments; self.summary = summary
+        self.highlights = highlights; self.audioPath = audioPath
+        self.canRetranscribe = canRetranscribe; self.isProcessing = isProcessing
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, createdAtEpochSec, durationMs, source, status, archived
+        case segments, summary, highlights, audioPath, canRetranscribe, isProcessing
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); title = try c.decode(String.self, forKey: .title)
+        createdAtEpochSec = try c.decode(UInt64.self, forKey: .createdAtEpochSec)
+        durationMs = try c.decode(UInt64.self, forKey: .durationMs)
+        source = try c.decode(String.self, forKey: .source); status = try c.decode(String.self, forKey: .status)
+        archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+        segments = try c.decode([SegmentSnapshot].self, forKey: .segments)
+        summary = try c.decode([SummarySnapshot].self, forKey: .summary)
+        highlights = try c.decode([SourceSnapshot].self, forKey: .highlights)
+        audioPath = try c.decodeIfPresent(String.self, forKey: .audioPath)
+        canRetranscribe = try c.decode(Bool.self, forKey: .canRetranscribe)
+        isProcessing = try c.decode(Bool.self, forKey: .isProcessing)
+    }
+}
+
+public struct TrashRecordSnapshot: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let title: String
+    public let createdAtEpochSec: UInt64
+    public let durationMs: UInt64
+    public let source: String
+    public let segmentCount: Int
+    public let preview: String
+    public let trashedAtMs: UInt64
+    public let expiresAtMs: UInt64
+    public let remainingDays: Int
+
+    public init(
+        id: String, title: String, createdAtEpochSec: UInt64, durationMs: UInt64,
+        source: String, segmentCount: Int, preview: String,
+        trashedAtMs: UInt64, expiresAtMs: UInt64, remainingDays: Int
+    ) {
+        self.id = id; self.title = title; self.createdAtEpochSec = createdAtEpochSec
+        self.durationMs = durationMs; self.source = source; self.segmentCount = segmentCount
+        self.preview = preview; self.trashedAtMs = trashedAtMs
+        self.expiresAtMs = expiresAtMs; self.remainingDays = remainingDays
+    }
+}
+
+public struct UndoTrashSnapshot: Codable, Equatable, Sendable {
+    public let recordId: String
+    public let title: String
+
+    public init(recordId: String, title: String) {
+        self.recordId = recordId
+        self.title = title
+    }
 }
 
 public struct TaskSnapshot: Codable, Equatable, Identifiable, Sendable {
@@ -307,8 +399,6 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let epoch: UInt64
     public let clockNs: UInt64?
     public let lanes: [String: CaptureLaneSnapshot]
-
-
 }
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
@@ -322,6 +412,8 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let focusSegmentId: String?
     public let records: [RecordSnapshot]
     public let todayRecordIds: [String]
+    public let trashRecords: [TrashRecordSnapshot]
+    public let undoTrash: UndoTrashSnapshot?
     public let detail: RecordDetailSnapshot?
     public let tasks: [TaskSnapshot]
     public let memories: [MemorySnapshot]
@@ -332,6 +424,54 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let error: String?
     public var migrationReports: [MigrationReportSnapshot]? = nil
     public let notice: String?
+
+    public init(
+        microphone: MicrophoneSnapshot? = nil, lifecycle: LifecycleSnapshot? = nil,
+        version: UInt32, generation: UInt64, section: String, canGoBack: Bool,
+        selectedRecordId: String?, focusSegmentId: String?, records: [RecordSnapshot],
+        todayRecordIds: [String], trashRecords: [TrashRecordSnapshot] = [],
+        undoTrash: UndoTrashSnapshot? = nil, detail: RecordDetailSnapshot?,
+        tasks: [TaskSnapshot], memories: [MemorySnapshot], ask: AskSnapshot,
+        device: DeviceSnapshot, provider: ProviderSnapshot, playback: PlaybackSnapshot,
+        error: String?, migrationReports: [MigrationReportSnapshot]? = nil, notice: String?
+    ) {
+        self.microphone = microphone; self.lifecycle = lifecycle; self.version = version
+        self.generation = generation; self.section = section; self.canGoBack = canGoBack
+        self.selectedRecordId = selectedRecordId; self.focusSegmentId = focusSegmentId
+        self.records = records; self.todayRecordIds = todayRecordIds
+        self.trashRecords = trashRecords; self.undoTrash = undoTrash; self.detail = detail
+        self.tasks = tasks; self.memories = memories; self.ask = ask; self.device = device
+        self.provider = provider; self.playback = playback; self.error = error
+        self.migrationReports = migrationReports; self.notice = notice
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case microphone, lifecycle, version, generation, section, canGoBack
+        case selectedRecordId, focusSegmentId, records, todayRecordIds
+        case trashRecords, undoTrash, detail, tasks, memories, ask
+        case device, provider, playback, error, migrationReports, notice
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)
+        lifecycle = try c.decodeIfPresent(LifecycleSnapshot.self, forKey: .lifecycle)
+        version = try c.decode(UInt32.self, forKey: .version); generation = try c.decode(UInt64.self, forKey: .generation)
+        section = try c.decode(String.self, forKey: .section); canGoBack = try c.decode(Bool.self, forKey: .canGoBack)
+        selectedRecordId = try c.decodeIfPresent(String.self, forKey: .selectedRecordId)
+        focusSegmentId = try c.decodeIfPresent(String.self, forKey: .focusSegmentId)
+        records = try c.decode([RecordSnapshot].self, forKey: .records)
+        todayRecordIds = try c.decode([String].self, forKey: .todayRecordIds)
+        trashRecords = try c.decodeIfPresent([TrashRecordSnapshot].self, forKey: .trashRecords) ?? []
+        undoTrash = try c.decodeIfPresent(UndoTrashSnapshot.self, forKey: .undoTrash)
+        detail = try c.decodeIfPresent(RecordDetailSnapshot.self, forKey: .detail)
+        tasks = try c.decode([TaskSnapshot].self, forKey: .tasks); memories = try c.decode([MemorySnapshot].self, forKey: .memories)
+        ask = try c.decode(AskSnapshot.self, forKey: .ask); device = try c.decode(DeviceSnapshot.self, forKey: .device)
+        provider = try c.decode(ProviderSnapshot.self, forKey: .provider); playback = try c.decode(PlaybackSnapshot.self, forKey: .playback)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        migrationReports = try c.decodeIfPresent([MigrationReportSnapshot].self, forKey: .migrationReports)
+        notice = try c.decodeIfPresent(String.self, forKey: .notice)
+    }
 
     public var activeLiveRecord: RecordSnapshot? {
         if let liveId = device.liveRecordId,
@@ -344,7 +484,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public static let empty = HostSnapshot(
         version: 2, generation: 0, section: "today", canGoBack: false,
         selectedRecordId: nil, focusSegmentId: nil, records: [], todayRecordIds: [],
-        detail: nil, tasks: [], memories: [],
+        trashRecords: [], undoTrash: nil, detail: nil, tasks: [], memories: [],
         ask: AskSnapshot(scope: "all", recordId: nil, phase: "idle", messages: []),
         device: DeviceSnapshot(state: "未连接", connected: false, busy: false, files: [], progress: 0),
         provider: ProviderSnapshot(configured: false, model: ""),

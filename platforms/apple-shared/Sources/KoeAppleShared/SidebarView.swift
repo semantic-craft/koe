@@ -17,7 +17,12 @@ public struct SidebarView: View {
                 Spacer()
             }.padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 26)
             ForEach(sections, id: \.0) { section in
-                navigationRow(section.0, title: section.1, icon: section.2)
+                navigationRow(
+                    section.0,
+                    title: section.1,
+                    icon: section.2,
+                    count: section.0 == "records" ? store.snapshot.records.count : 0
+                )
             }
             if !store.snapshot.records.isEmpty {
                 Text("最近的记录").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
@@ -59,6 +64,7 @@ public struct SidebarView: View {
                 .overlay(RoundedRectangle(cornerRadius: 7).stroke(AppColors.border))
                 .contentShape(Rectangle())
             }.buttonStyle(.plain)
+            navigationRow("trash", title: "回收站", icon: "trash", count: store.snapshot.trashRecords.count)
             navigationRow("settings", title: "设置", icon: "gearshape")
         }
         .padding(12).frame(width: 220).background(AppColors.bgPanel)
@@ -86,15 +92,15 @@ public struct SidebarView: View {
         if dev.phase == "disconnected" { return AppColors.textMuted }
         return AppColors.warning
     }
-    private func navigationRow(_ id: String, title: String, icon: String) -> some View {
+    private func navigationRow(_ id: String, title: String, icon: String, count: Int = 0) -> some View {
         let selected = store.snapshot.section == id || (id == "records" && store.snapshot.section == "detail")
         return Button { store.send("navigate", ["section": id]) } label: {
             HStack(spacing: 11) {
                 Image(systemName: icon).frame(width: 18)
                 Text(title)
                 Spacer()
-                if id == "records", !store.snapshot.records.isEmpty {
-                    Text("\(store.snapshot.records.count)").font(.system(size: AppFontSizes.xs))
+                if count > 0 {
+                    Text("\(count)").font(.system(size: AppFontSizes.xs))
                 }
             }
             .font(.system(size: AppFontSizes.sm, weight: selected ? .medium : .regular))
