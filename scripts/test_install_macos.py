@@ -118,6 +118,12 @@ log_path = os.environ.get("KOE_SPY_LOG")
 if log_path:
     with open(log_path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(["koe", str(exe), flag]) + "\\n")
+
+fail_at = os.environ.get("KOE_FAIL_AT_PATH")
+fail_flag = os.environ.get("KOE_FAIL_ON_FLAG", "--verify-self")
+if fail_at and Path(fail_at).resolve() == exe and flag == fail_flag:
+    sys.stderr.write(f"simulated failure at {exe} {flag}\\n")
+    raise SystemExit(1)
 """
 
 
@@ -189,6 +195,7 @@ class InstallMacosScriptTest(unittest.TestCase):
         self,
         *args: str,
         script_root: Path | None = None,
+        cwd: Path | None = None,
         extra_env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         root = script_root or self.repo
@@ -197,36 +204,46 @@ class InstallMacosScriptTest(unittest.TestCase):
             KOE_BUILD_APP=str(self.build_app),
             KOE_SIGN_SCRIPT=str(self.sign_script),
             KOE_LSREGISTER=str(self.lsregister_spy),
+            KOE_CLEANUP_SETTLE_SECONDS="0",
             KOE_SPY_LOG=str(self.spy_log),
         )
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
             [str(root / "scripts" / "install-macos.sh"), *args],
-            cwd=root,
+            cwd=cwd or root,
             env=env,
             capture_output=True,
             text=True,
             check=False,
         )
 
-    def test_write_info_plist_omits_assetless_icon_name_and_preserves_permissions(self) -> None:
-        out_plist = self.sandbox / "Info.plist"
+    def test_dump_info_plist_writes_stdout_and_rejects_write_info_plist_flag(self) -> None:
         proc = subprocess.run(
-            [str(REPO_ROOT / "scripts" / "install-macos.sh"), "--write-info-plist", str(out_plist)],
+            [str(REPO_ROOT / "scripts" / "install-macos.sh"), "--dump-info-plist"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertTrue(out_plist.is_file())
-        plist = plistlib.loads(out_plist.read_bytes())
+        plist = plistlib.loads(proc.stdout.encode("utf-8"))
         self.assertEqual(plist.get("CFBundleIconFile"), "AppIcon")
         self.assertNotIn("CFBundleIconName", plist)
         self.assertNotIn("CFBundleIcons", plist)
         for key in REQUIRED_USAGE_KEYS:
             self.assertTrue(isinstance(plist.get(key), str) and plist[key], f"missing {key}")
+
+        bypass_file = self.sandbox / "should-not-exist.plist"
+        legacy = subprocess.run(
+            [str(REPO_ROOT / "scripts" / "install-macos.sh"), "--write-info-plist", str(bypass_file)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(legacy.returncode, 0)
+        self.assertFalse(bypass_file.exists())
 
     def test_skip_build_replaces_bundle_atomically_and_registers_launchservices(self) -> None:
         install_app = self.sandbox / "Install" / "Koe.app"
@@ -418,6 +435,143 @@ class InstallMacosScriptTest(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, f"expected {accepted} to pass guard: {proc.stderr}")
+
+    def test_path_guard_blocks_symlink_dotdot_system_tree_and_unicode_normalization_overlap(self) -> None:
+        inside_bypass = self.repo / "InsideRepoBypass.app"
+        inside_bypass.mkdir(parents=True, exist_ok=True)
+        (inside_bypass / "sentinel.txt").write_text("inside-repo-bypass\n", encoding="utf-8")
+        sym_repo = self.sandbox / "sym_repo"
+        sym_repo.symlink_to(self.repo / "scripts")
+        proc = self._run_installer(
+            "--skip-build",
+            extra_env={"MACOS_INSTALL_PATH": f"{sym_repo}/../InsideRepoBypass.app"},
+        )
+        self.assertNotEqual(proc.returncode, 0, "symlink/.. into repo must be rejected")
+        self.assertTrue((inside_bypass / "sentinel.txt").is_file())
+
+        sym_apps = self.sandbox / "sym_apps"
+        sym_apps.symlink_to("/Applications/Utilities")
+        proc_safari = self._run_installer(
+            "--validate-paths-only",
+            extra_env={"MACOS_INSTALL_PATH": f"{sym_apps}/../Safari.app"},
+        )
+        self.assertNotEqual(proc_safari.returncode, 0, "symlink/.. into /Applications must be rejected")
+
+        proc_sys = self._run_installer(
+            "--validate-paths-only",
+            extra_env={"MACOS_INSTALL_PATH": "/System/Applications/Mail.app"},
+        )
+        self.assertNotEqual(proc_sys.returncode, 0, "/System/Applications/Mail.app must be rejected")
+
+        proc_nfd = self._run_installer(
+            "--validate-paths-only",
+            extra_env={
+                "KOE_BUILD_APP": str(self.sandbox / "Caf\u00e9" / "Koe.app"),
+                "MACOS_INSTALL_PATH": str(self.sandbox / "Cafe\u0301" / "Koe.app"),
+            },
+        )
+        self.assertNotEqual(proc_nfd.returncode, 0, "NFC vs NFD normalization overlap must be rejected")
+
+        caller_cwd = self.sandbox / "CallerWorkingDir"
+        caller_cwd.mkdir(parents=True, exist_ok=True)
+        real_app = self.sandbox / "CallerReal.app"
+        real_app.mkdir(parents=True, exist_ok=True)
+        (caller_cwd / "RelativeLink.app").symlink_to(real_app)
+        proc_rel = self._run_installer(
+            "--validate-paths-only",
+            cwd=caller_cwd,
+            extra_env={"MACOS_INSTALL_PATH": "RelativeLink.app"},
+        )
+        self.assertNotEqual(proc_rel.returncode, 0, "relative symlink from caller cwd must be rejected")
+
+    def test_post_swap_failure_rolls_back_atomically_sweeps_orphan_stage_and_checks_lsregister(self) -> None:
+        install_app = self.sandbox / "RollbackInstall" / "Koe.app"
+        self._make_build_app(install_app)
+        obsolete = install_app / "Contents" / "Resources" / "obsolete.txt"
+        obsolete.write_text("keep-existing-bundle\n", encoding="utf-8")
+        subprocess.run(["codesign", "--force", "--sign", "-", str(install_app)], check=True)
+
+        missing_lsreg = self._run_installer(
+            "--skip-build",
+            extra_env={
+                "MACOS_INSTALL_PATH": str(install_app),
+                "KOE_LSREGISTER": str(self.sandbox / "nonexistent-lsregister"),
+            },
+        )
+        self.assertNotEqual(missing_lsreg.returncode, 0, "missing KOE_LSREGISTER must fail fast")
+        self.assertTrue(obsolete.is_file())
+
+        orphan_stage = install_app.parent / ".Koe.stage.CRASHED"
+        orphan_app = orphan_stage / "Koe.app"
+        orphan_app.mkdir(parents=True, exist_ok=True)
+
+        proc = self._run_installer(
+            "--skip-build",
+            extra_env={
+                "MACOS_INSTALL_PATH": str(install_app),
+                "KOE_FAIL_AT_PATH": str(install_app / "Contents" / "MacOS" / "Koe"),
+                "KOE_FAIL_ON_FLAG": "--verify-self",
+            },
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertTrue(obsolete.is_file(), "post-swap failure must roll back previous bundle")
+        self.assertEqual(obsolete.read_text(encoding="utf-8"), "keep-existing-bundle\n")
+        leftover_stages = [
+            p.name for p in install_app.parent.iterdir() if p.name.startswith(".Koe.stage.")
+        ]
+        self.assertEqual(leftover_stages, [])
+
+        events = self._read_spy_events()
+        self.assertIn(["lsregister", "-u", str(orphan_app)], events)
+        fail_event = ["koe", str(install_app / "Contents" / "MacOS" / "Koe"), "--verify-self"]
+        self.assertIn(fail_event, events)
+        fail_idx = events.index(fail_event)
+        self.assertIn(["lsregister", "-f", str(install_app)], events[fail_idx + 1 :])
+
+    def test_live_process_inside_target_blocks_overwrite_across_metacharacters_and_case_folding(self) -> None:
+        sleeper_src = self.sandbox / "sleeper.c"
+        sleeper_src.write_text(
+            '#include <unistd.h>\nint main(void) { write(1, "R", 1); pause(); return 0; }\n',
+            encoding="utf-8",
+        )
+        install_dir = self.sandbox / "LiveInstall"
+        install_app = install_dir / "Koe [Beta].app"
+        self._make_build_app(install_app)
+        obsolete = install_app / "Contents" / "Resources" / "obsolete.txt"
+        obsolete.write_text("live-bundle\n", encoding="utf-8")
+        exe = install_app / "Contents" / "MacOS" / "Koe"
+        subprocess.run(["cc", str(sleeper_src), "-o", str(exe)], check=True)
+        subprocess.run(["codesign", "--force", "--sign", "-", str(install_app)], check=True)
+
+        live_proc = subprocess.Popen([str(exe)], stdout=subprocess.PIPE)
+        try:
+            assert live_proc.stdout is not None
+            self.assertEqual(live_proc.stdout.read(1), b"R")
+
+            proc = self._run_installer(
+                "--skip-build",
+                extra_env={"MACOS_INSTALL_PATH": str(install_app)},
+            )
+            self.assertNotEqual(proc.returncode, 0, "live process with regex metacharacters must block install")
+            self.assertIn("Quit Koe before installing.", proc.stderr)
+            self.assertTrue(obsolete.is_file())
+
+            folded_path = self.sandbox / "liveinstall" / "koe [beta].app"
+            if folded_path.exists() and folded_path.samefile(install_app):
+                proc_folded = self._run_installer(
+                    "--skip-build",
+                    extra_env={"MACOS_INSTALL_PATH": str(folded_path)},
+                )
+                self.assertNotEqual(proc_folded.returncode, 0, "case-folded live bundle path must block install")
+                self.assertIn("Quit Koe before installing.", proc_folded.stderr)
+                self.assertTrue(obsolete.is_file())
+                entries = [p.name for p in install_dir.iterdir()]
+                self.assertIn("Koe [Beta].app", entries)
+        finally:
+            if live_proc.stdout is not None:
+                live_proc.stdout.close()
+            live_proc.terminate()
+            live_proc.wait()
 
 
 if __name__ == "__main__":

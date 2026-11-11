@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,9 +11,16 @@ ROOT = Path(__file__).resolve().parent
 MODULE = ROOT / 'cleanup_app_registrations.py'
 if not MODULE.exists():
     MODULE = ROOT.parent / 'lib/cleanup_app_registrations.py'
-spec = importlib.util.spec_from_file_location('cleanup_apps', MODULE)
-cleanup = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(cleanup)
+
+
+def load_cleanup_module():
+    spec = importlib.util.spec_from_file_location('cleanup_apps', MODULE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+cleanup = load_cleanup_module()
 
 
 class CleanupTests(unittest.TestCase):
@@ -116,6 +124,59 @@ class CleanupTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 cleanup.prepare(self.root)
         self.assertEqual(self.commands, [])
+
+    def test_env_overrides_lsregister_and_settle_seconds(self):
+        with patch.dict(
+            os.environ,
+            {
+                'KOE_LSREGISTER': '/custom/stub/lsregister',
+                'KOE_CLEANUP_SETTLE_SECONDS': '0.125',
+            },
+            clear=False,
+        ):
+            reloaded = load_cleanup_module()
+        self.assertEqual(reloaded.LSREGISTER, '/custom/stub/lsregister')
+        self.assertEqual(reloaded.SETTLE_SECONDS, 0.125)
+
+    def test_inside_detects_unicode_nfc_and_nfd_equivalence(self):
+        nfc_dir = self.root / 'Caf\u00e9'
+        nfd_dir = self.root / 'Cafe\u0301'
+        self.assertTrue(cleanup.inside(nfc_dir / 'Koe.app', nfd_dir))
+        self.assertTrue(cleanup.inside(nfd_dir / 'Koe.app', nfc_dir))
+
+    def test_canonicalize_bundle_path_guards_dotdot_symlinks_and_on_disk_casing(self):
+        caller_pwd = self.root / 'caller'
+        caller_pwd.mkdir()
+        fake_home = self.root / 'HomeDir'
+        (fake_home / 'Applications').mkdir(parents=True)
+
+        sym_dir = self.root / 'sym_dir'
+        sym_dir.symlink_to(caller_pwd)
+        with self.assertRaises(ValueError):
+            cleanup.canonicalize_bundle_path(
+                f'{sym_dir}/../Bypass.app', caller_pwd, fake_home, 'MACOS_INSTALL_PATH'
+            )
+
+        real_app = self.root / 'InstallDir' / 'Koe.app'
+        real_app.mkdir(parents=True)
+        link_app = caller_pwd / 'Link.app'
+        link_app.symlink_to(real_app)
+        with self.assertRaises(ValueError):
+            cleanup.canonicalize_bundle_path(
+                'Link.app', caller_pwd, fake_home, 'MACOS_INSTALL_PATH'
+            )
+
+        tilde_resolved = cleanup.canonicalize_bundle_path(
+            '~/Applications/Koe.app', caller_pwd, fake_home, 'MACOS_INSTALL_PATH'
+        )
+        self.assertEqual(tilde_resolved, fake_home / 'Applications' / 'Koe.app')
+
+        folded = self.root / 'installdir' / 'koe.app'
+        if folded.exists() and folded.samefile(real_app):
+            preserved = cleanup.canonicalize_bundle_path(
+                str(folded), caller_pwd, fake_home, 'MACOS_INSTALL_PATH'
+            )
+            self.assertEqual(preserved, real_app)
 
 
 if __name__ == '__main__':

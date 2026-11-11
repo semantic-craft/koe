@@ -302,6 +302,75 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             violations,
         )
 
+    def test_install_script_comment_stripping_and_plist_xml_validation(self) -> None:
+        valid_lines = [
+            "#!/usr/bin/env bash",
+            'LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"',
+            *verifier.REQUIRED_INSTALL_PLIST_KEYS,
+            '"$LSREGISTER" -f "$TARGET"',
+        ]
+        valid_script = "\n".join(valid_lines) + "\n"
+
+        commented_explanation = (
+            valid_script
+            + "# Never set CFBundleIconName without Assets.car or copy AppIcon.png into Contents/Resources\n"
+        )
+        self.assertEqual(verifier.check_install_script(commented_explanation), [])
+
+        commented_out_lsregister = valid_script.replace(
+            '"$LSREGISTER" -f "$TARGET"',
+            '# "$LSREGISTER" -f "$TARGET"',
+        )
+        violations = verifier.check_install_script(commented_out_lsregister)
+        self.assertTrue(
+            any("lsregister -f" in v for v in violations),
+            violations,
+        )
+
+        commented_out_assets = (
+            valid_script
+            + "<key>CFBundleIconName</key><string>AppIcon</string>\n"
+            + '# cp Assets.car "$SOURCE/Contents/Resources/Assets.car"\n'
+        )
+        violations = verifier.check_install_script(commented_out_assets)
+        self.assertTrue(
+            any("CFBundleIconName without bundling Assets.car" in v for v in violations),
+            violations,
+        )
+
+        usage_keys = [k for k in verifier.REQUIRED_INSTALL_PLIST_KEYS if k.startswith("NS")]
+        plist_entries = [
+            "  <key>CFBundleIconFile</key><string>WrongIcon</string>",
+            *[
+                f"  <key>{k}</key><string>{'' if k == 'NSMicrophoneUsageDescription' else 'ok'}</string>"
+                for k in usage_keys
+            ],
+        ]
+        bad_plist_script = "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "AppIcon.icns",
+                "--verify-self",
+                "--smoke-test",
+                '"$LSREGISTER" -f "$TARGET"',
+                "cat <<'PLIST'",
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<plist version="1.0"><dict>',
+                *plist_entries,
+                "</dict></plist>",
+                "PLIST",
+            ]
+        )
+        plist_violations = verifier.check_install_script(bad_plist_script)
+        self.assertTrue(
+            any("CFBundleIconFile" in v for v in plist_violations),
+            plist_violations,
+        )
+        self.assertTrue(
+            any("NSMicrophoneUsageDescription" in v for v in plist_violations),
+            plist_violations,
+        )
+
     def test_repository_shared_theme_passes_all_principles(self) -> None:
         root = Path(__file__).resolve().parent.parent
         report = verifier.analyze_repository(root, "all")
