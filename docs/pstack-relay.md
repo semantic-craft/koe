@@ -77,3 +77,21 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: 保留现有插画，校正打包留白并使用系统处理后的运行图标；更新本机日常安装版。
 - **Done Predicate**: ./scripts/check && swift scripts/verify-app-icon.swift build/macos/AppIcon.iconset && codesign --verify --strict /Applications/Koe.app
 - **Evidence**: /Applications/Koe.app; scripts/check PASS; issue #594; installed ICNS opaque frame 824px
+
+### [x] Slice I: 修复未运行态 Dock 静态图标注册与重装部署 #600 至 #630
+- **Playbook**: `Bug fix` + `interrogate` + `Shipping`
+- **Outcome**: 修复 `scripts/install-macos.sh` 无 `Assets.car` 时误写 `CFBundleIconName`、非原子覆盖与缺少 `lsregister -f` 导致退出后 Dock 变白格占位图的问题；收敛路径守卫与 `renamex_np(RENAME_SWAP)` 同卷原子互换回滚；重装 Developer ID 签名版 `/Applications/Koe.app`（把 #600 至 #630 全量部署到位），并在未运行态完成 Dock 并排截图验收（#594）。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test
+- **Evidence**: scripts/install-macos.sh;scripts/cleanup_app_registrations.py;CDHash 4665f09f7d0353513efc1acab745f2dbfb8d3a25;Closes #594
+
+### [ ] Slice R1: 记录删除、30 天回收站与归档防误删保护
+- **Playbook**: `Feature` + `interrogate`
+- **Outcome**: 按用户排定的功能还原第一优先级落地 Slice R1（记录删除、30 天回收站与归档防误删保护，下一片紧接 Slice R2 转写原文分段编辑与说话人重命名合并）。在 crates/koe-engine/src/product/ 新增独立 trash.rs 子模块承载软删除时间戳 trashed_at_ms、恢复、彻底清除、30 天过期自动收敛与归档锁 archived 防误删不变量（软删记录自动移出今天主列表、BM25 搜索与全局问答上下文，恢复后原样归位）；在 ProductStore 与 KoeRuntime 确保仅在彻底清除或 30 天到期持久化成功后物理删除受管音频资产，活跃录音或排空中的记录拒绝删除；经 koe-host-api C ABI v2 快照与单向意图在 platforms/apple-shared 新增 TrashView.swift 并接通 TodayView.swift 与 RecordDetailView.swift 的归档锁定、即按软删加底部撤销条及回收站恢复与彻底清除。
+- **Done Predicate**: ./scripts/check && cargo test --workspace --offline && swift test --package-path platforms/apple-shared && swift test --package-path platforms/macos && ./scripts/install-macos.sh
+- **Evidence**: `PENDING`
+
+### [ ] Slice R2: 转写原文分段编辑与说话人重命名合并
+- **Playbook**: `Feature` + `interrogate`
+- **Outcome**: 在 `ProductRecord` 与 `KoeRuntime` 补齐逐句文本修订、说话人重命名与同人合并领域操作，保留原始 ASR 证据链与音频时间锚点（`start_ms` / `end_ms`），同步刷新 BM25 索引并对受影响纪要标记需重算状态；经 C ABI v2 在 `RecordDetailView.swift` 接通内联编辑与说话人改名合并交互。
+- **Done Predicate**: `./scripts/check && cargo test --workspace --offline && swift test --package-path platforms/apple-shared && swift test --package-path platforms/macos`
+- **Evidence**: `PENDING`

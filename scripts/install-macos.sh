@@ -290,6 +290,12 @@ ROLLBACK_MODE="$(atomic_swap_or_move "$TARGET_STAGE/${APP_NAME}.app" "$TARGET")"
 "$TARGET/Contents/MacOS/$APP_NAME" --smoke-test
 
 ROLLBACK_MODE=""
+if [[ "$TARGET" == "/Applications/${APP_NAME}.app" || "$TARGET" == "$HOME/Applications/${APP_NAME}.app" ]]; then
+  DARWIN_CACHE="$(/usr/bin/getconf DARWIN_USER_CACHE_DIR 2>/dev/null || true)"
+  if [[ -n "$DARWIN_CACHE" && -d "$DARWIN_CACHE" ]]; then
+    rm -f "${DARWIN_CACHE%/}"/com.apple.dock.iconcache* || true
+  fi
+fi
 if [[ "$TARGET" == "/Applications/Koe.app" && -d "/Applications/KoeSwiftUI.app" ]]; then
   "$LSREGISTER" -u "/Applications/KoeSwiftUI.app" >/dev/null 2>&1 || true
   rm -rf "/Applications/KoeSwiftUI.app"
