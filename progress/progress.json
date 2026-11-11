@@ -16,9 +16,9 @@
       },
       {
         "number": 594,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-10T06:58:00Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-11T02:04:03Z"
       },
       {
         "number": 597,
@@ -115,9 +115,15 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-10T13:02:15Z"
+      },
+      {
+        "number": 634,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-11T05:17:53Z"
       }
     ],
-    "main": "3308931d70c92c0c0bce69cb40985f05a810decd",
+    "main": "d832ec83411e4e5be13320c839af2eb8e31cb361",
     "open_pulls": [],
     "pulls": [
       {
@@ -207,12 +213,28 @@
         "merged": true,
         "number": 630,
         "state": "closed"
+      },
+      {
+        "base": "3308931d70c92c0c0bce69cb40985f05a810decd",
+        "head": "a40935eba6924de43ace6d458b3d55f4b4790e6d",
+        "merge_commit": "22417e19e500fa4ac6f03bb4301d65cd34e6c5ad",
+        "merged": true,
+        "number": 633,
+        "state": "closed"
+      },
+      {
+        "base": "22417e19e500fa4ac6f03bb4301d65cd34e6c5ad",
+        "head": "3662926147bdb3e001f6b23c4fb603878d65f3a2",
+        "merge_commit": "d832ec83411e4e5be13320c839af2eb8e31cb361",
+        "merged": true,
+        "number": 635,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-11T01:51:59.735584Z",
+  "observed_at": "2026-11-11T05:18:38.316285Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -504,6 +526,40 @@
           "status": "in_progress",
           "summary": "Rust 分路资产保管（PR #621）、共同时间轴与暂停协议（PR #624）及分路回放（PR #627）已合并。原生单路麦克风补接真实首样本时刻、权限后clock及暂停恢复，PR #630已squash 22334d2，完整门禁、CI和独立实运行通过；本轮未安装签名版。Core Audio与原生双路入口仍未恢复，不把单路子单元视为完整N3B。真实GUI、权限和听感继续#620。",
           "title": "Mac 系统音频双路恢复"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "Slice R1 实现范围与验收条件。",
+              "ref": 634
+            },
+            {
+              "kind": "pull",
+              "note": "squash d832ec8 已合并；281 Rust、44 Python、53 Swift 完整门禁、三模型对抗审查加固与 CI 通过。",
+              "ref": 635
+            },
+            {
+              "kind": "file",
+              "note": "RecordRetention 和类型、30 天到期收敛、问答引用降级与 D3200 墓碑。",
+              "ref": "crates/koe-engine/src/product/trash.rs"
+            },
+            {
+              "kind": "file",
+              "note": "录音与处理删除守卫、8 秒撤销条、同步停播与先落盘后删音频编排。",
+              "ref": "crates/koe-runtime/src/trash.rs"
+            },
+            {
+              "kind": "file",
+              "note": "原生回收站列表、恢复与不可逆彻底清除二次确认。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/TrashView.swift"
+            }
+          ],
+          "id": "record-trash-archive",
+          "next": "推进 Slice R2 转写原文分段编辑与说话人重命名合并；实体 D3200 墓碑同步按 #588 验收。",
+          "status": "done",
+          "summary": "Slice R1（PR #635）在 ProductWorkspace 新增互斥保留态 RecordRetention（Active / Archived / Trashed），软删即刻生效并附 8 秒底部撤销条，软删记录自动移出今天、待办、记忆、BM25 与全局问答，30 天内恢复零损归位；已归档、采集中或排空中的记录拒绝删除；彻底清除或到期先原子落盘元数据再按白名单清理主音频与分路音频，录音豆已清除文件写入墓碑阻断自动重建并保留手动重下恢复。实体 D3200 蓝牙同步墓碑行为继续归入 #588。",
+          "title": "记录归档防误删与 30 天回收站"
         }
       ],
       "title": "当前产品实现"
@@ -532,12 +588,17 @@
               "kind": "pull",
               "note": "N3A 完整门禁、CI 及 gpt-6-astra 独立 PASS+NOTES；真实麦克风未验。",
               "ref": 617
+            },
+            {
+              "kind": "pull",
+              "note": "Slice R1 完整门禁（281 Rust、44 Python、53 Swift）、koe-cli benchmark（66.389 ms）、三模型对抗审查及 PR CI 通过。",
+              "ref": 635
             }
           ],
           "id": "automated-check",
           "next": "后续改动运行统一门禁。",
           "status": "done",
-          "summary": "N3A 完整 check 通过 249 项 Rust、32 项 Python 和 29 项 Swift 测试，PR CI 与独立复核通过。独立评审发现的启动失败、部分写入和容量上限问题已修复；故障注入验证了保存结果不确定时阻退出及重开读回。此前切片的验收记录保留在各自条目。",
+          "summary": "最新全量 scripts/check 通过 281 项 Rust、44 项 Python 契约、44 文件 verify-ui-principles 零违规与 53 项 Swift 测试，PR #635 CI 与三模型独立对抗审查（pro / flash / inherit）通过，7 项审查加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -575,12 +636,22 @@
               "kind": "file",
               "note": "移除无 Assets.car 时的 CFBundleIconName，同卷 renamex_np 原子互换后执行 lsregister -f 并清理 Dock 图标缓存。",
               "ref": "scripts/install-macos.sh"
+            },
+            {
+              "kind": "pull",
+              "note": "静态 Dock 图标注册与原子重装修复已 squash 合并。",
+              "ref": 633
+            },
+            {
+              "kind": "pull",
+              "note": "含归档锁与 30 天回收站的签名版已重装并通过 verify-self 与 smoke-test。",
+              "ref": 635
             }
           ],
           "id": "merge-install",
           "next": "真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 推进。",
           "status": "done",
-          "summary": "2026-11-11 已重装最新 Developer ID 签名版 /Applications/Koe.app（CDHash 4665f09f7d0353513efc1acab745f2dbfb8d3a25，designated requirement 与旧版一致，Keychain 授权保持有效），将 PR #600 至 #630 连同静态 Dock 图标注册修复一并部署到位；verify-self 与 smoke-test 通过，lsregister 记为 relative-icon-path (0x1) 且无构建目录残留注册，未运行态重启 Dock 后与 Responsay、Sonori、Micro Input、Kotone 并排截图轮廓对齐（#594）。签名安装完成不替代各独立工单的真机交互验收。",
+          "summary": "2026-11-11 已重装包含 PR #635（Slice R1 归档锁与 30 天回收站）的最新 Developer ID 签名版 /Applications/Koe.app（CDHash 220aaafcf38da26f2da3e1b26072c03914d8f5f6，designated requirement 与旧版一致），真实二进制 --verify-self（含归档拦截、软删撤销、恢复与彻底清除）及 --smoke-test 全部通过；此前 #633 已在未运行态完成 Dock 并排图标轮廓验收（#594）。签名安装完成不替代各独立工单的真机交互验收。",
           "title": "本机签名安装"
         },
         {
@@ -698,7 +769,8 @@
       620,
       623,
       626,
-      629
+      629,
+      634
     ],
     "pulls": [
       589,
@@ -711,7 +783,9 @@
       621,
       624,
       627,
-      630
+      630,
+      633,
+      635
     ]
   }
 }
