@@ -58,10 +58,12 @@ impl ProductWorkspace {
         id: &str,
         lanes: Vec<CaptureLaneRecord>,
     ) -> Result<(), ProductError> {
-        self.records
+        let record = self
+            .records
             .get_mut(id)
-            .ok_or(ProductError::UnknownRecord)?
-            .restore_capture_lanes(lanes)?;
+            .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        record.restore_capture_lanes(lanes)?;
         self.changed();
         Ok(())
     }
