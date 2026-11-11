@@ -40,6 +40,19 @@ pub(super) struct Microphone {
     pub(super) save_error: Option<String>,
 }
 impl Microphone {
+    pub(super) fn owns_id(&self, id: &str) -> bool {
+        self.record_id == id || self.lanes.values().any(|l| l.asset_id == id)
+    }
+    pub(super) fn audio_filenames(&self) -> std::collections::BTreeSet<String> {
+        let mut files = std::collections::BTreeSet::from([
+            format!("{}.wav", self.record_id),
+            format!("{}.opus", self.record_id),
+        ]);
+        for lane in self.lanes.values() {
+            files.insert(format!("{}.wav", lane.asset_id));
+        }
+        files
+    }
     fn matches(&self, record: &str, session: &str, lane: &str) -> bool {
         self.record_id == record && self.session_id == session && self.lanes.contains_key(lane)
     }

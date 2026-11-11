@@ -37,7 +37,7 @@ impl KoeRuntime {
             0
         };
         let today = local_date(now);
-        let rows: Vec<_> = records.iter().map(|record| {
+        let rows: Vec<_> = records.iter().filter(|r| r.is_live()).map(|record| {
             let is_live = Some(record.aggregate.recording_id.as_str()) == live_record_id;
             let duration_ms = if is_live {
                 record.aggregate.duration_ms.max(live_duration_ms)
@@ -52,18 +52,80 @@ impl KoeRuntime {
             json!({"id":record.aggregate.recording_id,"title":record.title,
                 "createdAtEpochSec":record.aggregate.created_at_epoch_sec,"durationMs":duration_ms,
                 "source":origin(record.origin),"status":status(record),"segmentCount":record.aggregate.spine.len(),
-                "preview":preview})
+                "preview":preview,"archived":record.is_archived()})
         }).collect();
         let today_ids: Vec<_> = records
             .iter()
-            .filter(|r| local_date(r.aggregate.created_at_epoch_sec) == today)
+            .filter(|r| r.is_live() && local_date(r.aggregate.created_at_epoch_sec) == today)
             .map(|r| &r.aggregate.recording_id)
             .collect();
+        let mut trashed_records: Vec<_> = self
+            .workspace()
+            .records()
+            .values()
+            .filter(|r| r.is_trashed())
+            .collect();
+        trashed_records.sort_by(|a, b| {
+            b.retention()
+                .trashed_at_ms()
+                .cmp(&a.retention().trashed_at_ms())
+                .then_with(|| {
+                    b.aggregate
+                        .created_at_epoch_sec
+                        .cmp(&a.aggregate.created_at_epoch_sec)
+                })
+                .then_with(|| a.aggregate.recording_id.cmp(&b.aggregate.recording_id))
+        });
+        let effective_now_sec = if now > 0 { now } else { self.last_now_sec };
+        let trash_rows: Vec<_> = trashed_records
+            .iter()
+            .filter_map(|record| {
+                let trashed_at_ms = record.retention().trashed_at_ms()?;
+                let expires_at_ms = record.retention().expires_at_ms()?;
+                let reference_now_ms = if effective_now_sec > 0 {
+                    effective_now_sec.saturating_mul(1000)
+                } else {
+                    trashed_at_ms
+                };
+                let remaining_days = if reference_now_ms < expires_at_ms {
+                    expires_at_ms
+                        .saturating_sub(reference_now_ms)
+                        .div_ceil(86_400_000)
+                        .clamp(1, 30)
+                } else {
+                    0
+                };
+                let preview = record
+                    .aggregate
+                    .spine
+                    .segments()
+                    .first()
+                    .map(|s| s.text.chars().take(100).collect::<String>())
+                    .unwrap_or_default();
+                Some(json!({
+                    "id": record.aggregate.recording_id,
+                    "title": record.title,
+                    "createdAtEpochSec": record.aggregate.created_at_epoch_sec,
+                    "durationMs": record.aggregate.duration_ms,
+                    "source": origin(record.origin),
+                    "segmentCount": record.aggregate.spine.len(),
+                    "preview": preview,
+                    "trashedAtMs": trashed_at_ms,
+                    "expiresAtMs": expires_at_ms,
+                    "remainingDays": remaining_days,
+                }))
+            })
+            .collect();
+        let undo_trash = self
+            .undo_trash
+            .as_ref()
+            .map(|b| json!({"recordId": b.record_id, "title": b.title}));
         let detail = self
             .location
             .record
             .as_deref()
             .and_then(|id| self.workspace().record(id))
+            .filter(|r| r.is_live())
             .map(|r| self.detail(r, live_record_id, live_duration_ms));
         let mut tasks = Vec::new();
         let mut memories = Vec::new();
@@ -73,6 +135,9 @@ impl KoeRuntime {
                 .iter()
                 .filter_map(|s| self.source_json(s))
                 .collect();
+            if sources.is_empty() {
+                continue;
+            }
             let state = match item.review {
                 ReviewState::Proposed => "proposed",
                 ReviewState::Accepted => "accepted",
@@ -162,7 +227,7 @@ impl KoeRuntime {
         json!({"lifecycle": self.lifecycle_json(),
             "microphone": self.microphone_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
-            "records":rows,"todayRecordIds":today_ids,"detail":detail,"tasks":tasks,"memories":memories,
+            "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
             "device":{
                 "phase":device_phase,
@@ -271,13 +336,13 @@ impl KoeRuntime {
                 AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. }
             );
         json!({"id":aggregate.recording_id,"title":record.title,"createdAtEpochSec":aggregate.created_at_epoch_sec,
-            "durationMs":duration_ms,"source":origin(record.origin),"status":status(record),"segments":segments,
+            "durationMs":duration_ms,"source":origin(record.origin),"status":status(record),"archived":record.is_archived(),"segments":segments,
             "captureLanes":capture_lanes,"summary":summary,"highlights":highlights,"audioPath":audio.map(|p|p.to_string_lossy().to_string()),
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
     }
 
     pub(crate) fn source_json(&self, source: &SourceRef) -> Option<Value> {
-        let evidence = self.workspace().resolve_source(source).ok()?;
+        let evidence = self.workspace().resolve_live_source(source).ok()?;
         Some(
             json!({"recordId":source.record_id,"segmentId":source.segment_id.to_string(),"title":evidence.title,"quote":evidence.quote,"startMs":evidence.start_ms}),
         )

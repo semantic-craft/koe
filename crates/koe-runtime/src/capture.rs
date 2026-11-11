@@ -236,7 +236,11 @@ impl KoeRuntime {
                         }
                         capture.results.pop_front();
                     }
-                    Err(StoreError::Domain(ProductError::StaleRequest)) => {
+                    Err(StoreError::Domain(
+                        ProductError::StaleRequest
+                        | ProductError::UnknownRecord
+                        | ProductError::RecordTrashed,
+                    )) => {
                         capture.terminal = true;
                         capture.stream = None;
                         capture.results.clear();
@@ -275,11 +279,12 @@ impl KoeRuntime {
             return;
         };
         let needed = self.workspace().record(&id).is_some_and(|record| {
-            if summary {
-                !record.aggregate.spine.is_empty() && record.aggregate.minutes.is_none()
-            } else {
-                record.aggregate.spine.is_empty()
-            }
+            record.is_live()
+                && if summary {
+                    !record.aggregate.spine.is_empty() && record.aggregate.minutes.is_none()
+                } else {
+                    record.aggregate.spine.is_empty()
+                }
         });
         let result = if !needed {
             Ok(())

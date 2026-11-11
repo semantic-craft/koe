@@ -34,7 +34,10 @@ impl KoeRuntime {
     }
 
     fn selected_playback_lane(&self) -> Option<PlaybackLane<'_>> {
-        let record = self.workspace().record(self.playback.record.as_deref()?)?;
+        let record = self
+            .workspace()
+            .record(self.playback.record.as_deref()?)
+            .filter(|r| r.is_live())?;
         let lanes = self.playback_lanes(record);
         let index = lanes
             .iter()
@@ -48,6 +51,7 @@ impl KoeRuntime {
             .workspace()
             .record(self.playback.record.as_deref().ok_or("先选择一条录音")?)
             .ok_or("录音不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
         if !self
             .playback_lanes(record)
             .iter()
@@ -62,12 +66,9 @@ impl KoeRuntime {
 
     pub(super) fn seek_playback(&mut self, position_ms: u64) -> Result<(), String> {
         let id = self.location.record.clone().ok_or("先选择一条录音")?;
-        let duration = self
-            .workspace()
-            .record(&id)
-            .ok_or("录音不存在")?
-            .aggregate
-            .duration_ms;
+        let record = self.workspace().record(&id).ok_or("录音不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
+        let duration = record.aggregate.duration_ms;
         self.playback.record = Some(id);
         self.playback.position_ms = position_ms.min(duration);
         self.playback.request_id = self.playback.request_id.saturating_add(1);
@@ -75,6 +76,11 @@ impl KoeRuntime {
     }
 
     pub(super) fn set_playback(&mut self, playing: bool) -> Result<(), String> {
+        if let Some(id) = self.playback.record.as_deref() {
+            if let Some(record) = self.workspace().record(id) {
+                record.ensure_live().map_err(|e| e.to_string())?;
+            }
+        }
         if self.selected_playback_lane().is_none() {
             return Err("这条记录没有可播放的音频".into());
         }
@@ -95,7 +101,7 @@ impl KoeRuntime {
         {
             return;
         }
-        if let Some(record) = self.workspace().record(record_id) {
+        if let Some(record) = self.workspace().record(record_id).filter(|r| r.is_live()) {
             self.playback.position_ms = position_ms.min(record.aggregate.duration_ms);
             self.playback.playing = playing;
         }
@@ -106,7 +112,8 @@ impl KoeRuntime {
             .playback
             .record
             .as_deref()
-            .and_then(|id| self.workspace().record(id));
+            .and_then(|id| self.workspace().record(id))
+            .filter(|r| r.is_live());
         let lanes: Vec<_> = record
             .map(|r| self.playback_lanes(r))
             .unwrap_or_default()
@@ -127,7 +134,7 @@ impl KoeRuntime {
             })).collect()).unwrap_or_default();
             json!({"audioPath":l.path.as_ref().map(|p|p.to_string_lossy()),"sampleRate":l.capture.and_then(|l|l.sample_rate),"durationNs":duration_ns,"segments":segments})
         });
-        json!({"recordId":self.playback.record,"requestId":self.playback.request_id,"lane":selected.map(|l|l.id),
+        json!({"recordId":record.map(|r| &r.aggregate.recording_id),"requestId":self.playback.request_id,"lane":selected.map(|l|l.id),
             "positionMs":self.playback.position_ms,"isPlaying":self.playback.playing,"lanes":lanes,"asset":asset})
     }
 }

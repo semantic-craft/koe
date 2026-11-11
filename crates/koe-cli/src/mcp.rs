@@ -88,6 +88,7 @@ fn handle(
         _ if !*ready => return Some(error(id, -32600, "请先完成 MCP 初始化")),
         "tools/list" => json!({"tools":tool_definitions()}),
         "tools/call" => {
+            runtime.poll_timers(0, super::now());
             let Some(name) = request["params"]["name"].as_str() else {
                 return Some(error(id, -32602, "缺少工具名称"));
             };

@@ -10,6 +10,7 @@ pub(crate) enum Page {
     Tasks,
     Memory,
     Ask,
+    Trash,
     Settings,
 }
 
@@ -113,6 +114,21 @@ pub(crate) enum Command {
         record_id: String,
         title: String,
     },
+    SetRecordArchived {
+        record_id: String,
+        archived: bool,
+    },
+    TrashRecord {
+        record_id: String,
+    },
+    RestoreRecord {
+        record_id: String,
+    },
+    PurgeRecord {
+        record_id: String,
+    },
+    EmptyTrash,
+    DismissUndoTrash,
     ExportRecord {
         record_id: String,
         path: String,

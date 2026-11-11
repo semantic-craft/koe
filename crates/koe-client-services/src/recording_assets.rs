@@ -112,6 +112,14 @@ pub fn audio_path(root: &Path, id: &str) -> Result<PathBuf, String> {
     Ok(root.join("audio").join(format!("{id}.wav")))
 }
 
+/// Resolves only generated Ogg Opus asset names, never arbitrary relative paths.
+pub fn opus_path(root: &Path, id: &str) -> Result<PathBuf, String> {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err("无效的录音标识".into());
+    }
+    Ok(root.join("audio").join(format!("{id}.opus")))
+}
+
 /// Persists complete validated audio before a record is allowed to reference it.
 pub fn save_audio(root: &Path, id: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     parse_pcm_wave(bytes)?;

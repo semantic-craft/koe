@@ -134,6 +134,7 @@ fn run() -> Result<(), String> {
         other => return Err(format!("未知命令：{other}；运行 koe --help 查看用法")),
     }
     let mut runtime = KoeRuntime::open(options.path()?)?;
+    runtime.poll_timers(0, now());
     let output = match options.command.as_str() {
         "status" => runtime.snapshot(now()),
         "doctor" => {

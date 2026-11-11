@@ -63,6 +63,7 @@ impl KoeRuntime {
         self.ensure_meeting_audio_upload()?;
         self.ensure_configured()?;
         let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
         if matches!(record.analysis, AnalysisState::Pending { .. }) {
             return Err("这条记录仍在处理中".into());
         }
@@ -130,6 +131,7 @@ impl KoeRuntime {
     pub(super) fn try_start_summary(&mut self, id: &str) -> Result<(), StartError> {
         self.ensure_configured()?;
         let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
         if record.aggregate.spine.is_empty() {
             return Err("这条录音还没有文字，请先转写".into());
         }
@@ -262,7 +264,11 @@ impl KoeRuntime {
                     self.error = Some(message);
                     break;
                 }
-                Err(CompletionError::Save(StoreError::Domain(ProductError::StaleRequest))) => {
+                Err(CompletionError::Save(StoreError::Domain(
+                    ProductError::StaleRequest
+                    | ProductError::UnknownRecord
+                    | ProductError::RecordTrashed,
+                ))) => {
                     if let PendingWork::Ask(operation) = work {
                         if self
                             .workspace()
@@ -294,7 +300,11 @@ impl KoeRuntime {
                         }
                     };
                     match recorded {
-                        Err(StoreError::Domain(ProductError::StaleRequest)) => {
+                        Err(StoreError::Domain(
+                            ProductError::StaleRequest
+                            | ProductError::UnknownRecord
+                            | ProductError::RecordTrashed,
+                        )) => {
                             self.notice = Some("已忽略过期请求的失败结果".into());
                         }
                         Err(save_error) => {
@@ -356,7 +366,8 @@ impl KoeRuntime {
                 let record = self
                     .workspace()
                     .record(id)
-                    .ok_or_else(|| CompletionError::Invalid("记录不存在".into()))?;
+                    .ok_or(StoreError::Domain(ProductError::UnknownRecord))?;
+                record.ensure_live().map_err(StoreError::Domain)?;
                 let minutes =
                     parse_meeting_minutes_json(&text, &record.aggregate.spine).map_err(|_| {
                         CompletionError::Invalid(
