@@ -15,7 +15,7 @@ public enum KoeSelfCheckRunner {
         guard let task = store.snapshot.tasks.first else { return fail("create task") }
         store.send("review_item", ["itemId": task.id, "decision": "accept"])
         store.send("create_note", ["title": "Independent discussion", "text": "The blue notebook is on the shelf."])
-        guard store.snapshot.records.count == 2 else { return fail("record isolation") }
+        guard let second = store.snapshot.detail, store.snapshot.records.count == 2 else { return fail("record isolation") }
         store.send("select_record", ["recordId": first.id])
         guard store.snapshot.detail?.segments == first.segments else { return fail("select record") }
         store.send("ask", ["question": "recording ownership", "scope": "record", "recordId": first.id])
@@ -27,8 +27,39 @@ public enum KoeSelfCheckRunner {
         guard store.snapshot.selectedRecordId == first.id, store.snapshot.focusSegmentId == segment.id else {
             return fail("source navigation")
         }
+        store.send("set_record_archived", ["recordId": second.id, "archived": true], nowEpochSec: 1_800_000_000)
+        guard store.snapshot.records.first(where: { $0.id == second.id })?.archived == true else {
+            return fail("archive lock")
+        }
+        store.send("trash_record", ["recordId": second.id], nowEpochSec: 1_800_000_005)
+        guard store.snapshot.error != nil,
+              store.snapshot.trashRecords.isEmpty,
+              store.snapshot.records.contains(where: { $0.id == second.id }) else {
+            return fail("archive blocks trash")
+        }
+        store.clearError()
+        store.send("set_record_archived", ["recordId": second.id, "archived": false], nowEpochSec: 1_800_000_010)
+        store.send("trash_record", ["recordId": second.id], nowEpochSec: 1_800_000_015)
+        guard !store.snapshot.records.contains(where: { $0.id == second.id }),
+              store.snapshot.trashRecords.contains(where: { $0.id == second.id }),
+              store.snapshot.undoTrash?.recordId == second.id else {
+            return fail("trash record")
+        }
+        store.send("restore_record", ["recordId": second.id], nowEpochSec: 1_800_000_020)
+        guard store.snapshot.records.contains(where: { $0.id == second.id }),
+              store.snapshot.trashRecords.isEmpty,
+              store.snapshot.undoTrash == nil else {
+            return fail("restore record")
+        }
+        store.send("trash_record", ["recordId": second.id], nowEpochSec: 1_800_000_025)
+        store.send("purge_record", ["recordId": second.id], nowEpochSec: 1_800_000_030)
+        guard !store.snapshot.records.contains(where: { $0.id == second.id }),
+              store.snapshot.trashRecords.isEmpty,
+              store.snapshot.undoTrash == nil else {
+            return fail("purge record")
+        }
         guard store.snapshot.error == nil, store.nativeError == nil else { return fail("unexpected error") }
-        print("koe-verify-self: PASS (version=2, records=2, scoped_sources=\(answer.sources.count))")
+        print("koe-verify-self: PASS (version=2, records=1, scoped_sources=\(answer.sources.count))")
         return 0
     }
 

@@ -40,7 +40,10 @@ struct RecordDetailView: View {
                     inspector(detail).padding(20).frame(width: 250)
                 }
             }
-            .onChange(of: detail.id) { _, _ in tab = store.snapshot.focusSegmentId == nil ? "summary" : "transcript" }
+            .onChange(of: detail.id) { _, _ in
+                renaming = false
+                tab = store.snapshot.focusSegmentId == nil ? "summary" : "transcript"
+            }
         } else {
             EmptyState(icon: "doc.text", title: "请选择一条记录", detail: "从所有记录或今天的时间线打开。")
         }
@@ -48,7 +51,7 @@ struct RecordDetailView: View {
     private func heading(_ detail: RecordDetailSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 13) {
             Text(TimeLabel.date(detail.createdAtEpochSec)).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-            HStack {
+            HStack(spacing: 10) {
                 if renaming {
                     TextField("记录标题", text: $titleDraft).font(.system(size: AppFontSizes.lg)).onSubmit { rename(detail.id) }
                     KoeActionButton("保存") { rename(detail.id) }
@@ -60,9 +63,25 @@ struct RecordDetailView: View {
                     }.buttonStyle(.plain).foregroundStyle(AppColors.textMuted).help("重命名")
                 }
                 Spacer()
+                if !renaming {
+                    KoeActionButton(
+                        detail.archived ? "取消归档" : "归档保护",
+                        systemImage: detail.archived ? "lock.open" : "lock"
+                    ) {
+                        store.send("set_record_archived", ["recordId": detail.id, "archived": !detail.archived])
+                    }
+                    KoeActionButton("移到回收站", systemImage: "trash") {
+                        store.send("trash_record", ["recordId": detail.id])
+                    }
+                    .disabled(detail.archived || detail.isProcessing)
+                    .help(detail.archived ? "已开启归档保护，取消归档后可移入回收站" : "")
+                }
             }
             HStack(spacing: 12) {
                 KoeBadge(detail.status)
+                if detail.archived {
+                    KoeBadge("已归档", tint: AppColors.textSecondary)
+                }
                 Text(detail.source)
                 if detail.durationMs > 0 { Text(TimeLabel.duration(detail.durationMs)) }
                 Text("\(detail.segments.count) 段原文")

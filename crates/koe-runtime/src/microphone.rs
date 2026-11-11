@@ -40,6 +40,19 @@ pub(super) struct Microphone {
     pub(super) save_error: Option<String>,
 }
 impl Microphone {
+    pub(super) fn owns_id(&self, id: &str) -> bool {
+        self.record_id == id || self.lanes.values().any(|l| l.asset_id == id)
+    }
+    pub(super) fn audio_filenames(&self) -> std::collections::BTreeSet<String> {
+        let mut files = std::collections::BTreeSet::from([
+            format!("{}.wav", self.record_id),
+            format!("{}.opus", self.record_id),
+        ]);
+        for lane in self.lanes.values() {
+            files.insert(format!("{}.wav", lane.asset_id));
+        }
+        files
+    }
     fn matches(&self, record: &str, session: &str, lane: &str) -> bool {
         self.record_id == record && self.session_id == session && self.lanes.contains_key(lane)
     }
@@ -313,7 +326,6 @@ impl KoeRuntime {
                         "录音达到 WAV 长度上限，已保留此前收到的音频。请新建录音继续。".into(),
                     );
                     m.phase = Phase::CapacityReached;
-                    // Every lane will lose further callbacks after the shared stop request.
                     for other in m.lanes.values_mut() {
                         other
                             .interruption
@@ -321,7 +333,6 @@ impl KoeRuntime {
                     }
                 }
                 Err(error) => {
-                    // Retrying custody repairs the bytes, not the prematurely ended capture.
                     l.interruption
                         .get_or_insert_with(|| error.chars().take(500).collect());
                     l.save_error = Some(error.clone());

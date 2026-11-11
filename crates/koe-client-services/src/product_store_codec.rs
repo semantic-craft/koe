@@ -15,6 +15,8 @@ struct WorkspaceDto {
     provider: Option<ProviderDto>,
     #[serde(default)]
     migrations: Vec<MigrationDto>,
+    #[serde(default)]
+    purged_bean_file_ids: Vec<u32>,
     version: u32,
     revision: u64,
     next_operation: u64,
@@ -114,6 +116,10 @@ struct ImportedSummaryDto {
 struct RecordDto {
     #[serde(default)]
     capture_lanes: Vec<CaptureLaneDto>,
+    #[serde(default)]
+    archived: bool,
+    #[serde(default)]
+    trashed_at_ms: Option<u64>,
     id: String,
     title: String,
     origin: String,
@@ -331,6 +337,7 @@ pub(super) fn encode(workspace: &ProductWorkspace) -> Result<String, StoreError>
                     .collect(),
             })
             .collect(),
+        purged_bean_file_ids: state.purged_bean_file_ids.iter().copied().collect(),
         version: 1,
         revision: state.revision,
         next_operation: state.next_operation,
@@ -381,6 +388,9 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
     if dto.version != 1 {
         return Err(invalid("unsupported workspace version"));
     }
+    if dto.purged_bean_file_ids.contains(&0) {
+        return Err(invalid("invalid purged bean file id"));
+    }
     let state = WorkspaceState {
         provider_configuration: dto.provider.map(Into::into).unwrap_or_default(),
         migrations: dto
@@ -402,6 +412,7 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
                     .collect(),
             })
             .collect(),
+        purged_bean_file_ids: dto.purged_bean_file_ids.into_iter().collect(),
         revision: dto.revision,
         next_operation: dto.next_operation,
         records: dto
@@ -438,6 +449,8 @@ impl RecordDto {
         let a = &record.aggregate;
         Self {
             capture_lanes: record.capture_lanes.iter().map(Into::into).collect(),
+            archived: record.is_archived(),
+            trashed_at_ms: record.retention().trashed_at_ms(),
             id: a.recording_id.clone(),
             title: record.title.clone(),
             origin: match record.origin {
@@ -488,6 +501,8 @@ impl RecordDto {
     }
 
     fn into_record(self) -> Result<ProductRecord, StoreError> {
+        let retention = RecordRetention::from_persisted(self.archived, self.trashed_at_ms)
+            .map_err(|e| invalid(e.to_string()))?;
         let origin = match self.origin.as_str() {
             "microphone" => RecordOrigin::Microphone,
             "bean" => RecordOrigin::Bean,
@@ -580,6 +595,7 @@ impl RecordDto {
         record
             .restore_capture_lanes(self.capture_lanes.into_iter().map(Into::into).collect())
             .map_err(|e| invalid(e.to_string()))?;
+        record.restore_retention(retention);
         Ok(record)
     }
 }

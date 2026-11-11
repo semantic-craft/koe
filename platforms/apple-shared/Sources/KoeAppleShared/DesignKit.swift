@@ -37,6 +37,7 @@ public enum AppRadii {
 }
 
 public struct KoeActionButton: View {
+    @Environment(\.isEnabled) private var isEnabled
     private let title: String
     private let icon: String?
     private let primary: Bool
@@ -58,6 +59,7 @@ public struct KoeActionButton: View {
             .padding(.horizontal, 12).frame(minHeight: 34)
             .background(primary ? AppColors.accent : AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
             .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(primary ? AppColors.accent : AppColors.border))
+            .opacity(isEnabled ? 1.0 : 0.45)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

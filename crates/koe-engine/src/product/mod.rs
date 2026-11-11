@@ -11,6 +11,8 @@ pub use capture::CaptureLaneRecord;
 mod capture_timeline;
 pub use capture_timeline::{place_capture_span, CaptureSpan};
 mod state;
+mod trash;
+pub use trash::{PurgeReceipt, RecordRetention, TRASH_RETENTION_MS};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -187,6 +189,7 @@ pub struct ProductRecord {
     pub highlighted_segments: BTreeSet<SegmentId>,
     /// Expected native lanes, including explicitly interrupted or empty lanes.
     pub capture_lanes: Vec<CaptureLaneRecord>,
+    retention: RecordRetention,
     final_keys: BTreeMap<String, SegmentId>,
     completed_request: Option<RequestKey>,
 }
@@ -229,6 +232,10 @@ pub enum ProductError {
     InvalidTransition,
     /// Generated response is not supported by the allowed sources.
     InvalidEvidence,
+    /// Recording is locked by archive protection and cannot be trashed or purged.
+    RecordArchived,
+    /// Recording is in the trash and must be restored before live operations.
+    RecordTrashed,
 }
 
 impl fmt::Display for ProductError {
@@ -242,6 +249,8 @@ impl fmt::Display for ProductError {
             Self::InvalidInput(message) => message,
             Self::InvalidTransition => "当前状态不支持此操作",
             Self::InvalidEvidence => "回答包含缺失、无效或已变化的来源",
+            Self::RecordArchived => "记录已归档，请先取消归档再移入回收站",
+            Self::RecordTrashed => "记录已在回收站中，恢复后才能继续操作",
         };
         f.write_str(message)
     }
@@ -256,6 +265,8 @@ pub struct WorkspaceState {
     pub provider_configuration: ProviderConfiguration,
     /// Completed imports, including preserved material that has not been mapped.
     pub migrations: Vec<MigrationReceipt>,
+    /// Hardware Bean `file_id` tombstones preventing automatic re-pull after purge.
+    pub purged_bean_file_ids: BTreeSet<u32>,
     /// Committed revision.
     pub revision: u64,
     /// Next operation identity.
@@ -279,6 +290,7 @@ pub struct WorkspaceState {
 pub struct ProductWorkspace {
     provider_configuration: ProviderConfiguration,
     migrations: Vec<MigrationReceipt>,
+    purged_bean_file_ids: BTreeSet<u32>,
     revision: u64,
     next_operation: u64,
     records: BTreeMap<RecordId, ProductRecord>,
@@ -302,6 +314,7 @@ impl ProductWorkspace {
         Self {
             provider_configuration: ProviderConfiguration::default(),
             migrations: Vec::new(),
+            purged_bean_file_ids: BTreeSet::new(),
             revision: 0,
             next_operation: 1,
             records: BTreeMap::new(),
@@ -383,7 +396,7 @@ impl ProductWorkspace {
             return Err(ProductError::InvalidSource);
         }
         for source in &sources {
-            self.resolve_source(source)?;
+            self.resolve_live_source(source)?;
         }
         if let Some(item) = self
             .items
@@ -413,6 +426,7 @@ impl ProductWorkspace {
 
     /// Applies an explicit review decision without changing the underlying recording.
     pub fn review_item(&mut self, id: &str, decision: ReviewDecision) -> Result<(), ProductError> {
+        self.ensure_item_live(id)?;
         let item = self.items.get_mut(id).ok_or(ProductError::UnknownItem)?;
         let review = match decision {
             ReviewDecision::Accept => ReviewState::Accepted,
@@ -431,6 +445,7 @@ impl ProductWorkspace {
 
     /// Completes or reopens an explicitly accepted task.
     pub fn complete_task(&mut self, id: &str, completed: bool) -> Result<(), ProductError> {
+        self.ensure_item_live(id)?;
         let item = self.items.get_mut(id).ok_or(ProductError::UnknownItem)?;
         if item.kind != ItemKind::Task || item.review != ReviewState::Accepted {
             return Err(ProductError::InvalidTransition);
@@ -451,6 +466,7 @@ impl ProductWorkspace {
     ) -> Result<(), ProductError> {
         let clean = nonempty(text)?;
         let due = due.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        self.ensure_item_live(id)?;
         let item = self.items.get_mut(id).ok_or(ProductError::UnknownItem)?;
         if item.kind == ItemKind::Memory && due.is_some() {
             return Err(ProductError::InvalidTransition);
@@ -459,6 +475,18 @@ impl ProductWorkspace {
             item.text = clean;
             item.due = due;
             self.changed();
+        }
+        Ok(())
+    }
+
+    fn ensure_item_live(&self, id: &str) -> Result<(), ProductError> {
+        let item = self.items.get(id).ok_or(ProductError::UnknownItem)?;
+        if !item.sources.iter().any(|s| {
+            self.records
+                .get(&s.record_id)
+                .is_some_and(ProductRecord::is_live)
+        }) {
+            return Err(ProductError::RecordTrashed);
         }
         Ok(())
     }
@@ -484,9 +512,10 @@ impl ProductWorkspace {
     fn corpus(&self, scope: &SearchScope) -> Vec<Evidence> {
         self.records
             .iter()
-            .filter(|(id, _)| {
-                matches!(scope, SearchScope::All)
-                    || matches!(scope, SearchScope::Record(wanted) if *id == wanted)
+            .filter(|(id, record)| {
+                record.is_live()
+                    && (matches!(scope, SearchScope::All)
+                        || matches!(scope, SearchScope::Record(wanted) if *id == wanted))
             })
             .flat_map(|(id, record)| {
                 record
@@ -508,8 +537,9 @@ impl ProductWorkspace {
     }
 
     fn validate_scope(&self, scope: &SearchScope) -> Result<(), ProductError> {
-        if matches!(scope, SearchScope::Record(id) if !self.records.contains_key(id)) {
-            return Err(ProductError::UnknownRecord);
+        if let SearchScope::Record(id) = scope {
+            let record = self.records.get(id).ok_or(ProductError::UnknownRecord)?;
+            record.ensure_live()?;
         }
         Ok(())
     }

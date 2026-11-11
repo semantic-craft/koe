@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use koe_client_services::product_store::{ProductStore, PRODUCT_WORKSPACE_FILE};
+use koe_client_services::product_store::{ProductStore, StoreError, PRODUCT_WORKSPACE_FILE};
+use koe_client_services::recording_assets::reconcile_audio_directory;
 use koe_engine::domain::SegmentId;
 use koe_engine::product::*;
 
@@ -206,4 +208,150 @@ fn changed_inflight_evidence_does_not_make_the_store_unreadable() {
         "alpha revised"
     );
     assert!(store.workspace().pending_ask().is_none());
+}
+
+#[test]
+fn retention_and_tombstones_round_trip_with_legacy_compatibility_and_corruption_rejection() {
+    let dir = Directory::new();
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    store
+        .transact(|w| {
+            w.insert_record(
+                "arch".into(),
+                "Archived".into(),
+                RecordOrigin::Note,
+                0,
+                1_800_000_000,
+                0,
+            )?;
+            w.set_record_archived("arch", true)?;
+            w.insert_record(
+                "trash".into(),
+                "Trashed".into(),
+                RecordOrigin::Note,
+                0,
+                1_800_000_001,
+                0,
+            )?;
+            w.trash_record("trash", 77_000)?;
+            w.insert_record(
+                "bean-gone".into(),
+                "Bean".into(),
+                RecordOrigin::Bean,
+                42,
+                1_800_000_002,
+                1_000,
+            )?;
+            w.trash_record("bean-gone", 78_000)?;
+            w.purge_record("bean-gone")?;
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+
+    let reopened = ProductStore::open(&dir.0).unwrap();
+    let ws = reopened.workspace();
+    assert!(ws.record("arch").unwrap().is_archived());
+    assert!(ws.record("trash").unwrap().is_trashed());
+    assert_eq!(
+        ws.record("trash").unwrap().retention().trashed_at_ms(),
+        Some(77_000)
+    );
+    assert!(ws.is_bean_file_purged(42));
+    drop(reopened);
+
+    let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let baseline_raw = fs::read_to_string(&json_path).unwrap();
+
+    let mut legacy_val: serde_json::Value = serde_json::from_str(&baseline_raw).unwrap();
+    legacy_val
+        .as_object_mut()
+        .unwrap()
+        .remove("purged_bean_file_ids");
+    for rec in legacy_val["records"].as_array_mut().unwrap() {
+        let obj = rec.as_object_mut().unwrap();
+        obj.remove("archived");
+        obj.remove("trashed_at_ms");
+    }
+    fs::write(&json_path, serde_json::to_string(&legacy_val).unwrap()).unwrap();
+    let legacy_store = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(
+        legacy_store.workspace().record("arch").unwrap().retention(),
+        RecordRetention::Active
+    );
+    assert_eq!(
+        legacy_store
+            .workspace()
+            .record("trash")
+            .unwrap()
+            .retention(),
+        RecordRetention::Active
+    );
+    assert!(legacy_store.workspace().purged_bean_file_ids().is_empty());
+    drop(legacy_store);
+
+    let mut contradictory: serde_json::Value = serde_json::from_str(&baseline_raw).unwrap();
+    contradictory["records"][0]["archived"] = serde_json::Value::Bool(true);
+    contradictory["records"][0]["trashed_at_ms"] = serde_json::Value::from(100u64);
+    fs::write(&json_path, serde_json::to_string(&contradictory).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+
+    let mut zero_trash: serde_json::Value = serde_json::from_str(&baseline_raw).unwrap();
+    zero_trash["records"][0]["archived"] = serde_json::Value::Bool(false);
+    zero_trash["records"][0]["trashed_at_ms"] = serde_json::Value::from(0u64);
+    fs::write(&json_path, serde_json::to_string(&zero_trash).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+
+    let mut zero_tombstone: serde_json::Value = serde_json::from_str(&baseline_raw).unwrap();
+    zero_tombstone["purged_bean_file_ids"] = serde_json::json!([0]);
+    fs::write(&json_path, serde_json::to_string(&zero_tombstone).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn reconcile_audio_directory_unlinks_only_unreferenced_regular_wav_and_opus_files() {
+    let dir = Directory::new();
+    assert_eq!(
+        reconcile_audio_directory(&dir.0, &BTreeSet::new()).unwrap(),
+        0
+    );
+
+    let audio_dir = dir.0.join("audio");
+    fs::create_dir_all(&audio_dir).unwrap();
+    fs::write(audio_dir.join("keep.wav"), b"wav-keep").unwrap();
+    fs::write(audio_dir.join("keep.opus"), b"opus-keep").unwrap();
+    fs::write(audio_dir.join("orphan.wav"), b"wav-orphan").unwrap();
+    fs::write(audio_dir.join("orphan.opus"), b"opus-orphan").unwrap();
+    fs::write(audio_dir.join("mic-live.capture"), b"staging").unwrap();
+    fs::create_dir(audio_dir.join("nested.wav")).unwrap();
+
+    let external_target = dir.0.join("external.wav");
+    fs::write(&external_target, b"outside").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&external_target, audio_dir.join("symlink.wav")).unwrap();
+
+    let retained = BTreeSet::from(["keep.wav".to_string(), "keep.opus".to_string()]);
+    let removed = reconcile_audio_directory(&dir.0, &retained).unwrap();
+    assert_eq!(removed, 2);
+
+    assert!(audio_dir.join("keep.wav").exists());
+    assert!(audio_dir.join("keep.opus").exists());
+    assert!(!audio_dir.join("orphan.wav").exists());
+    assert!(!audio_dir.join("orphan.opus").exists());
+    assert!(audio_dir.join("mic-live.capture").exists());
+    assert!(audio_dir.join("nested.wav").is_dir());
+    assert!(external_target.exists());
+    #[cfg(unix)]
+    assert!(fs::symlink_metadata(audio_dir.join("symlink.wav")).is_ok());
+
+    assert_eq!(reconcile_audio_directory(&dir.0, &retained).unwrap(), 0);
 }

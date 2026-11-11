@@ -8,16 +8,19 @@ impl KoeRuntime {
         if self.device.session.has_disk_custody(file_id) {
             return true;
         }
+        let has_asset = |id: &str| {
+            recording_assets::audio_path(&self.root, id).is_ok_and(|p| p.exists())
+                || recording_assets::opus_path(&self.root, id).is_ok_and(|p| p.exists())
+        };
         if let Some(id) = self.captures.records_by_file_id.get(&file_id) {
-            if recording_assets::audio_path(&self.root, id).is_ok_and(|p| p.exists()) {
+            if has_asset(id) {
                 return true;
             }
         }
         self.workspace().records().values().any(|record| {
             record.origin == RecordOrigin::Bean
                 && record.aggregate.file_id == file_id
-                && recording_assets::audio_path(&self.root, &record.aggregate.recording_id)
-                    .is_ok_and(|p| p.exists())
+                && has_asset(&record.aggregate.recording_id)
         })
     }
 
@@ -42,6 +45,7 @@ impl KoeRuntime {
                     && entry.duration_ms > 0
                     && entry.end_time != Some(0)
                     && !self.device.auto_pull_attempted.contains(&entry.file_id)
+                    && !self.workspace().is_bean_file_purged(entry.file_id)
                     && !self.is_device_file_synced(entry.file_id)
             })
             .map(|entry| (entry.file_id, entry.duration_ms));
@@ -75,7 +79,7 @@ impl KoeRuntime {
                 recording_assets::save_audio(&self.root, &id, &recording.preview_wav_bytes)?;
             }
             fs::create_dir_all(self.root.join("audio")).map_err(|e| e.to_string())?;
-            let opus_path = self.root.join("audio").join(format!("{id}.opus"));
+            let opus_path = recording_assets::opus_path(&self.root, &id)?;
             write_atomic(&opus_path, &recording.ogg_opus_bytes)
                 .map_err(|e| format!("原始录音保存失败：{e}"))?;
             fs::File::open(self.root.join("audio"))
@@ -87,6 +91,10 @@ impl KoeRuntime {
                 sha256_hex: sha256_hex(&recording.ogg_opus_bytes),
                 fsynced_at_epoch_sec: now,
             };
+            let was_trashed = self
+                .workspace()
+                .record(&id)
+                .is_some_and(ProductRecord::is_trashed);
             self.commit(|w| {
                 w.insert_record(
                     id.clone(),
@@ -96,8 +104,14 @@ impl KoeRuntime {
                     entry.created_at_epoch_sec,
                     entry.duration_ms,
                 )?;
+                if w.record(&id).is_some_and(ProductRecord::is_trashed) {
+                    w.restore_record(&id)?;
+                }
                 w.finish_capture(&id, entry.duration_ms, &entry.marks_ms)
             })?;
+            if was_trashed {
+                self.clear_undo_trash_for(&id);
+            }
             self.device.session.confirm_disk_custody(receipt);
             self.device.finalized.remove(0);
             self.captures.records_by_file_id.remove(&entry.id);
@@ -121,6 +135,7 @@ impl KoeRuntime {
 
     pub(super) fn export_record(&mut self, id: &str, path: &Path) -> Result<(), String> {
         let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
         let mut output = format!("# {}\n\n", record.title);
         if let Some(minutes) = &record.aggregate.minutes {
             output.push_str(&format!("{}\n\n", minutes.overview));

@@ -27,6 +27,7 @@ mod projection;
 mod provider_settings;
 use provider_settings::ProviderSettings;
 mod restore;
+mod trash;
 
 use command::{Command, Location, Page, Playback};
 use device::DeviceRuntime;
@@ -73,6 +74,8 @@ pub struct KoeRuntime {
     audio_policy_error: Option<String>,
     quit: lifecycle::QuitState,
     drain_error: Option<String>,
+    undo_trash: Option<trash::UndoTrashBanner>,
+    last_now_sec: u64,
 }
 
 impl KoeRuntime {
@@ -112,10 +115,13 @@ impl KoeRuntime {
             audio_policy_error: None,
             quit: Default::default(),
             drain_error: None,
+            undo_trash: None,
+            last_now_sec: 0,
         };
         if !existed {
             runtime.restore_legacy()?;
         }
+        runtime.reconcile_orphan_audio();
         if let Err(error) = runtime.load_credentials() {
             runtime.error = Some(error);
         }
@@ -171,12 +177,16 @@ impl KoeRuntime {
     }
 
     fn dispatch(&mut self, command: Command, now: u64) -> Result<(), String> {
+        if now > 0 {
+            self.last_now_sec = now;
+        }
         if self.is_quitting()
             && !matches!(
                 command,
                 Command::RequestQuit
                     | Command::CancelQuit
                     | Command::ClearError
+                    | Command::DismissUndoTrash
                     | Command::Navigate { .. }
                     | Command::Back
                     | Command::SelectRecord { .. }
@@ -193,6 +203,9 @@ impl KoeRuntime {
             )
         {
             return Err("正在退出，请先取消退出再开始新操作".into());
+        }
+        if !self.is_quitting() {
+            self.reconcile_expired_trash(now);
         }
         match command {
             Command::StartMicrophone {
@@ -269,7 +282,7 @@ impl KoeRuntime {
             } => {
                 let source = self
                     .workspace()
-                    .resolve_source(&source_ref(&record_id, &segment_id)?)
+                    .resolve_live_source(&source_ref(&record_id, &segment_id)?)
                     .map_err(|e| e.to_string())?;
                 self.open_record(&record_id, Some(segment_id))?;
                 self.seek_playback(source.start_ms)?;
@@ -293,7 +306,12 @@ impl KoeRuntime {
                 let imported =
                     recording_assets::import_recording(&self.root, Path::new(&path), now)?;
                 let id = imported.id.clone();
-                if self.workspace().record(&id).is_none() {
+                if let Some(existing) = self.workspace().record(&id) {
+                    if existing.is_trashed() {
+                        self.commit(|w| w.restore_record(&id))?;
+                        self.clear_undo_trash_for(&id);
+                    }
+                } else {
                     self.commit(|workspace| {
                         let origin = if imported.has_audio {
                             RecordOrigin::ImportedAudio
@@ -324,6 +342,15 @@ impl KoeRuntime {
             Command::RenameRecord { record_id, title } => {
                 self.commit(|w| w.rename_record(&record_id, &title))?
             }
+            Command::SetRecordArchived {
+                record_id,
+                archived,
+            } => self.handle_set_record_archived(&record_id, archived)?,
+            Command::TrashRecord { record_id } => self.handle_trash_record(&record_id, now)?,
+            Command::RestoreRecord { record_id } => self.handle_restore_record(&record_id)?,
+            Command::PurgeRecord { record_id } => self.handle_purge_record(&record_id)?,
+            Command::EmptyTrash => self.handle_empty_trash()?,
+            Command::DismissUndoTrash => self.handle_dismiss_undo_trash(),
             Command::ExportRecord { record_id, path } => {
                 self.export_record(&record_id, Path::new(&path))?
             }
@@ -420,7 +447,14 @@ impl KoeRuntime {
                     .catalog
                     .iter()
                     .find(|v| v.file_id == file_id)
+                    .cloned()
                     .ok_or("设备上没有这条录音")?;
+                if self.workspace().is_bean_file_purged(file_id) {
+                    self.commit(|w| {
+                        w.clear_purged_bean_file_id(file_id);
+                        Ok(())
+                    })?;
+                }
                 let frame = self
                     .device
                     .session
@@ -461,9 +495,8 @@ impl KoeRuntime {
         self.location = location;
     }
     fn open_record(&mut self, id: &str, segment: Option<String>) -> Result<(), String> {
-        if self.workspace().record(id).is_none() {
-            return Err("记录不存在".into());
-        }
+        let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
         self.go(Location {
             page: Page::Detail,
             record: Some(id.into()),
@@ -474,7 +507,7 @@ impl KoeRuntime {
     fn create_item(&mut self, kind: ItemKind, id: &str, segment: &str) -> Result<(), String> {
         let source = source_ref(id, segment)?;
         self.commit(|w| {
-            let evidence = w.resolve_source(&source)?;
+            let evidence = w.resolve_live_source(&source)?;
             let id = w.propose_item(kind, &evidence.quote, vec![source])?;
             w.review_item(&id, ReviewDecision::Accept)
         })?;
@@ -502,10 +535,15 @@ impl KoeRuntime {
     }
     /// Advances protocol deadlines and consumes completed provider work.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now: u64) {
+        if now > 0 {
+            self.last_now_sec = now;
+        }
         let lifecycle = self.lifecycle_json();
         let revision = self.workspace().revision();
         let error = self.error.clone();
         self.drain_error = None;
+        let undo_expired = self.tick_undo_trash(elapsed_ms);
+        let trash_expired = self.reconcile_expired_trash(now);
         let changed = match self.device.tick(elapsed_ms.min(60_000), now) {
             Ok(changed) => changed,
             Err(error) => {
@@ -521,6 +559,8 @@ impl KoeRuntime {
         completed |= self.maybe_start_auto_offline_pull();
         if changed
             || completed
+            || undo_expired
+            || trash_expired
             || revision != self.workspace().revision()
             || error != self.error
             || lifecycle != self.lifecycle_json()

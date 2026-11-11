@@ -30,6 +30,9 @@ public struct KoeWorkspaceRootView: View {
                         .foregroundStyle(AppColors.textSecondary).padding(12).background(AppColors.surface1)
                 }
                 page.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let undo = store.snapshot.undoTrash {
+                    UndoTrashBar(undo: undo, store: store)
+                }
                 if store.snapshot.playback.asset != nil,
                    store.snapshot.playback.recordId == store.snapshot.detail?.id { PlayerBarView(store: store) }
             }.background(AppColors.surface0)
@@ -77,6 +80,7 @@ public struct KoeWorkspaceRootView: View {
         case "tasks": "待办"
         case "memory": "记忆"
         case "ask": "问 Koe"
+        case "trash": "回收站"
         case "settings": "设置"
         default: "今天"
         }
@@ -88,9 +92,46 @@ public struct KoeWorkspaceRootView: View {
         case "tasks": TasksView(store: store)
         case "memory": MemoryView(store: store)
         case "ask": AskView(store: store)
+        case "trash": TrashView(store: store)
         case "settings": SettingsDoctorView(store: store)
         default: TodayView(store: store)
         }
+    }
+}
+
+private struct UndoTrashBar: View {
+    let undo: UndoTrashSnapshot
+    let store: HostSessionStore
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trash")
+                .font(.system(size: AppFontSizes.xs))
+                .foregroundStyle(AppColors.textMuted)
+            Text("已将《\(undo.title)》移入回收站")
+                .font(.system(size: AppFontSizes.xs))
+                .foregroundStyle(AppColors.textSecondary)
+                .lineLimit(1)
+            Spacer()
+            KoeActionButton("撤销", systemImage: "arrow.uturn.backward") {
+                store.send("restore_record", ["recordId": undo.recordId])
+            }
+            Button {
+                store.send("dismiss_undo_trash")
+            } label: {
+                Text("关闭")
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textMuted)
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .background(AppColors.surface1)
+        .overlay(alignment: .top) { Rectangle().fill(AppColors.border).frame(height: 1) }
     }
 }
 

@@ -84,14 +84,14 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test
 - **Evidence**: scripts/install-macos.sh;scripts/cleanup_app_registrations.py;CDHash 4665f09f7d0353513efc1acab745f2dbfb8d3a25;Closes #594
 
-### [ ] Slice R1: 记录删除、30 天回收站与归档防误删保护
+### [x] Slice R1: 记录删除、30 天回收站与归档防误删保护
 - **Playbook**: `Feature` + `interrogate`
 - **Outcome**: 按用户排定的功能还原第一优先级落地 Slice R1（记录删除、30 天回收站与归档防误删保护，下一片紧接 Slice R2 转写原文分段编辑与说话人重命名合并）。在 crates/koe-engine/src/product/ 新增独立 trash.rs 子模块承载软删除时间戳 trashed_at_ms、恢复、彻底清除、30 天过期自动收敛与归档锁 archived 防误删不变量（软删记录自动移出今天主列表、BM25 搜索与全局问答上下文，恢复后原样归位）；在 ProductStore 与 KoeRuntime 确保仅在彻底清除或 30 天到期持久化成功后物理删除受管音频资产，活跃录音或排空中的记录拒绝删除；经 koe-host-api C ABI v2 快照与单向意图在 platforms/apple-shared 新增 TrashView.swift 并接通 TodayView.swift 与 RecordDetailView.swift 的归档锁定、即按软删加底部撤销条及回收站恢复与彻底清除。
 - **Done Predicate**: ./scripts/check && cargo test --workspace --offline && swift test --package-path platforms/apple-shared && swift test --package-path platforms/macos && ./scripts/install-macos.sh
-- **Evidence**: `PENDING`
+- **Evidence**: crates/koe-engine/src/product/trash.rs;crates/koe-runtime/src/trash.rs;platforms/apple-shared/Sources/KoeAppleShared/TrashView.swift;CDHash 220aaafcf38da26f2da3e1b26072c03914d8f5f6;Closes #634
 
 ### [ ] Slice R2: 转写原文分段编辑与说话人重命名合并
 - **Playbook**: `Feature` + `interrogate`
-- **Outcome**: 在 `ProductRecord` 与 `KoeRuntime` 补齐逐句文本修订、说话人重命名与同人合并领域操作，保留原始 ASR 证据链与音频时间锚点（`start_ms` / `end_ms`），同步刷新 BM25 索引并对受影响纪要标记需重算状态；经 C ABI v2 在 `RecordDetailView.swift` 接通内联编辑与说话人改名合并交互。
-- **Done Predicate**: `./scripts/check && cargo test --workspace --offline && swift test --package-path platforms/apple-shared && swift test --package-path platforms/macos`
+- **Outcome**: 按功能还原第二优先级落地 Slice R2（转写原文分段编辑与说话人重命名合并）。鉴于 crates/koe-engine/src/product/record.rs 已达 467 行，必须在 crates/koe-engine/src/product/ 新增独立子模块（如 transcript_edit.rs）承载逐句文本修订、单句说话人改名与同人批量合并领域规则，保留原始 ASR 证据链与 start_ms/end_ms 音频锚点及 SegmentId 引用完备性（ProductWorkspace::restore 强校验），同步刷新 BM25 索引并将既有结构化纪要标记为原文已变更待重算；在 KoeRuntime 拒绝转写进行中或软删态记录的分段编辑并持久化回写；经 koe-host-api C ABI v2（lib.rs 当前 295 行）在 RecordDetailView.swift（当前 213 行）接通分段内联编辑（必带 .onSubmit）与说话人改名合并交互。
+- **Done Predicate**: ./scripts/check && cargo test --workspace --offline && swift test --package-path platforms/apple-shared && swift test --package-path platforms/macos && ./scripts/install-macos.sh
 - **Evidence**: `PENDING`

@@ -81,9 +81,10 @@ impl ProductWorkspace {
         let selected: Vec<_> = self
             .records
             .iter()
-            .filter(|(id, _)| {
-                matches!(&scope, SearchScope::All)
-                    || matches!(&scope, SearchScope::Record(wanted) if *id == wanted)
+            .filter(|(id, record)| {
+                record.is_live()
+                    && (matches!(&scope, SearchScope::All)
+                        || matches!(&scope, SearchScope::Record(wanted) if *id == wanted))
             })
             .collect();
         let stats = AskScope {
@@ -111,7 +112,7 @@ impl ProductWorkspace {
             let evidence: Result<Vec<_>, _> = plan
                 .candidate_sources
                 .iter()
-                .map(|line| self.resolve_source(&source_ref(line)?))
+                .map(|line| self.resolve_live_source(&source_ref(line)?))
                 .collect();
             let request = AskRequest {
                 operation: self.operation(),
@@ -220,7 +221,7 @@ impl ProductWorkspace {
             {
                 return Err(ProductError::InvalidEvidence);
             }
-            let current = self.resolve_source(&evidence.source)?;
+            let current = self.resolve_live_source(&evidence.source)?;
             if current.quote != evidence.quote {
                 return Err(ProductError::StaleRequest);
             }

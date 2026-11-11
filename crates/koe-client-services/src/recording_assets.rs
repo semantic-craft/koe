@@ -6,6 +6,7 @@ use koe_engine::{
     minutes::parse_meeting_minutes_json, wav::parse_pcm_wave,
 };
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
@@ -111,6 +112,14 @@ pub fn audio_path(root: &Path, id: &str) -> Result<PathBuf, String> {
     Ok(root.join("audio").join(format!("{id}.wav")))
 }
 
+/// Resolves only generated Ogg Opus asset names, never arbitrary relative paths.
+pub fn opus_path(root: &Path, id: &str) -> Result<PathBuf, String> {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err("无效的录音标识".into());
+    }
+    Ok(root.join("audio").join(format!("{id}.opus")))
+}
+
 /// Persists complete validated audio before a record is allowed to reference it.
 pub fn save_audio(root: &Path, id: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     parse_pcm_wave(bytes)?;
@@ -136,4 +145,58 @@ pub fn transcription_pcm(root: &Path, id: &str) -> Result<Vec<u8>, String> {
     let path = audio_path(root, id)?;
     let bytes = fs::read(path).map_err(|e| format!("无法读取录音：{e}"))?;
     Ok(parse_pcm_wave(&bytes)?.mono_16khz())
+}
+
+/// Convergently removes unreferenced `.wav` and `.opus` regular files in `<root>/audio/`.
+pub fn reconcile_audio_directory(
+    root: &Path,
+    retained_filenames: &BTreeSet<String>,
+) -> Result<usize, String> {
+    let audio_dir = root.join("audio");
+    let dir_meta = match fs::symlink_metadata(&audio_dir) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(format!("无法读取音频目录：{e}")),
+    };
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return Err("音频目录路径无效或为符号链接".into());
+    }
+    let entries = fs::read_dir(&audio_dir).map_err(|e| format!("无法读取音频目录：{e}"))?;
+    let mut removed = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("无法遍历音频目录：{e}"))?;
+        let path = entry.path();
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("无法读取音频文件属性：{e}")),
+        };
+        if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !(name.ends_with(".wav") || name.ends_with(".opus")) {
+            continue;
+        }
+        if retained_filenames.contains(&name)
+            || retained_filenames
+                .iter()
+                .any(|retained| retained.eq_ignore_ascii_case(&name))
+        {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => removed += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("无法删除已清除录音文件：{e}")),
+        }
+    }
+    if removed > 0 {
+        fs::File::open(&audio_dir)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| format!("音频目录落盘失败：{e}"))?;
+    }
+    Ok(removed)
 }

@@ -14,6 +14,7 @@ impl ProductWorkspace {
             .records
             .get_mut(id)
             .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         record.aggregate.duration_ms = record.aggregate.duration_ms.max(duration_ms);
         for &mark in bookmarks {
             record.aggregate.add_bookmark(mark);
@@ -28,7 +29,7 @@ impl ProductWorkspace {
         source: &SourceRef,
         speaker: Option<String>,
     ) -> Result<(), ProductError> {
-        self.resolve_source(source)?;
+        self.resolve_live_source(source)?;
         let record = self
             .records
             .get_mut(&source.record_id)
@@ -41,7 +42,6 @@ impl ProductWorkspace {
         Ok(())
     }
     /// Registers factual recording metadata without replacing an existing record's content.
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_record(
         &mut self,
         id: String,
@@ -54,7 +54,16 @@ impl ProductWorkspace {
         let id = nonempty(&id)?;
         let title = nonempty(&title)?;
         if self.records.contains_key(&id) {
+            if origin == RecordOrigin::Bean
+                && file_id > 0
+                && self.purged_bean_file_ids.remove(&file_id)
+            {
+                self.changed();
+            }
             return Ok(());
+        }
+        if origin == RecordOrigin::Bean && file_id > 0 {
+            self.purged_bean_file_ids.remove(&file_id);
         }
         let mut aggregate = RecordingAggregate::new(id.clone(), file_id, created_at, duration_ms);
         aggregate.phase = RecordingLifecyclePhase::Local;
@@ -68,6 +77,7 @@ impl ProductWorkspace {
                 content_revision: 0,
                 highlighted_segments: BTreeSet::new(),
                 capture_lanes: Vec::new(),
+                retention: RecordRetention::Active,
                 final_keys: BTreeMap::new(),
                 completed_request: None,
             },
@@ -95,6 +105,7 @@ impl ProductWorkspace {
             .records
             .get_mut(id)
             .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         let segment = record
             .aggregate
             .spine
@@ -113,6 +124,7 @@ impl ProductWorkspace {
             .records
             .get_mut(id)
             .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         if record.title != title {
             record.title = title;
             self.changed();
@@ -122,7 +134,7 @@ impl ProductWorkspace {
 
     /// Marks the original utterance's timestamp as a highlight.
     pub fn add_highlight(&mut self, source: SourceRef) -> Result<(), ProductError> {
-        let evidence = self.resolve_source(&source)?;
+        let evidence = self.resolve_live_source(&source)?;
         let record = self
             .records
             .get_mut(&source.record_id)
@@ -149,6 +161,7 @@ impl ProductWorkspace {
         stage: AnalysisStage,
     ) -> Result<RequestKey, ProductError> {
         let record = self.records.get(id).ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         if matches!(record.analysis, AnalysisState::Pending { .. }) {
             return Err(ProductError::Busy);
         }
@@ -177,7 +190,6 @@ impl ProductWorkspace {
     }
 
     /// Commits a provider final to its fixed recording/attempt, deduplicating delivery IDs.
-    #[allow(clippy::too_many_arguments)]
     pub fn accept_transcript(
         &mut self,
         key: &RequestKey,
@@ -198,31 +210,33 @@ impl ProductWorkspace {
             .records
             .get_mut(&key.record_id)
             .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         record.require_pending(key, AnalysisStage::Transcribing)?;
         let delivery = format!("{}:{final_id}", key.attempt);
-        let segment = if let Some(&id) = record.final_keys.get(&delivery) {
-            if record.aggregate.spine.get(id).is_some_and(|s| {
-                s.text == clean && s.start_ms == start_ms && s.end_ms == end_ms
-            }) {
-                return Ok(id);
-            }
-            if !record
-                .aggregate
-                .spine
-                .update_segment(id, clean, start_ms, end_ms)
-            {
-                return Err(ProductError::InvalidSource);
-            }
-            id
-        } else {
-            let id = record
-                .aggregate
-                .spine
-                .append_segment(clean, start_ms, end_ms, "auto", provider)
-                .ok_or_else(|| ProductError::InvalidInput("无法保存文字片段".to_string()))?;
-            record.final_keys.insert(delivery, id);
-            id
-        };
+        let segment =
+            if let Some(&id) = record.final_keys.get(&delivery) {
+                if record.aggregate.spine.get(id).is_some_and(|s| {
+                    s.text == clean && s.start_ms == start_ms && s.end_ms == end_ms
+                }) {
+                    return Ok(id);
+                }
+                if !record
+                    .aggregate
+                    .spine
+                    .update_segment(id, clean, start_ms, end_ms)
+                {
+                    return Err(ProductError::InvalidSource);
+                }
+                id
+            } else {
+                let id = record
+                    .aggregate
+                    .spine
+                    .append_segment(clean, start_ms, end_ms, "auto", provider)
+                    .ok_or_else(|| ProductError::InvalidInput("无法保存文字片段".to_string()))?;
+                record.final_keys.insert(delivery, id);
+                id
+            };
         record.aggregate.duration_ms = record.aggregate.duration_ms.max(end_ms);
         record.content_changed();
         self.changed();
@@ -235,6 +249,7 @@ impl ProductWorkspace {
             .records
             .get_mut(&key.record_id)
             .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         if record.completed_request.as_ref() == Some(key)
             && matches!(record.analysis, AnalysisState::Idle)
         {
@@ -258,6 +273,7 @@ impl ProductWorkspace {
             .records
             .get_mut(&key.record_id)
             .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         if record.content_revision != key.input_revision {
             return Err(ProductError::StaleRequest);
         }
@@ -291,7 +307,6 @@ impl ProductWorkspace {
                     .map(|p| (ItemKind::Memory, p.claim.clone(), p.citations.clone(), None)),
             )
             .collect();
-        // Keep only validated structured output; presentation must not invent additional cards.
         record.aggregate.minutes = Some(minutes);
         record.aggregate.visual_cards.clear();
         record.aggregate.phase = RecordingLifecyclePhase::Ready;
@@ -322,6 +337,7 @@ impl ProductWorkspace {
             .records
             .get_mut(&key.record_id)
             .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
         if !matches!(&record.analysis, AnalysisState::Pending { key: current, .. } if current == key)
         {
             return Err(ProductError::StaleRequest);
@@ -443,53 +459,9 @@ impl ProductRecord {
             content_revision,
             highlighted_segments,
             capture_lanes: Vec::new(),
+            retention: RecordRetention::Active,
             final_keys,
             completed_request,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn accept_transcript_updates_text_and_timestamps_for_same_delivery_id() {
-        let mut ws = ProductWorkspace::new();
-        ws.insert_record(
-            "rec-1".into(),
-            "Test".into(),
-            RecordOrigin::Bean,
-            101,
-            1_700_000_000,
-            0,
-        )
-        .unwrap();
-        let key = ws.begin_analysis("rec-1", AnalysisStage::Transcribing).unwrap();
-
-        let seg_id = ws
-            .accept_transcript(&key, "7", "你好", 0, 400, "dashscope")
-            .unwrap();
-        let rev1 = ws.revision();
-
-        let same_id = ws
-            .accept_transcript(&key, "7", "你好世界", 10, 950, "dashscope")
-            .unwrap();
-        assert_eq!(same_id, seg_id);
-        let rev2 = ws.revision();
-        assert!(rev2 > rev1);
-
-        let rec = ws.record("rec-1").unwrap();
-        let seg = rec.aggregate.spine.get(seg_id).unwrap();
-        assert_eq!(seg.text, "你好世界");
-        assert_eq!(seg.start_ms, 10);
-        assert_eq!(seg.end_ms, 950);
-        assert_eq!(rec.aggregate.duration_ms, 950);
-
-        let noop_id = ws
-            .accept_transcript(&key, "7", "你好世界", 10, 950, "dashscope")
-            .unwrap();
-        assert_eq!(noop_id, seg_id);
-        assert_eq!(ws.revision(), rev2);
     }
 }

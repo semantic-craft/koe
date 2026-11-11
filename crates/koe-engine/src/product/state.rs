@@ -9,6 +9,7 @@ impl ProductWorkspace {
         WorkspaceState {
             provider_configuration: self.provider_configuration.clone(),
             migrations: self.migrations.clone(),
+            purged_bean_file_ids: self.purged_bean_file_ids.clone(),
             revision: self.revision,
             next_operation: self.next_operation,
             records: self.records.values().cloned().collect(),
@@ -23,10 +24,14 @@ impl ProductWorkspace {
     /// Restores validated value state; malformed identities or references are rejected.
     pub fn restore(state: WorkspaceState) -> Result<Self, ProductError> {
         state.provider_configuration.validate()?;
+        if state.purged_bean_file_ids.contains(&0) {
+            return Err(ProductError::InvalidEvidence);
+        }
         let mut records = BTreeMap::new();
         for record in state.records {
             let id = record.aggregate.recording_id.clone();
             let lanes = record.capture_lanes;
+            let retention = record.retention;
             let mut record = ProductRecord::restore(
                 record.aggregate,
                 record.title,
@@ -38,6 +43,7 @@ impl ProductWorkspace {
                 record.completed_request,
             )?;
             record.restore_capture_lanes(lanes)?;
+            record.restore_retention(retention);
             if records.insert(id, record).is_some() {
                 return Err(ProductError::InvalidEvidence);
             }
@@ -45,6 +51,7 @@ impl ProductWorkspace {
         let mut workspace = Self {
             provider_configuration: state.provider_configuration,
             migrations: state.migrations,
+            purged_bean_file_ids: state.purged_bean_file_ids,
             revision: state.revision,
             next_operation: state.next_operation,
             records,
@@ -110,10 +117,8 @@ impl ProductWorkspace {
             if request.operation == 0 || request.evidence.is_empty() {
                 return Err(ProductError::InvalidEvidence);
             }
-            // A valid snapshot can contain evidence superseded by a later final. Startup
-            // interrupts that attempt; only completion requires equality with current text.
             for evidence in &request.evidence {
-                workspace.resolve_source(&evidence.source)?;
+                workspace.resolve_live_source(&evidence.source)?;
                 if matches!(&request.scope, SearchScope::Record(id) if id != &evidence.source.record_id)
                 {
                     return Err(ProductError::InvalidEvidence);
