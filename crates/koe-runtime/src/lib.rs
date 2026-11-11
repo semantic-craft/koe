@@ -11,6 +11,10 @@ mod capture;
 #[cfg(test)]
 mod capture_tests;
 mod command;
+/// Typeless-compatible D3200 collar companion protocol and tap-thump gating state machine.
+pub mod companion;
+#[cfg(test)]
+mod companion_mcp_tests;
 pub mod credentials;
 mod device;
 mod flutter_import;
@@ -18,6 +22,8 @@ mod legacy;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
+/// Centralized 16-tool MCP registry and step/poll dispatcher shared by native host and CLI.
+pub mod mcp_surface;
 mod microphone;
 #[cfg(test)]
 mod navigation_tests;
@@ -31,10 +37,17 @@ mod transcript_edit;
 mod trash;
 
 use command::{Command, Location, Page, Playback};
+pub use companion::{
+    decode_pcm16_le_b64, encode_pcm16_le_b64, CompanionClientCommand, CompanionRoutingMode,
+    CompanionStreamEvent, DeclaredControlSpec, COMPANION_AUDIO_FORMAT,
+    COMPANION_DOUBLE_TAP_TRIGGER, COMPANION_FRONT_CONTROL, COMPANION_PROTOCOL_VERSION,
+    POST_TAP_SKIP_SLICES, PRE_STOP_TAP_HOLDBACK_SLICES,
+};
 use device::DeviceRuntime;
 use koe_client_providers::ProviderWorker;
 use koe_client_services::{product_store::ProductStore, recording_assets};
 use koe_engine::{domain::SegmentId, product::*};
+pub use mcp_surface::{McpToolCallState, McpToolError};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -60,6 +73,7 @@ pub struct KoeRuntime {
     back: Vec<Location>,
     playback: Playback,
     device: DeviceRuntime,
+    companion: companion::CompanionRuntime,
     provider: ProviderWorker,
     settings: ProviderSettings,
     credentials: Box<dyn credentials::CredentialStore>,
@@ -101,6 +115,7 @@ impl KoeRuntime {
             back: Vec::new(),
             playback: Playback::default(),
             device: DeviceRuntime::default(),
+            companion: Default::default(),
             provider: ProviderWorker::new()?,
             settings: ProviderSettings::default(),
             credentials,
@@ -263,7 +278,10 @@ impl KoeRuntime {
                 epoch,
             } => self.microphone_failed(&record_id, &session_id, &lane, message, epoch),
             Command::RequestQuit => self.request_quit(),
-            Command::CancelQuit => self.quit = lifecycle::QuitState::Running,
+            Command::CancelQuit => {
+                self.quit = lifecycle::QuitState::Running;
+                self.drive_companion(now);
+            }
             Command::ImportFlutterLibrary { path } => {
                 self.import_flutter_library(Path::new(&path))?
             }
@@ -446,15 +464,72 @@ impl KoeRuntime {
                 self.device
                     .event(&event, &connection_id, device_name.as_deref())?;
                 self.save_captures(now)?;
+                self.drive_companion(now);
             }
             Command::DeviceOpenGuide => self.device.open_guide(),
             Command::DeviceOnboardingNext => self.device.onboarding_next(),
             Command::DeviceCloseGuide => self.device.close_guide(),
             Command::DeviceRefresh => self.device.refresh(),
-            Command::DeviceDisconnect => self.device.disconnect(),
+            Command::DeviceDisconnect => {
+                if self.companion.standby_stream_owned {
+                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+                        let _ = self.mark_standby_scratch_file(fid);
+                    }
+                    self.companion.standby_stream_owned = false;
+                }
+                self.device.disconnect();
+                self.drive_companion(now);
+            }
+            Command::DeviceRelease => {
+                self.commit(|w| {
+                    w.set_ble_auto_connect(false);
+                    Ok(())
+                })?;
+                if self.companion.standby_stream_owned {
+                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+                        let _ = self.mark_standby_scratch_file(fid);
+                    }
+                    self.companion.standby_stream_owned = false;
+                }
+                self.companion.capture_active = false;
+                self.companion.post_tap_skip_slices = 0;
+                self.companion.tail_holdback.clear();
+                self.device.disconnect();
+                self.drive_companion(now);
+                self.notice = Some("已释放录音豆蓝牙控制权".into());
+            }
+            Command::SetBleAutoConnect { enabled } => {
+                self.commit(|w| {
+                    w.set_ble_auto_connect(enabled);
+                    Ok(())
+                })?;
+            }
+            Command::SetCompanionMode { mode } => {
+                let parsed = CompanionRoutingMode::parse(&mode).ok_or("无效的领夹麦伴侣模式")?;
+                self.commit(|w| {
+                    w.set_companion_mode(parsed);
+                    Ok(())
+                })?;
+                self.companion.standby_suppressed_for_connection = false;
+                if parsed != CompanionRoutingMode::CollarStandby
+                    && self.companion.standby_stream_owned
+                {
+                    self.stop_owned_standby_stream()?;
+                } else if parsed == CompanionRoutingMode::Disabled {
+                    self.companion.capture_active = false;
+                    self.companion.post_tap_skip_slices = 0;
+                    self.companion.tail_holdback.clear();
+                }
+                self.drive_companion(now);
+            }
             Command::DeviceDownload { file_id } => {
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
+                }
+                if self.companion.standby_stream_owned {
+                    return Err(
+                        "当前处于领夹麦待命模式，请先切换为关闭或会议兼领夹模式后再下载录音".into(),
+                    );
                 }
                 self.ensure_device_idle()?;
                 let entry = self
@@ -481,14 +556,38 @@ impl KoeRuntime {
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }
-                self.ensure_device_idle()?;
-                let outcome = self
-                    .device
-                    .session
-                    .start_realtime_recording(None, now.saturating_mul(1000));
-                self.device.accept(outcome);
+                if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby {
+                    if self.companion.standby_stream_owned {
+                        return Err(
+                            "当前处于领夹麦待命模式，如需录制会议请先切换为普通或会议兼领夹模式"
+                                .into(),
+                        );
+                    }
+                    self.companion.standby_suppressed_for_connection = false;
+                    self.ensure_device_idle()?;
+                    self.drive_companion(now);
+                } else {
+                    if self.companion.standby_stream_owned {
+                        self.stop_owned_standby_stream()?;
+                    }
+                    self.ensure_device_idle()?;
+                    let outcome = self
+                        .device
+                        .session
+                        .start_realtime_recording(None, now.saturating_mul(1000));
+                    self.device.accept(outcome);
+                    self.drive_companion(now);
+                }
             }
-            Command::DeviceStop => self.device.stop_recording(),
+            Command::DeviceStop => {
+                if self.companion.standby_stream_owned {
+                    self.companion.standby_suppressed_for_connection = true;
+                    self.stop_owned_standby_stream()?;
+                } else {
+                    self.device.stop_recording();
+                }
+                self.drive_companion(now);
+            }
         }
         Ok(())
     }
@@ -540,6 +639,7 @@ impl KoeRuntime {
         if let Err(error) = self.save_captures(now) {
             self.error = Some(error);
         }
+        changed |= self.drive_companion(now);
         changed |= self.maybe_start_auto_offline_pull();
         if changed
             || revision != self.workspace().revision()
@@ -572,6 +672,7 @@ impl KoeRuntime {
         }
         let mut completed = self.poll_provider() | self.poll_captures();
         self.drive_analysis_queue();
+        completed |= self.drive_companion(now);
         completed |= self.maybe_start_auto_offline_pull();
         if changed
             || completed

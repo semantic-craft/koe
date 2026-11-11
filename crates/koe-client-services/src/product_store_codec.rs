@@ -8,11 +8,21 @@ use serde::{Deserialize, Serialize};
 
 use super::StoreError;
 
+fn default_ble_auto_connect() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceDto {
     #[serde(default)]
     provider: Option<ProviderDto>,
+    #[serde(default = "default_ble_auto_connect")]
+    ble_auto_connect: bool,
+    #[serde(default)]
+    companion_mode: Option<String>,
+    #[serde(default)]
+    standby_scratch_file_ids: Vec<u32>,
     #[serde(default)]
     migrations: Vec<MigrationDto>,
     #[serde(default)]
@@ -322,6 +332,9 @@ pub(super) fn encode(workspace: &ProductWorkspace) -> Result<String, StoreError>
     let state = workspace.export_state();
     let dto = WorkspaceDto {
         provider: Some(state.provider_configuration.into()),
+        ble_auto_connect: state.ble_auto_connect,
+        companion_mode: Some(state.companion_mode.as_str().to_string()),
+        standby_scratch_file_ids: state.standby_scratch_file_ids.iter().copied().collect(),
         migrations: state
             .migrations
             .iter()
@@ -395,8 +408,19 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
     if dto.purged_bean_file_ids.contains(&0) {
         return Err(invalid("invalid purged bean file id"));
     }
+    if dto.standby_scratch_file_ids.contains(&0) {
+        return Err(invalid("invalid standby scratch file id"));
+    }
+    let companion_mode = match dto.companion_mode.as_deref() {
+        None => CompanionRoutingMode::Disabled,
+        Some(raw_mode) => CompanionRoutingMode::parse(raw_mode)
+            .ok_or_else(|| invalid("invalid companion routing mode"))?,
+    };
     let state = WorkspaceState {
         provider_configuration: dto.provider.map(Into::into).unwrap_or_default(),
+        ble_auto_connect: dto.ble_auto_connect,
+        companion_mode,
+        standby_scratch_file_ids: dto.standby_scratch_file_ids.into_iter().collect(),
         migrations: dto
             .migrations
             .into_iter()

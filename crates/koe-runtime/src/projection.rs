@@ -22,8 +22,9 @@ impl KoeRuntime {
             .and_then(|fid| self.captures.active.get(&fid))
             .or_else(|| self.captures.active.values().next())
             .map(String::as_str);
-        let live_duration_ms = if device.device_recording_active
-            || matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime)
+        let live_duration_ms = if !self.companion.standby_stream_owned
+            && (device.device_recording_active
+                || matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime))
         {
             let opus_ms = ((device.opus_buffer.len() / OPUS_FRAME_BYTES) as u64) * 20;
             let pcm_ms = live_record_id
@@ -206,7 +207,12 @@ impl KoeRuntime {
             .device_name
             .clone()
             .unwrap_or_else(|| "Soundcore Work".to_string());
-        let files: Vec<_> = device.catalog.iter().map(|f| json!({"id":f.file_id,"title":format!("录音 {}", f.file_id),"durationMs":f.duration_ms})).collect();
+        let files: Vec<_> = device
+            .catalog
+            .iter()
+            .filter(|f| !self.is_standby_file(f.file_id))
+            .map(|f| json!({"id":f.file_id,"title":format!("录音 {}", f.file_id),"durationMs":f.duration_ms}))
+            .collect();
         let progress = if device.transfer.expected_wire_bytes > 0 {
             (f64::from(device.transfer.received_wire_bytes)
                 / f64::from(device.transfer.expected_wire_bytes))
@@ -216,6 +222,10 @@ impl KoeRuntime {
         };
         let transfer_phase = if device.is_offline_pull_suspended() {
             "suspended"
+        } else if self.companion.standby_stream_owned
+            && matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime)
+        {
+            "collar_standby"
         } else {
             match device.transfer.phase {
                 TransferPhaseTag::Idle | TransferPhaseTag::QueryingCatalog => "idle",
@@ -224,35 +234,47 @@ impl KoeRuntime {
                 TransferPhaseTag::Failed => "failed",
             }
         };
+        let device_busy = (matches!(
+            device.transfer.phase,
+            TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
+        ) || device.device_recording_active
+            || self.device.awaiting_stop)
+            && !self.companion.standby_stream_owned;
+        let device_recording =
+            device.device_recording_active && !self.companion.standby_stream_owned;
+        let device_json = json!({
+            "phase": device_phase,
+            "state": device_state,
+            "statusDetail": status_detail,
+            "connected": connected,
+            "busy": device_busy,
+            "stopping": self.device.awaiting_stop,
+            "recording": device_recording,
+            "transferPhase": transfer_phase,
+            "liveDurationMs": live_duration_ms,
+            "liveBytes": device.transfer.received_wire_bytes,
+            "liveRecordId": live_record_id,
+            "deviceName": device_name,
+            "batteryPercent": battery_pct,
+            "charging": telemetry.is_some_and(|t| t.charging),
+            "boxBatteryPercent": box_battery_pct,
+            "boxCharging": telemetry.is_some_and(|t| t.box_charging),
+            "serialNumber": telemetry.map(|t| t.serial_number.clone()).unwrap_or_default(),
+            "firmwareVersion": telemetry.map(|t| t.firmware_version.clone()).unwrap_or_default(),
+            "storageLabel": telemetry.map(|t| t.storage_label()).unwrap_or_else(|| "—".to_string()),
+            "files": files,
+            "progress": progress,
+            "autoConnect": self.workspace().ble_auto_connect(),
+            "companionMode": self.workspace().companion_mode().as_str(),
+            "standbyReady": self.is_standby_ready(),
+            "guide": self.device.guide_json()
+        });
         json!({"lifecycle": self.lifecycle_json(),
             "microphone": self.microphone_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
-            "device":{
-                "phase":device_phase,
-                "state":device_state,
-                "statusDetail":status_detail,
-                "connected":connected,
-                "busy":matches!(device.transfer.phase,TransferPhaseTag::PullingOffline|TransferPhaseTag::StreamingRealtime) || device.device_recording_active || self.device.awaiting_stop,
-                "stopping":self.device.awaiting_stop,
-                "recording":device.device_recording_active,
-                "transferPhase":transfer_phase,
-                "liveDurationMs":live_duration_ms,
-                "liveBytes":device.transfer.received_wire_bytes,
-                "liveRecordId":live_record_id,
-                "deviceName":device_name,
-                "batteryPercent":battery_pct,
-                "charging":telemetry.is_some_and(|t| t.charging),
-                "boxBatteryPercent":box_battery_pct,
-                "boxCharging":telemetry.is_some_and(|t| t.box_charging),
-                "serialNumber":telemetry.map(|t| t.serial_number.clone()).unwrap_or_default(),
-                "firmwareVersion":telemetry.map(|t| t.firmware_version.clone()).unwrap_or_default(),
-                "storageLabel":telemetry.map(|t| t.storage_label()).unwrap_or_else(|| "—".to_string()),
-                "files":files,
-                "progress":progress,
-                "guide":self.device.guide_json()
-            },
+            "device":device_json,
             "provider":{"meetingAudioPolicy":self.workspace().provider_configuration().meeting_audio_policy.as_str(),"meetingAudioPolicyError":self.audio_policy_error,"meetingAudioStatus":self.ensure_meeting_audio_upload().err(),"configured":!self.settings.key.is_empty(),"model":self.workspace().provider_configuration().model,"asrEndpoint":self.workspace().provider_configuration().asr_endpoint,"chatEndpoint":self.workspace().provider_configuration().chat_endpoint,"credentialState":self.credential_state(),"isolated":self.credentials.isolated()},
             "playback":self.playback_json(),
             "migrationReports": self.workspace().migrations().iter().map(|m|json!({"fingerprint":m.fingerprint,"archivePath":self.root.join(&m.archive).to_string_lossy(),"pending":m.pending,"recordCount":m.record_ids.len()})).collect::<Vec<_>>(),
@@ -369,6 +391,33 @@ impl KoeRuntime {
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
     }
 
+    pub(crate) fn record_detail_json(&self, id: &str) -> Result<Value, String> {
+        let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
+        let device = &self.device.session;
+        let live_record_id = device
+            .active_file_id
+            .and_then(|fid| self.captures.active.get(&fid))
+            .or_else(|| self.captures.active.values().next())
+            .map(String::as_str);
+        let live_duration_ms = if !self.companion.standby_stream_owned
+            && (device.device_recording_active
+                || matches!(device.transfer.phase, TransferPhaseTag::StreamingRealtime))
+        {
+            let opus_ms = ((device.opus_buffer.len() / OPUS_FRAME_BYTES) as u64) * 20;
+            let pcm_ms = live_record_id
+                .and_then(|rid| self.captures.sessions.get(rid))
+                .map_or(0, |c| c.captured_pcm_bytes / 32);
+            let record_ms = live_record_id
+                .and_then(|rid| self.workspace().record(rid))
+                .map_or(0, |r| r.aggregate.duration_ms);
+            opus_ms.max(pcm_ms).max(record_ms)
+        } else {
+            0
+        };
+        Ok(self.detail(record, live_record_id, live_duration_ms))
+    }
+
     pub(crate) fn source_json(&self, source: &SourceRef) -> Option<Value> {
         let evidence = self.workspace().resolve_live_source(source).ok()?;
         Some(
@@ -384,7 +433,17 @@ fn local_date(epoch: u64) -> Option<chrono::NaiveDate> {
         .map(|d| d.with_timezone(&Local).date_naive())
 }
 
-fn origin(source: RecordOrigin) -> &'static str {
+pub(crate) fn origin_slug(source: RecordOrigin) -> &'static str {
+    match source {
+        RecordOrigin::Microphone => "microphone",
+        RecordOrigin::Bean => "bean",
+        RecordOrigin::ImportedAudio => "imported_audio",
+        RecordOrigin::ImportedText => "imported_text",
+        RecordOrigin::Note => "note",
+    }
+}
+
+pub(crate) fn origin(source: RecordOrigin) -> &'static str {
     match source {
         RecordOrigin::Microphone => "Mac 麦克风",
         RecordOrigin::Bean => "录音豆",
@@ -394,7 +453,7 @@ fn origin(source: RecordOrigin) -> &'static str {
     }
 }
 
-fn status(record: &ProductRecord) -> &'static str {
+pub(crate) fn status(record: &ProductRecord) -> &'static str {
     match &record.analysis {
         AnalysisState::Pending {
             stage: AnalysisStage::Transcribing,

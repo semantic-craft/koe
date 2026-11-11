@@ -299,6 +299,18 @@ impl ProductWorkspace {
         }
     }
 
+    /// Marks a temporary or reclaimed Bean `file_id` as purged and clears any pending scratch entry.
+    pub fn record_purged_bean_file_id(&mut self, file_id: u32) {
+        if file_id == 0 {
+            return;
+        }
+        let removed_scratch = self.standby_scratch_file_ids.remove(&file_id);
+        let inserted_tombstone = self.purged_bean_file_ids.insert(file_id);
+        if removed_scratch || inserted_tombstone {
+            self.changed();
+        }
+    }
+
     /// Resolves a source only when its owning recording is live.
     pub fn resolve_live_source(&self, source: &SourceRef) -> Result<Evidence, ProductError> {
         let record = self

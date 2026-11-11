@@ -238,9 +238,42 @@ pub enum CaptureEvent {
     },
 }
 
+/// Pure protocol-level companion signal emitted in slice order without I/O.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RawCompanionSignal {
+    /// Device recording state changed (`0` = stopped, `1` = recording, `2` = paused).
+    RecordingStateChanged {
+        /// D3200 recording state (`0`, `1`, or `2`).
+        state: u8,
+        /// Active or announced bean `file_id`, if known.
+        file_id: Option<u32>,
+    },
+    /// Front housing double-tap mark (`flags & 0x01`) on a 20 ms realtime audio slice.
+    FrontDoubleTap {
+        /// Active bean `file_id`.
+        file_id: u32,
+        /// Zero-based 20 ms slice sequence number.
+        slice_seq: u32,
+        /// Millisecond offset (`slice_seq * 20`).
+        offset_ms: u64,
+    },
+    /// Single 20 ms frame (`320` samples at `16 kHz` mono) of decoded realtime PCM16 audio.
+    LivePcm16 {
+        /// Active bean `file_id`.
+        file_id: u32,
+        /// Zero-based 20 ms slice sequence number.
+        slice_seq: u32,
+        /// Decoded 16 kHz mono signed 16-bit PCM samples.
+        samples: Vec<i16>,
+    },
+}
+
+const MAX_COMPANION_SIGNALS: usize = 4_096;
+
 /// Stateful D3200 transport session engine.
 pub struct TransportSession {
     capture_events: VecDeque<CaptureEvent>,
+    companion_signals: VecDeque<RawCompanionSignal>,
     /// Streaming packet reassembler.
     pub reassembler: FrameReassembler,
     /// Current connection phase.
@@ -315,6 +348,7 @@ impl Clone for TransportSession {
     fn clone(&self) -> Self {
         Self {
             capture_events: self.capture_events.clone(),
+            companion_signals: self.companion_signals.clone(),
             reassembler: self.reassembler.clone(),
             connection_phase: self.connection_phase,
             telemetry: self.telemetry.clone(),
@@ -375,6 +409,7 @@ impl core::fmt::Debug for TransportSession {
             .field("marks_ms", &self.marks_ms)
             .field("last_finalized", &self.last_finalized)
             .field("finalized_queue_len", &self.finalized_queue.len())
+            .field("companion_signals_len", &self.companion_signals.len())
             .field("live_pcm16_16khz_len", &self.live_pcm16_16khz.len())
             .field("wifi_endpoint", &self.wifi_endpoint)
             .field("wifi_batch_phase", &self.wifi_batch_phase)
@@ -398,6 +433,7 @@ impl TransportSession {
     pub fn with_decoder_factory(factory: Option<OpusDecoderFactory>) -> Self {
         Self {
             capture_events: VecDeque::new(),
+            companion_signals: VecDeque::new(),
             reassembler: FrameReassembler::default(),
             connection_phase: ConnectionPhaseTag::Disconnected,
             telemetry: None,
@@ -487,6 +523,18 @@ impl TransportSession {
         std::mem::take(&mut self.capture_events)
     }
 
+    /// Drains ordered companion signals accumulated since the previous call.
+    pub fn take_companion_signals(&mut self) -> Vec<RawCompanionSignal> {
+        self.companion_signals.drain(..).collect()
+    }
+
+    fn push_companion_signal(&mut self, signal: RawCompanionSignal) {
+        if self.companion_signals.len() >= MAX_COMPANION_SIGNALS {
+            self.companion_signals.pop_front();
+        }
+        self.companion_signals.push_back(signal);
+    }
+
     /// Returns the number of complete 160-byte Opus slices currently buffered for the active file.
     #[must_use]
     pub fn received_slice_count(&self) -> u32 {
@@ -563,6 +611,7 @@ impl TransportSession {
         self.session_key = None;
         self.device_recording_active = false;
         self.pending_realtime_subscribe = false;
+        self.companion_signals.clear();
         self.reset_active_transfer();
         self.connection_phase = ConnectionPhaseTag::Disconnected;
     }
@@ -745,6 +794,13 @@ impl TransportSession {
                 .push(DeviceCommands::list_files_with_end_time(0));
             outcome.transfer_updated = true;
         }
+        let signal_fid = file_id
+            .filter(|&id| id > 0)
+            .or_else(|| self.active_file_id.filter(|&id| id > 0));
+        self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+            state: 1,
+            file_id: signal_fid,
+        });
         outcome
     }
 
@@ -773,6 +829,10 @@ impl TransportSession {
                 outcome.transfer_updated = true;
             }
         }
+        self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+            state: 2,
+            file_id: self.active_file_id.filter(|&id| id > 0),
+        });
         outcome
     }
 
@@ -1159,6 +1219,7 @@ impl TransportSession {
                 (0x01, 0x01) => {
                     let info = DeviceInfoModel::parse_packet(&pkt.raw);
                     let is_rec = info.recording();
+                    let rec_state = info.recording_status;
                     self.device_recording_active = is_rec;
                     if is_rec {
                         if !self.active_is_realtime || self.active_file_id.is_none() {
@@ -1176,6 +1237,12 @@ impl TransportSession {
                                 outcome.transfer_updated = true;
                             }
                         }
+                    }
+                    if rec_state <= 2 {
+                        self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+                            state: rec_state,
+                            file_id: self.active_file_id.filter(|&id| id > 0),
+                        });
                     }
                     self.telemetry = Some(info);
                     if self.ecdh_private_key.is_some() && self.session_key.is_none() {
@@ -1254,6 +1321,14 @@ impl TransportSession {
                                     .push(DeviceCommands::list_files_with_end_time(0));
                             }
                             outcome.transfer_updated = true;
+                        }
+                        if state <= 2 {
+                            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+                                state,
+                                file_id: (fid > 0)
+                                    .then_some(fid)
+                                    .or_else(|| self.active_file_id.filter(|&id| id > 0)),
+                            });
                         }
                     }
                 }
@@ -1368,6 +1443,14 @@ impl TransportSession {
                             }
                             outcome.transfer_updated = true;
                         }
+                        if state <= 2 {
+                            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+                                state,
+                                file_id: (fid > 0)
+                                    .then_some(fid)
+                                    .or_else(|| self.active_file_id.filter(|&id| id > 0)),
+                            });
+                        }
                     } else if pkt.payload.len() == 1 {
                         let state = pkt.payload[0];
                         if state == 1 {
@@ -1408,6 +1491,12 @@ impl TransportSession {
                                     .push(DeviceCommands::list_files_with_end_time(0));
                             }
                             outcome.transfer_updated = true;
+                        }
+                        if state <= 2 {
+                            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+                                state,
+                                file_id: self.active_file_id.filter(|&id| id > 0),
+                            });
                         }
                     }
                 }
@@ -1556,12 +1645,25 @@ impl TransportSession {
                         .zip(self.active_nonce.as_ref())
                         .and_then(|(fk, n)| AesCtrStreamDecrypt::new(fk, n));
                     let min_seq = self.received_slice_count();
-                    let batch =
-                        TransportSliceProcessor::unpack_frame_from(&pkt.raw, dec.as_ref(), min_seq);
+                    let (batch, slice_sequences) = TransportSliceProcessor::unpack_frame_with_sequences(
+                        &pkt.raw,
+                        dec.as_ref(),
+                        min_seq,
+                    );
                     if batch.slice_count > 0 {
                         let fid = self.active_file_id.unwrap_or(1);
                         self.active_file_id = Some(fid);
                         self.opus_buffer.extend_from_slice(&batch.opus_bytes);
+                        let mut newly_marked_seqs = Vec::new();
+                        for seq in batch.marked_sequences {
+                            let ms = SliceMark::position_ms(seq);
+                            if !self.marks_ms.contains(&ms) {
+                                self.marks_ms.push(ms);
+                                outcome.new_marks_ms.push(ms);
+                                newly_marked_seqs.push(seq);
+                            }
+                        }
+                        self.marks_ms.sort_unstable();
                         if self.live_decoder_16k.is_none() {
                             if let Some(factory) =
                                 self.decoder_factory.or_else(default_opus_decoder_factory)
@@ -1569,37 +1671,65 @@ impl TransportSession {
                                 self.live_decoder_16k = factory(ASR_SAMPLE_RATE);
                             }
                         }
-                        if let Some(live_dec) = self.live_decoder_16k.as_mut() {
-                            let start_len = outcome.live_pcm16_16khz.len();
-                            for frame in batch.opus_bytes.as_chunks::<OPUS_FRAME_BYTES>().0 {
+                        let start_len = outcome.live_pcm16_16khz.len();
+                        let mut companion_batch = Vec::new();
+                        for (frame_idx, frame) in
+                            batch.opus_bytes.as_chunks::<OPUS_FRAME_BYTES>().0.iter().enumerate()
+                        {
+                            let slice_seq = slice_sequences
+                                .get(frame_idx)
+                                .copied()
+                                .unwrap_or_else(|| min_seq.saturating_add(frame_idx as u32));
+                            if self.active_is_realtime && newly_marked_seqs.contains(&slice_seq) {
+                                companion_batch.push(RawCompanionSignal::FrontDoubleTap {
+                                    file_id: fid,
+                                    slice_seq,
+                                    offset_ms: SliceMark::position_ms(slice_seq),
+                                });
+                            }
+                            if let Some(live_dec) = self.live_decoder_16k.as_mut() {
+                                let frame_start = outcome.live_pcm16_16khz.len();
                                 let _ = OpusWave::decode_frame_into(
                                     live_dec.as_mut(),
                                     frame,
                                     &mut outcome.live_pcm16_16khz,
                                 );
-                            }
-                            if outcome.live_pcm16_16khz.len() > start_len {
-                                self.live_pcm16_16khz
-                                    .extend_from_slice(&outcome.live_pcm16_16khz[start_len..]);
-                                if self.active_is_realtime {
-                                    self.capture_events.push_back(CaptureEvent::Audio {
-                                        file_id: fid,
-                                        pcm16: outcome.live_pcm16_16khz[start_len..].to_vec(),
-                                    });
+                                if self.active_is_realtime
+                                    && outcome.live_pcm16_16khz.len() > frame_start
+                                {
+                                    let samples: Vec<i16> = outcome.live_pcm16_16khz[frame_start..]
+                                        .as_chunks::<2>()
+                                        .0
+                                        .iter()
+                                        .copied()
+                                        .map(i16::from_le_bytes)
+                                        .collect();
+                                    if !samples.is_empty() {
+                                        companion_batch.push(RawCompanionSignal::LivePcm16 {
+                                            file_id: fid,
+                                            slice_seq,
+                                            samples,
+                                        });
+                                    }
                                 }
+                            }
+                        }
+                        for signal in companion_batch {
+                            self.push_companion_signal(signal);
+                        }
+                        if outcome.live_pcm16_16khz.len() > start_len {
+                            self.live_pcm16_16khz
+                                .extend_from_slice(&outcome.live_pcm16_16khz[start_len..]);
+                            if self.active_is_realtime {
+                                self.capture_events.push_back(CaptureEvent::Audio {
+                                    file_id: fid,
+                                    pcm16: outcome.live_pcm16_16khz[start_len..].to_vec(),
+                                });
                             }
                         }
                         let new_received = self
                             .received_slice_count()
                             .saturating_mul(SLICE_RECORD_BYTES as u32);
-                        for seq in batch.marked_sequences {
-                            let ms = SliceMark::position_ms(seq);
-                            if !self.marks_ms.contains(&ms) {
-                                self.marks_ms.push(ms);
-                                outcome.new_marks_ms.push(ms);
-                            }
-                        }
-                        self.marks_ms.sort_unstable();
                         if self.active_is_realtime {
                             let drain = if self.is_realtime_quiet_draining() {
                                 Some(0)
@@ -2531,5 +2661,86 @@ mod tests {
             Vec::from(session.take_capture_events()),
             vec![CaptureEvent::Finished { file_id: 7001 }]
         );
+    }
+
+    #[test]
+    fn companion_signals_emit_recording_states_and_double_tap_before_slice_pcm() {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let sk = [0x61u8; 32];
+        let fk = [0x62u8; 32];
+        let fn_iv = [0x63u8; 16];
+        session.set_session_key(sk);
+
+        let _ = session.start_realtime_recording(Some(8801), 1_775_000_000_000);
+        assert_eq!(
+            session.take_companion_signals(),
+            vec![RawCompanionSignal::RecordingStateChanged {
+                state: 1,
+                file_id: Some(8801),
+            }]
+        );
+
+        let head = build_test_head_frame(&sk, 8801, UNFINISHED_FILE_SIZE, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_775_000_000);
+
+        let dec = AesCtrStreamDecrypt::new(&fk, &fn_iv).unwrap();
+        let mut payload = Vec::with_capacity(3 * SLICE_RECORD_BYTES);
+        for seq in 0..3u32 {
+            payload.extend_from_slice(&seq.to_le_bytes());
+            payload.push(if seq == 1 { 0x01 } else { 0x00 });
+            let mut opus = [0u8; OPUS_FRAME_BYTES];
+            opus[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+                .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+            dec.decrypt_contiguous_in_place(&mut opus, seq);
+            payload.extend_from_slice(&opus);
+            payload.push(0);
+        }
+        let slices_rx = TransportSession::build_rx_frame(0x1A, 0x08, &payload);
+        let outcome = session.ingest_ble_chunk(&slices_rx, 1_775_000_001);
+        assert_eq!(outcome.new_marks_ms, vec![20]);
+        assert_eq!(outcome.live_pcm16_16khz.len(), 3 * 320 * 2);
+
+        let signals = session.take_companion_signals();
+        assert_eq!(signals.len(), 4);
+        assert!(matches!(
+            &signals[0],
+            RawCompanionSignal::LivePcm16 { file_id: 8801, slice_seq: 0, samples } if samples.len() == 320
+        ));
+        assert_eq!(
+            signals[1],
+            RawCompanionSignal::FrontDoubleTap {
+                file_id: 8801,
+                slice_seq: 1,
+                offset_ms: 20,
+            }
+        );
+        assert!(matches!(
+            &signals[2],
+            RawCompanionSignal::LivePcm16 { file_id: 8801, slice_seq: 1, samples } if samples.len() == 320
+        ));
+        assert!(matches!(
+            &signals[3],
+            RawCompanionSignal::LivePcm16 { file_id: 8801, slice_seq: 2, samples } if samples.len() == 320
+        ));
+
+        let _ = session.stop_realtime_recording();
+        assert_eq!(
+            session.take_companion_signals(),
+            vec![RawCompanionSignal::RecordingStateChanged {
+                state: 2,
+                file_id: Some(8801),
+            }]
+        );
+
+        let rx_state_zero = TransportSession::build_rx_frame(0x18, 0x82, &[0x00]);
+        let _ = session.ingest_ble_chunk(&rx_state_zero, 1_775_000_002);
+        session.on_disconnected();
+        assert!(session.take_companion_signals().is_empty());
+
+        let _ = session.begin_offline_pull(8802, 1_000);
+        let offline_head = build_test_head_frame(&sk, 8802, 3 * 166, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&offline_head, 1_775_000_003);
+        let _ = session.ingest_ble_chunk(&slices_rx, 1_775_000_004);
+        assert!(session.take_companion_signals().is_empty());
     }
 }

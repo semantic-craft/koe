@@ -101,7 +101,8 @@ pub use minutes::{
     validate_calculation_grounding, validate_minutes_citations, validate_minutes_grounding,
     MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState, MinutesValidationError,
 };
-pub use session::CustodyReceipt;
+pub use product::CompanionRoutingMode;
+pub use session::{CustodyReceipt, RawCompanionSignal};
 pub use wifi::{
     normalize_wifi_chunk, WifiBatchPhase, WifiBatchProgress, WifiEndpoint, WIFI_DEFAULT_WS_PORT,
     WIFI_KEEPALIVE_INTERVAL_MS, WIFI_KEEPALIVE_PAYLOAD, WIFI_UDP_PORT, WIFI_WS_FINISH_TEXT,

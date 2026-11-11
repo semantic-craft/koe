@@ -33,9 +33,25 @@ impl KoeRuntime {
         while let Some(event) = self.device.captures.front().cloned() {
             match event {
                 CaptureEvent::Started { file_id } => {
+                    if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+                        || self.companion.standby_stream_owned
+                        || self.is_standby_file(file_id)
+                    {
+                        self.mark_standby_scratch_file(file_id)?;
+                        self.device.captures.pop_front();
+                        continue;
+                    }
                     let _ = self.ensure_capture(file_id, now)?;
                 }
                 CaptureEvent::Audio { file_id, pcm16 } => {
+                    if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+                        || self.companion.standby_stream_owned
+                        || self.is_standby_file(file_id)
+                    {
+                        self.mark_standby_scratch_file(file_id)?;
+                        self.device.captures.pop_front();
+                        continue;
+                    }
                     let id = self.ensure_capture(file_id, now)?;
                     self.ensure_live_stream(&id)?;
                     let capture = self
@@ -58,6 +74,16 @@ impl KoeRuntime {
                     }
                 }
                 CaptureEvent::Finished { file_id } => {
+                    if self.is_standby_file(file_id)
+                        || (self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+                            && !self.captures.active.contains_key(&file_id))
+                        || (self.companion.standby_stream_owned
+                            && !self.captures.active.contains_key(&file_id))
+                    {
+                        self.captures.active.remove(&file_id);
+                        self.device.captures.pop_front();
+                        continue;
+                    }
                     let id = self.captures.active.remove(&file_id);
                     if let Some(capture) = id
                         .as_ref()
