@@ -9,8 +9,13 @@ public enum KoeSelfCheckRunner {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
         guard store.handle != 0, store.snapshot.records.isEmpty else { return fail("initial workspace") }
-        store.send("create_note", ["title": "Architecture review", "text": "Keep recording ownership in Rust. The native host renders snapshots."])
-        guard let first = store.snapshot.detail, let segment = first.segments.first else { return fail("create note") }
+        store.send("create_note", [
+            "title": "Architecture review",
+            "text": "Keep recording ownership in Rust. The native host renders snapshots.\nVerify speaker merge and reversible inline edits."
+        ])
+        guard let first = store.snapshot.detail, first.segments.count == 2 else { return fail("create note") }
+        let segment = first.segments[0]
+        let secondSegment = first.segments[1]
         store.send("create_task", ["recordId": first.id, "segmentId": segment.id])
         guard let task = store.snapshot.tasks.first else { return fail("create task") }
         store.send("review_item", ["itemId": task.id, "decision": "accept"])
@@ -18,6 +23,26 @@ public enum KoeSelfCheckRunner {
         guard let second = store.snapshot.detail, store.snapshot.records.count == 2 else { return fail("record isolation") }
         store.send("select_record", ["recordId": first.id])
         guard store.snapshot.detail?.segments == first.segments else { return fail("select record") }
+        store.send("set_segment_speaker", ["recordId": first.id, "segmentId": segment.id, "speaker": "发言人 1："])
+        store.send("set_segment_speaker", ["recordId": first.id, "segmentId": secondSegment.id, "speaker": "林工"])
+        guard store.snapshot.detail?.speakers.first?.name == "发言人 1",
+              store.snapshot.detail?.speakers.count == 2 else { return fail("set segment speaker") }
+        store.send("edit_segment_text", [
+            "recordId": first.id,
+            "segmentId": segment.id,
+            "text": "Keep recording ownership strictly in Rust. The native host renders snapshots."
+        ])
+        guard let editedSeg = store.snapshot.detail?.segments.first(where: { $0.id == segment.id }),
+              editedSeg.isEdited == true,
+              editedSeg.originalText == segment.text else { return fail("edit segment text") }
+        store.send("rename_speaker", ["recordId": first.id, "fromSpeaker": "发言人 1", "toSpeaker": "林工"])
+        guard store.snapshot.detail?.speakers == [
+            SpeakerSummarySnapshot(name: "林工", segmentCount: 2, firstSegmentId: segment.id)
+        ] else { return fail("rename speaker merge") }
+        store.send("edit_segment_text", ["recordId": first.id, "segmentId": segment.id, "text": segment.text])
+        guard let revertedSeg = store.snapshot.detail?.segments.first(where: { $0.id == segment.id }),
+              revertedSeg.isEdited == false,
+              revertedSeg.originalText == nil else { return fail("revert segment text") }
         store.send("ask", ["question": "recording ownership", "scope": "record", "recordId": first.id])
         guard let answer = store.snapshot.ask.messages.last,
               answer.role == "assistant", !answer.sources.isEmpty,

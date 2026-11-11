@@ -38,6 +38,7 @@ impl ProductWorkspace {
                 record.origin,
                 record.analysis,
                 record.content_revision,
+                record.minutes_revision,
                 record.highlighted_segments,
                 record.final_keys,
                 record.completed_request,

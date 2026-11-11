@@ -133,12 +133,12 @@ impl KoeRuntime {
                         segment.end_ms,
                         segment.provider.as_deref().unwrap_or("recovered"),
                     )?;
-                    workspace.name_speaker(
+                    workspace.import_segment_speaker(
                         &SourceRef {
                             record_id: id.clone(),
                             segment_id,
                         },
-                        segment.speaker,
+                        segment.speaker.as_deref(),
                     )?;
                 }
                 let duration = workspace

@@ -149,12 +149,12 @@ impl KoeRuntime {
                         segment.end_ms.unwrap_or(segment.start_ms),
                         "flutter-import",
                     )?;
-                    workspace.name_speaker(
+                    workspace.import_segment_speaker(
                         &SourceRef {
                             record_id: record.id.clone(),
                             segment_id: id,
                         },
-                        segment.speaker,
+                        segment.speaker.as_deref(),
                     )?;
                 }
             }

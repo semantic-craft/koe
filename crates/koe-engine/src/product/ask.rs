@@ -2,6 +2,19 @@ use super::*;
 use crate::context::{
     cited_labels, AskRole, AskScope, AskStatus, AskStepOutcome, SourceLine, SourcePointer,
 };
+use crate::domain::UtteranceSegment;
+
+fn ask_source_text(segment: &UtteranceSegment) -> String {
+    match segment
+        .speaker
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(spk) => format!("{spk}：{}", segment.text),
+        None => segment.text.clone(),
+    }
+}
 
 impl ProductWorkspace {
     /// Current durable conversation, including original source pointers.
@@ -50,19 +63,16 @@ impl ProductWorkspace {
             .enumerate()
             .map(|(index, evidence)| {
                 let record = &self.records[&evidence.source.record_id];
+                let seg = record.aggregate.spine.get(evidence.source.segment_id);
                 SourceLine {
                     label: format!("S{}", index + 1),
                     title: evidence.title.clone(),
-                    text: evidence.quote.clone(),
+                    text: seg.map_or_else(|| evidence.quote.clone(), ask_source_text),
                     source: SourcePointer {
                         recording_key: evidence.source.record_id.clone(),
                         path: None,
                         start_ms: evidence.start_ms,
-                        end_ms: record
-                            .aggregate
-                            .spine
-                            .get(evidence.source.segment_id)
-                            .map(|s| s.end_ms),
+                        end_ms: seg.map(|s| s.end_ms),
                         line: Some(evidence.source.segment_id.zero_based_index()),
                     },
                     at_epoch_sec: if record.aggregate.created_at_epoch_sec == 0 {
@@ -112,7 +122,11 @@ impl ProductWorkspace {
             let evidence: Result<Vec<_>, _> = plan
                 .candidate_sources
                 .iter()
-                .map(|line| self.resolve_live_source(&source_ref(line)?))
+                .map(|line| {
+                    let mut ev = self.resolve_live_source(&source_ref(line)?)?;
+                    ev.quote.clone_from(&line.text);
+                    Ok(ev)
+                })
                 .collect();
             let request = AskRequest {
                 operation: self.operation(),
@@ -221,8 +235,13 @@ impl ProductWorkspace {
             {
                 return Err(ProductError::InvalidEvidence);
             }
-            let current = self.resolve_live_source(&evidence.source)?;
-            if current.quote != evidence.quote {
+            self.resolve_live_source(&evidence.source)?;
+            let segment = self.records[&evidence.source.record_id]
+                .aggregate
+                .spine
+                .get(evidence.source.segment_id)
+                .ok_or(ProductError::InvalidSource)?;
+            if ask_source_text(segment) != evidence.quote {
                 return Err(ProductError::StaleRequest);
             }
         }

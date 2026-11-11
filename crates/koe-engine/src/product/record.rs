@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::{MeetingMinutes, RecordingLifecyclePhase};
-use crate::minutes::validate_minutes_grounding;
+use crate::minutes::{validate_minutes_citations, validate_minutes_grounding};
 
 impl ProductWorkspace {
     /// Updates factual duration and marks after a capture has been safely persisted.
@@ -23,24 +23,6 @@ impl ProductWorkspace {
         Ok(())
     }
 
-    /// Restores or names a speaker on one original segment without changing its text.
-    pub fn name_speaker(
-        &mut self,
-        source: &SourceRef,
-        speaker: Option<String>,
-    ) -> Result<(), ProductError> {
-        self.resolve_live_source(source)?;
-        let record = self
-            .records
-            .get_mut(&source.record_id)
-            .ok_or(ProductError::UnknownRecord)?;
-        record
-            .aggregate
-            .spine
-            .set_speaker(source.segment_id, speaker);
-        self.changed();
-        Ok(())
-    }
     /// Registers factual recording metadata without replacing an existing record's content.
     pub fn insert_record(
         &mut self,
@@ -75,6 +57,7 @@ impl ProductWorkspace {
                 origin,
                 analysis: AnalysisState::Idle,
                 content_revision: 0,
+                minutes_revision: None,
                 highlighted_segments: BTreeSet::new(),
                 capture_lanes: Vec::new(),
                 retention: RecordRetention::Active,
@@ -308,6 +291,7 @@ impl ProductWorkspace {
             )
             .collect();
         record.aggregate.minutes = Some(minutes);
+        record.minutes_revision = Some(key.input_revision);
         record.aggregate.visual_cards.clear();
         record.aggregate.phase = RecordingLifecyclePhase::Ready;
         record.analysis = AnalysisState::Ready {
@@ -365,6 +349,7 @@ impl ProductRecord {
     fn content_changed(&mut self) {
         self.content_revision = self.content_revision.saturating_add(1);
         self.aggregate.minutes = None;
+        self.minutes_revision = None;
         self.aggregate.visual_cards.clear();
         if let AnalysisState::Pending {
             key,
@@ -402,6 +387,7 @@ impl ProductRecord {
         origin: RecordOrigin,
         analysis: AnalysisState,
         content_revision: u64,
+        minutes_revision: Option<u64>,
         highlighted_segments: BTreeSet<SegmentId>,
         final_keys: BTreeMap<String, SegmentId>,
         completed_request: Option<RequestKey>,
@@ -410,6 +396,7 @@ impl ProductRecord {
         let title = nonempty(&title)?;
         if aggregate.recording_id != aggregate.spine.session_id()
             || content_revision < aggregate.spine.len() as u64
+            || aggregate.minutes.is_some() != minutes_revision.is_some()
         {
             return Err(ProductError::InvalidEvidence);
         }
@@ -425,9 +412,16 @@ impl ProductRecord {
         {
             return Err(ProductError::InvalidSource);
         }
-        if let Some(minutes) = &aggregate.minutes {
-            validate_minutes_grounding(minutes, &aggregate.spine)
-                .map_err(|_| ProductError::InvalidEvidence)?;
+        if let (Some(minutes), Some(min_rev)) = (&aggregate.minutes, minutes_revision) {
+            if min_rev == 0 || min_rev > content_revision || aggregate.spine.is_empty() {
+                return Err(ProductError::InvalidEvidence);
+            }
+            let valid = if min_rev == content_revision {
+                validate_minutes_grounding(minutes, &aggregate.spine)
+            } else {
+                validate_minutes_citations(minutes, &aggregate.spine)
+            };
+            valid.map_err(|_| ProductError::InvalidEvidence)?;
         }
         let request = match &analysis {
             AnalysisState::Pending { key, .. }
@@ -447,7 +441,7 @@ impl ProductRecord {
             return Err(ProductError::InvalidEvidence);
         }
         if let AnalysisState::Ready { input_revision } = analysis {
-            if input_revision != content_revision || aggregate.minutes.is_none() {
+            if minutes_revision != Some(input_revision) || input_revision > content_revision {
                 return Err(ProductError::InvalidEvidence);
             }
         }
@@ -457,6 +451,7 @@ impl ProductRecord {
             origin,
             analysis,
             content_revision,
+            minutes_revision,
             highlighted_segments,
             capture_lanes: Vec::new(),
             retention: RecordRetention::Active,

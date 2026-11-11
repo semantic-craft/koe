@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use koe_engine::context::{AskMessage, AskRole, AskSession, AskStatus, SourceLine, SourcePointer};
 use koe_engine::domain::{RecordingAggregate, RecordingLifecyclePhase, SegmentId, SummaryFormat};
-use koe_engine::minutes::{encode_meeting_minutes_json, parse_meeting_minutes_json};
+use koe_engine::minutes::{encode_meeting_minutes_json, parse_persisted_meeting_minutes_json};
 use koe_engine::product::*;
 use serde::{Deserialize, Serialize};
 
@@ -127,6 +127,8 @@ struct RecordDto {
     created_at: u64,
     duration_ms: u64,
     content_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minutes_revision: Option<u64>,
     segments: Vec<SegmentDto>,
     minutes: Option<String>,
     bookmarks: Vec<u64>,
@@ -207,6 +209,8 @@ impl From<CaptureLaneDto> for CaptureLaneRecord {
 struct SegmentDto {
     id: u32,
     text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_text: Option<String>,
     start_ms: u64,
     end_ms: u64,
     language: String,
@@ -465,6 +469,7 @@ impl RecordDto {
             created_at: a.created_at_epoch_sec,
             duration_ms: a.duration_ms,
             content_revision: record.content_revision,
+            minutes_revision: record.minutes_revision(),
             segments: a
                 .spine
                 .segments()
@@ -472,6 +477,7 @@ impl RecordDto {
                 .map(|s| SegmentDto {
                     id: s.id.ordinal(),
                     text: s.text.clone(),
+                    original_text: s.original_text.clone(),
                     start_ms: s.start_ms,
                     end_ms: s.end_ms,
                     language: s.source_language.clone(),
@@ -530,7 +536,12 @@ impl RecordDto {
                     segment.provider,
                 )
                 .ok_or_else(|| invalid("empty transcript segment"))?;
-            if let Some(speaker) = segment.speaker {
+            if let Some(orig) = segment.original_text {
+                if !a.spine.restore_original_text(id, orig) {
+                    return Err(invalid("invalid segment original_text"));
+                }
+            }
+            if let Some(speaker) = segment.speaker.as_deref().and_then(sanitize_speaker_lossy) {
                 a.spine.set_speaker(id, Some(speaker));
             }
             if let Some(translation) = segment.translation {
@@ -541,13 +552,33 @@ impl RecordDto {
                 );
             }
         }
-        a.minutes = self
-            .minutes
-            .map(|raw| {
-                parse_meeting_minutes_json(&raw, &a.spine)
-                    .map_err(|e| invalid(format!("invalid minutes: {e:?}")))
-            })
-            .transpose()?;
+        let analysis = self.analysis.into_analysis()?;
+        let minutes_revision = match self.minutes {
+            Some(raw) => {
+                let rev = self.minutes_revision.unwrap_or(match &analysis {
+                    AnalysisState::Ready { input_revision } => *input_revision,
+                    _ => self.content_revision,
+                });
+                if rev == 0 || rev > self.content_revision {
+                    return Err(invalid("invalid minutes_revision"));
+                }
+                a.minutes = Some(
+                    parse_persisted_meeting_minutes_json(
+                        &raw,
+                        &a.spine,
+                        rev == self.content_revision,
+                    )
+                    .map_err(|e| invalid(format!("invalid minutes: {e:?}")))?,
+                );
+                Some(rev)
+            }
+            None => {
+                if self.minutes_revision.is_some() {
+                    return Err(invalid("orphan minutes_revision"));
+                }
+                None
+            }
+        };
         a.coarse_place = self.coarse_place;
         a.selected_format = SummaryFormat::parse(&self.selected_format)
             .ok_or_else(|| invalid("invalid summary format"))?;
@@ -557,7 +588,6 @@ impl RecordDto {
             }
             a.add_bookmark(timestamp);
         }
-        let analysis = self.analysis.into_analysis()?;
         a.phase = match analysis {
             AnalysisState::Pending { .. } => RecordingLifecyclePhase::Transcribing,
             AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. } => {
@@ -587,6 +617,7 @@ impl RecordDto {
             origin,
             analysis,
             self.content_revision,
+            minutes_revision,
             highlighted_segments,
             final_keys,
             self.completed_request.map(KeyDto::into_key),

@@ -27,6 +27,7 @@ mod projection;
 mod provider_settings;
 use provider_settings::ProviderSettings;
 mod restore;
+mod transcript_edit;
 mod trash;
 
 use command::{Command, Location, Page, Playback};
@@ -384,6 +385,21 @@ impl KoeRuntime {
                 let source = source_ref(&record_id, &segment_id)?;
                 self.commit(|w| w.add_highlight(source))?;
             }
+            Command::EditSegmentText {
+                record_id,
+                segment_id,
+                text,
+            } => self.edit_segment_text(&record_id, &segment_id, &text)?,
+            Command::SetSegmentSpeaker {
+                record_id,
+                segment_id,
+                speaker,
+            } => self.set_segment_speaker(&record_id, &segment_id, speaker.as_deref())?,
+            Command::RenameSpeaker {
+                record_id,
+                from_speaker,
+                to_speaker,
+            } => self.rename_speaker(&record_id, &from_speaker, &to_speaker)?,
             Command::Ask {
                 question,
                 scope,

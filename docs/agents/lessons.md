@@ -309,3 +309,10 @@
 - 修复，(1) `scripts/install-macos.sh` 抽离 `write_info_plist()`，移除 `CFBundleIconName`（仅保留 `CFBundleIconFile = AppIcon`），构建时校验 `verify-app-icon.swift`、写入 `.metadata_never_index` 且不再复制 `Contents/Resources/AppIcon.png`；(2) 在 `scripts/cleanup_app_registrations.py` 统一收敛五种路径保护关系（含禁止 `..` 与软链越界、APFS 大小写及 Unicode NFD 归一化等价）、`libproc` `proc_pidpath` 进程拦截与 `renamex_np(RENAME_SWAP)` 同卷单系统调用原子互换及异常回滚；(3) 互换后执行 `lsregister -f "$TARGET"` 并在正式目录安装时清理 `com.apple.dock.iconcache*`，在 `verify-ui-principles.py` 剥离注释并解析内嵌 `Info.plist` 固守静态门禁。
 - 验证点，`python3 scripts/test_install_macos.py`、`python3 scripts/test_cleanup_app_registrations.py` 与 `python3 scripts/verify-ui-principles.py --mode all` 通过；正式安装退出进程后查 `lsregister -dump` 确认 `/Applications/Koe.app` 的 `icon flags` 为 `relative-icon-path (0x1)` 且 `build/` 下无残留注册，重启 Dock 后在未运行态截图核对 Koe 与相邻应用圆角边界一致。
 - Seen 1x（2026-11-11）。
+
+### 原文修订与说话人合并不可用子串替换改写旧纪要，且磁盘重开须区分引用完备性与新稿数字防幻觉校验
+
+- 出处，2026-11-11 Slice R2（#637）三模型对抗审查（`/interrogate`）发现两处重启损坏隐患：(1) 磁盘编解码若继续对已过期的历史纪要调用 `parse_meeting_minutes_json_for_spine` 逐句比对数字和薪资，用户一旦修改转写数字就会在下次 `ProductStore::open` 时拒绝打开整个工作区；(2) 批量合并说话人时若对旧纪要执行全局子串替换 `MeetingMinutes::replace_speaker_name`，不仅会把短标签（如 `"1"`）误替换进正文百分比和日期（`"100%"` 变成 `"张工00%"`），还会把接近上限的 `overview` 撑破 20,000 字符解析上限导致重启打不开。
+- 修复，(1) 在 `minutes.rs` 拆分 `parse_persisted_meeting_minutes_json`（仅校验 `S1..Sn` 引用存在性与结构完备性）供持久化重开使用，新生成的模型返回仍走严格数字归属校验；(2) `ProductWorkspace::rename_speaker` 保持历史 `MeetingMinutes` 原文不变，通过 `minutes_revision < content_revision` 派生 `MinutesFreshness::Stale` 提示用户重算，并在运行时立即回收已被编辑超越的在途摘要槽位。
+- 验证点，`cargo test -p koe-engine --test product_transcript_edit`、`cargo test -p koe-client-services --test product_store` 与 `cargo test -p koe-runtime --test transcript_edit` 覆盖改数字后重开、短标签 `"1"` 改名长名字后重开及摘要生成中改句立即重算，均先红后绿。
+- Seen 1x（2026-11-11）。

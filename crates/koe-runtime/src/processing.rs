@@ -56,12 +56,45 @@ impl KoeRuntime {
         }
     }
 
+    fn is_stale_summary(&self, work: &PendingWork) -> bool {
+        let PendingWork::Summary(key) = work else {
+            return false;
+        };
+        self.workspace().record(&key.record_id).is_none_or(|record| {
+            !record.is_live()
+                || record.content_revision != key.input_revision
+                || !matches!(
+                    &record.analysis,
+                    AnalysisState::Pending {
+                        key: cur,
+                        stage: AnalysisStage::Summarizing,
+                    } if cur == key
+                )
+        })
+    }
+
+    pub(super) fn reclaim_stale_summaries(&mut self) -> Result<(), String> {
+        if self.pending.is_empty() || !self.pending.values().all(|w| self.is_stale_summary(w)) {
+            return Ok(());
+        }
+        self.provider = ProviderWorker::new()?;
+        let pending = &self.pending;
+        self.completed
+            .retain(|event| !pending.contains_key(&event.operation_id));
+        self.pending.clear();
+        Ok(())
+    }
+
     pub(super) fn start_transcription(&mut self, id: &str) -> Result<(), String> {
         self.try_start_transcription(id).map_err(|e| e.message())
     }
     pub(super) fn try_start_transcription(&mut self, id: &str) -> Result<(), StartError> {
         self.ensure_meeting_audio_upload()?;
         self.ensure_configured()?;
+        self.reclaim_stale_summaries()?;
+        if !self.pending.is_empty() {
+            return Err(StartError::Other("已有云端任务正在处理，请稍后重试".into()));
+        }
         let record = self.workspace().record(id).ok_or("记录不存在")?;
         record.ensure_live().map_err(|e| e.to_string())?;
         if matches!(record.analysis, AnalysisState::Pending { .. }) {
@@ -136,6 +169,10 @@ impl KoeRuntime {
             return Err("这条录音还没有文字，请先转写".into());
         }
         let sources = record.aggregate.spine.format_cited_sources().join("\n");
+        self.reclaim_stale_summaries()?;
+        if !self.pending.is_empty() {
+            return Err(StartError::Other("已有云端任务正在处理，请稍后重试".into()));
+        }
         let prompt = build_meeting_minutes_prompt(
             &sources,
             "zh",
@@ -178,6 +215,7 @@ impl KoeRuntime {
                 Ok(())
             });
         }
+        self.reclaim_stale_summaries()?;
         let request = self.commit(|w| w.begin_ask(scope, question, now))?;
         let Some(request) = request else {
             return Ok(());
@@ -368,6 +406,19 @@ impl KoeRuntime {
                     .record(id)
                     .ok_or(StoreError::Domain(ProductError::UnknownRecord))?;
                 record.ensure_live().map_err(StoreError::Domain)?;
+                if record.content_revision != key.input_revision
+                    || !matches!(
+                        &record.analysis,
+                        AnalysisState::Pending {
+                            key: cur,
+                            stage: AnalysisStage::Summarizing,
+                        } if cur == key
+                    )
+                {
+                    return Err(CompletionError::Save(StoreError::Domain(
+                        ProductError::StaleRequest,
+                    )));
+                }
                 let minutes =
                     parse_meeting_minutes_json(&text, &record.aggregate.spine).map_err(|_| {
                         CompletionError::Invalid(

@@ -1888,6 +1888,92 @@ fn validate_point(
     validate_calculation_grounding(&point.claim, &point.citations, spine)
 }
 
+fn validate_citation_slice(
+    claim: &str,
+    citations: &[SegmentId],
+    spine: &UtteranceSpine,
+) -> Result<(), MinutesValidationError> {
+    if citations.is_empty() {
+        return Err(MinutesValidationError::InvalidCitation {
+            claim: claim.to_string(),
+            invalid_id: None,
+        });
+    }
+    for &id in citations {
+        if !spine.validate_citation(id) {
+            return Err(MinutesValidationError::InvalidCitation {
+                claim: claim.to_string(),
+                invalid_id: Some(id),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validates non-empty citation lists and live `S1..Sn` existence across all sections of `minutes`.
+pub fn validate_minutes_citations(
+    minutes: &MeetingMinutes,
+    spine: &UtteranceSpine,
+) -> Result<(), MinutesValidationError> {
+    for topic in &minutes.topics {
+        if !topic.citations.is_empty() {
+            validate_citation_slice(&topic.title, &topic.citations, spine)?;
+        }
+        for point in &topic.points {
+            validate_citation_slice(&point.claim, &point.citations, spine)?;
+        }
+        if let Some(fb) = &topic.fishbone {
+            for cause in &fb.causes {
+                let combined = format!("{} {}", cause.category, cause.description);
+                validate_citation_slice(&combined, &cause.citations, spine)?;
+            }
+        }
+    }
+    for d in &minutes.decisions {
+        validate_citation_slice(&d.claim, &d.citations, spine)?;
+    }
+    for a in &minutes.actions {
+        validate_citation_slice(&a.claim, &a.citations, spine)?;
+    }
+    for q in &minutes.questions {
+        validate_citation_slice(&q.claim, &q.citations, spine)?;
+    }
+    for fb in &minutes.fishbones {
+        for cause in &fb.causes {
+            let combined = format!("{} {}", cause.category, cause.description);
+            validate_citation_slice(&combined, &cause.citations, spine)?;
+        }
+    }
+    for term in &minutes.terms {
+        for spelling in &term.heard {
+            let trimmed = spelling.trim();
+            if trimmed.is_empty() || trimmed.chars().count() > 20_000 {
+                return Err(MinutesValidationError::InvalidJson(
+                    "empty or oversized term.heard item".to_string(),
+                ));
+            }
+        }
+        let combined = format!("{} {}", term.term, term.definition);
+        validate_citation_slice(&combined, &term.citations, spine)?;
+    }
+    for section in &minutes.custom_sections {
+        for point in &section.points {
+            validate_citation_slice(&point.claim, &point.citations, spine)?;
+        }
+    }
+    Ok(())
+}
+
+/// Parses persisted [`MeetingMinutes`] JSON against `spine`, enforcing full lexical grounding
+/// when `require_lexical_grounding` is `true` and citation totality when `false`.
+pub fn parse_persisted_meeting_minutes_json(
+    raw: &str,
+    spine: &UtteranceSpine,
+    require_lexical_grounding: bool,
+) -> Result<MeetingMinutes, MinutesValidationError> {
+    parse_meeting_minutes_json_inner(raw, spine, None, require_lexical_grounding)
+}
+
 /// Parses and validates a raw LLM JSON response into [`MeetingMinutes`] against `spine`,
 /// enforcing all schema, citation, `heard`, and calculation grounding rules from `MeetingMinutes.parse`.
 pub fn parse_meeting_minutes_json(
@@ -1903,6 +1989,15 @@ pub fn parse_meeting_minutes_json_with_allowed(
     raw: &str,
     spine: &UtteranceSpine,
     allowed_node: Option<(&str, &BTreeSet<SegmentId>)>,
+) -> Result<MeetingMinutes, MinutesValidationError> {
+    parse_meeting_minutes_json_inner(raw, spine, allowed_node, true)
+}
+
+fn parse_meeting_minutes_json_inner(
+    raw: &str,
+    spine: &UtteranceSpine,
+    allowed_node: Option<(&str, &BTreeSet<SegmentId>)>,
+    require_lexical_grounding: bool,
 ) -> Result<MeetingMinutes, MinutesValidationError> {
     let extracted = extract_json_object(raw);
     let val = JsonValue::parse(extracted).map_err(MinutesValidationError::InvalidJson)?;
@@ -2253,14 +2348,16 @@ pub fn parse_meeting_minutes_json_with_allowed(
                                     "empty or oversized term.heard item".to_string(),
                                 ));
                             }
-                            let grounded = citations.iter().any(|&cid| {
-                                spine.get(cid).is_some_and(|seg| seg.text.contains(ht))
-                            });
-                            if !grounded {
-                                return Err(MinutesValidationError::UngroundedHeardVariant {
-                                    term: name,
-                                    heard: ht.to_string(),
+                            if require_lexical_grounding {
+                                let grounded = citations.iter().any(|&cid| {
+                                    spine.get(cid).is_some_and(|seg| seg.text.contains(ht))
                                 });
+                                if !grounded {
+                                    return Err(MinutesValidationError::UngroundedHeardVariant {
+                                        term: name,
+                                        heard: ht.to_string(),
+                                    });
+                                }
                             }
                             if seen_h.insert(ht.to_string()) {
                                 heard.push(ht.to_string());
@@ -2294,7 +2391,11 @@ pub fn parse_meeting_minutes_json_with_allowed(
         review_items,
     };
 
-    validate_minutes_grounding(&minutes, spine)?;
+    if require_lexical_grounding {
+        validate_minutes_grounding(&minutes, spine)?;
+    } else {
+        validate_minutes_citations(&minutes, spine)?;
+    }
     Ok(minutes)
 }
 

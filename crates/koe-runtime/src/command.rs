@@ -158,6 +158,22 @@ pub(crate) enum Command {
         record_id: String,
         segment_id: String,
     },
+    EditSegmentText {
+        record_id: String,
+        segment_id: String,
+        text: String,
+    },
+    SetSegmentSpeaker {
+        record_id: String,
+        segment_id: String,
+        #[serde(default)]
+        speaker: Option<String>,
+    },
+    RenameSpeaker {
+        record_id: String,
+        from_speaker: String,
+        to_speaker: String,
+    },
     Ask {
         question: String,
         scope: String,

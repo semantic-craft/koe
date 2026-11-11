@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use koe_client_base::hash::sha256_hex;
-use koe_engine::session::{TransferPhaseTag, TransferRuntimeState};
 
 use super::*;
 
@@ -15,53 +14,8 @@ pub(super) struct UndoTrashBanner {
 
 impl KoeRuntime {
     pub(super) fn ensure_record_deletable(&self, id: &str) -> Result<(), String> {
-        if self.microphone.as_ref().is_some_and(|m| m.owns_id(id)) {
-            return Err("录音仍在进行或等待保存，完成后才能删除".into());
-        }
-        let in_captures = self.captures.active.values().any(|rid| rid == id)
-            || self
-                .captures
-                .records_by_file_id
-                .values()
-                .any(|rid| rid == id)
-            || self.captures.sessions.contains_key(id)
-            || self.captures.targets.iter().flatten().any(|rid| rid == id);
-        if in_captures {
-            return Err("这条录音仍在取回或处理中，请等待完成后再删除".into());
-        }
-        let bean_file_id = self
-            .workspace()
-            .record(id)
-            .filter(|r| r.origin == RecordOrigin::Bean && r.aggregate.file_id > 0)
-            .map(|r| r.aggregate.file_id);
-        if let Some(fid) = bean_file_id {
-            let session = &self.device.session;
-            let transfer_busy = session.active_file_id == Some(fid)
-                || matches!(
-                    session.runtime_state,
-                    TransferRuntimeState::PullingOffline { file_id, .. }
-                        | TransferRuntimeState::Suspended { file_id, .. }
-                        | TransferRuntimeState::StreamingRealtime { file_id, .. }
-                        if file_id == fid
-                )
-                || (matches!(
-                    session.transfer.phase,
-                    TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
-                ) && session.transfer.file_id == fid);
-            let capture_busy = self.captures.active.contains_key(&fid)
-                || self.captures.records_by_file_id.contains_key(&fid);
-            let finalized_busy = self.device.finalized.iter().any(|r| r.entry.id == fid);
-            if transfer_busy || capture_busy || finalized_busy {
-                return Err("这条录音正在同步或录制中，请等待完成后再删除".into());
-            }
-        }
-        if self.device.finalized.iter().any(|r| {
-            id.starts_with(&format!("bean-{}-", r.entry.id)) && {
-                let digest = sha256_hex(&r.ogg_opus_bytes);
-                format!("bean-{}-{}", r.entry.id, &digest[..16]) == id
-            }
-        }) {
-            return Err("这条录音正在保存落盘，请稍候再试".into());
+        if let Some(prefix) = self.record_custody_busy_reason(id) {
+            return Err(format!("{prefix}删除"));
         }
         let ask_cites_id = |op: Option<u64>| -> bool {
             self.workspace().pending_ask().is_some_and(|req| {
@@ -229,6 +183,7 @@ impl KoeRuntime {
     }
 
     pub(super) fn handle_trash_record(&mut self, record_id: &str, now: u64) -> Result<(), String> {
+        let _ = self.reclaim_stale_summaries();
         self.ensure_record_deletable(record_id)?;
         let now_ms = now.max(1).saturating_mul(1000);
         let title = self.commit(|w| {
@@ -255,6 +210,7 @@ impl KoeRuntime {
     }
 
     pub(super) fn handle_purge_record(&mut self, record_id: &str) -> Result<(), String> {
+        let _ = self.reclaim_stale_summaries();
         self.ensure_record_deletable(record_id)?;
         let receipt = self.commit(|w| w.purge_record(record_id))?;
         self.detach_records_from_session(&receipt.purged_record_ids);
@@ -267,6 +223,7 @@ impl KoeRuntime {
     }
 
     pub(super) fn handle_empty_trash(&mut self) -> Result<(), String> {
+        let _ = self.reclaim_stale_summaries();
         let trashed_ids: Vec<String> = self
             .workspace()
             .records()

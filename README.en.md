@@ -23,7 +23,7 @@ The product starts on macOS. **Today reviews the day, recording details preserve
 3. **Review tasks and memories.** Generated candidates wait for review. Accept, dismiss, edit, or restore them; task completion and memory decisions persist locally.
 4. **Follow the source.** Minutes, tasks, memories, and answers retain recording and utterance references. Open a source and return to the conversation. Audio records support playback and seeking; records export to Markdown.
 
-Today gathers the day's records, pending decisions, and next actions, with All and Archived filters. All Records holds the complete library. Each record owns its transcript, minutes, highlights, and processing state, and can be archive-locked or moved to the 30-day Trash with an undo bar, restore, and permanent purge after metadata commit. Questions can target one record or the whole library.
+Today gathers the day's records, pending decisions, and next actions, with All and Archived filters. All Records holds the complete library. Each record owns its transcript, minutes, highlights, and processing state, supports inline segment editing with original ASR text provenance, speaker reassignment and batch merge with stale-minutes notice, and can be archive-locked or moved to the 30-day Trash with an undo bar, restore, and permanent purge after metadata commit. Questions can target one record or the whole library.
 
 Without cloud configuration, text notes, browsing, review, playback, and local retrieval remain available. Ask Koe labels retrieved original passages accordingly. Speech recognition and generated minutes require a configured provider.
 
