@@ -21,7 +21,10 @@ struct RecordDetailView: View {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 24) {
                                 switch tab {
-                                case "transcript": transcript(detail)
+                                case "transcript":
+                                    TranscriptDetailView(detail: detail, store: store) { segmentId in
+                                        proxy.scrollTo(segmentId, anchor: .center)
+                                    }
                                 case "highlights": highlights(detail)
                                 default: summary(detail)
                                 }
@@ -102,6 +105,9 @@ struct RecordDetailView: View {
                 store.send("summarize", ["recordId": detail.id])
             }.disabled(detail.segments.isEmpty || detail.isProcessing)
         } else {
+            if detail.minutesStale {
+                StaleMinutesBanner(recordId: detail.id, isProcessing: detail.isProcessing, store: store)
+            }
             ForEach(Array(detail.summary.enumerated()), id: \.offset) { _, block in
                 VStack(alignment: .leading, spacing: 12) {
                     Text(block.title).font(.system(size: AppFontSizes.md, weight: .semibold))
@@ -109,47 +115,6 @@ struct RecordDetailView: View {
                     ForEach(block.sources) { source in SourceLink(source: source, store: store) }
                 }
             }
-        }
-    }
-    @ViewBuilder private func transcript(_ detail: RecordDetailSnapshot) -> some View {
-        if detail.segments.isEmpty {
-            EmptyState(icon: "text.bubble", title: "还没有文字", detail: detail.audioPath == nil ? "这条记录尚未包含原文。" : "录音已保留，配置转写服务后可以开始转写。")
-            if detail.audioPath != nil {
-                KoeActionButton("转写并整理", isPrimary: true) { store.send("transcribe", ["recordId": detail.id]) }
-                    .disabled(detail.isProcessing)
-            }
-        } else if detail.canRetranscribe {
-            VStack(alignment: .leading, spacing: 8) {
-                KoeActionButton("重新转写完整录音", systemImage: "arrow.clockwise") {
-                    store.send("transcribe", ["recordId": detail.id])
-                }.disabled(detail.isProcessing)
-                Text("保留原记录和来源，在新副本中重新转写完整录音。")
-                    .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-            }
-        }
-        ForEach(detail.segments) { segment in
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Text(segment.timed == false ? "无时码" : TimeLabel.duration(segment.startMs)).monospacedDigit().foregroundStyle(AppColors.accent)
-                    Text(segment.speaker ?? "原文").foregroundStyle(AppColors.textMuted)
-                    Spacer()
-                    Menu {
-                        Button("标记重点") { sourceCommand("add_highlight", detail.id, segment.id) }
-                        Button("设为待办") { sourceCommand("create_task", detail.id, segment.id) }
-                        Button("记住") { sourceCommand("save_memory", detail.id, segment.id) }
-                    } label: { Image(systemName: "ellipsis").frame(width: 26, height: 26) }
-                    .menuStyle(.borderlessButton).frame(width: 28)
-                }.font(.system(size: AppFontSizes.xs))
-                Text(segment.text).font(.system(size: AppFontSizes.sm)).lineSpacing(7).textSelection(.enabled)
-                HStack(spacing: 16) {
-                    Button("标记重点") { sourceCommand("add_highlight", detail.id, segment.id) }
-                    Button("设为待办") { sourceCommand("create_task", detail.id, segment.id) }
-                    Button("记住") { sourceCommand("save_memory", detail.id, segment.id) }
-                }.buttonStyle(.borderless).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-            }
-            .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(store.snapshot.focusSegmentId == segment.id ? AppColors.accentSoft : AppColors.surface1,
-                        in: RoundedRectangle(cornerRadius: 7)).id(segment.id)
         }
     }
     @ViewBuilder private func highlights(_ detail: RecordDetailSnapshot) -> some View {
@@ -200,9 +165,6 @@ struct RecordDetailView: View {
                 }
             }
         }
-    }
-    private func sourceCommand(_ command: String, _ record: String, _ segment: String) {
-        store.send(command, ["recordId": record, "segmentId": segment])
     }
     private func rename(_ id: String) {
         store.send("rename_record", ["recordId": id, "title": titleDraft])

@@ -9,13 +9,52 @@ public struct SourceSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let startMs: UInt64
 }
 
+public struct SpeakerSummarySnapshot: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { name }
+    public let name: String
+    public let segmentCount: Int
+    public let firstSegmentId: String
+
+    public init(name: String, segmentCount: Int, firstSegmentId: String) {
+        self.name = name
+        self.segmentCount = segmentCount
+        self.firstSegmentId = firstSegmentId
+    }
+}
+
 public struct SegmentSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let text: String
+    public let originalText: String?
+    public let isEdited: Bool
     public let startMs: UInt64
     public let endMs: UInt64
     public var timed: Bool? = nil
     public let speaker: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, originalText, isEdited, startMs, endMs, timed, speaker
+    }
+
+    public init(id: String, text: String, originalText: String? = nil, isEdited: Bool = false,
+                startMs: UInt64, endMs: UInt64, timed: Bool? = nil, speaker: String? = nil) {
+        self.id = id; self.text = text; self.originalText = originalText; self.isEdited = isEdited
+        self.startMs = startMs; self.endMs = endMs; self.timed = timed; self.speaker = speaker
+    }
+}
+
+extension SegmentSnapshot {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        text = try c.decode(String.self, forKey: .text)
+        originalText = try c.decodeIfPresent(String.self, forKey: .originalText)
+        isEdited = try c.decodeIfPresent(Bool.self, forKey: .isEdited) ?? false
+        startMs = try c.decode(UInt64.self, forKey: .startMs)
+        endMs = try c.decode(UInt64.self, forKey: .endMs)
+        timed = try c.decodeIfPresent(Bool.self, forKey: .timed)
+        speaker = try c.decodeIfPresent(String.self, forKey: .speaker)
+    }
 }
 
 public typealias KoeColors = AppColors
@@ -72,10 +111,26 @@ public struct RecordDetailSnapshot: Codable, Equatable, Identifiable, Sendable {
     public let audioPath: String?
     public let canRetranscribe: Bool
     public let isProcessing: Bool
+    public let minutesStale: Bool
+    public let canEditTranscript: Bool
+    public let speakers: [SpeakerSummarySnapshot]
 
     private enum CodingKeys: String, CodingKey {
         case id, title, createdAtEpochSec, durationMs, source, status, archived
         case segments, summary, highlights, audioPath, canRetranscribe, isProcessing
+        case minutesStale, canEditTranscript, speakers
+    }
+
+    public init(id: String, title: String, createdAtEpochSec: UInt64, durationMs: UInt64,
+                source: String, status: String, archived: Bool = false, segments: [SegmentSnapshot],
+                summary: [SummarySnapshot], highlights: [SourceSnapshot], audioPath: String? = nil,
+                canRetranscribe: Bool = false, isProcessing: Bool = false, minutesStale: Bool = false,
+                canEditTranscript: Bool = false, speakers: [SpeakerSummarySnapshot] = []) {
+        self.id = id; self.title = title; self.createdAtEpochSec = createdAtEpochSec; self.durationMs = durationMs
+        self.source = source; self.status = status; self.archived = archived; self.segments = segments
+        self.summary = summary; self.highlights = highlights; self.audioPath = audioPath
+        self.canRetranscribe = canRetranscribe; self.isProcessing = isProcessing
+        self.minutesStale = minutesStale; self.canEditTranscript = canEditTranscript; self.speakers = speakers
     }
 }
 
@@ -95,6 +150,9 @@ extension RecordDetailSnapshot {
         audioPath = try c.decodeIfPresent(String.self, forKey: .audioPath)
         canRetranscribe = try c.decode(Bool.self, forKey: .canRetranscribe)
         isProcessing = try c.decode(Bool.self, forKey: .isProcessing)
+        minutesStale = try c.decodeIfPresent(Bool.self, forKey: .minutesStale) ?? false
+        canEditTranscript = try c.decodeIfPresent(Bool.self, forKey: .canEditTranscript) ?? false
+        speakers = try c.decodeIfPresent([SpeakerSummarySnapshot].self, forKey: .speakers) ?? []
     }
 }
 

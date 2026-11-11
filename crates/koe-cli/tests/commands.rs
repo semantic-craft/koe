@@ -297,3 +297,307 @@ fn cli_and_mcp_exclude_trashed_records_and_expire_30_day_trash_on_open() {
     assert_eq!(mcp_search["sources"][0]["recordId"], live_id);
     assert_eq!(responses[3]["result"]["isError"], true);
 }
+
+#[test]
+fn cli_transcript_and_speaker_commands_align_with_mcp_search_and_get_record() {
+    let workspace = Workspace::new();
+    let now_sec = 1_780_000_000u64;
+    let id = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let chat_url = format!("http://{}/chat/completions", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            use std::io::Read;
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let answer = json!({
+                "schemaVersion": 2,
+                "title": "架构评审",
+                "overview": "按70%灰度推进。",
+                "topics": [{"text": "灰度方案", "summary": "按70%灰度推进", "sources": ["S1"]}],
+                "decisions": [],
+                "actions": [],
+                "questions": [],
+                "terms": [],
+                "reviewItems": []
+            })
+            .to_string();
+            let body = json!({"choices": [{"message": {"content": answer}}]}).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let mut runtime = KoeRuntime::open(&workspace.0).unwrap();
+        let created: Value = serde_json::from_str(
+            &runtime.dispatch_json(
+                &json!({
+                    "type": "create_note",
+                    "title": "架构评审",
+                    "text": "西卡达模块按70%灰度推进。\n周五前完成压测验收。"
+                })
+                .to_string(),
+                now_sec,
+            ),
+        )
+        .unwrap();
+        assert!(created["error"].is_null(), "{created}");
+        let id = created["detail"]["id"].as_str().unwrap().to_owned();
+        runtime.dispatch_json(
+            &json!({
+                "type": "configure_provider",
+                "apiKey": "cli-test-key",
+                "model": "qwen-plus",
+                "chatEndpoint": chat_url
+            })
+            .to_string(),
+            now_sec,
+        );
+        runtime.dispatch_json(
+            &json!({"type": "summarize", "recordId": id}).to_string(),
+            now_sec,
+        );
+        for _ in 0..200 {
+            runtime.poll_timers(10, now_sec);
+            if runtime.snapshot(now_sec)["detail"]["status"] == "已整理" {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        server.join().unwrap();
+        assert_eq!(runtime.snapshot(now_sec)["detail"]["status"], "已整理");
+        id
+    };
+
+    let dash_edited = Command::new(env!("CARGO_BIN_EXE_koe"))
+        .arg("--workspace")
+        .arg(&workspace.0)
+        .args([
+            "edit-segment",
+            "--record",
+            &id,
+            "--",
+            "S1",
+            "- 列表项：Cicada 模块按 85% 灰度推进。",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dash_edited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dash_edited.stderr)
+    );
+    let dash_detail: Value = serde_json::from_slice(&dash_edited.stdout).unwrap();
+    assert_eq!(
+        dash_detail["segments"][0]["text"],
+        "- 列表项：Cicada 模块按 85% 灰度推进。"
+    );
+
+    let bad_rename = cli(
+        &workspace.0,
+        &["rename-speaker", "--record", &id, "发言人", "1", "张工"],
+    );
+    assert!(!bad_rename.status.success());
+    let bad_rename_err: Value = serde_json::from_slice(&bad_rename.stderr).unwrap();
+    assert_eq!(
+        bad_rename_err["error"],
+        "用法：koe rename-speaker --record <ID> \"<原说话人>\" \"<新说话人>\""
+    );
+
+    let edited = cli(
+        &workspace.0,
+        &[
+            "edit-segment",
+            "--record",
+            &id,
+            "S1",
+            "Cicada",
+            "模块按",
+            "85%",
+            "灰度推进。",
+        ],
+    );
+    assert!(
+        edited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&edited.stderr)
+    );
+    let edited_detail: Value = serde_json::from_slice(&edited.stdout).unwrap();
+    assert_eq!(
+        edited_detail["segments"][0]["text"],
+        "Cicada 模块按 85% 灰度推进。"
+    );
+    assert_eq!(
+        edited_detail["segments"][0]["originalText"],
+        "西卡达模块按70%灰度推进。"
+    );
+    assert_eq!(edited_detail["segments"][0]["isEdited"], true);
+
+    let set_sp1 = cli(
+        &workspace.0,
+        &["set-speaker", "--record", &id, "S1", "发言人", "1："],
+    );
+    assert!(
+        set_sp1.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set_sp1.stderr)
+    );
+    let sp1_detail: Value = serde_json::from_slice(&set_sp1.stdout).unwrap();
+    assert_eq!(sp1_detail["segments"][0]["speaker"], "发言人 1");
+
+    let set_sp2 = cli(
+        &workspace.0,
+        &["set-speaker", "--record", &id, "S2", "发言人", "2"],
+    );
+    assert!(set_sp2.status.success());
+
+    let clear_sp2 = cli(&workspace.0, &["set-speaker", "--record", &id, "S2"]);
+    assert!(clear_sp2.status.success());
+    let cleared_detail: Value = serde_json::from_slice(&clear_sp2.stdout).unwrap();
+    assert_eq!(cleared_detail["segments"][1]["speaker"], Value::Null);
+
+    assert!(cli(&workspace.0, &["set-speaker", "--record", &id, "S2", "李工"])
+        .status
+        .success());
+    let clear_empty = cli(&workspace.0, &["set-speaker", "--record", &id, "S2", ""]);
+    assert!(clear_empty.status.success());
+    let cleared_empty_detail: Value = serde_json::from_slice(&clear_empty.stdout).unwrap();
+    assert_eq!(cleared_empty_detail["segments"][1]["speaker"], Value::Null);
+
+    assert!(cli(
+        &workspace.0,
+        &["set-speaker", "--record", &id, "S2", "发言人 2"]
+    )
+    .status
+    .success());
+
+    assert!(cli(
+        &workspace.0,
+        &["rename-speaker", "--record", &id, "发言人 1", "张工："]
+    )
+    .status
+    .success());
+    let merged = cli(
+        &workspace.0,
+        &["rename-speaker", "--record", &id, "发言人 2", "张工"],
+    );
+    assert!(
+        merged.status.success(),
+        "{}",
+        String::from_utf8_lossy(&merged.stderr)
+    );
+    let merged_detail: Value = serde_json::from_slice(&merged.stdout).unwrap();
+    assert_eq!(
+        merged_detail["speakers"],
+        json!([{"name": "张工", "segmentCount": 2, "firstSegmentId": "S1"}])
+    );
+
+    {
+        let mut runtime = KoeRuntime::open(&workspace.0).unwrap();
+        let archived: Value = serde_json::from_str(
+            &runtime.dispatch_json(
+                &json!({"type": "set_record_archived", "recordId": id, "archived": true})
+                    .to_string(),
+                now_sec,
+            ),
+        )
+        .unwrap();
+        assert!(archived["error"].is_null(), "{archived}");
+    }
+
+    let blocked = cli(
+        &workspace.0,
+        &["edit-segment", "--record", &id, "S1", "归档状态下不可改"],
+    );
+    assert!(!blocked.status.success());
+    assert!(blocked.stdout.is_empty());
+    let blocked_err: Value = serde_json::from_slice(&blocked.stderr).unwrap();
+    assert!(blocked_err["error"].as_str().unwrap().contains("归档保护"));
+
+    {
+        let mut runtime = KoeRuntime::open(&workspace.0).unwrap();
+        let unarchived: Value = serde_json::from_str(
+            &runtime.dispatch_json(
+                &json!({"type": "set_record_archived", "recordId": id, "archived": false})
+                    .to_string(),
+                now_sec,
+            ),
+        )
+        .unwrap();
+        assert!(unarchived["error"].is_null(), "{unarchived}");
+    }
+
+    let mut process = Command::new(env!("CARGO_BIN_EXE_koe"))
+        .args(["mcp-stdio", "--workspace"])
+        .arg(&workspace.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = process.stdin.take().unwrap();
+    for request in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"query":"张工 Cicada"}}}),
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_record","arguments":{"record_id":id}}}),
+    ] {
+        writeln!(input, "{request}").unwrap();
+    }
+    drop(input);
+    let output = process.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let tool_names: Vec<_> = responses[1]["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tool_names, ["search", "get_record", "ask"]);
+
+    let search_payload: Value = serde_json::from_str(
+        responses[2]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(search_payload["sources"][0]["recordId"], id);
+    assert_eq!(search_payload["sources"][0]["segmentId"], "S1");
+    assert_eq!(
+        search_payload["sources"][0]["quote"],
+        "Cicada 模块按 85% 灰度推进。"
+    );
+
+    let detail_payload: Value = serde_json::from_str(
+        responses[3]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(detail_payload["canEditTranscript"], true);
+    assert_eq!(detail_payload["minutesStale"], true);
+    assert_eq!(detail_payload["status"], "原文已变更待重算");
+    assert_eq!(
+        detail_payload["speakers"],
+        json!([{"name": "张工", "segmentCount": 2, "firstSegmentId": "S1"}])
+    );
+    assert_eq!(
+        detail_payload["segments"][0]["originalText"],
+        "西卡达模块按70%灰度推进。"
+    );
+    assert_eq!(detail_payload["segments"][0]["isEdited"], true);
+}

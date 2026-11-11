@@ -97,9 +97,9 @@ pub use memory_hub::{
     VOICEPRINT_CONFIRM_THRESHOLD, VOICEPRINT_SUGGEST_THRESHOLD,
 };
 pub use minutes::{
-    contains_calculation_phrase, contains_percentage, validate_calculation_grounding,
-    validate_minutes_grounding, MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState,
-    MinutesValidationError,
+    contains_calculation_phrase, contains_percentage, parse_persisted_meeting_minutes_json,
+    validate_calculation_grounding, validate_minutes_citations, validate_minutes_grounding,
+    MinutesEvent, MinutesOutcome, MinutesReducer, MinutesState, MinutesValidationError,
 };
 pub use session::CustodyReceipt;
 pub use wifi::{

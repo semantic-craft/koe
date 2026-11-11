@@ -271,7 +271,34 @@ impl KoeRuntime {
         } else {
             aggregate.duration_ms
         };
-        let segments: Vec<_> = aggregate.spine.segments().iter().map(|s| json!({"id":s.id.to_string(),"text":s.text,"startMs":s.start_ms,"endMs":s.end_ms,"timed":s.end_ms>s.start_ms,"speaker":s.speaker})).collect();
+        let segments: Vec<_> = aggregate
+            .spine
+            .segments()
+            .iter()
+            .map(|s| {
+                json!({
+                    "id": s.id.to_string(),
+                    "text": s.text,
+                    "originalText": s.original_text,
+                    "isEdited": s.is_edited(),
+                    "startMs": s.start_ms,
+                    "endMs": s.end_ms,
+                    "timed": s.end_ms > s.start_ms,
+                    "speaker": s.speaker,
+                })
+            })
+            .collect();
+        let speakers: Vec<_> = record
+            .distinct_speakers()
+            .into_iter()
+            .map(|sp| {
+                json!({
+                    "name": sp.name,
+                    "segmentCount": sp.segment_count,
+                    "firstSegmentId": sp.first_segment_id.to_string(),
+                })
+            })
+            .collect();
         let mut summary = Vec::new();
         for imported in self
             .workspace()
@@ -336,7 +363,8 @@ impl KoeRuntime {
                 AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. }
             );
         json!({"id":aggregate.recording_id,"title":record.title,"createdAtEpochSec":aggregate.created_at_epoch_sec,
-            "durationMs":duration_ms,"source":origin(record.origin),"status":status(record),"archived":record.is_archived(),"segments":segments,
+            "durationMs":duration_ms,"source":origin(record.origin),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
+            "minutesStale":record.is_minutes_stale(),"canEditTranscript":self.can_edit_record(&aggregate.recording_id),
             "captureLanes":capture_lanes,"summary":summary,"highlights":highlights,"audioPath":audio.map(|p|p.to_string_lossy().to_string()),
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})
     }
@@ -386,6 +414,7 @@ fn status(record: &ProductRecord) -> &'static str {
             "采集不完整"
         }
         _ if record.aggregate.spine.is_empty() => "等待转写",
+        _ if record.is_minutes_stale() => "原文已变更待重算",
         _ if record.aggregate.minutes.is_some() => "已整理",
         _ => "已有文字",
     }

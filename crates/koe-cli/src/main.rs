@@ -59,6 +59,15 @@ impl Options {
                     options.command = "benchmark".into();
                     options.safe = true;
                 }
+                "--" => {
+                    if options.command.is_empty() {
+                        if let Some(cmd) = args.next() {
+                            options.command = cmd;
+                        }
+                    }
+                    options.words.extend(args.by_ref());
+                    break;
+                }
                 _ if arg.starts_with('-') => return Err(format!("未知参数：{arg}")),
                 _ if options.command.is_empty() => options.command = arg,
                 _ => options.words.push(arg),
@@ -129,7 +138,8 @@ fn run() -> Result<(), String> {
             protocol::run_benchmark(!options.safe);
             return Ok(());
         }
-        "status" | "doctor" | "search" | "ask" | "mcp-stdio" => {}
+        "status" | "doctor" | "search" | "ask" | "edit-segment" | "set-speaker"
+        | "rename-speaker" | "mcp-stdio" => {}
         other => return Err(format!("未知命令：{other}；运行 koe --help 查看用法")),
     }
     let mut runtime = KoeRuntime::open(options.path()?)?;
@@ -148,6 +158,11 @@ fn run() -> Result<(), String> {
             options.limit,
         )?,
         "ask" => ask(&mut runtime, &options.words.join(" "), &options.scope())?,
+        "edit-segment" => edit_segment(&mut runtime, options.record.as_deref(), &options.words)?,
+        "set-speaker" => set_speaker(&mut runtime, options.record.as_deref(), &options.words)?,
+        "rename-speaker" => {
+            rename_speaker(&mut runtime, options.record.as_deref(), &options.words)?
+        }
         "mcp-stdio" => return mcp::serve(&mut runtime),
         _ => unreachable!(),
     };
@@ -222,6 +237,78 @@ fn get_record(runtime: &mut KoeRuntime, id: &str) -> Result<Value, String> {
     Ok(snapshot["detail"].clone())
 }
 
+fn mutate_record(runtime: &mut KoeRuntime, id: &str, command: Value) -> Result<Value, String> {
+    let snapshot: Value = serde_json::from_str(&runtime.dispatch_json(&command.to_string(), now()))
+        .map_err(|_| "操作返回了无效状态")?;
+    if let Some(error) = snapshot["error"].as_str() {
+        return Err(error.into());
+    }
+    get_record(runtime, id)
+}
+
+fn edit_segment(
+    runtime: &mut KoeRuntime,
+    record_id: Option<&str>,
+    words: &[String],
+) -> Result<Value, String> {
+    let record_id = record_id.ok_or("缺少 --record <ID>")?;
+    let segment_id = words.first().ok_or("缺少片段 ID")?;
+    if words.len() < 2 {
+        return Err("缺少要更新的原文内容".into());
+    }
+    mutate_record(
+        runtime,
+        record_id,
+        json!({
+            "type": "edit_segment_text",
+            "recordId": record_id,
+            "segmentId": segment_id,
+            "text": words[1..].join(" "),
+        }),
+    )
+}
+
+fn set_speaker(
+    runtime: &mut KoeRuntime,
+    record_id: Option<&str>,
+    words: &[String],
+) -> Result<Value, String> {
+    let record_id = record_id.ok_or("缺少 --record <ID>")?;
+    let segment_id = words.first().ok_or("缺少片段 ID")?;
+    let speaker = (words.len() > 1).then(|| words[1..].join(" "));
+    mutate_record(
+        runtime,
+        record_id,
+        json!({
+            "type": "set_segment_speaker",
+            "recordId": record_id,
+            "segmentId": segment_id,
+            "speaker": speaker,
+        }),
+    )
+}
+
+fn rename_speaker(
+    runtime: &mut KoeRuntime,
+    record_id: Option<&str>,
+    words: &[String],
+) -> Result<Value, String> {
+    let record_id = record_id.ok_or("缺少 --record <ID>")?;
+    if words.len() != 2 {
+        return Err("用法：koe rename-speaker --record <ID> \"<原说话人>\" \"<新说话人>\"".into());
+    }
+    mutate_record(
+        runtime,
+        record_id,
+        json!({
+            "type": "rename_speaker",
+            "recordId": record_id,
+            "fromSpeaker": words[0],
+            "toSpeaker": words[1],
+        }),
+    )
+}
+
 fn help() {
-    println!("Koe {}\n\n用法：koe <命令> [参数]\n\n命令：\n  status                  查看与原生应用同源的工作区快照\n  doctor                  查看工作区、设备与模型状态\n  search <内容>           搜索真实记录及来源\n  ask <问题>              查询记录；未配置模型时返回本地来源\n  mcp-stdio               提供 search/get_record/ask 三个 MCP 工具\n  verify-protocol         在内存中验证协议与编解码\n  benchmark [--safe]      运行协议和音频封装基准\n  version                 查看版本\n\n参数：\n  --workspace <目录>      工作区（--export-dir 为兼容别名）\n  --record <ID>           限定 search/ask 的记录\n  --limit <1..100>        搜索结果数量\n\n默认工作区：~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace\n工作区被 Koe.app 或其他进程占用时，命令会明确失败。", env!("CARGO_PKG_VERSION"));
+    println!("Koe {}\n\n用法：koe <命令> [参数]\n\n命令：\n  status                  查看与原生应用同源的工作区快照\n  doctor                  查看工作区、设备与模型状态\n  search <内容>           搜索真实记录及来源\n  ask <问题>              查询记录；未配置模型时返回本地来源\n  edit-segment <片段> <词> 修改指定记录的单段原文（需配合 --record）\n  set-speaker <片段> [人]  设置或清空指定片段说话人（需配合 --record）\n  rename-speaker <原> <新> 批量重命名或合并说话人（需配合 --record）\n  mcp-stdio               提供 search/get_record/ask 三个 MCP 工具\n  verify-protocol         在内存中验证协议与编解码\n  benchmark [--safe]      运行协议和音频封装基准\n  version                 查看版本\n\n参数：\n  --workspace <目录>      工作区（--export-dir 为兼容别名）\n  --record <ID>           限定 search/ask 或指定要编辑的记录\n  --limit <1..100>        搜索结果数量\n\n默认工作区：~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace\n工作区被 Koe.app 或其他进程占用时，命令会明确失败。", env!("CARGO_PKG_VERSION"));
 }

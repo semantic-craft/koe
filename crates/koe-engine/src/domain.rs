@@ -118,6 +118,8 @@ pub struct UtteranceSegment {
     pub end_ms: u64,
     /// Canonical UTF-8 source transcript text.
     pub text: String,
+    /// Original finalized ASR text retained when `text` differs from its initial baseline.
+    pub original_text: Option<String>,
     /// Monotonically increasing segment revision (starts at `1`, increments on text edit).
     pub revision: u32,
     /// Whether the ASR provider has finalized this utterance.
@@ -137,6 +139,18 @@ impl UtteranceSegment {
     #[must_use]
     pub const fn duration_ms(&self) -> u64 {
         self.end_ms.saturating_sub(self.start_ms)
+    }
+
+    /// Returns the baseline ASR text prior to manual editing, or `text` when unedited.
+    #[must_use]
+    pub fn asr_text(&self) -> &str {
+        self.original_text.as_deref().unwrap_or(&self.text)
+    }
+
+    /// Returns `true` when `text` differs from its initial ASR baseline.
+    #[must_use]
+    pub const fn is_edited(&self) -> bool {
+        self.original_text.is_some()
     }
 }
 
@@ -256,6 +270,7 @@ impl UtteranceSpine {
             start_ms,
             end_ms: normalized_end,
             text: clean,
+            original_text: None,
             revision: 1,
             is_final: true,
             source_language: source_language.into(),
@@ -301,6 +316,9 @@ impl UtteranceSpine {
                 let mut changed = false;
                 if seg.text != clean {
                     seg.text = clean.to_string();
+                    if seg.original_text.as_deref() == Some(seg.text.as_str()) {
+                        seg.original_text = None;
+                    }
                     seg.revision = seg.revision.saturating_add(1);
                     changed = true;
                 }
@@ -324,6 +342,7 @@ impl UtteranceSpine {
             start_ms: 0,
             end_ms: 0,
             text: clean.to_string(),
+            original_text: None,
             revision: 1,
             is_final: true,
             source_language: source_language.trim().to_string(),
@@ -375,8 +394,10 @@ impl UtteranceSpine {
         Some(id)
     }
 
-    /// Updates the source text of segment `id`, increments both segment and spine revisions,
-    /// clears any existing translation on that segment, and marks the spine stale.
+    /// Updates the source text of segment `id`, latching its initial unedited ASR text into
+    /// `original_text` (or clearing `original_text` when reverted to that original text),
+    /// increments both segment and spine revisions, clears any existing translation on that
+    /// segment, and marks the spine stale.
     pub fn update_segment_text(&mut self, id: SegmentId, new_text: impl Into<String>) -> bool {
         let clean = new_text.into().trim().to_string();
         if clean.is_empty() {
@@ -388,12 +409,29 @@ impl UtteranceSpine {
         if seg.text == clean {
             return false;
         }
+        let orig = seg.original_text.take().unwrap_or_else(|| seg.text.clone());
         seg.text = clean;
+        seg.original_text = (seg.text != orig && !orig.is_empty()).then_some(orig);
         seg.revision = seg.revision.saturating_add(1);
         seg.translation = None;
         seg.target_language = None;
         self.revision = self.revision.saturating_add(1);
         self.stale = true;
+        true
+    }
+
+    /// Restores persisted `original_text` onto segment `id` without advancing revisions,
+    /// self-healing empty or redundant values matching `seg.text` back to `None`.
+    pub fn restore_original_text(&mut self, id: SegmentId, original_text: String) -> bool {
+        let Some(seg) = self.segments.get_mut(id.zero_based_index()) else {
+            return false;
+        };
+        let clean = original_text.trim();
+        if clean.is_empty() || seg.text == clean {
+            seg.original_text = None;
+            return true;
+        }
+        seg.original_text = Some(clean.to_string());
         true
     }
 
@@ -421,6 +459,9 @@ impl UtteranceSpine {
         }
         if text_changed {
             seg.text = clean;
+            if seg.original_text.as_deref() == Some(seg.text.as_str()) {
+                seg.original_text = None;
+            }
             seg.translation = None;
             seg.target_language = None;
         }
@@ -505,16 +546,27 @@ impl UtteranceSpine {
     }
 
     /// Renames every occurrence of `old_speaker` to `new_speaker` across all segments,
-    /// returning the number of segments updated.
+    /// matching colon-suffixed legacy labels and returning the number of segments updated.
     pub fn replace_speaker_name(&mut self, old_speaker: &str, new_speaker: &str) -> usize {
-        let old_trimmed = old_speaker.trim();
-        let new_trimmed = new_speaker.trim();
-        if old_trimmed.is_empty() || new_trimmed.is_empty() || old_trimmed == new_trimmed {
+        fn strip_colons(raw: &str) -> &str {
+            let mut cur = raw.trim();
+            while let Some(stripped) = cur.strip_suffix([':', '：']) {
+                cur = stripped.trim();
+            }
+            cur
+        }
+        let old_key = strip_colons(old_speaker);
+        let new_trimmed = strip_colons(new_speaker);
+        if old_key.is_empty() || new_trimmed.is_empty() {
             return 0;
         }
         let mut updated = 0usize;
         for seg in &mut self.segments {
-            if seg.speaker.as_deref() == Some(old_trimmed) {
+            if seg
+                .speaker
+                .as_deref()
+                .is_some_and(|spk| strip_colons(spk) == old_key && spk != new_trimmed)
+            {
                 seg.speaker = Some(new_trimmed.to_string());
                 seg.revision = seg.revision.saturating_add(1);
                 updated += 1;

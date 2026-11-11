@@ -355,3 +355,241 @@ fn reconcile_audio_directory_unlinks_only_unreferenced_regular_wav_and_opus_file
 
     assert_eq!(reconcile_audio_directory(&dir.0, &retained).unwrap(), 0);
 }
+
+#[test]
+fn edited_segments_stale_minutes_and_legacy_v1_records_round_trip_cleanly() {
+    use koe_engine::minutes::parse_meeting_minutes_json;
+
+    let dir = Directory::new();
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    let s1 = SourceRef {
+        record_id: "m1".into(),
+        segment_id: SegmentId::new(1).unwrap(),
+    };
+    let s2 = SourceRef {
+        record_id: "m1".into(),
+        segment_id: SegmentId::new(2).unwrap(),
+    };
+
+    store
+        .transact(|w| {
+            w.insert_record(
+                "m1".into(),
+                "架构例会".into(),
+                RecordOrigin::Bean,
+                9,
+                1_800_000_100,
+                10_000,
+            )?;
+            w.append_transcript("m1", "西卡达模块按80%灰度上线。", 0, 4_000, "qwen")?;
+            w.append_transcript("m1", "下周复核监控面板。", 4_000, 8_000, "qwen")?;
+            w.set_segment_speaker(&s1, Some("发言人 1："))?;
+            w.set_segment_speaker(&s2, Some("发言人 2："))?;
+            let key = w.begin_analysis("m1", AnalysisStage::Summarizing)?;
+            let mins = parse_meeting_minutes_json(
+                r#"{"schemaVersion":2,"title":"架构例会","overview":"按80%灰度上线","topics":[{"text":"灰度上线","summary":"发言人 1 确认按80%灰度上线","sources":["S1"]}],"decisions":[{"text":"按80%灰度上线","speaker":"发言人 1","sources":["S1"]}],"actions":[{"text":"下周复核监控面板","owner":"发言人 2","sources":["S2"]}],"questions":[],"terms":[{"name":"Cicada","note":"实时双语引擎","heard":["西卡达"],"sources":["S1"]}],"reviewItems":[]}"#,
+                &w.record("m1").unwrap().aggregate.spine,
+            )
+            .unwrap();
+            w.complete_summary(&key, mins)?;
+            w.edit_segment_text(&s1, "Cicada 模块按85%灰度上线。")?;
+            w.rename_speaker("m1", "发言人 1", "张工")?;
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+
+    let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let saved_raw = fs::read_to_string(&json_path).unwrap();
+    let saved_val: serde_json::Value = serde_json::from_str(&saved_raw).unwrap();
+    assert_eq!(
+        saved_val["records"][0]["segments"][0]["original_text"].as_str(),
+        Some("西卡达模块按80%灰度上线。")
+    );
+    assert!(saved_val["records"][0]["segments"][1]
+        .get("original_text")
+        .is_none());
+    assert!(saved_val["records"][0]["minutes_revision"].is_u64());
+
+    let reopened = ProductStore::open(&dir.0).unwrap();
+    let rec = reopened.workspace().record("m1").unwrap();
+    assert!(rec.is_minutes_stale());
+    let seg0 = &rec.aggregate.spine.segments()[0];
+    assert!(seg0.is_edited());
+    assert_eq!(seg0.text, "Cicada 模块按85%灰度上线。");
+    assert_eq!(seg0.asr_text(), "西卡达模块按80%灰度上线。");
+    assert_eq!(seg0.speaker.as_deref(), Some("张工"));
+    assert_eq!(
+        rec.aggregate.minutes.as_ref().unwrap().decisions[0]
+            .speaker
+            .as_deref(),
+        Some("发言人 1")
+    );
+    drop(reopened);
+
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    store
+        .transact(|w| {
+            w.edit_segment_text(&s1, "西卡达模块按80%灰度上线。")?;
+            let key = w.begin_analysis("m1", AnalysisStage::Summarizing)?;
+            let fresh_mins = parse_meeting_minutes_json(
+                r#"{"schemaVersion":2,"title":"架构例会","overview":"按80%灰度上线","topics":[{"text":"灰度上线","summary":"张工确认按80%灰度上线","sources":["S1"]}],"decisions":[{"text":"按80%灰度上线","speaker":"张工","sources":["S1"]}],"actions":[],"questions":[],"terms":[{"name":"Cicada","note":"实时双语引擎","heard":["西卡达"],"sources":["S1"]}],"reviewItems":[]}"#,
+                &w.record("m1").unwrap().aggregate.spine,
+            )
+            .unwrap();
+            w.complete_summary(&key, fresh_mins)?;
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+
+    let fresh_raw = fs::read_to_string(&json_path).unwrap();
+    let mut legacy_val: serde_json::Value = serde_json::from_str(&fresh_raw).unwrap();
+    legacy_val["records"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("minutes_revision");
+    assert!(legacy_val["records"][0]["segments"][0]
+        .get("original_text")
+        .is_none());
+    fs::write(&json_path, serde_json::to_string(&legacy_val).unwrap()).unwrap();
+
+    let legacy_reopened = ProductStore::open(&dir.0).unwrap();
+    let legacy_rec = legacy_reopened.workspace().record("m1").unwrap();
+    assert!(!legacy_rec.is_minutes_stale());
+    assert_eq!(
+        legacy_rec.minutes_revision(),
+        Some(legacy_rec.content_revision)
+    );
+    drop(legacy_reopened);
+
+    let mut redundant_orig: serde_json::Value = serde_json::from_str(&fresh_raw).unwrap();
+    redundant_orig["records"][0]["segments"][0]["text"] = serde_json::Value::String("foo".into());
+    redundant_orig["records"][0]["segments"][0]["original_text"] =
+        serde_json::Value::String("foo ".into());
+    redundant_orig["records"][0]["minutes"] = serde_json::Value::Null;
+    redundant_orig["records"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("minutes_revision");
+    redundant_orig["records"][0]["analysis"] = serde_json::json!({"state": "idle"});
+    redundant_orig["records"][0]["segments"][0]["speaker"] =
+        serde_json::Value::String("发言人 1：".into());
+    redundant_orig["records"][0]["segments"][1]["speaker"] =
+        serde_json::Value::String(format!("{}：\t", "长".repeat(48)));
+    fs::write(&json_path, serde_json::to_string(&redundant_orig).unwrap()).unwrap();
+
+    let mut healed_store = ProductStore::open(&dir.0).unwrap();
+    let healed_seg0 = &healed_store
+        .workspace()
+        .record("m1")
+        .unwrap()
+        .aggregate
+        .spine
+        .segments()[0];
+    assert!(!healed_seg0.is_edited());
+    assert_eq!(healed_seg0.original_text, None);
+    assert_eq!(healed_seg0.speaker.as_deref(), Some("发言人 1"));
+    let healed_seg1 = &healed_store
+        .workspace()
+        .record("m1")
+        .unwrap()
+        .aggregate
+        .spine
+        .segments()[1];
+    assert_eq!(
+        healed_seg1.speaker.as_deref(),
+        Some("长".repeat(MAX_SPEAKER_NAME_CHARS).as_str())
+    );
+    healed_store
+        .transact(|w| w.rename_speaker("m1", "发言人 1：", "张工"))
+        .unwrap();
+    assert_eq!(
+        healed_store
+            .workspace()
+            .record("m1")
+            .unwrap()
+            .aggregate
+            .spine
+            .segments()[0]
+            .speaker
+            .as_deref(),
+        Some("张工")
+    );
+    drop(healed_store);
+
+    let mut orphan_min_rev: serde_json::Value = serde_json::from_str(&fresh_raw).unwrap();
+    orphan_min_rev["records"][0]["minutes"] = serde_json::Value::Null;
+    orphan_min_rev["records"][0]["analysis"] = serde_json::json!({"state": "idle"});
+    fs::write(&json_path, serde_json::to_string(&orphan_min_rev).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn rename_speaker_keeps_near_cap_minutes_immutable_without_corrupting_numbers_or_bricking_open() {
+    let dir = Directory::new();
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    let s1 = SourceRef {
+        record_id: "m-cap".into(),
+        segment_id: koe_engine::domain::SegmentId::new(1).unwrap(),
+    };
+    let padding = "稳".repeat(19_650);
+    let overview = format!("{}{padding}", "100%".repeat(50));
+    assert!(overview.chars().count() > 19_800 && overview.chars().count() < 20_000);
+
+    store
+        .transact(|w| {
+            w.insert_record(
+                "m-cap".into(),
+                "容量与指标评审".into(),
+                RecordOrigin::Bean,
+                12,
+                1_800_000_200,
+                10_000,
+            )?;
+            w.append_transcript("m-cap", "全链路达成 100% 可用率。", 0, 5_000, "qwen")?;
+            w.set_segment_speaker(&s1, Some("1"))?;
+            let key = w.begin_analysis("m-cap", AnalysisStage::Summarizing)?;
+            let raw_mins = serde_json::json!({
+                "schemaVersion": 2,
+                "title": "1 号议题：100% 可用率",
+                "overview": overview,
+                "topics": [{"text": "可用率", "summary": "达成 100% 目标", "sources": ["S1"]}],
+                "decisions": [{"text": "保持 100% 目标", "speaker": "1", "sources": ["S1"]}],
+                "actions": [],
+                "questions": [],
+                "terms": [],
+                "reviewItems": []
+            })
+            .to_string();
+            let mins = koe_engine::minutes::parse_meeting_minutes_json(
+                &raw_mins,
+                &w.record("m-cap").unwrap().aggregate.spine,
+            )
+            .unwrap();
+            w.complete_summary(&key, mins)?;
+            let receipt = w.rename_speaker("m-cap", "1", "Alexandria_Product_Lead")?;
+            assert!(matches!(
+                receipt.minutes_freshness,
+                MinutesFreshness::Stale { .. }
+            ));
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+
+    let reopened = ProductStore::open(&dir.0).unwrap();
+    let rec = reopened.workspace().record("m-cap").unwrap();
+    assert!(rec.is_minutes_stale());
+    assert_eq!(
+        rec.aggregate.spine.segments()[0].speaker.as_deref(),
+        Some("Alexandria_Product_Lead")
+    );
+    let mins = rec.aggregate.minutes.as_ref().unwrap();
+    assert_eq!(mins.overview.matches("100%").count(), 50);
+    assert!(!mins.overview.contains("Alexandria_Product_Lead"));
+    assert_eq!(mins.decisions[0].speaker.as_deref(), Some("1"));
+}

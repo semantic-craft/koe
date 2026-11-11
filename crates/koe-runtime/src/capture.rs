@@ -266,7 +266,11 @@ impl KoeRuntime {
     }
 
     pub(super) fn drive_analysis_queue(&mut self) {
-        if self.is_quitting() || !self.pending.is_empty() || !self.completed.is_empty() || self.settings.key.is_empty() {
+        if self.is_quitting() || self.settings.key.is_empty() {
+            return;
+        }
+        let _ = self.reclaim_stale_summaries();
+        if !self.pending.is_empty() || !self.completed.is_empty() {
             return;
         }
         let summary = !self.auto_summarize.is_empty();

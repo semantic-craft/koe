@@ -261,7 +261,7 @@ fn soft_delete_hides_from_search_and_ask_while_preserving_reviewed_items_for_res
         Err(ProductError::RecordTrashed)
     );
     assert_eq!(
-        ws.name_speaker(&source("rec-a", 1), Some("张工".into())),
+        ws.set_segment_speaker(&source("rec-a", 1), Some("张工")),
         Err(ProductError::RecordTrashed)
     );
     assert_eq!(

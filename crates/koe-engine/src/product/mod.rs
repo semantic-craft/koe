@@ -11,6 +11,11 @@ pub use capture::CaptureLaneRecord;
 mod capture_timeline;
 pub use capture_timeline::{place_capture_span, CaptureSpan};
 mod state;
+mod transcript_edit;
+pub use transcript_edit::{
+    sanitize_speaker_lossy, MinutesFreshness, SpeakerName, SpeakerSummary, TranscriptEditReceipt,
+    MAX_SEGMENT_TEXT_CHARS, MAX_SPEAKER_NAME_CHARS,
+};
 mod trash;
 pub use trash::{PurgeReceipt, RecordRetention, TRASH_RETENTION_MS};
 
@@ -185,6 +190,7 @@ pub struct ProductRecord {
     pub analysis: AnalysisState,
     /// Content revision, preserved across storage reconstruction.
     pub content_revision: u64,
+    pub(super) minutes_revision: Option<u64>,
     /// Explicit highlighted utterances, including text with no audio timestamp.
     pub highlighted_segments: BTreeSet<SegmentId>,
     /// Expected native lanes, including explicitly interrupted or empty lanes.
@@ -222,6 +228,8 @@ pub enum ProductError {
     UnknownItem,
     /// Record or utterance in a source is missing.
     InvalidSource,
+    /// Segment ID does not exist in the addressed recording's spine.
+    SegmentNotFound,
     /// Request belongs to an older attempt or input revision.
     StaleRequest,
     /// An attempt is already pending.
@@ -232,7 +240,7 @@ pub enum ProductError {
     InvalidTransition,
     /// Generated response is not supported by the allowed sources.
     InvalidEvidence,
-    /// Recording is locked by archive protection and cannot be trashed or purged.
+    /// Recording is locked by archive protection and cannot have its transcript/speakers edited or be trashed/purged.
     RecordArchived,
     /// Recording is in the trash and must be restored before live operations.
     RecordTrashed,
@@ -244,12 +252,13 @@ impl fmt::Display for ProductError {
             Self::UnknownRecord => "记录不存在",
             Self::UnknownItem => "待办或记忆不存在",
             Self::InvalidSource => "来源不存在",
+            Self::SegmentNotFound => "原文片段不存在",
             Self::StaleRequest => "内容或请求已变化，旧结果未写入",
             Self::Busy => "请求仍在处理中",
             Self::InvalidInput(message) => message,
             Self::InvalidTransition => "当前状态不支持此操作",
             Self::InvalidEvidence => "回答包含缺失、无效或已变化的来源",
-            Self::RecordArchived => "记录已归档，请先取消归档再移入回收站",
+            Self::RecordArchived => "记录已开启归档保护，请先取消归档后再修改或移入回收站",
             Self::RecordTrashed => "记录已在回收站中，恢复后才能继续操作",
         };
         f.write_str(message)
@@ -491,7 +500,7 @@ impl ProductWorkspace {
         Ok(())
     }
 
-    /// Searches real utterance text with the existing Chinese/Latin BM25 implementation.
+    /// Searches real utterance text and speaker labels with the existing Chinese/Latin BM25 implementation.
     pub fn search(
         &self,
         scope: &SearchScope,
@@ -500,7 +509,18 @@ impl ProductWorkspace {
     ) -> Result<Vec<Evidence>, ProductError> {
         self.validate_scope(scope)?;
         let evidence = self.corpus(scope);
-        let texts: Vec<_> = evidence.iter().map(|item| item.quote.as_str()).collect();
+        let docs: Vec<String> = evidence
+            .iter()
+            .map(|item| {
+                self.records
+                    .get(&item.source.record_id)
+                    .and_then(|r| r.aggregate.spine.get(item.source.segment_id))
+                    .and_then(|seg| seg.speaker.as_deref())
+                    .filter(|spk| !spk.is_empty())
+                    .map_or_else(|| item.quote.clone(), |spk| format!("{spk} {}", item.quote))
+            })
+            .collect();
+        let texts: Vec<_> = docs.iter().map(String::as_str).collect();
         let index = ContextSearchIndex::build(&texts);
         Ok(index
             .search(query, limit, ScoringMode::default())
