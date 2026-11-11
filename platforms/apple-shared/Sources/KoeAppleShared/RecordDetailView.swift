@@ -40,7 +40,10 @@ struct RecordDetailView: View {
                     inspector(detail).padding(20).frame(width: 250)
                 }
             }
-            .onChange(of: detail.id) { _, _ in tab = store.snapshot.focusSegmentId == nil ? "summary" : "transcript" }
+            .onChange(of: detail.id) { _, _ in
+                renaming = false
+                tab = store.snapshot.focusSegmentId == nil ? "summary" : "transcript"
+            }
         } else {
             EmptyState(icon: "doc.text", title: "请选择一条记录", detail: "从所有记录或今天的时间线打开。")
         }
@@ -71,6 +74,7 @@ struct RecordDetailView: View {
                         store.send("trash_record", ["recordId": detail.id])
                     }
                     .disabled(detail.archived || detail.isProcessing)
+                    .help(detail.archived ? "已开启归档保护，取消归档后可移入回收站" : "")
                 }
             }
             HStack(spacing: 12) {

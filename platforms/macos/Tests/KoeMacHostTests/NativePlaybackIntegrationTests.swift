@@ -122,6 +122,33 @@ final class NativePlaybackIntegrationTests: XCTestCase {
         }
     }
 
+    func testTrashingPlayingRecordStopsPlayerSynchronouslyOnSnapshotChange() async throws {
+        try await fixture { store in
+            let player = AVPlayer()
+            let playback = NativePlayback(player: player)
+            let delegate = KoeAppDelegate(playback: playback)
+            delegate.store = store
+            defer {
+                delegate.store = nil
+                playback.stop()
+            }
+
+            let recordId = try XCTUnwrap(store.snapshot.selectedRecordId)
+            store.send("playback", ["isPlaying": true])
+            try await self.until(
+                "player item ready and playing",
+                { player.currentItem?.status == .readyToPlay && player.rate > 0 },
+                tick: playback.tick
+            )
+
+            store.send("trash_record", ["recordId": recordId])
+            XCTAssertNil(store.snapshot.playback.recordId)
+            XCTAssertFalse(store.snapshot.playback.isPlaying)
+            XCTAssertNil(player.currentItem)
+            XCTAssertEqual(player.rate, 0)
+        }
+    }
+
 }
 
 @MainActor

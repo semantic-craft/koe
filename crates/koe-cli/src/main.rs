@@ -1,4 +1,3 @@
-//! Native-workspace queries and MCP stdio backed by the same Rust runtime as Koe.app.
 #![forbid(unsafe_code)]
 
 mod mcp;

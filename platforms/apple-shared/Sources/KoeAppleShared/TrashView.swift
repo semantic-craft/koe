@@ -33,6 +33,14 @@ struct TrashView: View {
             }
             .padding(30)
         }
+        .onChange(of: store.snapshot.trashRecords) { _, items in
+            if let target = purgeTarget, !items.contains(where: { $0.id == target.id }) {
+                purgeTarget = nil
+            }
+            if items.isEmpty {
+                confirmEmptyTrash = false
+            }
+        }
         .confirmationDialog(
             "彻底删除这条记录？",
             isPresented: Binding(

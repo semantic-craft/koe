@@ -56,8 +56,10 @@ impl KoeRuntime {
             }
         }
         if self.device.finalized.iter().any(|r| {
-            let digest = sha256_hex(&r.ogg_opus_bytes);
-            format!("bean-{}-{}", r.entry.id, &digest[..16]) == id
+            id.starts_with(&format!("bean-{}-", r.entry.id)) && {
+                let digest = sha256_hex(&r.ogg_opus_bytes);
+                format!("bean-{}-{}", r.entry.id, &digest[..16]) == id
+            }
         }) {
             return Err("这条录音正在保存落盘，请稍候再试".into());
         }
@@ -115,6 +117,26 @@ impl KoeRuntime {
         files
     }
 
+    pub(super) fn clear_undo_trash_for(&mut self, id: &str) {
+        if self
+            .undo_trash
+            .as_ref()
+            .is_some_and(|u| u.record_id == id)
+        {
+            self.undo_trash = None;
+        }
+    }
+
+    pub(super) fn clear_undo_trash_in(&mut self, ids: &BTreeSet<String>) {
+        if self
+            .undo_trash
+            .as_ref()
+            .is_some_and(|u| ids.contains(&u.record_id))
+        {
+            self.undo_trash = None;
+        }
+    }
+
     pub(super) fn detach_records_from_session(&mut self, removed_ids: &BTreeSet<String>) {
         if removed_ids.is_empty() {
             return;
@@ -123,12 +145,14 @@ impl KoeRuntime {
             self.auto_transcribe.remove(id);
             self.auto_summarize.remove(id);
         }
-        let purged_bean_ids = self.workspace().purged_bean_file_ids().clone();
-        if !purged_bean_ids.is_empty() {
-            self.device
-                .session
-                .custody_receipts
-                .retain(|fid, _| !purged_bean_ids.contains(fid));
+        {
+            let purged_bean_ids = self.store.workspace().purged_bean_file_ids();
+            if !purged_bean_ids.is_empty() {
+                self.device
+                    .session
+                    .custody_receipts
+                    .retain(|fid, _| !purged_bean_ids.contains(fid));
+            }
         }
         if self
             .playback
@@ -158,7 +182,9 @@ impl KoeRuntime {
                 loc.record = None;
                 loc.segment = None;
             }
-            cleaned_back.push(loc);
+            if cleaned_back.last() != Some(&loc) {
+                cleaned_back.push(loc);
+            }
         }
         self.back = cleaned_back;
 
@@ -179,6 +205,9 @@ impl KoeRuntime {
                 self.location.record = None;
                 self.location.segment = None;
             }
+        }
+        while self.back.last() == Some(&self.location) {
+            self.back.pop();
         }
     }
 
@@ -219,13 +248,7 @@ impl KoeRuntime {
 
     pub(super) fn handle_restore_record(&mut self, record_id: &str) -> Result<(), String> {
         self.commit(|w| w.restore_record(record_id))?;
-        if self
-            .undo_trash
-            .as_ref()
-            .is_some_and(|u| u.record_id == record_id)
-        {
-            self.undo_trash = None;
-        }
+        self.clear_undo_trash_for(record_id);
         self.error = None;
         self.notice = Some("已从回收站恢复记录".into());
         Ok(())
@@ -235,14 +258,10 @@ impl KoeRuntime {
         self.ensure_record_deletable(record_id)?;
         let receipt = self.commit(|w| w.purge_record(record_id))?;
         self.detach_records_from_session(&receipt.purged_record_ids);
-        if self
-            .undo_trash
-            .as_ref()
-            .is_some_and(|u| receipt.purged_record_ids.contains(&u.record_id))
-        {
-            self.undo_trash = None;
+        self.clear_undo_trash_in(&receipt.purged_record_ids);
+        if let Err(e) = self.try_reconcile_orphan_audio() {
+            return Err(format!("记录已移除，音频文件稍后自动重试清理：{e}"));
         }
-        self.try_reconcile_orphan_audio()?;
         self.notice = Some("记录已永久删除".into());
         Ok(())
     }
@@ -260,14 +279,10 @@ impl KoeRuntime {
         }
         let receipt = self.commit(|w| w.empty_trash())?;
         self.detach_records_from_session(&receipt.purged_record_ids);
-        if self
-            .undo_trash
-            .as_ref()
-            .is_some_and(|u| receipt.purged_record_ids.contains(&u.record_id))
-        {
-            self.undo_trash = None;
+        self.clear_undo_trash_in(&receipt.purged_record_ids);
+        if let Err(e) = self.try_reconcile_orphan_audio() {
+            return Err(format!("记录已移除，音频文件稍后自动重试清理：{e}"));
         }
-        self.try_reconcile_orphan_audio()?;
         if !receipt.purged_record_ids.is_empty() {
             self.notice = Some("回收站已清空".into());
         }
@@ -320,9 +335,6 @@ impl KoeRuntime {
                 for id in &deletable_expired {
                     let receipt = w.purge_record(id)?;
                     merged.purged_record_ids.extend(receipt.purged_record_ids);
-                    merged
-                        .unlinked_audio_filenames
-                        .extend(receipt.unlinked_audio_filenames);
                 }
                 Ok(merged)
             })
@@ -338,14 +350,10 @@ impl KoeRuntime {
             return false;
         }
         self.detach_records_from_session(&receipt.purged_record_ids);
-        if self
-            .undo_trash
-            .as_ref()
-            .is_some_and(|u| receipt.purged_record_ids.contains(&u.record_id))
-        {
-            self.undo_trash = None;
+        self.clear_undo_trash_in(&receipt.purged_record_ids);
+        if let Err(e) = self.try_reconcile_orphan_audio() {
+            self.error = Some(format!("记录已移除，音频文件稍后自动重试清理：{e}"));
         }
-        self.reconcile_orphan_audio();
         true
     }
 

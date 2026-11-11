@@ -224,7 +224,7 @@ pub(crate) enum Command {
     DeviceStop,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Location {
     pub page: Page,
     pub record: Option<String>,

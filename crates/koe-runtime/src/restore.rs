@@ -109,13 +109,8 @@ impl KoeRuntime {
                 }
                 w.finish_capture(&id, entry.duration_ms, &entry.marks_ms)
             })?;
-            if was_trashed
-                && self
-                    .undo_trash
-                    .as_ref()
-                    .is_some_and(|u| u.record_id == id)
-            {
-                self.undo_trash = None;
+            if was_trashed {
+                self.clear_undo_trash_for(&id);
             }
             self.device.session.confirm_disk_custody(receipt);
             self.device.finalized.remove(0);

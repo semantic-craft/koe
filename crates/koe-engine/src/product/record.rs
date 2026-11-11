@@ -42,7 +42,6 @@ impl ProductWorkspace {
         Ok(())
     }
     /// Registers factual recording metadata without replacing an existing record's content.
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_record(
         &mut self,
         id: String,
@@ -191,7 +190,6 @@ impl ProductWorkspace {
     }
 
     /// Commits a provider final to its fixed recording/attempt, deduplicating delivery IDs.
-    #[allow(clippy::too_many_arguments)]
     pub fn accept_transcript(
         &mut self,
         key: &RequestKey,
@@ -309,7 +307,6 @@ impl ProductWorkspace {
                     .map(|p| (ItemKind::Memory, p.claim.clone(), p.citations.clone(), None)),
             )
             .collect();
-        // Keep only validated structured output; presentation must not invent additional cards.
         record.aggregate.minutes = Some(minutes);
         record.aggregate.visual_cards.clear();
         record.aggregate.phase = RecordingLifecyclePhase::Ready;

@@ -1162,3 +1162,171 @@ fn late_cloud_completion_after_policy_cancel_and_purge_converges_quit_to_ready()
     assert_eq!(quit_snap["lifecycle"]["quitPhase"], "ready");
     assert_eq!(quit_snap["lifecycle"]["keepAwake"], false);
 }
+
+#[test]
+fn trashing_record_after_returning_to_today_leaves_no_noop_back_stack_entries() {
+    let dir = Sandbox::new();
+    let mut runtime = dir.open();
+
+    let rec_a = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "会议 A", "text": "第一条讨论内容。"}),
+        NOW,
+    )["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let at_today = dispatch_ok(&mut runtime, json!({"type": "back"}), NOW);
+    assert_eq!(at_today["section"], "today");
+    assert_eq!(at_today["canGoBack"], false);
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_record", "recordId": rec_a}),
+        NOW,
+    );
+    let back_to_today = dispatch_ok(
+        &mut runtime,
+        json!({"type": "navigate", "section": "today"}),
+        NOW,
+    );
+    assert_eq!(back_to_today["section"], "today");
+    assert_eq!(back_to_today["canGoBack"], true);
+
+    let trashed = dispatch_ok(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": rec_a}),
+        NOW,
+    );
+    assert_eq!(trashed["section"], "today");
+    assert!(trashed["selectedRecordId"].is_null());
+    assert_eq!(trashed["canGoBack"], false);
+
+    let rec_b = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "会议 B", "text": "第二条讨论内容。"}),
+        NOW + 1,
+    )["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    dispatch_ok(&mut runtime, json!({"type": "back"}), NOW + 1);
+    let rec_c = dispatch_ok(
+        &mut runtime,
+        json!({"type": "create_note", "title": "会议 C", "text": "第三条讨论内容。"}),
+        NOW + 2,
+    )["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    dispatch_ok(&mut runtime, json!({"type": "back"}), NOW + 2);
+    assert_eq!(runtime.snapshot(NOW + 2)["canGoBack"], false);
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_record", "recordId": rec_b}),
+        NOW + 2,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "navigate", "section": "today"}),
+        NOW + 2,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_record", "recordId": rec_c}),
+        NOW + 2,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "navigate", "section": "today"}),
+        NOW + 2,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": rec_b}),
+        NOW + 2,
+    );
+    let after_both = dispatch_ok(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": rec_c}),
+        NOW + 2,
+    );
+    assert_eq!(after_both["section"], "today");
+    assert_eq!(after_both["canGoBack"], false);
+}
+
+#[cfg(unix)]
+#[test]
+fn purge_with_unwritable_audio_dir_commits_metadata_reports_deferred_cleanup_and_reopen_unlinks() {
+    use std::os::unix::fs::PermissionsExt;
+
+    struct DirPermGuard(PathBuf);
+    impl Drop for DirPermGuard {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    let dir = Sandbox::new();
+    let wav_file = dir.external("deferred-unlink.wav");
+    write_wav(&wav_file, 19);
+
+    let mut runtime = dir.open();
+    let rec_id = dispatch_ok(
+        &mut runtime,
+        json!({"type": "import_file", "path": wav_file}),
+        NOW,
+    )["selectedRecordId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let owned_wav = recording_assets::audio_path(&dir.0, &rec_id).unwrap();
+    assert!(owned_wav.exists());
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "trash_record", "recordId": rec_id}),
+        NOW + 1,
+    );
+
+    let audio_dir = dir.0.join("audio");
+    let _guard = DirPermGuard(audio_dir.clone());
+    fs::set_permissions(&audio_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = audio_dir.join(".root-probe");
+    if fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .is_ok()
+    {
+        let _ = fs::remove_file(&probe);
+        return;
+    }
+
+    let gen_before = runtime.generation();
+    let purged = dispatch_raw(
+        &mut runtime,
+        json!({"type": "purge_record", "recordId": rec_id}),
+        NOW + 2,
+    );
+    assert!(runtime.generation() > gen_before);
+    assert_eq!(purged["records"], json!([]));
+    assert_eq!(purged["trashRecords"], json!([]));
+    assert!(owned_wav.exists());
+    let err_msg = purged["error"]
+        .as_str()
+        .expect("post-commit unlink failure must surface in snapshot error");
+    assert!(
+        err_msg.contains("记录已移除，音频文件稍后自动重试清理"),
+        "unexpected error message: {err_msg}"
+    );
+
+    fs::set_permissions(&audio_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    drop(runtime);
+
+    let reopened = dir.open();
+    assert_eq!(reopened.snapshot(NOW + 3)["records"], json!([]));
+    assert_eq!(reopened.snapshot(NOW + 3)["trashRecords"], json!([]));
+    assert!(!owned_wav.exists());
+}

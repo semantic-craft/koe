@@ -55,12 +55,12 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     public var store: HostSessionStore? {
         didSet {
             oldValue?.onSnapshotChanged = nil
-            store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
-            if let store { applyLifecycle(store.snapshot) }
             bluetoothBridge.store = store
             files.store = store
             playback.store = store
             capture.store = store
+            store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
+            if let store { applyLifecycle(store.snapshot) }
             if store != nil {
                 bluetoothBridge.reconnectKnownIfAvailable()
             }
@@ -68,8 +68,17 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     }
     public let bluetoothBridge = BluetoothBridge()
     let files = NativeFileActions()
-    private let playback = NativePlayback()
+    private let playback: NativePlayback
     private let capture = NativeCapture()
+
+    public override convenience init() {
+        self.init(playback: NativePlayback())
+    }
+
+    init(playback: NativePlayback) {
+        self.playback = playback
+        super.init()
+    }
     private lazy var lifecycle = NativeQuitCoordinator(
         send: { [weak self] in self?.store?.send($0) },
         reply: { [weak self] allowed in
@@ -127,6 +136,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         return true
     }
     private func applyLifecycle(_ snapshot: HostSnapshot) {
+        playback.tick()
         capture.apply()
         let current = store?.snapshot.lifecycle ?? snapshot.lifecycle
         lifecycle.apply(current)

@@ -15,6 +15,7 @@ final class NativePlayback {
     private var failedRequest: UInt64?
     private var loadGeneration: UInt64 = 0
     private var loadTask: Task<Void, Never>?
+    private var isSyncingPlayback = false
 
     init(player: AVPlayer = AVPlayer(), makeItem: @escaping (PlaybackAssetSnapshot) async throws -> AVPlayerItem = NativePlaybackItem.make) {
         self.player = player
@@ -22,7 +23,9 @@ final class NativePlayback {
     }
 
     func tick() {
-        guard let store else { return }
+        guard !isSyncingPlayback, let store else { return }
+        isSyncingPlayback = true
+        defer { isSyncingPlayback = false }
         let desired = store.snapshot.playback
         guard let id = desired.recordId, let plan = desired.asset else {
             stop()

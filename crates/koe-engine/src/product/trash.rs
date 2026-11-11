@@ -91,8 +91,6 @@ impl RecordRetention {
 pub struct PurgeReceipt {
     /// Recording identifiers permanently removed in this transaction.
     pub purged_record_ids: BTreeSet<RecordId>,
-    /// Unreferenced audio basenames eligible for post-commit unlink.
-    pub unlinked_audio_filenames: BTreeSet<String>,
 }
 
 impl ProductRecord {
@@ -174,27 +172,21 @@ impl ProductWorkspace {
     pub fn trash_record(&mut self, id: &str, now_ms: u64) -> Result<(), ProductError> {
         let trashed_at_ms = NonZeroU64::new(now_ms)
             .ok_or_else(|| ProductError::InvalidInput("删除时间无效".to_string()))?;
-        let (already_trashed, is_archived, analysis_pending) = {
-            let record = self.records.get(id).ok_or(ProductError::UnknownRecord)?;
-            (
-                record.is_trashed(),
-                record.is_archived(),
-                matches!(record.analysis, AnalysisState::Pending { .. }),
-            )
-        };
-        if already_trashed {
-            return Ok(());
-        }
-        if is_archived {
-            return Err(ProductError::RecordArchived);
-        }
-        if analysis_pending || self.pending_ask_references(id) {
-            return Err(ProductError::Busy);
-        }
         let record = self
             .records
             .get_mut(id)
             .ok_or(ProductError::UnknownRecord)?;
+        if record.is_trashed() {
+            return Ok(());
+        }
+        if record.is_archived() {
+            return Err(ProductError::RecordArchived);
+        }
+        if matches!(record.analysis, AnalysisState::Pending { .. })
+            || pending_ask_references(&self.pending_ask, id)
+        {
+            return Err(ProductError::Busy);
+        }
         record.retention = RecordRetention::Trashed { trashed_at_ms };
         if matches!(&self.ask_scope, SearchScope::Record(rid) if rid == id) {
             self.ask_scope = SearchScope::All;
@@ -225,7 +217,7 @@ impl ProductWorkspace {
             RecordRetention::Trashed { .. } => {}
         }
         if matches!(record.analysis, AnalysisState::Pending { .. })
-            || self.pending_ask_references(id)
+            || pending_ask_references(&self.pending_ask, id)
         {
             return Err(ProductError::Busy);
         }
@@ -238,7 +230,7 @@ impl ProductWorkspace {
         for (id, record) in &self.records {
             if record.is_trashed() {
                 if matches!(record.analysis, AnalysisState::Pending { .. })
-                    || self.pending_ask_references(id)
+                    || pending_ask_references(&self.pending_ask, id)
                 {
                     return Err(ProductError::Busy);
                 }
@@ -259,7 +251,7 @@ impl ProductWorkspace {
             .filter(|(id, record)| {
                 record.retention.is_expired_at(now_ms)
                     && !matches!(record.analysis, AnalysisState::Pending { .. })
-                    && !self.pending_ask_references(id)
+                    && !pending_ask_references(&self.pending_ask, id)
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -275,7 +267,7 @@ impl ProductWorkspace {
         self.records.iter().any(|(id, record)| {
             record.retention.is_expired_at(now_ms)
                 && !matches!(record.analysis, AnalysisState::Pending { .. })
-                && !self.pending_ask_references(id)
+                && !pending_ask_references(&self.pending_ask, id)
         })
     }
 
@@ -317,21 +309,12 @@ impl ProductWorkspace {
         self.resolve_source(source)
     }
 
-    fn pending_ask_references(&self, id: &str) -> bool {
-        self.pending_ask.as_ref().is_some_and(|request| {
-            matches!(&request.scope, SearchScope::Record(rid) if rid == id)
-                || request.evidence.iter().any(|e| e.source.record_id == id)
-        })
-    }
-
     fn reconcile_purged_records(&mut self, purged_ids: BTreeSet<RecordId>) -> PurgeReceipt {
         let mut removed_ids = BTreeSet::new();
-        let mut candidate_audio = BTreeSet::new();
         let mut candidate_bean_file_ids = BTreeSet::new();
 
         for id in &purged_ids {
             if let Some(record) = self.records.remove(id) {
-                candidate_audio.extend(record.owned_audio_filenames());
                 if record.origin == RecordOrigin::Bean && record.aggregate.file_id > 0 {
                     candidate_bean_file_ids.insert(record.aggregate.file_id);
                 }
@@ -341,12 +324,6 @@ impl ProductWorkspace {
         if removed_ids.is_empty() {
             return PurgeReceipt::default();
         }
-
-        let surviving_audio = self.referenced_audio_filenames();
-        let unlinked_audio_filenames = candidate_audio
-            .difference(&surviving_audio)
-            .cloned()
-            .collect();
 
         for file_id in candidate_bean_file_ids {
             let shared_by_survivor = self.records.values().any(|record| {
@@ -372,19 +349,6 @@ impl ProductWorkspace {
 
         if matches!(&self.ask_scope, SearchScope::Record(id) if removed_ids.contains(id)) {
             self.ask_scope = SearchScope::All;
-        }
-
-        let cites_purged = self.pending_ask.as_ref().is_some_and(|request| {
-            matches!(&request.scope, SearchScope::Record(id) if removed_ids.contains(id))
-                || request
-                    .evidence
-                    .iter()
-                    .any(|e| removed_ids.contains(&e.source.record_id))
-        });
-        if cites_purged {
-            self.pending_ask = None;
-            self.ask_session
-                .fail_answer(Some("引用的记录已被清除，请重新提问"));
         }
 
         for message in &mut self.ask_session.messages {
@@ -421,7 +385,13 @@ impl ProductWorkspace {
         self.changed();
         PurgeReceipt {
             purged_record_ids: removed_ids,
-            unlinked_audio_filenames,
         }
     }
+}
+
+fn pending_ask_references(pending_ask: &Option<AskRequest>, id: &str) -> bool {
+    pending_ask.as_ref().is_some_and(|request| {
+        matches!(&request.scope, SearchScope::Record(rid) if rid == id)
+            || request.evidence.iter().any(|e| e.source.record_id == id)
+    })
 }

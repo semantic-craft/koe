@@ -117,8 +117,6 @@ impl ProductWorkspace {
             if request.operation == 0 || request.evidence.is_empty() {
                 return Err(ProductError::InvalidEvidence);
             }
-            // A valid snapshot can contain evidence superseded by a later final. Startup
-            // interrupts that attempt; only completion requires equality with current text.
             for evidence in &request.evidence {
                 workspace.resolve_live_source(&evidence.source)?;
                 if matches!(&request.scope, SearchScope::Record(id) if id != &evidence.source.record_id)

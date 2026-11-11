@@ -289,7 +289,7 @@ struct RecordRow: View {
             Button("移到回收站") {
                 store.send("trash_record", ["recordId": record.id])
             }
-            .disabled(record.archived)
+            .disabled(record.archived || record.status == "转写中" || record.status == "整理中")
         }
     }
 }

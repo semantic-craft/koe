@@ -116,12 +116,17 @@ private struct UndoTrashBar: View {
             KoeActionButton("撤销", systemImage: "arrow.uturn.backward") {
                 store.send("restore_record", ["recordId": undo.recordId])
             }
-            Button("关闭") {
+            Button {
                 store.send("dismiss_undo_trash")
+            } label: {
+                Text("关闭")
+                    .font(.system(size: AppFontSizes.xs))
+                    .foregroundStyle(AppColors.textMuted)
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 34)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
-            .font(.system(size: AppFontSizes.xs))
-            .foregroundStyle(AppColors.textMuted)
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 10)

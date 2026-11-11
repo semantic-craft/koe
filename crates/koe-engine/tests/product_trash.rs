@@ -418,14 +418,11 @@ fn permanent_purge_expiry_and_empty_trash_maintain_restore_totality_and_bean_tom
     ws.trash_record("rec-1", 50_000).unwrap();
     let receipt = ws.purge_record("rec-1").unwrap();
     assert_eq!(receipt.purged_record_ids, BTreeSet::from(["rec-1".into()]));
-    assert_eq!(
-        receipt.unlinked_audio_filenames,
-        BTreeSet::from([
-            "rec-1.wav".into(),
-            "rec-1.opus".into(),
-            "rec-1-system.wav".into(),
-        ])
-    );
+    let surviving_audio = ws.referenced_audio_filenames();
+    assert!(!surviving_audio.contains("rec-1.wav"));
+    assert!(!surviving_audio.contains("rec-1.opus"));
+    assert!(!surviving_audio.contains("rec-1-system.wav"));
+    assert!(surviving_audio.contains("rec-2.wav"));
     assert!(ws.is_bean_file_purged(42));
     assert!(!ws.is_bean_file_purged(0));
     assert!(!ws.items().contains_key(&single_item));

@@ -309,13 +309,7 @@ impl KoeRuntime {
                 if let Some(existing) = self.workspace().record(&id) {
                     if existing.is_trashed() {
                         self.commit(|w| w.restore_record(&id))?;
-                        if self
-                            .undo_trash
-                            .as_ref()
-                            .is_some_and(|u| u.record_id == id)
-                        {
-                            self.undo_trash = None;
-                        }
+                        self.clear_undo_trash_for(&id);
                     }
                 } else {
                     self.commit(|workspace| {

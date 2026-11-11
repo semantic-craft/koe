@@ -326,7 +326,6 @@ impl KoeRuntime {
                         "录音达到 WAV 长度上限，已保留此前收到的音频。请新建录音继续。".into(),
                     );
                     m.phase = Phase::CapacityReached;
-                    // Every lane will lose further callbacks after the shared stop request.
                     for other in m.lanes.values_mut() {
                         other
                             .interruption
@@ -334,7 +333,6 @@ impl KoeRuntime {
                     }
                 }
                 Err(error) => {
-                    // Retrying custody repairs the bytes, not the prematurely ended capture.
                     l.interruption
                         .get_or_insert_with(|| error.chars().take(500).collect());
                     l.save_error = Some(error.clone());
