@@ -102,8 +102,13 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check
 - **Evidence**: scripts/check PASS; isolated GUI screenshots; signed staged build self-check and smoke PASS; #652
 
-### [ ] Slice ULI: 浅色版日常安装与剩余弹窗验收
+### [x] Slice ULI: 浅色版日常安装与退出修复
 - **Playbook**: `Feature`
-- **Outcome**: 先核对旧版取回与保存是否完成；仅在可以正常退出后安装浅色版，再验连接引导和审核编辑弹窗，更新 #654。不要强制终止或覆盖运行中的应用。
+- **Outcome**: 旧版已显示取回保存完成，按用户本轮授权终止卡住进程并安装浅色版。修复 #657 的本地桥退出死锁，核验日常窗口、自检不干扰运行中应用、正常退出及重新打开；剩余弹窗验收继续记录于 #654。
 - **Done Predicate**: ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && python3 progress/progress.py check
-- **Evidence**: issue #654; blocked by existing app quit failure
+- **Evidence**: 04d0eb6; signed CDHash 573498ceae3ab7eb2bba9e284786b0380c13fa20; full check and live selfcheck/quit/reopen PASS
+
+### [ ] Slice ULD: 浅色版剩余弹窗验收
+- **Outcome**: 核验连接引导与审核编辑弹窗浅色配色，更新 #654。
+- **Done Predicate**: python3 progress/progress.py check
+- **Evidence**: issue #654; pending visual checks
