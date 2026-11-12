@@ -396,4 +396,70 @@ struct KoeAppleSharedTests {
         #expect(reopened.snapshot.error == nil)
         #expect(reopened.nativeError == nil)
     }
+
+    @Test("CaptureStudioSnapshot, MicrophoneSnapshot.level legacy defaults, and SidebarView capture states")
+    @MainActor
+    func captureStudioContractAndSidebarSummary() throws {
+        let legacyMicJSON = """
+        {
+          "version": 2, "generation": 1, "section": "today", "canGoBack": false,
+          "selectedRecordId": null, "focusSegmentId": null, "records": [], "todayRecordIds": [],
+          "detail": null, "tasks": [], "memories": [],
+          "ask": { "scope": "all", "recordId": null, "phase": "idle", "messages": [] },
+          "microphone": {
+            "recordId": "m-1", "sessionId": "s-1", "lane": "microphone", "inputId": "",
+            "phase": "recording", "nextSequence": 1, "durationMs": 5000,
+            "error": null, "interruption": null, "epoch": 0, "clockNs": 1000,
+            "lanes": { "microphone": { "nextSequence": 1, "sampleRate": 16000, "started": true, "stopped": false, "error": null, "interruption": null } }
+          },
+          "device": { "state": "未连接", "connected": false, "busy": false, "files": [], "progress": 0.0 },
+          "provider": { "configured": false, "model": "qwen-plus" },
+          "playback": { "recordId": null, "positionMs": 0, "isPlaying": false },
+          "error": null, "notice": null
+        }
+        """
+        let legacyDecoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(legacyMicJSON.utf8))
+        #expect(legacyDecoded.capture == .empty)
+        #expect(legacyDecoded.microphone?.level == 0.0)
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+        let sidebar = SidebarView(store: store)
+
+        #expect(sidebar.deviceSummaryText == "系统默认  点击录音")
+        #expect(!sidebar.deviceSummaryText.unicodeScalars.contains(where: { $0.value == 0x00B7 }))
+
+        store.send("sync_audio_inputs", ["inputs": [
+            ["id": "macbook-mic", "name": "MacBook Pro 麦克风", "transport": "built_in", "isDefault": true],
+            ["id": "airpods-pro", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": false]
+        ]])
+        #expect(store.snapshot.capture.selectedSource == "input:airpods-pro")
+        #expect(store.snapshot.capture.selectedBadge == "Mac 蓝牙")
+        #expect(sidebar.deviceSummaryText == "Mac 蓝牙  点击录音")
+
+        store.send("select_capture_source", ["source": "bean"])
+        #expect(store.snapshot.capture.selectedSource == "bean")
+        #expect(store.snapshot.capture.canStart == false)
+        #expect(sidebar.deviceSummaryText == "未连接  点击选择音源")
+
+        store.send("navigate", ["section": "capture"])
+        #expect(store.snapshot.section == "capture")
+        store.send("select_capture_source", ["source": "input:airpods-pro"])
+        store.send("start_microphone", ["inputId": store.snapshot.capture.selectedInputId, "clockNs": 1_000_000_000])
+        let mic = try #require(store.snapshot.microphone)
+        store.send("microphone_started", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sampleRate": 16000])
+        store.send("microphone_chunk", [
+            "recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone",
+            "sequence": 0, "samples": [Int16](repeating: 4096, count: 320),
+            "timing": ["epoch": 0, "capturedStartNs": 1_000_000_000]
+        ])
+        #expect((store.snapshot.microphone?.level ?? 0) > 0.4)
+        #expect(sidebar.deviceSummaryText.hasPrefix("正在录音  "))
+        store.send("cancel_microphone")
+        #expect(store.snapshot.microphone?.level == 0.0)
+        store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sequence": 1, "epoch": 0])
+        #expect(store.snapshot.microphone == nil)
+    }
 }

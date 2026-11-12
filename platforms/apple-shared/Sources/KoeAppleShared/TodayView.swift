@@ -16,7 +16,9 @@ struct TodayView: View {
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         PageHeading(title: "今天", subtitle: "让值得记住的事，有个去处。")
                     }
-                    MicrophoneCard(store: store)
+                    if let mic = store.snapshot.microphone {
+                        activeMicrophoneBanner(mic)
+                    }
                     if store.snapshot.device.recording || store.snapshot.device.stopping || store.snapshot.device.transferPhase == "streaming_realtime" {
                         liveRecordingCard
                     } else if store.snapshot.device.busy {
@@ -101,6 +103,24 @@ struct TodayView: View {
                     }
                 }.frame(width: 235).padding(.top, 7)
             }.padding(30)
+        }
+    }
+    private func activeMicrophoneBanner(_ mic: MicrophoneSnapshot) -> some View {
+        KoeCard {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(mic.phase == "paused" ? AppColors.warning : KoeColors.danger)
+                    .frame(width: 8, height: 8)
+                Text(mic.phase == "paused" ? "\(store.snapshot.capture.selectedLabel) 已暂停" : "\(store.snapshot.capture.selectedLabel) 正在录音")
+                    .font(.system(size: AppFontSizes.sm, weight: .medium))
+                Spacer()
+                Text(TimeLabel.duration(mic.durationMs))
+                    .font(.system(size: AppFontSizes.xs, design: .monospaced))
+                    .foregroundStyle(KoeColors.textSecondary)
+                KoeActionButton("查看录音实况", systemImage: "waveform") {
+                    store.send("navigate", ["section": "capture"])
+                }
+            }
         }
     }
     private var liveRecordingCard: some View {
