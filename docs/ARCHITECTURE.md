@@ -85,9 +85,11 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 ### 转写、整理与重试
 
-保存的 WAV 经 Rust 转为 16 kHz 单声道 PCM，发送到 DashScope WebSocket；设备实时 PCM 由 `LiveTranscription` 的有界队列发送。最终句子和对应时间进入目标记录。转写完成后，Qwen 根据该记录的原文生成结构化纪要；审核候选项来自已通过校验的纪要。
+保存的 WAV 经 Rust 转为 16 kHz 单声道 PCM，发送到 DashScope WebSocket；云端模式下，设备实时 PCM 由 `LiveTranscription` 的有界队列发送。最终句子和对应时间进入目标记录。转写完成后，Qwen 根据该记录的原文生成结构化纪要；审核候选项来自已通过校验的纪要。
 
 `ProviderConfiguration.meeting_audio_policy` 在同一工作区中保存会议音频策略，默认 `LocalOnly`。Rust 在实时与文件转写入口守门，文字任务不受影响。切换为本机策略时先取消音频并等待传输线程停止，再原子保存策略与失效请求状态；保存失败继续暂停音频，未知提交只能重开。已开始或明确撤销的实时转写不会在取回时自动重新上传；未收到实时音频的云端会话仍可通过取回完整文件补转写。Swift 只展示快照并发送策略意图。
+
+本机模式的录音豆 PCM 进入 Rust 有界 effect 队列，经专用 C ABI drain 交给 macOS `SpeechAnalyzer` / `SpeechTranscriber`。宿主回传 operation ID、音频时间范围、文字与 final 标志，Rust 将操作身份绑定到原 `RequestKey`。临时字幕保留在 Runtime，最终段沿既有事务队列持久化；停止输入后等待识别末句，取消则撤销操作身份。原生资源准备与识别都不持有 host-api 的 session 锁。本机识别失败不会触发云端上传。本机实时转写结束后不自动调用云端纪要，用户仍可手动整理文字。全局 `liveCaption` 快照驱动根视图字幕条，不依赖当前导航页面。
 
 网络运行在后台工作线程。runtime 不因等待远端结果阻塞 SwiftUI 的命令处理。宿主每 250ms 推进 runtime、读取新结果并执行设备发送队列；这一生命周期属于应用，而非某个页面。
 

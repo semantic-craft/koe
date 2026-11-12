@@ -132,6 +132,12 @@ public final class HostSessionStore {
         return frames
     }
 
+    public func drainLocalASREffectsJSON() -> Data? {
+        guard handle != 0, let pointer = koe_host_session_drain_local_asr_json(handle) else { return nil }
+        defer { koe_host_string_free(pointer) }
+        return Data(String(cString: pointer).utf8)
+    }
+
     func applySnapshotJSON(_ json: String) {
         do {
             let decoded = try JSONDecoder().decode(HostSnapshot.self, from: Data(json.utf8))

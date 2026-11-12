@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) const LOCAL_ASR_UNAVAILABLE: &str =
-    "会议录音只留本机；本机语音识别尚未接入，无法转写。文字纪要与问答仍可使用云服务。";
+    "音频只留本机；已有文件暂不支持本机补转写。录音豆可使用本机实时字幕，文字纪要与问答仍可使用云服务。";
 
 impl KoeRuntime {
     pub(super) fn ensure_meeting_audio_upload(&self) -> Result<(), String> {
@@ -31,7 +31,7 @@ impl KoeRuntime {
         if revoke {
             self.audio_policy_error = Some("音频上传已暂停；策略尚未保存，请重新设置。".into());
             self.auto_transcribe.clear();
-            self.cancel_meeting_captures();
+            self.cancel_cloud_captures();
             let jobs: Vec<_> = self
                 .pending
                 .iter()
@@ -47,6 +47,7 @@ impl KoeRuntime {
                 cancelled?;
             }
         }
+        let local_records = self.local_capture_record_ids();
         self.commit(|workspace| {
             let mut config = workspace.provider_configuration().clone();
             config.meeting_audio_policy = policy;
@@ -59,7 +60,7 @@ impl KoeRuntime {
                         AnalysisState::Pending {
                             key,
                             stage: AnalysisStage::Transcribing,
-                        } => Some(key.clone()),
+                        } if !local_records.contains(&key.record_id) => Some(key.clone()),
                         _ => None,
                     })
                     .collect();
@@ -71,15 +72,15 @@ impl KoeRuntime {
             Ok(())
         })?;
         self.audio_policy_error = None;
-        self.notice = Some(
-            match policy {
-                MeetingAudioPolicy::LocalOnly => LOCAL_ASR_UNAVAILABLE,
-                MeetingAudioPolicy::CloudAllowed => {
-                    "允许会议音频云端转写；已取消的任务不会自动恢复，请手动重试。"
-                }
+        self.notice = Some(match policy {
+            MeetingAudioPolicy::LocalOnly => format!(
+                "会议录音只留本机；录音豆离线字幕：{}。文件转写暂不支持本机识别。",
+                self.local_asr.message
+            ),
+            MeetingAudioPolicy::CloudAllowed => {
+                "允许会议音频云端转写；已取消的任务不会自动恢复，请手动重试。".into()
             }
-            .into(),
-        );
+        });
         Ok(())
     }
 }

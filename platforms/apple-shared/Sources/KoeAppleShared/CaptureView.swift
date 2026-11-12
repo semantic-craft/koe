@@ -51,16 +51,18 @@ public struct CaptureView: View {
                         NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                     }
                 }
-                if let liveRecord, !liveRecord.preview.isEmpty {
-                    Text(liveRecord.preview).font(.system(size: AppFontSizes.sm)).lineLimit(3)
+                if let caption = store.snapshot.liveCaption, !caption.text.isEmpty {
+                    Text(caption.text).font(.system(size: AppFontSizes.sm)).lineLimit(3)
                 } else {
                     Text(device.liveBytes > 0 ? "正在接收实时语音流 (\(device.liveBytes) B)" : "正在等待录音豆语音帧")
                         .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
                 }
-                if provider.meetingAudioPolicy == "local_only" || !provider.configured {
+                if provider.meetingAudioPolicy == "local_only"
+                    ? store.snapshot.localAsr?.state != "ready"
+                    : !provider.configured {
                     HStack(spacing: 12) {
                         Text(provider.meetingAudioPolicy == "local_only"
-                             ? "当前已设为会议录音只留本机，音频仅保存在本地，不发送云端实时字幕。"
+                             ? store.snapshot.localAsr?.message ?? "本机语音识别尚未就绪，原始录音会保留。"
                              : "尚未配置云端 AI 服务，音频完整保存在本机，配置后可生成字幕与纪要。")
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         Spacer()

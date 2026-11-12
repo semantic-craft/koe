@@ -112,3 +112,9 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: 核验连接引导与审核编辑弹窗浅色配色，更新 #654。
 - **Done Predicate**: python3 progress/progress.py check
 - **Evidence**: issue #654; pending visual checks
+
+### [x] Slice OL: 录音豆本机实时识别与全局字幕
+- **Playbook**: `Feature` + `figure-it-out`
+- **Outcome**: macOS 26+ 使用 Apple SpeechAnalyzer 在本机识别 D3200 实时 PCM；Rust 管理请求归属和收尾，当前页面顶部显示字幕，实体录音开始时唤出应用窗口。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check；签名安装版 D3200 实体按键在本机模式下停止前显示真实中文，停止后同一记录保留最终文字，验收 #655。
+- **Evidence**: scripts/check PASS; signed install self-check/smoke PASS; issue #655 comment-6827765221; hardware.jsonl and hardware-final-record.json
