@@ -168,16 +168,22 @@
         "number": 654,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-12T15:19:52Z"
+        "updated_at": "2026-11-12T15:00:26Z"
       },
       {
         "number": 655,
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-12T15:24:17Z"
+      },
+      {
+        "number": 657,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-12T15:11:53Z"
       }
     ],
-    "main": "704c3d928fb415891230d06af1e91c965ae18923",
+    "main": "2e60e8d17a640c5abc4d0d8979e5099fffe4e7fb",
     "open_pulls": [],
     "pulls": [
       {
@@ -307,12 +313,20 @@
         "merged": true,
         "number": 646,
         "state": "closed"
+      },
+      {
+        "base": "d6f12d02aab3782b58ae8d78b9fb81b13d1bb719",
+        "head": "f56d04c5ba791fa5d2453b7a227b8c3b152bde7c",
+        "merge_commit": "2e60e8d17a640c5abc4d0d8979e5099fffe4e7fb",
+        "merged": true,
+        "number": 656,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-12T15:25:49.711250Z",
+  "observed_at": "2026-11-12T15:13:32.413063Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1019,15 +1033,20 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "记录退出阻塞与剩余日常安装验收。",
+              "note": "签名日常安装与 GUI 退出重开通过。",
               "ref": 654
+            },
+            {
+              "kind": "issue",
+              "note": "路径删除后的退出死锁有先红后绿回归和真机采样。",
+              "ref": 657
             }
           ],
           "id": "plaud-light-install",
-          "next": "按 #654 继续核对连接引导和审核编辑弹窗。",
-          "status": "unverified",
-          "summary": "本轮已正常退出旧版并安装包含浅色色板与离线字幕的签名版，安装自检通过；连接引导和审核编辑弹窗仍未验。",
-          "title": "浅色版日常安装与剩余弹窗验收"
+          "next": "连接引导和审核编辑弹窗的剩余配色验收见 #654。",
+          "status": "done",
+          "summary": "已安装 Developer ID 签名浅色修复版。自检不再覆盖日常通信入口；运行中自检后 CLI 仍正常，Cmd-Q 退出与重开通过，已有记录可见。",
+          "title": "浅色版日常安装与退出修复"
         }
       ],
       "title": "验收与交付"
@@ -1082,9 +1101,10 @@
       644,
       645,
       652,
-      654,
       653,
-      655
+      654,
+      655,
+      657
     ],
     "pulls": [
       589,
@@ -1102,7 +1122,8 @@
       635,
       638,
       642,
-      646
+      646,
+      656
     ]
   }
 }
