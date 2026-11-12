@@ -31,10 +31,17 @@ use crate::{now, sessions};
 const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
 const ASK_TIMEOUT: Duration = Duration::from_secs(190);
 const ASK_POLL_SLEEP: Duration = Duration::from_millis(25);
+const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
+
+struct SubscriberEntry {
+    id: u64,
+    tx: mpsc::SyncSender<String>,
+    socket: Option<UnixStream>,
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct SubscriberHub {
-    subscribers: Arc<Mutex<Vec<mpsc::Sender<String>>>>,
+    subscribers: Arc<Mutex<Vec<SubscriberEntry>>>,
 }
 
 impl SubscriberHub {
@@ -51,23 +58,69 @@ impl SubscriberHub {
             return;
         }
         if let Ok(mut list) = self.subscribers.lock() {
-            list.retain(|tx| lines.iter().all(|line| tx.send(line.clone()).is_ok()));
+            list.retain(|entry| {
+                let ok = lines.iter().all(|line| entry.tx.try_send(line.clone()).is_ok());
+                if !ok {
+                    if let Some(sock) = &entry.socket {
+                        let _ = sock.shutdown(Shutdown::Both);
+                    }
+                }
+                ok
+            });
         }
     }
 
-    fn subscribe(&self, hello_line: String) -> (mpsc::Sender<String>, mpsc::Receiver<String>) {
-        let (tx, rx) = mpsc::channel();
-        let _ = tx.send(hello_line);
+    fn subscribe(
+        &self,
+        hello_line: String,
+        socket: Option<UnixStream>,
+    ) -> (u64, mpsc::Receiver<String>) {
+        static NEXT_SUB: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT_SUB.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = mpsc::sync_channel(SUBSCRIBER_CHANNEL_CAPACITY);
+        let _ = tx.try_send(hello_line);
         if let Ok(mut list) = self.subscribers.lock() {
-            list.push(tx.clone());
+            list.push(SubscriberEntry { id, tx, socket });
         }
-        (tx, rx)
+        (id, rx)
+    }
+
+    fn unsubscribe(&self, id: u64) {
+        if let Ok(mut list) = self.subscribers.lock() {
+            list.retain(|entry| entry.id != id);
+        }
     }
 
     fn close_all(&self) {
         if let Ok(mut list) = self.subscribers.lock() {
-            for tx in list.drain(..) {
-                let _ = tx.send(String::new());
+            for entry in list.drain(..) {
+                if let Some(sock) = &entry.socket {
+                    let _ = sock.shutdown(Shutdown::Both);
+                }
+            }
+        }
+    }
+}
+
+struct ManualGateGuard {
+    handle: u64,
+    active: bool,
+}
+
+impl ManualGateGuard {
+    fn new(handle: u64, active: bool) -> Self {
+        Self { handle, active }
+    }
+}
+
+impl Drop for ManualGateGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        if let Ok(mut table) = sessions().lock() {
+            if let Some(entry) = table.entries.get_mut(&self.handle) {
+                entry.runtime.release_companion_manual_gate();
             }
         }
     }
@@ -143,7 +196,7 @@ impl BridgeServer {
             let existed = parent.exists();
             fs::create_dir_all(parent).ok()?;
             if !existed || parent.file_name() == Some(OsStr::new(".koe")) {
-                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+                fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).ok()?;
             }
         }
         if let Ok(meta) = fs::symlink_metadata(&sock_path) {
@@ -429,29 +482,6 @@ fn handle_rpc_call(
         }
         "koe/mcp_tools_list" => Ok(KoeRuntime::mcp_tools_list()),
         "koe/mcp_tool_call" => handle_mcp_tool_call(handle, request, shutdown),
-        "koe/dispatch" => {
-            let command = request
-                .get("params")
-                .and_then(|p| p.get("command"))
-                .filter(|v| v.is_object())
-                .ok_or_else(|| (-32602, "params.command 必须是对象".to_string()))?;
-            let command_str = command.to_string();
-            let (raw, subs, events) = {
-                let mut table = sessions()
-                    .lock()
-                    .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
-                let entry = table
-                    .entries
-                    .get_mut(&handle)
-                    .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string()))?;
-                let out = entry.runtime.dispatch_json(&command_str, now(0));
-                let events = entry.runtime.drain_companion_events();
-                (out, entry.subscribers.clone(), events)
-            };
-            subs.broadcast(&events);
-            serde_json::from_str::<Value>(&raw)
-                .map_err(|_| (-32603, "宿主返回了无效快照".to_string()))
-        }
         _ => Err((-32601, "未知方法".to_string())),
     }
 }
@@ -497,7 +527,6 @@ fn handle_mcp_tool_call(
         })),
         Ok(McpToolCallState::PendingAsk { question }) => {
             let deadline = Instant::now() + ASK_TIMEOUT;
-            let mut previous = Instant::now();
             loop {
                 if shutdown.load(Ordering::Acquire) {
                     return Ok(json!({"isError": true, "error": "Koe 会话正在关闭"}));
@@ -506,9 +535,6 @@ fn handle_mcp_tool_call(
                     return Ok(json!({"isError": true, "error": "问答未在期限内完成"}));
                 }
                 thread::sleep(ASK_POLL_SLEEP);
-                let current = Instant::now();
-                let elapsed_ms = current.duration_since(previous).as_millis() as u64;
-                previous = current;
                 let (poll_res, poll_subs, poll_events) = {
                     let mut table = sessions()
                         .lock()
@@ -516,7 +542,7 @@ fn handle_mcp_tool_call(
                     let Some(entry) = table.entries.get_mut(&handle) else {
                         return Ok(json!({"isError": true, "error": "Koe 会话已关闭"}));
                     };
-                    let res = entry.runtime.poll_mcp_ask(&question, elapsed_ms, now(0));
+                    let res = entry.runtime.poll_mcp_ask(&question, 0, now(0));
                     let evs = entry.runtime.drain_companion_events();
                     (res, entry.subscribers.clone(), evs)
                 };
@@ -541,25 +567,30 @@ fn serve_companion_subscription(
     active_streams: Arc<Mutex<BTreeMap<u64, UnixStream>>>,
     worker_state: Arc<WorkerState>,
 ) {
+    let manual_gate = auto_gate == Some(false);
+    let evict_socket = writer.try_clone().ok();
     let setup = {
         sessions().lock().ok().and_then(|mut table| {
             let entry = table.entries.get_mut(&handle)?;
-            if let Some(gate) = auto_gate {
-                entry.runtime.set_companion_auto_gate(gate);
+            if manual_gate {
+                entry.runtime.acquire_companion_manual_gate();
             }
             let drained = entry.runtime.drain_companion_events();
             entry.subscribers.broadcast(&drained);
             let hello = entry.runtime.companion_hello();
             let hello_line = serde_json::to_string(&hello).ok()?;
-            let (close_tx, rx) = entry.subscribers.subscribe(hello_line);
-            Some((close_tx, rx))
+            let subs = entry.subscribers.clone();
+            let (sub_id, rx) = subs.subscribe(hello_line, evict_socket);
+            Some((subs, sub_id, rx))
         })
     };
-    let Some((close_tx, rx)) = setup else {
+    let Some((subs, sub_id, rx)) = setup else {
         let _ = writer.shutdown(Shutdown::Both);
         return;
     };
+    let _manual_gate_guard = ManualGateGuard::new(handle, manual_gate);
 
+    let _ = writer.set_write_timeout(Some(Duration::from_secs(2)));
     let writer_shutdown = Arc::clone(&shutdown);
     let writer_guard = WorkerGuard::acquire(None, active_streams, worker_state);
     let writer_thread = thread::spawn(move || {
@@ -607,7 +638,7 @@ fn serve_companion_subscription(
         }
     }
 
-    let _ = close_tx.send(String::new());
+    subs.unsubscribe(sub_id);
     let _ = writer_thread.join();
 }
 
@@ -715,5 +746,120 @@ mod tests {
         drop(session);
         assert!(!sock_path.exists());
         let _ = fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn local_bridge_rejects_raw_dispatch_evicts_stalled_subscriber_and_scopes_manual_gate() {
+        let base = PathBuf::from(format!("/tmp/kb-{}", std::process::id()));
+        let container_ws = base
+            .join("Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace");
+        let _ = fs::remove_dir_all(&base);
+        let sock_path = resolve_bridge_socket_path(&container_ws).unwrap();
+        let dot_koe = sock_path.parent().unwrap();
+
+        let session = HostSessionGuard::open(&container_ws).expect("host session should open");
+        let dir_meta = fs::metadata(dot_koe).unwrap();
+        assert_eq!(dir_meta.mode() & 0o777, 0o700);
+
+        let mut rpc_client = UnixStream::connect(&sock_path).unwrap();
+        writeln!(
+            rpc_client,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 99,
+                "method": "koe/dispatch",
+                "params": {"command": {"type": "empty_trash"}}
+            })
+        )
+        .unwrap();
+        rpc_client.flush().unwrap();
+        let mut rpc_reader = BufReader::new(rpc_client.try_clone().unwrap());
+        let mut dispatch_resp_line = String::new();
+        rpc_reader.read_line(&mut dispatch_resp_line).unwrap();
+        let dispatch_resp: Value = serde_json::from_str(&dispatch_resp_line).unwrap();
+        assert_eq!(dispatch_resp["error"]["code"], -32601);
+
+        let mut manual_sub = UnixStream::connect(&sock_path).unwrap();
+        manual_sub
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        writeln!(
+            manual_sub,
+            "{}",
+            json!({"method": "companion/subscribe", "params": {"autoGate": false}})
+        )
+        .unwrap();
+        manual_sub.flush().unwrap();
+        let mut manual_reader = BufReader::new(manual_sub.try_clone().unwrap());
+        let mut hello1 = String::new();
+        manual_reader.read_line(&mut hello1).unwrap();
+        assert!(hello1.contains("\"hello\""));
+
+        let mut auto_sub = UnixStream::connect(&sock_path).unwrap();
+        auto_sub
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        writeln!(
+            auto_sub,
+            "{}",
+            json!({"method": "companion/subscribe", "params": {"autoGate": true}})
+        )
+        .unwrap();
+        auto_sub.flush().unwrap();
+        let mut auto_reader = BufReader::new(auto_sub.try_clone().unwrap());
+        let mut hello2 = String::new();
+        auto_reader.read_line(&mut hello2).unwrap();
+        assert!(hello2.contains("\"hello\""));
+
+        {
+            let table = sessions().lock().unwrap();
+            let entry = table.entries.get(&session.handle()).unwrap();
+            assert_eq!(entry.subscribers.subscribers.lock().unwrap().len(), 2);
+        }
+
+        let big_b64 = "A".repeat(1024);
+        let flood_events: Vec<CompanionStreamEvent> = (1..=2_500)
+            .map(|seq| CompanionStreamEvent::AudioPcm16 {
+                device_id: "d3200".into(),
+                epoch: "00000000-0000-4000-8000-000000000001".into(),
+                sequence: seq,
+                sample_rate_hz: 16_000,
+                samples_le_b64: big_b64.clone(),
+            })
+            .collect();
+
+        let subs = {
+            let table = sessions().lock().unwrap();
+            table.entries.get(&session.handle()).unwrap().subscribers.clone()
+        };
+
+        let drain_auto = thread::spawn(move || {
+            let mut count = 0usize;
+            for _ in 0..2_500 {
+                let mut line = String::new();
+                if auto_reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                count += 1;
+            }
+            count
+        });
+
+        for chunk in flood_events.chunks(25) {
+            subs.broadcast(chunk);
+        }
+
+        let received_healthy = drain_auto.join().unwrap();
+        assert_eq!(received_healthy, 2_500);
+        assert_eq!(subs.subscribers.lock().unwrap().len(), 1);
+
+        drop(manual_reader);
+        drop(manual_sub);
+        drop(auto_sub);
+        drop(rpc_reader);
+        drop(rpc_client);
+        drop(session);
+        let _ = fs::remove_dir_all(&base);
     }
 }

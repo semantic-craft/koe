@@ -210,9 +210,15 @@ pub(crate) struct CompanionRuntime {
     pub sequence: u64,
     pub capture_active: bool,
     pub auto_gate: bool,
+    pub manual_gate_subscribers: usize,
     pub standby_stream_owned: bool,
+    pub active_standby_file_id: Option<u32>,
+    pub pending_standby_stop: bool,
+    pub pre_standby_catalog_ids: BTreeSet<u32>,
+    pub deleted_in_connection: BTreeSet<u32>,
     pub standby_suppressed_for_connection: bool,
     pub post_tap_skip_slices: usize,
+    pub pending_tap_holdback_extra: usize,
     pub tail_holdback: VecDeque<Vec<i16>>,
     pub events: VecDeque<CompanionStreamEvent>,
     pub standby_file_ids: BTreeSet<u32>,
@@ -229,9 +235,15 @@ impl Default for CompanionRuntime {
             sequence: 0,
             capture_active: false,
             auto_gate: true,
+            manual_gate_subscribers: 0,
             standby_stream_owned: false,
+            active_standby_file_id: None,
+            pending_standby_stop: false,
+            pre_standby_catalog_ids: BTreeSet::new(),
+            deleted_in_connection: BTreeSet::new(),
             standby_suppressed_for_connection: false,
             post_tap_skip_slices: 0,
+            pending_tap_holdback_extra: 0,
             tail_holdback: VecDeque::new(),
             events: VecDeque::new(),
             standby_file_ids: BTreeSet::new(),
@@ -310,13 +322,31 @@ impl KoeRuntime {
         self.companion.auto_gate = enabled;
     }
 
+    /// Acquires a scoped manual capture-gate lease for a subscriber with `autoGate == false`.
+    pub fn acquire_companion_manual_gate(&mut self) {
+        self.companion.manual_gate_subscribers =
+            self.companion.manual_gate_subscribers.saturating_add(1);
+    }
+
+    /// Releases a scoped manual capture-gate lease when a subscriber disconnects.
+    pub fn release_companion_manual_gate(&mut self) {
+        self.companion.manual_gate_subscribers =
+            self.companion.manual_gate_subscribers.saturating_sub(1);
+    }
+
+    fn effective_companion_auto_gate(&self) -> bool {
+        self.companion.auto_gate && self.companion.manual_gate_subscribers == 0
+    }
+
     /// Synchronizes companion PCM capture gating across front double-taps and host shortcuts.
     ///
-    /// Stopping with `reason == Some("double_tap")` discards the 240 ms tail holdback window so
-    /// finger-tap housing thumps never leak into ASR; stopping for any other reason flushes the
-    /// held-back speech tail into the companion event queue.
+    /// Starting with `reason == Some("double_tap")` skips 60 ms (`POST_TAP_SKIP_SLICES`) of tap
+    /// transient; stopping with `reason == Some("double_tap")` discards the 240 ms tail holdback
+    /// window so finger-tap housing thumps never leak into ASR; stopping for any other reason
+    /// flushes the held-back speech tail into the companion event queue.
     pub fn set_companion_capture_active(&mut self, active: bool, reason: Option<String>) {
         let is_double_tap = reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER);
+        self.companion.pending_tap_holdback_extra = 0;
         if self.companion.capture_active && !active {
             if is_double_tap {
                 self.companion.tail_holdback.clear();
@@ -328,9 +358,11 @@ impl KoeRuntime {
         }
         if !self.companion.capture_active && active {
             self.companion.tail_holdback.clear();
-            if !is_double_tap {
-                self.companion.post_tap_skip_slices = 0;
-            }
+            self.companion.post_tap_skip_slices = if is_double_tap {
+                POST_TAP_SKIP_SLICES
+            } else {
+                0
+            };
             self.companion.capture_active = true;
         }
     }
@@ -338,7 +370,14 @@ impl KoeRuntime {
     pub(crate) fn is_standby_file(&self, file_id: u32) -> bool {
         file_id != 0
             && (self.companion.standby_file_ids.contains(&file_id)
-                || self.workspace().is_standby_scratch_file(file_id))
+                || self.workspace().is_standby_scratch_file(file_id)
+                || self.workspace().is_reclaimed_standby_file(file_id))
+    }
+
+    pub(crate) fn treats_file_as_standby(&self, file_id: u32) -> bool {
+        self.is_standby_file(file_id)
+            || self.companion.standby_stream_owned
+            || self.companion.pending_standby_stop
     }
 
     pub(crate) fn mark_standby_scratch_file(&mut self, file_id: u32) -> Result<(), String> {
@@ -356,18 +395,26 @@ impl KoeRuntime {
     }
 
     pub(crate) fn stop_owned_standby_stream(&mut self) -> Result<(), String> {
-        if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+        let session = &self.device.session;
+        let in_flight = session.device_recording_active
+            || session.pending_realtime_subscribe
+            || (session.active_is_realtime && !session.transfer.quiet_draining);
+        let active_fid = session
+            .active_file_id
+            .filter(|&id| id > 0)
+            .or_else(|| self.companion.active_standby_file_id.take());
+        if let Some(fid) = active_fid {
             self.mark_standby_scratch_file(fid)?;
+            self.companion.pending_standby_stop = false;
+        } else if self.companion.standby_stream_owned && in_flight {
+            self.companion.pending_standby_stop = true;
         }
+        self.companion.active_standby_file_id = None;
         self.companion.standby_stream_owned = false;
         self.companion.capture_active = false;
         self.companion.post_tap_skip_slices = 0;
         self.companion.tail_holdback.clear();
-        let session = &self.device.session;
-        if session.device_recording_active
-            || session.pending_realtime_subscribe
-            || (session.active_is_realtime && !session.transfer.quiet_draining)
-        {
+        if in_flight {
             self.device.stop_recording();
         }
         Ok(())
@@ -386,6 +433,10 @@ impl KoeRuntime {
             self.companion.epoch = generate_uuid_v4();
             self.companion.sequence = 0;
             self.companion.capture_active = false;
+            self.companion.active_standby_file_id = None;
+            self.companion.pending_standby_stop = false;
+            self.companion.pre_standby_catalog_ids.clear();
+            self.companion.deleted_in_connection.clear();
             self.companion.standby_suppressed_for_connection = false;
             self.companion.post_tap_skip_slices = 0;
             self.companion.tail_holdback.clear();
@@ -394,12 +445,25 @@ impl KoeRuntime {
             self.companion.push_event(hello);
             changed = true;
         } else if self.companion.was_connected && !connected {
-            if self.companion.standby_stream_owned {
-                if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+            if self.companion.standby_stream_owned
+                || self.companion.pending_standby_stop
+                || self.companion.active_standby_file_id.is_some()
+            {
+                if let Some(fid) = self
+                    .device
+                    .session
+                    .active_file_id
+                    .filter(|&id| id > 0)
+                    .or_else(|| self.companion.active_standby_file_id.take())
+                {
                     let _ = self.mark_standby_scratch_file(fid);
                 }
+                self.companion.active_standby_file_id = None;
                 self.companion.standby_stream_owned = false;
+                self.companion.pending_standby_stop = false;
             }
+            self.companion.pre_standby_catalog_ids.clear();
+            self.companion.deleted_in_connection.clear();
             self.companion.standby_suppressed_for_connection = false;
             self.companion.capture_active = false;
             self.companion.post_tap_skip_slices = 0;
@@ -417,24 +481,55 @@ impl KoeRuntime {
 
         changed |= self.process_companion_signals();
 
+        if self.companion.pending_standby_stop {
+            let candidate = self
+                .device
+                .session
+                .catalog
+                .iter()
+                .filter(|f| {
+                    f.file_id > 0
+                        && !self.companion.pre_standby_catalog_ids.contains(&f.file_id)
+                        && !self.is_device_file_synced(f.file_id)
+                })
+                .max_by_key(|f| (f.end_time == Some(0), f.file_id))
+                .map(|f| (f.file_id, f.end_time == Some(0)));
+            if let Some((fid, still_open)) = candidate {
+                let _ = self.mark_standby_scratch_file(fid);
+                self.companion.active_standby_file_id = None;
+                self.companion.pending_standby_stop = false;
+                if still_open {
+                    self.device.stop_recording();
+                }
+                changed = true;
+            }
+        }
+
         if self.device.is_connected()
             && self.device.session.telemetry.is_some()
             && self.is_device_completely_idle()
         {
-            let scratch_ids: Vec<u32> = self
+            let mut reclaim_ids: BTreeSet<u32> = self
                 .workspace()
                 .standby_scratch_file_ids()
                 .iter()
                 .copied()
                 .collect();
-            if !scratch_ids.is_empty() {
-                for &fid in &scratch_ids {
+            for entry in &self.device.session.catalog {
+                if self.workspace().is_reclaimed_standby_file(entry.file_id) {
+                    reclaim_ids.insert(entry.file_id);
+                }
+            }
+            reclaim_ids.retain(|&fid| fid > 0 && !self.companion.deleted_in_connection.contains(&fid));
+            if !reclaim_ids.is_empty() {
+                for &fid in &reclaim_ids {
                     self.device.outbound.push(DeviceCommands::delete_file(fid));
+                    self.companion.deleted_in_connection.insert(fid);
                     self.device.session.catalog.retain(|f| f.file_id != fid);
                     self.companion.standby_file_ids.insert(fid);
                 }
                 let _ = self.commit(|w| {
-                    for &fid in &scratch_ids {
+                    for &fid in &reclaim_ids {
                         w.record_purged_bean_file_id(fid);
                     }
                     Ok(())
@@ -446,6 +541,15 @@ impl KoeRuntime {
                 && !self.companion.standby_suppressed_for_connection
                 && self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
             {
+                self.companion.pre_standby_catalog_ids = self
+                    .device
+                    .session
+                    .catalog
+                    .iter()
+                    .map(|f| f.file_id)
+                    .collect();
+                self.companion.active_standby_file_id = None;
+                self.companion.pending_standby_stop = false;
                 let outcome = self
                     .device
                     .session
@@ -495,15 +599,44 @@ impl KoeRuntime {
             match signal {
                 RawCompanionSignal::RecordingStateChanged { state, file_id } => {
                     self.companion.last_recording_state = state;
-                    if (state == 0 || state == 2) && self.companion.standby_stream_owned {
+                    if state == 1
+                        && (self.companion.standby_stream_owned
+                            || self.companion.pending_standby_stop)
+                    {
                         if let Some(fid) = file_id.filter(|&id| id > 0) {
+                            self.companion.active_standby_file_id = Some(fid);
                             let _ = self.mark_standby_scratch_file(fid);
+                            if self.companion.pending_standby_stop {
+                                self.companion.pending_standby_stop = false;
+                                self.companion.standby_stream_owned = false;
+                                self.device.stop_recording();
+                            }
                         }
-                        self.companion.standby_stream_owned = false;
-                        self.companion.standby_suppressed_for_connection = true;
-                        self.companion.capture_active = false;
-                        self.companion.post_tap_skip_slices = 0;
-                        self.companion.tail_holdback.clear();
+                    } else if state == 0 || state == 2 {
+                        if self.companion.standby_stream_owned {
+                            let fid = file_id
+                                .filter(|&id| id > 0)
+                                .or_else(|| self.companion.active_standby_file_id.take())
+                                .or_else(|| {
+                                    self.device.session.active_file_id.filter(|&id| id > 0)
+                                });
+                            if let Some(fid) = fid {
+                                let _ = self.mark_standby_scratch_file(fid);
+                            }
+                            self.companion.active_standby_file_id = None;
+                            self.companion.standby_stream_owned = false;
+                            self.companion.pending_standby_stop = false;
+                            self.companion.standby_suppressed_for_connection = true;
+                            self.companion.capture_active = false;
+                            self.companion.post_tap_skip_slices = 0;
+                            self.companion.tail_holdback.clear();
+                        } else if self.companion.pending_standby_stop {
+                            if let Some(fid) = file_id.filter(|&id| id > 0) {
+                                let _ = self.mark_standby_scratch_file(fid);
+                                self.companion.active_standby_file_id = None;
+                                self.companion.pending_standby_stop = false;
+                            }
+                        }
                     }
                 }
                 RawCompanionSignal::FrontDoubleTap {
@@ -512,10 +645,6 @@ impl KoeRuntime {
                     if mode == CompanionRoutingMode::Disabled {
                         continue;
                     }
-                    if self.companion.capture_active {
-                        self.companion.tail_holdback.clear();
-                    }
-                    self.companion.post_tap_skip_slices = POST_TAP_SKIP_SLICES;
                     let epoch = self.companion.epoch.clone();
                     let seq_down = self.companion.next_sequence();
                     self.companion.push_event(CompanionStreamEvent::ControlEdge {
@@ -537,12 +666,14 @@ impl KoeRuntime {
                         file_id: Some(file_id),
                         offset_ms: Some(offset_ms),
                     });
-                    if self.companion.auto_gate {
+                    if self.effective_companion_auto_gate() {
                         let next = !self.companion.capture_active;
                         self.set_companion_capture_active(
                             next,
                             Some(COMPANION_DOUBLE_TAP_TRIGGER.to_string()),
                         );
+                    } else if self.companion.capture_active {
+                        self.companion.pending_tap_holdback_extra = POST_TAP_SKIP_SLICES;
                     }
                 }
                 RawCompanionSignal::LivePcm16 { samples, .. } => {
@@ -555,7 +686,14 @@ impl KoeRuntime {
                     }
                     if self.companion.capture_active {
                         self.companion.tail_holdback.push_back(samples);
-                        while self.companion.tail_holdback.len() > PRE_STOP_TAP_HOLDBACK_SLICES {
+                        let limit = PRE_STOP_TAP_HOLDBACK_SLICES
+                            + self.companion.pending_tap_holdback_extra;
+                        if self.companion.tail_holdback.len() > limit {
+                            self.companion.pending_tap_holdback_extra = 0;
+                        }
+                        let effective_limit = PRE_STOP_TAP_HOLDBACK_SLICES
+                            + self.companion.pending_tap_holdback_extra;
+                        while self.companion.tail_holdback.len() > effective_limit {
                             if let Some(ready) = self.companion.tail_holdback.pop_front() {
                                 let epoch = self.companion.epoch.clone();
                                 let seq = self.companion.next_sequence();

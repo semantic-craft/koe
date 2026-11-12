@@ -475,18 +475,10 @@ impl KoeRuntime {
                     return Ok(McpToolCallState::Completed(Err(err)));
                 }
                 let snap = self.snapshot(now);
-                if snap["ask"]["phase"] == "pending" {
-                    return Ok(McpToolCallState::PendingAsk { question });
+                match self.resolve_settled_ask(&snap) {
+                    None => Ok(McpToolCallState::PendingAsk { question }),
+                    Some(done) => Ok(McpToolCallState::Completed(done)),
                 }
-                if let Some(error) = snap["error"].as_str() {
-                    return Ok(McpToolCallState::Completed(Err(error.to_string())));
-                }
-                if snap["ask"]["phase"] == "failed" {
-                    return Ok(McpToolCallState::Completed(Err(
-                        "问答处理失败，原始记录已保留".into(),
-                    )));
-                }
-                Ok(McpToolCallState::Completed(Ok(snap["ask"].clone())))
             }
             "list_review_items" => {
                 ensure_allowed_keys(obj, &["kind", "state"])?;
@@ -843,14 +835,25 @@ impl KoeRuntime {
     ) -> Option<Result<Value, String>> {
         self.poll_timers(elapsed_ms, now);
         let snapshot = self.snapshot(now);
+        self.resolve_settled_ask(&snapshot)
+    }
+
+    fn resolve_settled_ask(&self, snapshot: &Value) -> Option<Result<Value, String>> {
         if snapshot["ask"]["phase"] == "pending" {
             return None;
         }
-        if let Some(error) = snapshot["error"].as_str() {
-            return Some(Err(error.to_string()));
-        }
         if snapshot["ask"]["phase"] == "failed" {
-            return Some(Err("问答处理失败，原始记录已保留".into()));
+            let reason = self
+                .workspace()
+                .ask_session()
+                .messages
+                .last()
+                .filter(|m| m.status == koe_engine::context::AskStatus::Failed)
+                .map(|m| m.text.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("问答处理失败，原始记录已保留")
+                .to_string();
+            return Some(Err(reason));
         }
         Some(Ok(snapshot["ask"].clone()))
     }

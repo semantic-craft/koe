@@ -1,5 +1,6 @@
 use std::{
     io::{self, BufRead, Read, Write},
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -13,7 +14,10 @@ const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
 
 pub(crate) enum McpBackend<'a> {
     Offline(&'a mut KoeRuntime),
-    Online(&'a mut BridgeClient),
+    Online {
+        client: &'a mut BridgeClient,
+        workspace: &'a Path,
+    },
 }
 
 pub(crate) fn serve(mut backend: McpBackend<'_>) -> Result<(), String> {
@@ -126,10 +130,12 @@ fn handle(
         _ if !*ready => return Some(error(id, -32600, "请先完成 MCP 初始化")),
         "tools/list" => match backend {
             McpBackend::Offline(_) => KoeRuntime::mcp_tools_list(),
-            McpBackend::Online(client) => match client.mcp_tools_list() {
-                Ok(list) => list,
-                Err(err) => return Some(error(id, err.code, &err.message)),
-            },
+            McpBackend::Online { client, workspace } => {
+                match online_tools_list(client, workspace) {
+                    Ok(list) => list,
+                    Err(err) => return Some(error(id, err.code, &err.message)),
+                }
+            }
         },
         "tools/call" => {
             let Some(name) = request["params"]["name"].as_str() else {
@@ -141,7 +147,9 @@ fn handle(
                 .unwrap_or_else(|| json!({}));
             let outcome = match backend {
                 McpBackend::Offline(runtime) => call_offline_tool(runtime, name, &args),
-                McpBackend::Online(client) => client.mcp_tool_call(name, &args),
+                McpBackend::Online { client, workspace } => {
+                    online_tool_call(client, workspace, name, &args)
+                }
             };
             match outcome {
                 Err(McpToolError { code, message }) => return Some(error(id, code, &message)),
@@ -156,6 +164,39 @@ fn handle(
         _ => return Some(error(id, -32601, "未知方法")),
     };
     Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+}
+
+fn online_tools_list(client: &mut BridgeClient, workspace: &Path) -> Result<Value, McpToolError> {
+    match client.mcp_tools_list() {
+        Ok(list) => Ok(list),
+        Err(first_err) if client.is_disconnected() => {
+            if let Ok(Some(reconnected)) = BridgeClient::try_connect(workspace) {
+                *client = reconnected;
+                return client.mcp_tools_list();
+            }
+            Err(first_err)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn online_tool_call(
+    client: &mut BridgeClient,
+    workspace: &Path,
+    name: &str,
+    args: &Value,
+) -> Result<Result<Value, String>, McpToolError> {
+    match client.mcp_tool_call(name, args) {
+        Ok(res) => Ok(res),
+        Err(first_err) if client.is_disconnected() => {
+            if let Ok(Some(reconnected)) = BridgeClient::try_connect(workspace) {
+                *client = reconnected;
+                return client.mcp_tool_call(name, args);
+            }
+            Err(first_err)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {

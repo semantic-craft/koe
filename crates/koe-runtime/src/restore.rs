@@ -28,7 +28,10 @@ impl KoeRuntime {
     }
 
     pub(crate) fn maybe_start_auto_offline_pull(&mut self) -> bool {
-        if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+        if (self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+            && !self.companion.standby_suppressed_for_connection)
+            || self.companion.standby_stream_owned
+            || self.companion.pending_standby_stop
             || !self.device.is_connected()
             || self.device.awaiting_stop
             || self.device.session.device_recording_active
@@ -70,16 +73,21 @@ impl KoeRuntime {
                 || self.captures.active.contains_key(&entry_id);
             if self.is_standby_file(entry_id)
                 || (!has_meeting_capture
-                    && (self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
-                        || self.companion.standby_stream_owned))
+                    && (self.companion.standby_stream_owned
+                        || self.companion.pending_standby_stop))
             {
                 self.device.finalized.remove(0);
                 self.captures.active.remove(&entry_id);
                 self.captures.records_by_file_id.remove(&entry_id);
+                if self.companion.active_standby_file_id == Some(entry_id) {
+                    self.companion.active_standby_file_id = None;
+                }
                 if self.device.is_connected() && self.is_device_completely_idle() {
-                    self.device
-                        .outbound
-                        .push(DeviceCommands::delete_file(entry_id));
+                    if self.companion.deleted_in_connection.insert(entry_id) {
+                        self.device
+                            .outbound
+                            .push(DeviceCommands::delete_file(entry_id));
+                    }
                     self.device.session.catalog.retain(|f| f.file_id != entry_id);
                     self.companion.standby_file_ids.insert(entry_id);
                     self.commit(|w| {

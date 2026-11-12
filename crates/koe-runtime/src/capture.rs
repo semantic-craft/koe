@@ -33,21 +33,30 @@ impl KoeRuntime {
         while let Some(event) = self.device.captures.front().cloned() {
             match event {
                 CaptureEvent::Started { file_id } => {
-                    if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
-                        || self.companion.standby_stream_owned
-                        || self.is_standby_file(file_id)
-                    {
+                    if self.treats_file_as_standby(file_id) {
+                        if self.companion.standby_stream_owned || self.companion.pending_standby_stop
+                        {
+                            self.companion.active_standby_file_id = Some(file_id);
+                        }
                         self.mark_standby_scratch_file(file_id)?;
+                        if self.companion.pending_standby_stop {
+                            self.companion.pending_standby_stop = false;
+                            self.companion.standby_stream_owned = false;
+                            self.device.stop_recording();
+                        }
                         self.device.captures.pop_front();
                         continue;
                     }
                     let _ = self.ensure_capture(file_id, now)?;
                 }
                 CaptureEvent::Audio { file_id, pcm16 } => {
-                    if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
-                        || self.companion.standby_stream_owned
-                        || self.is_standby_file(file_id)
+                    if !self.captures.active.contains_key(&file_id)
+                        && self.treats_file_as_standby(file_id)
                     {
+                        if self.companion.standby_stream_owned || self.companion.pending_standby_stop
+                        {
+                            self.companion.active_standby_file_id = Some(file_id);
+                        }
                         self.mark_standby_scratch_file(file_id)?;
                         self.device.captures.pop_front();
                         continue;
@@ -75,11 +84,13 @@ impl KoeRuntime {
                 }
                 CaptureEvent::Finished { file_id } => {
                     if self.is_standby_file(file_id)
-                        || (self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
-                            && !self.captures.active.contains_key(&file_id))
-                        || (self.companion.standby_stream_owned
-                            && !self.captures.active.contains_key(&file_id))
+                        || (!self.captures.active.contains_key(&file_id)
+                            && (self.companion.standby_stream_owned
+                                || self.companion.pending_standby_stop))
                     {
+                        if self.companion.active_standby_file_id == Some(file_id) {
+                            self.companion.active_standby_file_id = None;
+                        }
                         self.captures.active.remove(&file_id);
                         self.device.captures.pop_front();
                         continue;

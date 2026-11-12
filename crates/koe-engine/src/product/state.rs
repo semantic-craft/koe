@@ -11,6 +11,7 @@ impl ProductWorkspace {
             ble_auto_connect: self.ble_auto_connect,
             companion_mode: self.companion_mode,
             standby_scratch_file_ids: self.standby_scratch_file_ids.clone(),
+            reclaimed_standby_file_ids: self.reclaimed_standby_file_ids.clone(),
             migrations: self.migrations.clone(),
             purged_bean_file_ids: self.purged_bean_file_ids.clone(),
             revision: self.revision,
@@ -27,7 +28,10 @@ impl ProductWorkspace {
     /// Restores validated value state; malformed identities or references are rejected.
     pub fn restore(state: WorkspaceState) -> Result<Self, ProductError> {
         state.provider_configuration.validate()?;
-        if state.purged_bean_file_ids.contains(&0) || state.standby_scratch_file_ids.contains(&0) {
+        if state.purged_bean_file_ids.contains(&0)
+            || state.standby_scratch_file_ids.contains(&0)
+            || state.reclaimed_standby_file_ids.contains(&0)
+        {
             return Err(ProductError::InvalidEvidence);
         }
         let mut records = BTreeMap::new();
@@ -57,6 +61,7 @@ impl ProductWorkspace {
             ble_auto_connect: state.ble_auto_connect,
             companion_mode: state.companion_mode,
             standby_scratch_file_ids: state.standby_scratch_file_ids,
+            reclaimed_standby_file_ids: state.reclaimed_standby_file_ids,
             migrations: state.migrations,
             purged_bean_file_ids: state.purged_bean_file_ids,
             revision: state.revision,

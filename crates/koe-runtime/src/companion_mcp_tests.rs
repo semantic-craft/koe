@@ -917,3 +917,347 @@ fn resolve_bridge_socket_path_maps_sandbox_container_env_overrides_and_length_ca
     assert_eq!(exact_103.len(), 103);
     assert!(resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new(&exact_103))).is_none());
 }
+
+#[test]
+fn collar_standby_preserves_manual_side_button_recordings_and_inflight_offline_pulls() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let session_key = connect_simulated_bean(&mut runtime, "ble-preserve", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    let mut offline_cat = Vec::new();
+    offline_cat.extend_from_slice(&1u16.to_le_bytes());
+    offline_cat.extend_from_slice(&6101u32.to_le_bytes());
+    offline_cat.extend_from_slice(&40u32.to_le_bytes());
+    offline_cat.extend_from_slice(&(NOW as u32).to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &offline_cat), NOW + 1);
+    let pull_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        pull_tx
+            .iter()
+            .any(|f| f == &DeviceCommands::start_transport_audio_file(6101, 0, 0)),
+        "idle disabled mode must start offline pull for 6101"
+    );
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW + 2,
+    );
+    let file_key_pull = [0x41u8; 32];
+    let file_nonce_pull = [0x51u8; 16];
+    runtime.ingest_ble_chunk(
+        &build_head_rx(&session_key, 6101, 332, &file_key_pull, &file_nonce_pull),
+        NOW + 2,
+    );
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key_pull, &file_nonce_pull, &[(0, 0), (1, 0)]),
+        NOW + 2,
+    );
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x0A, &6101u32.to_le_bytes()), NOW + 3);
+    let post_pull_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        !post_pull_tx.contains(&DeviceCommands::delete_file(6101)),
+        "in-flight offline pull finalized after switching to collar_standby must never be deleted"
+    );
+    assert!(
+        runtime
+            .workspace()
+            .records()
+            .values()
+            .any(|r| r.origin == RecordOrigin::Bean && r.aggregate.file_id == 6101),
+        "in-flight offline pull 6101 must be saved as a Bean ProductRecord"
+    );
+
+    let (sb_key, sb_nonce) = activate_realtime_file(&mut runtime, &session_key, 6102, NOW + 4);
+    assert!(runtime.is_standby_ready());
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&sb_key, &sb_nonce, &[(0, 0), (1, 0)]),
+        NOW + 4,
+    );
+    let mut sb_stop = Vec::from(6102u32.to_le_bytes());
+    sb_stop.push(0);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &sb_stop), NOW + 5);
+    runtime.poll_timers(2_100, NOW + 8);
+    let sb_cleanup_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        sb_cleanup_tx.contains(&DeviceCommands::delete_file(6102)),
+        "side-button stop of owned standby file 6102 must reclaim scratch file"
+    );
+    assert!(
+        !runtime
+            .workspace()
+            .records()
+            .values()
+            .any(|r| r.aggregate.file_id == 6102)
+    );
+
+    let mut manual_start = Vec::from(6103u32.to_le_bytes());
+    manual_start.push(1);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &manual_start), NOW + 9);
+    let manual_sub_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        manual_sub_tx.contains(&DeviceCommands::start_transport_audio_file(6103, 0, 1)),
+        "manual side-button recording 6103 must subscribe realtime stream"
+    );
+    let manual_key = [0x43u8; 32];
+    let manual_nonce = [0x53u8; 16];
+    runtime.ingest_ble_chunk(
+        &build_head_rx(
+            &session_key,
+            6103,
+            UNFINISHED_FILE_SIZE,
+            &manual_key,
+            &manual_nonce,
+        ),
+        NOW + 9,
+    );
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&manual_key, &manual_nonce, &[(0, 0), (1, 0), (2, 0)]),
+        NOW + 10,
+    );
+    let mut manual_stop = Vec::from(6103u32.to_le_bytes());
+    manual_stop.push(0);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &manual_stop), NOW + 11);
+    runtime.poll_timers(2_100, NOW + 14);
+    let manual_finish_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        !manual_finish_tx.contains(&DeviceCommands::delete_file(6103)),
+        "manual side-button recording 6103 must never be wiped via 0x1A 0x10"
+    );
+    assert!(
+        runtime
+            .workspace()
+            .records()
+            .values()
+            .any(|r| r.origin == RecordOrigin::Bean && r.aggregate.file_id == 6103),
+        "manual side-button recording 6103 must be saved as a Bean ProductRecord"
+    );
+}
+
+#[test]
+fn pre_catalog_mode_switch_and_crash_before_flash_delete_reclaim_standby_idempotently() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+    let _ = connect_simulated_bean(&mut runtime, "ble-pre-cat", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+        NOW + 1,
+    );
+    let pre_switch_tx = runtime.drain_outbound_ble_frames();
+    assert!(pre_switch_tx.contains(&DeviceCommands::pause_record()));
+
+    let mut late_cat = Vec::new();
+    late_cat.extend_from_slice(&1u16.to_le_bytes());
+    late_cat.extend_from_slice(&7201u32.to_le_bytes());
+    late_cat.extend_from_slice(&0u32.to_le_bytes());
+    late_cat.extend_from_slice(&200u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &late_cat), NOW + 2);
+    let late_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        late_tx.contains(&DeviceCommands::pause_record()),
+        "arriving open standby file 7201 after mode switch must be stopped"
+    );
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[2]), NOW + 2);
+    runtime.poll_timers(250, NOW + 3);
+    let reclaim_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        reclaim_tx.contains(&DeviceCommands::delete_file(7201)),
+        "dying pre-catalog standby file 7201 must be deleted on idle"
+    );
+    assert!(runtime.workspace().records().is_empty());
+    assert!(runtime.workspace().is_bean_file_purged(7201));
+    assert!(runtime.workspace().is_reclaimed_standby_file(7201));
+    drop(runtime);
+
+    let mut reopened = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = connect_simulated_bean(&mut reopened, "ble-crash-recover", NOW + 10);
+    let _ = reopened.drain_outbound_ble_frames();
+
+    let mut survivor_cat = Vec::new();
+    survivor_cat.extend_from_slice(&2u16.to_le_bytes());
+    survivor_cat.extend_from_slice(&7201u32.to_le_bytes());
+    survivor_cat.extend_from_slice(&(NOW as u32).to_le_bytes());
+    survivor_cat.extend_from_slice(&200u32.to_le_bytes());
+    survivor_cat.extend_from_slice(&7202u32.to_le_bytes());
+    survivor_cat.extend_from_slice(&0u32.to_le_bytes());
+    survivor_cat.extend_from_slice(&400u32.to_le_bytes());
+    reopened.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &survivor_cat), NOW + 11);
+
+    let snap = reopened.snapshot(NOW + 11);
+    let visible_ids: Vec<u64> = snap["device"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(
+        visible_ids,
+        vec![7202],
+        "unwiped standby tombstone 7201 must stay hidden from device.files"
+    );
+
+    let retry_tx = reopened.drain_outbound_ble_frames();
+    assert_eq!(
+        retry_tx
+            .iter()
+            .filter(|&f| f == &DeviceCommands::delete_file(7201))
+            .count(),
+        1,
+        "reconnect with 7201 still in catalog must re-issue 0x1A 0x10 once"
+    );
+    reopened.poll_timers(250, NOW + 12);
+    assert!(
+        !reopened
+            .drain_outbound_ble_frames()
+            .contains(&DeviceCommands::delete_file(7201)),
+        "deleted_in_connection must suppress duplicate 0x1A 0x10 within the same connection"
+    );
+}
+
+#[test]
+fn manual_gate_preserves_speech_across_double_tap_and_restores_auto_gate_on_release() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+    let session_key = connect_simulated_bean(&mut runtime, "ble-manual-gate", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &session_key, 7301, NOW + 1);
+    let _ = runtime.drain_companion_events();
+
+    runtime.acquire_companion_manual_gate();
+    runtime.set_companion_capture_active(true, Some("shortcut_dictate".into()));
+
+    let mut slices = Vec::new();
+    for seq in 0..10 {
+        slices.push((seq, 0x00));
+    }
+    slices.push((10, 0x01));
+    for seq in 11..21 {
+        slices.push((seq, 0x00));
+    }
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &slices),
+        NOW + 2,
+    );
+    runtime.set_companion_capture_active(false, Some("shortcut_dictate".into()));
+
+    let events = runtime.drain_companion_events();
+    let edge_count = events
+        .iter()
+        .filter(|ev| matches!(ev, CompanionStreamEvent::ControlEdge { .. }))
+        .count();
+    let pcm_count = events
+        .iter()
+        .filter(|ev| matches!(ev, CompanionStreamEvent::AudioPcm16 { .. }))
+        .count();
+    assert_eq!(edge_count, 2);
+    assert_eq!(
+        pcm_count, 21,
+        "manual gate must drop zero slices when double-tap fires during active shortcut capture"
+    );
+
+    runtime.release_companion_manual_gate();
+    let mut resume_slices = vec![(21, 0x01)];
+    for seq in 22..40 {
+        resume_slices.push((seq, 0x00));
+    }
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &resume_slices),
+        NOW + 3,
+    );
+    let resumed_events = runtime.drain_companion_events();
+    assert_eq!(
+        resumed_events
+            .iter()
+            .filter(|ev| matches!(ev, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        4,
+        "releasing last manual gate must restore double-tap auto-gating with 3-slice start skip and 12-slice holdback"
+    );
+}
+
+#[test]
+fn poll_mcp_ask_ignores_unrelated_runtime_error_and_create_note_increments_generation_once() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let gen_before = runtime.generation();
+    let created = match runtime
+        .call_mcp_tool_step(
+            "create_note",
+            &json!({"title": "代次校验", "text": "单次提交只递增一代快照。"}),
+            NOW,
+        )
+        .unwrap()
+    {
+        McpToolCallState::Completed(Ok(value)) => value,
+        other => panic!("expected completed create_note, got {other:?}"),
+    };
+    assert_eq!(
+        runtime.generation(),
+        gen_before + 1,
+        "create_note must advance snapshot generation by exactly 1"
+    );
+    let record_id = created["id"].as_str().unwrap().to_string();
+
+    let ask_op = runtime
+        .commit(|w| {
+            let req = w
+                .begin_ask(
+                    SearchScope::Record(record_id.clone()),
+                    "单次提交",
+                    NOW + 1,
+                )?
+                .unwrap();
+            Ok(req.operation)
+        })
+        .unwrap();
+    let job_id = runtime.next_job;
+    runtime.next_job += 1;
+    runtime.pending.insert(job_id, PendingWork::Ask(ask_op));
+    runtime.error = Some("无关并发操作错误".into());
+    runtime.completed.push_back(ProviderEvent {
+        operation_id: job_id,
+        record_id: "ask".into(),
+        result: Ok(ProviderOutput::Chat {
+            text: "单次提交只递增一代快照 [S1]".into(),
+        }),
+    });
+    let settled = runtime
+        .poll_mcp_ask("单次提交", 0, NOW + 2)
+        .expect("completed ask must settle")
+        .expect("unrelated runtime.error must not fail settled ask");
+    assert_eq!(settled["phase"], "ready");
+
+    let fail_op = runtime
+        .commit(|w| {
+            let req = w
+                .begin_ask(SearchScope::Record(record_id), "单次提交", NOW + 3)?
+                .unwrap();
+            Ok(req.operation)
+        })
+        .unwrap();
+    let fail_job = runtime.next_job;
+    runtime.next_job += 1;
+    runtime.pending.insert(fail_job, PendingWork::Ask(fail_op));
+    runtime.error = None;
+    runtime.completed.push_back(ProviderEvent {
+        operation_id: fail_job,
+        record_id: "ask".into(),
+        result: Err("模型服务暂时不可用".into()),
+    });
+    let failed_err = runtime
+        .poll_mcp_ask("单次提交", 0, NOW + 4)
+        .expect("failed ask must settle")
+        .unwrap_err();
+    assert!(failed_err.contains("模型服务暂时不可用"), "{failed_err}");
+}

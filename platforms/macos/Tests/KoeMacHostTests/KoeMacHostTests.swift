@@ -176,4 +176,44 @@ struct KoeMacHostTests {
         #expect(store.snapshot.device.autoConnect == false)
         #expect(UserDefaults.standard.string(forKey: key) == nil)
     }
+
+    @Test("Runtime disconnect with autoConnect enabled resets bridge link state and collar standby teardown emits pause frame")
+    @MainActor
+    func syncDisconnectWithAutoConnectAndStandbyTeardownPauseFrame() {
+        let key = BluetoothBridge.savedPeripheralKey
+        let previousSaved = UserDefaults.standard.string(forKey: key)
+        defer {
+            if let previousSaved {
+                UserDefaults.standard.set(previousSaved, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let savedUUID = "22222222-3333-4444-5555-666666666666"
+        UserDefaults.standard.set(savedUUID, forKey: key)
+        store.send("set_ble_auto_connect", ["enabled": true])
+        store.send("set_companion_mode", ["mode": "collar_standby"])
+
+        let bridge = BluetoothBridge(store: store)
+        bridge.reportedReady = true
+        bridge.isScanRequested = true
+        bridge.syncWithRuntimeDevice(store.snapshot.device)
+
+        #expect(!bridge.reportedReady)
+        #expect(!bridge.isScanRequested)
+        #expect(UserDefaults.standard.string(forKey: key) == savedUUID)
+        #expect(bridge.lastTeardownStopFrames == [BluetoothBridge.pauseRecordFrame])
+
+        bridge.lastTeardownStopFrames = []
+        bridge.releaseControl()
+        #expect(store.snapshot.device.autoConnect == false)
+        #expect(store.snapshot.device.companionMode == "collar_standby")
+        #expect(UserDefaults.standard.string(forKey: key) == nil)
+    }
 }

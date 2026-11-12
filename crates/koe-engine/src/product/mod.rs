@@ -313,6 +313,8 @@ pub struct WorkspaceState {
     pub companion_mode: CompanionRoutingMode,
     /// Temporary D3200 `file_id`s created during collar standby awaiting flash deletion.
     pub standby_scratch_file_ids: BTreeSet<u32>,
+    /// Standby D3200 `file_id`s whose flash deletion was issued and must be re-verified on reconnect.
+    pub reclaimed_standby_file_ids: BTreeSet<u32>,
     /// Completed imports, including preserved material that has not been mapped.
     pub migrations: Vec<MigrationReceipt>,
     /// Hardware Bean `file_id` tombstones preventing automatic re-pull after purge.
@@ -342,6 +344,7 @@ pub struct ProductWorkspace {
     ble_auto_connect: bool,
     companion_mode: CompanionRoutingMode,
     standby_scratch_file_ids: BTreeSet<u32>,
+    reclaimed_standby_file_ids: BTreeSet<u32>,
     migrations: Vec<MigrationReceipt>,
     purged_bean_file_ids: BTreeSet<u32>,
     revision: u64,
@@ -369,6 +372,7 @@ impl ProductWorkspace {
             ble_auto_connect: true,
             companion_mode: CompanionRoutingMode::Disabled,
             standby_scratch_file_ids: BTreeSet::new(),
+            reclaimed_standby_file_ids: BTreeSet::new(),
             migrations: Vec::new(),
             purged_bean_file_ids: BTreeSet::new(),
             revision: 0,

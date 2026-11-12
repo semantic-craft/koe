@@ -1056,3 +1056,81 @@ fn live_host_companion_listen_streams_thump_gated_pcm_and_flushes_shortcut_holdb
         assert_eq!(decoded.len(), 320);
     }
 }
+
+#[test]
+fn mcp_stdio_online_reconnects_automatically_after_host_session_restart() {
+    let workspace = Workspace::new();
+    let host1 = HostSessionGuard::open(&workspace.0).expect("first host session must open");
+
+    let mut mcp_proc = Command::new(env!("CARGO_BIN_EXE_koe"))
+        .args(["mcp-stdio", "--workspace"])
+        .arg(&workspace.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = mcp_proc.stdin.take().unwrap();
+    let mut stdout = BufReader::new(mcp_proc.stdout.take().unwrap());
+
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"reconnect-test","version":"1"}}})
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_note","arguments":{"title":"重启前速记","text":"跨宿主会话保留并自动重连。"}}})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    let mut line1 = String::new();
+    stdout.read_line(&mut line1).unwrap();
+    let mut line2 = String::new();
+    stdout.read_line(&mut line2).unwrap();
+    let created_resp: Value = serde_json::from_str(&line2).unwrap();
+    assert_eq!(created_resp["result"]["isError"], false);
+
+    drop(host1);
+    let _host2 = HostSessionGuard::open(&workspace.0).expect("restarted host session must open");
+
+    writeln!(stdin, "{}", json!({"jsonrpc":"2.0","id":3,"method":"tools/list"})).unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_records","arguments":{"limit":10,"offset":0}}})
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+
+    let mut line3 = String::new();
+    stdout.read_line(&mut line3).unwrap();
+    let tools_resp: Value = serde_json::from_str(&line3).unwrap();
+    assert_eq!(
+        tools_resp["result"]["tools"].as_array().unwrap().len(),
+        EXPECTED_MCP_TOOLS.len()
+    );
+
+    let mut line4 = String::new();
+    stdout.read_line(&mut line4).unwrap();
+    let records_resp: Value = serde_json::from_str(&line4).unwrap();
+    assert_eq!(records_resp["result"]["isError"], false);
+    let payload: Value =
+        serde_json::from_str(records_resp["result"]["content"][0]["text"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(payload["total"], 1);
+    assert_eq!(payload["records"][0]["title"], "重启前速记");
+
+    drop(stdin);
+    let status = mcp_proc.wait().unwrap();
+    assert!(status.success());
+}

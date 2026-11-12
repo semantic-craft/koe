@@ -24,6 +24,8 @@ struct WorkspaceDto {
     #[serde(default)]
     standby_scratch_file_ids: Vec<u32>,
     #[serde(default)]
+    reclaimed_standby_file_ids: Vec<u32>,
+    #[serde(default)]
     migrations: Vec<MigrationDto>,
     #[serde(default)]
     purged_bean_file_ids: Vec<u32>,
@@ -335,6 +337,7 @@ pub(super) fn encode(workspace: &ProductWorkspace) -> Result<String, StoreError>
         ble_auto_connect: state.ble_auto_connect,
         companion_mode: Some(state.companion_mode.as_str().to_string()),
         standby_scratch_file_ids: state.standby_scratch_file_ids.iter().copied().collect(),
+        reclaimed_standby_file_ids: state.reclaimed_standby_file_ids.iter().copied().collect(),
         migrations: state
             .migrations
             .iter()
@@ -411,6 +414,9 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
     if dto.standby_scratch_file_ids.contains(&0) {
         return Err(invalid("invalid standby scratch file id"));
     }
+    if dto.reclaimed_standby_file_ids.contains(&0) {
+        return Err(invalid("invalid reclaimed standby file id"));
+    }
     let companion_mode = match dto.companion_mode.as_deref() {
         None => CompanionRoutingMode::Disabled,
         Some(raw_mode) => CompanionRoutingMode::parse(raw_mode)
@@ -421,6 +427,7 @@ pub(super) fn decode(raw: &str) -> Result<ProductWorkspace, StoreError> {
         ble_auto_connect: dto.ble_auto_connect,
         companion_mode,
         standby_scratch_file_ids: dto.standby_scratch_file_ids.into_iter().collect(),
+        reclaimed_standby_file_ids: dto.reclaimed_standby_file_ids.into_iter().collect(),
         migrations: dto
             .migrations
             .into_iter()

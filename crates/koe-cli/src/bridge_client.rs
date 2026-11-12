@@ -18,6 +18,7 @@ pub(crate) struct BridgeClient {
     reader: BufReader<UnixStream>,
     writer: UnixStream,
     next_id: u64,
+    disconnected: bool,
 }
 
 impl BridgeClient {
@@ -25,7 +26,7 @@ impl BridgeClient {
         let Some(sock_path) = resolve_bridge_socket_path(workspace) else {
             return Ok(None);
         };
-        let meta = match fs::symlink_metadata(&sock_path) {
+        let mut meta = match fs::symlink_metadata(&sock_path) {
             Ok(meta) => meta,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(format!("无法检查本地桥套接字：{err}")),
@@ -34,7 +35,18 @@ impl BridgeClient {
             return Err("本地桥路径不是 Unix 套接字，已拒绝连接".into());
         }
         if (meta.mode() & 0o077) != 0 {
-            return Err("本地桥套接字权限不安全，已拒绝连接".into());
+            std::thread::sleep(Duration::from_millis(15));
+            meta = match fs::symlink_metadata(&sock_path) {
+                Ok(rechecked) => rechecked,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(err) => return Err(format!("无法检查本地桥套接字：{err}")),
+            };
+            if !meta.file_type().is_socket() {
+                return Err("本地桥路径不是 Unix 套接字，已拒绝连接".into());
+            }
+            if (meta.mode() & 0o077) != 0 {
+                return Err("本地桥套接字权限不安全，已拒绝连接".into());
+            }
         }
         if workspace.exists() {
             let ws_meta =
@@ -63,7 +75,12 @@ impl BridgeClient {
             reader: BufReader::new(stream),
             writer,
             next_id: 0,
+            disconnected: false,
         }))
+    }
+
+    pub(crate) fn is_disconnected(&self) -> bool {
+        self.disconnected
     }
 
     pub(crate) fn status(&mut self) -> Result<Value, String> {
@@ -201,13 +218,19 @@ impl BridgeClient {
             "method": method,
             "params": params,
         });
-        writeln!(self.writer, "{request}").map_err(|e| McpToolError {
-            code: -32603,
-            message: format!("本地桥写入失败：{e}"),
+        writeln!(self.writer, "{request}").map_err(|e| {
+            self.disconnected = true;
+            McpToolError {
+                code: -32603,
+                message: format!("本地桥写入失败：{e}"),
+            }
         })?;
-        self.writer.flush().map_err(|e| McpToolError {
-            code: -32603,
-            message: format!("本地桥刷新失败：{e}"),
+        self.writer.flush().map_err(|e| {
+            self.disconnected = true;
+            McpToolError {
+                code: -32603,
+                message: format!("本地桥刷新失败：{e}"),
+            }
         })?;
 
         let mut line = String::new();
@@ -216,11 +239,15 @@ impl BridgeClient {
             .by_ref()
             .take(MAX_LINE_BYTES + 1)
             .read_line(&mut line)
-            .map_err(|e| McpToolError {
-                code: -32603,
-                message: format!("本地桥读取失败：{e}"),
+            .map_err(|e| {
+                self.disconnected = true;
+                McpToolError {
+                    code: -32603,
+                    message: format!("本地桥读取失败：{e}"),
+                }
             })?;
         if read == 0 {
+            self.disconnected = true;
             return Err(McpToolError {
                 code: -32603,
                 message: "本地桥连接已提前关闭".into(),

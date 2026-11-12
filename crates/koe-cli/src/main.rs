@@ -210,7 +210,12 @@ fn run() -> Result<(), String> {
                     client.call_tool_value(name, args)
                 })?
             }
-            "mcp-stdio" => return mcp::serve(McpBackend::Online(&mut client)),
+            "mcp-stdio" => {
+                return mcp::serve(McpBackend::Online {
+                    client: &mut client,
+                    workspace: &workspace_path,
+                });
+            }
             _ => unreachable!(),
         };
         println!("{output}");

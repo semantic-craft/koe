@@ -471,12 +471,24 @@ impl KoeRuntime {
             Command::DeviceCloseGuide => self.device.close_guide(),
             Command::DeviceRefresh => self.device.refresh(),
             Command::DeviceDisconnect => {
-                if self.companion.standby_stream_owned {
-                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+                if self.companion.standby_stream_owned
+                    || self.companion.pending_standby_stop
+                    || self.companion.active_standby_file_id.is_some()
+                {
+                    if let Some(fid) = self
+                        .device
+                        .session
+                        .active_file_id
+                        .filter(|&id| id > 0)
+                        .or_else(|| self.companion.active_standby_file_id.take())
+                    {
                         let _ = self.mark_standby_scratch_file(fid);
                     }
+                    self.companion.active_standby_file_id = None;
                     self.companion.standby_stream_owned = false;
+                    self.companion.pending_standby_stop = false;
                 }
+                self.companion.deleted_in_connection.clear();
                 self.device.disconnect();
                 self.drive_companion(now);
             }
@@ -485,12 +497,24 @@ impl KoeRuntime {
                     w.set_ble_auto_connect(false);
                     Ok(())
                 })?;
-                if self.companion.standby_stream_owned {
-                    if let Some(fid) = self.device.session.active_file_id.filter(|&id| id > 0) {
+                if self.companion.standby_stream_owned
+                    || self.companion.pending_standby_stop
+                    || self.companion.active_standby_file_id.is_some()
+                {
+                    if let Some(fid) = self
+                        .device
+                        .session
+                        .active_file_id
+                        .filter(|&id| id > 0)
+                        .or_else(|| self.companion.active_standby_file_id.take())
+                    {
                         let _ = self.mark_standby_scratch_file(fid);
                     }
+                    self.companion.active_standby_file_id = None;
                     self.companion.standby_stream_owned = false;
+                    self.companion.pending_standby_stop = false;
                 }
+                self.companion.deleted_in_connection.clear();
                 self.companion.capture_active = false;
                 self.companion.post_tap_skip_slices = 0;
                 self.companion.tail_holdback.clear();

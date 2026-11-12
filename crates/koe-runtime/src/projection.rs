@@ -210,7 +210,7 @@ impl KoeRuntime {
         let files: Vec<_> = device
             .catalog
             .iter()
-            .filter(|f| !self.is_standby_file(f.file_id))
+            .filter(|f| !self.is_standby_file(f.file_id) && !self.workspace().is_reclaimed_standby_file(f.file_id))
             .map(|f| json!({"id":f.file_id,"title":format!("录音 {}", f.file_id),"durationMs":f.duration_ms}))
             .collect();
         let progress = if device.transfer.expected_wire_bytes > 0 {

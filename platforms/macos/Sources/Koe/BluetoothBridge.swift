@@ -139,9 +139,10 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     var central: CBCentralManager?
     var peripheral: CBPeripheral?
     var reconnectingPeripheral: CBPeripheral?
-    private var writeCharacteristic: CBCharacteristic?
-    private var outboundQueue = BleOutboundQueue()
-    private var outboundFlushTimer: Timer?
+    var writeCharacteristic: CBCharacteristic?
+    var outboundQueue = BleOutboundQueue()
+    var outboundFlushTimer: Timer?
+    public internal(set) var lastTeardownStopFrames: [Data] = []
     private var notifyReady = false
     private var notifyFound = false
     private var pendingServices = 0

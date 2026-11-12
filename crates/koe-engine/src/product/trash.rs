@@ -294,9 +294,17 @@ impl ProductWorkspace {
 
     /// Clears a Bean `file_id` tombstone before an explicit download.
     pub fn clear_purged_bean_file_id(&mut self, file_id: u32) {
-        if self.purged_bean_file_ids.remove(&file_id) {
+        let removed_purged = self.purged_bean_file_ids.remove(&file_id);
+        let removed_reclaimed = self.reclaimed_standby_file_ids.remove(&file_id);
+        if removed_purged || removed_reclaimed {
             self.changed();
         }
+    }
+
+    /// Returns `true` when `file_id` was reclaimed as a temporary collar-standby scratch file.
+    #[must_use]
+    pub fn is_reclaimed_standby_file(&self, file_id: u32) -> bool {
+        file_id != 0 && self.reclaimed_standby_file_ids.contains(&file_id)
     }
 
     /// Marks a temporary or reclaimed Bean `file_id` as purged and clears any pending scratch entry.
@@ -305,8 +313,9 @@ impl ProductWorkspace {
             return;
         }
         let removed_scratch = self.standby_scratch_file_ids.remove(&file_id);
+        let inserted_reclaimed = self.reclaimed_standby_file_ids.insert(file_id);
         let inserted_tombstone = self.purged_bean_file_ids.insert(file_id);
-        if removed_scratch || inserted_tombstone {
+        if removed_scratch || inserted_reclaimed || inserted_tombstone {
             self.changed();
         }
     }
