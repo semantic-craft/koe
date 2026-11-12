@@ -2,120 +2,6 @@ import CoreBluetooth
 import Foundation
 import KoeAppleShared
 
-public struct BleAdvertisementCandidate: Equatable, Sendable {
-    public let displayName: String
-    public let macAddress: String
-    public let matchedByServiceUUID: Bool
-    public let matchedByManufacturerData: Bool
-    public let matchedByName: Bool
-
-    public static func match(
-        peripheralName: String?,
-        advertisementData: [String: Any]
-    ) -> BleAdvertisementCandidate? {
-        var serviceUUIDStrings: [String] = []
-        if let uuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
-            serviceUUIDStrings.append(contentsOf: uuids.map { $0.uuidString.lowercased() })
-        }
-        if let overflow = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
-            serviceUUIDStrings.append(contentsOf: overflow.map { $0.uuidString.lowercased() })
-        }
-        if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
-            serviceUUIDStrings.append(contentsOf: serviceData.keys.map { $0.uuidString.lowercased() })
-        }
-        let matchedByService = serviceUUIDStrings.contains { uuid in
-            uuid.contains("020cf5da") || uuid.contains("daf50c02") || uuid.contains("f5da")
-        }
-
-        let advName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? ""
-        let rawName = (peripheralName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
-            ? peripheralName!.trimmingCharacters(in: .whitespacesAndNewlines)
-            : advName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matchedByName = rawName.localizedCaseInsensitiveContains("soundcore")
-            || rawName.localizedCaseInsensitiveContains("d3200")
-            || rawName.localizedCaseInsensitiveContains("work")
-
-        var matchedByMfg = false
-        var macAddress = ""
-        if let mfg = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data {
-            let bytes = [UInt8](mfg)
-            var macBase = 0
-            if bytes.count >= 16 {
-                let mark = String(decoding: bytes[10..<16], as: UTF8.self).lowercased()
-                if mark.contains("sound") || mark.contains("scor") {
-                    matchedByMfg = true
-                    macBase = 2
-                }
-            }
-            if !matchedByMfg && bytes.count >= 14 {
-                let mark = String(decoding: bytes[8..<14], as: UTF8.self).lowercased()
-                if mark.contains("sound") || mark.contains("scor") {
-                    matchedByMfg = true
-                    macBase = 0
-                }
-            }
-            if !matchedByMfg && bytes.count >= 7 {
-                for i in 0..<(bytes.count - 1) {
-                    if (bytes[i] == 0xF5 && bytes[i + 1] == 0xDA)
-                        || (bytes[i] == 0xDA && bytes[i + 1] == 0xF5)
-                    {
-                        matchedByMfg = true
-                        break
-                    }
-                }
-            }
-            if bytes.count >= macBase + 6 && (matchedByMfg || matchedByService || matchedByName) {
-                macAddress = formatMac(Array(bytes[macBase..<(macBase + 6)]))
-            }
-        }
-
-        guard matchedByService || matchedByMfg || matchedByName else { return nil }
-
-        let displayName = !rawName.isEmpty
-            ? rawName
-            : (macAddress.count >= 5 ? "soundcore Work (\(macAddress.suffix(5)))" : "soundcore Work")
-        return BleAdvertisementCandidate(
-            displayName: displayName, macAddress: macAddress,
-            matchedByServiceUUID: matchedByService,
-            matchedByManufacturerData: matchedByMfg, matchedByName: matchedByName
-        )
-    }
-
-    private static func formatMac(_ bytes: [UInt8]) -> String {
-        guard bytes.count >= 6 else { return "" }
-        let first = bytes[0]
-        if bytes[0..<6].allSatisfy({ $0 == first }) || bytes[0..<6].allSatisfy({ $0 == 0 }) { return "" }
-        return bytes[0..<6].map { String(format: "%02X", $0) }.joined(separator: ":")
-    }
-}
-
-public struct BleOutboundQueue: Sendable {
-    public var spacingSeconds: TimeInterval
-    public private(set) var pendingFrames: [Data] = []
-    public private(set) var lastWriteDate: Date?
-
-    public init(spacingSeconds: TimeInterval = 0.30) { self.spacingSeconds = spacingSeconds }
-    public mutating func enqueue(_ frames: [Data]) { pendingFrames.append(contentsOf: frames) }
-
-    public mutating func popReady(now: Date) -> Data? {
-        guard !pendingFrames.isEmpty else { return nil }
-        if let last = lastWriteDate, now.timeIntervalSince(last) + 1e-6 < spacingSeconds { return nil }
-        lastWriteDate = now
-        return pendingFrames.removeFirst()
-    }
-
-    public func delayUntilNextReady(now: Date) -> TimeInterval? {
-        guard !pendingFrames.isEmpty else { return nil }
-        guard let last = lastWriteDate else { return 0 }
-        return max(0, spacingSeconds - now.timeIntervalSince(last))
-    }
-
-    public mutating func reset() {
-        pendingFrames.removeAll()
-        lastWriteDate = nil
-    }
-}
-
 @MainActor
 public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     nonisolated public static var d3200ServiceUUID: CBUUID { CBUUID(string: "020CF5DA-0000-1000-8000-00805F9B34FB") }
@@ -135,6 +21,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     static let savedPeripheralKey = "koe.ble.lastPeripheralUUID"
     public weak var store: HostSessionStore?
+    public private(set) var isHostActivated = false
+    public private(set) var allowsCoreBluetooth = true
+    public internal(set) var scanStartCount = 0
     public internal(set) var isScanRequested = false
     var central: CBCentralManager?
     var peripheral: CBPeripheral?
@@ -143,6 +32,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     var outboundQueue = BleOutboundQueue()
     var outboundFlushTimer: Timer?
     public internal(set) var lastTeardownStopFrames: [Data] = []
+    public internal(set) var lastObservedAutoConnect: Bool?
     private var notifyReady = false
     private var notifyFound = false
     private var pendingServices = 0
@@ -151,6 +41,17 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     private var discoveredName: String?
 
     public init(store: HostSessionStore? = nil) { self.store = store; super.init() }
+
+    public func activateHost(allowsCoreBluetooth: Bool = true) {
+        self.allowsCoreBluetooth = allowsCoreBluetooth
+        isHostActivated = true
+        if let device = store?.snapshot.device {
+            syncWithRuntimeDevice(device)
+            if device.autoConnect && !device.connected && !reportedReady && !isScanRequested && peripheral == nil && reconnectingPeripheral == nil {
+                startScanningIfPoweredOn()
+            }
+        }
+    }
 
     public func startScanningIfPoweredOn() {
         if reportedReady, peripheral?.state == .connected {
@@ -168,7 +69,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
         isScanRequested = true
         connectionID = UUID().uuidString
+        scanStartCount += 1
         emit("scanning")
+        guard allowsCoreBluetooth else { return }
         if central == nil { central = CBCentralManager(delegate: self, queue: .main) }
         if let central, central.state == .poweredOn {
             beginDiscoveryAndReconnect(central)
@@ -181,6 +84,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
               UUID(uuidString: savedString) != nil else { return }
         isScanRequested = true
         connectionID = UUID().uuidString
+        guard allowsCoreBluetooth else { return }
         if central == nil { central = CBCentralManager(delegate: self, queue: .main) }
         if let central, central.state == .poweredOn {
             beginDiscoveryAndReconnect(central)
@@ -347,6 +251,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
             advertisementData: advertisementData
         ) else { return }
         Task { @MainActor in
+            guard self.store?.snapshot.device.autoConnect != false else { return }
             guard self.isScanRequested, self.peripheral == nil else { return }
             if let pending = self.reconnectingPeripheral, pending !== discovered {
                 central.cancelPeripheralConnection(pending)
@@ -358,6 +263,16 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
 
     nonisolated public func centralManager(_ central: CBCentralManager, didConnect connected: CBPeripheral) {
         Task { @MainActor in
+            if self.store?.snapshot.device.autoConnect == false {
+                central.cancelPeripheralConnection(connected)
+                if self.reconnectingPeripheral === connected {
+                    self.reconnectingPeripheral = nil
+                }
+                if self.peripheral === connected {
+                    self.resetLinkState()
+                }
+                return
+            }
             if self.peripheral == nil, self.reconnectingPeripheral === connected {
                 self.peripheral = connected
                 self.reconnectingPeripheral = nil

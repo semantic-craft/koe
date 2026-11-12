@@ -75,6 +75,7 @@ pub(crate) struct DeviceRuntime {
     pub onboarding_shown_in_session: bool,
     pub outbound: Vec<Vec<u8>>,
     pub finalized: Vec<FinalizedRecording>,
+    pub explicitly_disconnected: bool,
     pub captures: std::collections::VecDeque<CaptureEvent>,
     pub auto_pull_attempted: std::collections::BTreeSet<u32>,
     pending_start_ms: u64,
@@ -95,6 +96,7 @@ impl Default for DeviceRuntime {
             onboarding_shown_in_session: false,
             outbound: Vec::new(),
             finalized: Vec::new(),
+            explicitly_disconnected: false,
             captures: Default::default(),
             auto_pull_attempted: Default::default(),
             pending_start_ms: 0,
@@ -159,6 +161,7 @@ impl DeviceRuntime {
     }
 
     pub fn disconnect(&mut self) {
+        self.explicitly_disconnected = true;
         self.connection = None;
         self.outbound.clear();
         self.auto_pull_attempted.clear();
@@ -211,6 +214,7 @@ impl DeviceRuntime {
         }
         match event {
             "scanning" => {
+                self.explicitly_disconnected = false;
                 if !self.is_connected() {
                     self.connection = None;
                     self.outbound.clear();
@@ -220,6 +224,7 @@ impl DeviceRuntime {
                 }
             }
             "connecting" => {
+                self.explicitly_disconnected = false;
                 self.connection = Some(connection.to_string());
                 self.outbound.clear();
                 self.handshake_retry_ms = 0;
@@ -227,6 +232,7 @@ impl DeviceRuntime {
                 self.session.on_connecting();
             }
             "ready" if self.connection.as_deref() == Some(connection) => {
+                self.explicitly_disconnected = false;
                 let mut private_key = [0u8; 32];
                 File::open("/dev/urandom")
                     .and_then(|mut f| f.read_exact(&mut private_key))
@@ -256,6 +262,9 @@ impl DeviceRuntime {
     }
 
     pub fn ingest(&mut self, bytes: &[u8], now: u64) -> bool {
+        if self.explicitly_disconnected {
+            return false;
+        }
         let outcome = self.session.ingest_ble_chunk(bytes, now);
         self.accept(outcome)
     }

@@ -254,6 +254,100 @@ struct KoeMacHostTests {
         #expect(UserDefaults.standard.string(forKey: key) == nil)
     }
 
+    @Test("Re-enabling autoConnect after releaseControl syncs bridge without headless CBCentralManager instantiation")
+    @MainActor
+    func reenableAutoConnectAfterReleaseControl() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let bridge = BluetoothBridge(store: store)
+        bridge.releaseControl()
+        #expect(bridge.lastObservedAutoConnect == false)
+
+        store.send("set_ble_auto_connect", ["enabled": true])
+        #expect(store.snapshot.device.autoConnect == true)
+        bridge.syncWithRuntimeDevice(store.snapshot.device)
+        #expect(bridge.lastObservedAutoConnect == true)
+        #expect(bridge.central == nil)
+    }
+
+    @Test("activateHost with allowsCoreBluetooth false requests scan without touching CBCentralManager")
+    @MainActor
+    func activateHostHeadlessRequestsScan() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        #expect(store.snapshot.device.autoConnect == true)
+        let bridge = BluetoothBridge(store: store)
+        #expect(!bridge.isHostActivated)
+        #expect(!bridge.isScanRequested)
+        #expect(bridge.scanStartCount == 0)
+        #expect(bridge.central == nil)
+
+        bridge.activateHost(allowsCoreBluetooth: false)
+        #expect(bridge.isHostActivated)
+        #expect(!bridge.allowsCoreBluetooth)
+        #expect(bridge.isScanRequested)
+        #expect(bridge.scanStartCount == 1)
+        #expect(bridge.central == nil)
+    }
+
+    @Test("Toggling autoConnect false while phase is scanning tears down scan immediately")
+    @MainActor
+    func toggleAutoConnectFalseTearsDownScanning() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let bridge = BluetoothBridge(store: store)
+        bridge.activateHost(allowsCoreBluetooth: false)
+        #expect(bridge.isScanRequested)
+        #expect(store.snapshot.device.phase == "scanning")
+
+        store.send("set_ble_auto_connect", ["enabled": false])
+        #expect(store.snapshot.device.autoConnect == false)
+        bridge.syncWithRuntimeDevice(store.snapshot.device)
+
+        #expect(!bridge.isScanRequested)
+        #expect(bridge.lastObservedAutoConnect == false)
+        #expect(store.snapshot.device.phase == "disconnected")
+    }
+
+    @Test("Manual scan with allowsCoreBluetooth false runs startScanning exactly once without double-cancelling")
+    @MainActor
+    func manualScanHeadlessRunsOnceWithoutDoubleCancelling() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let delegate = KoeAppDelegate(makeDefaultStore: { store })
+        _ = delegate.ensureSessionStore()
+        delegate.bluetoothBridge.activateHost(allowsCoreBluetooth: false)
+        #expect(delegate.bluetoothBridge.scanStartCount == 1)
+
+        delegate.bluetoothBridge.releaseControl()
+        #expect(delegate.bluetoothBridge.scanStartCount == 1)
+        #expect(!delegate.bluetoothBridge.isScanRequested)
+        #expect(store.snapshot.device.autoConnect == false)
+
+        delegate.prepareManualScan()
+        #expect(store.snapshot.device.autoConnect == true)
+        delegate.bluetoothBridge.startScanningIfPoweredOn()
+        #expect(delegate.bluetoothBridge.scanStartCount == 2)
+        #expect(delegate.bluetoothBridge.isScanRequested)
+        #expect(delegate.bluetoothBridge.central == nil)
+
+        await Task.yield()
+        #expect(delegate.bluetoothBridge.scanStartCount == 2)
+        #expect(store.snapshot.device.guide?.mode == "connect_guide")
+    }
+
     @Test("KoeAppDelegate lazily initializes, caches, and wires HostSessionStore on demand")
     @MainActor
     func lazySessionStoreInitialization() throws {

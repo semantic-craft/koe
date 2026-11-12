@@ -1771,3 +1771,46 @@ fn failed_phase_survives_5s_poll_blocks_quit_and_clears_on_cancel_quit() {
     let snap_after = runtime.snapshot(NOW + 8);
     assert_eq!(snap_after["lifecycle"]["quitPhase"], "running");
 }
+
+#[test]
+fn release_ble_ignores_late_queued_ble_slices_and_allows_immediate_quit() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+    let session_key = connect_simulated_bean(&mut runtime, "ble-release-stray", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &session_key, 7001, NOW + 1);
+    assert!(runtime.is_standby_ready());
+
+    let _ = runtime
+        .call_mcp_tool_step(
+            "device_control",
+            &json!({"action": "release_ble"}),
+            NOW + 2,
+        )
+        .unwrap();
+    let after_release = runtime.snapshot(NOW + 2);
+    assert_eq!(after_release["device"]["connected"], false);
+    assert_eq!(after_release["device"]["autoConnect"], false);
+
+    let stray_head = build_head_rx(&session_key, 7002, 1_000, &file_key, &file_nonce);
+    runtime.ingest_ble_chunk(&stray_head, NOW + 3);
+    let stray_slice = build_encrypted_slices_rx(&file_key, &file_nonce, &[(1, 0x01)]);
+    runtime.ingest_ble_chunk(&stray_slice, NOW + 3);
+
+    runtime.poll_timers(20_000, NOW + 23);
+
+    let snap = runtime.snapshot(NOW + 23);
+    assert_eq!(snap["device"]["transferPhase"], "idle");
+    assert_eq!(snap["device"]["liveBytes"], 0);
+
+    let _ = runtime.dispatch_json(&json!({"type": "request_quit"}).to_string(), NOW + 24);
+    let quit_snap = runtime.snapshot(NOW + 24);
+    assert_eq!(quit_snap["lifecycle"]["quitPhase"], "ready");
+    assert_eq!(quit_snap["lifecycle"]["keepAwake"], false);
+}

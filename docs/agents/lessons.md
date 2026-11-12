@@ -330,3 +330,10 @@
 - 修复：Engine 实施 `0x1B 0x0E` 多页分页与 `raw_catalog` 全量去重，待命启动时快照 `pre_start_entries`，优先选取不在快照中的全新未闭合文件；暂停录音续接（state == 2 -> 1）按 `(duration_ms / 20) * 166` 相对分片偏移发送 `1A/07`，双击打标与回放采用相对时间；Runtime 增加 `can_own_as_standby_scratch` 属权门禁，暂停态（state != 0）抑制离线自动取回，`Failed` 阶段在用户刷新/切模式/手动下载时重置恢复。
 - 验证点：`cargo test -p koe-engine --lib multipage_catalog_pagination_selects_new_open_file_on_second_page` 与 `resumed_open_file_computes_slice_offset_and_relative_marks`；`cargo test -p koe-runtime --lib collar_standby_disabled_pause_recovery_resumes_open_file_and_protects_pre_existing_files` 与 `failed_offline_pull_recovers_via_device_refresh_or_mode_switch_or_manual_download`。
 - Seen 1x（2026-11-12）。
+
+### 主动释放蓝牙后必须过滤 CoreBluetooth 尾部排队切片且重新打开自动连接须恢复扫描
+
+- 出处：2026-11-12 固件 04.92 实机联调通过多页分页和 16 kHz 流式转写后，在 Step 5 执行 `release_ble` -> 重新打开 `autoConnect` 暴露两处边缘时序缺陷：(1) Rust 侧调用 `DeviceRuntime::disconnect()` 后至宿主主循环取消 CBPeripheral 之间可相差至多 250 ms，期间 CoreBluetooth 交付已排队的 `0x1A 0x08` 音频切片，因无有效文件编号强行兜底 `file_id = 1` 触发假离线取回并最终超时进入 `TransferPhaseTag::Failed`，因连接已断开导致应用退出被死锁挂起；(2) 释放控制权清除了 savedBlePeripheralUUID，用户重新开启「自动连接」时宿主未感知 `false -> true` 跃迁触发扫描，导致录音豆无法自动重连。
+- 修复：(1) Engine 彻底删除 `active_file_id.unwrap_or(1)`，未激活文件编号时严格丢弃孤儿音频切片；Runtime 增加 `explicitly_disconnected` 状态位，在 `disconnect()` 中置 true，并在 `scanning` / `connecting` / `ready` 时复位；`DeviceRuntime::ingest()` 首行门禁主动断开态拦截残余切片；(2) `BluetoothBridge` 拆分传输模型至 `BleTransportModels.swift` 并增设 `isHostActivated` 宿主激活权与扫描计数，在 `syncWithRuntimeDevice` 中检测 `wasAutoConnectDisabled && device.autoConnect` 并在中央管理器上电时调用 `startScanningIfPoweredOn()`；`applicationDidFinishLaunching` 在冷启动时主动调用 `bluetoothBridge.activateHost()`。
+- 验证点：`cargo test -p koe-engine orphan_slice_without_active_file_id_is_ignored_and_never_creates_phantom_file`；`cargo test -p koe-runtime release_ble_ignores_late_queued_ble_slices_and_allows_immediate_quit` 与 `failed_phase_survives_5s_poll_blocks_quit_and_clears_on_cancel_quit`；`swift test --package-path platforms/macos` 验证 `reenableAutoConnectAfterReleaseControl`、`activateHostHeadlessRequestsScan` 与 `manualScanHeadlessRunsOnceWithoutDoubleCancelling`。
+- Seen 1x（2026-11-12）。

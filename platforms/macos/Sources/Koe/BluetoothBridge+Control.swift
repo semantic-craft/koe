@@ -46,31 +46,71 @@ extension BluetoothBridge {
         UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
         resetLinkState()
         isScanRequested = false
+        lastObservedAutoConnect = false
         store?.send("device_release")
     }
 
     public func syncWithRuntimeDevice(_ device: DeviceSnapshot) {
+        let wasAutoConnectDisabled = (lastObservedAutoConnect == false)
+        lastObservedAutoConnect = device.autoConnect
         if !device.autoConnect {
             UserDefaults.standard.removeObject(forKey: Self.savedPeripheralKey)
-        }
-        guard !device.connected && device.phase == "disconnected" else {
+            if reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
+                if reportedReady && (device.standbyReady || device.recording || device.companionMode == "collar_standby") {
+                    lastTeardownStopFrames = [Self.pauseRecordFrame]
+                    writeImmediateFrames([Self.pauseRecordFrame], on: peripheral, via: writeCharacteristic)
+                }
+                central?.stopScan()
+                if let active = peripheral {
+                    central?.cancelPeripheralConnection(active)
+                }
+                if let pending = reconnectingPeripheral {
+                    central?.cancelPeripheralConnection(pending)
+                    reconnectingPeripheral = nil
+                }
+                resetLinkState()
+                isScanRequested = false
+                if device.phase == "scanning" || device.phase == "connecting" {
+                    store?.send("device_disconnect")
+                }
+            }
             return
         }
-        if reportedReady || (!device.autoConnect && (isScanRequested || peripheral != nil || reconnectingPeripheral != nil)) {
-            if reportedReady, device.companionMode == "collar_standby" {
-                lastTeardownStopFrames = [Self.pauseRecordFrame]
-                writeImmediateFrames([Self.pauseRecordFrame], on: peripheral, via: writeCharacteristic)
+        if !device.connected && device.phase == "disconnected" {
+            if reportedReady {
+                if device.companionMode == "collar_standby" {
+                    lastTeardownStopFrames = [Self.pauseRecordFrame]
+                    writeImmediateFrames([Self.pauseRecordFrame], on: peripheral, via: writeCharacteristic)
+                }
+                central?.stopScan()
+                if let active = peripheral {
+                    central?.cancelPeripheralConnection(active)
+                }
+                if let pending = reconnectingPeripheral {
+                    central?.cancelPeripheralConnection(pending)
+                    reconnectingPeripheral = nil
+                }
+                resetLinkState()
+                isScanRequested = false
+                return
             }
-            central?.stopScan()
-            if let active = peripheral {
-                central?.cancelPeripheralConnection(active)
+            if isHostActivated && wasAutoConnectDisabled && !isScanRequested && peripheral == nil && reconnectingPeripheral == nil {
+                Task { @MainActor [weak self] in
+                    self?.startAutoConnectScanIfIdle()
+                }
             }
-            if let pending = reconnectingPeripheral {
-                central?.cancelPeripheralConnection(pending)
-                reconnectingPeripheral = nil
-            }
-            resetLinkState()
-            isScanRequested = false
         }
+    }
+
+    private func startAutoConnectScanIfIdle() {
+        guard isHostActivated,
+              let current = store?.snapshot.device,
+              current.autoConnect,
+              !current.connected,
+              !reportedReady,
+              !isScanRequested,
+              peripheral == nil,
+              reconnectingPeripheral == nil else { return }
+        startScanningIfPoweredOn()
     }
 }
