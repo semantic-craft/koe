@@ -38,7 +38,9 @@ impl KoeRuntime {
                         {
                             self.companion.active_standby_file_id = Some(file_id);
                         }
-                        self.mark_standby_scratch_file(file_id)?;
+                        if self.can_own_as_standby_scratch(file_id) {
+                            self.mark_standby_scratch_file(file_id)?;
+                        }
                         if self.companion.pending_standby_stop {
                             self.companion.pending_standby_stop = false;
                             self.companion.standby_stream_owned = false;
@@ -57,7 +59,9 @@ impl KoeRuntime {
                         {
                             self.companion.active_standby_file_id = Some(file_id);
                         }
-                        self.mark_standby_scratch_file(file_id)?;
+                        if self.can_own_as_standby_scratch(file_id) {
+                            self.mark_standby_scratch_file(file_id)?;
+                        }
                         self.device.captures.pop_front();
                         continue;
                     }

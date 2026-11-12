@@ -39,6 +39,8 @@ impl KoeRuntime {
             || self.device.session.active_file_id.is_some()
             || !matches!(self.device.session.transfer.phase, TransferPhaseTag::Idle)
             || self.device.session.is_offline_pull_suspended()
+            || self.device.session.is_catalog_loading()
+            || self.current_companion_recording_state() != 0
         {
             return false;
         }
@@ -49,7 +51,7 @@ impl KoeRuntime {
             .iter()
             .find(|entry| {
                 (!self.is_quitting() || self.captures.records_by_file_id.contains_key(&entry.file_id))
-                    && entry.duration_ms > 0
+                    && entry.has_duration()
                     && entry.end_time != Some(0)
                     && !self.is_standby_file(entry.file_id)
                     && !self.device.auto_pull_attempted.contains(&entry.file_id)
@@ -69,26 +71,31 @@ impl KoeRuntime {
     pub(super) fn save_device_recordings(&mut self, now: u64) -> Result<(), String> {
         while !self.device.finalized.is_empty() {
             let entry_id = self.device.finalized[0].entry.id;
-            let has_meeting_capture = self.captures.records_by_file_id.contains_key(&entry_id)
-                || self.captures.active.contains_key(&entry_id);
-            if self.is_standby_file(entry_id)
-                || (!has_meeting_capture
-                    && (self.companion.standby_stream_owned
-                        || self.companion.pending_standby_stop))
-            {
+            let is_realtime = self.device.finalized[0].is_realtime;
+            let is_standby_recording = !self.is_known_bean_record(entry_id)
+                && (self.is_standby_file(entry_id)
+                    || (is_realtime
+                        && (self.companion.standby_stream_owned
+                            || self.companion.pending_standby_stop)));
+            if is_standby_recording {
                 self.device.finalized.remove(0);
                 self.captures.active.remove(&entry_id);
                 self.captures.records_by_file_id.remove(&entry_id);
                 if self.companion.active_standby_file_id == Some(entry_id) {
                     self.companion.active_standby_file_id = None;
                 }
-                if self.device.is_connected() && self.is_device_completely_idle() {
+                if !self.can_own_as_standby_scratch(entry_id) {
+                    continue;
+                }
+                if self.device.is_connected()
+                    && self.current_companion_recording_state() == 0
+                {
                     if self.companion.deleted_in_connection.insert(entry_id) {
                         self.device
                             .outbound
                             .push(DeviceCommands::delete_file(entry_id));
                     }
-                    self.device.session.catalog.retain(|f| f.file_id != entry_id);
+                    self.device.session.remove_catalog_entry(entry_id);
                     self.companion.standby_file_ids.insert(entry_id);
                     self.commit(|w| {
                         w.record_purged_bean_file_id(entry_id);
@@ -114,20 +121,25 @@ impl KoeRuntime {
                 .unwrap_or_else(|| format!("bean-{}-{}", entry.id, &digest[..16]));
             let is_new = self.workspace().record(&id).is_none();
             let has_audio = !recording.preview_wav_bytes.is_empty();
-            if has_audio {
-                recording_assets::save_audio(&self.root, &id, &recording.preview_wav_bytes)?;
-            }
-            fs::create_dir_all(self.root.join("audio")).map_err(|e| e.to_string())?;
             let opus_path = recording_assets::opus_path(&self.root, &id)?;
-            write_atomic(&opus_path, &recording.ogg_opus_bytes)
-                .map_err(|e| format!("原始录音保存失败：{e}"))?;
-            fs::File::open(self.root.join("audio"))
-                .and_then(|f| f.sync_all())
-                .map_err(|e| format!("录音尚未完成落盘：{e}"))?;
+            let should_skip_custody = recording.base_slice_offset > 0 && opus_path.exists();
+
+            if !should_skip_custody {
+                if has_audio {
+                    recording_assets::save_audio(&self.root, &id, &recording.preview_wav_bytes)?;
+                }
+                fs::create_dir_all(self.root.join("audio")).map_err(|e| e.to_string())?;
+                write_atomic(&opus_path, &recording.ogg_opus_bytes)
+                    .map_err(|e| format!("原始录音保存失败：{e}"))?;
+                fs::File::open(self.root.join("audio"))
+                    .and_then(|f| f.sync_all())
+                    .map_err(|e| format!("录音尚未完成落盘：{e}"))?;
+            }
+            let byte_count = recording.ogg_opus_bytes.len() as u32;
             let receipt = CustodyReceipt {
                 file_id: entry.id,
-                byte_count: recording.ogg_opus_bytes.len() as u32,
-                sha256_hex: sha256_hex(&recording.ogg_opus_bytes),
+                byte_count,
+                sha256_hex: digest,
                 fsynced_at_epoch_sec: now,
             };
             let was_trashed = self
@@ -151,7 +163,9 @@ impl KoeRuntime {
             if was_trashed {
                 self.clear_undo_trash_for(&id);
             }
-            self.device.session.confirm_disk_custody(receipt);
+            if !should_skip_custody {
+                self.device.session.confirm_disk_custody(receipt);
+            }
             self.device.finalized.remove(0);
             self.captures.records_by_file_id.remove(&entry.id);
             self.captures.targets.pop_front();

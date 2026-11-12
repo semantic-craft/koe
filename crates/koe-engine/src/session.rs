@@ -16,7 +16,7 @@
 //! assert!(finalized.preview_wav_bytes.is_empty()); // No decoder was supplied.
 //! ```
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::commands::DeviceCommands;
 use crate::crypto::{AesCtrStreamDecrypt, AudioFileSecretKey, DeviceCrypto};
@@ -173,6 +173,10 @@ pub struct FinalizedRecording {
     pub ogg_opus_bytes: Vec<u8>,
     /// Complete 48 kHz mono PCM16 preview WAV bytes (`RIFF...`) with 880 Hz mark chimes.
     pub preview_wav_bytes: Vec<u8>,
+    /// Whether the transfer was a realtime stream (`true`) or an offline pull (`false`).
+    pub is_realtime: bool,
+    /// Base slice offset when resuming an open stream mid-file.
+    pub base_slice_offset: u32,
 }
 
 /// Durable disk `fsync` custody receipt required before hardware file deletion (`0x1A/0x10`),
@@ -266,9 +270,29 @@ pub enum RawCompanionSignal {
         /// Decoded 16 kHz mono signed 16-bit PCM samples.
         samples: Vec<i16>,
     },
+    /// Hardware file deletion response (`0x1A 0x10`).
+    DeleteFileAck {
+        /// Whether deletion succeeded.
+        success: bool,
+    },
 }
 
 const MAX_COMPANION_SIGNALS: usize = 4_096;
+
+/// Current phase of multi-page offline file catalog retrieval (`0x1B 0x0E`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CatalogLoadPhase {
+    /// No catalog listing in flight.
+    #[default]
+    Idle,
+    /// Page 0 request dispatched, awaiting initial batch of file entries.
+    AwaitingFirstPage,
+    /// Chaining sequential catalog pages (`page 1+`).
+    Paginating {
+        /// Next 0-based page index to query.
+        next_page: u16,
+    },
+}
 
 /// Stateful D3200 transport session engine.
 pub struct TransportSession {
@@ -286,6 +310,38 @@ pub struct TransportSession {
     pub session_key: Option<[u8; 32]>,
     /// Latest offline catalog entries (`1A/01`/`1A/0D`/`1B/0E`).
     pub catalog: Vec<OfflineFileEntry>,
+    /// All deduplicated offline file entries from the most recent completed listing, including zero-duration entries.
+    pub raw_catalog: Vec<OfflineFileEntry>,
+    /// Snapshot of raw catalog entries captured at realtime recording start.
+    pub pre_start_entries: BTreeMap<u32, OfflineFileEntry>,
+    /// Current phase of multi-page offline catalog retrieval (`0x1B 0x0E`).
+    pub catalog_load_phase: CatalogLoadPhase,
+    /// Elapsed milliseconds since the current catalog page request was dispatched.
+    pub catalog_page_elapsed_ms: u64,
+    /// In-flight catalog entries accumulated across pages before pagination completes.
+    pub staged_catalog_entries: Vec<OfflineFileEntry>,
+    /// Active transport timestamp announced in a catalog page header, if present.
+    pub staged_transport_timestamp: Option<u32>,
+    /// Whether the in-flight catalog listing was queried with end-time metadata (`0x1B 0x0E`).
+    pub staged_with_end_time: bool,
+    /// Whether at least one full catalog listing with end-time metadata (`0x1B 0x0E`) has completed.
+    pub has_complete_catalog: bool,
+    /// Whether the most recent catalog query timed out before all pages were received.
+    pub catalog_timed_out: bool,
+    /// Number of consecutive 3-second timeout retries attempted for the initial catalog.
+    pub catalog_timeout_retries: u8,
+    /// Whether a catalog refresh request was deferred while a previous catalog query was in flight.
+    pub catalog_refresh_queued: bool,
+    /// Whether the active catalog listing was triggered to resolve a pending realtime stream subscription.
+    pub catalog_started_for_subscribe: bool,
+    /// Raw wire file IDs encountered across pages during the current catalog pagination.
+    pub staged_seen_wire_ids: BTreeSet<u32>,
+    /// The first wire file ID observed on page 0 of the current catalog pagination.
+    pub staged_first_page_head: Option<u32>,
+    /// Whether to skip existing audio slices when resuming an open stream at start.
+    pub skip_existing_slices_on_start: bool,
+    /// Base slice offset when resuming an open stream mid-file.
+    pub stream_base_slices: u32,
     /// Current transfer progress snapshot.
     pub transfer: TransferProgress,
     /// Algebraic runtime state governing transfer supervision, retries, and suspension.
@@ -355,6 +411,22 @@ impl Clone for TransportSession {
             ecdh_private_key: self.ecdh_private_key,
             session_key: self.session_key,
             catalog: self.catalog.clone(),
+            raw_catalog: self.raw_catalog.clone(),
+            pre_start_entries: self.pre_start_entries.clone(),
+            catalog_load_phase: self.catalog_load_phase,
+            catalog_page_elapsed_ms: self.catalog_page_elapsed_ms,
+            staged_catalog_entries: self.staged_catalog_entries.clone(),
+            staged_transport_timestamp: self.staged_transport_timestamp,
+            staged_with_end_time: self.staged_with_end_time,
+            has_complete_catalog: self.has_complete_catalog,
+            catalog_timed_out: self.catalog_timed_out,
+            catalog_timeout_retries: self.catalog_timeout_retries,
+            catalog_refresh_queued: self.catalog_refresh_queued,
+            catalog_started_for_subscribe: self.catalog_started_for_subscribe,
+            staged_seen_wire_ids: self.staged_seen_wire_ids.clone(),
+            staged_first_page_head: self.staged_first_page_head,
+            skip_existing_slices_on_start: self.skip_existing_slices_on_start,
+            stream_base_slices: self.stream_base_slices,
             transfer: self.transfer,
             runtime_state: self.runtime_state.clone(),
             active_file_id: self.active_file_id,
@@ -394,6 +466,12 @@ impl core::fmt::Debug for TransportSession {
             .field("has_ecdh_private_key", &self.ecdh_private_key.is_some())
             .field("session_key", &self.session_key)
             .field("catalog", &self.catalog)
+            .field("raw_catalog_len", &self.raw_catalog.len())
+            .field("catalog_load_phase", &self.catalog_load_phase)
+            .field("has_complete_catalog", &self.has_complete_catalog)
+            .field("catalog_timed_out", &self.catalog_timed_out)
+            .field("catalog_refresh_queued", &self.catalog_refresh_queued)
+            .field("stream_base_slices", &self.stream_base_slices)
             .field("transfer", &self.transfer)
             .field("runtime_state", &self.runtime_state)
             .field("active_file_id", &self.active_file_id)
@@ -440,6 +518,22 @@ impl TransportSession {
             ecdh_private_key: None,
             session_key: None,
             catalog: Vec::new(),
+            raw_catalog: Vec::new(),
+            pre_start_entries: BTreeMap::new(),
+            catalog_load_phase: CatalogLoadPhase::Idle,
+            catalog_page_elapsed_ms: 0,
+            staged_catalog_entries: Vec::new(),
+            staged_transport_timestamp: None,
+            staged_with_end_time: false,
+            has_complete_catalog: false,
+            catalog_timed_out: false,
+            catalog_timeout_retries: 0,
+            catalog_refresh_queued: false,
+            catalog_started_for_subscribe: false,
+            staged_seen_wire_ids: BTreeSet::new(),
+            staged_first_page_head: None,
+            skip_existing_slices_on_start: false,
+            stream_base_slices: 0,
             transfer: TransferProgress::default(),
             runtime_state: TransferRuntimeState::Idle,
             active_file_id: None,
@@ -541,6 +635,84 @@ impl TransportSession {
         (self.opus_buffer.len() / OPUS_FRAME_BYTES) as u32
     }
 
+    /// Returns the total slice offset for the active realtime stream (`base + received`).
+    #[must_use]
+    pub fn total_slice_offset(&self) -> u32 {
+        self.stream_base_slices
+            .saturating_add(self.received_slice_count())
+    }
+
+    /// Returns `true` if catalog retrieval (first page or subsequent pages) is actively in flight.
+    #[must_use]
+    pub fn is_catalog_loading(&self) -> bool {
+        self.catalog_load_phase != CatalogLoadPhase::Idle
+    }
+
+    /// Returns `true` if at least one complete multi-page catalog listing with end-time metadata has finished.
+    #[must_use]
+    pub fn has_complete_catalog(&self) -> bool {
+        self.has_complete_catalog
+    }
+
+    /// Returns the set of all known file IDs in the raw catalog, including zero-duration entries.
+    #[must_use]
+    pub fn raw_catalog_file_ids(&self) -> std::collections::BTreeSet<u32> {
+        self.raw_catalog.iter().map(|f| f.file_id).collect()
+    }
+
+    /// Removes a file entry from both the public catalog and raw catalog by `file_id`.
+    pub fn remove_catalog_entry(&mut self, fid: u32) {
+        if fid == 0 {
+            return;
+        }
+        self.catalog.retain(|f| f.file_id != fid);
+        self.raw_catalog.retain(|f| f.file_id != fid);
+    }
+
+    /// Computes the number of 20 ms audio slices already recorded in flash for `fid`.
+    pub fn known_base_slices_for(&self, fid: u32) -> u32 {
+        if !self.skip_existing_slices_on_start {
+            return 0;
+        }
+        let entry = self
+            .pre_start_entries
+            .get(&fid)
+            .or_else(|| self.raw_catalog.iter().find(|f| f.file_id == fid));
+        match entry {
+            Some(entry) if entry.has_duration() => {
+                (entry.duration_ms / 20).min(u32::MAX / (SLICE_RECORD_BYTES as u32))
+            }
+            _ => 0,
+        }
+    }
+
+    /// Resets catalog pagination state and returns a `0x1B 0x0E` page-0 query frame.
+    pub fn request_full_catalog(&mut self) -> Vec<u8> {
+        if self.is_catalog_loading() {
+            self.catalog_refresh_queued = true;
+            return Vec::new();
+        }
+        self.catalog_load_phase = CatalogLoadPhase::AwaitingFirstPage;
+        self.catalog_page_elapsed_ms = 0;
+        self.staged_catalog_entries.clear();
+        self.staged_seen_wire_ids.clear();
+        self.staged_first_page_head = None;
+        self.staged_transport_timestamp = None;
+        self.staged_with_end_time = true;
+        DeviceCommands::list_files_with_end_time(0)
+    }
+
+    /// Starts a realtime recording, optionally skipping existing slices if resuming an open stream.
+    pub fn start_realtime_recording_with_options(
+        &mut self,
+        file_id: Option<u32>,
+        now_epoch_ms: u64,
+        skip_existing_slices: bool,
+    ) -> SessionIngestOutcome {
+        self.skip_existing_slices_on_start = skip_existing_slices;
+        self.start_realtime_recording(file_id, now_epoch_ms)
+    }
+
     /// Returns `true` when the active realtime stream is in its post-stop 2-second quiet-drain window.
     #[must_use]
     pub fn is_realtime_quiet_draining(&self) -> bool {
@@ -594,6 +766,7 @@ impl TransportSession {
         self.active_file_key = None;
         self.active_nonce = None;
         self.active_is_realtime = false;
+        self.stream_base_slices = 0;
         self.opus_buffer.clear();
         self.marks_ms.clear();
         self.live_pcm16_16khz.clear();
@@ -611,6 +784,20 @@ impl TransportSession {
         self.session_key = None;
         self.device_recording_active = false;
         self.pending_realtime_subscribe = false;
+        self.pre_start_entries.clear();
+        self.catalog_load_phase = CatalogLoadPhase::Idle;
+        self.catalog_page_elapsed_ms = 0;
+        self.staged_catalog_entries.clear();
+        self.staged_seen_wire_ids.clear();
+        self.staged_first_page_head = None;
+        self.staged_transport_timestamp = None;
+        self.staged_with_end_time = false;
+        self.has_complete_catalog = false;
+        self.catalog_timed_out = false;
+        self.catalog_timeout_retries = 0;
+        self.catalog_refresh_queued = false;
+        self.catalog_started_for_subscribe = false;
+        self.skip_existing_slices_on_start = false;
         self.companion_signals.clear();
         self.reset_active_transfer();
         self.connection_phase = ConnectionPhaseTag::Disconnected;
@@ -624,6 +811,20 @@ impl TransportSession {
         self.ecdh_private_key = None;
         self.session_key = None;
         self.connection_phase = ConnectionPhaseTag::Disconnected;
+        self.catalog_load_phase = CatalogLoadPhase::Idle;
+        self.catalog_page_elapsed_ms = 0;
+        self.staged_catalog_entries.clear();
+        self.staged_seen_wire_ids.clear();
+        self.staged_first_page_head = None;
+        self.staged_transport_timestamp = None;
+        self.staged_with_end_time = false;
+        self.has_complete_catalog = false;
+        self.catalog_timed_out = false;
+        self.catalog_timeout_retries = 0;
+        self.catalog_refresh_queued = false;
+        self.catalog_started_for_subscribe = false;
+        self.skip_existing_slices_on_start = false;
+        self.pre_start_entries.clear();
         match self.runtime_state {
             TransferRuntimeState::PullingOffline {
                 file_id,
@@ -708,9 +909,131 @@ impl TransportSession {
         ))
     }
 
-    fn enter_or_resume_realtime_stream(
+    fn finalize_staged_catalog(
+        &mut self,
+        now_epoch_sec: u64,
+        outcome: &mut SessionIngestOutcome,
+    ) {
+        self.catalog_load_phase = CatalogLoadPhase::Idle;
+        self.catalog_page_elapsed_ms = 0;
+        self.catalog_timed_out = false;
+        self.catalog_timeout_retries = 0;
+        if self.staged_with_end_time {
+            self.has_complete_catalog = true;
+        }
+        self.raw_catalog = std::mem::take(&mut self.staged_catalog_entries);
+        self.catalog = self
+            .raw_catalog
+            .iter()
+            .filter(|f| f.has_duration())
+            .cloned()
+            .collect();
+        outcome.catalog_updated = true;
+
+        if self.pending_realtime_subscribe
+            || (self.device_recording_active && self.active_file_id.is_none())
+        {
+            let candidate_fid = if self.staged_with_end_time {
+                let open_new = self
+                    .raw_catalog
+                    .iter()
+                    .filter(|f| {
+                        f.file_id > 0
+                            && f.end_time == Some(0)
+                            && !self.pre_start_entries.contains_key(&f.file_id)
+                    })
+                    .map(|f| f.file_id)
+                    .max();
+                let open_any = open_new.or_else(|| {
+                    self.raw_catalog
+                        .iter()
+                        .filter(|f| f.file_id > 0 && f.end_time == Some(0))
+                        .map(|f| f.file_id)
+                        .max()
+                });
+                open_any.or_else(|| {
+                    self.staged_transport_timestamp.filter(|&ts| {
+                        ts > 0
+                            && !self.raw_catalog.iter().any(|f| {
+                                f.file_id == ts && f.end_time.is_some_and(|et| et > 0)
+                            })
+                    })
+                })
+            } else {
+                let unstarted = self
+                    .raw_catalog
+                    .iter()
+                    .filter(|f| f.file_id > 0 && !self.pre_start_entries.contains_key(&f.file_id))
+                    .map(|f| f.file_id)
+                    .max();
+                unstarted
+                    .or_else(|| self.staged_transport_timestamp.filter(|&id| id > 0))
+                    .or_else(|| {
+                        self.raw_catalog
+                            .iter()
+                            .map(|f| f.file_id)
+                            .max()
+                            .filter(|&id| id > 0)
+                    })
+            };
+
+            let has_fresh_open_candidate = candidate_fid.is_some_and(|fid| {
+                !self.pre_start_entries.contains_key(&fid)
+                    && self
+                        .raw_catalog
+                        .iter()
+                        .any(|f| f.file_id == fid && f.end_time == Some(0))
+            });
+
+            if self.catalog_refresh_queued && !has_fresh_open_candidate {
+                self.catalog_refresh_queued = false;
+                self.catalog_started_for_subscribe = self.pending_realtime_subscribe;
+                let tx = self.request_full_catalog();
+                if !tx.is_empty() {
+                    outcome.outbound_tx_frames.push(tx);
+                }
+                return;
+            }
+            self.catalog_refresh_queued = false;
+
+            if let Some(fid) = candidate_fid {
+                let base_slices = self.known_base_slices_for(fid);
+                if let Some(tx) =
+                    self.enter_or_resume_realtime_stream_at(fid, base_slices, now_epoch_sec)
+                {
+                    outcome.outbound_tx_frames.push(tx);
+                    outcome.transfer_updated = true;
+                }
+            } else if self.active_file_id.is_none()
+                && !matches!(self.transfer.phase, TransferPhaseTag::Failed)
+            {
+                self.runtime_state = TransferRuntimeState::Idle;
+                self.transfer.phase = TransferPhaseTag::Idle;
+            }
+            self.pre_start_entries.clear();
+        } else {
+            if self.catalog_refresh_queued {
+                self.catalog_refresh_queued = false;
+                let tx = self.request_full_catalog();
+                if !tx.is_empty() {
+                    outcome.outbound_tx_frames.push(tx);
+                }
+            }
+            if self.active_file_id.is_none()
+                && !matches!(self.transfer.phase, TransferPhaseTag::Failed)
+            {
+                self.runtime_state = TransferRuntimeState::Idle;
+                self.transfer.phase = TransferPhaseTag::Idle;
+            }
+            self.pre_start_entries.clear();
+        }
+    }
+
+    /// Resumes a realtime stream at an explicit slice offset, returning the `1A/07` TX frame.
+    pub fn enter_or_resume_realtime_stream_at(
         &mut self,
         file_id: u32,
+        base_slices: u32,
         now_epoch_sec: u64,
     ) -> Option<Vec<u8>> {
         if file_id == 0 {
@@ -732,13 +1055,20 @@ impl TransportSession {
             if let Some(dec) = self.live_decoder_16k.as_mut() {
                 dec.reset();
             }
+            self.stream_base_slices = base_slices;
+        } else if self.opus_buffer.is_empty() && base_slices > self.stream_base_slices {
+            self.stream_base_slices = base_slices;
         }
         if is_new_stream {
             self.capture_events
                 .push_back(CaptureEvent::Started { file_id });
+            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+                state: 1,
+                file_id: Some(file_id),
+            });
         }
         let offset = self
-            .received_slice_count()
+            .total_slice_offset()
             .saturating_mul(SLICE_RECORD_BYTES as u32);
         self.active_file_id = Some(file_id);
         self.active_is_realtime = true;
@@ -763,6 +1093,14 @@ impl TransportSession {
         ))
     }
 
+    fn enter_or_resume_realtime_stream(
+        &mut self,
+        file_id: u32,
+        now_epoch_sec: u64,
+    ) -> Option<Vec<u8>> {
+        self.enter_or_resume_realtime_stream_at(file_id, 0, now_epoch_sec)
+    }
+
     /// Starts an app-initiated realtime bean recording (`0x18 0x81 [0x01]` + `0x18 0x82 [0x01]`).
     ///
     /// When `file_id` is `Some(fid)` (`fid > 0`), immediately subscribes to `1A/07` (`realtime_flag = 1`);
@@ -783,24 +1121,39 @@ impl TransportSession {
             .outbound_tx_frames
             .push(DeviceCommands::start_app_recording());
         if let Some(fid) = file_id.filter(|&id| id > 0) {
-            if let Some(tx) = self.enter_or_resume_realtime_stream(fid, now_epoch_sec) {
+            let base_slices = self.known_base_slices_for(fid);
+            if let Some(tx) =
+                self.enter_or_resume_realtime_stream_at(fid, base_slices, now_epoch_sec)
+            {
                 outcome.outbound_tx_frames.push(tx);
                 outcome.transfer_updated = true;
             }
         } else {
+            self.pre_start_entries = self
+                .raw_catalog
+                .iter()
+                .map(|f| (f.file_id, f.clone()))
+                .collect();
             self.pending_realtime_subscribe = true;
-            outcome
-                .outbound_tx_frames
-                .push(DeviceCommands::list_files_with_end_time(0));
+            if self.is_catalog_loading() {
+                self.catalog_refresh_queued = true;
+                self.catalog_started_for_subscribe = false;
+            } else {
+                self.catalog_started_for_subscribe = true;
+                let tx = self.request_full_catalog();
+                if !tx.is_empty() {
+                    outcome.outbound_tx_frames.push(tx);
+                }
+            }
             outcome.transfer_updated = true;
         }
-        let signal_fid = file_id
-            .filter(|&id| id > 0)
-            .or_else(|| self.active_file_id.filter(|&id| id > 0));
-        self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
-            state: 1,
-            file_id: signal_fid,
-        });
+        if file_id.is_none() {
+            let signal_fid = self.active_file_id.filter(|&id| id > 0);
+            self.push_companion_signal(RawCompanionSignal::RecordingStateChanged {
+                state: 1,
+                file_id: signal_fid,
+            });
+        }
         outcome
     }
 
@@ -816,6 +1169,7 @@ impl TransportSession {
         let mut outcome = SessionIngestOutcome::default();
         self.device_recording_active = false;
         self.pending_realtime_subscribe = false;
+        self.pre_start_entries.clear();
         outcome
             .outbound_tx_frames
             .push(DeviceCommands::pause_record());
@@ -841,6 +1195,41 @@ impl TransportSession {
     /// timer by `elapsed_ms`.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now_epoch_sec: u64) -> SessionIngestOutcome {
         let mut outcome = SessionIngestOutcome::default();
+        if self.is_catalog_loading() {
+            self.catalog_page_elapsed_ms =
+                self.catalog_page_elapsed_ms.saturating_add(elapsed_ms);
+            if self.catalog_page_elapsed_ms >= 3_000 {
+                self.catalog_load_phase = CatalogLoadPhase::Idle;
+                self.catalog_page_elapsed_ms = 0;
+                self.catalog_timed_out = true;
+                for entry in std::mem::take(&mut self.staged_catalog_entries) {
+                    if let Some(existing) = self
+                        .raw_catalog
+                        .iter_mut()
+                        .find(|f| f.file_id == entry.file_id)
+                    {
+                        *existing = entry;
+                    } else {
+                        self.raw_catalog.push(entry);
+                    }
+                }
+                self.catalog = self
+                    .raw_catalog
+                    .iter()
+                    .filter(|f| f.has_duration())
+                    .cloned()
+                    .collect();
+                outcome.catalog_updated = true;
+
+                if !self.has_complete_catalog && self.catalog_timeout_retries < 2 {
+                    self.catalog_timeout_retries += 1;
+                    let retry_tx = self.request_full_catalog();
+                    if !retry_tx.is_empty() {
+                        outcome.outbound_tx_frames.push(retry_tx);
+                    }
+                }
+            }
+        }
         if self.wifi_batch_phase == WifiBatchPhase::Transferring {
             self.wifi_keepalive_elapsed_ms =
                 self.wifi_keepalive_elapsed_ms.saturating_add(elapsed_ms);
@@ -883,6 +1272,13 @@ impl TransportSession {
                             file_id: fid,
                             error_code: TRANSFER_ERR_WATCHDOG_TIMEOUT,
                         };
+                        self.active_file_id = None;
+                        self.active_is_realtime = false;
+                        self.active_file_key = None;
+                        self.active_nonce = None;
+                        self.opus_buffer.clear();
+                        self.marks_ms.clear();
+                        self.stream_base_slices = 0;
                         self.transfer.phase = TransferPhaseTag::Failed;
                         self.transfer.error_code = TRANSFER_ERR_WATCHDOG_TIMEOUT;
                         self.transfer.retry_count = retries;
@@ -1149,6 +1545,7 @@ impl TransportSession {
         self.active_file_key = None;
         self.active_nonce = None;
         self.active_is_realtime = false;
+        self.stream_base_slices = 0;
         self.opus_buffer.clear();
         self.marks_ms.clear();
         self.live_pcm16_16khz.clear();
@@ -1251,9 +1648,10 @@ impl TransportSession {
                         self.connection_phase = ConnectionPhaseTag::Connected;
                     }
                     outcome.telemetry_updated = true;
-                    outcome
-                        .outbound_tx_frames
-                        .push(DeviceCommands::list_files_with_end_time(0));
+                    let tx = self.request_full_catalog();
+                    if !tx.is_empty() {
+                        outcome.outbound_tx_frames.push(tx);
+                    }
                     if self.is_offline_pull_suspended() && self.session_key.is_some() {
                         if let Some(resume_tx) = self.resume_offline_pull() {
                             outcome.outbound_tx_frames.push(resume_tx);
@@ -1277,8 +1675,9 @@ impl TransportSession {
                         if state == 1 {
                             self.device_recording_active = true;
                             if fid > 0 {
+                                let base_slices = self.known_base_slices_for(fid);
                                 if let Some(tx) =
-                                    self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
+                                    self.enter_or_resume_realtime_stream_at(fid, base_slices, now_epoch_sec)
                                 {
                                     outcome.outbound_tx_frames.push(tx);
                                     outcome.transfer_updated = true;
@@ -1288,8 +1687,9 @@ impl TransportSession {
                                 .filter(|&id| id > 0 && self.active_is_realtime)
                             {
                                 if self.is_realtime_quiet_draining() {
+                                    let base_slices = self.known_base_slices_for(active_fid);
                                     if let Some(tx) = self
-                                        .enter_or_resume_realtime_stream(active_fid, now_epoch_sec)
+                                        .enter_or_resume_realtime_stream_at(active_fid, base_slices, now_epoch_sec)
                                     {
                                         outcome.outbound_tx_frames.push(tx);
                                         outcome.transfer_updated = true;
@@ -1297,9 +1697,17 @@ impl TransportSession {
                                 }
                             } else {
                                 self.pending_realtime_subscribe = true;
-                                outcome
-                                    .outbound_tx_frames
-                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                if self.is_catalog_loading() {
+                                    if !self.catalog_started_for_subscribe {
+                                        self.catalog_refresh_queued = true;
+                                    }
+                                } else {
+                                    self.catalog_started_for_subscribe = true;
+                                    let tx = self.request_full_catalog();
+                                    if !tx.is_empty() {
+                                        outcome.outbound_tx_frames.push(tx);
+                                    }
+                                }
                                 outcome.transfer_updated = true;
                             }
                         } else if state == 0 || state == 2 {
@@ -1316,9 +1724,13 @@ impl TransportSession {
                                 }
                             }
                             if state == 0 {
-                                outcome
-                                    .outbound_tx_frames
-                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                if self.is_catalog_loading() {
+                                    self.catalog_refresh_queued = true;
+                                } else {
+                                    outcome
+                                        .outbound_tx_frames
+                                        .push(DeviceCommands::list_files_with_end_time(0));
+                                }
                             }
                             outcome.transfer_updated = true;
                         }
@@ -1336,47 +1748,85 @@ impl TransportSession {
                     let with_end_time =
                         pkt.cmd_id == 0x0D || (pkt.cmd_type == 0x1B && pkt.cmd_id == 0x0E);
                     let page = OfflineFileList::parse(&pkt.payload, with_end_time);
-                    let candidate_fid = page
-                        .current_transport_timestamp
-                        .filter(|&id| id > 0)
-                        .or_else(|| {
-                            if with_end_time {
-                                page.files
-                                    .iter()
-                                    .filter(|f| f.file_id > 0 && f.end_time == Some(0))
-                                    .map(|f| f.file_id)
-                                    .max()
+                    match self.catalog_load_phase {
+                        CatalogLoadPhase::Idle => {
+                            if self.catalog_timed_out {
+                                self.staged_catalog_entries = self.raw_catalog.clone();
+                                self.staged_seen_wire_ids =
+                                    self.raw_catalog.iter().map(|f| f.file_id).collect();
+                                self.staged_first_page_head =
+                                    self.raw_catalog.first().map(|f| f.file_id);
                             } else {
-                                page.files
-                                    .iter()
-                                    .map(|f| f.file_id)
-                                    .max()
-                                    .filter(|&id| id > 0)
+                                self.staged_catalog_entries.clear();
+                                self.staged_seen_wire_ids.clear();
+                                self.staged_first_page_head = page.wire_ids.first().copied();
                             }
-                        });
-                    self.catalog = page
-                        .files
-                        .into_iter()
-                        .filter(|f| f.duration_ms > 0)
-                        .collect();
-                    outcome.catalog_updated = true;
-                    if self.pending_realtime_subscribe
-                        || (self.device_recording_active && self.active_file_id.is_none())
-                    {
-                        if let Some(fid) = candidate_fid {
-                            if let Some(tx) =
-                                self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
-                            {
-                                outcome.outbound_tx_frames.push(tx);
-                                outcome.transfer_updated = true;
-                            }
-                        } else if self.active_file_id.is_none() {
-                            self.runtime_state = TransferRuntimeState::Idle;
-                            self.transfer.phase = TransferPhaseTag::Idle;
+                            self.staged_transport_timestamp = None;
+                            self.staged_with_end_time = with_end_time;
+                            self.catalog_page_elapsed_ms = 0;
                         }
-                    } else if self.active_file_id.is_none() {
-                        self.runtime_state = TransferRuntimeState::Idle;
-                        self.transfer.phase = TransferPhaseTag::Idle;
+                        CatalogLoadPhase::AwaitingFirstPage => {
+                            self.staged_catalog_entries.clear();
+                            self.staged_seen_wire_ids.clear();
+                            self.staged_first_page_head = page.wire_ids.first().copied();
+                            self.staged_transport_timestamp = None;
+                            self.staged_with_end_time = with_end_time;
+                            self.catalog_page_elapsed_ms = 0;
+                        }
+                        CatalogLoadPhase::Paginating { .. } => {
+                            if !page.wire_ids.is_empty()
+                                && page
+                                    .wire_ids
+                                    .iter()
+                                    .all(|id| self.staged_seen_wire_ids.contains(id))
+                                && self.staged_first_page_head == page.wire_ids.first().copied()
+                                && page.file_count as usize == page.wire_ids.len()
+                            {
+                                continue;
+                            }
+                        }
+                    }
+
+                    let mut new_wire_id_seen = false;
+                    for &wid in &page.wire_ids {
+                        if self.staged_seen_wire_ids.insert(wid) {
+                            new_wire_id_seen = true;
+                        }
+                    }
+                    for file in page.files {
+                        if let Some(existing) = self
+                            .staged_catalog_entries
+                            .iter_mut()
+                            .find(|f| f.file_id == file.file_id)
+                        {
+                            *existing = file;
+                        } else {
+                            self.staged_catalog_entries.push(file);
+                        }
+                    }
+                    if let Some(ts) = page.current_transport_timestamp.filter(|&id| id > 0) {
+                        self.staged_transport_timestamp = Some(ts);
+                    }
+
+                    let current_page = match self.catalog_load_phase {
+                        CatalogLoadPhase::Idle | CatalogLoadPhase::AwaitingFirstPage => 0,
+                        CatalogLoadPhase::Paginating { next_page } => next_page.saturating_sub(1),
+                    };
+                    let next_page = current_page + 1;
+                    if with_end_time
+                        && page.file_count >= 10
+                        && new_wire_id_seen
+                        && next_page < 128
+                    {
+                        self.catalog_load_phase = CatalogLoadPhase::Paginating {
+                            next_page: next_page + 1,
+                        };
+                        self.catalog_page_elapsed_ms = 0;
+                        outcome
+                            .outbound_tx_frames
+                            .push(DeviceCommands::list_files_with_end_time(next_page));
+                    } else {
+                        self.finalize_staged_catalog(now_epoch_sec, &mut outcome);
                     }
                 }
                 (0x1A, 0x05) => {
@@ -1398,8 +1848,9 @@ impl TransportSession {
                         if state == 1 {
                             self.device_recording_active = true;
                             if fid > 0 {
+                                let base_slices = self.known_base_slices_for(fid);
                                 if let Some(tx) =
-                                    self.enter_or_resume_realtime_stream(fid, now_epoch_sec)
+                                    self.enter_or_resume_realtime_stream_at(fid, base_slices, now_epoch_sec)
                                 {
                                     outcome.outbound_tx_frames.push(tx);
                                     outcome.transfer_updated = true;
@@ -1408,17 +1859,26 @@ impl TransportSession {
                                 .active_file_id
                                 .filter(|&id| id > 0 && self.active_is_realtime)
                             {
+                                let base_slices = self.known_base_slices_for(active_fid);
                                 if let Some(tx) =
-                                    self.enter_or_resume_realtime_stream(active_fid, now_epoch_sec)
+                                    self.enter_or_resume_realtime_stream_at(active_fid, base_slices, now_epoch_sec)
                                 {
                                     outcome.outbound_tx_frames.push(tx);
                                     outcome.transfer_updated = true;
                                 }
                             } else {
                                 self.pending_realtime_subscribe = true;
-                                outcome
-                                    .outbound_tx_frames
-                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                if self.is_catalog_loading() {
+                                    if !self.catalog_started_for_subscribe {
+                                        self.catalog_refresh_queued = true;
+                                    }
+                                } else {
+                                    self.catalog_started_for_subscribe = true;
+                                    let tx = self.request_full_catalog();
+                                    if !tx.is_empty() {
+                                        outcome.outbound_tx_frames.push(tx);
+                                    }
+                                }
                                 outcome.transfer_updated = true;
                             }
                         } else if state == 0 || state == 2 {
@@ -1437,9 +1897,13 @@ impl TransportSession {
                                 }
                             }
                             if state == 0 {
-                                outcome
-                                    .outbound_tx_frames
-                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                if self.is_catalog_loading() {
+                                    self.catalog_refresh_queued = true;
+                                } else {
+                                    outcome
+                                        .outbound_tx_frames
+                                        .push(DeviceCommands::list_files_with_end_time(0));
+                                }
                             }
                             outcome.transfer_updated = true;
                         }
@@ -1469,7 +1933,7 @@ impl TransportSession {
                                 self.pending_realtime_subscribe = true;
                                 outcome
                                     .outbound_tx_frames
-                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                    .push(self.request_full_catalog());
                                 outcome.transfer_updated = true;
                             }
                         } else if state == 0 || state == 2 {
@@ -1488,7 +1952,7 @@ impl TransportSession {
                             if state == 0 {
                                 outcome
                                     .outbound_tx_frames
-                                    .push(DeviceCommands::list_files_with_end_time(0));
+                                    .push(self.request_full_catalog());
                             }
                             outcome.transfer_updated = true;
                         }
@@ -1515,6 +1979,13 @@ impl TransportSession {
                                 file_id: head.secret.file_id,
                                 error_code: err,
                             };
+                            self.active_file_id = None;
+                            self.active_is_realtime = false;
+                            self.active_file_key = None;
+                            self.active_nonce = None;
+                            self.opus_buffer.clear();
+                            self.marks_ms.clear();
+                            self.stream_base_slices = 0;
                             self.transfer.phase = TransferPhaseTag::Failed;
                             self.transfer.error_code = err;
                             outcome.transfer_updated = true;
@@ -1525,6 +1996,13 @@ impl TransportSession {
                                 file_id: head.secret.file_id,
                                 error_code: err,
                             };
+                            self.active_file_id = None;
+                            self.active_is_realtime = false;
+                            self.active_file_key = None;
+                            self.active_nonce = None;
+                            self.opus_buffer.clear();
+                            self.marks_ms.clear();
+                            self.stream_base_slices = 0;
                             self.transfer.phase = TransferPhaseTag::Failed;
                             self.transfer.error_code = err;
                             if self.wifi_batch_phase == WifiBatchPhase::Transferring {
@@ -1534,9 +2012,31 @@ impl TransportSession {
                             continue;
                         }
 
+                        let was_realtime_for_file = self.active_is_realtime
+                            && self.active_file_id == Some(head.secret.file_id);
+                        let starting_realtime_for_file = self.device_recording_active
+                            && (self.active_file_id == Some(head.secret.file_id)
+                                || self.pending_realtime_subscribe);
+                        let is_offline_pull = matches!(
+                            self.transfer.phase,
+                            TransferPhaseTag::PullingOffline
+                        ) || (self.active_file_id.is_some() && !self.active_is_realtime);
+                        if is_offline_pull && head.unfinished {
+                            self.reset_active_transfer();
+                            if self.wifi_batch_phase == WifiBatchPhase::Transferring {
+                                self.wifi_skipped_count = self.wifi_skipped_count.saturating_add(1);
+                                self.advance_wifi_batch();
+                            }
+                            outcome.transfer_updated = true;
+                            continue;
+                        }
+
                         let is_resuming_same_file = self.active_file_id
                             == Some(head.secret.file_id)
                             && !self.opus_buffer.is_empty();
+                        if !is_resuming_same_file && self.active_file_id != Some(head.secret.file_id) {
+                            self.stream_base_slices = 0;
+                        }
                         let retries_used = if is_resuming_same_file {
                             match self.runtime_state {
                                 TransferRuntimeState::PullingOffline { retries_used, .. }
@@ -1565,17 +2065,25 @@ impl TransportSession {
                                 dec.reset();
                             }
                         }
-                        let was_realtime_for_file = self.active_is_realtime
-                            && self.active_file_id == Some(head.secret.file_id);
-                        let starting_realtime_for_file = self.device_recording_active
-                            && (self.active_file_id == Some(head.secret.file_id)
-                                || self.pending_realtime_subscribe);
                         let is_realtime =
                             head.unfinished || was_realtime_for_file || starting_realtime_for_file;
                         if is_realtime && !was_realtime_for_file {
+                            if self.catalog_started_for_subscribe {
+                                self.catalog_load_phase = CatalogLoadPhase::Idle;
+                                self.catalog_started_for_subscribe = false;
+                                self.catalog_refresh_queued = false;
+                            }
                             self.capture_events.push_back(CaptureEvent::Started {
                                 file_id: head.secret.file_id,
                             });
+                            if self.active_file_id != Some(head.secret.file_id) {
+                                self.push_companion_signal(
+                                    RawCompanionSignal::RecordingStateChanged {
+                                        state: 1,
+                                        file_id: Some(head.secret.file_id),
+                                    },
+                                );
+                            }
                         }
                         self.active_file_id = Some(head.secret.file_id);
                         self.active_file_key = head.file_key;
@@ -1585,9 +2093,13 @@ impl TransportSession {
                             None
                         };
                         self.active_is_realtime = is_realtime;
-                        let received_wire = self
-                            .received_slice_count()
-                            .saturating_mul(SLICE_RECORD_BYTES as u32);
+                        let received_wire = if is_realtime {
+                            self.total_slice_offset()
+                                .saturating_mul(SLICE_RECORD_BYTES as u32)
+                        } else {
+                            self.received_slice_count()
+                                .saturating_mul(SLICE_RECORD_BYTES as u32)
+                        };
                         if is_realtime {
                             self.pending_realtime_subscribe = false;
                             self.runtime_state = TransferRuntimeState::StreamingRealtime {
@@ -1627,6 +2139,11 @@ impl TransportSession {
                     }
                 }
                 (0x1A, 0x08) | (0x1A, 0x12) | (0x1B, 0x08) | (0x1B, 0x12) => {
+                    if self.active_file_id.is_none()
+                        && matches!(self.runtime_state, TransferRuntimeState::Failed { .. })
+                    {
+                        continue;
+                    }
                     if let TransferRuntimeState::PullingOffline { inactivity_ms, .. } =
                         &mut self.runtime_state
                     {
@@ -1644,7 +2161,11 @@ impl TransportSession {
                         .as_ref()
                         .zip(self.active_nonce.as_ref())
                         .and_then(|(fk, n)| AesCtrStreamDecrypt::new(fk, n));
-                    let min_seq = self.received_slice_count();
+                    let min_seq = if self.active_is_realtime {
+                        self.total_slice_offset()
+                    } else {
+                        self.received_slice_count()
+                    };
                     let (batch, slice_sequences) = TransportSliceProcessor::unpack_frame_with_sequences(
                         &pkt.raw,
                         dec.as_ref(),
@@ -1656,7 +2177,12 @@ impl TransportSession {
                         self.opus_buffer.extend_from_slice(&batch.opus_bytes);
                         let mut newly_marked_seqs = Vec::new();
                         for seq in batch.marked_sequences {
-                            let ms = SliceMark::position_ms(seq);
+                            let rel_seq = seq.saturating_sub(if self.active_is_realtime {
+                                self.stream_base_slices
+                            } else {
+                                0
+                            });
+                            let ms = SliceMark::position_ms(rel_seq);
                             if !self.marks_ms.contains(&ms) {
                                 self.marks_ms.push(ms);
                                 outcome.new_marks_ms.push(ms);
@@ -1681,10 +2207,11 @@ impl TransportSession {
                                 .copied()
                                 .unwrap_or_else(|| min_seq.saturating_add(frame_idx as u32));
                             if self.active_is_realtime && newly_marked_seqs.contains(&slice_seq) {
+                                let rel_seq = slice_seq.saturating_sub(self.stream_base_slices);
                                 companion_batch.push(RawCompanionSignal::FrontDoubleTap {
                                     file_id: fid,
                                     slice_seq,
-                                    offset_ms: SliceMark::position_ms(slice_seq),
+                                    offset_ms: SliceMark::position_ms(rel_seq),
                                 });
                             }
                             if let Some(live_dec) = self.live_decoder_16k.as_mut() {
@@ -1727,9 +2254,13 @@ impl TransportSession {
                                 });
                             }
                         }
-                        let new_received = self
-                            .received_slice_count()
-                            .saturating_mul(SLICE_RECORD_BYTES as u32);
+                        let new_received = if self.active_is_realtime {
+                            self.total_slice_offset()
+                                .saturating_mul(SLICE_RECORD_BYTES as u32)
+                        } else {
+                            self.received_slice_count()
+                                .saturating_mul(SLICE_RECORD_BYTES as u32)
+                        };
                         if self.active_is_realtime {
                             let drain = if self.is_realtime_quiet_draining() {
                                 Some(0)
@@ -1808,6 +2339,30 @@ impl TransportSession {
                         }
                     }
                 }
+                (0x1A, 0x10) | (0x1B, 0x10) => {
+                    let success = pkt.is_success();
+                    self.push_companion_signal(RawCompanionSignal::DeleteFileAck { success });
+                    let deleted_fid = if pkt.payload.len() >= 4 {
+                        read_u32_le(&pkt.payload, 0)
+                    } else {
+                        0
+                    };
+                    if success {
+                        if deleted_fid > 0 {
+                            self.remove_catalog_entry(deleted_fid);
+                            outcome.catalog_updated = true;
+                        } else if !self.device_recording_active
+                            && self.active_file_id.is_none()
+                            && !self.is_catalog_loading()
+                        {
+                            let tx = self.request_full_catalog();
+                            if !tx.is_empty() {
+                                outcome.outbound_tx_frames.push(tx);
+                            }
+                            outcome.transfer_updated = true;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -1857,6 +2412,8 @@ impl TransportSession {
             entry,
             ogg_opus_bytes,
             preview_wav_bytes,
+            is_realtime: self.active_is_realtime,
+            base_slice_offset: self.stream_base_slices,
         };
         self.finalized_queue.push_back(finalized.clone());
         self.capture_events
@@ -2785,5 +3342,245 @@ mod tests {
             .expect("must produce finalized recording");
         assert_eq!(finalized.entry.duration_ms, 400);
         assert_eq!(finalized.entry.marks_ms, vec![60]);
+    }
+
+    fn build_1b0e_page(count: u16, files: &[(u32, u32, Option<u32>)]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&count.to_le_bytes());
+        for &(fid, dur, et) in files {
+            payload.extend_from_slice(&fid.to_le_bytes());
+            payload.extend_from_slice(&et.unwrap_or(0).to_le_bytes());
+            payload.extend_from_slice(&dur.to_le_bytes());
+        }
+        TransportSession::build_rx_frame(0x1B, 0x0E, &payload)
+    }
+
+    #[test]
+    fn multipage_catalog_pagination_selects_new_open_file_on_second_page() {
+        let mut session = TransportSession::new();
+        let sk = [0x41u8; 32];
+        session.set_session_key(sk);
+
+        let initial_files: Vec<(u32, u32, Option<u32>)> = (101..=110)
+            .map(|id| {
+                if id == 105 {
+                    (id, 0, Some(0))
+                } else {
+                    (id, 2_000, Some(1_700_000_000 + id))
+                }
+            })
+            .collect();
+
+        let initial_page = build_1b0e_page(10, &initial_files);
+        let _ = session.ingest_ble_chunk(&initial_page, 1_700_000_100);
+        let initial_end = build_1b0e_page(0, &[]);
+        let _ = session.ingest_ble_chunk(&initial_end, 1_700_000_100);
+        assert_eq!(session.raw_catalog.len(), 10);
+
+        let start_out = session.start_realtime_recording(None, 1_700_000_100_000);
+        assert!(start_out.outbound_tx_frames.iter().any(|f| f.len() >= 7 && f[5] == 0x18 && f[6] == 0x81));
+        assert!(start_out.outbound_tx_frames.iter().any(|f| f.len() >= 7 && f[5] == 0x1B && f[6] == 0x0E));
+
+        let page0_files = initial_files.clone();
+        let page0_rx = build_1b0e_page(10, &page0_files);
+        let p0_out = session.ingest_ble_chunk(&page0_rx, 1_700_000_101);
+        assert!(session.is_catalog_loading());
+        assert_eq!(
+            session.catalog_load_phase,
+            CatalogLoadPhase::Paginating { next_page: 2 }
+        );
+        assert_eq!(
+            p0_out.outbound_tx_frames,
+            vec![DeviceCommands::list_files_with_end_time(1)]
+        );
+        assert_eq!(session.active_file_id, None);
+
+        let page1_files = vec![(111, 0, Some(0))];
+        let page1_rx = build_1b0e_page(1, &page1_files);
+        let p1_out = session.ingest_ble_chunk(&page1_rx, 1_700_000_102);
+        assert!(!session.is_catalog_loading());
+        assert_eq!(session.active_file_id, Some(111));
+        assert_eq!(session.stream_base_slices, 0);
+        assert_eq!(
+            p1_out.outbound_tx_frames,
+            vec![DeviceCommands::start_transport_audio_file(111, 0, 1)]
+        );
+    }
+
+    #[test]
+    fn resumed_open_file_computes_slice_offset_and_relative_marks() {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let sk = [0x51u8; 32];
+        let fk = [0x52u8; 32];
+        let fn_iv = [0x53u8; 16];
+        session.set_session_key(sk);
+
+        let files = vec![(201, 1_000, Some(0))];
+        let initial_page = build_1b0e_page(1, &files);
+        let _ = session.ingest_ble_chunk(&initial_page, 1_700_000_200);
+
+        let _ = session.start_realtime_recording_with_options(None, 1_700_000_200_000, true);
+        let resume_page = build_1b0e_page(1, &files);
+        let resume_out = session.ingest_ble_chunk(&resume_page, 1_700_000_201);
+
+        assert_eq!(session.active_file_id, Some(201));
+        assert_eq!(session.stream_base_slices, 50);
+        let expected_wire_offset = 50 * SLICE_RECORD_BYTES as u32;
+        assert_eq!(
+            resume_out.outbound_tx_frames,
+            vec![DeviceCommands::start_transport_audio_file(201, expected_wire_offset, 1)]
+        );
+
+        let head = build_test_head_frame(&sk, 201, UNFINISHED_FILE_SIZE, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_700_000_202);
+
+        let dec = AesCtrStreamDecrypt::new(&fk, &fn_iv).unwrap();
+        let mut slice_payload = Vec::with_capacity(SLICE_RECORD_BYTES);
+        let seq = 51u32;
+        slice_payload.extend_from_slice(&seq.to_le_bytes());
+        slice_payload.push(0x01);
+        let mut opus = [0u8; OPUS_FRAME_BYTES];
+        opus[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+        dec.decrypt_contiguous_in_place(&mut opus, seq);
+        slice_payload.extend_from_slice(&opus);
+        slice_payload.push(0);
+
+        let slice_rx = TransportSession::build_rx_frame(0x1A, 0x08, &slice_payload);
+        let outcome = session.ingest_ble_chunk(&slice_rx, 1_700_000_203);
+        assert_eq!(outcome.new_marks_ms, vec![20]);
+        assert_eq!(session.marks_ms, vec![20]);
+
+        let companion_signals = session.take_companion_signals();
+        assert!(companion_signals.iter().any(|s| matches!(
+            s,
+            RawCompanionSignal::FrontDoubleTap {
+                file_id: 201,
+                slice_seq: 51,
+                offset_ms: 20,
+            }
+        )));
+    }
+
+    #[test]
+    fn offline_pull_error_code_clears_active_file_id_and_sets_failed_phase() {
+        let mut session = TransportSession::new();
+        let sk = [0x61u8; 32];
+        let fk = [0x62u8; 32];
+        let fn_iv = [0x63u8; 16];
+        session.set_session_key(sk);
+
+        let _ = session.begin_offline_pull(301, 2_000);
+        assert_eq!(session.active_file_id, Some(301));
+        assert_eq!(session.transfer.phase, TransferPhaseTag::PullingOffline);
+
+        let err_head = build_test_head_frame_with_err(&sk, 301, 2_000, &fk, &fn_iv, 1);
+
+        let outcome = session.ingest_ble_chunk(&err_head, 1_700_000_300);
+        assert!(outcome.transfer_updated);
+        assert_eq!(session.active_file_id, None);
+        assert!(!session.active_is_realtime);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Failed);
+        assert_eq!(session.transfer.file_id, 301);
+        assert_eq!(session.transfer.error_code, 1);
+    }
+
+    #[test]
+    fn offline_pull_unfinished_head_aborts_to_idle_without_flipping_to_realtime() {
+        let mut session = TransportSession::new();
+        let sk = [0x71u8; 32];
+        let fk = [0x72u8; 32];
+        let fn_iv = [0x73u8; 16];
+        session.set_session_key(sk);
+
+        let _ = session.begin_offline_pull(401, 2_000);
+        assert_eq!(session.active_file_id, Some(401));
+        assert_eq!(session.transfer.phase, TransferPhaseTag::PullingOffline);
+
+        let head = build_test_head_frame(&sk, 401, UNFINISHED_FILE_SIZE, &fk, &fn_iv);
+        let outcome = session.ingest_ble_chunk(&head, 1_700_000_400);
+
+        assert!(outcome.transfer_updated);
+        assert_eq!(session.active_file_id, None);
+        assert!(!session.active_is_realtime);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Idle);
+    }
+
+    fn build_1b0e_page_with_tail(
+        count: u16,
+        files: &[(u32, u32, Option<u32>)],
+        transport_timestamp: Option<u32>,
+        transport_duration: Option<u32>,
+    ) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&count.to_le_bytes());
+        for &(fid, dur, et) in files {
+            payload.extend_from_slice(&fid.to_le_bytes());
+            payload.extend_from_slice(&et.unwrap_or(0).to_le_bytes());
+            payload.extend_from_slice(&dur.to_le_bytes());
+        }
+        if let (Some(ts), Some(dur)) = (transport_timestamp, transport_duration) {
+            payload.extend_from_slice(&ts.to_le_bytes());
+            payload.extend_from_slice(&dur.to_le_bytes());
+        }
+        TransportSession::build_rx_frame(0x1B, 0x0E, &payload)
+    }
+
+    #[test]
+    fn duplicate_page0_and_1882_ack_do_not_abort_multi_page_pagination() {
+        let mut session = TransportSession::new();
+        let sk = [0x42u8; 32];
+        session.set_session_key(sk);
+
+        let page0_files: Vec<(u32, u32, Option<u32>)> = (1001..=1010)
+            .map(|id| (id, 60_000, Some(1_700_000_000 + id)))
+            .collect();
+
+        let start_out = session.start_realtime_recording(None, 1_700_000_100_000);
+        assert!(start_out.outbound_tx_frames.iter().any(|f| f.len() >= 7 && f[5] == 0x1B && f[6] == 0x0E));
+        assert!(session.is_catalog_loading());
+
+        let page0_rx = build_1b0e_page_with_tail(10, &page0_files, Some(1793860020), Some(60_000));
+        let p0_out = session.ingest_ble_chunk(&page0_rx, 1_700_000_101);
+        assert_eq!(p0_out.outbound_tx_frames, vec![DeviceCommands::list_files_with_end_time(1)]);
+        assert!(session.is_catalog_loading());
+
+        let ack_rx = TransportSession::build_rx_frame(0x18, 0x82, &[0x01]);
+        let _ = session.ingest_ble_chunk(&ack_rx, 1_700_000_102);
+        assert!(session.is_catalog_loading());
+
+        let _ = session.ingest_ble_chunk(&page0_rx, 1_700_000_103);
+        assert!(session.is_catalog_loading());
+
+        let page1_files = vec![(1794015297, 9_480, Some(0))];
+        let page1_rx = build_1b0e_page_with_tail(1, &page1_files, Some(1794015297), Some(9_480));
+        let p1_out = session.ingest_ble_chunk(&page1_rx, 1_700_000_104);
+
+        assert!(!session.is_catalog_loading());
+        assert!(session.has_complete_catalog());
+        assert_eq!(session.raw_catalog.len(), 11);
+        assert_eq!(session.active_file_id, Some(1794015297));
+        assert!(p1_out.outbound_tx_frames.iter().any(|f| f == &DeviceCommands::start_transport_audio_file(1794015297, 0, 1)));
+    }
+
+    #[test]
+    fn wifi_batch_skips_unfinished_253_and_advances() {
+        let mut session = TransportSession::new();
+        let sk = [0x81u8; 32];
+        let fk = [0x82u8; 32];
+        let fn_iv = [0x83u8; 16];
+        session.set_session_key(sk);
+
+        session.begin_wifi_batch(&[9001, 9002]);
+        assert_eq!(session.wifi_batch_phase, WifiBatchPhase::Transferring);
+        assert_eq!(session.active_file_id, Some(9001));
+
+        let unfinished_head = build_test_head_frame(&sk, 9001, UNFINISHED_FILE_SIZE, &fk, &fn_iv);
+        let outcome = session.ingest_ble_chunk(&unfinished_head, 1_700_000_500);
+
+        assert!(outcome.transfer_updated);
+        assert_eq!(session.wifi_skipped_count, 1);
+        assert_eq!(session.wifi_current_index, 1);
+        assert_eq!(session.active_file_id, Some(9002));
+        assert_eq!(session.wifi_batch_phase, WifiBatchPhase::Transferring);
     }
 }

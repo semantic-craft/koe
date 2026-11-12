@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub use koe_engine::product::CompanionRoutingMode;
+pub use koe_engine::product::{CompanionRoutingMode, RecordOrigin};
 use koe_engine::{
     commands::DeviceCommands,
     session::{RawCompanionSignal, TransferPhaseTag},
@@ -215,6 +215,7 @@ pub(crate) struct CompanionRuntime {
     pub active_standby_file_id: Option<u32>,
     pub pending_standby_stop: bool,
     pub pre_standby_catalog_ids: BTreeSet<u32>,
+    pub pre_standby_catalog_complete: bool,
     pub deleted_in_connection: BTreeSet<u32>,
     pub standby_suppressed_for_connection: bool,
     pub post_tap_skip_slices: usize,
@@ -240,6 +241,7 @@ impl Default for CompanionRuntime {
             active_standby_file_id: None,
             pending_standby_stop: false,
             pre_standby_catalog_ids: BTreeSet::new(),
+            pre_standby_catalog_complete: false,
             deleted_in_connection: BTreeSet::new(),
             standby_suppressed_for_connection: false,
             post_tap_skip_slices: 0,
@@ -367,6 +369,15 @@ impl KoeRuntime {
         }
     }
 
+    pub(crate) fn is_known_bean_record(&self, file_id: u32) -> bool {
+        file_id > 0
+            && (self.captures.records_by_file_id.contains_key(&file_id)
+                || self.captures.active.contains_key(&file_id)
+                || self.workspace().records().values().any(|r| {
+                    r.origin == RecordOrigin::Bean && r.aggregate.file_id == file_id
+                }))
+    }
+
     pub(crate) fn is_standby_file(&self, file_id: u32) -> bool {
         file_id != 0
             && (self.companion.standby_file_ids.contains(&file_id)
@@ -374,10 +385,19 @@ impl KoeRuntime {
                 || self.workspace().is_reclaimed_standby_file(file_id))
     }
 
+    pub(crate) fn can_own_as_standby_scratch(&self, file_id: u32) -> bool {
+        file_id > 0
+            && !self.is_known_bean_record(file_id)
+            && (self.is_standby_file(file_id)
+                || (self.companion.pre_standby_catalog_complete
+                    && !self.companion.pre_standby_catalog_ids.contains(&file_id)))
+    }
+
     pub(crate) fn treats_file_as_standby(&self, file_id: u32) -> bool {
-        self.is_standby_file(file_id)
-            || self.companion.standby_stream_owned
-            || self.companion.pending_standby_stop
+        !self.is_known_bean_record(file_id)
+            && (self.is_standby_file(file_id)
+                || self.companion.standby_stream_owned
+                || self.companion.pending_standby_stop)
     }
 
     pub(crate) fn mark_standby_scratch_file(&mut self, file_id: u32) -> Result<(), String> {
@@ -404,7 +424,9 @@ impl KoeRuntime {
             .filter(|&id| id > 0)
             .or_else(|| self.companion.active_standby_file_id.take());
         if let Some(fid) = active_fid {
-            self.mark_standby_scratch_file(fid)?;
+            if self.can_own_as_standby_scratch(fid) {
+                self.mark_standby_scratch_file(fid)?;
+            }
             self.companion.pending_standby_stop = false;
         } else if self.companion.standby_stream_owned && in_flight {
             self.companion.pending_standby_stop = true;
@@ -436,10 +458,17 @@ impl KoeRuntime {
             self.companion.active_standby_file_id = None;
             self.companion.pending_standby_stop = false;
             self.companion.pre_standby_catalog_ids.clear();
+            self.companion.pre_standby_catalog_complete = false;
             self.companion.deleted_in_connection.clear();
             self.companion.standby_suppressed_for_connection = false;
             self.companion.post_tap_skip_slices = 0;
             self.companion.tail_holdback.clear();
+            self.companion.last_recording_state = self
+                .device
+                .session
+                .telemetry
+                .as_ref()
+                .map_or(0, |t| t.recording_status.min(2));
             let hello = self.companion_hello();
             self.companion.last_status = Some(self.current_companion_status());
             self.companion.push_event(hello);
@@ -456,13 +485,16 @@ impl KoeRuntime {
                     .filter(|&id| id > 0)
                     .or_else(|| self.companion.active_standby_file_id.take())
                 {
-                    let _ = self.mark_standby_scratch_file(fid);
+                    if self.can_own_as_standby_scratch(fid) {
+                        let _ = self.mark_standby_scratch_file(fid);
+                    }
                 }
                 self.companion.active_standby_file_id = None;
                 self.companion.standby_stream_owned = false;
                 self.companion.pending_standby_stop = false;
             }
             self.companion.pre_standby_catalog_ids.clear();
+            self.companion.pre_standby_catalog_complete = false;
             self.companion.deleted_in_connection.clear();
             self.companion.standby_suppressed_for_connection = false;
             self.companion.capture_active = false;
@@ -485,79 +517,99 @@ impl KoeRuntime {
             let candidate = self
                 .device
                 .session
-                .catalog
+                .raw_catalog
                 .iter()
                 .filter(|f| {
                     f.file_id > 0
-                        && !self.companion.pre_standby_catalog_ids.contains(&f.file_id)
+                        && f.end_time == Some(0)
+                        && self.can_own_as_standby_scratch(f.file_id)
                         && !self.is_device_file_synced(f.file_id)
                 })
-                .max_by_key(|f| (f.end_time == Some(0), f.file_id))
-                .map(|f| (f.file_id, f.end_time == Some(0)));
-            if let Some((fid, still_open)) = candidate {
-                let _ = self.mark_standby_scratch_file(fid);
+                .max_by_key(|f| f.file_id)
+                .map(|f| f.file_id);
+            if let Some(fid) = candidate {
+                if self.can_own_as_standby_scratch(fid) {
+                    let _ = self.mark_standby_scratch_file(fid);
+                }
                 self.companion.active_standby_file_id = None;
                 self.companion.pending_standby_stop = false;
-                if still_open {
-                    self.device.stop_recording();
-                }
+                self.device.stop_recording();
                 changed = true;
             }
+        }
+
+        if self.device.session.has_complete_catalog()
+            && !self.companion.pre_standby_catalog_complete
+        {
+            self.companion.pre_standby_catalog_ids =
+                self.device.session.raw_catalog_file_ids();
+            self.companion.pre_standby_catalog_complete = true;
         }
 
         if self.device.is_connected()
             && self.device.session.telemetry.is_some()
             && self.is_device_completely_idle()
+            && self.device.session.has_complete_catalog()
+            && !self.device.session.is_catalog_loading()
         {
-            let mut reclaim_ids: BTreeSet<u32> = self
-                .workspace()
-                .standby_scratch_file_ids()
-                .iter()
-                .copied()
-                .collect();
-            for entry in &self.device.session.catalog {
-                if self.workspace().is_reclaimed_standby_file(entry.file_id) {
-                    reclaim_ids.insert(entry.file_id);
-                }
-            }
-            reclaim_ids.retain(|&fid| fid > 0 && !self.companion.deleted_in_connection.contains(&fid));
-            if !reclaim_ids.is_empty() {
-                for &fid in &reclaim_ids {
-                    self.device.outbound.push(DeviceCommands::delete_file(fid));
-                    self.companion.deleted_in_connection.insert(fid);
-                    self.device.session.catalog.retain(|f| f.file_id != fid);
-                    self.companion.standby_file_ids.insert(fid);
-                }
-                let _ = self.commit(|w| {
-                    for &fid in &reclaim_ids {
-                        w.record_purged_bean_file_id(fid);
+            if self.current_companion_recording_state() == 0 {
+                let mut reclaim_ids: BTreeSet<u32> = self
+                    .workspace()
+                    .standby_scratch_file_ids()
+                    .iter()
+                    .copied()
+                    .collect();
+                for entry in &self.device.session.raw_catalog {
+                    if self.workspace().is_reclaimed_standby_file(entry.file_id) {
+                        reclaim_ids.insert(entry.file_id);
                     }
-                    Ok(())
-                });
-                changed = true;
+                }
+                reclaim_ids.retain(|&fid| fid > 0 && !self.companion.deleted_in_connection.contains(&fid));
+                if !reclaim_ids.is_empty() {
+                    for &fid in &reclaim_ids {
+                        self.device.outbound.push(DeviceCommands::delete_file(fid));
+                        self.companion.deleted_in_connection.insert(fid);
+                        self.device.session.remove_catalog_entry(fid);
+                        self.companion.standby_file_ids.insert(fid);
+                    }
+                    let _ = self.commit(|w| {
+                        for &fid in &reclaim_ids {
+                            w.record_purged_bean_file_id(fid);
+                        }
+                        Ok(())
+                    });
+                    changed = true;
+                }
             }
 
             if !self.is_quitting()
                 && !self.companion.standby_suppressed_for_connection
                 && self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
             {
-                self.companion.pre_standby_catalog_ids = self
+                let open_entry = self
                     .device
                     .session
-                    .catalog
+                    .raw_catalog
                     .iter()
-                    .map(|f| f.file_id)
-                    .collect();
-                self.companion.active_standby_file_id = None;
-                self.companion.pending_standby_stop = false;
-                let outcome = self
-                    .device
-                    .session
-                    .start_realtime_recording(None, now.saturating_mul(1_000));
-                self.device.accept(outcome);
-                self.companion.standby_stream_owned = true;
-                let _ = self.process_companion_signals();
-                changed = true;
+                    .find(|f| f.end_time == Some(0));
+                let open_is_known = open_entry.is_some_and(|f| self.is_known_bean_record(f.file_id));
+                if self.current_companion_recording_state() != 0 && open_is_known {
+                    self.companion.standby_suppressed_for_connection = true;
+                } else {
+                    let page0 = DeviceCommands::list_files_with_end_time(0);
+                    self.device.outbound.retain(|f| f != &page0);
+                    self.companion.active_standby_file_id = None;
+                    self.companion.pending_standby_stop = false;
+                    let skip_existing = self.current_companion_recording_state() != 0;
+                    let outcome = self
+                        .device
+                        .session
+                        .start_realtime_recording_with_options(None, now.saturating_mul(1_000), skip_existing);
+                    self.device.accept(outcome);
+                    self.companion.standby_stream_owned = true;
+                    let _ = self.process_companion_signals();
+                    changed = true;
+                }
             }
         }
 
@@ -581,6 +633,7 @@ impl KoeRuntime {
     pub(crate) fn is_device_completely_idle(&self) -> bool {
         !self.device.session.device_recording_active
             && !self.device.session.pending_realtime_subscribe
+            && !self.device.session.is_catalog_loading()
             && self.device.session.active_file_id.is_none()
             && matches!(self.device.session.transfer.phase, TransferPhaseTag::Idle)
             && !self.device.awaiting_stop
@@ -598,14 +651,23 @@ impl KoeRuntime {
         for signal in signals {
             match signal {
                 RawCompanionSignal::RecordingStateChanged { state, file_id } => {
+                    let prev_recording_state = self.companion.last_recording_state;
                     self.companion.last_recording_state = state;
+                    if prev_recording_state != 0 && state == 0 {
+                        self.companion.deleted_in_connection.clear();
+                        self.device.auto_pull_attempted.clear();
+                    }
                     if state == 1
                         && (self.companion.standby_stream_owned
                             || self.companion.pending_standby_stop)
                     {
                         if let Some(fid) = file_id.filter(|&id| id > 0) {
-                            self.companion.active_standby_file_id = Some(fid);
-                            let _ = self.mark_standby_scratch_file(fid);
+                            if self.can_own_as_standby_scratch(fid) {
+                                self.companion.active_standby_file_id = Some(fid);
+                                let _ = self.mark_standby_scratch_file(fid);
+                            } else {
+                                self.companion.active_standby_file_id = None;
+                            }
                             if self.companion.pending_standby_stop {
                                 self.companion.pending_standby_stop = false;
                                 self.companion.standby_stream_owned = false;
@@ -621,7 +683,9 @@ impl KoeRuntime {
                                     self.device.session.active_file_id.filter(|&id| id > 0)
                                 });
                             if let Some(fid) = fid {
-                                let _ = self.mark_standby_scratch_file(fid);
+                                if self.can_own_as_standby_scratch(fid) {
+                                    let _ = self.mark_standby_scratch_file(fid);
+                                }
                             }
                             self.companion.active_standby_file_id = None;
                             self.companion.standby_stream_owned = false;
@@ -632,11 +696,27 @@ impl KoeRuntime {
                             self.companion.tail_holdback.clear();
                         } else if self.companion.pending_standby_stop {
                             if let Some(fid) = file_id.filter(|&id| id > 0) {
-                                let _ = self.mark_standby_scratch_file(fid);
+                                if self.can_own_as_standby_scratch(fid) {
+                                    let _ = self.mark_standby_scratch_file(fid);
+                                }
                                 self.companion.active_standby_file_id = None;
                                 self.companion.pending_standby_stop = false;
                             }
                         }
+                    }
+                }
+                RawCompanionSignal::DeleteFileAck { success } => {
+                    if !success {
+                        let rollback_ids: Vec<u32> = self
+                            .companion
+                            .deleted_in_connection
+                            .iter()
+                            .copied()
+                            .collect();
+                        for fid in rollback_ids {
+                            let _ = self.mark_standby_scratch_file(fid);
+                        }
+                        self.companion.deleted_in_connection.clear();
                     }
                 }
                 RawCompanionSignal::FrontDoubleTap {

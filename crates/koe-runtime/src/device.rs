@@ -154,8 +154,7 @@ impl DeviceRuntime {
         self.auto_pull_attempted.clear();
         if self.session.session_key.is_some() {
             self.outbound.push(DeviceCommands::get_device_info());
-            self.outbound
-                .push(DeviceCommands::list_files_with_end_time(0));
+            self.outbound.push(self.session.request_full_catalog());
         }
     }
 
@@ -303,10 +302,12 @@ impl DeviceRuntime {
             && self.is_connected()
             && self.outbound.is_empty()
             && !self.session.pending_realtime_subscribe
+            && !self.session.is_catalog_loading()
             && self.session.active_file_id.is_none()
             && matches!(
                 self.session.transfer.phase,
                 koe_engine::session::TransferPhaseTag::Idle
+                    | koe_engine::session::TransferPhaseTag::Failed
             )
         {
             self.status_poll_elapsed_ms = self.status_poll_elapsed_ms.saturating_add(elapsed_ms);

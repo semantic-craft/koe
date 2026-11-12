@@ -710,6 +710,7 @@ fn connect_simulated_bean_on_host(
 
     let _ = session.ingest_ble(&ecdh_rx, now);
     let _ = session.ingest_ble(&build_telemetry_rx(0, 8), now);
+    let _ = session.ingest_ble(&build_rx_frame(0x1B, 0x0E, &[0, 0]), now);
     session_key
 }
 
