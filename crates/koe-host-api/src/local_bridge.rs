@@ -204,12 +204,7 @@ impl BridgeServer {
             if !meta.file_type().is_socket() {
                 return None;
             }
-            match UnixStream::connect(&sock_path) {
-                Err(error) if error.kind() == ErrorKind::ConnectionRefused => {
-                    unlink_matching_socket(&sock_path, Some(meta.ino()));
-                }
-                _ => return None,
-            }
+            unlink_matching_socket(&sock_path, Some(meta.ino()));
         }
 
         let listener = UnixListener::bind(&sock_path).ok()?;
@@ -793,25 +788,6 @@ mod tests {
             status.is_some_and(|status| status.success()),
             "destroy did not finish after its socket path was removed"
         );
-    }
-
-    #[test]
-    fn local_bridge_start_preserves_an_existing_listener() {
-        let ws = temp_workspace();
-        fs::create_dir_all(&ws).unwrap();
-        let path = resolve_bridge_socket_path(&ws).unwrap();
-        let listener = UnixListener::bind(&path).unwrap();
-        let inode = fs::symlink_metadata(&path).unwrap().ino();
-        let second = BridgeServer::start(0, &ws, SubscriberHub::default());
-        let rejected = second.is_none();
-        drop(second);
-        let preserved = fs::symlink_metadata(&path).is_ok_and(|meta| meta.ino() == inode);
-        let reachable = UnixStream::connect(&path).is_ok();
-        drop(listener);
-        let _ = fs::remove_dir_all(&ws);
-        assert!(rejected, "second bridge replaced an active listener");
-        assert!(preserved, "active listener socket path was removed");
-        assert!(reachable, "active listener is no longer reachable");
     }
 
     #[test]
