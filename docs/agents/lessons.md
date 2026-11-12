@@ -323,3 +323,10 @@
 - 修复：(1) `crates/koe-engine/src/session.rs` 的 `finalize_active_transfer` 将 `marks_ms` 映射至 `m.min(pcm_duration_ms)`（实际解码 PCM 时长，保证短录音书签落在真实音频区间与 880 Hz 提示音对齐）并排序去重；(2) `crates/koe-engine/src/product/record.rs` 的 `ProductWorkspace::finish_capture` 在 `duration_ms > 0` 时做双向钳位、`duration_ms == 0` 时保留书签防被压成 0；(3) `crates/koe-client-services/src/product_store_codec.rs` 的 `RecordDto::into_record` 移除硬校验改由 `a.add_bookmark(if a.duration_ms > 0 { timestamp.min(a.duration_ms) } else { timestamp })` 在解码层自愈既有持久化记录；(4) `crates/koe-runtime/src/legacy.rs` 移除旧工作区迁移的书签硬校验交由 `finish_capture` 自愈；(5) `crates/koe-host-api/src/lib.rs` 补充打开失败诊断输出。
 - 验证点：`cargo test -p koe-engine realtime_transfer_clamps_out_of_range_marks_to_duration`、`cargo test -p koe-engine --test product_workflow`、`cargo test -p koe-client-services --test product_store` 与 `cargo test -p koe-runtime --test legacy_restore legacy_session_clamps_out_of_range_bookmarks_on_restore` 覆盖线序超长、零时长保留、旧工作区迁移与带超长历史书签工作区自愈重开，均先红后绿。
 - Seen 1x（2026-11-12）。
+
+### D3200 目录分页与录音暂停恢复必须保护已有历史文件并按相对分片对齐
+
+- 出处：2026-11-12 固件 04.92 真机联调（10 个历史录音），目录单页仅返回 10 条导致待命录音落在第 2 页被截断，误将第 1 页 0 ms 残留未闭合录音认作新待命文件；且录音处于暂停态（state == 2）时取回必返回 0xFFFFFFFF 未闭合头（#253），直接触发待命模式自动拉取死循环与闪存文件误删。
+- 修复：Engine 实施 `0x1B 0x0E` 多页分页与 `raw_catalog` 全量去重，待命启动时快照 `pre_start_entries`，优先选取不在快照中的全新未闭合文件；暂停录音续接（state == 2 -> 1）按 `(duration_ms / 20) * 166` 相对分片偏移发送 `1A/07`，双击打标与回放采用相对时间；Runtime 增加 `can_own_as_standby_scratch` 属权门禁，暂停态（state != 0）抑制离线自动取回，`Failed` 阶段在用户刷新/切模式/手动下载时重置恢复。
+- 验证点：`cargo test -p koe-engine --lib multipage_catalog_pagination_selects_new_open_file_on_second_page` 与 `resumed_open_file_computes_slice_offset_and_relative_marks`；`cargo test -p koe-runtime --lib collar_standby_disabled_pause_recovery_resumes_open_file_and_protects_pre_existing_files` 与 `failed_offline_pull_recovers_via_device_refresh_or_mode_switch_or_manual_download`。
+- Seen 1x（2026-11-12）。

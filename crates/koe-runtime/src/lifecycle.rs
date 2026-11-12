@@ -44,7 +44,8 @@ impl KoeRuntime {
             || !self.device.captures.is_empty()
             || !self.captures.sessions.is_empty()
             || !self.pending.is_empty()
-            || !self.completed.is_empty();
+            || !self.completed.is_empty()
+            || (self.is_quitting() && session.transfer.phase == TransferPhaseTag::Failed);
         let queued_work = !self.is_quitting()
             && !self.settings.key.is_empty()
             && (!self.auto_summarize.is_empty() || !self.auto_transcribe.is_empty());

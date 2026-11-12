@@ -6,7 +6,8 @@ use koe_engine::{
     commands::DeviceCommands,
     crypto::{AesCtrStreamDecrypt, DeviceCrypto},
     frame::{ProtocolFrame, RX_MAGIC},
-    session::REAL_OPUS_20MS_440HZ_PACKET,
+    library::RecordingEntry,
+    session::{FinalizedRecording, REAL_OPUS_20MS_440HZ_PACKET},
     transport::{OPUS_FRAME_BYTES, SLICE_RECORD_BYTES, UNFINISHED_FILE_SIZE},
 };
 use serde_json::{json, Value};
@@ -48,7 +49,7 @@ fn build_rx_frame(cmd_type: u8, cmd_id: u8, payload: &[u8]) -> Vec<u8> {
 fn build_telemetry_rx(recording_status: u8, battery_level: u8) -> Vec<u8> {
     let mut pkt = Vec::from(RX_MAGIC);
     pkt.extend_from_slice(&[0x01, 0x01, 0x01, 0x00, 0x00]);
-    pkt.push(recording_status);
+    pkt.push(1);
     pkt.push(battery_level);
     pkt.push(0);
     pkt.extend_from_slice(b"04.92");
@@ -59,6 +60,9 @@ fn build_telemetry_rx(recording_status: u8, battery_level: u8) -> Vec<u8> {
     pkt.extend_from_slice(b"2.1.0");
     pkt.push(9);
     pkt.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0x63, 0x9D]);
+    pkt.extend_from_slice(&[0, 0, 0, 0, 0]);
+    pkt.push(recording_status);
+    pkt.extend_from_slice(b"1.0.0");
     let total_len = (pkt.len() + 1) as u16;
     pkt[7] = (total_len & 0xFF) as u8;
     pkt[8] = ((total_len >> 8) & 0xFF) as u8;
@@ -68,6 +72,15 @@ fn build_telemetry_rx(recording_status: u8, battery_level: u8) -> Vec<u8> {
 }
 
 fn connect_simulated_bean(runtime: &mut KoeRuntime, connection_id: &str, now: u64) -> [u8; 32] {
+    connect_simulated_bean_with_status(runtime, connection_id, now, 0)
+}
+
+fn connect_simulated_bean_raw(
+    runtime: &mut KoeRuntime,
+    connection_id: &str,
+    now: u64,
+    recording_status: u8,
+) -> [u8; 32] {
     let connecting = runtime.dispatch_json(
         &json!({
             "type": "device_event",
@@ -114,8 +127,33 @@ fn connect_simulated_bean(runtime: &mut KoeRuntime, connection_id: &str, now: u6
     session_key.copy_from_slice(&derived);
 
     runtime.ingest_ble_chunk(&ecdh_rx, now);
-    runtime.ingest_ble_chunk(&build_telemetry_rx(0, 8), now);
+    runtime.ingest_ble_chunk(&build_telemetry_rx(recording_status, 8), now);
     session_key
+}
+
+fn connect_simulated_bean_with_status(
+    runtime: &mut KoeRuntime,
+    connection_id: &str,
+    now: u64,
+    recording_status: u8,
+) -> [u8; 32] {
+    let key = connect_simulated_bean_raw(runtime, connection_id, now, recording_status);
+    if recording_status == 0 {
+        runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &[0, 0]), now);
+    }
+    key
+}
+
+fn connect_simulated_bean_with_catalog(
+    runtime: &mut KoeRuntime,
+    connection_id: &str,
+    now: u64,
+    recording_status: u8,
+    catalog_payload: &[u8],
+) -> [u8; 32] {
+    let key = connect_simulated_bean_raw(runtime, connection_id, now, recording_status);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, catalog_payload), now);
+    key
 }
 
 fn build_head_rx(
@@ -1065,6 +1103,13 @@ fn pre_catalog_mode_switch_and_crash_before_flash_delete_reclaim_standby_idempot
     );
     runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[2]), NOW + 2);
     runtime.poll_timers(250, NOW + 3);
+    let deferred_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        !deferred_tx.contains(&DeviceCommands::delete_file(7201)),
+        "deletion of 7201 must be deferred while state == 2"
+    );
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[0]), NOW + 3);
+    runtime.poll_timers(250, NOW + 4);
     let reclaim_tx = runtime.drain_outbound_ble_frames();
     assert!(
         reclaim_tx.contains(&DeviceCommands::delete_file(7201)),
@@ -1260,4 +1305,469 @@ fn poll_mcp_ask_ignores_unrelated_runtime_error_and_create_note_increments_gener
         .expect("failed ask must settle")
         .unwrap_err();
     assert!(failed_err.contains("模型服务暂时不可用"), "{failed_err}");
+}
+
+#[test]
+fn collar_standby_disabled_pause_recovery_resumes_open_file_and_protects_pre_existing_files() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+    let session_key = connect_simulated_bean(&mut runtime, "ble-pause-rec", NOW);
+    let initial_outbound = runtime.drain_outbound_ble_frames();
+    assert!(
+        initial_outbound.contains(&DeviceCommands::start_realtime_record_81()),
+        "standby mode must issue 18/81 start_realtime_record_81 on connect"
+    );
+    assert!(
+        initial_outbound.contains(&DeviceCommands::list_files_with_end_time(0)),
+        "standby mode must query catalog after 18/81 and 18/82"
+    );
+
+    let mut cat_bytes = Vec::new();
+    cat_bytes.extend_from_slice(&2u16.to_le_bytes());
+    cat_bytes.extend_from_slice(&7501u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&(NOW as u32).to_le_bytes());
+    cat_bytes.extend_from_slice(&5_000u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&7502u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &cat_bytes), NOW + 1);
+
+    let start_sub_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        start_sub_tx.contains(&DeviceCommands::start_transport_audio_file(7502, 0, 1)),
+        "open standby file 7502 must be subscribed"
+    );
+
+    let file_key = [0x5Au8; 32];
+    let file_nonce = [0x6Bu8; 16];
+    let head_rx = build_head_rx(&session_key, 7502, UNFINISHED_FILE_SIZE, &file_key, &file_nonce);
+    runtime.ingest_ble_chunk(&head_rx, NOW + 1);
+    assert!(runtime.is_standby_file(7502), "7502 must be owned as standby file");
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+        NOW + 2,
+    );
+    let pause_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        pause_tx.contains(&DeviceCommands::pause_record()),
+        "switching from collar_standby to disabled must pause recording"
+    );
+
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[2]), NOW + 2);
+    assert_eq!(runtime.current_companion_recording_state(), 2);
+
+    runtime.poll_timers(2_000, NOW + 4);
+    let auto_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        auto_tx
+            .iter()
+            .all(|f| !(f.len() >= 7 && f[5] == 0x1A && f[6] == 0x07 && f.len() > 10 && f[10] == 0)),
+        "paused recording state 2 must suppress auto offline pull"
+    );
+
+    let mut resume_cat_bytes = Vec::new();
+    resume_cat_bytes.extend_from_slice(&2u16.to_le_bytes());
+    resume_cat_bytes.extend_from_slice(&7501u32.to_le_bytes());
+    resume_cat_bytes.extend_from_slice(&(NOW as u32).to_le_bytes());
+    resume_cat_bytes.extend_from_slice(&5_000u32.to_le_bytes());
+    resume_cat_bytes.extend_from_slice(&7502u32.to_le_bytes());
+    resume_cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    resume_cat_bytes.extend_from_slice(&2_000u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &resume_cat_bytes), NOW + 4);
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW + 5,
+    );
+    let resume_start_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        resume_start_tx.contains(&DeviceCommands::start_realtime_record_81()),
+        "resuming collar_standby must issue 18/81 start_realtime_record_81"
+    );
+
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &resume_cat_bytes), NOW + 6);
+    let resume_sub_tx = runtime.drain_outbound_ble_frames();
+    let expected_offset = (2_000 / 20) * 166;
+    assert!(
+        resume_sub_tx.contains(&DeviceCommands::start_transport_audio_file(7502, expected_offset, 1)),
+        "resuming collar_standby with open file 7502 must send slice offset 16600"
+    );
+    assert!(runtime.is_standby_file(7502), "7502 must still be owned as standby file");
+
+    assert!(
+        !runtime.workspace().is_bean_file_purged(7501),
+        "pre-existing file 7501 must never be marked purged"
+    );
+    assert!(
+        !runtime.workspace().standby_scratch_file_ids().contains(&7501),
+        "pre-existing file 7501 must never be marked as standby scratch"
+    );
+    assert!(
+        !runtime.is_standby_file(7501),
+        "pre-existing file 7501 must not be standby file"
+    );
+}
+
+#[test]
+fn collar_standby_connect_in_paused_state_waits_for_initial_catalog_and_protects_pre_existing_open_file() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+    let session_key = connect_simulated_bean_with_status(&mut runtime, "ble-paused-connect", NOW, 2);
+    let connect_outbound = runtime.drain_outbound_ble_frames();
+    assert!(
+        connect_outbound.contains(&DeviceCommands::list_files_with_end_time(0)),
+        "01/01 in paused state must emit initial catalog query"
+    );
+    assert!(
+        !connect_outbound.contains(&DeviceCommands::start_realtime_record_81()),
+        "standby mode must wait for initial catalog before sending 18/81 when device is paused"
+    );
+
+    let mut cat_bytes = Vec::new();
+    cat_bytes.extend_from_slice(&1u16.to_le_bytes());
+    cat_bytes.extend_from_slice(&7601u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&9_480u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &cat_bytes), NOW + 1);
+
+    let cat_ack_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        cat_ack_tx.contains(&DeviceCommands::start_realtime_record_81()),
+        "after initial catalog completes, standby must send 18/81"
+    );
+    assert!(
+        cat_ack_tx.contains(&DeviceCommands::start_record()),
+        "after initial catalog completes, standby must send 18/82 start_record"
+    );
+    assert!(
+        cat_ack_tx.contains(&DeviceCommands::list_files_with_end_time(0)),
+        "after initial catalog completes, standby must send 1B/0E(0) after 18/82"
+    );
+
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &cat_bytes), NOW + 2);
+    let sub_tx = runtime.drain_outbound_ble_frames();
+    let expected_offset = (9_480 / 20) * 166;
+    assert!(
+        sub_tx.contains(&DeviceCommands::start_transport_audio_file(7601, expected_offset, 1)),
+        "must subscribe to pre-existing open file 7601 with slice offset 78684"
+    );
+
+    let file_key = [0x5Au8; 32];
+    let file_nonce = [0x6Bu8; 16];
+    let head_rx = build_head_rx(&session_key, 7601, UNFINISHED_FILE_SIZE, &file_key, &file_nonce);
+    runtime.ingest_ble_chunk(&head_rx, NOW + 2);
+
+    let snap: Value = serde_json::from_str(&runtime.snapshot_json(NOW + 2)).unwrap();
+    assert!(runtime.is_standby_ready());
+    assert_eq!(snap["device"]["standbyReady"], true);
+    assert!(
+        !runtime.is_standby_file(7601),
+        "pre-existing paused file 7601 must not be marked as standby scratch"
+    );
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+        NOW + 3,
+    );
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[0]), NOW + 3);
+    let stop_outbound = runtime.drain_outbound_ble_frames();
+    assert!(
+        stop_outbound
+            .iter()
+            .all(|f| !(f.len() >= 7 && f[5] == 0x1A && f[6] == 0x10)),
+        "pre-existing file 7601 must never receive 1A/10 delete frame"
+    );
+    assert!(!runtime.is_standby_file(7601));
+    assert!(!runtime.workspace().is_bean_file_purged(7601));
+}
+
+#[test]
+fn failed_offline_pull_recovers_via_device_refresh_or_mode_switch_or_manual_download() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+
+    let _ = connect_simulated_bean(&mut runtime, "ble-failed-rec", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    runtime.device.session.transfer.phase = koe_engine::session::TransferPhaseTag::Failed;
+    runtime.device.session.transfer.file_id = 8501;
+    runtime.device.session.transfer.error_code = 1;
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "device_refresh"}).to_string(),
+        NOW + 1,
+    );
+    assert_eq!(
+        runtime.device.session.transfer.phase,
+        koe_engine::session::TransferPhaseTag::Idle
+    );
+    let refresh_tx = runtime.drain_outbound_ble_frames();
+    assert!(refresh_tx.contains(&DeviceCommands::get_device_info()));
+    assert!(refresh_tx.contains(&DeviceCommands::list_files_with_end_time(0)));
+
+    runtime.device.session.transfer.phase = koe_engine::session::TransferPhaseTag::Failed;
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+        NOW + 2,
+    );
+    assert_eq!(
+        runtime.device.session.transfer.phase,
+        koe_engine::session::TransferPhaseTag::Idle
+    );
+
+    let mut cat_bytes = Vec::new();
+    cat_bytes.extend_from_slice(&1u16.to_le_bytes());
+    cat_bytes.extend_from_slice(&8502u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&(NOW as u32).to_le_bytes());
+    cat_bytes.extend_from_slice(&1_000u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &cat_bytes), NOW + 3);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    runtime.device.session.transfer.phase = koe_engine::session::TransferPhaseTag::Failed;
+    runtime.device.session.transfer.file_id = 8502;
+    let res = runtime.dispatch_json(
+        &json!({"type": "device_download", "fileId": 8502}).to_string(),
+        NOW + 4,
+    );
+    let snap: Value = serde_json::from_str(&res).unwrap();
+    assert!(snap["error"].is_null(), "{snap}");
+    assert_eq!(
+        runtime.device.session.transfer.phase,
+        koe_engine::session::TransferPhaseTag::PullingOffline
+    );
+    let dl_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        dl_tx.contains(&DeviceCommands::start_transport_audio_file(8502, 0, 0)),
+        "manual download must recover from Failed phase and initiate 1A/07 offline pull"
+    );
+}
+
+#[test]
+fn repro_connect_mode_switch_never_deletes_closed_user_recording_5002() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+
+    let _ = connect_simulated_bean_raw(&mut runtime, "ble-mode-switch-5002", NOW, 0);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+        NOW + 1,
+    );
+    let switch_tx = runtime.drain_outbound_ble_frames();
+    assert!(!switch_tx.iter().any(|f| f.len() >= 7 && f[5] == 0x1A && f[6] == 0x10));
+
+    let mut cat_bytes = Vec::new();
+    cat_bytes.extend_from_slice(&1u16.to_le_bytes());
+    cat_bytes.extend_from_slice(&5002u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&1_700_000_120u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&120_000u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1B, 0x0E, &cat_bytes), NOW + 2);
+    runtime.poll_timers(500, NOW + 3);
+
+    let late_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        !late_tx.contains(&DeviceCommands::delete_file(5002)),
+        "closed user recording 5002 must never receive 0x1A 0x10 delete frame"
+    );
+    assert!(!runtime.is_standby_file(5002));
+    assert!(!runtime.workspace().is_bean_file_purged(5002));
+
+    let sandbox2 = Sandbox::new();
+    let mut runtime2 = KoeRuntime::open(&sandbox2.0).unwrap();
+    let _ = runtime2.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+    let _session_key2 = connect_simulated_bean_with_catalog(
+        &mut runtime2,
+        "ble-normal-5002",
+        NOW,
+        0,
+        &cat_bytes,
+    );
+    assert!(runtime2.device.session.has_complete_catalog());
+    assert!(runtime2.companion.pre_standby_catalog_ids.contains(&5002));
+    assert!(!runtime2.can_own_as_standby_scratch(5002));
+
+    let connect_outbound = runtime2.drain_outbound_ble_frames();
+    assert!(
+        !connect_outbound.contains(&DeviceCommands::delete_file(5002)),
+        "5002 must not be deleted on connect"
+    );
+
+    let _ = runtime2.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+        NOW + 2,
+    );
+    runtime2.poll_timers(250, NOW + 3);
+    let stop_outbound = runtime2.drain_outbound_ble_frames();
+    assert!(
+        !stop_outbound.contains(&DeviceCommands::delete_file(5002)),
+        "5002 must not be deleted on stop"
+    );
+    assert!(!runtime2.is_standby_file(5002));
+    assert!(!runtime2.workspace().is_bean_file_purged(5002));
+}
+
+#[test]
+fn packet_order_1881_before_1b0e_preserves_paused_base_slices() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+
+    let mut cat_bytes = Vec::new();
+    cat_bytes.extend_from_slice(&1u16.to_le_bytes());
+    cat_bytes.extend_from_slice(&1794015297u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&9_480u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+    cat_bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let session_key = connect_simulated_bean_with_catalog(
+        &mut runtime,
+        "ble-paused-base",
+        NOW,
+        2,
+        &cat_bytes,
+    );
+    assert!(runtime.device.session.has_complete_catalog());
+    assert_eq!(runtime.device.session.known_base_slices_for(1794015297), 474);
+
+    let mut ack_81 = Vec::from(1794015297u32.to_le_bytes());
+    ack_81.push(1);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x81, &ack_81), NOW + 1);
+
+    let outbound = runtime.drain_outbound_ble_frames();
+    assert!(
+        outbound.contains(&DeviceCommands::start_transport_audio_file(1794015297, 78_684, 1)),
+        "1A/07 must use byte_offset == 474 * 166 == 78_684"
+    );
+
+    let file_key = [0x91u8; 32];
+    let file_nonce = [0x92u8; 16];
+    let head = build_head_rx(&session_key, 1794015297, UNFINISHED_FILE_SIZE, &file_key, &file_nonce);
+    runtime.ingest_ble_chunk(&head, NOW + 2);
+
+    assert!(runtime.treats_file_as_standby(1794015297));
+    assert!(!runtime.can_own_as_standby_scratch(1794015297));
+    assert!(!runtime.is_standby_file(1794015297));
+    assert!(runtime.workspace().records().is_empty(), "standby routing must not create ProductRecord");
+
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "disabled"}).to_string(),
+        NOW + 3,
+    );
+    runtime.poll_timers(250, NOW + 4);
+    let stop_tx = runtime.drain_outbound_ble_frames();
+    assert!(
+        !stop_tx.contains(&DeviceCommands::delete_file(1794015297)),
+        "pre-existing paused file 1794015297 must not receive delete frame"
+    );
+}
+
+#[test]
+fn non_standby_finalized_offline_pull_saved_while_standby_active() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = runtime.dispatch_json(
+        &json!({"type": "set_companion_mode", "mode": "collar_standby"}).to_string(),
+        NOW,
+    );
+    let _session_key = connect_simulated_bean(&mut runtime, "ble-offline-standby", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    assert!(runtime.companion.standby_stream_owned);
+
+    runtime.device.finalized.push(FinalizedRecording {
+        entry: RecordingEntry {
+            id: 5002,
+            bean_file_id: 5002,
+            created_at_epoch_sec: NOW,
+            duration_ms: 2_000,
+            byte_count: 5,
+            marks_ms: vec![],
+        },
+        ogg_opus_bytes: vec![0x4F, 0x67, 0x67, 0x53, 0x00],
+        preview_wav_bytes: vec![],
+        is_realtime: false,
+        base_slice_offset: 0,
+    });
+
+    runtime.save_device_recordings(NOW).unwrap();
+
+    assert!(
+        runtime
+            .workspace()
+            .records()
+            .values()
+            .any(|r| r.origin == RecordOrigin::Bean && r.aggregate.file_id == 5002),
+        "user file 5002 must be saved to workspace even while standby is active"
+    );
+    let outbound = runtime.drain_outbound_ble_frames();
+    assert!(
+        !outbound.contains(&DeviceCommands::delete_file(5002)),
+        "user file 5002 must not receive delete frame"
+    );
+}
+
+#[test]
+fn failed_phase_survives_5s_poll_blocks_quit_and_clears_on_cancel_quit() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let _ = connect_simulated_bean(&mut runtime, "ble-failed-survive", NOW);
+    let _ = runtime.drain_outbound_ble_frames();
+
+    runtime.device.session.transfer.phase = koe_engine::session::TransferPhaseTag::Failed;
+    runtime.device.session.transfer.file_id = 9901;
+    runtime.device.session.transfer.error_code = 1;
+
+    runtime.poll_timers(5_500, NOW + 6);
+    assert_eq!(
+        runtime.device.session.transfer.phase,
+        koe_engine::session::TransferPhaseTag::Failed,
+        "Failed phase must survive 5-second poll timer"
+    );
+
+    let empty_cat = build_rx_frame(0x1B, 0x0E, &[0, 0]);
+    runtime.ingest_ble_chunk(&empty_cat, NOW + 6);
+    assert_eq!(
+        runtime.device.session.transfer.phase,
+        koe_engine::session::TransferPhaseTag::Failed,
+        "Failed phase must survive catalog completion in finalize_staged_catalog"
+    );
+
+    let _ = runtime.dispatch_json(&json!({"type": "request_quit"}).to_string(), NOW + 7);
+    let snap = runtime.snapshot(NOW + 7);
+    assert_eq!(snap["lifecycle"]["quitPhase"], "blocked");
+    assert_eq!(snap["lifecycle"]["keepAwake"], true);
+
+    let _ = runtime.dispatch_json(&json!({"type": "cancel_quit"}).to_string(), NOW + 8);
+    assert_eq!(
+        runtime.device.session.transfer.phase,
+        koe_engine::session::TransferPhaseTag::Idle,
+        "CancelQuit must clear Failed phase to Idle"
+    );
+    let snap_after = runtime.snapshot(NOW + 8);
+    assert_eq!(snap_after["lifecycle"]["quitPhase"], "running");
 }

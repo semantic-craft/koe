@@ -289,6 +289,12 @@ impl KoeRuntime {
             Command::RequestQuit => self.request_quit(),
             Command::CancelQuit => {
                 self.quit = lifecycle::QuitState::Running;
+                if matches!(
+                    self.device.session.transfer.phase,
+                    koe_engine::session::TransferPhaseTag::Failed
+                ) {
+                    self.device.session.reset_active_transfer();
+                }
                 self.drive_companion(now);
             }
             Command::ImportFlutterLibrary { path } => {
@@ -478,7 +484,17 @@ impl KoeRuntime {
             Command::DeviceOpenGuide => self.device.open_guide(),
             Command::DeviceOnboardingNext => self.device.onboarding_next(),
             Command::DeviceCloseGuide => self.device.close_guide(),
-            Command::DeviceRefresh => self.device.refresh(),
+            Command::DeviceRefresh => {
+                if !self.is_quitting()
+                    && matches!(
+                        self.device.session.transfer.phase,
+                        koe_engine::session::TransferPhaseTag::Failed
+                    )
+                {
+                    self.device.session.reset_active_transfer();
+                }
+                self.device.refresh();
+            }
             Command::DeviceDisconnect => {
                 if self.companion.standby_stream_owned
                     || self.companion.pending_standby_stop
@@ -491,7 +507,9 @@ impl KoeRuntime {
                         .filter(|&id| id > 0)
                         .or_else(|| self.companion.active_standby_file_id.take())
                     {
-                        let _ = self.mark_standby_scratch_file(fid);
+                        if self.can_own_as_standby_scratch(fid) {
+                            let _ = self.mark_standby_scratch_file(fid);
+                        }
                     }
                     self.companion.active_standby_file_id = None;
                     self.companion.standby_stream_owned = false;
@@ -517,7 +535,9 @@ impl KoeRuntime {
                         .filter(|&id| id > 0)
                         .or_else(|| self.companion.active_standby_file_id.take())
                     {
-                        let _ = self.mark_standby_scratch_file(fid);
+                        if self.can_own_as_standby_scratch(fid) {
+                            let _ = self.mark_standby_scratch_file(fid);
+                        }
                     }
                     self.companion.active_standby_file_id = None;
                     self.companion.standby_stream_owned = false;
@@ -538,6 +558,14 @@ impl KoeRuntime {
                 })?;
             }
             Command::SetCompanionMode { mode } => {
+                if !self.is_quitting()
+                    && matches!(
+                        self.device.session.transfer.phase,
+                        koe_engine::session::TransferPhaseTag::Failed
+                    )
+                {
+                    self.device.session.reset_active_transfer();
+                }
                 let parsed = CompanionRoutingMode::parse(&mode).ok_or("无效的领夹麦伴侣模式")?;
                 self.commit(|w| {
                     w.set_companion_mode(parsed);
@@ -563,6 +591,14 @@ impl KoeRuntime {
                     return Err(
                         "当前处于领夹麦待命模式，请先切换为关闭或会议兼领夹模式后再下载录音".into(),
                     );
+                }
+                if !self.is_quitting()
+                    && matches!(
+                        self.device.session.transfer.phase,
+                        koe_engine::session::TransferPhaseTag::Failed
+                    )
+                {
+                    self.device.session.reset_active_transfer();
                 }
                 self.ensure_device_idle()?;
                 let entry = self
@@ -592,6 +628,14 @@ impl KoeRuntime {
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }
+                if !self.is_quitting()
+                    && matches!(
+                        self.device.session.transfer.phase,
+                        koe_engine::session::TransferPhaseTag::Failed
+                    )
+                {
+                    self.device.session.reset_active_transfer();
+                }
                 if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby {
                     if self.companion.standby_stream_owned {
                         return Err(
@@ -610,7 +654,7 @@ impl KoeRuntime {
                     let outcome = self
                         .device
                         .session
-                        .start_realtime_recording(None, now.saturating_mul(1000));
+                        .start_realtime_recording_with_options(None, now.saturating_mul(1000), false);
                     self.device.accept(outcome);
                     self.drive_companion(now);
                 }

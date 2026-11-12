@@ -544,6 +544,8 @@ pub struct OfflineFileList {
     pub files: Vec<OfflineFileEntry>,
     /// Total file count header reported by the device.
     pub file_count: u16,
+    /// Raw file IDs observed on the wire before duration filtering.
+    pub wire_ids: Vec<u32>,
     /// Optional trailing active transport timestamp.
     pub current_transport_timestamp: Option<u32>,
     /// Optional trailing active transport duration.
@@ -560,6 +562,7 @@ impl OfflineFileList {
         let count = read_u16_le(payload, 0);
         let mut o = 2usize;
         let mut files = Vec::new();
+        let mut wire_ids = Vec::new();
         let entry_size = if with_end_time { 12usize } else { 8usize };
 
         for _ in 0..count {
@@ -567,6 +570,9 @@ impl OfflineFileList {
                 break;
             }
             let file_id = read_u32_le(payload, o);
+            if file_id > 0 {
+                wire_ids.push(file_id);
+            }
             o += 4;
             let end_time = if with_end_time {
                 let et = read_u32_le(payload, o);
@@ -598,6 +604,7 @@ impl OfflineFileList {
         Self {
             files,
             file_count: count,
+            wire_ids,
             current_transport_timestamp: curr_ts,
             current_transport_duration: curr_dur,
         }
