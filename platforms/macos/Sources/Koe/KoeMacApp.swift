@@ -75,6 +75,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     let files = NativeFileActions()
     private let playback: NativePlayback
     private let capture = NativeCapture()
+    private let makeDefaultStore: @MainActor () -> HostSessionStore
     private var lastSyncedInputs: [MicrophoneInput]?
     private var inputSyncTickCounter: UInt8 = 0
 
@@ -82,9 +83,32 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         self.init(playback: NativePlayback())
     }
 
-    init(playback: NativePlayback) {
+    convenience init(makeDefaultStore: @escaping @MainActor () -> HostSessionStore) {
+        self.init(playback: NativePlayback(), makeDefaultStore: makeDefaultStore)
+    }
+
+    init(
+        playback: NativePlayback,
+        makeDefaultStore: @escaping @MainActor () -> HostSessionStore = { KoeAppDelegate.createDefaultStore() }
+    ) {
         self.playback = playback
+        self.makeDefaultStore = makeDefaultStore
         super.init()
+    }
+
+    private static func createDefaultStore() -> HostSessionStore {
+        HostSessionStore(
+            workspacePath: KoeMainEntry.workspacePath,
+            credentials: NativeCredentials(workspaceOverride: KoeMainEntry.workspacePath != nil)
+        )
+    }
+
+    @discardableResult
+    public func ensureSessionStore() -> HostSessionStore {
+        if let store { return store }
+        let initialized = makeDefaultStore()
+        store = initialized
+        return initialized
     }
     private lazy var lifecycle = NativeQuitCoordinator(
         send: { [weak self] in self?.store?.send($0) },
@@ -100,6 +124,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     private var lastTick = ProcessInfo.processInfo.systemUptime
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = ensureSessionStore()
         NSApp?.applicationIconImage = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "Koe"
@@ -255,17 +280,16 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
 
 struct KoeNativeSceneApp: App {
     @NSApplicationDelegateAdaptor(KoeAppDelegate.self) private var appDelegate
-    @State private var store = HostSessionStore(
-        workspacePath: KoeMainEntry.workspacePath,
-        credentials: NativeCredentials(workspaceOverride: KoeMainEntry.workspacePath != nil)
-    )
     var body: some Scene {
         WindowGroup("Koe") {
-            KoeWorkspaceRootView(store: store, onImport: { appDelegate.files.importFile() }, onExport: { appDelegate.files.exportRecord($0) })
-                .onAppear {
-                    appDelegate.store = store
-                    KoeWindowPresenter.presentPrimaryWorkspaceWindow()
-                }
+            KoeWorkspaceRootView(
+                store: appDelegate.ensureSessionStore(),
+                onImport: { appDelegate.files.importFile() },
+                onExport: { appDelegate.files.exportRecord($0) }
+            )
+            .onAppear {
+                KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+            }
         }
         .windowResizability(.contentMinSize)
     }

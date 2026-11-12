@@ -48,6 +48,7 @@ final class NativePlayback {
                     guard let self, self.loadGeneration == generation, !Task.isCancelled,
                           self.store?.snapshot.playback.recordId == id,
                           self.store?.snapshot.playback.asset == plan else { return }
+                    self.loadTask = nil
                     self.fail()
                 }
             }
@@ -85,7 +86,11 @@ final class NativePlayback {
             report(currentMs, playing: false)
             return
         }
-        if desired.isPlaying { player.play() } else { player.pause() }
+        if desired.isPlaying {
+            if player.rate == 0 { player.play() }
+        } else if player.rate != 0 {
+            player.pause()
+        }
         if currentMs != lastReportedPosition { report(currentMs, playing: desired.isPlaying) }
     }
 
@@ -99,13 +104,18 @@ final class NativePlayback {
         store?.send("playback_progress", ["recordId": id, "requestId": desired.requestId, "positionMs": position, "isPlaying": playing])
     }
     private func fail() {
-        player.pause()
         guard failedRequest == nil else { return }
+        if player.rate != 0 { player.pause() }
+        player.replaceCurrentItem(with: nil)
         failedRequest = store?.snapshot.playback.requestId
         report(store?.snapshot.playback.positionMs ?? 0, playing: false)
         store?.reportNativeError("无法播放这段音频。原始文件可能不可用，或格式不受支持。")
     }
     func stop() {
+        if loadedRecordId == nil && loadedPlan == nil && loadTask == nil && player.currentItem == nil
+            && appliedRequest == nil && seekRequest == nil && lastReportedPosition == nil && failedRequest == nil {
+            return
+        }
         loadGeneration += 1
         loadTask?.cancel()
         loadTask = nil

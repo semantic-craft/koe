@@ -147,11 +147,6 @@ impl KoeRuntime {
                     .aggregate
                     .duration_ms
                     .max(legacy.duration_ms);
-                if legacy.bookmarks.iter().any(|mark| *mark > duration) {
-                    return Err(ProductError::InvalidInput(
-                        "旧记录标记超出录音长度，已保留原文件".to_string(),
-                    ));
-                }
                 workspace.finish_capture(&id, duration, &legacy.bookmarks)?;
             }
             Ok(())

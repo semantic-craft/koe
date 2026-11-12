@@ -671,3 +671,89 @@ fn companion_fields_and_edited_segments_round_trip_and_accept_legacy_json() {
         Err(StoreError::InvalidData(_))
     ));
 }
+
+#[test]
+fn reopen_heals_persisted_bookmark_exceeding_duration() {
+    let dir = Directory::new();
+    {
+        let mut store = ProductStore::open(&dir.0).unwrap();
+        store
+            .transact(|w| {
+                w.insert_record(
+                    "live-1794444326-1794444325-32".into(),
+                    "Live Meeting".into(),
+                    RecordOrigin::Bean,
+                    1,
+                    1_794_444_325,
+                    0,
+                )?;
+                w.finish_capture("live-1794444326-1794444325-32", 27_660, &[12_000])?;
+                w.append_transcript(
+                    "live-1794444326-1794444325-32",
+                    "audio segment text",
+                    0,
+                    1000,
+                    "manual",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let baseline = fs::read_to_string(&json_path).unwrap();
+    let mut val: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    let record_obj = val["records"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|r| r["id"] == "live-1794444326-1794444325-32")
+        .unwrap();
+    assert_eq!(record_obj["duration_ms"], 27_660);
+    record_obj["bookmarks"] = serde_json::json!([12_000, 27_680]);
+    fs::write(&json_path, serde_json::to_string(&val).unwrap()).unwrap();
+
+    let reopened = ProductStore::open(&dir.0).expect("open must succeed and heal bookmarks");
+    let record = reopened
+        .workspace()
+        .record("live-1794444326-1794444325-32")
+        .expect("record must be preserved");
+    assert_eq!(record.aggregate.duration_ms, 27_660);
+    assert_eq!(record.aggregate.bookmarks, vec![12_000, 27_660]);
+    assert_eq!(record.aggregate.spine.segments().len(), 1);
+}
+
+#[test]
+fn zero_duration_preserves_bookmarks_across_reopen_and_subsequent_finish_clamps() {
+    let dir = Directory::new();
+    {
+        let mut store = ProductStore::open(&dir.0).unwrap();
+        store
+            .transact(|w| {
+                w.insert_record(
+                    "rec-zero".into(),
+                    "Zero Duration Meeting".into(),
+                    RecordOrigin::Bean,
+                    1,
+                    1_794_444_325,
+                    0,
+                )?;
+                w.finish_capture("rec-zero", 0, &[12_000, 27_680])?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    let mut reopened = ProductStore::open(&dir.0).unwrap();
+    let record = reopened.workspace().record("rec-zero").unwrap();
+    assert_eq!(record.aggregate.duration_ms, 0);
+    assert_eq!(record.aggregate.bookmarks, vec![12_000, 27_680]);
+
+    reopened
+        .transact(|w| {
+            w.finish_capture("rec-zero", 27_660, &[])?;
+            Ok(())
+        })
+        .unwrap();
+    let updated = reopened.workspace().record("rec-zero").unwrap();
+    assert_eq!(updated.aggregate.duration_ms, 27_660);
+    assert_eq!(updated.aggregate.bookmarks, vec![12_000, 27_660]);
+}

@@ -77,6 +77,27 @@ fn legacy_speakers_and_bookmarks_survive_migration_and_reopen() {
 }
 
 #[test]
+fn legacy_session_clamps_out_of_range_bookmarks_on_restore() {
+    let dir = Sandbox::new();
+    let original = json!({
+        "activeFileId": 88,
+        "durationMs": 2000,
+        "segments": [
+            {"text": "Recorded discussion.", "startMs": 0, "endMs": 2000, "sourceLanguage": "zh", "provider": "legacy", "speaker": "Alice"}
+        ],
+        "bookmarks": [250, 2020],
+        "dismissedReviews": [],
+        "appliedProposals": []
+    })
+    .to_string();
+    fs::write(dir.0.join("workspace_session.json"), &original).unwrap();
+    let runtime = KoeRuntime::open(&dir.0).expect("legacy restore must heal out-of-range bookmarks");
+    let record = runtime.workspace().record("bean-88").unwrap();
+    assert_eq!(record.aggregate.duration_ms, 2000);
+    assert_eq!(record.aggregate.bookmarks, vec![250, 2000]);
+}
+
+#[test]
 fn opus_without_preview_is_recovered_from_real_decoder_output() {
     let dir = Sandbox::new();
     let mut frame = [0_u8; 160];

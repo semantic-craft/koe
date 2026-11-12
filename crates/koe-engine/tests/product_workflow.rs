@@ -304,3 +304,45 @@ fn companion_preferences_scratch_ledger_and_transcript_editing_preserve_invarian
     assert_eq!(restored.companion_mode(), CompanionRoutingMode::CollarStandby);
     assert!(restored.is_bean_file_purged(501));
 }
+
+#[test]
+fn finish_capture_clamps_bookmarks_to_duration() {
+    let mut ws = ProductWorkspace::new();
+    ws.insert_record(
+        "rec-1".into(),
+        "Meeting".into(),
+        RecordOrigin::Bean,
+        1,
+        1_700_000_000,
+        0,
+    )
+    .unwrap();
+    ws.finish_capture("rec-1", 27_660, &[12_000, 27_680, 28_000])
+        .unwrap();
+    let record = ws.record("rec-1").unwrap();
+    assert_eq!(record.aggregate.duration_ms, 27_660);
+    assert_eq!(record.aggregate.bookmarks, vec![12_000, 27_660]);
+}
+
+#[test]
+fn finish_capture_preserves_bookmarks_when_duration_zero_and_subsequent_duration_clamps() {
+    let mut ws = ProductWorkspace::new();
+    ws.insert_record(
+        "rec-zero".into(),
+        "Meeting".into(),
+        RecordOrigin::Bean,
+        1,
+        1_700_000_000,
+        0,
+    )
+    .unwrap();
+    ws.finish_capture("rec-zero", 0, &[12_000, 27_680]).unwrap();
+    let record = ws.record("rec-zero").unwrap();
+    assert_eq!(record.aggregate.duration_ms, 0);
+    assert_eq!(record.aggregate.bookmarks, vec![12_000, 27_680]);
+
+    ws.finish_capture("rec-zero", 27_660, &[]).unwrap();
+    let updated = ws.record("rec-zero").unwrap();
+    assert_eq!(updated.aggregate.duration_ms, 27_660);
+    assert_eq!(updated.aggregate.bookmarks, vec![12_000, 27_660]);
+}

@@ -316,3 +316,10 @@
 - 修复，(1) 在 `minutes.rs` 拆分 `parse_persisted_meeting_minutes_json`（仅校验 `S1..Sn` 引用存在性与结构完备性）供持久化重开使用，新生成的模型返回仍走严格数字归属校验；(2) `ProductWorkspace::rename_speaker` 保持历史 `MeetingMinutes` 原文不变，通过 `minutes_revision < content_revision` 派生 `MinutesFreshness::Stale` 提示用户重算，并在运行时立即回收已被编辑超越的在途摘要槽位。
 - 验证点，`cargo test -p koe-engine --test product_transcript_edit`、`cargo test -p koe-client-services --test product_store` 与 `cargo test -p koe-runtime --test transcript_edit` 覆盖改数字后重开、短标签 `"1"` 改名长名字后重开及摘要生成中改句立即重算，均先红后绿。
 - Seen 1x（2026-11-11）。
+
+### 实时流正面双击书签须钳位至已收音频时长并在解码层自愈
+
+- 出处：2026-11-12 用户升级 `04.92` 固件后实测 D3200 录音豆重启应用打不开（`live-1794444326-1794444325-32` 报 `highlight exceeds duration`，`duration_ms: 27660`，`bookmarks: [12000, 27680]`）。根因为实时流 `1A/08` 切片正面双击生成书签时 `SliceMark::position_ms(seq)`（`seq * 20`）使用切片线序序号，中途丢片或迟入流时线序大于已接收帧数；`ProductWorkspace::finish_capture` 未作钳位直接落盘，`RecordDto::into_record` 启动时硬校验抛错导致整个工作区拒绝打开。
+- 修复：(1) `crates/koe-engine/src/session.rs` 的 `finalize_active_transfer` 将 `marks_ms` 映射至 `m.min(pcm_duration_ms)`（实际解码 PCM 时长，保证短录音书签落在真实音频区间与 880 Hz 提示音对齐）并排序去重；(2) `crates/koe-engine/src/product/record.rs` 的 `ProductWorkspace::finish_capture` 在 `duration_ms > 0` 时做双向钳位、`duration_ms == 0` 时保留书签防被压成 0；(3) `crates/koe-client-services/src/product_store_codec.rs` 的 `RecordDto::into_record` 移除硬校验改由 `a.add_bookmark(if a.duration_ms > 0 { timestamp.min(a.duration_ms) } else { timestamp })` 在解码层自愈既有持久化记录；(4) `crates/koe-runtime/src/legacy.rs` 移除旧工作区迁移的书签硬校验交由 `finish_capture` 自愈；(5) `crates/koe-host-api/src/lib.rs` 补充打开失败诊断输出。
+- 验证点：`cargo test -p koe-engine realtime_transfer_clamps_out_of_range_marks_to_duration`、`cargo test -p koe-engine --test product_workflow`、`cargo test -p koe-client-services --test product_store` 与 `cargo test -p koe-runtime --test legacy_restore legacy_session_clamps_out_of_range_bookmarks_on_restore` 覆盖线序超长、零时长保留、旧工作区迁移与带超长历史书签工作区自愈重开，均先红后绿。
+- Seen 1x（2026-11-12）。
