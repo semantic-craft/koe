@@ -75,6 +75,7 @@ public struct KoeWorkspaceRootView: View {
     }
     private var sectionTitle: String {
         switch store.snapshot.section {
+        case "capture": "录音"
         case "records": "所有记录"
         case "detail": "所有记录 / \(store.snapshot.detail?.title ?? "记录")"
         case "tasks": "待办"
@@ -87,6 +88,7 @@ public struct KoeWorkspaceRootView: View {
     }
     @ViewBuilder private var page: some View {
         switch store.snapshot.section {
+        case "capture": CaptureView(store: store)
         case "records": RecordListView(store: store)
         case "detail": RecordDetailView(store: store)
         case "tasks": TasksView(store: store)

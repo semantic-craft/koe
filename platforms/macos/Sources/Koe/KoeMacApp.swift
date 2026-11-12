@@ -55,12 +55,17 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     public var store: HostSessionStore? {
         didSet {
             oldValue?.onSnapshotChanged = nil
+            lastSyncedInputs = nil
+            inputSyncTickCounter = 0
             bluetoothBridge.store = store
             files.store = store
             playback.store = store
             capture.store = store
             store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
-            if let store { applyLifecycle(store.snapshot) }
+            if let store {
+                syncAudioInputsIfNeeded(force: true)
+                applyLifecycle(store.snapshot)
+            }
             if let store, store.snapshot.device.autoConnect {
                 bluetoothBridge.reconnectKnownIfAvailable()
             }
@@ -70,6 +75,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     let files = NativeFileActions()
     private let playback: NativePlayback
     private let capture = NativeCapture()
+    private var lastSyncedInputs: [MicrophoneInput]?
+    private var inputSyncTickCounter: UInt8 = 0
 
     public override convenience init() {
         self.init(playback: NativePlayback())
@@ -105,7 +112,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.willCloseNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(importFlutterLibrary), name: Notification.Name("KoeImportFlutterLibrary"), object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(startMicrophone), name: Notification.Name("KoeStartMicrophone"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(resumeMicrophone), name: Notification.Name("KoeResumeMicrophone"), object: nil)
         lastTick = ProcessInfo.processInfo.systemUptime
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -119,13 +125,35 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         let now = ProcessInfo.processInfo.systemUptime
         let elapsed = UInt64(max(0, now - lastTick) * 1000)
         lastTick = now
+        inputSyncTickCounter = (inputSyncTickCounter + 1) % 4
+        if inputSyncTickCounter == 0 {
+            syncAudioInputsIfNeeded()
+        }
         store?.pollTimers(elapsedMs: elapsed)
         bluetoothBridge.flushOutboundFrames()
         playback.tick()
         capture.apply()
     }
 
-    @objc private func startMicrophone() { capture.chooseInput() }
+    public func syncAudioInputsIfNeeded(
+        force: Bool = false,
+        inputsProvider: () -> [MicrophoneInput] = NativeAudioSource.inputs
+    ) {
+        guard let store, store.handle != 0 else { return }
+        let current = Array(inputsProvider().prefix(64))
+        guard force || lastSyncedInputs != current else { return }
+        lastSyncedInputs = current
+        let payload: [[String: Any]] = current.map { input in
+            [
+                "id": input.id,
+                "name": input.name,
+                "transport": input.transport,
+                "isDefault": input.isDefault
+            ]
+        }
+        store.send("sync_audio_inputs", ["inputs": payload])
+    }
+
     @objc private func resumeMicrophone() { capture.resume() }
     @objc private func importFlutterLibrary() { files.importFlutterLibrary() }
     @objc private func rememberWindow(_ notification: Notification) {
@@ -184,7 +212,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
-        for (id, title) in [("today", "今天"), ("records", "所有记录"), ("tasks", "待办"), ("memory", "记忆"), ("ask", "问 Koe"), ("settings", "设置")] {
+        for (id, title) in [("today", "今天"), ("capture", "录音"), ("records", "所有记录"), ("tasks", "待办"), ("memory", "记忆"), ("ask", "问 Koe"), ("settings", "设置")] {
             let item = NSMenuItem(title: title, action: #selector(navigate(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = id
