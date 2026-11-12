@@ -2,12 +2,21 @@ import AVFoundation
 import CoreAudio
 import Foundation
 
-struct MicrophoneInput {
-    let id: String
-    let name: String
+public struct MicrophoneInput: Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let transport: String
+    public let isDefault: Bool
+
+    public init(id: String, name: String, transport: String = "external", isDefault: Bool = false) {
+        self.id = id
+        self.name = name
+        self.transport = transport
+        self.isDefault = isDefault
+    }
 }
 
-final class NativeAudioSource: MicrophoneSource {
+public final class NativeAudioSource: MicrophoneSource {
     private var engine: AVAudioEngine?
     private var fence: AudioCallbackFence?
     private var observer: NSObjectProtocol?
@@ -85,8 +94,21 @@ final class NativeAudioSource: MicrophoneSource {
         fence = nil
         self.engine = nil
     }
-    static func inputs() -> [MicrophoneInput] {
-        deviceIDs().compactMap { device in
+    public static func classifyTransport(_ rawType: UInt32) -> String {
+        switch rawType {
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            return "bluetooth"
+        case kAudioDeviceTransportTypeUSB:
+            return "usb"
+        case kAudioDeviceTransportTypeBuiltIn:
+            return "built_in"
+        default:
+            return "external"
+        }
+    }
+    public static func inputs() -> [MicrophoneInput] {
+        let defaultDevice = defaultInputDeviceID()
+        let discovered: [MicrophoneInput] = deviceIDs().compactMap { device in
             var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
             var size: UInt32 = 0
             guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr, size > 0 else { return nil }
@@ -94,9 +116,33 @@ final class NativeAudioSource: MicrophoneSource {
             defer { memory.deallocate() }
             guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, memory) == noErr else { return nil }
             let buffers = UnsafeMutableAudioBufferListPointer(memory.assumingMemoryBound(to: AudioBufferList.self))
-            guard buffers.contains(where: { $0.mNumberChannels > 0 }), let id = uid(device) else { return nil }
-            return MicrophoneInput(id: id, name: stringProperty(device, kAudioObjectPropertyName) ?? id)
+            guard buffers.contains(where: { $0.mNumberChannels > 0 }),
+                  let rawID = uid(device)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rawID.isEmpty, rawID.count <= 256 else { return nil }
+            let rawName = stringProperty(device, kAudioObjectPropertyName)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return MicrophoneInput(
+                id: rawID,
+                name: rawName.isEmpty ? rawID : rawName,
+                transport: classifyTransport(transportType(device)),
+                isDefault: device == defaultDevice
+            )
         }
+        return Array(discovered.prefix(64))
+    }
+    private static func defaultInputDeviceID() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr,
+              deviceID != kAudioObjectUnknown else { return nil }
+        return deviceID
+    }
+    private static func transportType(_ device: AudioDeviceID) -> UInt32 {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var rawType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rawType) == noErr else { return 0 }
+        return rawType
     }
     private static func deviceIDs() -> [AudioDeviceID] {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
