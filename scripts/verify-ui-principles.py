@@ -89,8 +89,8 @@ def check_palette(theme_text: str) -> dict[str, Any]:
         rgb = parse_hex_color(accent_hex)
         hue, sat, val = hue_sat_val(rgb)
         foreground_hex = tokens.get("onAccent")
-        if accent_hex.upper() != "0XFFC4B5FD":
-            violations.append("Palette violation: ACCENT must use approved violet 0xFFC4B5FD")
+        if accent_hex.upper() != "0XFF242426":
+            violations.append("Palette violation: ACCENT must use approved charcoal 0xFF242426")
         if foreground_hex is None:
             violations.append("Palette violation: missing ON_ACCENT foreground")
         else:
@@ -103,9 +103,9 @@ def check_palette(theme_text: str) -> dict[str, Any]:
             if foreground_contrast < 4.5:
                 violations.append(f"Contrast violation: ON_ACCENT contrast is {foreground_contrast}:1 (< 4.5:1)")
 
-    for key, approved in (("surface0", "0XFF1A1A1D"), ("bgPanel", "0XFF141416"), ("surface1", "0XFF202024")):
+    for key, approved in (("surface0", "0XFFFFFFFF"), ("bgPanel", "0XFFF7F7F8"), ("surface1", "0XFFFFFFFF")):
         if tokens.get(key, "").upper() != approved:
-            violations.append(f"Palette violation: {key} must use approved dark surface {approved}")
+            violations.append(f"Palette violation: {key} must use approved light surface {approved}")
 
     neutral_keys = ["surface0", "bgPanel", "surface1", "bgSubtle", "bgCardHover", "bgMuted",
                     "border", "borderSoft", "textPrimary", "textSecondary", "textMuted"]

@@ -38,7 +38,7 @@ public struct KoeWorkspaceRootView: View {
             }.background(AppColors.surface0)
         }
         .foregroundStyle(AppColors.textPrimary).tint(AppColors.accent)
-        .preferredColorScheme(.dark).frame(minWidth: 1040, minHeight: 680)
+        .preferredColorScheme(.light).frame(minWidth: 1040, minHeight: 680)
         .overlay {
             if store.snapshot.device.guide != nil {
                 ZStack {
@@ -161,7 +161,7 @@ private struct NewNoteSheet: View {
                     .keyboardShortcut(.return, modifiers: .command)
             }
         }.padding(28).frame(width: 570).background(AppColors.surface0)
-            .foregroundStyle(AppColors.textPrimary).preferredColorScheme(.dark)
+            .foregroundStyle(AppColors.textPrimary).preferredColorScheme(.light)
             .onAppear { focusTitle = true }
     }
     private func save() {

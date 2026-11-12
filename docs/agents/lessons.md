@@ -337,3 +337,10 @@
 - 修复：(1) Engine 彻底删除 `active_file_id.unwrap_or(1)`，未激活文件编号时严格丢弃孤儿音频切片；Runtime 增加 `explicitly_disconnected` 状态位，在 `disconnect()` 中置 true，并在 `scanning` / `connecting` / `ready` 时复位；`DeviceRuntime::ingest()` 首行门禁主动断开态拦截残余切片；(2) `BluetoothBridge` 拆分传输模型至 `BleTransportModels.swift` 并增设 `isHostActivated` 宿主激活权与扫描计数，在 `syncWithRuntimeDevice` 中检测 `wasAutoConnectDisabled && device.autoConnect` 并在中央管理器上电时调用 `startScanningIfPoweredOn()`；`applicationDidFinishLaunching` 在冷启动时主动调用 `bluetoothBridge.activateHost()`。
 - 验证点：`cargo test -p koe-engine orphan_slice_without_active_file_id_is_ignored_and_never_creates_phantom_file`；`cargo test -p koe-runtime release_ble_ignores_late_queued_ble_slices_and_allows_immediate_quit` 与 `failed_phase_survives_5s_poll_blocks_quit_and_clears_on_cancel_quit`；`swift test --package-path platforms/macos` 验证 `reenableAutoConnectAfterReleaseControl`、`activateHostHeadlessRequestsScan` 与 `manualScanHeadlessRunsOnceWithoutDoubleCancelling`。
 - Seen 1x（2026-11-12）。
+
+### 指定 QA 工作区不等于隔离蓝牙设备
+
+- 出处：2026-11-12 浅色色板 #652 验收，带 `--workspace-root` 的测试副本仍按默认 `ble_auto_connect=true` 自动连接附近 D3200 并取回文件。
+- 修复：立即停止测试副本，在测试工作区明确关闭自动重连；本轮 QA 启动器在启动前检查该值必须为 false。未修改日常工作区。
+- 验证点：运行完整宿主前确认测试工作区 `ble_auto_connect=false`，启动后在设置页回读“未连接”和未勾选的自动重连。凭据隔离不能代替硬件隔离。
+- Seen 1x（2026-11-12）。

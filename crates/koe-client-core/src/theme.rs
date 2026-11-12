@@ -1,4 +1,4 @@
-//! Shared dark surfaces, violet accent and native typography tokens.
+//! Shared light surfaces, charcoal accent and native typography tokens.
 
 pub use koe_engine::domain::EditorialCardRole;
 
@@ -8,65 +8,65 @@ pub struct AppColors;
 
 impl AppColors {
     /// Window canvas.
-    pub const CANVAS: u32 = 0xFF1A1A1D;
+    pub const CANVAS: u32 = 0xFFFFFFFF;
     /// Sidebar surface.
-    pub const SIDEBAR: u32 = 0xFF141416;
+    pub const SIDEBAR: u32 = 0xFFF7F7F8;
     /// Primary page surface.
-    pub const SURFACE_0: u32 = 0xFF1A1A1D;
+    pub const SURFACE_0: u32 = 0xFFFFFFFF;
     /// Sidebar surface.
-    pub const BG_PANEL: u32 = 0xFF141416;
+    pub const BG_PANEL: u32 = 0xFFF7F7F8;
     /// Elevated content surface.
-    pub const SURFACE_1: u32 = 0xFF202024;
+    pub const SURFACE_1: u32 = 0xFFFFFFFF;
     /// Card surface.
-    pub const BG_CARD: u32 = 0xFF202024;
+    pub const BG_CARD: u32 = 0xFFFFFFFF;
     /// Subtle control surface.
-    pub const BG_SUBTLE: u32 = 0xFF252529;
+    pub const BG_SUBTLE: u32 = 0xFFF1F1F3;
     /// Hover surface.
-    pub const BG_CARD_HOVER: u32 = 0xFF29292E;
+    pub const BG_CARD_HOVER: u32 = 0xFFECECEF;
     /// Muted surface.
-    pub const BG_MUTED: u32 = 0xFF2A2A30;
+    pub const BG_MUTED: u32 = 0xFFF1F1F3;
     /// Standard divider.
-    pub const BORDER: u32 = 0xFF323237;
+    pub const BORDER: u32 = 0xFFE3E3E7;
     /// Soft divider.
-    pub const BORDER_SOFT: u32 = 0xFF2B2B30;
+    pub const BORDER_SOFT: u32 = 0xFFEBEBEE;
     /// Strong divider.
-    pub const BORDER_STRONG: u32 = 0xFF45454D;
+    pub const BORDER_STRONG: u32 = 0xFFCDCDD3;
     /// Selected border.
-    pub const BORDER_SELECTED: u32 = 0xFFC4B5FD;
+    pub const BORDER_SELECTED: u32 = 0xFF242426;
     /// Primary text.
-    pub const TEXT_PRIMARY: u32 = 0xFFEDECF2;
+    pub const TEXT_PRIMARY: u32 = 0xFF202022;
     /// Secondary text.
-    pub const TEXT_SECONDARY: u32 = 0xFFBDB9C7;
+    pub const TEXT_SECONDARY: u32 = 0xFF54545B;
     /// Muted text, with readable contrast on all surfaces.
-    pub const TEXT_MUTED: u32 = 0xFFAAA6B5;
-    /// Violet action fill and link text.
-    pub const ACCENT: u32 = 0xFFC4B5FD;
+    pub const TEXT_MUTED: u32 = 0xFF686870;
+    /// Charcoal action fill and link text.
+    pub const ACCENT: u32 = 0xFF242426;
     /// Hovered action fill.
-    pub const ACCENT_HOVER: u32 = 0xFFD3C5F7;
+    pub const ACCENT_HOVER: u32 = 0xFF39393C;
     /// Selected navigation surface.
-    pub const ACCENT_SOFT: u32 = 0xFF302938;
+    pub const ACCENT_SOFT: u32 = 0xFFECECEF;
     /// Selected navigation border.
-    pub const ACCENT_BORDER: u32 = 0xFF4C405A;
-    /// Foreground on the light violet action fill.
-    pub const ON_ACCENT: u32 = 0xFF251D33;
+    pub const ACCENT_BORDER: u32 = 0xFFCDCDD3;
+    /// Foreground on the charcoal action fill.
+    pub const ON_ACCENT: u32 = 0xFFFFFFFF;
     /// Unplayed waveform.
-    pub const WAVE_UNPLAYED: u32 = 0xFF777381;
+    pub const WAVE_UNPLAYED: u32 = 0xFF93939B;
     /// Success text.
-    pub const SUCCESS: u32 = 0xFF9AC9A7;
+    pub const SUCCESS: u32 = 0xFF287447;
     /// Success surface.
-    pub const SUCCESS_SOFT: u32 = 0xFF25312A;
+    pub const SUCCESS_SOFT: u32 = 0xFFEDF5EF;
     /// Warning text.
-    pub const WARNING: u32 = 0xFFDDBC90;
+    pub const WARNING: u32 = 0xFF8A5A12;
     /// Warning surface.
-    pub const WARNING_SOFT: u32 = 0xFF343127;
+    pub const WARNING_SOFT: u32 = 0xFFFAF3E7;
     /// Error text.
-    pub const DANGER: u32 = 0xFFEEA6A6;
+    pub const DANGER: u32 = 0xFFB43D43;
     /// Error surface.
-    pub const DANGER_SOFT: u32 = 0xFF372A2E;
+    pub const DANGER_SOFT: u32 = 0xFFFBEEEE;
     /// Information text.
-    pub const INFO: u32 = 0xFFA8C8DF;
+    pub const INFO: u32 = 0xFF326985;
     /// Information surface.
-    pub const INFO_SOFT: u32 = 0xFF263039;
+    pub const INFO_SOFT: u32 = 0xFFEDF4F8;
     /// Flat content cards have no shadow.
     pub const CARD_SHADOW: &[u32] = &[];
 
@@ -88,12 +88,12 @@ pub struct EditorialRolePalette {
     pub badge_text: u32,
 }
 
-/// Semantic role colors share the desktop's dark surfaces.
+/// Semantic role colors share the desktop's light surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AIVisualEditorialPalette;
 
 impl AIVisualEditorialPalette {
-    /// Returns the role's accessible dark surface palette.
+    /// Returns the role's accessible light surface palette.
     #[must_use]
     pub const fn for_role(role: EditorialCardRole) -> EditorialRolePalette {
         let (bg, badge_text) = match role {

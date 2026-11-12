@@ -18,7 +18,7 @@ def load_verifier():
 verifier = load_verifier()
 
 
-VALID_LINEAR_THEME = """
+VALID_LIGHT_THEME = """
 pub struct AppFontSizes;
 impl AppFontSizes {
     pub const XS: f32 = 12.0;
@@ -32,45 +32,46 @@ impl AppRadii {
 }
 pub struct AppColors;
 impl AppColors {
-    pub const SURFACE_0: u32 = 0xFF1A1A1D;
-    pub const BG_PANEL: u32 = 0xFF141416;
-    pub const SURFACE_1: u32 = 0xFF202024;
-    pub const BG_CARD: u32 = 0xFF202024;
-    pub const BG_SUBTLE: u32 = 0xFF252529;
-    pub const BG_CARD_HOVER: u32 = 0xFF29292E;
-    pub const BG_MUTED: u32 = 0xFF2A2A30;
-    pub const BORDER: u32 = 0xFF323237;
-    pub const BORDER_SOFT: u32 = 0xFF2B2B30;
-    pub const TEXT_PRIMARY: u32 = 0xFFEDECF2;
-    pub const TEXT_SECONDARY: u32 = 0xFFBDB9C7;
-    pub const TEXT_MUTED: u32 = 0xFFAAA6B5;
-    pub const ACCENT: u32 = 0xFFC4B5FD;
-    pub const ON_ACCENT: u32 = 0xFF251D33;
+    pub const SURFACE_0: u32 = 0xFFFFFFFF;
+    pub const BG_PANEL: u32 = 0xFFF7F7F8;
+    pub const SURFACE_1: u32 = 0xFFFFFFFF;
+    pub const BG_CARD: u32 = 0xFFFFFFFF;
+    pub const BG_SUBTLE: u32 = 0xFFF1F1F3;
+    pub const BG_CARD_HOVER: u32 = 0xFFECECEF;
+    pub const BG_MUTED: u32 = 0xFFF1F1F3;
+    pub const BORDER: u32 = 0xFFE3E3E7;
+    pub const BORDER_SOFT: u32 = 0xFFEBEBEE;
+    pub const TEXT_PRIMARY: u32 = 0xFF202022;
+    pub const TEXT_SECONDARY: u32 = 0xFF54545B;
+    pub const TEXT_MUTED: u32 = 0xFF686870;
+    pub const ACCENT: u32 = 0xFF242426;
+    pub const ON_ACCENT: u32 = 0xFFFFFFFF;
     pub const CARD_SHADOW: &[u32] = &[];
 }
 """
 
 
 class VerifyUiPrinciplesTest(unittest.TestCase):
-    def test_accepts_approved_dark_linear_palette(self) -> None:
-        res = verifier.check_theme_file(VALID_LINEAR_THEME)
+    def test_accepts_approved_light_palette(self) -> None:
+        res = verifier.check_theme_file(VALID_LIGHT_THEME)
         self.assertEqual(res["violations"], [])
         self.assertGreaterEqual(res["accent"]["foreground_contrast"], 4.5)
 
-    def test_rejects_old_orange_and_blue_accents(self) -> None:
-        for color in ("0xFFD9480F", "0xFF0066CC"):
-            res = verifier.check_theme_file(VALID_LINEAR_THEME.replace("0xFFC4B5FD", color))
-            self.assertTrue(any("approved violet" in v for v in res["violations"]), res["violations"])
+    def test_rejects_colored_accents(self) -> None:
+        for color in ("0xFFD9480F", "0xFF0066CC", "0xFFC4B5FD"):
+            res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("0xFF242426", color))
+            self.assertTrue(any("approved charcoal" in v for v in res["violations"]), res["violations"])
 
     def test_rejects_unreadable_text_and_action_foreground(self) -> None:
-        for before, after in (("0xFFAAA6B5", "0xFF444444"), ("0xFF251D33", "0xFFEDECF2")):
-            res = verifier.check_theme_file(VALID_LINEAR_THEME.replace(before, after))
+        for before, after in (("TEXT_MUTED: u32 = 0xFF686870", "TEXT_MUTED: u32 = 0xFFBBBBBB"),
+                              ("ON_ACCENT: u32 = 0xFFFFFFFF", "ON_ACCENT: u32 = 0xFF202022")):
+            res = verifier.check_theme_file(VALID_LIGHT_THEME.replace(before, after))
             self.assertTrue(any("contrast" in v for v in res["violations"]), res["violations"])
 
-    def test_rejects_light_surface_and_non_empty_shadow(self) -> None:
-        res = verifier.check_theme_file(VALID_LINEAR_THEME.replace("0xFF1A1A1D", "0xFFFAFAFA"))
-        self.assertTrue(any("dark" in v for v in res["violations"]), res["violations"])
-        res = verifier.check_theme_file(VALID_LINEAR_THEME.replace("&[]", "&[0x11000000]"))
+    def test_rejects_dark_surface_and_non_empty_shadow(self) -> None:
+        res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("SURFACE_0: u32 = 0xFFFFFFFF", "SURFACE_0: u32 = 0xFF1A1A1D"))
+        self.assertTrue(any("light surface" in v for v in res["violations"]), res["violations"])
+        res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("&[]", "&[0x11000000]"))
         self.assertTrue(any("CARD_SHADOW" in v for v in res["violations"]), res["violations"])
 
     def test_catches_font_size_sprawl_middle_dots_uppercase_and_italics_in_swiftui(self) -> None:

@@ -156,7 +156,7 @@ private struct ItemEditor: View {
                 KoeActionButton("保存", isPrimary: true) { save() }
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(24).frame(width: 470).preferredColorScheme(.dark)
+        }.padding(24).frame(width: 470).preferredColorScheme(.light)
     }
     private func save() {
         store.send("edit_item", ["itemId": id, "text": text, "due": due.isEmpty ? NSNull() : due as Any])
