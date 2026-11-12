@@ -289,6 +289,8 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let sessionId: String
     public let lane: String
     public let inputId: String
+    public var inputLabel: String = "Mac 麦克风"
+    public var inputBadge: String = "系统默认"
     public let phase: String
     public let nextSequence: UInt64
     public let durationMs: UInt64
@@ -299,8 +301,20 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let clockNs: UInt64?
     public let lanes: [String: CaptureLaneSnapshot]
 
+    public var phaseSummaryLabel: String {
+        switch phase {
+        case "paused": "已暂停"
+        case "saving": "正在保存"
+        case "stopping": "正在停止并保存"
+        case "pausing": "正在暂停"
+        case "cancelling": "正在取消"
+        case "starting": "等待权限"
+        default: "正在录音"
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case recordId, sessionId, lane, inputId, phase, nextSequence, durationMs
+        case recordId, sessionId, lane, inputId, inputLabel, inputBadge, phase, nextSequence, durationMs
         case level, error, interruption, epoch, clockNs, lanes
     }
 
@@ -310,6 +324,8 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
         sessionId = try c.decode(String.self, forKey: .sessionId)
         lane = try c.decode(String.self, forKey: .lane)
         inputId = try c.decode(String.self, forKey: .inputId)
+        inputLabel = try c.decodeIfPresent(String.self, forKey: .inputLabel) ?? "Mac 麦克风"
+        inputBadge = try c.decodeIfPresent(String.self, forKey: .inputBadge) ?? "系统默认"
         phase = try c.decode(String.self, forKey: .phase)
         nextSequence = try c.decode(UInt64.self, forKey: .nextSequence)
         durationMs = try c.decode(UInt64.self, forKey: .durationMs)

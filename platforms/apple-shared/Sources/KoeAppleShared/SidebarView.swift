@@ -46,10 +46,10 @@ public struct SidebarView: View {
                 store.send("navigate", ["section": "capture"])
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: store.snapshot.capture.selectedSource == "bean" ? "waveform.badge.mic" : "mic.fill")
+                    Image(systemName: store.snapshot.microphone == nil && store.snapshot.capture.selectedSource == "bean" ? "waveform.badge.mic" : "mic.fill")
                         .foregroundStyle(AppColors.accent)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(store.snapshot.capture.selectedLabel).foregroundStyle(AppColors.textPrimary).lineLimit(1)
+                        Text(store.snapshot.microphone?.inputLabel ?? store.snapshot.capture.selectedLabel).foregroundStyle(AppColors.textPrimary).lineLimit(1)
                         Text(deviceSummaryText).foregroundStyle(AppColors.textMuted).lineLimit(2)
                     }
                     Spacer(minLength: 0)
@@ -69,8 +69,7 @@ public struct SidebarView: View {
     }
     public var deviceSummaryText: String {
         if let mic = store.snapshot.microphone {
-            let prefix = mic.phase == "paused" ? "已暂停" : "正在录音"
-            return "\(prefix)  \(TimeLabel.duration(mic.durationMs))"
+            return "\(mic.phaseSummaryLabel)  \(TimeLabel.duration(mic.durationMs))"
         }
         let dev = store.snapshot.device
         if dev.recording || dev.stopping || dev.transferPhase == "streaming_realtime" {
@@ -79,6 +78,8 @@ public struct SidebarView: View {
         let cap = store.snapshot.capture
         if cap.selectedSource == "bean" {
             if dev.connected {
+                if dev.busy && dev.transferPhase == "pulling_offline" { return "正在取回录音" }
+                if dev.companionMode == "collar_standby" { return "领口待命中" }
                 if let micPct = dev.batteryPercent {
                     return "已连接  \(micPct)%"
                 }
@@ -101,7 +102,11 @@ public struct SidebarView: View {
         }
         let cap = store.snapshot.capture
         if cap.selectedSource == "bean" {
-            if dev.connected { return AppColors.success }
+            if dev.connected {
+                if dev.busy && dev.transferPhase == "pulling_offline" { return AppColors.warning }
+                if dev.companionMode == "collar_standby" { return AppColors.accent }
+                return AppColors.success
+            }
             if dev.phase == "disconnected" { return AppColors.textMuted }
             return AppColors.warning
         }

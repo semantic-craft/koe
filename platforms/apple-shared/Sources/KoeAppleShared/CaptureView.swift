@@ -18,7 +18,8 @@ public struct CaptureView: View {
                 PageHeading(title: "录音", subtitle: "选择录音豆、Mac 蓝牙耳机或本机麦克风，录音先保存在本机。")
                 if isBeanLive {
                     beanLiveCard
-                } else if let mic = store.snapshot.microphone {
+                }
+                if let mic = store.snapshot.microphone {
                     microphoneLiveCard(mic)
                 }
                 sourceSelectionDeck
@@ -84,15 +85,15 @@ public struct CaptureView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Circle().fill(mic.phase == "paused" ? AppColors.warning : AppColors.danger).frame(width: 8, height: 8)
-                    Text("\(micPhaseLabel(mic.phase))  \(capture.selectedLabel)")
+                    Text("\(micPhaseLabel(mic.phase))  \(mic.inputLabel)")
                         .font(.system(size: AppFontSizes.sm, weight: .medium))
-                    KoeBadge(capture.selectedBadge)
+                    KoeBadge(mic.inputBadge)
                     Spacer()
                     Text(TimeLabel.duration(mic.durationMs))
                         .font(.system(size: AppFontSizes.md, weight: .semibold, design: .monospaced))
                 }
                 CaptureLevelMeter(level: mic.level)
-                if let error = mic.error {
+                if let error = mic.error ?? mic.interruption {
                     Text(error).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.danger)
                 }
                 HStack(spacing: 10) {
@@ -123,11 +124,27 @@ public struct CaptureView: View {
     }
 
     private var sourceSelectionDeck: some View {
-        KoeCard {
+        let isAuto = capture.selectionMode == "auto"
+        return KoeCard {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("当前录音音源").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                        HStack(spacing: 8) {
+                            Text("当前录音音源").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                            Button { store.send("select_capture_source", ["source": "auto"]) } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: isAuto ? "checkmark.circle.fill" : "sparkles")
+                                    Text("自动优先")
+                                }
+                                .font(.system(size: AppFontSizes.xs, weight: .medium))
+                                .foregroundStyle(isAuto ? AppColors.accent : AppColors.textSecondary)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(isAuto ? AppColors.accentSoft : AppColors.bgSubtle, in: Capsule())
+                                .overlay(Capsule().stroke(isAuto ? AppColors.accent : AppColors.border))
+                                .contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                            .disabled(isRecordingLocked)
+                        }
                         HStack(spacing: 8) {
                             Text(capture.selectedLabel).font(.system(size: AppFontSizes.md, weight: .semibold))
                             KoeBadge(capture.selectedBadge)
@@ -178,34 +195,43 @@ public struct CaptureView: View {
 
     private var beanSourceCard: some View {
         let selected = capture.selectedSource == "bean"
-        return Button { store.send("select_capture_source", ["source": "bean"]) } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 10) {
-                    Image(systemName: "waveform.badge.mic").foregroundStyle(selected ? AppColors.accent : AppColors.textSecondary)
-                    Text(device.deviceName).font(.system(size: AppFontSizes.sm, weight: .medium))
-                    KoeBadge("录音豆")
-                    KoeBadge(device.state, tint: device.connected ? AppColors.success : AppColors.textMuted)
-                    Spacer()
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(selected ? AppColors.accent : AppColors.textMuted)
+        return HStack(spacing: 12) {
+            Button { store.send("select_capture_source", ["source": "bean"]) } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "waveform.badge.mic").foregroundStyle(selected ? AppColors.accent : AppColors.textSecondary)
+                        Text(device.deviceName).font(.system(size: AppFontSizes.sm, weight: .medium))
+                        KoeBadge("录音豆")
+                        KoeBadge(device.state, tint: device.connected ? AppColors.success : AppColors.textMuted)
+                        Spacer()
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected ? AppColors.accent : AppColors.textMuted)
+                    }
+                    if device.connected {
+                        HStack(spacing: 16) {
+                            Text(device.batteryPercent.map { "电量 \($0)%" } ?? "电量 —")
+                            Text("存储 \(device.storageLabel)")
+                        }.font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
+                    } else {
+                        Text(device.statusDetail).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                    }
+                    Text(device.connected ? "点击上方按钮或短按录音豆侧边按键均可开始录音。" : "连接录音豆后即可无线录音或取回离线文件。")
+                        .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                 }
-                if device.connected {
-                    HStack(spacing: 16) {
-                        Text(device.batteryPercent.map { "电量 \($0)%" } ?? "电量 —")
-                        Text("存储 \(device.storageLabel)")
-                    }.font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
-                } else {
-                    Text(device.statusDetail).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-                }
-                Text("点击上方按钮或短按录音豆侧边按键均可开始录音。")
-                    .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            .disabled(isRecordingLocked)
+            if !device.connected {
+                KoeActionButton("连接", systemImage: "antenna.radiowaves.left.and.right") {
+                    store.send("device_open_guide")
+                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
+                }.disabled(device.busy || isRecordingLocked)
             }
-            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? AppColors.accentSoft : AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
-            .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(selected ? AppColors.accent : AppColors.border))
-            .contentShape(Rectangle())
-        }.buttonStyle(.plain)
-        .disabled(isRecordingLocked)
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(selected ? AppColors.accentSoft : AppColors.bgSubtle, in: RoundedRectangle(cornerRadius: AppRadii.control))
+        .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(selected ? AppColors.accent : AppColors.border))
     }
 
     private func macInputCard(_ input: AudioInputSnapshot) -> some View {

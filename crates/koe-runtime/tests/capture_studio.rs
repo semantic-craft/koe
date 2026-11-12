@@ -53,6 +53,15 @@ fn rx_frame(cmd_type: u8, cmd_id: u8, payload: &[u8]) -> Vec<u8> {
     frame
 }
 
+fn catalog_1b0e_rx(file_id: u32, duration_ms: u32, end_time: u32) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(14);
+    payload.extend_from_slice(&1u16.to_le_bytes());
+    payload.extend_from_slice(&file_id.to_le_bytes());
+    payload.extend_from_slice(&duration_ms.to_le_bytes());
+    payload.extend_from_slice(&end_time.to_le_bytes());
+    rx_frame(0x1b, 0x0e, &payload)
+}
+
 fn connect_bean(runtime: &mut KoeRuntime, connection_id: &str, name: &str, now: u64) {
     dispatch_ok(
         runtime,
@@ -396,4 +405,159 @@ fn mutual_exclusion_source_lock_and_microphone_rms_level_reset() {
         NOW + 6,
     );
     assert!(finished["microphone"].is_null());
+}
+
+#[test]
+fn edge_cases_quiet_drain_hardware_coexistence_auto_skip_and_unplug_reset() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+
+    dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "sync_audio_inputs",
+            "inputs": [
+                {"id": "usb-rode", "name": "Rode NT-USB", "transport": "usb", "isDefault": false},
+                {"id": "airpods", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": true}
+            ]
+        }),
+        NOW,
+    );
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "input:usb-rode"}),
+        NOW,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "sync_audio_inputs",
+            "inputs": [
+                {"id": "airpods", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": true}
+            ]
+        }),
+        NOW + 1,
+    );
+    let replugged = dispatch_ok(
+        &mut runtime,
+        json!({
+            "type": "sync_audio_inputs",
+            "inputs": [
+                {"id": "usb-rode", "name": "Rode NT-USB", "transport": "usb", "isDefault": false},
+                {"id": "airpods", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": true}
+            ]
+        }),
+        NOW + 2,
+    );
+    assert_eq!(replugged["capture"]["selectedSource"], "input:airpods");
+    assert_eq!(replugged["capture"]["selectionMode"], "auto");
+
+    connect_bean(&mut runtime, "c1", "Soundcore Work", NOW + 3);
+    assert_eq!(
+        runtime.snapshot(NOW + 3)["capture"]["selectedSource"],
+        "bean"
+    );
+
+    let standby = dispatch_ok(
+        &mut runtime,
+        json!({"type": "set_companion_mode", "mode": "collar_standby"}),
+        NOW + 4,
+    );
+    assert_eq!(standby["capture"]["selectedSource"], "input:airpods");
+    assert_eq!(standby["capture"]["selectionMode"], "auto");
+    assert_eq!(standby["capture"]["canStart"], true);
+
+    let manual_bean_standby = dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "bean"}),
+        NOW + 4,
+    );
+    assert_eq!(manual_bean_standby["capture"]["selectedSource"], "bean");
+    assert_eq!(manual_bean_standby["capture"]["canStart"], false);
+
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "select_capture_source", "source": "auto"}),
+        NOW + 4,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "set_companion_mode", "mode": "disabled"}),
+        NOW + 5,
+    );
+
+    let dir_pull = Sandbox::new();
+    let mut pull_rt = KoeRuntime::open(&dir_pull.0).unwrap();
+    dispatch_ok(
+        &mut pull_rt,
+        json!({
+            "type": "sync_audio_inputs",
+            "inputs": [
+                {"id": "airpods", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": true}
+            ]
+        }),
+        NOW,
+    );
+    connect_bean(&mut pull_rt, "cp1", "Soundcore Work", NOW);
+    assert_eq!(pull_rt.snapshot(NOW)["capture"]["selectedSource"], "bean");
+    pull_rt.ingest_ble_chunk(&catalog_1b0e_rx(901, 40, NOW as u32 + 1), NOW + 1);
+    let pulling = pull_rt.snapshot(NOW + 1);
+    assert_eq!(pulling["device"]["transferPhase"], "pulling_offline");
+    assert_eq!(pulling["capture"]["selectedSource"], "input:airpods");
+    assert_eq!(pulling["capture"]["canStart"], true);
+
+    let dir_hw = Sandbox::new();
+    let mut hw_rt = KoeRuntime::open(&dir_hw.0).unwrap();
+    dispatch_ok(
+        &mut hw_rt,
+        json!({
+            "type": "sync_audio_inputs",
+            "inputs": [
+                {"id": "airpods", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": true}
+            ]
+        }),
+        NOW,
+    );
+    connect_bean(&mut hw_rt, "ch1", "Soundcore Work", NOW);
+
+    let mut hw_start = Vec::with_capacity(5);
+    hw_start.extend_from_slice(&902u32.to_le_bytes());
+    hw_start.push(1);
+    hw_rt.ingest_ble_chunk(&rx_frame(0x18, 0x81, &hw_start), NOW + 1);
+    hw_rt.ingest_ble_chunk(&rx_frame(0x18, 0x82, &[0]), NOW + 2);
+    let quiet_drain = hw_rt.snapshot(NOW + 2);
+    assert_eq!(quiet_drain["device"]["recording"], false);
+    assert_eq!(quiet_drain["device"]["stopping"], false);
+    assert_eq!(quiet_drain["device"]["transferPhase"], "streaming_realtime");
+
+    let mic_during_drain = dispatch(
+        &mut hw_rt,
+        json!({"type": "start_microphone", "inputId": "airpods"}),
+        NOW + 2,
+    );
+    assert_eq!(
+        mic_during_drain["error"],
+        "录音豆正在录音中，请先结束当前录音"
+    );
+
+    hw_rt.poll_timers(2_000, NOW + 4);
+
+    let mic_active = dispatch_ok(
+        &mut hw_rt,
+        json!({"type": "start_microphone", "inputId": "airpods", "clockNs": 1_000_000_000u64}),
+        NOW + 5,
+    );
+    assert_eq!(mic_active["microphone"]["inputLabel"], "AirPods Pro");
+    assert_eq!(mic_active["microphone"]["inputBadge"], "Mac 蓝牙");
+
+    let mut hw_start_coexist = Vec::with_capacity(5);
+    hw_start_coexist.extend_from_slice(&903u32.to_le_bytes());
+    hw_start_coexist.push(1);
+    hw_rt.ingest_ble_chunk(&rx_frame(0x18, 0x81, &hw_start_coexist), NOW + 6);
+    let coexist = hw_rt.snapshot(NOW + 6);
+    assert_eq!(coexist["capture"]["activeSource"], "bean");
+    assert_eq!(coexist["capture"]["selectedLabel"], "Soundcore Work");
+    assert_eq!(coexist["microphone"]["inputLabel"], "AirPods Pro");
+    assert_eq!(coexist["microphone"]["inputBadge"], "Mac 蓝牙");
 }

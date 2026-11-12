@@ -111,7 +111,7 @@ struct TodayView: View {
                 Circle()
                     .fill(mic.phase == "paused" ? AppColors.warning : KoeColors.danger)
                     .frame(width: 8, height: 8)
-                Text(mic.phase == "paused" ? "\(store.snapshot.capture.selectedLabel) 已暂停" : "\(store.snapshot.capture.selectedLabel) 正在录音")
+                Text("\(mic.inputLabel) \(mic.phaseSummaryLabel)")
                     .font(.system(size: AppFontSizes.sm, weight: .medium))
                 Spacer()
                 Text(TimeLabel.duration(mic.durationMs))

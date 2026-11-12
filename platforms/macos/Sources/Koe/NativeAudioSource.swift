@@ -31,7 +31,7 @@ public final class NativeAudioSource: MicrophoneSource {
         let engine = AVAudioEngine()
         let node = engine.inputNode
         if !inputID.isEmpty {
-            guard let device = Self.deviceIDs().first(where: { Self.uid($0) == inputID }) else {
+            guard let device = Self.deviceIDs().first(where: { Self.hasInputChannels($0) && Self.uid($0) == inputID }) else {
                 throw CaptureError("所选输入设备已不可用，请重新选择。")
             }
             try node.auAudioUnit.setDeviceID(device)
@@ -109,15 +109,8 @@ public final class NativeAudioSource: MicrophoneSource {
     public static func inputs() -> [MicrophoneInput] {
         let defaultDevice = defaultInputDeviceID()
         let discovered: [MicrophoneInput] = deviceIDs().compactMap { device in
-            var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
-            var size: UInt32 = 0
-            guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr, size > 0 else { return nil }
-            let memory = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
-            defer { memory.deallocate() }
-            guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, memory) == noErr else { return nil }
-            let buffers = UnsafeMutableAudioBufferListPointer(memory.assumingMemoryBound(to: AudioBufferList.self))
-            guard buffers.contains(where: { $0.mNumberChannels > 0 }),
-                  let rawID = uid(device)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            guard hasInputChannels(device),
+                  let rawID = uid(device),
                   !rawID.isEmpty, rawID.count <= 256 else { return nil }
             let rawName = stringProperty(device, kAudioObjectPropertyName)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return MicrophoneInput(
@@ -128,6 +121,16 @@ public final class NativeAudioSource: MicrophoneSource {
             )
         }
         return Array(discovered.prefix(64))
+    }
+    private static func hasInputChannels(_ device: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr, size > 0 else { return false }
+        let memory = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { memory.deallocate() }
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, memory) == noErr else { return false }
+        let buffers = UnsafeMutableAudioBufferListPointer(memory.assumingMemoryBound(to: AudioBufferList.self))
+        return buffers.contains(where: { $0.mNumberChannels > 0 })
     }
     private static func defaultInputDeviceID() -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -152,7 +155,9 @@ public final class NativeAudioSource: MicrophoneSource {
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices) == noErr else { return [] }
         return devices
     }
-    private static func uid(_ device: AudioDeviceID) -> String? { stringProperty(device, kAudioDevicePropertyDeviceUID) }
+    private static func uid(_ device: AudioDeviceID) -> String? {
+        stringProperty(device, kAudioDevicePropertyDeviceUID)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     private static func stringProperty(_ device: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> String? {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var value: CFString = "" as CFString

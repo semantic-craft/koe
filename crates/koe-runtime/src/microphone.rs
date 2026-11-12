@@ -72,9 +72,7 @@ impl KoeRuntime {
         if self.microphone.is_some() {
             return Err("请先结束当前录音并完成保存".into());
         }
-        if (self.device.session.device_recording_active && !self.companion.standby_stream_owned)
-            || self.device.awaiting_stop
-        {
+        if self.is_bean_meeting_recording() {
             return Err("录音豆正在录音中，请先结束当前录音".into());
         }
         if self.store.requires_reopen() {
@@ -586,7 +584,23 @@ impl KoeRuntime {
             })
             .max()
             .unwrap_or(0);
-        json!({"recordId":m.record_id,"sessionId":m.session_id,"epoch":m.epoch,"clockNs":m.clock_ns,"lane":"microphone","inputId":m.input_id,
+        let (input_label, input_badge) = if m.input_id.is_empty() {
+            if let Some(def) = self.capture_studio.inputs.iter().find(|i| i.is_default) {
+                (def.name.clone(), def.transport.badge())
+            } else {
+                ("系统默认麦克风".to_string(), "系统默认")
+            }
+        } else if let Some(found) = self
+            .capture_studio
+            .inputs
+            .iter()
+            .find(|i| i.id == m.input_id)
+        {
+            (found.name.clone(), found.transport.badge())
+        } else {
+            ("Mac 麦克风".to_string(), "音频输入")
+        };
+        json!({"recordId":m.record_id,"sessionId":m.session_id,"epoch":m.epoch,"clockNs":m.clock_ns,"lane":"microphone","inputId":m.input_id,"inputLabel":input_label,"inputBadge":input_badge,
             "phase":match m.phase {Phase::Starting=>"starting",Phase::Recording=>"recording",Phase::Pausing=>"pausing",Phase::Paused=>"paused",Phase::Stopping | Phase::CapacityReached=>"stopping",Phase::Cancelling=>"cancelling",Phase::Saving=>"saving"},
             "nextSequence":mic.next_sequence,"durationMs":duration_ms,"level":m.level,"error":m.save_error,"interruption":mic.interruption,"lanes":lanes})
     }

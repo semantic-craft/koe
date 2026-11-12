@@ -112,6 +112,11 @@ impl KoeRuntime {
                 ))
         });
         self.capture_studio.inputs = cleaned;
+        if let CaptureSourcePreference::CoreAudioInput(uid) = &self.capture_studio.preference {
+            if !self.capture_studio.inputs.iter().any(|i| i.id == *uid) {
+                self.capture_studio.preference = CaptureSourcePreference::Auto;
+            }
+        }
         Ok(())
     }
 
@@ -160,8 +165,18 @@ impl KoeRuntime {
             })
         };
 
+        let device_busy = (matches!(
+            self.device.session.transfer.phase,
+            TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
+        ) || self.device.session.device_recording_active
+            || self.device.awaiting_stop)
+            && !self.companion.standby_stream_owned;
+        let bean_ready = self.device.is_connected()
+            && !device_busy
+            && self.workspace().companion_mode() != CompanionRoutingMode::CollarStandby;
+
         let resolve_auto = || -> (String, String, String, &'static str) {
-            if self.device.is_connected() {
+            if bean_ready {
                 ("bean".into(), String::new(), device_name.clone(), "录音豆")
             } else if let Some(bt) = inputs
                 .iter()
@@ -293,19 +308,11 @@ impl KoeRuntime {
                 }
             };
 
-        let device_busy = (matches!(
-            self.device.session.transfer.phase,
-            TransferPhaseTag::PullingOffline | TransferPhaseTag::StreamingRealtime
-        ) || self.device.session.device_recording_active
-            || self.device.awaiting_stop)
-            && !self.companion.standby_stream_owned;
         let can_start =
             if self.is_quitting() || self.store.requires_reopen() || active_source.is_some() {
                 false
             } else if selected_source == "bean" {
-                self.device.is_connected()
-                    && !device_busy
-                    && self.workspace().companion_mode() != CompanionRoutingMode::CollarStandby
+                bean_ready
             } else {
                 true
             };

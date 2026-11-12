@@ -77,7 +77,8 @@ public final class HostSessionStore {
 
     public func dispatchCommand(_ payload: [String: Any], nowEpochSec: UInt64 = 0) {
         guard handle != 0 else { return }
-        if payload["type"] as? String != "playback_progress" { nativeError = nil }
+        let commandType = payload["type"] as? String
+        if commandType != "playback_progress" && commandType != "sync_audio_inputs" { nativeError = nil }
         do {
             let data = try JSONSerialization.data(withJSONObject: payload)
             guard let command = String(data: data, encoding: .utf8) else { return }
