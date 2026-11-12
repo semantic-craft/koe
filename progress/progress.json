@@ -127,9 +127,21 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-11T12:34:48Z"
+      },
+      {
+        "number": 640,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-12T05:37:15Z"
+      },
+      {
+        "number": 641,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-11T14:27:08Z"
       }
     ],
-    "main": "d0068f4a3f4983c373360ce6cb775ad8bf26dd42",
+    "main": "78d2d504302ab0edad83820194159c0a7abf425e",
     "open_pulls": [],
     "pulls": [
       {
@@ -243,12 +255,20 @@
         "merged": true,
         "number": 638,
         "state": "closed"
+      },
+      {
+        "base": "b55c36ad0031bdeeb4bf483532acb8fb959f4af8",
+        "head": "cc580829e521d947672868cf626fa3cf2e0f6945",
+        "merge_commit": "78d2d504302ab0edad83820194159c0a7abf425e",
+        "merged": true,
+        "number": 642,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-11T12:35:52.891266Z",
+  "observed_at": "2026-11-12T05:40:57.907928Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -608,6 +628,50 @@
           "status": "done",
           "summary": "Slice R2（PR #638）在 ProductWorkspace 新增逐句原文修订、原始识别文本门闩与还原折叠、单句说话人切换及同人批量重命名合并，保持 S1..Sn 引用与 start_ms/end_ms 音频锚点完备；持久化重开拆分引用完备校验与新稿数字防幻觉校验，rename_speaker 保持历史纪要原文不变并以 minutes_revision < content_revision 标记待重算；说话人与修订文本实时接入 BM25 搜索、全局问答证据与 Markdown 导出；KoeRuntime 统一采集/转写/问答/归档/软删守卫并即时回收被编辑超越的在途摘要槽位。实体 D3200 与真实云服务联调继续归入 #588。",
           "title": "转写原文分段编辑与说话人重命名合并"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "16 工具实时 MCP 桥接与 D3200 领口伴侣接口需求及验收范围。",
+              "ref": 640
+            },
+            {
+              "kind": "pull",
+              "note": "四层实现、三模型对抗审查 6 项加固、独立分支复验（flash PASS+NOTES）与 CI 通过后 squash 合并。",
+              "ref": 642
+            },
+            {
+              "kind": "issue",
+              "note": "独立真机验收工单：实体 04.92 D3200 自动待命、闪存回收、敲击门控与蓝牙控制权移交。",
+              "ref": 641
+            },
+            {
+              "kind": "file",
+              "note": "纯函数领口伴侣状态机、双向脉冲边沿与双击敲击闷响门控（跳过前 3 片 60 ms、裁剪尾 12 片 240 ms）。",
+              "ref": "crates/koe-engine/src/companion.rs"
+            },
+            {
+              "kind": "file",
+              "note": "属主私有 0600 koe.sock JSON-RPC 桥接、有界订阅推送与作用域化手动门控引用计数。",
+              "ref": "crates/koe-host-api/src/local_bridge.rs"
+            },
+            {
+              "kind": "file",
+              "note": "在线优先回退离线的 16 工具 MCP stdio 服务与宿主重启自动重连。",
+              "ref": "crates/koe-cli/src/mcp.rs"
+            },
+            {
+              "kind": "file",
+              "note": "原生设置页伴侣模式选择、蓝牙自动连接开关与释放蓝牙控制权卡片。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift"
+            }
+          ],
+          "id": "collar-companion-mcp-bridge",
+          "next": "退出当前运行中的 Koe.app 后执行 ./scripts/install-macos.sh 刷新至 78d2d50，并按 #641 在实体 04.92 D3200 上验收自动待命、敲击门控与控制权释放；后续在 Responsay 侧对接 companion/subscribe。",
+          "status": "done",
+          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。不为 Responsay 客户端提前写胶水；实体 D3200 真机行为拆入 #641 验收。",
+          "title": "16 工具实时 MCP 桥接与 D3200 领口伴侣接口"
         }
       ],
       "title": "当前产品实现"
@@ -646,12 +710,17 @@
               "kind": "pull",
               "note": "Slice R2 完整门禁（295 Rust、44 Python、57 Swift）、koe-cli benchmark（release 5 轮中位数 65.721 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。",
               "ref": 638
+            },
+            {
+              "kind": "pull",
+              "note": "16 工具实时 MCP 桥接与领口伴侣完整门禁（44 Python、49 文件 UI 原则零违规、全量 Rust 与 Swift 测试）、koe-cli benchmark（release 5 轮中位数 64.311 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。",
+              "ref": 642
             }
           ],
           "id": "automated-check",
           "next": "后续改动运行统一门禁。",
           "status": "done",
-          "summary": "最新全量 scripts/check 通过 295 项 Rust、44 项 Python 契约、46 文件 verify-ui-principles 零违规与 57 项 Swift 测试，PR #638 CI、三模型独立对抗审查（pro / flash / inherit）与独立分支复验（flash PASS+NOTES）通过，6 项审查加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。",
+          "summary": "最新全量 scripts/check 通过 44 项 Python 契约、49 文件 verify-ui-principles 零违规、全量 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #642 CI、三模型独立对抗审查（pro / flash / inherit）与独立分支复验（flash PASS+NOTES）通过，6 项审查加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。",
           "title": "自动化与独立代码评审"
         },
         {
@@ -704,12 +773,17 @@
               "kind": "pull",
               "note": "含转写原文分段编辑与说话人合并的签名版已重装并通过 verify-self 与 smoke-test。",
               "ref": 638
+            },
+            {
+              "kind": "pull",
+              "note": "沙盒态运行中签名版 Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54）实测 0600 koe.sock 实时暴露 16 项 MCP 工具；最终加固提交 cc58082 通过 verify-self 与 smoke-test，待退出运行中应用后重装刷新。",
+              "ref": 642
             }
           ],
           "id": "merge-install",
-          "next": "真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 推进。",
+          "next": "退出前台运行中的 Koe.app 后执行 ./scripts/install-macos.sh 刷新至 78d2d50；真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 / #641 推进。",
           "status": "done",
-          "summary": "2026-11-11 已重装包含 PR #638（Slice R2 转写原文分段编辑与说话人合并）的最新 Developer ID 签名版 /Applications/Koe.app（CDHash 9e248d83414459bcbca9b9d27f66b4ebe37295ac，designated requirement 与旧版一致），真实二进制 --verify-self（含归档拦截、软删撤销、恢复清除及分段修订、还原折叠、说话人合并）与 --smoke-test 全部通过；此前 #633 已在未运行态完成 Dock 并排图标轮廓验收（#594）。签名安装完成不替代各独立工单的真机交互验收。",
+          "summary": "2026-11-12 已在 PR #642 首轮提交（3d558a3）安装 Developer ID 签名版 /Applications/Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54，designated requirement 与既有版本一致），并在沙盒运行态实测容器内 .koe/koe.sock（0600）零锁冲突直连返回完整 16 项 MCP 工具；因 Koe.app 当前正在前台运行未中断覆盖，合并提交 78d2d50（含 cc58082 审查加固）已在构建二进制通过 --verify-self 与 --smoke-test，待退出应用后执行 ./scripts/install-macos.sh 刷新已安装二进制。签名安装完成不替代各独立工单的真机交互验收。",
           "title": "本机签名安装"
         },
         {
@@ -781,6 +855,20 @@
           "status": "unverified",
           "summary": "本轮以隔离音源、真实 C ABI 与磁盘验证，不使用真实麦克风或个人 Keychain，未安装签名版。系统授权、物理音源切换、人耳回放和实际退出重开仍未验。",
           "title": "麦克风签名版与真机验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "独立真机验收工单，保持开放未验。",
+              "ref": 641
+            }
+          ],
+          "id": "collar-companion-device-acceptance",
+          "next": "重装刷新 78d2d50 签名版后，连接实体 04.92 D3200 按 #641 逐项核对。",
+          "status": "unverified",
+          "summary": "本轮已完成沙盒态运行中 Koe.app 的 0600 koe.sock 实时 16 工具连接验收与模拟 BLE 协议回归；尚未连接实体 04.92 国行 D3200 录音豆验证出仓自动待命指示灯与续航、闪存临时文件自动回收、正面双击与快捷键混用敲击门控听感及释放蓝牙控制权后的外部配对。",
+          "title": "D3200 领口伴侣与蓝牙控制权移交真机验收"
         }
       ],
       "title": "验收与交付"
@@ -829,7 +917,9 @@
       626,
       629,
       634,
-      637
+      637,
+      640,
+      641
     ],
     "pulls": [
       589,
@@ -845,7 +935,8 @@
       630,
       633,
       635,
-      638
+      638,
+      642
     ]
   }
 }
