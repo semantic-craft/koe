@@ -2,12 +2,12 @@ use std::{
     collections::BTreeMap,
     ffi::OsStr,
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
     net::Shutdown,
     os::{
         fd::AsRawFd,
         unix::{
-            fs::{MetadataExt, PermissionsExt},
+            fs::{FileTypeExt, MetadataExt, PermissionsExt},
             net::{UnixListener, UnixStream},
         },
     },
@@ -32,6 +32,7 @@ const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
 const ASK_TIMEOUT: Duration = Duration::from_secs(190);
 const ASK_POLL_SLEEP: Duration = Duration::from_millis(25);
 const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
+const ACCEPT_POLL_SLEEP: Duration = Duration::from_millis(25);
 
 struct SubscriberEntry {
     id: u64,
@@ -200,18 +201,25 @@ impl BridgeServer {
             }
         }
         if let Ok(meta) = fs::symlink_metadata(&sock_path) {
-            if meta.file_type().is_dir() {
+            if !meta.file_type().is_socket() {
                 return None;
             }
-            fs::remove_file(&sock_path).ok()?;
+            match UnixStream::connect(&sock_path) {
+                Err(error) if error.kind() == ErrorKind::ConnectionRefused => {
+                    unlink_matching_socket(&sock_path, Some(meta.ino()));
+                }
+                _ => return None,
+            }
         }
 
         let listener = UnixListener::bind(&sock_path).ok()?;
-        if fs::set_permissions(&sock_path, fs::Permissions::from_mode(0o600)).is_err() {
-            let _ = fs::remove_file(&sock_path);
+        let sock_ino = fs::symlink_metadata(&sock_path).ok().map(|m| m.ino());
+        if listener.set_nonblocking(true).is_err()
+            || fs::set_permissions(&sock_path, fs::Permissions::from_mode(0o600)).is_err()
+        {
+            unlink_matching_socket(&sock_path, sock_ino);
             return None;
         }
-        let sock_ino = fs::symlink_metadata(&sock_path).ok().map(|m| m.ino());
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let active_streams = Arc::new(Mutex::new(BTreeMap::new()));
@@ -222,16 +230,19 @@ impl BridgeServer {
         let accept_workers = Arc::clone(&worker_state);
         let accept_thread = thread::spawn(move || {
             static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
-            for accepted in listener.incoming() {
-                if accept_shutdown.load(Ordering::Acquire) {
-                    break;
-                }
-                let Ok(stream) = accepted else {
-                    if accept_shutdown.load(Ordering::Acquire) {
-                        break;
+            while !accept_shutdown.load(Ordering::Acquire) {
+                let stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::park_timeout(ACCEPT_POLL_SLEEP);
+                        continue;
                     }
-                    continue;
+                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                    Err(_) => break,
                 };
+                if stream.set_nonblocking(false).is_err() {
+                    continue;
+                }
                 set_nosigpipe(&stream);
                 if accept_shutdown.load(Ordering::Acquire) || !verify_same_uid(&stream) {
                     let _ = stream.shutdown(Shutdown::Both);
@@ -275,8 +286,8 @@ impl Drop for BridgeServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         self.subscribers.close_all();
-        let _ = UnixStream::connect(&self.sock_path);
         if let Some(accept_thread) = self.accept_thread.take() {
+            accept_thread.thread().unpark();
             let _ = accept_thread.join();
         }
         unlink_matching_socket(&self.sock_path, self.sock_ino);
@@ -298,10 +309,7 @@ fn unlink_matching_socket(path: &Path, expected_ino: Option<u64>) {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return;
     };
-    if meta.file_type().is_dir() {
-        return;
-    }
-    if expected_ino.is_none_or(|ino| meta.ino() == ino) {
+    if meta.file_type().is_socket() && expected_ino.is_some_and(|ino| meta.ino() == ino) {
         let _ = fs::remove_file(path);
     }
 }
@@ -697,7 +705,6 @@ fn jsonrpc_error(id: Value, code: i64, message: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::FileTypeExt;
     use std::sync::atomic::AtomicU64;
 
     use crate::HostSessionGuard;
@@ -720,7 +727,7 @@ mod tests {
         let sock_path = resolve_bridge_socket_path(&ws).unwrap();
 
         fs::create_dir_all(&ws).unwrap();
-        fs::write(&sock_path, b"stale").unwrap();
+        drop(UnixListener::bind(&sock_path).unwrap());
 
         let session = HostSessionGuard::open(&ws).expect("host session should open");
         let meta = fs::symlink_metadata(&sock_path).unwrap();
@@ -746,6 +753,80 @@ mod tests {
         drop(session);
         assert!(!sock_path.exists());
         let _ = fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn host_session_destroy_finishes_after_socket_path_is_removed() {
+        const CHILD_WORKSPACE: &str = "KOE_BRIDGE_DROP_TEST_WORKSPACE";
+        if let Some(ws) = std::env::var_os(CHILD_WORKSPACE) {
+            let ws = PathBuf::from(ws);
+            let session = HostSessionGuard::open(&ws).unwrap();
+            fs::remove_file(resolve_bridge_socket_path(&ws).unwrap()).unwrap();
+            drop(session);
+            return;
+        }
+
+        let ws = temp_workspace();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "local_bridge::tests::host_session_destroy_finishes_after_socket_path_is_removed",
+                "--nocapture",
+            ])
+            .env(CHILD_WORKSPACE, &ws)
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                break None;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let _ = fs::remove_dir_all(&ws);
+        assert!(
+            status.is_some_and(|status| status.success()),
+            "destroy did not finish after its socket path was removed"
+        );
+    }
+
+    #[test]
+    fn local_bridge_start_preserves_an_existing_listener() {
+        let ws = temp_workspace();
+        fs::create_dir_all(&ws).unwrap();
+        let path = resolve_bridge_socket_path(&ws).unwrap();
+        let listener = UnixListener::bind(&path).unwrap();
+        let inode = fs::symlink_metadata(&path).unwrap().ino();
+        let second = BridgeServer::start(0, &ws, SubscriberHub::default());
+        let rejected = second.is_none();
+        drop(second);
+        let preserved = fs::symlink_metadata(&path).is_ok_and(|meta| meta.ino() == inode);
+        let reachable = UnixStream::connect(&path).is_ok();
+        drop(listener);
+        let _ = fs::remove_dir_all(&ws);
+        assert!(rejected, "second bridge replaced an active listener");
+        assert!(preserved, "active listener socket path was removed");
+        assert!(reachable, "active listener is no longer reachable");
+    }
+
+    #[test]
+    fn local_bridge_start_preserves_non_socket_files() {
+        let ws = temp_workspace();
+        fs::create_dir_all(&ws).unwrap();
+        let path = resolve_bridge_socket_path(&ws).unwrap();
+        fs::write(&path, b"unrelated file").unwrap();
+        let bridge = BridgeServer::start(0, &ws, SubscriberHub::default());
+        let rejected = bridge.is_none();
+        drop(bridge);
+        let contents = fs::read(&path).ok();
+        let _ = fs::remove_dir_all(&ws);
+        assert!(rejected, "bridge replaced a non-socket file");
+        assert_eq!(contents.as_deref(), Some(b"unrelated file".as_slice()));
     }
 
     #[test]

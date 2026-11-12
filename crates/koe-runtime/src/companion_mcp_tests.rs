@@ -957,6 +957,26 @@ fn resolve_bridge_socket_path_maps_sandbox_container_env_overrides_and_length_ca
 }
 
 #[test]
+fn isolated_sandbox_workspaces_do_not_share_the_canonical_bridge_socket() {
+    use companion::resolve_bridge_socket_path_with_env;
+
+    let data = Path::new("/tmp/Containers/com.anker.ankerRecorder/Data");
+    let canonical = data.join("Library/Application Support/KoeWorkspace");
+    let canonical_socket = resolve_bridge_socket_path_with_env(&canonical, None).unwrap();
+    for workspace in [
+        data.join("verify-self-123"),
+        data.join("Library/Application Support/KoeWorkspace/verify-self"),
+        data.join("qa/KoeWorkspaceDevelopment"),
+    ] {
+        let socket = resolve_bridge_socket_path_with_env(&workspace, None);
+        assert_ne!(socket.as_ref(), Some(&canonical_socket));
+        if let Some(socket) = socket {
+            assert_eq!(socket, workspace.join("koe.sock"));
+        }
+    }
+}
+
+#[test]
 fn collar_standby_preserves_manual_side_button_recordings_and_inflight_offline_pulls() {
     let sandbox = Sandbox::new();
     let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
