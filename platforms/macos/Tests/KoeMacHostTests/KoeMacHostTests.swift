@@ -125,4 +125,55 @@ struct KoeMacHostTests {
         #expect(delegate.applicationShouldHandleReopen(NSApplication.shared, hasVisibleWindows: false))
         #expect(window.isVisible)
     }
+
+    @Test("Companion auto-connect guard, BLE release, and manual scan recovery keep UserDefaults and runtime in sync")
+    @MainActor
+    func companionBleReleaseAndManualScanRecovery() {
+        let key = BluetoothBridge.savedPeripheralKey
+        let previousSaved = UserDefaults.standard.string(forKey: key)
+        defer {
+            if let previousSaved {
+                UserDefaults.standard.set(previousSaved, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let savedUUID = "11111111-2222-3333-4444-555555555555"
+        store.send("set_ble_auto_connect", ["enabled": false])
+        UserDefaults.standard.set(savedUUID, forKey: key)
+
+        let bridge = BluetoothBridge(store: store)
+        bridge.reconnectKnownIfAvailable()
+        #expect(!bridge.isScanRequested)
+        #expect(UserDefaults.standard.string(forKey: key) == savedUUID)
+
+        let delegate = KoeAppDelegate()
+        delegate.store = store
+        #expect(!delegate.bluetoothBridge.isScanRequested)
+        #expect(UserDefaults.standard.string(forKey: key) == nil)
+
+        delegate.prepareManualScan()
+        #expect(store.snapshot.device.autoConnect == true)
+        #expect(store.snapshot.device.guide?.mode == "connect_guide")
+
+        UserDefaults.standard.set(savedUUID, forKey: key)
+        delegate.bluetoothBridge.releaseControl()
+        #expect(store.snapshot.device.autoConnect == false)
+        #expect(!delegate.bluetoothBridge.isScanRequested)
+        #expect(UserDefaults.standard.string(forKey: key) == nil)
+
+        store.send("set_ble_auto_connect", ["enabled": true])
+        UserDefaults.standard.set(savedUUID, forKey: key)
+        #expect(UserDefaults.standard.string(forKey: key) == savedUUID)
+
+        store.send("device_release")
+        #expect(store.snapshot.device.autoConnect == false)
+        #expect(UserDefaults.standard.string(forKey: key) == nil)
+    }
 }

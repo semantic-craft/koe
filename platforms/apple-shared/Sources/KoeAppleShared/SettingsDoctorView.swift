@@ -96,6 +96,7 @@ public struct SettingsDoctorView: View {
                         }
                     }
                 }
+                CompanionSettingsCard(store: store)
                 KoeCard {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {

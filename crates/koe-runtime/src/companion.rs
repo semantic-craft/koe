@@ -1,6 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use koe_engine::product::CompanionRoutingMode;
@@ -29,6 +31,63 @@ pub const COMPANION_FRONT_CONTROL: &str = "front_surface";
 
 /// Canonical D3200 front housing gesture trigger name.
 pub const COMPANION_DOUBLE_TAP_TRIGGER: &str = "double_tap";
+
+/// Maximum encoded byte length for a Unix domain socket path on macOS (`sun_path` is 104 bytes including NUL).
+const MAX_UNIX_SOCKET_PATH_BYTES: usize = 103;
+
+/// Resolves the canonical local bridge Unix domain socket path for `workspace`.
+///
+/// Honors `KOE_BRIDGE_SOCKET` (`""`, `"0"`, or `"off"` disables the socket), places App Sandbox
+/// container workspaces inside `<Data>/.koe/koe.sock` (`koe-dev.sock` for development workspaces)
+/// to stay within the 104-byte `sun_path` kernel limit without altering entitlements, and falls
+/// back to `<workspace>/koe.sock` for standalone directories.
+#[must_use]
+pub fn resolve_bridge_socket_path(workspace: &Path) -> Option<PathBuf> {
+    resolve_bridge_socket_path_with_env(
+        workspace,
+        std::env::var_os("KOE_BRIDGE_SOCKET").as_deref(),
+    )
+}
+
+pub(crate) fn resolve_bridge_socket_path_with_env(
+    workspace: &Path,
+    env_override: Option<&OsStr>,
+) -> Option<PathBuf> {
+    if let Some(raw) = env_override {
+        if let Some(s) = raw.to_str() {
+            let trimmed = s.trim();
+            if trimmed.is_empty() || trimmed == "0" || trimmed.eq_ignore_ascii_case("off") {
+                return None;
+            }
+            let candidate = PathBuf::from(trimmed);
+            return (candidate.as_os_str().as_encoded_bytes().len() < MAX_UNIX_SOCKET_PATH_BYTES)
+                .then_some(candidate);
+        }
+        if raw.is_empty() {
+            return None;
+        }
+        let candidate = PathBuf::from(raw);
+        return (candidate.as_os_str().as_encoded_bytes().len() < MAX_UNIX_SOCKET_PATH_BYTES)
+            .then_some(candidate);
+    }
+
+    let candidate = if let Some(container_data) = workspace
+        .ancestors()
+        .find(|ancestor| ancestor.ends_with("Containers/com.anker.ankerRecorder/Data"))
+    {
+        let sock_name = if workspace.ends_with("KoeWorkspaceDevelopment") {
+            "koe-dev.sock"
+        } else {
+            "koe.sock"
+        };
+        container_data.join(".koe").join(sock_name)
+    } else {
+        workspace.join("koe.sock")
+    };
+
+    (candidate.as_os_str().as_encoded_bytes().len() < MAX_UNIX_SOCKET_PATH_BYTES)
+        .then_some(candidate)
+}
 
 const MAX_COMPANION_EVENTS: usize = 8_192;
 

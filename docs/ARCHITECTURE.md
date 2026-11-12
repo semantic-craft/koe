@@ -53,7 +53,7 @@ flowchart TD
     <record-id>.opus
 ```
 
-工作区在整个打开期间持有排他锁。GUI、CLI 和 MCP 使用同一 `KoeRuntime`，但不能同时写同一个目录。读取失败、未知或损坏的持久格式必须报错并保留原文件；不能以空库覆盖。旧记录迁移同样保留原文件。
+`ProductStore` 在整个打开期间持有排他文件锁，保证磁盘只有单一写者。`Koe.app` 运行时在容器内监听属主私有的 `.koe/koe.sock`（`0700` 目录、`0600` 套接字与同 UID 校验），CLI 与 MCP 优先经桥接共享同一 `KoeRuntime` 会话，应用未运行时再直接获取文件锁。读取失败、未知或损坏的持久格式必须报错并保留原文件；不能以空库覆盖。旧记录迁移同样保留原文件。
 
 ## 记录处理管线
 
@@ -119,7 +119,7 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 `HostSessionStore` 只持有一份快照。Swift 可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，不能自行提取待办、拼接转写时间、修补引用或改变处理阶段。AppKit 管理窗口和菜单，`NativeFileActions` 管理系统文件选择，`NativePlayback` 执行音频播放并回报实际进度。
 
-CLI 直接使用同一个 runtime。MCP stdio 的 `search`、`get_record`、`ask` 调用同一份记录与检索逻辑；`ask` 会保存会话。CLI/MCP 使用隔离凭据，不读取 GUI 的系统密钥，也不提供另一套独立的记录库。
+CLI 与 MCP 在宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）转发至同一 `KoeRuntime` 实例，宿主未运行时回退直开 `KoeRuntime`。MCP stdio 暴露 16 项检索、审核、修订与设备工具且不开放不可逆彻底清除；`companion/subscribe` 在同一桥接上为外部语音输入提供 D3200 领口待命的 `control_edge` 双击边沿与带防敲击门控的 `16 kHz` 单声道 `PCM16` 音频流，支持主机快捷键 `set_capture_active` 双向启停。离线 CLI/MCP 进程使用隔离凭据，不读取 GUI 的系统密钥，也不提供另一套独立的记录库。
 
 ## 构建约束与当前边界
 

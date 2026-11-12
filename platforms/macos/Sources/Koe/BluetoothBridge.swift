@@ -133,19 +133,19 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
     nonisolated public static func secondaryServiceUUIDForTest(_ string: String) -> CBUUID { CBUUID(string: string) }
 
-    private static let savedPeripheralKey = "koe.ble.lastPeripheralUUID"
+    static let savedPeripheralKey = "koe.ble.lastPeripheralUUID"
     public weak var store: HostSessionStore?
-    public private(set) var isScanRequested = false
-    private var central: CBCentralManager?
-    private var peripheral: CBPeripheral?
-    private var reconnectingPeripheral: CBPeripheral?
+    public internal(set) var isScanRequested = false
+    var central: CBCentralManager?
+    var peripheral: CBPeripheral?
+    var reconnectingPeripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
     private var outboundQueue = BleOutboundQueue()
     private var outboundFlushTimer: Timer?
     private var notifyReady = false
     private var notifyFound = false
     private var pendingServices = 0
-    private var reportedReady = false
+    var reportedReady = false
     private var connectionID = ""
     private var discoveredName: String?
 
@@ -175,7 +175,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     public func reconnectKnownIfAvailable() {
-        guard !reportedReady, peripheral == nil, reconnectingPeripheral == nil else { return }
+        guard store?.snapshot.device.autoConnect != false, !reportedReady, peripheral == nil, reconnectingPeripheral == nil else { return }
         guard let savedString = UserDefaults.standard.string(forKey: Self.savedPeripheralKey),
               UUID(uuidString: savedString) != nil else { return }
         isScanRequested = true
@@ -286,7 +286,7 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
         }
     }
 
-    private func resetLinkState() {
+    func resetLinkState() {
         outboundFlushTimer?.invalidate()
         outboundFlushTimer = nil
         outboundQueue.reset()

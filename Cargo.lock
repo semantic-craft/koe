@@ -561,6 +561,7 @@ dependencies = [
  "koe-client-base",
  "koe-client-providers",
  "koe-engine",
+ "koe-host-api",
  "koe-opus",
  "koe-runtime",
  "serde_json",
@@ -625,6 +626,8 @@ dependencies = [
  "koe-client-services",
  "koe-engine",
  "koe-runtime",
+ "libc",
+ "serde_json",
 ]
 
 [[package]]

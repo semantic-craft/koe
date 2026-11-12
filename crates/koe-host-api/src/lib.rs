@@ -3,11 +3,14 @@
 #![deny(missing_docs)]
 
 mod credentials;
+mod local_bridge;
+
 pub use credentials::KoeCredentialCallback;
 use koe_runtime::KoeRuntime;
 use std::{
     collections::BTreeMap,
     ffi::{c_char, CStr, CString},
+    path::Path,
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -15,17 +18,24 @@ use std::{
 /// Native snapshot and command contract version.
 pub const KOE_HOST_API_VERSION: u32 = koe_runtime::KOE_HOST_SNAPSHOT_VERSION;
 
-#[derive(Default)]
-struct Sessions {
-    next: u64,
-    runtimes: BTreeMap<u64, KoeRuntime>,
+pub(crate) struct SessionEntry {
+    pub(crate) runtime: KoeRuntime,
+    pub(crate) subscribers: local_bridge::SubscriberHub,
 }
 
-fn sessions() -> &'static Mutex<Sessions> {
+#[derive(Default)]
+pub(crate) struct Sessions {
+    next: u64,
+    pub(crate) entries: BTreeMap<u64, SessionEntry>,
+    bridges: BTreeMap<u64, local_bridge::BridgeServer>,
+}
+
+pub(crate) fn sessions() -> &'static Mutex<Sessions> {
     static SESSIONS: OnceLock<Mutex<Sessions>> = OnceLock::new();
     SESSIONS.get_or_init(|| Mutex::new(Sessions::default()))
 }
-fn now(value: u64) -> u64 {
+
+pub(crate) fn now(value: u64) -> u64 {
     if value > 0 {
         value
     } else {
@@ -34,12 +44,15 @@ fn now(value: u64) -> u64 {
             .map_or(0, |d| d.as_secs())
     }
 }
+
 fn guarded<T: Default>(operation: impl FnOnce() -> T) -> T {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).unwrap_or_default()
 }
+
 fn string(value: String) -> *mut c_char {
     CString::new(value).map_or(std::ptr::null_mut(), CString::into_raw)
 }
+
 unsafe fn read_string(pointer: *const c_char) -> Option<String> {
     if pointer.is_null() {
         None
@@ -49,6 +62,122 @@ unsafe fn read_string(pointer: *const c_char) -> Option<String> {
             .to_str()
             .ok()
             .map(str::to_string)
+    }
+}
+
+fn take_owned_string(pointer: *mut c_char) -> Option<String> {
+    if pointer.is_null() {
+        return None;
+    }
+    // SAFETY: `pointer` was allocated by `CString::into_raw` inside this crate.
+    let owned = unsafe { CString::from_raw(pointer) };
+    owned.into_string().ok()
+}
+
+fn register_session(workspace: &Path, runtime: KoeRuntime) -> u64 {
+    let subscribers = local_bridge::SubscriberHub::default();
+    let handle = {
+        let Ok(mut table) = sessions().lock() else {
+            return 0;
+        };
+        table.next = table.next.saturating_add(1);
+        let id = table.next;
+        table.entries.insert(
+            id,
+            SessionEntry {
+                runtime,
+                subscribers: subscribers.clone(),
+            },
+        );
+        id
+    };
+    if let Some(bridge) = local_bridge::BridgeServer::start(handle, workspace, subscribers) {
+        let mut orphan_bridge = Some(bridge);
+        if let Ok(mut table) = sessions().lock() {
+            if table.entries.contains_key(&handle) {
+                if let Some(active) = orphan_bridge.take() {
+                    table.bridges.insert(handle, active);
+                }
+            }
+        }
+        drop(orphan_bridge);
+    }
+    handle
+}
+
+/// Safe RAII wrapper around an active host session handle and its local Unix socket bridge.
+pub struct HostSessionGuard(u64);
+
+impl HostSessionGuard {
+    /// Opens an isolated host session with its local socket bridge at `path`.
+    #[must_use]
+    pub fn open(path: &Path) -> Option<Self> {
+        let text = path.to_str()?;
+        let c_path = CString::new(text).ok()?;
+        // SAFETY: `c_path` is a valid NUL-terminated UTF-8 string.
+        let handle = unsafe { koe_host_session_create(c_path.as_ptr()) };
+        (handle != 0).then_some(Self(handle))
+    }
+
+    /// Returns the underlying 1-based session handle.
+    #[must_use]
+    pub fn handle(&self) -> u64 {
+        self.0
+    }
+
+    /// Captures an immutable JSON projection of the session at `now`.
+    #[must_use]
+    pub fn snapshot_json(&self, now: u64) -> Option<String> {
+        take_owned_string(koe_host_session_snapshot_json(self.0, now))
+    }
+
+    /// Dispatches a JSON command into the session and returns the updated snapshot JSON.
+    #[must_use]
+    pub fn dispatch_json(&self, command_json: &str, now: u64) -> Option<String> {
+        let c_cmd = CString::new(command_json).ok()?;
+        // SAFETY: `c_cmd` is a valid NUL-terminated UTF-8 string.
+        take_owned_string(unsafe { koe_host_session_dispatch_json(self.0, c_cmd.as_ptr(), now) })
+    }
+
+    /// Feeds raw BLE notification bytes into the session and returns the resulting generation.
+    #[must_use]
+    pub fn ingest_ble(&self, bytes: &[u8], now: u64) -> u64 {
+        let ptr = if bytes.is_empty() {
+            std::ptr::null()
+        } else {
+            bytes.as_ptr()
+        };
+        // SAFETY: `ptr` addresses `bytes.len()` initialized bytes when non-empty.
+        unsafe { koe_host_session_ingest_ble(self.0, ptr, bytes.len(), now) }
+    }
+
+    /// Advances runtime deadlines and returns the resulting generation.
+    #[must_use]
+    pub fn poll_timers(&self, elapsed_ms: u64, now: u64) -> u64 {
+        koe_host_session_poll_timers(self.0, elapsed_ms, now)
+    }
+
+    /// Drains queued outbound BLE frames for the session.
+    #[must_use]
+    pub fn drain_ble_tx(&self) -> Vec<Vec<u8>> {
+        guarded(|| {
+            sessions()
+                .lock()
+                .ok()
+                .and_then(|mut table| {
+                    table
+                        .entries
+                        .get_mut(&self.0)
+                        .map(|entry| entry.runtime.drain_outbound_ble_frames())
+                })
+                .unwrap_or_default()
+        })
+    }
+}
+
+impl Drop for HostSessionGuard {
+    fn drop(&mut self) {
+        let _ = koe_host_session_destroy(self.0);
     }
 }
 
@@ -69,16 +198,10 @@ pub unsafe extern "C" fn koe_host_session_create(directory: *const c_char) -> u6
         else {
             return 0;
         };
-        let Ok(runtime) = KoeRuntime::open(path) else {
+        let Ok(runtime) = KoeRuntime::open(&path) else {
             return 0;
         };
-        let Ok(mut table) = sessions().lock() else {
-            return 0;
-        };
-        table.next = table.next.saturating_add(1);
-        let handle = table.next;
-        table.runtimes.insert(handle, runtime);
-        handle
+        register_session(Path::new(&path), runtime)
     })
 }
 
@@ -108,16 +231,10 @@ pub unsafe extern "C" fn koe_host_session_create_with_credentials(
             context: context as usize,
             isolated,
         };
-        let Ok(runtime) = KoeRuntime::open_with_credentials(path, Box::new(adapter)) else {
+        let Ok(runtime) = KoeRuntime::open_with_credentials(&path, Box::new(adapter)) else {
             return 0;
         };
-        let Ok(mut table) = sessions().lock() else {
-            return 0;
-        };
-        table.next = table.next.saturating_add(1);
-        let handle = table.next;
-        table.runtimes.insert(handle, runtime);
-        handle
+        register_session(Path::new(&path), runtime)
     })
 }
 
@@ -125,11 +242,16 @@ pub unsafe extern "C" fn koe_host_session_create_with_credentials(
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_destroy(handle: u64) -> bool {
     guarded(|| {
-        sessions()
-            .lock()
-            .ok()
-            .and_then(|mut s| s.runtimes.remove(&handle))
-            .is_some()
+        let (removed_entry, removed_bridge) = {
+            let Ok(mut table) = sessions().lock() else {
+                return false;
+            };
+            (table.entries.remove(&handle), table.bridges.remove(&handle))
+        };
+        drop(removed_bridge);
+        let existed = removed_entry.is_some();
+        drop(removed_entry);
+        existed
     })
 }
 
@@ -140,7 +262,7 @@ pub extern "C" fn koe_host_session_generation(handle: u64) -> u64 {
         sessions()
             .lock()
             .ok()
-            .and_then(|s| s.runtimes.get(&handle).map(KoeRuntime::generation))
+            .and_then(|s| s.entries.get(&handle).map(|e| e.runtime.generation()))
             .unwrap_or(0)
     })
 }
@@ -153,10 +275,10 @@ pub extern "C" fn koe_host_session_snapshot_json(handle: u64, epoch: u64) -> *mu
             return std::ptr::null_mut();
         };
         table
-            .runtimes
+            .entries
             .get(&handle)
-            .map_or(std::ptr::null_mut(), |r| {
-                string(r.snapshot_json(now(epoch)))
+            .map_or(std::ptr::null_mut(), |e| {
+                string(e.runtime.snapshot_json(now(epoch)))
             })
     })
 }
@@ -175,15 +297,19 @@ pub unsafe extern "C" fn koe_host_session_dispatch_json(
         let Some(command) = (unsafe { read_string(command) }) else {
             return std::ptr::null_mut();
         };
-        let Ok(mut table) = sessions().lock() else {
-            return std::ptr::null_mut();
+        let (json_out, subscribers, events) = {
+            let Ok(mut table) = sessions().lock() else {
+                return std::ptr::null_mut();
+            };
+            let Some(entry) = table.entries.get_mut(&handle) else {
+                return std::ptr::null_mut();
+            };
+            let out = entry.runtime.dispatch_json(&command, now(epoch));
+            let events = entry.runtime.drain_companion_events();
+            (out, entry.subscribers.clone(), events)
         };
-        table
-            .runtimes
-            .get_mut(&handle)
-            .map_or(std::ptr::null_mut(), |r| {
-                string(r.dispatch_json(&command, now(epoch)))
-            })
+        subscribers.broadcast(&events);
+        string(json_out)
     })
 }
 
@@ -207,14 +333,20 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
             // SAFETY: Checked pointer and length follow the caller contract.
             unsafe { std::slice::from_raw_parts(bytes, length) }
         };
-        let Ok(mut table) = sessions().lock() else {
-            return 0;
+        let (generation, subscribers, events) = {
+            let Ok(mut table) = sessions().lock() else {
+                return 0;
+            };
+            let Some(entry) = table.entries.get_mut(&handle) else {
+                return 0;
+            };
+            entry.runtime.ingest_ble_chunk(bytes, now(epoch));
+            let generation = entry.runtime.generation();
+            let events = entry.runtime.drain_companion_events();
+            (generation, entry.subscribers.clone(), events)
         };
-        let Some(runtime) = table.runtimes.get_mut(&handle) else {
-            return 0;
-        };
-        runtime.ingest_ble_chunk(bytes, now(epoch));
-        runtime.generation()
+        subscribers.broadcast(&events);
+        generation
     })
 }
 
@@ -225,10 +357,11 @@ pub extern "C" fn koe_host_session_drain_ble_tx_json(handle: u64) -> *mut c_char
         let Ok(mut table) = sessions().lock() else {
             return std::ptr::null_mut();
         };
-        let Some(runtime) = table.runtimes.get_mut(&handle) else {
+        let Some(entry) = table.entries.get_mut(&handle) else {
             return std::ptr::null_mut();
         };
-        let values: Vec<_> = runtime
+        let values: Vec<_> = entry
+            .runtime
             .drain_outbound_ble_frames()
             .iter()
             .map(|frame| {
@@ -246,14 +379,20 @@ pub extern "C" fn koe_host_session_drain_ble_tx_json(handle: u64) -> *mut c_char
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epoch: u64) -> u64 {
     guarded(|| {
-        let Ok(mut table) = sessions().lock() else {
-            return 0;
+        let (generation, subscribers, events) = {
+            let Ok(mut table) = sessions().lock() else {
+                return 0;
+            };
+            let Some(entry) = table.entries.get_mut(&handle) else {
+                return 0;
+            };
+            entry.runtime.poll_timers(elapsed_ms, now(epoch));
+            let generation = entry.runtime.generation();
+            let events = entry.runtime.drain_companion_events();
+            (generation, entry.subscribers.clone(), events)
         };
-        let Some(runtime) = table.runtimes.get_mut(&handle) else {
-            return 0;
-        };
-        runtime.poll_timers(elapsed_ms, now(epoch));
-        runtime.generation()
+        subscribers.broadcast(&events);
+        generation
     })
 }
 

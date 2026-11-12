@@ -868,3 +868,52 @@ fn mcp_sixteen_tools_cover_full_workspace_and_reject_unknown_or_destructive_acti
     );
     assert_eq!(updates_caught_up["hasUpdates"], false);
 }
+
+#[test]
+fn resolve_bridge_socket_path_maps_sandbox_container_env_overrides_and_length_cap() {
+    use companion::resolve_bridge_socket_path_with_env;
+    use std::ffi::OsStr;
+
+    let prod_ws = Path::new(
+        "/Users/alice/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace",
+    );
+    let prod_sock = resolve_bridge_socket_path_with_env(prod_ws, None).unwrap();
+    assert_eq!(
+        prod_sock,
+        PathBuf::from("/Users/alice/Library/Containers/com.anker.ankerRecorder/Data/.koe/koe.sock")
+    );
+    assert!(prod_sock.as_os_str().as_encoded_bytes().len() < 103);
+
+    let dev_ws = Path::new(
+        "/Users/alice/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspaceDevelopment",
+    );
+    assert_eq!(
+        resolve_bridge_socket_path_with_env(dev_ws, None).unwrap(),
+        PathBuf::from(
+            "/Users/alice/Library/Containers/com.anker.ankerRecorder/Data/.koe/koe-dev.sock"
+        )
+    );
+
+    let custom_ws = Path::new("/tmp/koe-ws");
+    assert_eq!(
+        resolve_bridge_socket_path_with_env(custom_ws, None).unwrap(),
+        PathBuf::from("/tmp/koe-ws/koe.sock")
+    );
+
+    assert!(resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new(""))).is_none());
+    assert!(resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new("  "))).is_none());
+    assert!(resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new("0"))).is_none());
+    assert!(resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new("off"))).is_none());
+    assert!(resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new("OFF"))).is_none());
+    assert_eq!(
+        resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new("/tmp/custom.sock")))
+            .unwrap(),
+        PathBuf::from("/tmp/custom.sock")
+    );
+
+    let overlong_ws = PathBuf::from(format!("/tmp/{}", "a".repeat(98)));
+    assert!(resolve_bridge_socket_path_with_env(&overlong_ws, None).is_none());
+    let exact_103 = format!("/tmp/{}.sock", "b".repeat(93));
+    assert_eq!(exact_103.len(), 103);
+    assert!(resolve_bridge_socket_path_with_env(custom_ws, Some(OsStr::new(&exact_103))).is_none());
+}

@@ -61,7 +61,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             capture.store = store
             store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
             if let store { applyLifecycle(store.snapshot) }
-            if store != nil {
+            if let store, store.snapshot.device.autoConnect {
                 bluetoothBridge.reconnectKnownIfAvailable()
             }
         }
@@ -100,6 +100,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         statusItem = item
         NotificationCenter.default.addObserver(self, selector: #selector(scan), name: Notification.Name("KoeRequestBleScan"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(disconnectBle), name: Notification.Name("KoeRequestBleDisconnect"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseBleControl), name: Notification.Name("KoeReleaseBleControl"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(flushBle), name: Notification.Name("KoeFlushBleOutbound"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rememberWindow(_:)), name: NSWindow.willCloseNotification, object: nil)
@@ -136,6 +137,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         return true
     }
     private func applyLifecycle(_ snapshot: HostSnapshot) {
+        bluetoothBridge.syncWithRuntimeDevice(store?.snapshot.device ?? snapshot.device)
         playback.tick()
         capture.apply()
         let current = store?.snapshot.lifecycle ?? snapshot.lifecycle
@@ -205,12 +207,19 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         if let section = item.representedObject as? String { store?.send("navigate", ["section": section]) }
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
     }
-    @objc private func scan() {
+    func prepareManualScan() {
+        if store?.snapshot.device.autoConnect == false {
+            store?.send("set_ble_auto_connect", ["enabled": true])
+        }
         store?.send("device_open_guide")
+    }
+    @objc private func scan() {
+        prepareManualScan()
         bluetoothBridge.startScanningIfPoweredOn()
         KoeWindowPresenter.presentPrimaryWorkspaceWindow()
     }
     @objc private func disconnectBle() { bluetoothBridge.disconnect() }
+    @objc private func releaseBleControl() { bluetoothBridge.releaseControl() }
     @objc private func flushBle() { bluetoothBridge.flushOutboundFrames() }
     @objc private func openWindow() { KoeWindowPresenter.presentPrimaryWorkspaceWindow() }
     @objc private func quit() { NSApp?.terminate(nil) }

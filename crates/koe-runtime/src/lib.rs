@@ -38,8 +38,8 @@ mod trash;
 
 use command::{Command, Location, Page, Playback};
 pub use companion::{
-    decode_pcm16_le_b64, encode_pcm16_le_b64, CompanionClientCommand, CompanionRoutingMode,
-    CompanionStreamEvent, DeclaredControlSpec, COMPANION_AUDIO_FORMAT,
+    decode_pcm16_le_b64, encode_pcm16_le_b64, resolve_bridge_socket_path, CompanionClientCommand,
+    CompanionRoutingMode, CompanionStreamEvent, DeclaredControlSpec, COMPANION_AUDIO_FORMAT,
     COMPANION_DOUBLE_TAP_TRIGGER, COMPANION_FRONT_CONTROL, COMPANION_PROTOCOL_VERSION,
     POST_TAP_SKIP_SLICES, PRE_STOP_TAP_HOLDBACK_SLICES,
 };
