@@ -614,10 +614,11 @@ impl RecordDto {
         a.selected_format = SummaryFormat::parse(&self.selected_format)
             .ok_or_else(|| invalid("invalid summary format"))?;
         for timestamp in self.bookmarks {
-            if timestamp > a.duration_ms {
-                return Err(invalid("highlight exceeds duration"));
-            }
-            a.add_bookmark(timestamp);
+            a.add_bookmark(if a.duration_ms > 0 {
+                timestamp.min(a.duration_ms)
+            } else {
+                timestamp
+            });
         }
         a.phase = match analysis {
             AnalysisState::Pending { .. } => RecordingLifecyclePhase::Transcribing,

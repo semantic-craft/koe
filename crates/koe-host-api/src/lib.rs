@@ -198,8 +198,12 @@ pub unsafe extern "C" fn koe_host_session_create(directory: *const c_char) -> u6
         else {
             return 0;
         };
-        let Ok(runtime) = KoeRuntime::open(&path) else {
-            return 0;
+        let runtime = match KoeRuntime::open(&path) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("koe-host-api: workspace open failed: {error}");
+                return 0;
+            }
         };
         register_session(Path::new(&path), runtime)
     })
@@ -231,8 +235,12 @@ pub unsafe extern "C" fn koe_host_session_create_with_credentials(
             context: context as usize,
             isolated,
         };
-        let Ok(runtime) = KoeRuntime::open_with_credentials(&path, Box::new(adapter)) else {
-            return 0;
+        let runtime = match KoeRuntime::open_with_credentials(&path, Box::new(adapter)) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("koe-host-api: workspace open failed: {error}");
+                return 0;
+            }
         };
         register_session(Path::new(&path), runtime)
     })

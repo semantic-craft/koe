@@ -149,6 +149,79 @@ final class NativePlaybackIntegrationTests: XCTestCase {
         }
     }
 
+    func testIdlePlaybackTickIsIdempotent() async throws {
+        let emptyRoot = FileManager.default.temporaryDirectory.appendingPathComponent("koe-player-idle-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
+        let emptyStore = HostSessionStore(workspacePath: emptyRoot.path)
+        defer { emptyStore.shutdown(); try? FileManager.default.removeItem(at: emptyRoot) }
+
+        let countingPlayer = CountingAVPlayer()
+        let idlePlayback = NativePlayback(player: countingPlayer)
+        idlePlayback.store = emptyStore
+        defer { idlePlayback.stop() }
+
+        XCTAssertNil(emptyStore.snapshot.playback.recordId)
+        for _ in 0..<10 { idlePlayback.tick() }
+        XCTAssertEqual(countingPlayer.replaceCurrentItemCount, 0)
+        XCTAssertEqual(countingPlayer.pauseCount, 0)
+
+        try await fixture { store in
+            let activePlayer = CountingAVPlayer()
+            let playback = NativePlayback(player: activePlayer)
+            let delegate = KoeAppDelegate(playback: playback)
+            delegate.store = store
+            defer {
+                delegate.store = nil
+                playback.stop()
+            }
+
+            let recordId = try XCTUnwrap(store.snapshot.selectedRecordId)
+            try await self.until(
+                "player item ready and idle",
+                { activePlayer.currentItem?.status == .readyToPlay },
+                tick: playback.tick
+            )
+            XCTAssertFalse(store.snapshot.playback.isPlaying)
+            let pausesWhileSelectedIdle = activePlayer.pauseCount
+            for _ in 0..<10 { playback.tick() }
+            XCTAssertEqual(activePlayer.pauseCount, pausesWhileSelectedIdle)
+
+            store.send("playback", ["isPlaying": true])
+            try await self.until(
+                "player item ready and playing",
+                { activePlayer.currentItem?.status == .readyToPlay && activePlayer.rate > 0 },
+                tick: playback.tick
+            )
+
+            let replacesBeforeTrash = activePlayer.replaceCurrentItemCount
+            store.send("trash_record", ["recordId": recordId])
+            XCTAssertNil(store.snapshot.playback.recordId)
+            XCTAssertNil(activePlayer.currentItem)
+            XCTAssertEqual(activePlayer.replaceCurrentItemCount, replacesBeforeTrash + 1)
+
+            let replacesAfterTrash = activePlayer.replaceCurrentItemCount
+            let pausesAfterTrash = activePlayer.pauseCount
+            for _ in 0..<5 { playback.tick() }
+            XCTAssertEqual(activePlayer.replaceCurrentItemCount, replacesAfterTrash)
+            XCTAssertEqual(activePlayer.pauseCount, pausesAfterTrash)
+        }
+    }
+
+}
+
+private final class CountingAVPlayer: AVPlayer {
+    var pauseCount = 0
+    var replaceCurrentItemCount = 0
+
+    override func pause() {
+        pauseCount += 1
+        super.pause()
+    }
+
+    override func replaceCurrentItem(with item: AVPlayerItem?) {
+        replaceCurrentItemCount += 1
+        super.replaceCurrentItem(with: item)
+    }
 }
 
 @MainActor

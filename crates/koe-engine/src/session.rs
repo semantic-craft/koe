@@ -1828,8 +1828,15 @@ impl TransportSession {
         }
         let ogg_opus_bytes = OggOpus::mux_raw_frames(&self.opus_buffer);
         let slice_count = (self.opus_buffer.len() / OPUS_FRAME_BYTES) as u64;
-        let duration_ms = (slice_count * 20).max(400);
-        let marks_ms = self.marks_ms.clone();
+        let pcm_duration_ms = slice_count * 20;
+        let duration_ms = pcm_duration_ms.max(400);
+        let mut marks_ms: Vec<u64> = self
+            .marks_ms
+            .iter()
+            .map(|&m| m.min(pcm_duration_ms))
+            .collect();
+        marks_ms.sort_unstable();
+        marks_ms.dedup();
         let preview_wav_bytes = OpusWave::decode_raw_frames_to_wav(
             &self.opus_buffer,
             WAV_SAMPLE_RATE,
@@ -2742,5 +2749,41 @@ mod tests {
         let _ = session.ingest_ble_chunk(&offline_head, 1_775_000_003);
         let _ = session.ingest_ble_chunk(&slices_rx, 1_775_000_004);
         assert!(session.take_companion_signals().is_empty());
+    }
+
+    #[test]
+    fn realtime_transfer_clamps_out_of_range_marks_to_duration() {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let sk = [0x71u8; 32];
+        let fk = [0x72u8; 32];
+        let fn_iv = [0x73u8; 16];
+        session.set_session_key(sk);
+
+        let _ = session.start_realtime_recording(Some(9901), 1_775_000_000_000);
+        let head = build_test_head_frame(&sk, 9901, UNFINISHED_FILE_SIZE, &fk, &fn_iv);
+        let _ = session.ingest_ble_chunk(&head, 1_775_000_000);
+
+        let dec = AesCtrStreamDecrypt::new(&fk, &fn_iv).unwrap();
+        let mut payload = Vec::with_capacity(3 * SLICE_RECORD_BYTES);
+        for i in 0..3u32 {
+            let seq = if i == 2 { 50 } else { i };
+            payload.extend_from_slice(&seq.to_le_bytes());
+            payload.push(if i == 2 { 0x01 } else { 0x00 });
+            let mut opus = [0u8; OPUS_FRAME_BYTES];
+            opus[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+                .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+            dec.decrypt_contiguous_in_place(&mut opus, seq);
+            payload.extend_from_slice(&opus);
+            payload.push(0);
+        }
+        let slices_rx = TransportSession::build_rx_frame(0x1A, 0x08, &payload);
+        let outcome = session.ingest_ble_chunk(&slices_rx, 1_775_000_001);
+        assert_eq!(outcome.new_marks_ms, vec![1000]);
+
+        let finalized = session
+            .finalize_active_transfer(1_775_000_002)
+            .expect("must produce finalized recording");
+        assert_eq!(finalized.entry.duration_ms, 400);
+        assert_eq!(finalized.entry.marks_ms, vec![60]);
     }
 }

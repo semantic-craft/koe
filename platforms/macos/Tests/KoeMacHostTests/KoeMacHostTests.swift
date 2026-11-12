@@ -216,4 +216,58 @@ struct KoeMacHostTests {
         #expect(store.snapshot.device.companionMode == "collar_standby")
         #expect(UserDefaults.standard.string(forKey: key) == nil)
     }
+
+    @Test("KoeAppDelegate lazily initializes, caches, and wires HostSessionStore on demand")
+    @MainActor
+    func lazySessionStoreInitialization() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("koe-s-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        var makeCount = 0
+        let delegate = KoeAppDelegate(
+            makeDefaultStore: {
+                makeCount += 1
+                return HostSessionStore(workspacePath: tempDir.path)
+            }
+        )
+        defer { delegate.store?.shutdown() }
+
+        #expect(makeCount == 0)
+        #expect(delegate.store == nil)
+
+        let store1 = delegate.ensureSessionStore()
+        #expect(makeCount == 1)
+        #expect(delegate.store === store1)
+        #expect(delegate.bluetoothBridge.store === store1)
+
+        let socketCandidates = [
+            tempDir.appendingPathComponent(".koe/koe.sock").path,
+            tempDir.appendingPathComponent("koe.sock").path
+        ]
+        #expect(socketCandidates.contains(where: { FileManager.default.fileExists(atPath: $0) }))
+
+        let store2 = delegate.ensureSessionStore()
+        #expect(makeCount == 1)
+        #expect(store2 === store1)
+
+        let preassignedDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: preassignedDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: preassignedDir) }
+        let preassignedStore = HostSessionStore(workspacePath: preassignedDir.path)
+        defer { preassignedStore.shutdown() }
+
+        var preassignedMakeCount = 0
+        let preassignedDelegate = KoeAppDelegate(
+            makeDefaultStore: {
+                preassignedMakeCount += 1
+                return HostSessionStore(workspacePath: tempDir.path)
+            }
+        )
+        preassignedDelegate.store = preassignedStore
+        let retrievedStore = preassignedDelegate.ensureSessionStore()
+        #expect(preassignedMakeCount == 0)
+        #expect(retrievedStore === preassignedStore)
+    }
 }

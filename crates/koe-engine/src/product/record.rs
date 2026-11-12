@@ -16,8 +16,20 @@ impl ProductWorkspace {
             .ok_or(ProductError::UnknownRecord)?;
         record.ensure_live()?;
         record.aggregate.duration_ms = record.aggregate.duration_ms.max(duration_ms);
+        if record.aggregate.duration_ms > 0 {
+            for m in &mut record.aggregate.bookmarks {
+                *m = (*m).min(record.aggregate.duration_ms);
+            }
+            record.aggregate.bookmarks.sort_unstable();
+            record.aggregate.bookmarks.dedup();
+        }
         for &mark in bookmarks {
-            record.aggregate.add_bookmark(mark);
+            let clamped = if record.aggregate.duration_ms > 0 {
+                mark.min(record.aggregate.duration_ms)
+            } else {
+                mark
+            };
+            record.aggregate.add_bookmark(clamped);
         }
         self.changed();
         Ok(())
