@@ -8,6 +8,7 @@ mod audio_policy;
 #[cfg(test)]
 mod audio_policy_tests;
 mod capture;
+mod capture_studio;
 #[cfg(test)]
 mod capture_tests;
 mod command;
@@ -80,6 +81,7 @@ pub struct KoeRuntime {
     pending: BTreeMap<u64, PendingWork>,
     completed: std::collections::VecDeque<koe_client_providers::ProviderEvent>,
     captures: capture::Captures,
+    capture_studio: capture_studio::CaptureStudioState,
     microphone: Option<microphone::Microphone>,
     auto_transcribe: std::collections::BTreeSet<String>,
     auto_summarize: std::collections::BTreeSet<String>,
@@ -122,6 +124,7 @@ impl KoeRuntime {
             pending: BTreeMap::new(),
             completed: std::collections::VecDeque::new(),
             captures: Default::default(),
+            capture_studio: Default::default(),
             microphone: None,
             auto_transcribe: Default::default(),
             auto_summarize: Default::default(),
@@ -161,7 +164,10 @@ impl KoeRuntime {
             serde_json::from_str::<Command>(json)
                 .map_err(|_| "无法识别此操作，请更新 Koe 后重试".to_string())
                 .and_then(|command| {
-                    if !matches!(command, Command::PlaybackProgress { .. }) {
+                    if !matches!(
+                        command,
+                        Command::PlaybackProgress { .. } | Command::SyncAudioInputs { .. }
+                    ) {
                         self.error = None;
                         self.notice = None;
                     }
@@ -208,6 +214,7 @@ impl KoeRuntime {
                     | Command::SelectRecord { .. }
                     | Command::OpenSource { .. }
                     | Command::DeviceEvent { .. }
+                    | Command::SyncAudioInputs { .. }
                     | Command::PlaybackProgress { .. }
                     | Command::MicrophoneStarted { .. }
                     | Command::MicrophonePrepared { .. }
@@ -229,6 +236,8 @@ impl KoeRuntime {
                 include_system,
                 clock_ns,
             } => self.start_microphone(input_id, include_system, clock_ns, now)?,
+            Command::SyncAudioInputs { inputs } => self.sync_audio_inputs(inputs)?,
+            Command::SelectCaptureSource { source } => self.select_capture_source(&source)?,
             Command::PauseMicrophone => self.pause_microphone()?,
             Command::MicrophonePrepared {
                 record_id,
@@ -577,6 +586,9 @@ impl KoeRuntime {
                 self.device.outbound.push(frame);
             }
             Command::DeviceStart => {
+                if self.microphone.is_some() {
+                    return Err("请先结束当前麦克风录音并完成保存".into());
+                }
                 if !self.device.is_connected() {
                     return Err("请先连接录音豆".into());
                 }

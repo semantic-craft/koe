@@ -30,13 +30,14 @@ struct Lane {
 pub(super) struct Microphone {
     record_id: String,
     session_id: String,
-    input_id: String,
+    pub(super) input_id: String,
     created_at: u64,
     clock_ns: Option<u64>,
     epoch: u64,
     epoch_offset_ns: u64,
     phase: Phase,
     lanes: BTreeMap<String, Lane>,
+    pub(super) level: f64,
     pub(super) save_error: Option<String>,
 }
 impl Microphone {
@@ -70,6 +71,11 @@ impl KoeRuntime {
     ) -> Result<(), String> {
         if self.microphone.is_some() {
             return Err("请先结束当前录音并完成保存".into());
+        }
+        if (self.device.session.device_recording_active && !self.companion.standby_stream_owned)
+            || self.device.awaiting_stop
+        {
+            return Err("录音豆正在录音中，请先结束当前录音".into());
         }
         if self.store.requires_reopen() {
             return Err("工作区保存结果未知，请重新打开后录音".into());
@@ -117,6 +123,7 @@ impl KoeRuntime {
             epoch_offset_ns: 0,
             phase: Phase::Starting,
             lanes,
+            level: 0.0,
             save_error: None,
         });
         Ok(())
@@ -151,6 +158,7 @@ impl KoeRuntime {
             return Err("当前录音尚不能暂停".into());
         }
         m.phase = Phase::Pausing;
+        m.level = 0.0;
         Ok(())
     }
     pub(super) fn microphone_paused(
@@ -175,6 +183,7 @@ impl KoeRuntime {
             return Err("仍有音频等待保存".into());
         }
         l.paused = true;
+        m.level = 0.0;
         if m.lanes.values().all(|l| l.paused) {
             m.phase = Phase::Paused;
         }
@@ -212,6 +221,7 @@ impl KoeRuntime {
             if m.phase == Phase::Saving {
                 return Err("正在保存录音，请完成保存后继续".into());
             }
+            m.level = 0.0;
             if cancel {
                 m.phase = Phase::Cancelling;
             } else if !matches!(m.phase, Phase::Cancelling | Phase::CapacityReached) {
@@ -320,8 +330,24 @@ impl KoeRuntime {
                             l.timeline.push(span);
                         }
                     }
+                    if lane == "microphone" {
+                        let sum_sq: f64 = samples
+                            .iter()
+                            .map(|&s| {
+                                let v = f64::from(s) / 32768.0;
+                                v * v
+                            })
+                            .sum();
+                        let rms = if samples.is_empty() {
+                            0.0
+                        } else {
+                            (sum_sq / samples.len() as f64).sqrt()
+                        };
+                        m.level = (rms * 4.0).clamp(0.0, 1.0);
+                    }
                 }
                 Ok(AppendOutcome::CapacityReached) => {
+                    m.level = 0.0;
                     l.interruption = Some(
                         "录音达到 WAV 长度上限，已保留此前收到的音频。请新建录音继续。".into(),
                     );
@@ -333,6 +359,7 @@ impl KoeRuntime {
                     }
                 }
                 Err(error) => {
+                    m.level = 0.0;
                     l.interruption
                         .get_or_insert_with(|| error.chars().take(500).collect());
                     l.save_error = Some(error.clone());
@@ -366,6 +393,7 @@ impl KoeRuntime {
         if l.producer_stopped {
             return;
         }
+        m.level = 0.0;
         l.interruption.get_or_insert_with(|| {
             let text: String = message.trim().chars().take(500).collect();
             if text.is_empty() {
@@ -399,6 +427,7 @@ impl KoeRuntime {
         if sequence != l.next_sequence {
             return Err("仍有音频等待保存".into());
         }
+        m.level = 0.0;
         if !matches!(
             m.phase,
             Phase::Stopping | Phase::CapacityReached | Phase::Cancelling | Phase::Saving
@@ -559,6 +588,6 @@ impl KoeRuntime {
             .unwrap_or(0);
         json!({"recordId":m.record_id,"sessionId":m.session_id,"epoch":m.epoch,"clockNs":m.clock_ns,"lane":"microphone","inputId":m.input_id,
             "phase":match m.phase {Phase::Starting=>"starting",Phase::Recording=>"recording",Phase::Pausing=>"pausing",Phase::Paused=>"paused",Phase::Stopping | Phase::CapacityReached=>"stopping",Phase::Cancelling=>"cancelling",Phase::Saving=>"saving"},
-            "nextSequence":mic.next_sequence,"durationMs":duration_ms,"error":m.save_error,"interruption":mic.interruption,"lanes":lanes})
+            "nextSequence":mic.next_sequence,"durationMs":duration_ms,"level":m.level,"error":m.save_error,"interruption":mic.interruption,"lanes":lanes})
     }
 }

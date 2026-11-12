@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub(crate) enum Page {
     #[default]
     Today,
+    Capture,
     Records,
     Detail,
     Tasks,
@@ -35,6 +36,12 @@ pub(crate) enum Command {
         include_system: bool,
         #[serde(default)]
         clock_ns: Option<u64>,
+    },
+    SyncAudioInputs {
+        inputs: Vec<crate::capture_studio::AudioInputDescriptor>,
+    },
+    SelectCaptureSource {
+        source: String,
     },
     PauseMicrophone,
     MicrophonePrepared {
