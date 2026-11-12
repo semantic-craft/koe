@@ -30,6 +30,24 @@ pub(crate) struct CaptureTiming {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
+    LocalAsrReadiness {
+        state: crate::local_asr::Readiness,
+        message: String,
+    },
+    LocalAsrResult {
+        operation_id: u64,
+        text: String,
+        start_ms: u64,
+        end_ms: u64,
+        is_final: bool,
+    },
+    LocalAsrFinished {
+        operation_id: u64,
+    },
+    LocalAsrFailed {
+        operation_id: u64,
+        message: String,
+    },
     StartMicrophone {
         input_id: String,
         #[serde(default)]

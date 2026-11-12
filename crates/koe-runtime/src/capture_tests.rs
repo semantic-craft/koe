@@ -197,6 +197,8 @@ fn live_words_are_durable_before_stop_and_keep_their_owner_after_selection_chang
     let id = runtime.workspace().records().keys().next().unwrap().clone();
     let before_stop = command(&mut runtime, json!({"type":"select_record","recordId":id}));
     assert_eq!(before_stop["detail"]["segments"][0]["text"], FIRST);
+    assert_eq!(before_stop["liveCaption"]["recordId"], id);
+    assert_eq!(before_stop["liveCaption"]["text"], FIRST);
     assert_eq!(before_stop["device"]["busy"], true);
     assert!(before_stop["detail"]["audioPath"].is_null());
     assert!(fs::read_to_string(dir.0.join("product-workspace.json"))
@@ -228,6 +230,8 @@ fn live_words_are_durable_before_stop_and_keep_their_owner_after_selection_chang
     );
     assert_eq!(corrected.aggregate.spine.segments()[0].id.to_string(), "S1");
     assert_eq!(runtime.snapshot(NOW)["selectedRecordId"], other_id);
+    assert_eq!(runtime.snapshot(NOW)["liveCaption"]["recordId"], id);
+    assert_eq!(runtime.snapshot(NOW)["liveCaption"]["text"], REVISED);
     assert_eq!(
         runtime
             .workspace()
@@ -637,5 +641,316 @@ fn local_capture_is_not_uploaded_automatically_when_cloud_is_enabled_before_stop
             .expect_err("local capture was uploaded after enabling cloud")
             .kind(),
         std::io::ErrorKind::WouldBlock
+    );
+}
+
+fn local_effects(runtime: &mut KoeRuntime) -> Vec<Value> {
+    serde_json::from_str(&runtime.drain_local_asr_json()).unwrap()
+}
+
+fn start_local(runtime: &mut KoeRuntime, file_id: u32) -> (String, u64) {
+    command(
+        runtime,
+        json!({"type":"local_asr_readiness","state":"ready","message":"本机识别已就绪"}),
+    );
+    prepare_capture(runtime, file_id, true);
+    runtime.ingest_ble_chunk(&slices(0..1), NOW);
+    let id = runtime.workspace().records().keys().last().unwrap().clone();
+    let effects = local_effects(runtime);
+    assert_eq!(effects[0]["kind"], "start");
+    assert_eq!(effects[0]["locale"], "zh-CN");
+    assert_eq!(effects[1]["kind"], "audio");
+    assert_eq!(effects[1]["pcm16"].as_array().unwrap().len(), 320);
+    assert!(effects[1]["pcm16"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|sample| sample != 0));
+    (id, effects[0]["operationId"].as_u64().unwrap())
+}
+
+fn local_result(
+    runtime: &mut KoeRuntime,
+    operation: u64,
+    text: &str,
+    start: u64,
+    final_result: bool,
+) -> Value {
+    command(
+        runtime,
+        json!({"type":"local_asr_result","operationId":operation,"text":text,"startMs":start,"endMs":start+20,"isFinal":final_result}),
+    )
+}
+
+#[test]
+fn local_only_words_are_durable_before_hardware_stop() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    command(
+        &mut runtime,
+        json!({"type":"configure_provider","model":"fixture","asrEndpoint":format!("ws://{}",listener.local_addr().unwrap())}),
+    );
+    command(
+        &mut runtime,
+        json!({"type":"set_meeting_audio_policy","policy":"local_only"}),
+    );
+    let (id, operation) = start_local(&mut runtime, 910);
+    command(
+        &mut runtime,
+        json!({"type":"navigate","section":"settings"}),
+    );
+    let partial = local_result(&mut runtime, operation, "未定稿", 0, false);
+    assert_eq!(partial["liveCaption"]["text"], "未定稿");
+    assert!(runtime
+        .workspace()
+        .record(&id)
+        .unwrap()
+        .aggregate
+        .spine
+        .is_empty());
+    let finalized = local_result(&mut runtime, operation, "离线实时文字。", 0, true);
+    assert_eq!(finalized["section"], "settings");
+    assert_eq!(finalized["liveCaption"]["recordId"], id);
+    assert_eq!(finalized["liveCaption"]["text"], "离线实时文字。");
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .segments()[0]
+            .text,
+        "离线实时文字。"
+    );
+    assert!(fs::read_to_string(dir.0.join("product-workspace.json"))
+        .unwrap()
+        .contains("离线实时文字。"));
+    assert!(runtime.device.session.active_file_id.is_some());
+    local_result(&mut runtime, operation, "离线实时文字。", 0, true);
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        1
+    );
+    command(&mut runtime, json!({"type":"navigate","section":"tasks"}));
+    runtime.ingest_ble_chunk(&slices(1..2), NOW);
+    runtime.ingest_ble_chunk(&rx(0x0a, &910u32.to_le_bytes()), NOW);
+    let effects = local_effects(&mut runtime);
+    assert_eq!(
+        effects
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["audio", "finish"]
+    );
+    assert_eq!(runtime.snapshot(NOW)["liveCaption"]["recordId"], id);
+    command(&mut runtime, json!({"type":"request_quit"}));
+    local_result(&mut runtime, operation, "停录后的尾句。", 20, true);
+    command(
+        &mut runtime,
+        json!({"type":"local_asr_finished","operationId":operation}),
+    );
+    runtime.poll_timers(0, NOW);
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        2
+    );
+    assert!(runtime.snapshot(NOW)["liveCaption"].is_null());
+    assert!(runtime.auto_summarize.is_empty());
+    assert_eq!(runtime.snapshot(NOW)["lifecycle"]["quitPhase"], "ready");
+    command(
+        &mut runtime,
+        json!({"type":"local_asr_failed","operationId":operation,"message":"过期失败"}),
+    );
+    assert!(runtime.snapshot(NOW)["error"].is_null());
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    drop(runtime);
+    let reopened = KoeRuntime::open(&dir.0).unwrap();
+    assert_eq!(
+        reopened
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .segments()[1]
+            .text,
+        "停录后的尾句。"
+    );
+    assert!(recording_assets::audio_path(&dir.0, &id).unwrap().exists());
+}
+
+#[test]
+fn local_final_and_finish_wait_for_storage_and_old_callbacks_cannot_touch_new_capture() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let (id, operation) = start_local(&mut runtime, 920);
+    runtime.ingest_ble_chunk(&rx(0x0a, &920u32.to_le_bytes()), NOW);
+    let path = dir.0.join("product-workspace.json");
+    fs::rename(&path, dir.0.join("original.json")).unwrap();
+    fs::create_dir(&path).unwrap();
+    runtime.dispatch_json(&json!({"type":"local_asr_result","operationId":operation,"text":"等待保存的尾句。","startMs":0,"endMs":20,"isFinal":true}).to_string(), NOW);
+    runtime.dispatch_json(
+        &json!({"type":"local_asr_finished","operationId":operation}).to_string(),
+        NOW,
+    );
+    assert!(runtime
+        .workspace()
+        .record(&id)
+        .unwrap()
+        .aggregate
+        .spine
+        .is_empty());
+    assert_eq!(runtime.snapshot(NOW)["liveCaption"]["recordId"], id);
+    fs::remove_dir(&path).unwrap();
+    fs::rename(dir.0.join("original.json"), &path).unwrap();
+    runtime.poll_timers(0, NOW);
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .segments()[0]
+            .text,
+        "等待保存的尾句。"
+    );
+    assert!(!matches!(
+        runtime.workspace().record(&id).unwrap().analysis,
+        AnalysisState::Pending { .. }
+    ));
+    let (_, new_operation) = start_local(&mut runtime, 921);
+    assert_ne!(new_operation, operation);
+    local_result(&mut runtime, operation, "旧的文字", 40, true);
+    command(
+        &mut runtime,
+        json!({"type":"local_asr_failed","operationId":operation,"message":"旧的失败"}),
+    );
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        1
+    );
+    assert_eq!(runtime.snapshot(NOW)["liveCaption"]["text"], "");
+    local_result(&mut runtime, new_operation, "新的文字", 0, true);
+    assert_eq!(runtime.snapshot(NOW)["liveCaption"]["text"], "新的文字");
+    command(
+        &mut runtime,
+        json!({"type":"set_meeting_audio_policy","policy":"local_only"}),
+    );
+    local_result(&mut runtime, new_operation, "仍在本机识别", 20, true);
+    assert_eq!(runtime.snapshot(NOW)["liveCaption"]["text"], "仍在本机识别");
+}
+
+#[test]
+fn local_audio_overflow_and_finish_timeout_keep_audio_and_confirmed_text() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let (id, operation) = start_local(&mut runtime, 930);
+    local_result(&mut runtime, operation, "已识别文字", 0, true);
+    for start in (1..1001).step_by(100) {
+        runtime.ingest_ble_chunk(&slices(start..start + 100), NOW);
+    }
+    let batch = local_effects(&mut runtime);
+    let bytes: usize = batch
+        .iter()
+        .filter_map(|effect| effect["pcm16"].as_array())
+        .map(|samples| samples.len() * 2)
+        .sum();
+    assert!(bytes > 0 && bytes <= 256 * 1024);
+    for start in (1001..4401).step_by(100) {
+        runtime.ingest_ble_chunk(&slices(start..start + 100), NOW);
+    }
+    runtime.poll_timers(0, NOW);
+    assert!(
+        matches!(&runtime.workspace().record(&id).unwrap().analysis, AnalysisState::Failed { message, .. } if message.contains("队列已满"))
+    );
+    let effects = local_effects(&mut runtime);
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["kind"], "cancel");
+    runtime.ingest_ble_chunk(&rx(0x0a, &930u32.to_le_bytes()), NOW);
+    assert!(recording_assets::audio_path(&dir.0, &id).unwrap().exists());
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .len(),
+        1
+    );
+    runtime.poll_timers(0, NOW);
+    let (next_id, next_operation) = start_local(&mut runtime, 931);
+    runtime.ingest_ble_chunk(&rx(0x0a, &931u32.to_le_bytes()), NOW);
+    local_effects(&mut runtime);
+    runtime.poll_timers(15_000, NOW + 15);
+    assert!(
+        matches!(&runtime.workspace().record(&next_id).unwrap().analysis, AnalysisState::Failed { message, .. } if message.contains("超时"))
+    );
+    runtime.dispatch_json(&json!({"type":"local_asr_result","operationId":next_operation,"text":"迟到的尾句","startMs":0,"endMs":20,"isFinal":true}).to_string(), NOW);
+    assert!(runtime
+        .workspace()
+        .record(&next_id)
+        .unwrap()
+        .aggregate
+        .spine
+        .is_empty());
+    assert!(runtime.snapshot(NOW)["liveCaption"].is_null());
+}
+
+#[test]
+fn local_result_queue_overflow_keeps_accepted_finals_until_storage_recovers() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let (id, operation) = start_local(&mut runtime, 940);
+    runtime.ingest_ble_chunk(&rx(0x0a, &940u32.to_le_bytes()), NOW);
+    local_effects(&mut runtime);
+    let path = dir.0.join("product-workspace.json");
+    fs::rename(&path, dir.0.join("original.json")).unwrap();
+    fs::create_dir(&path).unwrap();
+    let text = "字".repeat(10_000);
+    for start in [0, 20, 40] {
+        runtime.dispatch_json(&json!({"type":"local_asr_result","operationId":operation,"text":text,"startMs":start,"endMs":start+20,"isFinal":true}).to_string(), NOW);
+    }
+    assert_eq!(local_effects(&mut runtime)[0]["kind"], "cancel");
+    assert!(runtime
+        .workspace()
+        .record(&id)
+        .unwrap()
+        .aggregate
+        .spine
+        .is_empty());
+    fs::remove_dir(&path).unwrap();
+    fs::rename(dir.0.join("original.json"), &path).unwrap();
+    runtime.poll_timers(0, NOW);
+    let record = runtime.workspace().record(&id).unwrap();
+    assert_eq!(record.aggregate.spine.len(), 2);
+    assert_eq!(record.aggregate.spine.segments()[0].text, text);
+    assert!(
+        matches!(&record.analysis, AnalysisState::Failed { message, .. } if message.contains("超出范围"))
     );
 }

@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-12T15:01:50.568925Z</p>
-<p>Main: <code>main: d6f12d02aab3782b58ae8d78b9fb81b13d1bb719</code></p>
+<p>Observed: 2026-11-12T15:08:55.137710Z</p>
+<p>Main: <code>main: 2e60e8d17a640c5abc4d0d8979e5099fffe4e7fb</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -98,6 +98,10 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/652">issue 652: 配色实现范围与验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift">file platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift: 共享浅色色板。</a></li>
 </ul><p>Next: 日常安装与剩余弹窗验收见 #654。</p></article>
+<article id="bean-offline-live-captions"><h3>录音豆本机实时识别与全局字幕</h3><span class="badge">done</span><p>macOS 26+ 本机中文实时识别与全局字幕已接通；签名版 D3200 实体按键在设置页停止前显示文字，停止后保存并重启读回。真实 Apple 引擎另通过禁止联网测试。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/653">issue 653: 实现范围与自动验证</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/655">issue 655: 真机离线、实体按键与字幕可见性验收</a></li>
+</ul><p>Next: 已安装本机模式。#655 继续追踪运行中切换第二页及隐藏唤窗观察；本轮用户要求保持联网。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
@@ -145,9 +149,9 @@
 <article id="capture-studio-device-acceptance"><h3>独立「录音」页音源切换与实时字幕真机验收</h3><span class="badge">unverified</span><p>本轮已通过 C ABI v2 隔离音源回归、CoreAudio 传输类型分类测试与签名版二进制自检；尚未在真机连接实体 D3200 与蓝牙耳机核对热插拔选源切换、闲置态 A2DP 音质保持、录音期电平跳动与实时字幕提示。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/645">issue 645: 独立真机验收工单，保持开放未验。</a></li>
 </ul><p>Next: 连接实体 D3200 与蓝牙耳机按 #645 逐项核对。</p></article>
-<article id="plaud-light-install"><h3>浅色版日常安装与剩余弹窗验收</h3><span class="badge">blocked</span><p>旧版退出被录音取回失败阻止，已取消退出。未覆盖运行中的 /Applications/Koe.app。</p><ul>
+<article id="plaud-light-install"><h3>浅色版日常安装与剩余弹窗验收</h3><span class="badge">unverified</span><p>本轮已正常退出旧版并安装包含浅色色板与离线字幕的签名版，安装自检通过；连接引导和审核编辑弹窗仍未验。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/654">issue 654: 记录退出阻塞与剩余日常安装验收。</a></li>
-</ul><p>Next: 等待取回及保存完成后安装新版，再核对日常窗口、连接引导和审核编辑弹窗。</p></article>
+</ul><p>Next: 按 #654 继续核对连接引导和审核编辑弹窗。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、系统麦克风全天监听、Google 写回与 ACP 不计入当前 macOS 已接通功能；保留的底层模块不等于界面已实现。</p><ul>

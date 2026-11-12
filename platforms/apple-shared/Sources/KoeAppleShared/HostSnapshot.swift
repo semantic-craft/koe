@@ -339,6 +339,8 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
 }
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
+    public var localAsr: LocalAsrSnapshot? = nil
+    public var liveCaption: LiveCaptionSnapshot? = nil
     public var microphone: MicrophoneSnapshot? = nil
     public var capture: CaptureStudioSnapshot = .empty
     public var lifecycle: LifecycleSnapshot? = nil
@@ -364,6 +366,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let notice: String?
 
     private enum CodingKeys: String, CodingKey {
+        case localAsr, liveCaption
         case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records, todayRecordIds
         case trashRecords, undoTrash, detail, tasks, memories, ask
@@ -393,6 +396,8 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
 extension HostSnapshot {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        localAsr = try c.decodeIfPresent(LocalAsrSnapshot.self, forKey: .localAsr)
+        liveCaption = try c.decodeIfPresent(LiveCaptionSnapshot.self, forKey: .liveCaption)
         microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)
         capture = try c.decodeIfPresent(CaptureStudioSnapshot.self, forKey: .capture) ?? .empty
         lifecycle = try c.decodeIfPresent(LifecycleSnapshot.self, forKey: .lifecycle)

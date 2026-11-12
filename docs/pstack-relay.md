@@ -104,6 +104,12 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 
 ### [ ] Slice ULI: 浅色版日常安装与剩余弹窗验收
 - **Playbook**: `Feature`
-- **Outcome**: 先核对旧版取回与保存是否完成；仅在可以正常退出后安装浅色版，再验连接引导和审核编辑弹窗，更新 #654。不要强制终止或覆盖运行中的应用。
-- **Done Predicate**: ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && python3 progress/progress.py check
+- **Outcome**: 签名浅色版和离线字幕已安装，自检与实体按键实时出字通过。按 #654 补验连接引导和审核编辑弹窗；#655 仅剩运行中第二页及隐藏唤窗观察。不要重复安装或要求用户断网。
+- **Done Predicate**: python3 progress/progress.py check；真实界面观察并记录 #654/#655 尚未覆盖的项目，不把已有证据当作新验收。
 - **Evidence**: issue #654; blocked by existing app quit failure
+
+### [x] Slice OL: 录音豆本机实时识别与全局字幕
+- **Playbook**: `Feature` + `figure-it-out`
+- **Outcome**: macOS 26+ 使用 Apple SpeechAnalyzer 在本机识别 D3200 实时 PCM；Rust 管理请求归属和收尾，当前页面顶部显示字幕，实体录音开始时唤出应用窗口。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check；签名安装版 D3200 实体按键在本机模式下停止前显示真实中文，停止后同一记录保留最终文字，验收 #655。
+- **Evidence**: scripts/check PASS; signed install self-check/smoke PASS; issue #655 comment-6827765221; hardware.jsonl and hardware-final-record.json

@@ -154,18 +154,30 @@
       },
       {
         "number": 652,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-12T15:05:00Z"
+      },
+      {
+        "number": 653,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-12T14:55:20Z"
+        "updated_at": "2026-11-12T14:59:11Z"
       },
       {
         "number": 654,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-12T15:00:26Z"
+        "updated_at": "2026-11-12T15:19:52Z"
+      },
+      {
+        "number": 655,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-12T15:24:17Z"
       }
     ],
-    "main": "d6f12d02aab3782b58ae8d78b9fb81b13d1bb719",
+    "main": "704c3d928fb415891230d06af1e91c965ae18923",
     "open_pulls": [],
     "pulls": [
       {
@@ -300,7 +312,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-12T15:01:50.568925Z",
+  "observed_at": "2026-11-12T15:25:49.711250Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -762,6 +774,25 @@
           "status": "done",
           "summary": "白色内容区、浅灰侧栏、炭黑主按钮及浅色原生控件已实现，布局和功能保持不变。全量门禁与隔离工作区 GUI 验证通过。",
           "title": "PLAUD 风格浅色配色"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "实现范围与自动验证",
+              "ref": 653
+            },
+            {
+              "kind": "issue",
+              "note": "真机离线、实体按键与字幕可见性验收",
+              "ref": 655
+            }
+          ],
+          "id": "bean-offline-live-captions",
+          "next": "已安装本机模式。#655 继续追踪运行中切换第二页及隐藏唤窗观察；本轮用户要求保持联网。",
+          "status": "done",
+          "summary": "macOS 26+ 本机中文实时识别与全局字幕已接通；签名版 D3200 实体按键在设置页停止前显示文字，停止后保存并重启读回。真实 Apple 引擎另通过禁止联网测试。",
+          "title": "录音豆本机实时识别与全局字幕"
         }
       ],
       "title": "当前产品实现"
@@ -993,9 +1024,9 @@
             }
           ],
           "id": "plaud-light-install",
-          "next": "等待取回及保存完成后安装新版，再核对日常窗口、连接引导和审核编辑弹窗。",
-          "status": "blocked",
-          "summary": "旧版退出被录音取回失败阻止，已取消退出。未覆盖运行中的 /Applications/Koe.app。",
+          "next": "按 #654 继续核对连接引导和审核编辑弹窗。",
+          "status": "unverified",
+          "summary": "本轮已正常退出旧版并安装包含浅色色板与离线字幕的签名版，安装自检通过；连接引导和审核编辑弹窗仍未验。",
           "title": "浅色版日常安装与剩余弹窗验收"
         }
       ],
@@ -1051,7 +1082,9 @@
       644,
       645,
       652,
-      654
+      654,
+      653,
+      655
     ],
     "pulls": [
       589,

@@ -61,6 +61,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             files.store = store
             playback.store = store
             capture.store = store
+            localTranscription.store = store
+            lastLiveRecordId = nil
             store?.onSnapshotChanged = { [weak self] snapshot in self?.applyLifecycle(snapshot) }
             if let store {
                 syncAudioInputsIfNeeded(force: true)
@@ -72,6 +74,8 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     let files = NativeFileActions()
     private let playback: NativePlayback
     private let capture = NativeCapture()
+    private let localTranscription = NativeLocalTranscription()
+    private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
     private var lastSyncedInputs: [MicrophoneInput]?
     private var inputSyncTickCounter: UInt8 = 0
@@ -156,6 +160,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         bluetoothBridge.flushOutboundFrames()
         playback.tick()
         capture.apply()
+        localTranscription.apply()
     }
 
     public func syncAudioInputsIfNeeded(
@@ -188,6 +193,11 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         return true
     }
     private func applyLifecycle(_ snapshot: HostSnapshot) {
+        let liveRecordId = snapshot.device.liveRecordId
+        if let liveRecordId, liveRecordId != lastLiveRecordId {
+            KoeWindowPresenter.presentPrimaryWorkspaceWindow()
+        }
+        lastLiveRecordId = liveRecordId
         bluetoothBridge.syncWithRuntimeDevice(store?.snapshot.device ?? snapshot.device)
         playback.tick()
         capture.apply()
@@ -219,6 +229,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         timer?.invalidate()
         playback.stop()
         lifecycle.shutdown()
+        localTranscription.shutdown()
         store?.shutdown()
     }
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { buildStatusMenu() }

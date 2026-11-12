@@ -383,6 +383,20 @@ pub extern "C" fn koe_host_session_drain_ble_tx_json(handle: u64) -> *mut c_char
     })
 }
 
+/// Transfers local speech effects as owned JSON without invoking native callbacks.
+#[unsafe(no_mangle)]
+pub extern "C" fn koe_host_session_drain_local_asr_json(handle: u64) -> *mut c_char {
+    guarded(|| {
+        let Ok(mut table) = sessions().lock() else {
+            return std::ptr::null_mut();
+        };
+        let Some(entry) = table.entries.get_mut(&handle) else {
+            return std::ptr::null_mut();
+        };
+        string(entry.runtime.drain_local_asr_json())
+    })
+}
+
 /// Advances runtime deadlines and publishes completed background results.
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epoch: u64) -> u64 {
@@ -433,7 +447,11 @@ mod tests {
             assert!(text.contains("\"records\":[]"));
             assert!(text.contains("\"version\":2"));
             koe_host_string_free(snapshot);
+            let effects = koe_host_session_drain_local_asr_json(handle);
+            assert_eq!(CStr::from_ptr(effects).to_str().unwrap(), "[]");
+            koe_host_string_free(effects);
             assert!(koe_host_session_destroy(handle));
+            assert!(koe_host_session_drain_local_asr_json(handle).is_null());
             assert_eq!(koe_host_session_generation(handle), 0);
             assert!(!koe_host_session_destroy(handle));
         }

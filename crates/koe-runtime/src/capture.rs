@@ -1,4 +1,5 @@
 use super::*;
+use crate::local_asr::{LocalPhase, LocalSession, Readiness, MAX_MESSAGE_BYTES};
 use koe_client_providers::{LiveEvent, LiveTranscription, ProviderConfig, DASHSCOPE_ASR_MODEL};
 use koe_client_services::product_store::StoreError;
 use koe_engine::session::CaptureEvent;
@@ -13,6 +14,7 @@ enum CaptureTranscription {
 pub(super) struct Capture {
     transcription: CaptureTranscription,
     stream: Option<LiveTranscription>,
+    local: Option<LocalSession>,
     results: VecDeque<LiveEvent>,
     saved: bool,
     terminal: bool,
@@ -29,12 +31,25 @@ pub(super) struct Captures {
 }
 
 impl KoeRuntime {
+    /// Transfers a bounded FIFO batch of local speech effects to the native adapter.
+    pub fn drain_local_asr_json(&mut self) -> String {
+        for capture in self.captures.sessions.values_mut() {
+            if let Some(local) = &mut capture.local {
+                if matches!(local.phase, local_asr::LocalPhase::Active) {
+                    local.elapsed_ms = 0;
+                }
+            }
+        }
+        self.local_asr.drain()
+    }
+
     pub(super) fn process_capture_events(&mut self, now: u64) -> Result<(), String> {
         while let Some(event) = self.device.captures.front().cloned() {
             match event {
                 CaptureEvent::Started { file_id } => {
                     if self.treats_file_as_standby(file_id) {
-                        if self.companion.standby_stream_owned || self.companion.pending_standby_stop
+                        if self.companion.standby_stream_owned
+                            || self.companion.pending_standby_stop
                         {
                             self.companion.active_standby_file_id = Some(file_id);
                         }
@@ -55,7 +70,8 @@ impl KoeRuntime {
                     if !self.captures.active.contains_key(&file_id)
                         && self.treats_file_as_standby(file_id)
                     {
-                        if self.companion.standby_stream_owned || self.companion.pending_standby_stop
+                        if self.companion.standby_stream_owned
+                            || self.companion.pending_standby_stop
                         {
                             self.companion.active_standby_file_id = Some(file_id);
                         }
@@ -75,6 +91,15 @@ impl KoeRuntime {
                     capture.captured_pcm_bytes = capture
                         .captured_pcm_bytes
                         .saturating_add(pcm16.len() as u64);
+                    if let Some(local) = &capture.local {
+                        if matches!(local.phase, LocalPhase::Active) {
+                            if let Err(error) = self.local_asr.audio(local.operation_id, &pcm16) {
+                                self.local_asr.cancel(local.operation_id);
+                                capture.local.as_mut().unwrap().phase = LocalPhase::Closed;
+                                capture.results.push_back(LiveEvent::Failed(error));
+                            }
+                        }
+                    }
                     if let Some(stream) = &mut capture.stream {
                         for chunk in pcm16.chunks(64 * 1024) {
                             if let Err(error) = stream.push_audio(chunk.to_vec()) {
@@ -104,6 +129,13 @@ impl KoeRuntime {
                         .as_ref()
                         .and_then(|id| self.captures.sessions.get_mut(id))
                     {
+                        if let Some(local) = &mut capture.local {
+                            if matches!(local.phase, LocalPhase::Active) {
+                                local.phase = LocalPhase::Finishing;
+                                local.elapsed_ms = 0;
+                                self.local_asr.finish(local.operation_id);
+                            }
+                        }
                         if let Some(stream) = &capture.stream {
                             if let Err(error) = stream.finish() {
                                 capture.results.push_back(LiveEvent::Failed(error));
@@ -136,17 +168,10 @@ impl KoeRuntime {
                 0,
             )
         })?;
-        let upload_error = self.ensure_meeting_audio_upload().err();
-        if let Some(error) = &upload_error {
-            self.notice = Some(error.clone());
-        }
         let capture = Capture {
-            transcription: if upload_error.is_none() {
-                CaptureTranscription::Unstarted
-            } else {
-                CaptureTranscription::Revoked
-            },
+            transcription: CaptureTranscription::Unstarted,
             stream: None,
+            local: None,
             results: VecDeque::new(),
             saved: false,
             terminal: false,
@@ -164,6 +189,40 @@ impl KoeRuntime {
             matches!(c.transcription, CaptureTranscription::Unstarted) && !c.terminal
         });
         if !needs_start {
+            return Ok(());
+        }
+        if self
+            .workspace()
+            .provider_configuration()
+            .meeting_audio_policy
+            == MeetingAudioPolicy::LocalOnly
+        {
+            if self.store.requires_reopen() || self.audio_policy_error.is_some() {
+                return Err("工作区保存结果尚未确认，请重新打开 Koe".into());
+            }
+            let key = self.commit(|w| w.begin_analysis(id, AnalysisStage::Transcribing))?;
+            let operation_id = self.next_job;
+            self.next_job += 1;
+            let capture = self.captures.sessions.get_mut(id).unwrap();
+            capture.transcription = CaptureTranscription::Started(key);
+            capture.local = Some(LocalSession {
+                operation_id,
+                phase: LocalPhase::Active,
+                draft: String::new(),
+                elapsed_ms: 0,
+            });
+            if self.local_asr.state == Readiness::Unavailable {
+                capture.local.as_mut().unwrap().phase = LocalPhase::Closed;
+                capture.results.push_back(LiveEvent::Failed(format!(
+                    "本机语音识别不可用：{}；原始录音已保留",
+                    self.local_asr.message
+                )));
+            } else {
+                self.local_asr.start(operation_id);
+            }
+            if self.local_asr.state == Readiness::Unavailable {
+                self.poll_captures();
+            }
             return Ok(());
         }
         if let Err(error) = self.ensure_meeting_audio_upload() {
@@ -206,6 +265,226 @@ impl KoeRuntime {
         Ok(())
     }
 
+    pub(super) fn local_asr_readiness(
+        &mut self,
+        state: Readiness,
+        message: String,
+    ) -> Result<(), String> {
+        if message.len() > MAX_MESSAGE_BYTES {
+            return Err("本机识别状态内容过大".into());
+        }
+        self.local_asr.state = state;
+        self.local_asr.message = message;
+        if state == Readiness::Unavailable {
+            let operations: Vec<_> = self
+                .captures
+                .sessions
+                .values()
+                .filter_map(|c| c.local.as_ref())
+                .filter(|l| !matches!(l.phase, LocalPhase::Closed))
+                .map(|l| l.operation_id)
+                .collect();
+            for operation in operations {
+                self.local_asr_failed(
+                    operation,
+                    format!(
+                        "本机语音识别不可用：{}；原始录音已保留",
+                        self.local_asr.message
+                    ),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn local_asr_result(
+        &mut self,
+        operation_id: u64,
+        text: String,
+        start_ms: u64,
+        end_ms: u64,
+        is_final: bool,
+    ) -> Result<(), String> {
+        let Some(capture) = self.captures.sessions.values_mut().find(|c| {
+            c.local.as_ref().is_some_and(|l| {
+                l.operation_id == operation_id && !matches!(l.phase, LocalPhase::Closed)
+            })
+        }) else {
+            return Ok(());
+        };
+        let queued_bytes: usize = capture
+            .results
+            .iter()
+            .map(|event| match event {
+                LiveEvent::Final { segment, .. } => segment.text.len(),
+                LiveEvent::Failed(error) => error.len(),
+                _ => 0,
+            })
+            .sum();
+        if text.len().saturating_add(queued_bytes) > MAX_MESSAGE_BYTES
+            || capture.results.len() >= 1024
+            || start_ms > end_ms
+        {
+            self.local_asr_failed(
+                operation_id,
+                "本机识别结果超出范围，原始录音和已识别文字仍会保留".into(),
+            );
+            return Ok(());
+        }
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        let local = capture.local.as_mut().unwrap();
+        local.elapsed_ms = 0;
+        if is_final {
+            local.draft.clear();
+            capture.results.push_back(LiveEvent::Final {
+                sequence: start_ms,
+                segment: koe_client_providers::TranscriptSegment {
+                    start_ms,
+                    end_ms,
+                    text,
+                },
+            });
+            self.poll_captures();
+        } else {
+            local.draft = text;
+        }
+        Ok(())
+    }
+
+    pub(super) fn local_asr_finished(&mut self, operation_id: u64) {
+        if let Some(capture) = self.captures.sessions.values_mut().find(|c| {
+            c.local.as_ref().is_some_and(|l| {
+                l.operation_id == operation_id && matches!(l.phase, LocalPhase::Finishing)
+            })
+        }) {
+            let local = capture.local.as_mut().unwrap();
+            local.phase = LocalPhase::Closed;
+            local.draft.clear();
+            capture.results.push_back(LiveEvent::Finished);
+            self.local_asr.complete(operation_id);
+            self.poll_captures();
+        }
+    }
+
+    pub(super) fn local_asr_failed(&mut self, operation_id: u64, message: String) {
+        if let Some(capture) = self.captures.sessions.values_mut().find(|c| {
+            c.local.as_ref().is_some_and(|l| {
+                l.operation_id == operation_id && !matches!(l.phase, LocalPhase::Closed)
+            })
+        }) {
+            let local = capture.local.as_mut().unwrap();
+            local.phase = LocalPhase::Closed;
+            self.local_asr.cancel(operation_id);
+            let message = if message.len() <= MAX_MESSAGE_BYTES {
+                message
+            } else {
+                "本机语音识别失败，原始录音已保留".into()
+            };
+            capture.results.push_back(LiveEvent::Failed(message));
+            self.poll_captures();
+        }
+    }
+
+    pub(super) fn tick_local_asr(&mut self, elapsed_ms: u64) {
+        let mut timed_out = Vec::new();
+        for capture in self.captures.sessions.values_mut() {
+            if let Some(local) = &mut capture.local {
+                if matches!(local.phase, LocalPhase::Closed) {
+                    continue;
+                }
+                local.elapsed_ms = local.elapsed_ms.saturating_add(elapsed_ms);
+                if local.elapsed_ms >= 15_000 {
+                    timed_out.push(local.operation_id);
+                }
+            }
+        }
+        for operation in timed_out {
+            self.local_asr_failed(
+                operation,
+                "本机识别响应超时，原始录音和已识别文字仍会保留".into(),
+            );
+        }
+    }
+
+    pub(super) fn live_caption_json(&self) -> Value {
+        let capture = self
+            .captures
+            .active
+            .values()
+            .find_map(|id| self.captures.sessions.get_key_value(id))
+            .or_else(|| {
+                self.captures
+                    .sessions
+                    .iter()
+                    .find(|(_, c)| !c.terminal || !c.results.is_empty())
+            });
+        let Some((id, capture)) = capture else {
+            return Value::Null;
+        };
+        let Some(record) = self.workspace().record(id) else {
+            return Value::Null;
+        };
+        let text = capture
+            .local
+            .as_ref()
+            .filter(|local| !local.draft.is_empty())
+            .map(|local| local.draft.as_str())
+            .or_else(|| {
+                record
+                    .aggregate
+                    .spine
+                    .segments()
+                    .last()
+                    .map(|s| s.text.as_str())
+            })
+            .unwrap_or("");
+        let text: String = text
+            .chars()
+            .rev()
+            .take(120)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let finishing = !self.captures.active.values().any(|active| active == id);
+        let status = match &record.analysis {
+            AnalysisState::Failed { message, .. } => message.as_str(),
+            _ if finishing => "正在保存最后的字幕",
+            _ if self
+                .workspace()
+                .provider_configuration()
+                .meeting_audio_policy
+                == MeetingAudioPolicy::LocalOnly
+                && self.local_asr.state == Readiness::Unavailable =>
+            {
+                self.local_asr.message.as_str()
+            }
+            _ if self
+                .workspace()
+                .provider_configuration()
+                .meeting_audio_policy
+                == MeetingAudioPolicy::LocalOnly
+                && self.local_asr.state == Readiness::Preparing =>
+            {
+                "正在准备本机语音识别"
+            }
+            _ if capture.local.is_some()
+                || self
+                    .workspace()
+                    .provider_configuration()
+                    .meeting_audio_policy
+                    == MeetingAudioPolicy::LocalOnly =>
+            {
+                "正在本机实时转写"
+            }
+            _ if capture.terminal => "录音中，未启用实时转写",
+            _ => "正在云端实时转写",
+        };
+        serde_json::json!({"recordId": id, "text": text, "status": status})
+    }
+
     pub(super) fn capture_saved(&mut self, id: &str) -> bool {
         if let Some(capture) = self.captures.sessions.get_mut(id) {
             capture.saved = true;
@@ -214,8 +493,20 @@ impl KoeRuntime {
         false
     }
 
-    pub(super) fn cancel_meeting_captures(&mut self) {
+    pub(super) fn local_capture_record_ids(&self) -> std::collections::BTreeSet<String> {
+        self.captures
+            .sessions
+            .iter()
+            .filter(|(_, capture)| capture.local.is_some())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub(super) fn cancel_cloud_captures(&mut self) {
         for capture in self.captures.sessions.values_mut() {
+            if capture.local.is_some() {
+                continue;
+            }
             capture.stream = None;
             capture.transcription = CaptureTranscription::Revoked;
             capture.results.clear();
@@ -243,7 +534,11 @@ impl KoeRuntime {
                             &segment.text,
                             segment.start_ms,
                             segment.end_ms,
-                            "dashscope-live",
+                            if capture.local.is_some() {
+                                "apple-speech-live"
+                            } else {
+                                "dashscope-live"
+                            },
                         )
                         .map(|_| ()),
                     LiveEvent::Finished => {
@@ -295,7 +590,7 @@ impl KoeRuntime {
                     }
                 }
             }
-            if capture.saved && capture.terminal && capture.success {
+            if capture.saved && capture.terminal && capture.success && capture.local.is_none() {
                 self.auto_summarize.insert(id.clone());
             }
         }

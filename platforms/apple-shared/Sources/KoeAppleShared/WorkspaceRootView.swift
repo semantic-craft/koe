@@ -17,6 +17,9 @@ public struct KoeWorkspaceRootView: View {
             Rectangle().fill(AppColors.border).frame(width: 1)
             VStack(spacing: 0) {
                 toolbar
+                if let caption = store.snapshot.liveCaption {
+                    LiveCaptionBar(caption: caption, store: store)
+                }
                 if let message = store.nativeError ?? store.snapshot.error {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.circle")
