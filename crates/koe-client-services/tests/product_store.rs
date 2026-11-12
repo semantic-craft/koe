@@ -593,3 +593,81 @@ fn rename_speaker_keeps_near_cap_minutes_immutable_without_corrupting_numbers_or
     assert!(!mins.overview.contains("Alexandria_Product_Lead"));
     assert_eq!(mins.decisions[0].speaker.as_deref(), Some("1"));
 }
+
+#[test]
+fn companion_fields_and_edited_segments_round_trip_and_accept_legacy_json() {
+    let dir = Directory::new();
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    seed(&mut store);
+    store
+        .transact(|w| {
+            let minutes = koe_engine::minutes::parse_meeting_minutes_json(
+                r#"{"schemaVersion":2,"title":"a","overview":"alpha decision","topics":[{"text":"alpha","summary":"alpha decision","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#,
+                &w.record("a").unwrap().aggregate.spine,
+            )
+            .unwrap();
+            let key = w.begin_analysis("a", AnalysisStage::Summarizing)?;
+            w.complete_summary(&key, minutes)?;
+            w.edit_segment_text(&source("a"), "alpha decision edited")?;
+            w.set_ble_auto_connect(false);
+            w.set_companion_mode(CompanionRoutingMode::CollarStandby);
+            w.record_standby_scratch_file_id(9101);
+            w.record_standby_scratch_file_id(9102);
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+
+    let reopened = ProductStore::open(&dir.0).unwrap();
+    let ws = reopened.workspace();
+    assert!(!ws.ble_auto_connect());
+    assert_eq!(ws.companion_mode(), CompanionRoutingMode::CollarStandby);
+    assert_eq!(
+        ws.standby_scratch_file_ids()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![9101, 9102]
+    );
+    assert_eq!(
+        ws.resolve_source(&source("a")).unwrap().quote,
+        "alpha decision edited"
+    );
+    assert!(ws.record("a").unwrap().is_minutes_stale());
+    drop(reopened);
+
+    let json_path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let baseline = fs::read_to_string(&json_path).unwrap();
+
+    let mut legacy_val: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    let obj = legacy_val.as_object_mut().unwrap();
+    obj.remove("ble_auto_connect");
+    obj.remove("companion_mode");
+    obj.remove("standby_scratch_file_ids");
+    fs::write(&json_path, serde_json::to_string(&legacy_val).unwrap()).unwrap();
+
+    let legacy = ProductStore::open(&dir.0).unwrap();
+    assert!(legacy.workspace().ble_auto_connect());
+    assert_eq!(
+        legacy.workspace().companion_mode(),
+        CompanionRoutingMode::Disabled
+    );
+    assert!(legacy.workspace().standby_scratch_file_ids().is_empty());
+    drop(legacy);
+
+    let mut bad_mode: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    bad_mode["companion_mode"] = serde_json::json!("bogus_mode");
+    fs::write(&json_path, serde_json::to_string(&bad_mode).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+
+    let mut bad_scratch: serde_json::Value = serde_json::from_str(&baseline).unwrap();
+    bad_scratch["standby_scratch_file_ids"] = serde_json::json!([0]);
+    fs::write(&json_path, serde_json::to_string(&bad_scratch).unwrap()).unwrap();
+    assert!(matches!(
+        ProductStore::open(&dir.0),
+        Err(StoreError::InvalidData(_))
+    ));
+}

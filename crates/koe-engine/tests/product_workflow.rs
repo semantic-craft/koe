@@ -222,3 +222,85 @@ fn summary_candidates_keep_due_dates_and_do_not_overwrite_user_edits() {
     assert_eq!(w.items().len(), 1);
     assert_eq!(w.items()[&id].due.as_deref(), Some("2026-11-13"));
 }
+
+#[test]
+fn companion_preferences_scratch_ledger_and_transcript_editing_preserve_invariants() {
+    let mut w = workspace();
+    assert!(w.ble_auto_connect());
+    assert_eq!(w.companion_mode(), CompanionRoutingMode::Disabled);
+    assert_eq!(
+        CompanionRoutingMode::parse("collar_standby"),
+        Some(CompanionRoutingMode::CollarStandby)
+    );
+    assert_eq!(
+        CompanionRoutingMode::parse("meeting_and_collar"),
+        Some(CompanionRoutingMode::MeetingAndCollar)
+    );
+    assert_eq!(CompanionRoutingMode::parse("unknown"), None);
+
+    w.set_ble_auto_connect(false);
+    w.set_companion_mode(CompanionRoutingMode::CollarStandby);
+    w.record_standby_scratch_file_id(0);
+    assert!(w.standby_scratch_file_ids().is_empty());
+    w.record_standby_scratch_file_id(501);
+    assert!(w.is_standby_scratch_file(501));
+
+    let mut bad_state = w.export_state();
+    bad_state.standby_scratch_file_ids.insert(0);
+    assert_eq!(
+        ProductWorkspace::restore(bad_state),
+        Err(ProductError::InvalidEvidence)
+    );
+
+    w.record_purged_bean_file_id(501);
+    assert!(!w.is_standby_scratch_file(501));
+    assert!(w.is_bean_file_purged(501));
+
+    w.append_transcript("a", "alpha draft", 0, 1_000, "manual")
+        .unwrap();
+    w.append_transcript("a", "beta draft", 1_000, 2_000, "manual")
+        .unwrap();
+    w.set_segment_speaker(&source("a", 1), Some("Speaker 1"))
+        .unwrap();
+    w.set_segment_speaker(&source("a", 2), Some("Speaker 1"))
+        .unwrap();
+
+    let key = w.begin_analysis("a", AnalysisStage::Transcribing).unwrap();
+    assert_eq!(
+        w.edit_segment_text(&source("a", 1), "blocked while transcribing"),
+        Err(ProductError::Busy)
+    );
+    w.finish_transcription(&key).unwrap();
+
+    let sum_key = w.begin_analysis("a", AnalysisStage::Summarizing).unwrap();
+    let initial_minutes = minutes(&w, "a");
+    w.complete_summary(&sum_key, initial_minutes).unwrap();
+    assert!(matches!(
+        w.record("a").unwrap().analysis,
+        AnalysisState::Ready { .. }
+    ));
+
+    let rev_before_noop = w.revision();
+    w.edit_segment_text(&source("a", 1), "alpha draft").unwrap();
+    assert_eq!(w.revision(), rev_before_noop);
+    assert!(!w.record("a").unwrap().is_minutes_stale());
+
+    w.edit_segment_text(&source("a", 1), "alpha corrected")
+        .unwrap();
+    assert_eq!(
+        w.resolve_source(&source("a", 1)).unwrap().quote,
+        "alpha corrected"
+    );
+    assert!(w.record("a").unwrap().is_minutes_stale());
+
+    let renamed = w.rename_speaker("a", "Speaker 1", "Alice").unwrap();
+    assert_eq!(renamed.updated_segments, 2);
+    for seg in w.record("a").unwrap().aggregate.spine.segments() {
+        assert_eq!(seg.speaker.as_deref(), Some("Alice"));
+    }
+
+    let restored = ProductWorkspace::restore(w.export_state()).unwrap();
+    assert!(!restored.ble_auto_connect());
+    assert_eq!(restored.companion_mode(), CompanionRoutingMode::CollarStandby);
+    assert!(restored.is_bean_file_purged(501));
+}

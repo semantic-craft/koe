@@ -20,6 +20,9 @@ impl KoeRuntime {
         }
         self.quit = QuitState::Draining;
         let _ = self.stop_microphone(false);
+        if self.companion.standby_stream_owned {
+            let _ = self.stop_owned_standby_stream();
+        }
         let session = &self.device.session;
         if self.device.awaiting_stop
             || session.device_recording_active

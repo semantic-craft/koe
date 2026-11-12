@@ -233,6 +233,13 @@ pub(crate) enum Command {
     DeviceCloseGuide,
     DeviceRefresh,
     DeviceDisconnect,
+    DeviceRelease,
+    SetBleAutoConnect {
+        enabled: bool,
+    },
+    SetCompanionMode {
+        mode: String,
+    },
     DeviceDownload {
         file_id: u32,
     },

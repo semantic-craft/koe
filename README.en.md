@@ -36,7 +36,7 @@ Mac microphone recording supports pause and resume. Pausing drains accepted audi
 - Development builds, explicit workspaces, and any `KOE_CREDENTIAL_SOURCE` override use session-only isolated credentials. The default development workspace is `KoeWorkspaceDevelopment`. No personal `.env` or `.envrc` is read. Real signed upgrade verification remains pending in [#603](https://github.com/semantic-craft/koe/issues/603).
 - Meeting audio stays on this device by default, including older workspaces without an explicit policy. This blocks live, downloaded, and imported meeting audio from cloud transcription. On-device speech recognition is not connected yet and is reported as unavailable. Disabling the setting permits cloud transcription; cancelled work needs an explicit retry. Text summaries and questions can still use cloud services. Previously uploaded audio cannot be recalled. Signed-app and device acceptance remains in [#608](https://github.com/semantic-craft/koe/issues/608).
 - Request state is saved before cloud work begins. Completion requires saving the returned result. Restarted applications mark unfinished work as interrupted; they do not automatically resend paid requests. Configure the provider again and explicitly retry.
-- A workspace has one writer. Only one GUI, CLI, or MCP process can open it at a time. Closing the window keeps the app running; quit Koe with `⌘Q` before using the CLI.
+- A workspace has a single storage writer. While Koe is running, it serves an owner-private `.koe/koe.sock` local bridge inside its container so CLI and MCP processes share the live session without lock contention; when Koe is closed, CLI and MCP open the workspace lock directly.
 
 ## Build and run
 
@@ -64,16 +64,17 @@ The quick gate checks script, UI, progress, and Rust compile/lint contracts. The
 
 ## CLI and MCP
 
-The CLI uses the same `KoeRuntime` and workspace as the native application. After quitting the GUI:
+The CLI and MCP stdio share the same `KoeRuntime` and workspace as the native application, connecting over the live `koe.sock` bridge when Koe is running and falling back to opening the workspace directly when Koe is closed:
 
 ```bash
 cargo run --package koe-cli -- status
 cargo run --package koe-cli -- search "product decisions"
 cargo run --package koe-cli -- ask "what should happen next"
 cargo run --package koe-cli -- mcp-stdio
+cargo run --package koe-cli -- companion-listen
 ```
 
-Use `--workspace <directory>` for another library and `--record <ID>` to scope `search` or `ask`. MCP stdio exposes `search`, `get_record`, and `ask`; `ask` also saves conversation history. A separate CLI/MCP process uses isolated credentials and does not read the GUI's system credentials and currently uses local source retrieval. Stop the MCP process before reopening that workspace in the GUI.
+Use `--workspace <directory>` for another library and `--record <ID>` to scope `search` or `ask`. MCP stdio exposes 16 tools covering search, today brief, record inspection, grounded Q&A, task/memory review, note creation, segment annotation and transcript editing, reversible archive/trash management, device status/control, and generation polling, without exposing permanent purge. Settings and `companion-listen` also provide D3200 collar standby, dual front-double-tap and host-shortcut `16 kHz` `PCM16` capture streaming, and Bluetooth control handoff; physical device acceptance is tracked in [#641](https://github.com/semantic-craft/koe/issues/641). Offline CLI/MCP runs use isolated credentials and do not read the GUI's system credentials.
 
 ## Architecture
 

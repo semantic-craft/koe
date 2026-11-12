@@ -9,6 +9,17 @@ public enum KoeSelfCheckRunner {
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
         guard store.handle != 0, store.snapshot.records.isEmpty else { return fail("initial workspace") }
+        guard store.snapshot.device.autoConnect == true,
+              store.snapshot.device.companionMode == "disabled",
+              store.snapshot.device.standbyReady == false else { return fail("initial companion state") }
+        store.send("set_companion_mode", ["mode": "collar_standby"])
+        guard store.snapshot.device.companionMode == "collar_standby" else { return fail("set companion mode") }
+        store.send("device_release")
+        guard store.snapshot.device.autoConnect == false else { return fail("device release") }
+        store.send("set_ble_auto_connect", ["enabled": true])
+        store.send("set_companion_mode", ["mode": "disabled"])
+        guard store.snapshot.device.autoConnect == true,
+              store.snapshot.device.companionMode == "disabled" else { return fail("restore companion defaults") }
         store.send("create_note", [
             "title": "Architecture review",
             "text": "Keep recording ownership in Rust. The native host renders snapshots.\nVerify speaker merge and reversible inline edits."
@@ -101,6 +112,8 @@ public enum KoeSelfCheckRunner {
         store.send("save_memory", ["recordId": detail.id, "segmentId": segment.id])
         guard let memory = store.snapshot.memories.first else { store.shutdown(); return fail("save memory") }
         store.send("review_item", ["itemId": memory.id, "decision": "accept"])
+        store.send("set_companion_mode", ["mode": "meeting_and_collar"])
+        store.send("set_ble_auto_connect", ["enabled": false])
         store.shutdown()
         let restored = HostSessionStore(workspacePath: directory.path)
         defer { restored.shutdown() }
@@ -108,6 +121,8 @@ public enum KoeSelfCheckRunner {
         guard restored.snapshot.records.count == 1,
               restored.snapshot.detail?.segments == detail.segments,
               restored.snapshot.memories.contains(where: { $0.id == memory.id && $0.state == "accepted" }),
+              restored.snapshot.device.companionMode == "meeting_and_collar",
+              restored.snapshot.device.autoConnect == false,
               restored.snapshot.error == nil, restored.nativeError == nil else { return fail("restore saved state") }
         print("koe-smoke-test: PASS (version=2, persisted_record=1, accepted_memory=1)")
         return 0

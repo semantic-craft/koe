@@ -103,12 +103,21 @@ impl TransportSliceProcessor {
         decryptor: Option<&AesCtrStreamDecrypt>,
         min_sequence: u32,
     ) -> UnpackedSliceBatch {
+        Self::unpack_frame_with_sequences(frame, decryptor, min_sequence).0
+    }
+
+    pub(crate) fn unpack_frame_with_sequences(
+        frame: &[u8],
+        decryptor: Option<&AesCtrStreamDecrypt>,
+        min_sequence: u32,
+    ) -> (UnpackedSliceBatch, Vec<u32>) {
         if frame.len() < 9 + 165 {
-            return UnpackedSliceBatch::default();
+            return (UnpackedSliceBatch::default(), Vec::new());
         }
         let max_slices = (frame.len() - 9) / 165;
         let mut opus_bytes = Vec::with_capacity(max_slices * OPUS_FRAME_BYTES);
         let mut marked_sequences = Vec::new();
+        let mut slice_sequences = Vec::with_capacity(max_slices);
         let mut slice_count = 0usize;
         let mut next_min_seq = min_sequence;
 
@@ -130,6 +139,7 @@ impl TransportSliceProcessor {
                 continue;
             }
             next_min_seq = seq.saturating_add(1);
+            slice_sequences.push(seq);
             if SliceMark::is_mark(flags) {
                 marked_sequences.push(seq);
             }
@@ -148,11 +158,14 @@ impl TransportSliceProcessor {
             }
         }
 
-        UnpackedSliceBatch {
-            opus_bytes,
-            marked_sequences,
-            slice_count,
-        }
+        (
+            UnpackedSliceBatch {
+                opus_bytes,
+                marked_sequences,
+                slice_count,
+            },
+            slice_sequences,
+        )
     }
 }
 

@@ -18,6 +18,8 @@ koe-client-providers = { path = "../koe-client-providers" }
 koe-client-services = { path = "../koe-client-services" }
 koe-engine = { path = "../koe-engine" }
 koe-runtime = { path = "../koe-runtime" }
+libc = "0.2"
+serde_json = "1"
 
 [lints]
 workspace = true

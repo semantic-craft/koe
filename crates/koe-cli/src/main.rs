@@ -1,15 +1,18 @@
 #![forbid(unsafe_code)]
 
+mod bridge_client;
 mod mcp;
 mod protocol;
 
-use koe_engine::product::{Evidence, SearchScope};
+use bridge_client::BridgeClient;
+use koe_engine::product::SearchScope;
 use koe_runtime::KoeRuntime;
+use mcp::McpBackend;
 use serde_json::{json, Value};
 use std::{
     env,
     path::PathBuf,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 struct Options {
@@ -19,6 +22,9 @@ struct Options {
     record: Option<String>,
     limit: usize,
     safe: bool,
+    no_auto_gate: bool,
+    max_events: Option<usize>,
+    timeout_ms: Option<u64>,
 }
 
 impl Options {
@@ -31,6 +37,9 @@ impl Options {
             record: None,
             limit: 10,
             safe: false,
+            no_auto_gate: false,
+            max_events: None,
+            timeout_ms: None,
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -47,6 +56,23 @@ impl Options {
                     if !(1..=100).contains(&options.limit) {
                         return Err("结果数量必须在 1 到 100 之间".into());
                     }
+                }
+                "--no-auto-gate" => options.no_auto_gate = true,
+                "--max-events" => {
+                    options.max_events = Some(
+                        args.next()
+                            .ok_or("缺少 --max-events 参数值")?
+                            .parse()
+                            .map_err(|_| "--max-events 必须是非负整数")?,
+                    );
+                }
+                "--timeout-ms" => {
+                    options.timeout_ms = Some(
+                        args.next()
+                            .ok_or("缺少 --timeout-ms 参数值")?
+                            .parse()
+                            .map_err(|_| "--timeout-ms 必须是非负整数")?,
+                    );
                 }
                 "--safe" => options.safe = true,
                 "-h" | "--help" => options.command = "help".into(),
@@ -83,7 +109,9 @@ impl Options {
         let home = env::var_os("HOME")
             .filter(|s| !s.is_empty())
             .ok_or("无法确定用户目录，请传入 --workspace")?;
-        Ok(PathBuf::from(home).join("Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace"))
+        Ok(PathBuf::from(home).join(
+            "Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace",
+        ))
     }
 
     fn scope(&self) -> SearchScope {
@@ -138,177 +166,211 @@ fn run() -> Result<(), String> {
             protocol::run_benchmark(!options.safe);
             return Ok(());
         }
+        "companion-listen" => {
+            let workspace_path = options.path()?;
+            let client = BridgeClient::try_connect(&workspace_path)?
+                .ok_or_else(|| "未检测到运行中的 Koe 会话，请先启动 Koe.app".to_string())?;
+            return client.listen_companion(
+                !options.no_auto_gate,
+                options.max_events,
+                options.timeout_ms,
+            );
+        }
         "status" | "doctor" | "search" | "ask" | "edit-segment" | "set-speaker"
         | "rename-speaker" | "mcp-stdio" => {}
         other => return Err(format!("未知命令：{other}；运行 koe --help 查看用法")),
     }
-    let mut runtime = KoeRuntime::open(options.path()?)?;
+
+    let workspace_path = options.path()?;
+    if let Some(mut client) = BridgeClient::try_connect(&workspace_path)? {
+        let output = match options.command.as_str() {
+            "status" => client.status()?,
+            "doctor" => client.doctor()?,
+            "search" => run_search(
+                &options.words.join(" "),
+                &options.scope(),
+                options.limit,
+                |name, args| client.call_tool_value(name, args),
+            )?,
+            "ask" => run_ask(&options.words.join(" "), &options.scope(), |name, args| {
+                client.call_tool_value(name, args)
+            })?,
+            "edit-segment" => {
+                run_edit_segment(options.record.as_deref(), &options.words, |name, args| {
+                    client.call_tool_value(name, args)
+                })?
+            }
+            "set-speaker" => {
+                run_set_speaker(options.record.as_deref(), &options.words, |name, args| {
+                    client.call_tool_value(name, args)
+                })?
+            }
+            "rename-speaker" => {
+                run_rename_speaker(options.record.as_deref(), &options.words, |name, args| {
+                    client.call_tool_value(name, args)
+                })?
+            }
+            "mcp-stdio" => {
+                return mcp::serve(McpBackend::Online {
+                    client: &mut client,
+                    workspace: &workspace_path,
+                });
+            }
+            _ => unreachable!(),
+        };
+        println!("{output}");
+        return Ok(());
+    }
+
+    let mut runtime = KoeRuntime::open(workspace_path)?;
     runtime.poll_timers(0, now());
     let output = match options.command.as_str() {
         "status" => runtime.snapshot(now()),
         "doctor" => {
             let snapshot = runtime.snapshot(now());
-            json!({"workspaceReadable":true,"generation":snapshot["generation"],
-                "device":snapshot["device"],"provider":snapshot["provider"],"error":snapshot["error"]})
+            json!({
+                "workspaceReadable": true,
+                "generation": snapshot["generation"],
+                "device": snapshot["device"],
+                "provider": snapshot["provider"],
+                "error": snapshot["error"]
+            })
         }
-        "search" => search(
-            &runtime,
+        "search" => run_search(
             &options.words.join(" "),
             &options.scope(),
             options.limit,
+            |name, args| call_offline_value(&mut runtime, name, args),
         )?,
-        "ask" => ask(&mut runtime, &options.words.join(" "), &options.scope())?,
-        "edit-segment" => edit_segment(&mut runtime, options.record.as_deref(), &options.words)?,
-        "set-speaker" => set_speaker(&mut runtime, options.record.as_deref(), &options.words)?,
-        "rename-speaker" => {
-            rename_speaker(&mut runtime, options.record.as_deref(), &options.words)?
+        "ask" => run_ask(&options.words.join(" "), &options.scope(), |name, args| {
+            call_offline_value(&mut runtime, name, args)
+        })?,
+        "edit-segment" => {
+            run_edit_segment(options.record.as_deref(), &options.words, |name, args| {
+                call_offline_value(&mut runtime, name, args)
+            })?
         }
-        "mcp-stdio" => return mcp::serve(&mut runtime),
+        "set-speaker" => {
+            run_set_speaker(options.record.as_deref(), &options.words, |name, args| {
+                call_offline_value(&mut runtime, name, args)
+            })?
+        }
+        "rename-speaker" => {
+            run_rename_speaker(options.record.as_deref(), &options.words, |name, args| {
+                call_offline_value(&mut runtime, name, args)
+            })?
+        }
+        "mcp-stdio" => return mcp::serve(McpBackend::Offline(&mut runtime)),
         _ => unreachable!(),
     };
     println!("{output}");
     Ok(())
 }
 
-fn search(
-    runtime: &KoeRuntime,
+fn call_offline_value(runtime: &mut KoeRuntime, name: &str, args: Value) -> Result<Value, String> {
+    match mcp::call_offline_tool(runtime, name, &args) {
+        Ok(result) => result,
+        Err(err) => Err(err.message),
+    }
+}
+
+fn run_search(
     query: &str,
     scope: &SearchScope,
     limit: usize,
+    mut exec: impl FnMut(&str, Value) -> Result<Value, String>,
 ) -> Result<Value, String> {
     if query.trim().is_empty() {
         return Err("请输入搜索内容".into());
     }
-    let evidence = runtime
-        .workspace()
-        .search(scope, query, limit)
-        .map_err(|e| e.to_string())?;
-    Ok(json!({"query":query,"sources":evidence.iter().map(evidence_json).collect::<Vec<_>>()}))
+    let mut args = json!({
+        "query": query,
+        "limit": limit,
+    });
+    if let SearchScope::Record(id) = scope {
+        args["record_id"] = json!(id);
+    }
+    exec("search", args)
 }
 
-fn evidence_json(evidence: &Evidence) -> Value {
-    json!({"recordId":evidence.source.record_id,"segmentId":evidence.source.segment_id.to_string(),
-        "title":evidence.title,"quote":evidence.quote,"startMs":evidence.start_ms})
-}
-
-fn ask(runtime: &mut KoeRuntime, question: &str, scope: &SearchScope) -> Result<Value, String> {
+fn run_ask(
+    question: &str,
+    scope: &SearchScope,
+    mut exec: impl FnMut(&str, Value) -> Result<Value, String>,
+) -> Result<Value, String> {
     if question.trim().is_empty() {
         return Err("请输入问题".into());
     }
-    let (scope_name, record_id) = match scope {
-        SearchScope::All => ("all", None),
-        SearchScope::Record(id) => ("record", Some(id)),
-    };
-    let command = json!({"type":"ask","question":question,"scope":scope_name,"recordId":record_id});
-    let mut snapshot: Value =
-        serde_json::from_str(&runtime.dispatch_json(&command.to_string(), now()))
-            .map_err(|_| "问答返回了无效状态")?;
-    let deadline = Instant::now() + Duration::from_secs(190);
-    let mut previous = Instant::now();
-    while snapshot["ask"]["phase"] == "pending" {
-        if Instant::now() >= deadline {
-            return Err("问答未在期限内完成".into());
-        }
-        std::thread::sleep(Duration::from_millis(25));
-        let current = Instant::now();
-        runtime.poll_timers(current.duration_since(previous).as_millis() as u64, now());
-        previous = current;
-        snapshot = runtime.snapshot(now());
+    let mut args = json!({ "question": question });
+    if let SearchScope::Record(id) = scope {
+        args["record_id"] = json!(id);
     }
-    if let Some(error) = snapshot["error"].as_str() {
-        return Err(error.into());
-    }
-    if snapshot["ask"]["phase"] == "failed" {
-        return Err("问答处理失败，原始记录已保留".into());
-    }
-    Ok(snapshot["ask"].clone())
+    exec("ask", args)
 }
 
-fn get_record(runtime: &mut KoeRuntime, id: &str) -> Result<Value, String> {
-    let command = json!({"type":"select_record","recordId":id});
-    let snapshot: Value = serde_json::from_str(&runtime.dispatch_json(&command.to_string(), now()))
-        .map_err(|_| "记录返回了无效状态")?;
-    if let Some(error) = snapshot["error"].as_str() {
-        return Err(error.into());
-    }
-    if snapshot["detail"].is_null() {
-        return Err("记录不存在".into());
-    }
-    Ok(snapshot["detail"].clone())
-}
-
-fn mutate_record(runtime: &mut KoeRuntime, id: &str, command: Value) -> Result<Value, String> {
-    let snapshot: Value = serde_json::from_str(&runtime.dispatch_json(&command.to_string(), now()))
-        .map_err(|_| "操作返回了无效状态")?;
-    if let Some(error) = snapshot["error"].as_str() {
-        return Err(error.into());
-    }
-    get_record(runtime, id)
-}
-
-fn edit_segment(
-    runtime: &mut KoeRuntime,
+fn run_edit_segment(
     record_id: Option<&str>,
     words: &[String],
+    mut exec: impl FnMut(&str, Value) -> Result<Value, String>,
 ) -> Result<Value, String> {
     let record_id = record_id.ok_or("缺少 --record <ID>")?;
     let segment_id = words.first().ok_or("缺少片段 ID")?;
     if words.len() < 2 {
         return Err("缺少要更新的原文内容".into());
     }
-    mutate_record(
-        runtime,
-        record_id,
+    exec(
+        "edit_transcript",
         json!({
-            "type": "edit_segment_text",
-            "recordId": record_id,
-            "segmentId": segment_id,
+            "record_id": record_id,
+            "action": "edit_segment",
+            "segment_id": segment_id,
             "text": words[1..].join(" "),
         }),
-    )
+    )?;
+    exec("get_record", json!({ "record_id": record_id }))
 }
 
-fn set_speaker(
-    runtime: &mut KoeRuntime,
+fn run_set_speaker(
     record_id: Option<&str>,
     words: &[String],
+    mut exec: impl FnMut(&str, Value) -> Result<Value, String>,
 ) -> Result<Value, String> {
     let record_id = record_id.ok_or("缺少 --record <ID>")?;
     let segment_id = words.first().ok_or("缺少片段 ID")?;
     let speaker = (words.len() > 1).then(|| words[1..].join(" "));
-    mutate_record(
-        runtime,
-        record_id,
+    exec(
+        "edit_transcript",
         json!({
-            "type": "set_segment_speaker",
-            "recordId": record_id,
-            "segmentId": segment_id,
+            "record_id": record_id,
+            "action": "set_speaker",
+            "segment_id": segment_id,
             "speaker": speaker,
         }),
-    )
+    )?;
+    exec("get_record", json!({ "record_id": record_id }))
 }
 
-fn rename_speaker(
-    runtime: &mut KoeRuntime,
+fn run_rename_speaker(
     record_id: Option<&str>,
     words: &[String],
+    mut exec: impl FnMut(&str, Value) -> Result<Value, String>,
 ) -> Result<Value, String> {
     let record_id = record_id.ok_or("缺少 --record <ID>")?;
     if words.len() != 2 {
         return Err("用法：koe rename-speaker --record <ID> \"<原说话人>\" \"<新说话人>\"".into());
     }
-    mutate_record(
-        runtime,
-        record_id,
+    exec(
+        "edit_transcript",
         json!({
-            "type": "rename_speaker",
-            "recordId": record_id,
-            "fromSpeaker": words[0],
-            "toSpeaker": words[1],
+            "record_id": record_id,
+            "action": "rename_speaker",
+            "from_speaker": words[0],
+            "to_speaker": words[1],
         }),
-    )
+    )?;
+    exec("get_record", json!({ "record_id": record_id }))
 }
 
 fn help() {
-    println!("Koe {}\n\n用法：koe <命令> [参数]\n\n命令：\n  status                  查看与原生应用同源的工作区快照\n  doctor                  查看工作区、设备与模型状态\n  search <内容>           搜索真实记录及来源\n  ask <问题>              查询记录；未配置模型时返回本地来源\n  edit-segment <片段> <词> 修改指定记录的单段原文（需配合 --record）\n  set-speaker <片段> [人]  设置或清空指定片段说话人（需配合 --record）\n  rename-speaker <原> <新> 批量重命名或合并说话人（需配合 --record）\n  mcp-stdio               提供 search/get_record/ask 三个 MCP 工具\n  verify-protocol         在内存中验证协议与编解码\n  benchmark [--safe]      运行协议和音频封装基准\n  version                 查看版本\n\n参数：\n  --workspace <目录>      工作区（--export-dir 为兼容别名）\n  --record <ID>           限定 search/ask 或指定要编辑的记录\n  --limit <1..100>        搜索结果数量\n\n默认工作区：~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace\n工作区被 Koe.app 或其他进程占用时，命令会明确失败。", env!("CARGO_PKG_VERSION"));
+    println!("Koe {}\n\n用法：koe <命令> [参数]\n\n命令：\n  status                  查看与原生应用同源的工作区快照\n  doctor                  查看工作区、设备与模型状态\n  search <内容>           搜索真实记录及来源\n  ask <问题>              查询记录；未配置模型时返回本地来源\n  edit-segment <片段> <词> 修改指定记录的单段原文（需配合 --record）\n  set-speaker <片段> [人]  设置或清空指定片段说话人（需配合 --record）\n  rename-speaker <原> <新> 批量重命名或合并说话人（需配合 --record）\n  mcp-stdio               提供全部 16 个工作区与设备 MCP 工具\n  companion-listen        订阅运行中 Koe.app 的领夹麦伴侣按键与 PCM16 事件流\n  verify-protocol         在内存中验证协议与编解码\n  benchmark [--safe]      运行协议和音频封装基准\n  version                 查看版本\n\n参数：\n  --workspace <目录>      工作区（--export-dir 为兼容别名）\n  --record <ID>           限定 search/ask 或指定要编辑的记录\n  --limit <1..100>        搜索结果数量\n  --no-auto-gate          companion-listen 时禁用双击自动启停门控\n  --max-events <N>        companion-listen 收到 N 条事件后退出\n  --timeout-ms <MS>       companion-listen 超时毫秒数\n\n默认工作区：~/Library/Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace\nKoe.app 运行时自动经本地桥访问活体会话；未运行时直接打开本地工作区。", env!("CARGO_PKG_VERSION"));
 }

@@ -41,12 +41,16 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
     public var liveDurationMs: UInt64
     public var liveBytes: UInt64
     public var liveRecordId: String?
+    public let autoConnect: Bool
+    public let companionMode: String
+    public let standbyReady: Bool
 
     private enum CodingKeys: String, CodingKey {
         case phase, state, statusDetail, connected, busy, recording, stopping, deviceName
         case batteryPercent, charging, boxBatteryPercent, boxCharging
         case serialNumber, firmwareVersion, storageLabel, files, progress, guide
         case transferPhase, liveDurationMs, liveBytes, liveRecordId
+        case autoConnect, companionMode, standbyReady
     }
 
     static let empty = DeviceSnapshot(
@@ -71,7 +75,10 @@ public struct DeviceSnapshot: Codable, Equatable, Sendable {
         transferPhase: "idle",
         liveDurationMs: 0,
         liveBytes: 0,
-        liveRecordId: nil
+        liveRecordId: nil,
+        autoConnect: true,
+        companionMode: "disabled",
+        standbyReady: false
     )
 }
 
@@ -102,5 +109,8 @@ extension DeviceSnapshot {
         liveDurationMs = try c.decodeIfPresent(UInt64.self, forKey: .liveDurationMs) ?? 0
         liveBytes = try c.decodeIfPresent(UInt64.self, forKey: .liveBytes) ?? 0
         liveRecordId = try c.decodeIfPresent(String.self, forKey: .liveRecordId)
+        autoConnect = try c.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
+        companionMode = try c.decodeIfPresent(String.self, forKey: .companionMode) ?? "disabled"
+        standbyReady = try c.decodeIfPresent(Bool.self, forKey: .standbyReady) ?? false
     }
 }

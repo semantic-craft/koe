@@ -1,13 +1,26 @@
-use std::io::{self, BufRead, Read, Write};
+use std::{
+    io::{self, BufRead, Read, Write},
+    path::Path,
+    time::{Duration, Instant},
+};
 
-use koe_engine::product::SearchScope;
-use koe_runtime::KoeRuntime;
+use koe_runtime::{KoeRuntime, McpToolCallState, McpToolError};
 use serde_json::{json, Value};
+
+use crate::bridge_client::BridgeClient;
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
 const MAX_LINE_BYTES: u64 = 2 * 1024 * 1024;
 
-pub(crate) fn serve(runtime: &mut KoeRuntime) -> Result<(), String> {
+pub(crate) enum McpBackend<'a> {
+    Offline(&'a mut KoeRuntime),
+    Online {
+        client: &'a mut BridgeClient,
+        workspace: &'a Path,
+    },
+}
+
+pub(crate) fn serve(mut backend: McpBackend<'_>) -> Result<(), String> {
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     let mut initialized = false;
@@ -44,7 +57,7 @@ pub(crate) fn serve(runtime: &mut KoeRuntime) -> Result<(), String> {
                 continue;
             }
         };
-        let Some(response) = handle(runtime, request, &mut initialized, &mut ready) else {
+        let Some(response) = handle(&mut backend, request, &mut initialized, &mut ready) else {
             continue;
         };
         writeln!(output, "{response}").map_err(|e| e.to_string())?;
@@ -52,8 +65,34 @@ pub(crate) fn serve(runtime: &mut KoeRuntime) -> Result<(), String> {
     }
 }
 
-fn handle(
+pub(crate) fn call_offline_tool(
     runtime: &mut KoeRuntime,
+    name: &str,
+    args: &Value,
+) -> Result<Result<Value, String>, McpToolError> {
+    match runtime.call_mcp_tool_step(name, args, super::now())? {
+        McpToolCallState::Completed(result) => Ok(result),
+        McpToolCallState::PendingAsk { question } => {
+            let deadline = Instant::now() + Duration::from_secs(190);
+            let mut previous = Instant::now();
+            loop {
+                if Instant::now() >= deadline {
+                    return Ok(Err("问答未在期限内完成".into()));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+                let current = Instant::now();
+                let elapsed_ms = current.duration_since(previous).as_millis() as u64;
+                previous = current;
+                if let Some(done) = runtime.poll_mcp_ask(&question, elapsed_ms, super::now()) {
+                    return Ok(done);
+                }
+            }
+        }
+    }
+}
+
+fn handle(
+    backend: &mut McpBackend<'_>,
     request: Value,
     initialized: &mut bool,
     ready: &mut bool,
@@ -81,95 +120,85 @@ fn handle(
             }
             *initialized = true;
             *ready = false;
-            json!({"protocolVersion":PROTOCOL_VERSION,"capabilities":{"tools":{"listChanged":false}},
-                "serverInfo":{"name":"koe","version":env!("CARGO_PKG_VERSION")}})
+            json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": { "tools": { "listChanged": false } },
+                "serverInfo": { "name": "koe", "version": env!("CARGO_PKG_VERSION") }
+            })
         }
         "ping" => json!({}),
         _ if !*ready => return Some(error(id, -32600, "请先完成 MCP 初始化")),
-        "tools/list" => json!({"tools":tool_definitions()}),
+        "tools/list" => match backend {
+            McpBackend::Offline(_) => KoeRuntime::mcp_tools_list(),
+            McpBackend::Online { client, workspace } => {
+                match online_tools_list(client, workspace) {
+                    Ok(list) => list,
+                    Err(err) => return Some(error(id, err.code, &err.message)),
+                }
+            }
+        },
         "tools/call" => {
-            runtime.poll_timers(0, super::now());
             let Some(name) = request["params"]["name"].as_str() else {
                 return Some(error(id, -32602, "缺少工具名称"));
             };
-            if !matches!(name, "search" | "get_record" | "ask") {
-                return Some(error(id, -32602, "未知工具"));
-            }
             let args = request["params"]
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            if !args.is_object() {
-                return Some(error(id, -32602, "工具参数必须是对象"));
-            }
-            match call(runtime, name, &args) {
-                Ok(value) => {
-                    json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
+            let outcome = match backend {
+                McpBackend::Offline(runtime) => call_offline_tool(runtime, name, &args),
+                McpBackend::Online { client, workspace } => {
+                    online_tool_call(client, workspace, name, &args)
                 }
-                Err(message) => json!({"content":[{"type":"text","text":message}],"isError":true}),
+            };
+            match outcome {
+                Err(McpToolError { code, message }) => return Some(error(id, code, &message)),
+                Ok(Ok(value)) => {
+                    json!({"content": [{"type": "text", "text": value.to_string()}], "isError": false})
+                }
+                Ok(Err(message)) => {
+                    json!({"content": [{"type": "text", "text": message}], "isError": true})
+                }
             }
         }
         _ => return Some(error(id, -32601, "未知方法")),
     };
-    Some(json!({"jsonrpc":"2.0","id":id,"result":result}))
+    Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+}
+
+fn online_tools_list(client: &mut BridgeClient, workspace: &Path) -> Result<Value, McpToolError> {
+    match client.mcp_tools_list() {
+        Ok(list) => Ok(list),
+        Err(first_err) if client.is_disconnected() => {
+            if let Ok(Some(reconnected)) = BridgeClient::try_connect(workspace) {
+                *client = reconnected;
+                return client.mcp_tools_list();
+            }
+            Err(first_err)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn online_tool_call(
+    client: &mut BridgeClient,
+    workspace: &Path,
+    name: &str,
+    args: &Value,
+) -> Result<Result<Value, String>, McpToolError> {
+    match client.mcp_tool_call(name, args) {
+        Ok(res) => Ok(res),
+        Err(first_err) if client.is_disconnected() => {
+            if let Ok(Some(reconnected)) = BridgeClient::try_connect(workspace) {
+                *client = reconnected;
+                return client.mcp_tool_call(name, args);
+            }
+            Err(first_err)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {
-    json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
-}
-
-fn tool_definitions() -> Vec<Value> {
-    vec![
-        json!({"name":"search","description":"搜索已保存记录，返回原文和 recordId/segmentId 来源。",
-            "inputSchema":{"type":"object","properties":{"query":{"type":"string"},"record_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"required":["query"],"additionalProperties":false},
-            "annotations":{"readOnlyHint":true,"openWorldHint":false}}),
-        json!({"name":"get_record","description":"读取指定记录的原文、纪要与重点。",
-            "inputSchema":{"type":"object","properties":{"record_id":{"type":"string"}},"required":["record_id"],"additionalProperties":false},
-            "annotations":{"readOnlyHint":true,"openWorldHint":false}}),
-        json!({"name":"ask","description":"基于保存记录提问并保留问答历史；未配置模型时返回本地检索来源。",
-            "inputSchema":{"type":"object","properties":{"question":{"type":"string"},"record_id":{"type":"string"}},"required":["question"],"additionalProperties":false},
-            "annotations":{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}}),
-    ]
-}
-
-fn call(runtime: &mut KoeRuntime, name: &str, args: &Value) -> Result<Value, String> {
-    let allowed: &[&str] = match name {
-        "search" => &["query", "record_id", "limit"],
-        "get_record" => &["record_id"],
-        "ask" => &["question", "record_id"],
-        _ => return Err("未知工具".into()),
-    };
-    if args
-        .as_object()
-        .is_some_and(|values| values.keys().any(|key| !allowed.contains(&key.as_str())))
-    {
-        return Err("工具参数包含未知字段".into());
-    }
-    let scope = match args.get("record_id") {
-        None => SearchScope::All,
-        Some(Value::String(id)) => SearchScope::Record(id.clone()),
-        Some(_) => return Err("record_id 必须是字符串".into()),
-    };
-    match name {
-        "search" => {
-            let query = args["query"].as_str().ok_or("query 必须是字符串")?;
-            let limit = match args.get("limit") {
-                None => 10,
-                Some(value) => value
-                    .as_u64()
-                    .filter(|n| (1..=100).contains(n))
-                    .ok_or("limit 必须在 1 到 100 之间")? as usize,
-            };
-            super::search(runtime, query, &scope, limit)
-        }
-        "get_record" => {
-            super::get_record(runtime, args["record_id"].as_str().ok_or("缺少 record_id")?)
-        }
-        "ask" => super::ask(
-            runtime,
-            args["question"].as_str().ok_or("question 必须是字符串")?,
-            &scope,
-        ),
-        _ => unreachable!(),
-    }
+    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }

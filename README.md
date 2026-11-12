@@ -36,7 +36,7 @@ Mac 麦克风录音先保存本机 WAV，停止时排空已接收音频；输入
 - 开发构建、指定工作区或设置了 `KOE_CREDENTIAL_SOURCE` 的运行使用隔离凭据；密钥仅保留当前会话，默认开发工作区为 `KoeWorkspaceDevelopment`。不读取个人 `.env` 或 `.envrc`，不回退到系统凭据。签名安装升级后的真实读取仍待 [#603](https://github.com/semantic-craft/koe/issues/603) 验收。
 - 默认开启“会议录音只留本机”，旧工作区缺少该字段时也采用本机策略。录音豆实时音频、取回录音和导入文件均不上传；本机语音识别尚未接入时明确不可用。设置中关闭后才允许云端转写，已取消的任务须手动重试。文字纪要与问答仍可发云；此前已经上传的音频无法撤回。签名版与真实设备验收见 [#608](https://github.com/semantic-craft/koe/issues/608)。
 - 发起云端任务前保存请求状态，收到结果并完成本地保存后才显示完成。应用重启会将未完成任务标为中断；重新配置服务后，由用户明确重试，不在后台自动重发付费请求。
-- 工作区采用单写锁。同一资料库同时由一个 GUI、CLI 或 MCP 进程打开。关闭窗口会保留应用进程；使用 CLI 前请通过“退出 Koe”或 `⌘Q` 退出 GUI。
+- 工作区存储保持单写者。Koe 运行期间在沙盒容器内开放属主私有的 `.koe/koe.sock` 本地桥接，CLI 与 MCP 进程优先经该桥接实时读写同一会话；Koe 未运行时才直接打开工作区文件锁。
 
 ## 导入旧 Flutter 资料
 
@@ -74,16 +74,17 @@ swift build --package-path platforms/macos
 
 ## CLI 与 MCP
 
-CLI 与原生应用使用同一个 `KoeRuntime` 和本机工作区。退出 GUI 后可运行：
+CLI、MCP 与原生应用共用同一 `KoeRuntime` 和本机工作区。Koe 运行时自动连接容器内的 `koe.sock` 实时桥接，未运行时离线直开工作区：
 
 ```bash
 cargo run --package koe-cli -- status
 cargo run --package koe-cli -- search "产品决定"
 cargo run --package koe-cli -- ask "接下来要做什么"
 cargo run --package koe-cli -- mcp-stdio
+cargo run --package koe-cli -- companion-listen
 ```
 
-`--workspace <目录>` 指定其他资料库；`search` 和 `ask` 支持 `--record <ID>` 限定记录。MCP stdio 暴露 `search`、`get_record`、`ask` 三个工具，其中 `ask` 会保留问答历史。独立 CLI/MCP 进程使用隔离凭据，不读取 GUI 的系统密钥，当前使用本地来源检索。停止 MCP 进程后，GUI 才能重新打开同一工作区。
+`--workspace <目录>` 指定其他资料库；`search` 和 `ask` 支持 `--record <ID>` 限定记录。MCP stdio 暴露 16 项工具（检索、今日简报、记录列表与详情、问答、待办/记忆审核与修订、新建笔记、原文批注、分段修订与说话人管理、归档与软删恢复、设备状态与控制、代次轮询），不暴露彻底清除。设置页与 `companion-listen` 预留 D3200 领口待命与正面双击/快捷键 `16 kHz` `PCM16` 语音流订阅及蓝牙控制权移交，实体硬件验收见 [#641](https://github.com/semantic-craft/koe/issues/641)。离线直开模式使用隔离凭据，不读取 GUI 的系统密钥。
 
 ## 架构
 

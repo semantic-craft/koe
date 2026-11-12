@@ -1,6 +1,9 @@
 use super::*;
 use koe_client_base::{hash::sha256_hex, write_atomic};
-use koe_engine::session::{CustodyReceipt, TransferPhaseTag};
+use koe_engine::{
+    commands::DeviceCommands,
+    session::{CustodyReceipt, TransferPhaseTag},
+};
 use std::fs;
 
 impl KoeRuntime {
@@ -25,7 +28,11 @@ impl KoeRuntime {
     }
 
     pub(crate) fn maybe_start_auto_offline_pull(&mut self) -> bool {
-        if !self.device.is_connected()
+        if (self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+            && !self.companion.standby_suppressed_for_connection)
+            || self.companion.standby_stream_owned
+            || self.companion.pending_standby_stop
+            || !self.device.is_connected()
             || self.device.awaiting_stop
             || self.device.session.device_recording_active
             || self.device.session.pending_realtime_subscribe
@@ -44,6 +51,7 @@ impl KoeRuntime {
                 (!self.is_quitting() || self.captures.records_by_file_id.contains_key(&entry.file_id))
                     && entry.duration_ms > 0
                     && entry.end_time != Some(0)
+                    && !self.is_standby_file(entry.file_id)
                     && !self.device.auto_pull_attempted.contains(&entry.file_id)
                     && !self.workspace().is_bean_file_purged(entry.file_id)
                     && !self.is_device_file_synced(entry.file_id)
@@ -60,6 +68,37 @@ impl KoeRuntime {
 
     pub(super) fn save_device_recordings(&mut self, now: u64) -> Result<(), String> {
         while !self.device.finalized.is_empty() {
+            let entry_id = self.device.finalized[0].entry.id;
+            let has_meeting_capture = self.captures.records_by_file_id.contains_key(&entry_id)
+                || self.captures.active.contains_key(&entry_id);
+            if self.is_standby_file(entry_id)
+                || (!has_meeting_capture
+                    && (self.companion.standby_stream_owned
+                        || self.companion.pending_standby_stop))
+            {
+                self.device.finalized.remove(0);
+                self.captures.active.remove(&entry_id);
+                self.captures.records_by_file_id.remove(&entry_id);
+                if self.companion.active_standby_file_id == Some(entry_id) {
+                    self.companion.active_standby_file_id = None;
+                }
+                if self.device.is_connected() && self.is_device_completely_idle() {
+                    if self.companion.deleted_in_connection.insert(entry_id) {
+                        self.device
+                            .outbound
+                            .push(DeviceCommands::delete_file(entry_id));
+                    }
+                    self.device.session.catalog.retain(|f| f.file_id != entry_id);
+                    self.companion.standby_file_ids.insert(entry_id);
+                    self.commit(|w| {
+                        w.record_purged_bean_file_id(entry_id);
+                        Ok(())
+                    })?;
+                } else {
+                    self.mark_standby_scratch_file(entry_id)?;
+                }
+                continue;
+            }
             let recording = &self.device.finalized[0];
             let entry = recording.entry.clone();
             let digest = sha256_hex(&recording.ogg_opus_bytes);
