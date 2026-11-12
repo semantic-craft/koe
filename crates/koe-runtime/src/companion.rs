@@ -38,7 +38,7 @@ const MAX_UNIX_SOCKET_PATH_BYTES: usize = 103;
 /// Resolves the canonical local bridge Unix domain socket path for `workspace`.
 ///
 /// Honors `KOE_BRIDGE_SOCKET` (`""`, `"0"`, or `"off"` disables the socket), places App Sandbox
-/// container workspaces inside `<Data>/.koe/koe.sock` (`koe-dev.sock` for development workspaces)
+/// default container workspaces inside `<Data>/.koe/koe.sock` (`koe-dev.sock` for development)
 /// to stay within the 104-byte `sun_path` kernel limit without altering entitlements, and falls
 /// back to `<workspace>/koe.sock` for standalone directories.
 #[must_use]
@@ -71,15 +71,19 @@ pub(crate) fn resolve_bridge_socket_path_with_env(
             .then_some(candidate);
     }
 
-    let candidate = if let Some(container_data) = workspace
-        .ancestors()
-        .find(|ancestor| ancestor.ends_with("Containers/com.anker.ankerRecorder/Data"))
-    {
-        let sock_name = if workspace.ends_with("KoeWorkspaceDevelopment") {
-            "koe-dev.sock"
-        } else {
-            "koe.sock"
-        };
+    let canonical_workspace = workspace.ancestors().find_map(|ancestor| {
+        if !ancestor.ends_with("Containers/com.anker.ankerRecorder/Data") {
+            return None;
+        }
+        match workspace.strip_prefix(ancestor).ok()?.to_str()? {
+            "Library/Application Support/KoeWorkspace" => Some((ancestor, "koe.sock")),
+            "Library/Application Support/KoeWorkspaceDevelopment" => {
+                Some((ancestor, "koe-dev.sock"))
+            }
+            _ => None,
+        }
+    });
+    let candidate = if let Some((container_data, sock_name)) = canonical_workspace {
         container_data.join(".koe").join(sock_name)
     } else {
         workspace.join("koe.sock")
