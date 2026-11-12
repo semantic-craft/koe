@@ -66,9 +66,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
                 syncAudioInputsIfNeeded(force: true)
                 applyLifecycle(store.snapshot)
             }
-            if let store, store.snapshot.device.autoConnect {
-                bluetoothBridge.reconnectKnownIfAvailable()
-            }
         }
     }
     public let bluetoothBridge = BluetoothBridge()
@@ -125,6 +122,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         _ = ensureSessionStore()
+        bluetoothBridge.activateHost()
         NSApp?.applicationIconImage = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "Koe"

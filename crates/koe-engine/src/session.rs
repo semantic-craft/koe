@@ -847,6 +847,9 @@ impl TransportSession {
                     .saturating_mul(SLICE_RECORD_BYTES as u32);
                 self.transfer.quiet_draining = false;
             }
+            TransferRuntimeState::Failed { .. } => {
+                self.transfer.quiet_draining = false;
+            }
             _ if self.active_is_realtime && !self.opus_buffer.is_empty() => {
                 let _ = self.finalize_active_transfer(0);
             }
@@ -2139,11 +2142,9 @@ impl TransportSession {
                     }
                 }
                 (0x1A, 0x08) | (0x1A, 0x12) | (0x1B, 0x08) | (0x1B, 0x12) => {
-                    if self.active_file_id.is_none()
-                        && matches!(self.runtime_state, TransferRuntimeState::Failed { .. })
-                    {
+                    let Some(fid) = self.active_file_id else {
                         continue;
-                    }
+                    };
                     if let TransferRuntimeState::PullingOffline { inactivity_ms, .. } =
                         &mut self.runtime_state
                     {
@@ -2172,8 +2173,6 @@ impl TransportSession {
                         min_seq,
                     );
                     if batch.slice_count > 0 {
-                        let fid = self.active_file_id.unwrap_or(1);
-                        self.active_file_id = Some(fid);
                         self.opus_buffer.extend_from_slice(&batch.opus_bytes);
                         let mut newly_marked_seqs = Vec::new();
                         for seq in batch.marked_sequences {
@@ -3582,5 +3581,29 @@ mod tests {
         assert_eq!(session.wifi_current_index, 1);
         assert_eq!(session.active_file_id, Some(9002));
         assert_eq!(session.wifi_batch_phase, WifiBatchPhase::Transferring);
+    }
+
+    #[test]
+    fn orphan_slice_without_active_file_id_is_ignored_and_never_creates_phantom_file() {
+        let mut session = TransportSession::new();
+        let sk = [0x42u8; 32];
+        session.set_session_key(sk);
+
+        assert_eq!(session.active_file_id, None);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Idle);
+
+        let mut slice_payload = Vec::new();
+        slice_payload.extend_from_slice(&0u32.to_le_bytes());
+        slice_payload.push(0);
+        slice_payload.extend_from_slice(&[0xAA; 160]);
+        slice_payload.push(0);
+        let slice_rx = TransportSession::build_rx_frame(0x1A, 0x08, &slice_payload);
+
+        let outcome = session.ingest_ble_chunk(&slice_rx, 1_700_000_100);
+        assert!(!outcome.transfer_updated);
+        assert_eq!(session.active_file_id, None);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Idle);
+        assert_eq!(session.transfer.received_wire_bytes, 0);
+        assert!(session.opus_buffer.is_empty());
     }
 }
