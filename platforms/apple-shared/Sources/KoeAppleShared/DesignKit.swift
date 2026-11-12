@@ -1,20 +1,20 @@
 import SwiftUI
 
 public enum AppColors {
-    public static let accent = Color(hex: 0xC4B5FD)
-    public static let onAccent = Color(hex: 0x251D33)
-    public static let accentSoft = Color(hex: 0x302938)
-    public static let surface0 = Color(hex: 0x1A1A1D)
-    public static let surface1 = Color(hex: 0x202024)
-    public static let bgPanel = Color(hex: 0x141416)
-    public static let bgSubtle = Color(hex: 0x252529)
-    public static let border = Color(hex: 0x323237)
-    public static let textPrimary = Color(hex: 0xEDECF2)
-    public static let textSecondary = Color(hex: 0xBDB9C7)
-    public static let textMuted = Color(hex: 0xAAA6B5)
-    public static let success = Color(hex: 0x9AC9A7)
-    public static let warning = Color(hex: 0xDDBC90)
-    public static let danger = Color(hex: 0xEEA6A6)
+    public static let accent = Color(hex: 0x242426)
+    public static let onAccent = Color(hex: 0xFFFFFF)
+    public static let accentSoft = Color(hex: 0xECECEF)
+    public static let surface0 = Color(hex: 0xFFFFFF)
+    public static let surface1 = Color(hex: 0xFFFFFF)
+    public static let bgPanel = Color(hex: 0xF7F7F8)
+    public static let bgSubtle = Color(hex: 0xF1F1F3)
+    public static let border = Color(hex: 0xE3E3E7)
+    public static let textPrimary = Color(hex: 0x202022)
+    public static let textSecondary = Color(hex: 0x54545B)
+    public static let textMuted = Color(hex: 0x686870)
+    public static let success = Color(hex: 0x287447)
+    public static let warning = Color(hex: 0x8A5A12)
+    public static let danger = Color(hex: 0xB43D43)
 }
 
 extension Color {

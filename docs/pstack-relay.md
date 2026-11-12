@@ -95,3 +95,15 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: 按功能还原第二优先级落地 Slice R2（转写原文分段编辑与说话人重命名合并）。鉴于 crates/koe-engine/src/product/record.rs 已达 467 行，必须在 crates/koe-engine/src/product/ 新增独立子模块（如 transcript_edit.rs）承载逐句文本修订、单句说话人改名与同人批量合并领域规则，保留原始 ASR 证据链与 start_ms/end_ms 音频锚点及 SegmentId 引用完备性（ProductWorkspace::restore 强校验），同步刷新 BM25 索引并将既有结构化纪要标记为原文已变更待重算；在 KoeRuntime 拒绝转写进行中或软删态记录的分段编辑并持久化回写；经 koe-host-api C ABI v2（lib.rs 当前 295 行）在 RecordDetailView.swift（当前 213 行）接通分段内联编辑（必带 .onSubmit）与说话人改名合并交互。
 - **Done Predicate**: ./scripts/check && cargo test --workspace --offline && swift test --package-path platforms/apple-shared && swift test --package-path platforms/macos && ./scripts/install-macos.sh
 - **Evidence**: crates/koe-engine/src/product/transcript_edit.rs;crates/koe-runtime/src/transcript_edit.rs;platforms/apple-shared/Sources/KoeAppleShared/TranscriptDetailView.swift;CDHash 9e248d83414459bcbca9b9d27f66b4ebe37295ac;Closes #637
+
+### [x] Slice UL: PLAUD 风格浅色色板
+- **Playbook**: `Feature`
+- **Outcome**: 以白色内容区、浅灰侧栏和炭黑主按钮替换深色配色，保留布局与功能。同步浅色原生控件及原有配色门禁。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check
+- **Evidence**: scripts/check PASS; isolated GUI screenshots; signed staged build self-check and smoke PASS; #652
+
+### [ ] Slice ULI: 浅色版日常安装与剩余弹窗验收
+- **Playbook**: `Feature`
+- **Outcome**: 先核对旧版取回与保存是否完成；仅在可以正常退出后安装浅色版，再验连接引导和审核编辑弹窗，更新 #654。不要强制终止或覆盖运行中的应用。
+- **Done Predicate**: ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && python3 progress/progress.py check
+- **Evidence**: issue #654; blocked by existing app quit failure

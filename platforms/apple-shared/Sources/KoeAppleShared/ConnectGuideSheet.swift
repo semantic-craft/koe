@@ -106,7 +106,7 @@ public struct ConnectGuideSheet: View {
         .overlay(RoundedRectangle(cornerRadius: AppRadii.cardOuter).stroke(AppColors.border))
         .shadow(color: Color.black.opacity(0.45), radius: 24, x: 0, y: 12)
         .foregroundStyle(AppColors.textPrimary)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private func connectGuideContent(_ guide: DeviceGuideSnapshot) -> some View {

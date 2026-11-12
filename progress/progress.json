@@ -151,9 +151,21 @@
         "reason": null,
         "state": "open",
         "updated_at": "2026-11-12T07:11:38Z"
+      },
+      {
+        "number": 652,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-12T14:55:20Z"
+      },
+      {
+        "number": 654,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-12T15:00:26Z"
       }
     ],
-    "main": "061563da1fc263154fcd678a487728002ce2bb06",
+    "main": "d6f12d02aab3782b58ae8d78b9fb81b13d1bb719",
     "open_pulls": [],
     "pulls": [
       {
@@ -288,7 +300,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-12T14:17:41.446074Z",
+  "observed_at": "2026-11-12T15:01:50.568925Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -731,6 +743,25 @@
           "status": "done",
           "summary": "PR #646（#644）新增左侧边栏独立「录音」页（CaptureView），移除今天页顶部的 MicrophoneCard 输入条与阻塞式 NSAlert + NSPopUpButton 下拉弹窗，在 KoeRuntime 统一管理 D3200 蓝牙录音豆、Mac 蓝牙耳机与 CoreAudio 输入设备；Auto 模式按已连闲置非领口待命录音豆、Mac 蓝牙输入、系统默认输入动态选源，支持手动选卡与一键恢复自动优先；仅在正式录音期间由入站采样块计算归一化 RMS 电平以免平时打开音频输入把蓝牙耳机从立体声 A2DP 降级为单声道 HFP；录音豆实时录制遇到只留本机或未配云端密钥时直接说明无实时字幕原因并提供设置跳转。实体硬件联调归入 #645。",
           "title": "独立「录音」音源工作台与实时字幕状态说明"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "配色实现范围与验收。",
+              "ref": 652
+            },
+            {
+              "kind": "file",
+              "note": "共享浅色色板。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
+            }
+          ],
+          "id": "plaud-light-palette",
+          "next": "日常安装与剩余弹窗验收见 #654。",
+          "status": "done",
+          "summary": "白色内容区、浅灰侧栏、炭黑主按钮及浅色原生控件已实现，布局和功能保持不变。全量门禁与隔离工作区 GUI 验证通过。",
+          "title": "PLAUD 风格浅色配色"
         }
       ],
       "title": "当前产品实现"
@@ -952,6 +983,20 @@
           "status": "unverified",
           "summary": "本轮已通过 C ABI v2 隔离音源回归、CoreAudio 传输类型分类测试与签名版二进制自检；尚未在真机连接实体 D3200 与蓝牙耳机核对热插拔选源切换、闲置态 A2DP 音质保持、录音期电平跳动与实时字幕提示。",
           "title": "独立「录音」页音源切换与实时字幕真机验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "记录退出阻塞与剩余日常安装验收。",
+              "ref": 654
+            }
+          ],
+          "id": "plaud-light-install",
+          "next": "等待取回及保存完成后安装新版，再核对日常窗口、连接引导和审核编辑弹窗。",
+          "status": "blocked",
+          "summary": "旧版退出被录音取回失败阻止，已取消退出。未覆盖运行中的 /Applications/Koe.app。",
+          "title": "浅色版日常安装与剩余弹窗验收"
         }
       ],
       "title": "验收与交付"
@@ -1004,7 +1049,9 @@
       640,
       641,
       644,
-      645
+      645,
+      652,
+      654
     ],
     "pulls": [
       589,
