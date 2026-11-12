@@ -270,7 +270,7 @@ impl KoeRuntime {
             "guide": self.device.guide_json()
         });
         json!({"lifecycle": self.lifecycle_json(),
-            "microphone": self.microphone_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
+            "microphone": self.microphone_json(), "capture": self.capture_studio_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},

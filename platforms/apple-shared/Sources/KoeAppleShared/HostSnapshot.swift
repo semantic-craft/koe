@@ -289,18 +289,58 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
     public let sessionId: String
     public let lane: String
     public let inputId: String
+    public var inputLabel: String = "Mac 麦克风"
+    public var inputBadge: String = "系统默认"
     public let phase: String
     public let nextSequence: UInt64
     public let durationMs: UInt64
+    public var level: Double = 0.0
     public let error: String?
     public let interruption: String?
     public let epoch: UInt64
     public let clockNs: UInt64?
     public let lanes: [String: CaptureLaneSnapshot]
+
+    public var phaseSummaryLabel: String {
+        switch phase {
+        case "paused": "已暂停"
+        case "saving": "正在保存"
+        case "stopping": "正在停止并保存"
+        case "pausing": "正在暂停"
+        case "cancelling": "正在取消"
+        case "starting": "等待权限"
+        default: "正在录音"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordId, sessionId, lane, inputId, inputLabel, inputBadge, phase, nextSequence, durationMs
+        case level, error, interruption, epoch, clockNs, lanes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        recordId = try c.decode(String.self, forKey: .recordId)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        lane = try c.decode(String.self, forKey: .lane)
+        inputId = try c.decode(String.self, forKey: .inputId)
+        inputLabel = try c.decodeIfPresent(String.self, forKey: .inputLabel) ?? "Mac 麦克风"
+        inputBadge = try c.decodeIfPresent(String.self, forKey: .inputBadge) ?? "系统默认"
+        phase = try c.decode(String.self, forKey: .phase)
+        nextSequence = try c.decode(UInt64.self, forKey: .nextSequence)
+        durationMs = try c.decode(UInt64.self, forKey: .durationMs)
+        level = try c.decodeIfPresent(Double.self, forKey: .level) ?? 0.0
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        interruption = try c.decodeIfPresent(String.self, forKey: .interruption)
+        epoch = try c.decode(UInt64.self, forKey: .epoch)
+        clockNs = try c.decodeIfPresent(UInt64.self, forKey: .clockNs)
+        lanes = try c.decode([String: CaptureLaneSnapshot].self, forKey: .lanes)
+    }
 }
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
     public var microphone: MicrophoneSnapshot? = nil
+    public var capture: CaptureStudioSnapshot = .empty
     public var lifecycle: LifecycleSnapshot? = nil
     public let version: UInt32
     public let generation: UInt64
@@ -324,7 +364,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let notice: String?
 
     private enum CodingKeys: String, CodingKey {
-        case microphone, lifecycle, version, generation, section, canGoBack
+        case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records, todayRecordIds
         case trashRecords, undoTrash, detail, tasks, memories, ask
         case device, provider, playback, error, migrationReports, notice
@@ -354,6 +394,7 @@ extension HostSnapshot {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)
+        capture = try c.decodeIfPresent(CaptureStudioSnapshot.self, forKey: .capture) ?? .empty
         lifecycle = try c.decodeIfPresent(LifecycleSnapshot.self, forKey: .lifecycle)
         version = try c.decode(UInt32.self, forKey: .version)
         generation = try c.decode(UInt64.self, forKey: .generation)

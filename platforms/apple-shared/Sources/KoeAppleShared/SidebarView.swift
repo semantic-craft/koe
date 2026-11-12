@@ -3,7 +3,8 @@ import SwiftUI
 public struct SidebarView: View {
     let store: HostSessionStore
     private let sections = [
-        ("today", "今天", "sun.max"), ("records", "所有记录", "rectangle.stack"),
+        ("today", "今天", "sun.max"), ("capture", "录音", "mic"),
+        ("records", "所有记录", "rectangle.stack"),
         ("tasks", "待办", "checkmark.circle"), ("memory", "记忆", "square.stack.3d.up"),
         ("ask", "问 Koe", "sparkles")
     ]
@@ -42,16 +43,13 @@ public struct SidebarView: View {
             }
             Spacer(minLength: 30)
             Button {
-                store.send("navigate", ["section": "settings"])
-                if !store.snapshot.device.connected {
-                    store.send("device_open_guide")
-                    NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
-                }
+                store.send("navigate", ["section": "capture"])
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "waveform.badge.mic").foregroundStyle(AppColors.accent)
+                    Image(systemName: store.snapshot.microphone == nil && store.snapshot.capture.selectedSource == "bean" ? "waveform.badge.mic" : "mic.fill")
+                        .foregroundStyle(AppColors.accent)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(store.snapshot.device.deviceName).foregroundStyle(AppColors.textPrimary).lineLimit(1)
+                        Text(store.snapshot.microphone?.inputLabel ?? store.snapshot.capture.selectedLabel).foregroundStyle(AppColors.textPrimary).lineLimit(1)
                         Text(deviceSummaryText).foregroundStyle(AppColors.textMuted).lineLimit(2)
                     }
                     Spacer(minLength: 0)
@@ -70,27 +68,49 @@ public struct SidebarView: View {
         .padding(12).frame(width: 220).background(AppColors.bgPanel)
     }
     public var deviceSummaryText: String {
+        if let mic = store.snapshot.microphone {
+            return "\(mic.phaseSummaryLabel)  \(TimeLabel.duration(mic.durationMs))"
+        }
         let dev = store.snapshot.device
-        if dev.recording {
+        if dev.recording || dev.stopping || dev.transferPhase == "streaming_realtime" {
             return "正在录音  \(TimeLabel.duration(dev.liveDurationMs))"
         }
-        if dev.connected {
-            if let mic = dev.batteryPercent {
-                return "已连接  \(mic)%"
+        let cap = store.snapshot.capture
+        if cap.selectedSource == "bean" {
+            if dev.connected {
+                if dev.busy && dev.transferPhase == "pulling_offline" { return "正在取回录音" }
+                if dev.companionMode == "collar_standby" { return "领口待命中" }
+                if let micPct = dev.batteryPercent {
+                    return "已连接  \(micPct)%"
+                }
+                return dev.state
+            }
+            if dev.phase == "disconnected" {
+                return "未连接  点击选择音源"
             }
             return dev.state
         }
-        if dev.phase == "disconnected" {
-            return "未连接  点击连接"
-        }
-        return dev.state
+        return "\(cap.selectedBadge)  点击录音"
     }
     public var deviceDotColor: Color {
+        if let mic = store.snapshot.microphone {
+            return mic.phase == "paused" ? AppColors.warning : KoeColors.danger
+        }
         let dev = store.snapshot.device
-        if dev.recording { return KoeColors.danger }
-        if dev.connected { return AppColors.success }
-        if dev.phase == "disconnected" { return AppColors.textMuted }
-        return AppColors.warning
+        if dev.recording || dev.stopping || dev.transferPhase == "streaming_realtime" {
+            return KoeColors.danger
+        }
+        let cap = store.snapshot.capture
+        if cap.selectedSource == "bean" {
+            if dev.connected {
+                if dev.busy && dev.transferPhase == "pulling_offline" { return AppColors.warning }
+                if dev.companionMode == "collar_standby" { return AppColors.accent }
+                return AppColors.success
+            }
+            if dev.phase == "disconnected" { return AppColors.textMuted }
+            return AppColors.warning
+        }
+        return cap.canStart ? AppColors.success : AppColors.textMuted
     }
     private func navigationRow(_ id: String, title: String, icon: String, count: Int = 0) -> some View {
         let selected = store.snapshot.section == id || (id == "records" && store.snapshot.section == "detail")

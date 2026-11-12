@@ -20,6 +20,20 @@ public enum KoeSelfCheckRunner {
         store.send("set_companion_mode", ["mode": "disabled"])
         guard store.snapshot.device.autoConnect == true,
               store.snapshot.device.companionMode == "disabled" else { return fail("restore companion defaults") }
+        store.send("sync_audio_inputs", ["inputs": [
+            ["id": "built-in-mic", "name": "MacBook Pro 麦克风", "transport": "built_in", "isDefault": true],
+            ["id": "bt-airpods", "name": "AirPods Pro", "transport": "bluetooth", "isDefault": false]
+        ]])
+        guard store.snapshot.capture.selectedSource == "input:bt-airpods",
+              store.snapshot.capture.selectedBadge == "Mac 蓝牙",
+              store.snapshot.capture.inputs.first?.id == "bt-airpods" else { return fail("sync audio inputs bluetooth priority") }
+        store.send("select_capture_source", ["source": "input:built-in-mic"])
+        guard store.snapshot.capture.selectedSource == "input:built-in-mic",
+              store.snapshot.capture.selectionMode == "manual" else { return fail("select capture source") }
+        store.send("navigate", ["section": "capture"])
+        guard store.snapshot.section == "capture", store.snapshot.canGoBack == true else { return fail("navigate capture") }
+        store.send("back")
+        guard store.snapshot.section == "today" else { return fail("navigate back from capture") }
         store.send("create_note", [
             "title": "Architecture review",
             "text": "Keep recording ownership in Rust. The native host renders snapshots.\nVerify speaker merge and reversible inline edits."

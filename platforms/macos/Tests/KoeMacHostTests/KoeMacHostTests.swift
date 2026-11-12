@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import Foundation
 import KoeAppleShared
 import Testing
@@ -19,7 +20,43 @@ struct KoeMacHostTests {
         let delegate = KoeAppDelegate()
         let menu = delegate.buildStatusMenu()
         let destinations = menu.items.compactMap { $0.representedObject as? String }
-        #expect(destinations == ["today", "records", "tasks", "memory", "ask", "settings"])
+        #expect(destinations == ["today", "capture", "records", "tasks", "memory", "ask", "settings"])
+    }
+
+    @Test("CoreAudio transport classification and idempotent audio input sync avoid generation churn")
+    @MainActor
+    func transportClassificationAndIdempotentInputSync() {
+        #expect(NativeAudioSource.classifyTransport(kAudioDeviceTransportTypeBluetooth) == "bluetooth")
+        #expect(NativeAudioSource.classifyTransport(kAudioDeviceTransportTypeBluetoothLE) == "bluetooth")
+        #expect(NativeAudioSource.classifyTransport(kAudioDeviceTransportTypeUSB) == "usb")
+        #expect(NativeAudioSource.classifyTransport(kAudioDeviceTransportTypeBuiltIn) == "built_in")
+        #expect(NativeAudioSource.classifyTransport(kAudioDeviceTransportTypeVirtual) == "external")
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+        let delegate = KoeAppDelegate()
+        delegate.store = store
+
+        let fixture = [
+            MicrophoneInput(id: "built-in", name: "MacBook Pro 麦克风", transport: "built_in", isDefault: true),
+            MicrophoneInput(id: "airpods", name: "AirPods Pro", transport: "bluetooth", isDefault: false)
+        ]
+        delegate.syncAudioInputsIfNeeded(force: true, inputsProvider: { fixture })
+        #expect(store.snapshot.capture.selectedSource == "input:airpods")
+        #expect(store.snapshot.capture.selectedBadge == "Mac 蓝牙")
+        let generationAfterFirstSync = store.snapshot.generation
+
+        delegate.syncAudioInputsIfNeeded(force: false, inputsProvider: { fixture })
+        #expect(store.snapshot.generation == generationAfterFirstSync)
+
+        let unplugged = [
+            MicrophoneInput(id: "built-in", name: "MacBook Pro 麦克风", transport: "built_in", isDefault: true)
+        ]
+        delegate.syncAudioInputsIfNeeded(force: false, inputsProvider: { unplugged })
+        #expect(store.snapshot.generation > generationAfterFirstSync)
+        #expect(store.snapshot.capture.selectedSource == "input:built-in")
     }
 
     @Test("BLE data decoding rejects incomplete and invalid byte strings")

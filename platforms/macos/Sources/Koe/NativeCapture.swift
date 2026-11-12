@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import KoeAppleShared
 
@@ -35,23 +34,6 @@ final class NativeCapture {
         self.nowNanoseconds = nowNanoseconds
     }
 
-    func chooseInput() {
-        guard let store, store.snapshot.microphone == nil else { return }
-        let inputs = NativeAudioSource.inputs()
-        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26))
-        picker.addItem(withTitle: "系统默认麦克风")
-        for input in inputs { picker.addItem(withTitle: input.name) }
-        let alert = NSAlert()
-        alert.messageText = "选择录音输入"
-        alert.informativeText = "录音先保存到本机。输入设备变化时会停止并保存已收到的音频。"
-        alert.accessoryView = picker
-        alert.addButton(withTitle: "开始录音")
-        alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let index = picker.indexOfSelectedItem
-        store.send("start_microphone", ["inputId": index > 0 ? inputs[index - 1].id : ""])
-        apply()
-    }
     func resume() {
         guard let current = store?.snapshot.microphone, current.phase == "paused",
               pendingPermission == nil, run?.identity == CaptureIdentity(current) else { return }
