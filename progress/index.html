@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-12T05:40:57.907928Z</p>
-<p>Main: <code>main: 78d2d504302ab0edad83820194159c0a7abf425e</code></p>
+<p>Observed: 2026-11-12T07:22:45.296093Z</p>
+<p>Main: <code>main: e8e317e2e5c2864690d37e32692fa7c4cc9b43c2</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -85,10 +85,18 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-host-api/src/local_bridge.rs">file crates/koe-host-api/src/local_bridge.rs: 属主私有 0600 koe.sock JSON-RPC 桥接、有界订阅推送与作用域化手动门控引用计数。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/src/mcp.rs">file crates/koe-cli/src/mcp.rs: 在线优先回退离线的 16 工具 MCP stdio 服务与宿主重启自动重连。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift">file platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift: 原生设置页伴侣模式选择、蓝牙自动连接开关与释放蓝牙控制权卡片。</a></li>
-</ul><p>Next: 退出当前运行中的 Koe.app 后执行 ./scripts/install-macos.sh 刷新至 78d2d50，并按 #641 在实体 04.92 D3200 上验收自动待命、敲击门控与控制权释放；后续在 Responsay 侧对接 companion/subscribe。</p></article>
+</ul><p>Next: 按 #641 在实体 04.92 D3200 上验收自动待命、敲击门控与控制权释放；后续在 Responsay 侧对接 companion/subscribe。</p></article>
+<article id="capture-source-studio"><h3>独立「录音」音源工作台与实时字幕状态说明</h3><span class="badge">done</span><p>PR #646（#644）新增左侧边栏独立「录音」页（CaptureView），移除今天页顶部的 MicrophoneCard 输入条与阻塞式 NSAlert + NSPopUpButton 下拉弹窗，在 KoeRuntime 统一管理 D3200 蓝牙录音豆、Mac 蓝牙耳机与 CoreAudio 输入设备；Auto 模式按已连闲置非领口待命录音豆、Mac 蓝牙输入、系统默认输入动态选源，支持手动选卡与一键恢复自动优先；仅在正式录音期间由入站采样块计算归一化 RMS 电平以免平时打开音频输入把蓝牙耳机从立体声 A2DP 降级为单声道 HFP；录音豆实时录制遇到只留本机或未配云端密钥时直接说明无实时字幕原因并提供设置跳转。实体硬件联调归入 #645。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/644">issue 644: 独立「录音」音源工作台与实时字幕状态说明需求范围。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 三层实现、三模型对抗审查 5 项边界加固与远端 CI 通过后 squash 合并。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/645">issue 645: 独立真机工单：实体 D3200 录音豆与蓝牙耳机热插拔、A2DP 音质保持与实时字幕提示验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/capture_studio.rs">file crates/koe-runtime/src/capture_studio.rs: KoeRuntime 统一音源偏好、自动优先排序、拔除回退与领口待命/离线取回避让。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/CaptureView.swift">file platforms/apple-shared/Sources/KoeAppleShared/CaptureView.swift: 独立「录音」页音源卡片、自动优先切换、12 段实时电平表与实时字幕状态说明。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Sources/Koe/NativeAudioSource.swift">file platforms/macos/Sources/Koe/NativeAudioSource.swift: CoreAudio 传输类型分类（蓝牙/USB/内置/外接）、输入声道过滤与 UID 去重同步。</a></li>
+</ul><p>Next: 按 #645 连接实体 D3200 录音豆与蓝牙耳机完成热插拔、A2DP 音质与实时字幕真机核对。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
-<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 44 项 Python 契约、49 文件 verify-ui-principles 零违规、全量 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #642 CI、三模型独立对抗审查（pro / flash / inherit）与独立分支复验（flash PASS+NOTES）通过，6 项审查加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
+<article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/check">file scripts/check: 统一门禁</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/cloud_workflow.rs">file crates/koe-runtime/tests/cloud_workflow.rs: 本地真实协议流程</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 独立评审与 CI 通过，未运行真实安装升级。</a></li>
@@ -96,11 +104,12 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: Slice R1 完整门禁（281 Rust、44 Python、53 Swift）、koe-cli benchmark（66.389 ms）、三模型对抗审查及 PR CI 通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/638">pull 638: Slice R2 完整门禁（295 Rust、44 Python、57 Swift）、koe-cli benchmark（release 5 轮中位数 65.721 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 16 工具实时 MCP 桥接与领口伴侣完整门禁（44 Python、49 文件 UI 原则零违规、全量 Rust 与 Swift 测试）、koe-cli benchmark（release 5 轮中位数 64.311 ms）、三模型对抗审查、独立分支复验（flash PASS+NOTES）及 PR CI 通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 独立「录音」音源工作台完整门禁（50 文件 UI 原则零违规、全量离线 Rust 与 Swift 测试）、koe-cli benchmark（69.821 ms）、三模型对抗审查 5 项先红后绿加固及 PR CI 通过。</a></li>
 </ul><p>Next: 后续改动运行统一门禁。</p></article>
 <article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
 </ul><p>Next: 按 #588 继续验收完整取回、边录边转写与真实云服务。</p></article>
-<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-12 已在 PR #642 首轮提交（3d558a3）安装 Developer ID 签名版 /Applications/Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54，designated requirement 与既有版本一致），并在沙盒运行态实测容器内 .koe/koe.sock（0600）零锁冲突直连返回完整 16 项 MCP 工具；因 Koe.app 当前正在前台运行未中断覆盖，合并提交 78d2d50（含 cc58082 审查加固）已在构建二进制通过 --verify-self 与 --smoke-test，待退出应用后执行 ./scripts/install-macos.sh 刷新已安装二进制。签名安装完成不替代各独立工单的真机交互验收。</p><ul>
+<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-12 已从合并提交 e8e317e（含 PR #642 实时 MCP/领口伴侣与 PR #646 独立「录音」音源工作台）重新安装 Developer ID 签名版 /Applications/Koe.app（CDHash b567c5e501154071b3d444264b41277318fcd610，designated requirement 与既有版本一致，Keychain 授权持续有效），已安装二进制通过 --verify-self（含蓝牙输入优先、音源切换与「录音」页导航回退）与 --smoke-test 全部校验。签名安装完成不替代各独立工单的真机交互验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/587">issue 587: 实现范围与验收入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/594">issue 594: 未运行态下已在同一 Dock 并排截图确认 Responsay、Sonori、Koe、Micro Input、Kotone 视觉轮廓对齐。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/595">pull 595: 系统图标大小修复已 squash 合并，CI 通过；安装与 GUI 重启验证完成。</a></li>
@@ -109,7 +118,8 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/635">pull 635: 含归档锁与 30 天回收站的签名版已重装并通过 verify-self 与 smoke-test。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/638">pull 638: 含转写原文分段编辑与说话人合并的签名版已重装并通过 verify-self 与 smoke-test。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 沙盒态运行中签名版 Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54）实测 0600 koe.sock 实时暴露 16 项 MCP 工具；最终加固提交 cc58082 通过 verify-self 与 smoke-test，待退出运行中应用后重装刷新。</a></li>
-</ul><p>Next: 退出前台运行中的 Koe.app 后执行 ./scripts/install-macos.sh 刷新至 78d2d50；真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 / #641 推进。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 合并提交 e8e317e 已重装 Developer ID 签名版 /Applications/Koe.app（CDHash b567c5e501154071b3d444264b41277318fcd610）并通过 verify-self 与 smoke-test。</a></li>
+</ul><p>Next: 真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 / #641 / #645 推进。</p></article>
 <article id="flutter-device-acceptance"><h3>旧 Flutter 库真机验收</h3><span class="badge">unverified</span><p>本轮未运行签名安装版目录导入、真实音频播放及退出重启读回。自动回归不能替代真机结果。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/598">issue 598: 独立真机验收工单，保持未验。</a></li>
 </ul><p>Next: 使用授权旧库副本在签名版逐项核对。</p></article>
@@ -127,7 +137,10 @@
 </ul><p>Next: 按 #616 在签名安装版逐项验收。系统双路、本机 ASR、暂停与崩溃恢复不属于本片。</p></article>
 <article id="collar-companion-device-acceptance"><h3>D3200 领口伴侣与蓝牙控制权移交真机验收</h3><span class="badge">unverified</span><p>本轮已完成沙盒态运行中 Koe.app 的 0600 koe.sock 实时 16 工具连接验收与模拟 BLE 协议回归；尚未连接实体 04.92 国行 D3200 录音豆验证出仓自动待命指示灯与续航、闪存临时文件自动回收、正面双击与快捷键混用敲击门控听感及释放蓝牙控制权后的外部配对。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/641">issue 641: 独立真机验收工单，保持开放未验。</a></li>
-</ul><p>Next: 重装刷新 78d2d50 签名版后，连接实体 04.92 D3200 按 #641 逐项核对。</p></article>
+</ul><p>Next: 连接实体 04.92 D3200 按 #641 逐项核对。</p></article>
+<article id="capture-studio-device-acceptance"><h3>独立「录音」页音源切换与实时字幕真机验收</h3><span class="badge">unverified</span><p>本轮已通过 C ABI v2 隔离音源回归、CoreAudio 传输类型分类测试与签名版二进制自检；尚未在真机连接实体 D3200 与蓝牙耳机核对热插拔选源切换、闲置态 A2DP 音质保持、录音期电平跳动与实时字幕提示。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/645">issue 645: 独立真机验收工单，保持开放未验。</a></li>
+</ul><p>Next: 连接实体 D3200 与蓝牙耳机按 #645 逐项核对。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、系统麦克风全天监听、Google 写回与 ACP 不计入当前 macOS 已接通功能；保留的底层模块不等于界面已实现。</p><ul>
