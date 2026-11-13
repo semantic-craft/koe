@@ -2,11 +2,27 @@ import SwiftUI
 
 public struct SettingsDoctorView: View {
     let store: HostSessionStore
+    @State private var showAllDayDemo = false
     public init(store: HostSessionStore) { self.store = store }
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 PageHeading(title: "设置", subtitle: "管理录音音源、语音识别和文字整理服务。")
+                KoeCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Label("录音与保存", systemImage: "mic")
+                                .font(.system(size: AppFontSizes.md, weight: .medium))
+                            InfoTip("录音保存在本机。随手记与全天听记暂不支持只留文字。")
+                        }
+                        HStack(spacing: 10) {
+                            KoeActionButton("录音管理", systemImage: "mic") {
+                                store.send("navigate", ["section": "capture"])
+                            }
+                            KoeActionButton("全天听记演示", systemImage: "play.rectangle") { showAllDayDemo = true }
+                        }
+                    }
+                }
                 KoeCard {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -41,17 +57,6 @@ public struct SettingsDoctorView: View {
                                 )
                             }
                             HStack(spacing: 10) {
-                                if store.snapshot.device.recording {
-                                    KoeActionButton("结束录音", systemImage: "stop.circle", isPrimary: true) {
-                                        store.send("device_stop")
-                                        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-                                    }
-                                } else {
-                                    KoeActionButton("开始录音", systemImage: "record.circle", isPrimary: true) {
-                                        store.send("device_start")
-                                        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-                                    }.disabled(store.snapshot.device.busy)
-                                }
                                 KoeActionButton("刷新状态", systemImage: "arrow.clockwise") {
                                     store.send("device_refresh")
                                     NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
@@ -76,20 +81,6 @@ public struct SettingsDoctorView: View {
                                 }.disabled(store.snapshot.device.busy)
                             }
                         }
-                        if store.snapshot.device.busy { ProgressView(value: store.snapshot.device.progress) }
-                        ForEach(store.snapshot.device.files) { file in
-                            HStack {
-                                Text(file.title).font(.system(size: AppFontSizes.sm))
-                                Text(TimeLabel.duration(file.durationMs)).font(.system(size: AppFontSizes.xs))
-                                    .foregroundStyle(AppColors.textMuted)
-                                Spacer()
-                                KoeActionButton("取回") {
-                                    store.send("device_download", ["fileId": file.id])
-                                    NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-                                }
-                                .disabled(store.snapshot.device.busy)
-                            }.padding(.vertical, 5)
-                        }
                     }
                 }
                 CompanionSettingsCard(store: store)
@@ -106,11 +97,13 @@ public struct SettingsDoctorView: View {
                             .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
                     }
                 }
-                Text("记录与确认结果保存在本机工作区。导出时可选择保存位置。")
-                    .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
+                KoeActionButton("管理记忆", systemImage: "square.stack.3d.up") {
+                    store.send("navigate", ["section": "memory"])
+                }
             }.padding(30).frame(maxWidth: 850, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .sheet(isPresented: $showAllDayDemo) { AllDayDemoView() }
     }
     private func telemetryTile(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {

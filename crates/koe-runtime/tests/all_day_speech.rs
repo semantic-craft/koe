@@ -243,7 +243,10 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
             ..
         }
     ));
-    let s = audio(&mut r, &t, sequence, 320);
+    let next_day = 100 + 86_400;
+    let s: Value = serde_json::from_str(&r.dispatch_json(
+        &json!({"type":"microphone_chunk","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"samples":vec![100i16;320]}).to_string(), next_day,
+    )).unwrap();
     assert!(s["error"].is_null(), "{s}");
     sequence += 1;
     assert_eq!(s["microphone"]["recordId"], t["recordId"]);
@@ -257,6 +260,8 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         .find(|v| v.aggregate.recording_id != first.aggregate.recording_id)
         .unwrap();
     assert_eq!(second.all_day.as_ref().unwrap().ordinal, 2);
+    assert_eq!(second.aggregate.created_at_epoch_sec, next_day);
+    assert_eq!(s["journal"]["recordIds"], json!([second.aggregate.recording_id]));
     assert_eq!(
         second.all_day.as_ref().unwrap().run_id,
         first.all_day.as_ref().unwrap().run_id
@@ -276,6 +281,7 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         assert!(std::time::Instant::now() < deadline, "{}", r.snapshot(100));
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    assert_eq!(r.snapshot(100)["journal"]["summaries"][0]["text"], "已封段原文");
     send(&mut r, json!({"type":"stop_all_day"}));
     send(
         &mut r,
@@ -583,4 +589,49 @@ fn apple_file_backpressure_waits_for_native_completion_instead_of_filling_its_qu
     let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
     assert_eq!(effects.iter().filter(|e| e["kind"] == "start").count(), 1);
     assert!(!effects.iter().any(|e| e["kind"] == "cancel"));
+}
+
+#[test]
+fn standalone_dictation_publishes_words_after_microphone_resume() {
+    let d = Sandbox::new();
+    let mut r = KoeRuntime::open(&d.0).unwrap();
+    apple_ready(&mut r);
+    let started = send(&mut r, json!({"type":"start_capture_mode","mode":"dictation"}));
+    let mic = &started["microphone"];
+    send(&mut r, json!({"type":"microphone_prepared","recordId":mic["recordId"],"sessionId":mic["sessionId"],"epoch":0,"clockNs":1_000_000_000_u64}));
+    microphone_started(&mut r, mic);
+    send(&mut r, json!({"type":"capture_action","action":"pause"}));
+    let paused = send(&mut r, json!({"type":"microphone_paused","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":0,"epoch":0}));
+    assert_eq!(paused["dictation"]["active"], false);
+    let resumed = send(&mut r, json!({"type":"resume_microphone","clockNs":2_000_000_000_u64}));
+    assert_eq!(resumed["activeCapture"]["phase"], "recording");
+    let next_epoch = &resumed["microphone"]["epoch"];
+    let recorded = send(&mut r, json!({"type":"microphone_chunk","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":0,"samples":vec![100i16;320],"timing":{"epoch":next_epoch,"capturedStartNs":2_000_000_000_u64}}));
+    assert!(recorded["error"].is_null(), "{recorded}");
+    send(&mut r, json!({"type":"capture_action","action":"end"}));
+    send(&mut r, json!({"type":"microphone_stopped","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":1,"epoch":next_epoch}));
+    accept_windows(&mut r, "继续后的听写");
+    assert!(r.drain_companion_events().iter().any(|event| matches!(
+        event, koe_runtime::CompanionStreamEvent::TranscriptFinal { text, dictation: true, .. } if text == "继续后的听写"
+    )));
+}
+
+#[test]
+fn ending_all_day_delivers_the_selected_audio_while_the_microphone_drains() {
+    let d = Sandbox::new();
+    let mut r = KoeRuntime::open(&d.0).unwrap();
+    apple_ready(&mut r);
+    let started = send(&mut r, json!({"type":"start_capture_mode","mode":"all_day"}));
+    let mic = &started["microphone"];
+    microphone_started(&mut r, mic);
+    send(&mut r, json!({"type":"start_capture_mode","mode":"dictation"}));
+    send(&mut r, json!({"type":"capture_action","action":"end"}));
+    let tail = audio(&mut r, mic, 0, 320);
+    assert!(tail["error"].is_null(), "{tail}");
+    send(&mut r, json!({"type":"microphone_stopped","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":1}));
+    accept_windows(&mut r, "排空前的听写");
+    assert!(r.drain_companion_events().iter().any(|event| matches!(
+        event, koe_runtime::CompanionStreamEvent::TranscriptFinal { text, dictation: true, .. } if text == "排空前的听写"
+    )));
+    assert_eq!(r.snapshot(100)["dictation"]["active"], false);
 }

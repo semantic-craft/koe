@@ -20,6 +20,7 @@ mod companion_mcp_tests;
 pub mod credentials;
 mod device;
 mod dictation_capture;
+mod journal;
 mod legacy;
 mod lifecycle;
 #[cfg(test)]
@@ -90,6 +91,7 @@ pub struct KoeRuntime {
     all_day: all_day::AllDayState,
     capture_studio: capture_studio::CaptureStudioState,
     microphone: Option<microphone::Microphone>,
+    bean_capture_mode: Option<command::CaptureMode>,
     auto_transcribe: std::collections::BTreeSet<String>,
     auto_summarize: std::collections::BTreeSet<String>,
     next_job: u64,
@@ -137,6 +139,7 @@ impl KoeRuntime {
             local_asr: Default::default(),
             capture_studio: Default::default(),
             microphone: None,
+            bean_capture_mode: None,
             auto_transcribe: Default::default(),
             auto_summarize: Default::default(),
             next_job: 1,
@@ -260,6 +263,8 @@ impl KoeRuntime {
             self.reconcile_expired_trash(now);
         }
         match command {
+            Command::StartCaptureMode { mode } => self.start_capture_mode(mode, now)?,
+            Command::CaptureAction { action, clock_ns } => self.capture_action(action, clock_ns)?,
             Command::StartMicrophone {
                 input_id,
                 include_system,
@@ -571,7 +576,7 @@ impl KoeRuntime {
                 self.drive_companion(now);
             }
             Command::DeviceRelease => {
-                self.set_dictation_active(false);
+                self.stop_bean_dictation();
                 self.commit(|w| {
                     w.set_ble_auto_connect(false);
                     Ok(())
@@ -722,6 +727,8 @@ impl KoeRuntime {
                 self.drive_companion(now);
             }
         }
+        self.reconcile_all_day();
+        self.reconcile_bean_capture_mode();
         Ok(())
     }
 
@@ -765,9 +772,7 @@ impl KoeRuntime {
 
     /// Feeds real platform notifications into the existing protocol engine.
     pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
-        if now > 0 {
-            self.last_now_sec = now;
-        }
+        let day_changed = self.advance_clock(now);
         let lifecycle = self.lifecycle_json();
         let revision = self.workspace().revision();
         let error = self.error.clone();
@@ -777,7 +782,11 @@ impl KoeRuntime {
         }
         changed |= self.drive_companion(now);
         changed |= self.maybe_start_auto_offline_pull();
+        self.reconcile_bean_capture_mode();
+        let all_day_finished = self.reconcile_all_day();
         if changed
+            || day_changed
+            || all_day_finished
             || revision != self.workspace().revision()
             || error != self.error
             || lifecycle != self.lifecycle_json()
@@ -787,9 +796,7 @@ impl KoeRuntime {
     }
     /// Advances protocol deadlines and consumes completed provider work.
     pub fn poll_timers(&mut self, elapsed_ms: u64, now: u64) {
-        if now > 0 {
-            self.last_now_sec = now;
-        }
+        let day_changed = self.advance_clock(now);
         let lifecycle = self.lifecycle_json();
         let revision = self.workspace().revision();
         let error = self.error.clone();
@@ -816,11 +823,14 @@ impl KoeRuntime {
             | self.poll_provider()
             | self.poll_captures();
         self.drive_analysis_queue();
-        self.reconcile_all_day();
+        let all_day_finished = self.reconcile_all_day();
         completed |= self.drive_companion(now);
         completed |= self.maybe_start_auto_offline_pull();
+        self.reconcile_bean_capture_mode();
         if changed
             || completed
+            || day_changed
+            || all_day_finished
             || undo_expired
             || trash_expired
             || revision != self.workspace().revision()
@@ -829,6 +839,14 @@ impl KoeRuntime {
         {
             self.generation = self.generation.saturating_add(1);
         }
+    }
+
+    fn advance_clock(&mut self, now: u64) -> bool {
+        if now == 0 {
+            return false;
+        }
+        let before = std::mem::replace(&mut self.last_now_sec, now);
+        before > 0 && projection::local_date(before) != projection::local_date(now)
     }
 
     fn ensure_device_idle(&self) -> Result<(), String> {

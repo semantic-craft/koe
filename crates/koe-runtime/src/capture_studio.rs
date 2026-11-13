@@ -49,6 +49,16 @@ pub(crate) struct CaptureStudioState {
     pub inputs: Vec<AudioInputDescriptor>,
 }
 
+pub(super) struct CaptureSelection {
+    pub source: String,
+    pub input_id: String,
+    pub label: String,
+    badge: &'static str,
+    mode: &'static str,
+    active_source: Option<String>,
+    pub can_start: bool,
+}
+
 impl KoeRuntime {
     pub(super) fn is_bean_meeting_recording(&self) -> bool {
         (self.device.session.device_recording_active && !self.companion.standby_stream_owned)
@@ -145,7 +155,7 @@ impl KoeRuntime {
         Ok(())
     }
 
-    pub(super) fn capture_studio_json(&self) -> Value {
+    pub(super) fn capture_selection(&self) -> CaptureSelection {
         let device_name = self
             .device
             .device_name
@@ -173,6 +183,7 @@ impl KoeRuntime {
             && !self.companion.standby_stream_owned;
         let bean_ready = self.device.is_connected()
             && !device_busy
+            && !self.device.session.is_offline_pull_suspended()
             && self.workspace().companion_mode() != CompanionRoutingMode::CollarStandby;
 
         let resolve_auto = || -> (String, String, String, &'static str) {
@@ -317,7 +328,19 @@ impl KoeRuntime {
                 true
             };
 
-        let inputs_json: Vec<Value> = inputs
+        CaptureSelection {
+            source: selected_source,
+            input_id: selected_input_id,
+            label: selected_label,
+            badge: selected_badge,
+            mode: selection_mode,
+            active_source,
+            can_start,
+        }
+    }
+
+    pub(super) fn capture_studio_json(&self, selection: &CaptureSelection) -> Value {
+        let inputs_json: Vec<Value> = self.capture_studio.inputs
             .iter()
             .map(|input| {
                 json!({
@@ -332,13 +355,13 @@ impl KoeRuntime {
             .collect();
 
         json!({
-            "selectedSource": selected_source,
-            "selectedInputId": selected_input_id,
-            "selectedLabel": selected_label,
-            "selectedBadge": selected_badge,
-            "selectionMode": selection_mode,
-            "activeSource": active_source,
-            "canStart": can_start,
+            "selectedSource": selection.source,
+            "selectedInputId": selection.input_id,
+            "selectedLabel": selection.label,
+            "selectedBadge": selection.badge,
+            "selectionMode": selection.mode,
+            "activeSource": selection.active_source,
+            "canStart": selection.can_start,
             "inputs": inputs_json,
         })
     }

@@ -263,3 +263,20 @@ fn scanning_resets_stale_connecting_and_handshake_watchdog_retries() {
         "expected handshake watchdog to re-queue outbound handshake frames"
     );
 }
+
+#[test]
+fn bean_all_day_keeps_its_mode_until_stop_acknowledgement() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.device.session.session_key = Some([1; 32]);
+    let started = command(&mut runtime, json!({"type":"start_capture_mode","mode":"all_day"}));
+    assert_eq!(started["activeCapture"]["mode"], "all_day");
+    let stopped = command(&mut runtime, json!({"type":"capture_action","action":"end"}));
+    assert_eq!(stopped["device"]["stopping"], true);
+    assert_eq!(stopped["activeCapture"]["mode"], "all_day");
+    assert_eq!(stopped["activeCapture"]["phase"], "stopping");
+    let mut acknowledged = vec![0x09, 0xff, 0, 0, 1, 0x18, 0x82, 11, 0, 0];
+    acknowledged.push(koe_engine::frame::ProtocolFrame::checksum(&acknowledged));
+    runtime.ingest_ble_chunk(&acknowledged, 1800000001);
+    assert!(runtime.snapshot(1800000001)["activeCapture"].is_null());
+}

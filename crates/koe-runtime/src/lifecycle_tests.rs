@@ -555,3 +555,25 @@ fn retrying_unconfirmed_stop_does_not_reset_audio_drain() {
     runtime.ingest_ble_chunk(&rx(0x18, 0x82, &[0]), NOW + 2);
     assert_eq!(quit_phase(&runtime), "ready");
 }
+
+#[test]
+fn failed_bean_save_keeps_the_active_mode_until_audio_is_durable() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.device.session.session_key = Some([1; 32]);
+    let started = dispatch(&mut runtime, json!({"type":"start_capture_mode","mode":"quick_note"}));
+    assert_eq!(started["activeCapture"]["mode"], "quick_note");
+    let id = live(&mut runtime);
+    fs::write(dir.0.join("audio"), b"storage fault").unwrap();
+    dispatch(&mut runtime, json!({"type":"capture_action","action":"end"}));
+    runtime.ingest_ble_chunk(&rx(0x18, 0x82, &[0]), NOW);
+    runtime.poll_timers(2_000, NOW + 2);
+    let blocked = runtime.snapshot(NOW + 2);
+    assert_eq!(blocked["activeCapture"]["mode"], "quick_note");
+    assert_eq!(blocked["activeCapture"]["phase"], "stopping");
+    assert!(blocked["activeCapture"]["error"].is_string());
+    fs::remove_file(dir.0.join("audio")).unwrap();
+    runtime.poll_timers(0, NOW + 3);
+    assert!(runtime.snapshot(NOW + 3)["activeCapture"].is_null());
+    assert!(recording_assets::audio_path(&dir.0, &id).unwrap().exists());
+}

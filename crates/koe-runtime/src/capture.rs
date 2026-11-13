@@ -1,4 +1,5 @@
 use super::*;
+use crate::speech::DictationSource;
 use koe_engine::session::CaptureEvent;
 use std::collections::{BTreeMap, VecDeque};
 
@@ -42,7 +43,7 @@ impl KoeRuntime {
                         }
                     } else {
                         let id = self.ensure_capture(file_id, now)?;
-                        self.feed_speech(&id, &pcm16)?;
+                        self.feed_speech(&id, &pcm16, Some(DictationSource::Bean))?;
                         if self.all_day_group("bean").is_some()
                             && self.device.session.received_slice_count() as u64 * 20
                                 >= crate::all_day::SEGMENT_MS
@@ -66,7 +67,7 @@ impl KoeRuntime {
                         let id = self.captures.active.remove(&file_id);
                         if let Some(id) = &id {
                             self.finish_speech(id);
-                            self.set_dictation_active(false);
+                            self.set_source_dictation(DictationSource::Bean, false);
                         }
                         self.captures.targets.push_back(id);
                     }

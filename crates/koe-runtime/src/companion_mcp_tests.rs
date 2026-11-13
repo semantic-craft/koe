@@ -2054,3 +2054,21 @@ fn quitting_retries_a_standby_dictation_save_without_losing_audio() {
         640
     );
 }
+
+#[test]
+fn microphone_dictation_does_not_capture_or_stop_with_standby_bean() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(r#"{"type":"set_companion_mode","mode":"collar_standby"}"#, NOW);
+    let session_key = connect_simulated_bean(&mut runtime, "ble-separate-dictation", NOW);
+    let (file_key, nonce) = activate_realtime_file(&mut runtime, &session_key, 7601, NOW + 1);
+    runtime.drain_companion_events();
+    let started: Value = serde_json::from_str(&runtime.dispatch_json(r#"{"type":"start_capture_mode","mode":"dictation"}"#, NOW + 2)).unwrap();
+    assert!(started["microphone"]["sessionId"].is_string());
+    runtime.ingest_ble_chunk(&build_encrypted_slices_rx(&file_key, &nonce, &(0..21).map(|n| (n, 0)).collect::<Vec<_>>()), NOW + 3);
+    assert!(runtime.workspace().records().is_empty());
+    assert!(!runtime.drain_companion_events().iter().any(|e| matches!(e, CompanionStreamEvent::AudioPcm16 { .. })));
+    let disconnected: Value = serde_json::from_str(&runtime.dispatch_json(r#"{"type":"device_disconnect"}"#, NOW + 4)).unwrap();
+    assert_eq!(disconnected["dictation"]["active"], true);
+    assert_eq!(disconnected["activeCapture"]["mode"], "dictation");
+}

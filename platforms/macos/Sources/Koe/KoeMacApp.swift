@@ -244,7 +244,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
-        for (id, title) in [("today", "今天"), ("capture", "录音"), ("records", "所有记录"), ("tasks", "待办"), ("memory", "记忆"), ("ask", "问 Koe"), ("settings", "设置")] {
+        for (id, title) in [("today", "今天"), ("notes", "随心记"), ("tasks", "行动"), ("records", "所有记录"), ("ask", "问 Koe"), ("settings", "设置")] {
             let item = NSMenuItem(title: title, action: #selector(navigate(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = id

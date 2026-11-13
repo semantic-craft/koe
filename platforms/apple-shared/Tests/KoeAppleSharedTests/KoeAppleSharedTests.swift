@@ -397,9 +397,9 @@ struct KoeAppleSharedTests {
         #expect(reopened.nativeError == nil)
     }
 
-    @Test("CaptureStudioSnapshot, MicrophoneSnapshot.level legacy defaults, and SidebarView capture states")
+    @Test("Capture studio snapshots and activity across navigation")
     @MainActor
-    func captureStudioContractAndSidebarSummary() throws {
+    func captureStudioAndActivity() throws {
         let legacyMicJSON = """
         {
           "version": 2, "generation": 1, "section": "today", "canGoBack": false,
@@ -429,10 +429,9 @@ struct KoeAppleSharedTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = HostSessionStore(workspacePath: directory.path)
         defer { store.shutdown() }
-        let sidebar = SidebarView(store: store)
 
-        #expect(sidebar.deviceSummaryText == "系统默认  点击录音")
-        #expect(!sidebar.deviceSummaryText.unicodeScalars.contains(where: { $0.value == 0x00B7 }))
+        #expect(store.snapshot.captureModes.count == 4)
+        #expect(store.snapshot.captureModes.allSatisfy { $0.available })
 
         store.reportNativeError("麦克风权限未开启")
         store.send("sync_audio_inputs", ["inputs": [
@@ -444,12 +443,12 @@ struct KoeAppleSharedTests {
         #expect(store.nativeError == nil)
         #expect(store.snapshot.capture.selectedSource == "input:airpods-pro")
         #expect(store.snapshot.capture.selectedBadge == "Mac 蓝牙")
-        #expect(sidebar.deviceSummaryText == "Mac 蓝牙  点击录音")
+        #expect(store.snapshot.captureModes.allSatisfy { $0.sourceLabel == "AirPods Pro" })
 
         store.send("select_capture_source", ["source": "bean"])
         #expect(store.snapshot.capture.selectedSource == "bean")
         #expect(store.snapshot.capture.canStart == false)
-        #expect(sidebar.deviceSummaryText == "未连接  点击选择音源")
+        #expect(store.snapshot.captureModes.allSatisfy { !$0.available })
 
         store.send("navigate", ["section": "capture"])
         #expect(store.snapshot.section == "capture")
@@ -459,7 +458,10 @@ struct KoeAppleSharedTests {
         #expect(mic.inputLabel == "AirPods Pro")
         #expect(mic.inputBadge == "Mac 蓝牙")
         #expect(mic.phaseSummaryLabel == "等待权限")
-        #expect(sidebar.deviceSummaryText.hasPrefix("等待权限  "))
+        #expect(store.snapshot.activeCapture?.phase == "starting")
+        store.send("navigate", ["section": "notes"])
+        #expect(store.snapshot.section == "notes")
+        #expect(store.snapshot.microphone?.sessionId == mic.sessionId)
         store.send("microphone_started", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sampleRate": 16000])
         store.send("microphone_chunk", [
             "recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone",
@@ -467,11 +469,11 @@ struct KoeAppleSharedTests {
             "timing": ["epoch": 0, "capturedStartNs": 1_000_000_000]
         ])
         #expect((store.snapshot.microphone?.level ?? 0) > 0.4)
-        #expect(sidebar.deviceSummaryText.hasPrefix("正在录音  "))
+        #expect(store.snapshot.activeCapture?.actions.contains(.pause) == true)
         store.send("cancel_microphone")
         #expect(store.snapshot.microphone?.level == 0.0)
         #expect(store.snapshot.microphone?.phaseSummaryLabel == "正在取消")
-        #expect(sidebar.deviceSummaryText.hasPrefix("正在取消  "))
+        #expect(store.snapshot.activeCapture?.phase == "cancelling")
         store.send("microphone_stopped", ["recordId": mic.recordId, "sessionId": mic.sessionId, "lane": "microphone", "sequence": 1, "epoch": 0])
         #expect(store.snapshot.microphone == nil)
     }

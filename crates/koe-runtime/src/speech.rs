@@ -11,6 +11,13 @@ use std::collections::{BTreeSet, VecDeque};
 const WINDOW_SAMPLES: usize = 16_000 * 15;
 const MAX_PENDING_WINDOWS: usize = 4;
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum DictationSource {
+    Microphone,
+    Bean,
+    Standby,
+}
+
 pub(super) struct SpeechSession {
     key: RequestKey,
     engine: SpeechEngine,
@@ -20,7 +27,7 @@ pub(super) struct SpeechSession {
     pcm: Vec<i16>,
     consumed_samples: u64,
     input_closed: bool,
-    live_input: bool,
+    source: Option<DictationSource>,
     file_audio: Option<VecDeque<u8>>,
     results: VecDeque<LiveEvent>,
     selected_ranges: Vec<(u64, Option<u64>)>,
@@ -48,7 +55,7 @@ pub(super) struct SpeechState {
     preparation: Option<ModelPreparation>,
     apple_owner: Option<u64>,
     models: BTreeMap<String, ModelState>,
-    pub dictation_active: bool,
+    dictation: BTreeSet<DictationSource>,
 }
 impl SpeechState {
     pub fn new(root: &Path) -> Self {
@@ -63,7 +70,7 @@ impl SpeechState {
             preparation: None,
             apple_owner: None,
             models: BTreeMap::new(),
-            dictation_active: false,
+            dictation: BTreeSet::new(),
         }
     }
 }
@@ -206,7 +213,7 @@ impl KoeRuntime {
             SpeechEngine::Cloud => !self.settings.key.is_empty(),
         }
     }
-    fn ensure_speech_session(&mut self, id: &str, live_input: bool) -> Result<(), String> {
+    fn ensure_speech_session(&mut self, id: &str, source: Option<DictationSource>) -> Result<(), String> {
         if self.captures.sessions.contains_key(id) {
             return Ok(());
         }
@@ -242,7 +249,7 @@ impl KoeRuntime {
             pcm: Vec::new(),
             consumed_samples: 0,
             input_closed: false,
-            live_input,
+            source,
             file_audio: None,
             results: VecDeque::new(),
             selected_ranges: Vec::new(),
@@ -252,7 +259,7 @@ impl KoeRuntime {
             success: false,
             captured_pcm_bytes: 0,
         };
-        if self.speech.dictation_active && session.live_input {
+        if source.is_some_and(|source| self.dictation_active(source)) {
             session.selected_ranges.push((0, None));
         }
         if engine == SpeechEngine::Cloud {
@@ -289,7 +296,7 @@ impl KoeRuntime {
                 .max()
                 .unwrap_or(0)
         });
-        self.ensure_speech_session(id, false)?;
+        self.ensure_speech_session(id, None)?;
         if let Some(s) = self.captures.sessions.get_mut(id) {
             s.saved = true;
             let skip = (offset as usize).saturating_mul(32).min(pcm.len());
@@ -326,7 +333,7 @@ impl KoeRuntime {
             if finished {
                 s.file_audio = None;
             }
-            if let Err(error) = self.feed_speech(&id, &chunk) {
+            if let Err(error) = self.feed_speech(&id, &chunk, None) {
                 self.error = Some(error);
             }
             if finished {
@@ -335,8 +342,8 @@ impl KoeRuntime {
         }
         changed
     }
-    pub(super) fn feed_speech(&mut self, id: &str, pcm16: &[u8]) -> Result<(), String> {
-        if let Err(error) = self.ensure_speech_session(id, true) {
+    pub(super) fn feed_speech(&mut self, id: &str, pcm16: &[u8], source: Option<DictationSource>) -> Result<(), String> {
+        if let Err(error) = self.ensure_speech_session(id, source) {
             self.notice = Some(error);
             return Ok(());
         }
@@ -786,24 +793,50 @@ impl KoeRuntime {
         }
         false
     }
+    pub(super) fn dictation_active(&self, source: DictationSource) -> bool {
+        self.speech.dictation.contains(&source)
+    }
+
+    pub(super) fn any_dictation_active(&self) -> bool {
+        !self.speech.dictation.is_empty()
+    }
+
+    pub(super) fn stop_all_dictation(&mut self) {
+        for source in [DictationSource::Microphone, DictationSource::Bean, DictationSource::Standby] {
+            self.set_source_dictation(source, false);
+        }
+    }
+
     pub(super) fn set_dictation_active(&mut self, active: bool) {
-        if self.speech.dictation_active == active {
+        let source = if self.companion.standby_stream_owned {
+            DictationSource::Standby
+        } else if self.microphone.is_some() {
+            DictationSource::Microphone
+        } else {
+            DictationSource::Bean
+        };
+        self.set_source_dictation(source, active);
+    }
+
+    pub(super) fn set_source_dictation(&mut self, source: DictationSource, active: bool) {
+        if self.dictation_active(source) == active {
             return;
         }
-        if !active && self.companion.standby_stream_owned {
-            if self.companion.capture_active {
+        if source == DictationSource::Standby {
+            if !active && self.companion.capture_active {
                 self.flush_companion_holdback();
             }
-            self.companion.capture_active = false;
+            self.companion.capture_active = active;
         }
-        self.speech.dictation_active = active;
-        if active && self.companion.standby_stream_owned {
-            self.companion.capture_active = true;
+        if active {
+            self.speech.dictation.insert(source);
+        } else {
+            self.speech.dictation.remove(&source);
         }
         let ids: Vec<_> = self.captures.sessions.keys().cloned().collect();
         for id in ids {
             if let Some(mut s) = self.captures.sessions.remove(&id) {
-                if !s.live_input || s.terminal {
+                if s.source != Some(source) || s.input_closed || s.terminal {
                     self.captures.sessions.insert(id, s);
                     continue;
                 }
@@ -813,15 +846,13 @@ impl KoeRuntime {
                 } else if let Some((_, end)) = s.selected_ranges.last_mut() {
                     *end = Some(at);
                 }
-                if !s.input_closed {
-                    if let Err(error) = self.flush_speech_window(&mut s, true) {
-                        s.results.push_back(LiveEvent::Failed(error));
-                    }
+                if let Err(error) = self.flush_speech_window(&mut s, true) {
+                    s.results.push_back(LiveEvent::Failed(error));
                 }
                 self.captures.sessions.insert(id, s);
             }
         }
-        if !active {
+        if source == DictationSource::Standby && !active {
             if let Err(error) = self.finish_standby_dictation() {
                 self.error = Some(error);
             }

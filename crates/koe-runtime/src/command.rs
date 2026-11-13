@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub(crate) enum Page {
     #[default]
     Today,
+    Notes,
     Capture,
     Records,
     Detail,
@@ -13,6 +14,27 @@ pub(crate) enum Page {
     Ask,
     Trash,
     Settings,
+}
+
+#[derive(Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CaptureMode {
+    QuickNote,
+    AllDay,
+    Meeting,
+    Dictation,
+}
+
+#[derive(Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CaptureAction {
+    Pause,
+    Resume,
+    End,
+    EndDictation,
+    RetrySave,
+    RetryStop,
+    Cancel,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -30,6 +52,14 @@ pub(crate) struct CaptureTiming {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
+    StartCaptureMode {
+        mode: CaptureMode,
+    },
+    CaptureAction {
+        action: CaptureAction,
+        #[serde(default)]
+        clock_ns: Option<u64>,
+    },
     ConfigureSpeech {
         engine: String,
         #[serde(default)]

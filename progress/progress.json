@@ -196,13 +196,30 @@
       },
       {
         "number": 665,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T05:54:10Z"
+      },
+      {
+        "number": 667,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T05:44:47Z"
+        "updated_at": "2026-11-13T06:03:06Z"
+      },
+      {
+        "number": 668,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-13T06:05:46Z"
       }
     ],
-    "main": "c24928644e10e1a49f821ea14791be188f466c55",
-    "open_pulls": [],
+    "main": "047f1326033cb3285b2f4272a6b3161e861837d6",
+    "open_pulls": [
+      {
+        "head": "8ec17ec9fbbb598736289815cba72fc2279a6ba8",
+        "number": 669
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -355,12 +372,20 @@
         "merged": true,
         "number": 663,
         "state": "closed"
+      },
+      {
+        "base": "047f1326033cb3285b2f4272a6b3161e861837d6",
+        "head": "8ec17ec9fbbb598736289815cba72fc2279a6ba8",
+        "merge_commit": "a1f6e95d1386be31af06499d27375ba6f902d1bf",
+        "merged": false,
+        "number": 669,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T05:45:53.149658Z",
+  "observed_at": "2026-11-13T06:22:33.276620Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -870,6 +895,45 @@
           "status": "done",
           "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。 PR #663 已通过 CI 并 squash 合并为 e513032。",
           "title": "全天听记、下载模型与通用听写文字"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "原生接入范围。",
+              "ref": 667
+            },
+            {
+              "kind": "issue",
+              "note": "真实录音、外部输入法与签名版连续使用验收。",
+              "ref": 668
+            },
+            {
+              "kind": "pull",
+              "ref": 669,
+              "note": "原生实现与独立 PASS+NOTES 审查。"
+            },
+            {
+              "kind": "file",
+              "ref": "crates/koe-runtime/tests/day_journal.rs",
+              "note": "四模式跨页、跨午夜刷新、真实导入原文及已有摘要。"
+            },
+            {
+              "kind": "file",
+              "ref": "crates/koe-runtime/tests/all_day_speech.rs",
+              "note": "语音输入恢复和结束尾块以外部桥定稿事件先红后绿。"
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-13 隔离原生验收",
+              "note": "真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页/单独结束听写。非物理录音验收，QA应用和进程已清理。"
+            }
+          ],
+          "id": "day-journal-native",
+          "next": "物理麦克风/D3200、外部输入法与签名版按 #668 验收。只留文字后删除音频、整天合并分析及实时 AI 会议纪要尚未接入。",
+          "status": "done",
+          "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。尚未安装到日常应用。",
+          "title": "一天一页原生界面"
         }
       ],
       "title": "当前产品实现"
@@ -1130,13 +1194,13 @@
             },
             {
               "kind": "file",
-              "ref": "scripts/test_install_macos.py",
-              "note": "许可完整复制、旧文件清除及软链包外写入回归先红后绿"
+              "note": "许可完整复制、旧文件清除及软链包外写入回归先红后绿",
+              "ref": "scripts/test_install_macos.py"
             },
             {
               "kind": "note",
-              "ref": "2026-11-13 本机验证",
-              "note": "正常构建与 --skip-build 的独立 Developer ID 安装包均通过签名、自检、冒烟及 8 份许可文件字节核对；完整 scripts/check 通过。"
+              "note": "正常构建与 --skip-build 的独立 Developer ID 安装包均通过签名、自检、冒烟及 8 份许可文件字节核对；完整 scripts/check 通过。",
+              "ref": "2026-11-13 本机验证"
             }
           ],
           "id": "third-party-license-bundle",
@@ -1204,7 +1268,9 @@
       657,
       661,
       662,
-      665
+      665,
+      667,
+      668
     ],
     "pulls": [
       589,
@@ -1225,7 +1291,8 @@
       646,
       656,
       660,
-      663
+      663,
+      669
     ]
   }
 }

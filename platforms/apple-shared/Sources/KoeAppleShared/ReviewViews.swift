@@ -15,7 +15,7 @@ struct TasksView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                PageHeading(title: "待办", subtitle: "从讨论中找到行动，由你决定是否开始。")
+                PageHeading(title: "行动", subtitle: "从讨论中找到行动，由你决定是否开始。")
                 Picker("显示待办", selection: $filter) {
                     Text("待处理").tag("active")
                     Text("已完成").tag("completed")

@@ -12,7 +12,7 @@ use koe_engine::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::KoeRuntime;
+use crate::{speech::DictationSource, KoeRuntime};
 
 /// Number of 20 ms slices (`60 ms`) skipped immediately after a start front double-tap.
 pub const POST_TAP_SKIP_SLICES: usize = 3;
@@ -407,7 +407,7 @@ impl KoeRuntime {
             };
             self.companion.capture_active = true;
         }
-        self.set_dictation_active(active);
+        self.set_source_dictation(self.bean_dictation_source(), active);
     }
 
     pub(crate) fn is_known_bean_record(&self, file_id: u32) -> bool {
@@ -473,8 +473,21 @@ impl KoeRuntime {
         Ok(())
     }
 
+    fn bean_dictation_source(&self) -> DictationSource {
+        if self.companion.standby_stream_owned {
+            DictationSource::Standby
+        } else {
+            DictationSource::Bean
+        }
+    }
+
+    pub(super) fn stop_bean_dictation(&mut self) {
+        self.set_source_dictation(DictationSource::Bean, false);
+        self.set_source_dictation(DictationSource::Standby, false);
+    }
+
     pub(crate) fn stop_owned_standby_stream(&mut self) -> Result<(), String> {
-        self.set_dictation_active(false);
+        self.stop_bean_dictation();
         let session = &self.device.session;
         let in_flight = session.device_recording_active
             || session.pending_realtime_subscribe
@@ -534,7 +547,7 @@ impl KoeRuntime {
             self.companion.push_event(hello);
             changed = true;
         } else if self.companion.was_connected && !connected {
-            self.set_dictation_active(false);
+            self.stop_bean_dictation();
             if self.companion.standby_stream_owned
                 || self.companion.pending_standby_stop
                 || self.companion.active_standby_file_id.is_some()
@@ -740,7 +753,7 @@ impl KoeRuntime {
                         }
                     } else if state == 0 || state == 2 {
                         if self.companion.standby_stream_owned {
-                            self.set_dictation_active(false);
+                            self.stop_bean_dictation();
                             let fid = file_id
                                 .filter(|&id| id > 0)
                                 .or_else(|| self.companion.active_standby_file_id.take())
@@ -796,7 +809,7 @@ impl KoeRuntime {
                     {
                         continue;
                     }
-                    let next_dictation = !self.speech.dictation_active;
+                    let next_dictation = !self.dictation_active(self.bean_dictation_source());
                     let epoch = self.companion.epoch.clone();
                     let seq_down = self.companion.next_sequence();
                     self.companion
