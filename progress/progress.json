@@ -243,7 +243,7 @@
         "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "708dc880ee15d04bff3ed1aceaf54d73e756dcc0",
+    "main": "34d251b60cd5a22c50898eec93fb9e39dd2a0d86",
     "open_pulls": [],
     "pulls": [
       {
@@ -461,12 +461,28 @@
         "merged": true,
         "number": 688,
         "state": "closed"
+      },
+      {
+        "base": "708dc880ee15d04bff3ed1aceaf54d73e756dcc0",
+        "head": "c812ba46cccfaa02e293dc45f20490743334a7ea",
+        "merge_commit": "34d251b60cd5a22c50898eec93fb9e39dd2a0d86",
+        "merged": true,
+        "number": 690,
+        "state": "closed"
       }
     ],
-    "releases": []
+    "releases": [
+      {
+        "draft": false,
+        "id": 444456234,
+        "prerelease": false,
+        "published_at": "2026-11-13T16:25:00Z",
+        "tag": "v2.0.0"
+      }
+    ]
   },
   "inputs": [],
-  "observed_at": "2026-11-13T16:18:06.538978Z",
+  "observed_at": "2026-11-13T16:26:09.271299Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1512,18 +1528,28 @@
           "title": "Soundcore MIT 署名与安装包许可"
         },
         {
-          "id": "private-release-200",
-          "title": "Koe 2.0.0 私有发行包",
-          "status": "in_progress",
-          "summary": "准备首个私有 GitHub Release v2.0.0，macOS 构建号 9。模式入口、普通录音默认随心闪记和 Responsay 联动沿用当前主线；完整四业务页与硬件输入验收保持未完成。",
-          "next": "独立评审通过后合并版本变更，核验签名包、自检和公证，再创建私有 Release。日常升级由协调者统一执行。",
           "evidence": [
+            {
+              "kind": "release",
+              "ref": "v2.0.0",
+              "note": "正式私有 Release，arm64 zip、SHA256SUMS 与无秘密验收回执均已上传。zip SHA-256 c4b75ee1f79e7b52eaac77df000d4e5d974bb8fa3cbcfe9c08be5511afa15e35。"
+            },
+            {
+              "kind": "pull",
+              "ref": 690,
+              "note": "版本准备经独立评审与完整门禁通过，squash 合并为 34d251b6；远端 parent 和 tree 与受检范围一致。"
+            },
             {
               "kind": "file",
               "ref": "docs/releases/v2.0.0.md",
-              "note": "发行范围、安装方式和未验收边界。"
+              "note": "当前可用范围、安装方式和未验收边界。"
             }
-          ]
+          ],
+          "id": "private-release-200",
+          "next": "完整四业务页仍为交互稿。真实 Responsay ASR、原光标输入、实体双击与其他硬件未验收项继续按 #662 和 Responsay #810、#822 追踪。",
+          "status": "done",
+          "summary": "2026-11-14 已在私有仓库发布 v2.0.0（构建 9），提供 Apple silicon 签名包、校验和及验收回执。完整门禁、独立评审、Apple 公证、票据装订与解压包 Gatekeeper、自检和冒烟均通过。授权下载回读与发布哈希一致。本机日常应用仍为构建 8，本轮未退出或替换。",
+          "title": "Koe 2.0.0 私有发行包"
         }
       ],
       "title": "验收与交付"
@@ -1620,7 +1646,8 @@
       677,
       680,
       681,
-      688
+      688,
+      690
     ]
   }
 }
