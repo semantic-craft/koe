@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use koe_client_providers::{
     ProviderConfig, ProviderOutput, ProviderRequest, ProviderTask, ProviderWorker, StreamingAsrPump,
+    DASHSCOPE_ASR_MODEL,
 };
 
 #[test]
@@ -33,7 +34,7 @@ fn asr_request(endpoint: String) -> ProviderRequest {
     ProviderRequest {
         operation_id: 17,
         record_id: "record-asr".into(),
-        config: ProviderConfig::new(endpoint, "fun-asr-realtime".into(), "unit-test-key".into()),
+        config: ProviderConfig::new(endpoint, DASHSCOPE_ASR_MODEL.into(), "unit-test-key".into()),
         task: ProviderTask::TranscribePcm16 {
             pcm16: vec![2; 6400],
         },
@@ -59,7 +60,7 @@ fn asr_waits_for_ack_and_finish_and_keeps_latest_final_sentence() {
                 Ok(response)
             }).await.unwrap();
             let run: Value = serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
-            assert_eq!(run["payload"]["model"], "fun-asr-realtime");
+            assert_eq!(run["payload"]["model"], "qwen-audio-3.1-asr-flash-streaming");
             assert_eq!(run["payload"]["parameters"]["sample_rate"], 16000);
             assert_eq!(run["payload"]["parameters"]["format"], "pcm");
             let id = run["header"]["task_id"].as_str().unwrap();

@@ -36,7 +36,8 @@ public final class NativeAudioSource: MicrophoneSource {
             }
             try node.auAudioUnit.setDeviceID(device)
         }
-        let format = node.outputFormat(forBus: 0)
+        let deviceID = node.auAudioUnit.deviceID
+        let format = node.inputFormat(forBus: 0)
         guard format.sampleRate >= 8_000, format.sampleRate <= 96_000,
               format.sampleRate.rounded() == format.sampleRate, format.channelCount > 0,
               format.commonFormat == .pcmFormatFloat32, !format.isInterleaved else {
@@ -59,6 +60,8 @@ public final class NativeAudioSource: MicrophoneSource {
         ) { _ in
             guard fence.enter() else { return }
             defer { fence.leave() }
+            guard !engine.isRunning || node.auAudioUnit.deviceID != deviceID ||
+                  !node.inputFormat(forBus: 0).isEqual(format) else { return }
             failed("输入设备发生变化，已停止采集。请检查设备后重新开始。")
         }
         self.engine = engine

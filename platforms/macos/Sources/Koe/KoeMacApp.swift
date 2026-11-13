@@ -206,14 +206,6 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store, store.handle != 0 else { return .terminateNow }
         if quitPanel != nil { return .terminateLater }
-        if store.snapshot.lifecycle?.keepAwake == true {
-            let alert = NSAlert()
-            alert.messageText = "Koe 仍有进行中的工作，要退出吗？"
-            alert.informativeText = "录音将停止，已开始的处理和保存会完成后再退出。"
-            alert.addButton(withTitle: "保存后退出")
-            alert.addButton(withTitle: "取消")
-            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
-        }
         let result = lifecycle.request()
         bluetoothBridge.flushOutboundFrames()
         if result == .terminateLater {
