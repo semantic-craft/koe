@@ -238,12 +238,12 @@
       },
       {
         "number": 687,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-13T15:17:15Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "3740707c5f547371d906f3f63efdccd4c0b69ff3",
+    "main": "dec581345c91573bab3119089ca9138bcbcc43a1",
     "open_pulls": [],
     "pulls": [
       {
@@ -453,12 +453,20 @@
         "merged": true,
         "number": 681,
         "state": "closed"
+      },
+      {
+        "base": "3740707c5f547371d906f3f63efdccd4c0b69ff3",
+        "head": "68a22424e64eac6055953f708110b2292f695411",
+        "merge_commit": "dec581345c91573bab3119089ca9138bcbcc43a1",
+        "merged": true,
+        "number": 688,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T15:18:56.315315Z",
+  "observed_at": "2026-11-13T15:29:10.242062Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -481,6 +489,11 @@
       "items": [
         {
           "evidence": [
+            {
+              "kind": "pull",
+              "note": "业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。",
+              "ref": 688
+            },
             {
               "kind": "issue",
               "note": "本单仅交付业务定义和方案。",
@@ -523,7 +536,7 @@
           "id": "mode-workspaces-real-input",
           "next": "仅补可自动执行的真实证据；无法执行的物理项保持未验收。",
           "status": "unverified",
-          "summary": "物理双击、Responsay实时识别与原光标仍未验收。既有PCM、软件起止和引导选源通过项保留。本轮鼠标按住尝试无确认结果，原测试文本未改变。",
+          "summary": "物理双击、Responsay实时识别与原光标仍未验收。既有PCM、软件起止和引导选源通过项保留。本轮鼠标按住尝试无确认结果，原测试文本未改变。 前台确认后再次15秒按住，条件日志播放器仍未观察到启动证据；未播放测试声音，不能据此断言麦克风失败。",
           "title": "真实识别与光标上屏"
         }
       ],
@@ -1592,7 +1605,8 @@
       676,
       677,
       680,
-      681
+      681,
+      688
     ]
   }
 }
