@@ -1,6 +1,8 @@
 //! Downloadable speech models and in-process, 16 kHz mono PCM16 transcription.
 
-use std::path::PathBuf;
+mod artifacts;
+mod worker;
+pub use worker::OfflineSpeechWorker;
 
 /// A pinned, downloadable speech model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,9 +32,9 @@ pub fn offline_speech_models() -> &'static [OfflineSpeechModel] {
             name: "Qwen3 ASR 0.6B",
             size_bytes: 850_423_456,
             languages: &[
-                "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru",
-                "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi", "pl", "cs",
-                "fil", "fa", "el", "ro", "hu", "mk",
+                "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th",
+                "vi", "ja", "tr", "hi", "ms", "nl", "sv", "da", "fi", "pl", "cs", "fil", "fa",
+                "el", "ro", "hu", "mk",
             ],
         },
     ]
@@ -89,33 +91,4 @@ pub enum OfflineSpeechEvent {
         /// Actionable failure description.
         error: String,
     },
-}
-
-/// Owns the offline inference worker and its bounded command queue.
-pub struct OfflineSpeechWorker;
-
-impl OfflineSpeechWorker {
-    /// Creates a worker storing only model artifacts beneath `root`.
-    pub fn new(_root: PathBuf) -> Result<Self, String> {
-        Err("offline speech engine is not linked in this interface-only commit".into())
-    }
-
-    /// Queues verified download and loading of the selected model.
-    pub fn prepare(&self, _model_id: &str) -> Result<(), String> {
-        Err("offline speech engine is unavailable".into())
-    }
-
-    /// Queues 16 kHz mono PCM16 audio for the prepared model.
-    pub fn transcribe(&self, _operation_id: u64, _pcm16: Vec<i16>) -> Result<(), String> {
-        Err("offline speech engine is unavailable".into())
-    }
-
-    /// Cancels current and queued work without blocking the caller.
-    pub fn cancel(&self) {}
-
-    /// Takes currently available progress and terminal events.
-    #[must_use]
-    pub fn poll(&self) -> Vec<OfflineSpeechEvent> {
-        Vec::new()
-    }
 }

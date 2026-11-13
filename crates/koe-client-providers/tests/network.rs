@@ -366,3 +366,106 @@ fn chat_worker_sends_request_and_delivers_tagged_response() {
     );
     server.join().unwrap();
 }
+
+#[test]
+fn loopback_chat_without_key_omits_authorization_and_returns_real_response() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "local chat request never arrived"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let n = stream.read(&mut buffer).unwrap();
+            assert!(n > 0);
+            bytes.extend_from_slice(&buffer[..n]);
+            let request = String::from_utf8_lossy(&bytes);
+            if let Some((headers, body)) = request.split_once("\r\n\r\n") {
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_lowercase()
+                            .strip_prefix("content-length: ")
+                            .map(str::parse)
+                    })
+                    .unwrap()
+                    .unwrap();
+                if body.len() >= length {
+                    assert!(!headers.to_lowercase().contains("authorization:"));
+                    let json: serde_json::Value = serde_json::from_str(body).unwrap();
+                    assert_eq!(json["model"], "local-model");
+                    assert_eq!(json["messages"][1]["content"], "Use this recorded evidence");
+                    break;
+                }
+            }
+        }
+        let body =
+            r#"{"choices":[{"finish_reason":"stop","message":{"content":"Local model answer"}}]}"#;
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+    });
+    let mut worker = ProviderWorker::new().unwrap();
+    worker
+        .submit(ProviderRequest {
+            operation_id: 73,
+            record_id: "local-chat-record".into(),
+            config: ProviderConfig::new(endpoint, "local-model".into(), String::new()),
+            task: ProviderTask::Chat {
+                system: "Keep the facts".into(),
+                user: "Use this recorded evidence".into(),
+            },
+            timeout: Duration::from_secs(3),
+        })
+        .unwrap();
+    let event = wait_result(&mut worker);
+    assert_eq!(event.operation_id, 73);
+    assert_eq!(
+        event.result.unwrap(),
+        ProviderOutput::Chat {
+            text: "Local model answer".into()
+        }
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn keyless_chat_is_rejected_for_cloud_and_lan_endpoints() {
+    let worker = ProviderWorker::new().unwrap();
+    for endpoint in [
+        "https://api.example.com/v1/chat/completions",
+        "http://192.168.1.5/v1/chat/completions",
+        "https://192.168.1.5/v1/chat/completions",
+    ] {
+        let result = worker.submit(ProviderRequest {
+            operation_id: 74,
+            record_id: "local-chat-record".into(),
+            config: ProviderConfig::new(endpoint.into(), "local-model".into(), String::new()),
+            task: ProviderTask::Chat {
+                system: "Keep the facts".into(),
+                user: "Use this recorded evidence".into(),
+            },
+            timeout: Duration::from_secs(3),
+        });
+        assert!(result.is_err(), "accepted keyless endpoint {endpoint}");
+    }
+}

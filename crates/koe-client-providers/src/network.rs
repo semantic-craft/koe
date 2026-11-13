@@ -263,9 +263,6 @@ fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Resu
     if config.model.trim().is_empty() {
         return Err("缺少模型名称".into());
     }
-    if config.api_key.trim().is_empty() {
-        return Err("尚未配置云端 API Key".into());
-    }
     let url = reqwest::Url::parse(&config.endpoint).map_err(|_| "云端地址无效")?;
     if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
         return Err("云端地址不能包含账户、密码或片段".into());
@@ -277,6 +274,10 @@ fn validate_endpoint(config: &ProviderConfig, secure: &str, local: &str) -> Resu
                 .parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback())
     });
+    let keyless_local_chat = secure == "https" && url.scheme() == "http" && loopback;
+    if config.api_key.trim().is_empty() && !keyless_local_chat {
+        return Err("尚未配置云端 API Key".into());
+    }
     if url.scheme() != secure && !(url.scheme() == local && loopback) {
         return Err("云端地址必须加密；仅本机服务允许明文连接".into());
     }

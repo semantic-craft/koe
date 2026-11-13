@@ -14,9 +14,11 @@ pub(super) async fn complete(
         .connect_timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|_| "无法初始化 HTTPS 客户端")?;
-    let mut response = client
-        .post(&config.endpoint)
-        .bearer_auth(&config.api_key)
+    let mut request = client.post(&config.endpoint);
+    if !config.api_key.trim().is_empty() {
+        request = request.bearer_auth(&config.api_key);
+    }
+    let mut response = request
         .json(&json!({
             "model": config.model, "stream": false,
             "messages": [{"role": "system", "content": system},
