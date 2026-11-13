@@ -232,12 +232,18 @@
       },
       {
         "number": 685,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T14:19:56Z"
+      },
+      {
+        "number": 687,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T13:54:18Z"
+        "updated_at": "2026-11-13T15:17:15Z"
       }
     ],
-    "main": "a9e33353d70417874b8445060ac62be3f08f9b82",
+    "main": "3740707c5f547371d906f3f63efdccd4c0b69ff3",
     "open_pulls": [],
     "pulls": [
       {
@@ -452,7 +458,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T13:56:10.929280Z",
+  "observed_at": "2026-11-13T15:18:56.315315Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -461,12 +467,68 @@
     "BasedHardware/omi",
     "metasequoiaime/msime",
     "screenpipe/screenpipe",
-    "tacshi/Soundcore"
+    "tacshi/Soundcore",
+    "semantic-craft/responsay-macos",
+    "0xCoach/TaoSheng",
+    "wquguru/cicada"
   ],
   "renderer": null,
   "repository": "semantic-craft/koe",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "mode-workspaces-definition",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "本单仅交付业务定义和方案。",
+              "ref": 687
+            },
+            {
+              "kind": "file",
+              "note": "已明确实现、原型与未验收边界。",
+              "ref": "docs/mode-workspaces.md"
+            }
+          ],
+          "id": "mode-workspaces-spec",
+          "next": "正式页面实现沿用当前Rust状态与既有MCP，不重建资料库。",
+          "status": "done",
+          "summary": "随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。交付为文档和交互稿，尚未实现完整正式页面。",
+          "title": "四种业务与界面方案"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "仅证明Responsay软件交付；不证明Koe新业务页面或物理效果。",
+              "ref": "https://github.com/semantic-craft/responsay-macos/pull/823"
+            }
+          ],
+          "id": "mode-workspaces-pages",
+          "next": "按单个可验证业务切片实施。",
+          "status": "planned",
+          "summary": "项目归类、跨片段语义事件、完整实时纪要覆盖和跨App快捷键设置回执仍待实现。Responsay键家族开关软件已经独立合并并签名安装。",
+          "title": "正式四工作区业务页面"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "不以软件回放、合成PCM或代贴文本替代。",
+              "ref": "https://github.com/semantic-craft/responsay-macos/issues/810"
+            }
+          ],
+          "id": "mode-workspaces-real-input",
+          "next": "仅补可自动执行的真实证据；无法执行的物理项保持未验收。",
+          "status": "unverified",
+          "summary": "物理双击、Responsay实时识别与原光标仍未验收。既有PCM、软件起止和引导选源通过项保留。本轮鼠标按住尝试无确认结果，原测试文本未改变。",
+          "title": "真实识别与光标上屏"
+        }
+      ],
+      "title": "四模式工作区业务定义"
+    },
     {
       "id": "rust-product",
       "items": [
@@ -1501,7 +1563,8 @@
       671,
       675,
       678,
-      685
+      685,
+      687
     ],
     "pulls": [
       589,

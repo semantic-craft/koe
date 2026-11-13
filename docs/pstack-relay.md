@@ -120,12 +120,19 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: 回归与独立审查通过；签名安装后真实点击入口读到两端就绪。
 - **Evidence**: Koe 19d75d5 installed; Responsay 13e679c1 merged; voice-mode-entry/acceptance.json PARTIAL
 
+### [x] Slice MODEUX: 四模式业务定义与独立键策略软件交付
+- **Playbook**: `Investigation` + `Prototype`
+- **Outcome**: 固化随心闪记、全天听记、实时纪要、语音输入的业务与接口边界，完成同份交互稿和Responsay独立键开关软件交付。不包含正式Koe四业务页面或物理验收。
+- **Done Predicate**: test -f docs/mode-workspaces.md && python3 progress/progress.py check
+- **Evidence**: Responsay PR823 squash4167da5c; signed5c0127af UI and scoped gates PASS; mode-workspaces canvas check/export OK; docs/mode-workspaces.md
+
 ### [ ] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
 - **Playbook**: `Investigation`
-- **Outcome**: 只接续PCMHW和Responsay#810；先读record-button-quick-note/acceptance.json，不重跑已通过项目。实体侧键/双击、Responsay实时识别与原光标不能自动取得证据时保持未验收。
-- **Done Predicate**: 自动取得真实设备、明确触发来源、Responsay识别和原目标正文变化的关联证据；未执行物理动作保持NOT_RUN；python3 progress/progress.py check
+- **Outcome**: 只继续PCMHW与Responsay#810可自动验证的真实识别和原光标；先读现有acceptance及mode-research/live-attempt，不重跑已通过PCM/软件起止/选源。保留配置权限，物理无法自动执行保持未验收。
+- **Done Predicate**: 实际设备实时音频、Responsay真实识别与原目标文本变化有关联证据才通过；未执行项保持NOT_RUN；python3 progress/progress.py check
 - **Evidence**: 2026-11-13 部分通过。已合并版本 Koe `d6f9406` 与 Responsay `b6a061e` 下，真实 D3200 提供 11.56 秒非静音 PCM，收到软件开始和结束确认。Responsay 隔离完整应用的蓝色条响应真实收音，引导完成后自动选中 soundcore Work。未注入合成 PCM。原始证据保留在本机 `Projects/_artifacts/koe/pcmhw-20261113`，状态见 [Responsay #810](https://github.com/semantic-craft/responsay-macos/issues/810)。
 - **Remaining**: 真实 Responsay ASR、原光标输入、实体双击、断连恢复、三种输入快捷键及无重复录音或识别仍未验收。先前隔离截图入口缺少辅助功能权限和录制监听器，不能代替完整应用验收。现有 dev socket override 已恢复，录音豆已待命；默认生产 socket 缺失已不是当前阻塞。首页模式选择与侧栏语音输入的一键联动已实现、独立审查并签名安装。原入口版冷启动和侧栏重复进入通过；合入最新主线的 19d75d5 也已从真实首页连接至两端就绪。现有配置与权限保留；实时识别、原光标和实体双击仍未验收。
+- **Latest**: Responsay独立键开关已经PR #823合并，本机安装5c0127af，两个开关与三权限保留。当前完整应用的鼠标按住入口尝试未观察到确认的生产录音或输入变化，未播放声学刺激，原文本未改变。仅软件回放通过，不能证明实体双击或识别上屏。
 - **Watchouts**: 软件起止确认不证明尾音完整或无丢包。恢复普通模式时 Koe 显示保存 05:28 的设备录音，不能宣称设备或 Koe 不留录音。已恢复测试前模式并清理隔离应用，保留新版 Koe。
 
 ### [ ] Slice ADH: 全天听记真实硬件验收
