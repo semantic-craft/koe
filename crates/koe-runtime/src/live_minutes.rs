@@ -38,7 +38,6 @@ impl From<&Phase> for CapturePhase {
 #[serde(rename_all = "snake_case")]
 enum MinutesState {
     Unconfigured,
-    AfterStop,
     AwaitingTranscript,
     Waiting,
     Queued,
@@ -201,17 +200,7 @@ impl KoeRuntime {
         let configured = self.text_provider_configured();
         let parts = records
             .into_iter()
-            .map(|r| {
-                self.live_minutes_part(
-                    r,
-                    configured,
-                    matches!(scope, LiveMinutesScope::Record(_))
-                        && matches!(
-                            phase,
-                            CapturePhase::Starting | CapturePhase::Recording | CapturePhase::Paused
-                        ),
-                )
-            })
+            .map(|r| self.live_minutes_part(r, configured))
             .collect();
         Some(LiveMinutesView {
             scope,
@@ -278,21 +267,29 @@ impl KoeRuntime {
         &'a self,
         record: &'a ProductRecord,
         configured: bool,
-        after_stop: bool,
     ) -> LiveMinutesPart<'a> {
         let id = &record.aggregate.recording_id;
-        let (analysis, error) = match &record.analysis {
+        let state = if matches!(
+            record.live_summary,
+            AnalysisState::Pending { .. }
+                | AnalysisState::Failed { .. }
+                | AnalysisState::Interrupted { .. }
+        ) {
+            &record.live_summary
+        } else {
+            &record.analysis
+        };
+        let (analysis, error) = match state {
             AnalysisState::Pending {
                 stage: AnalysisStage::Summarizing,
                 ..
             } => (MinutesState::Summarizing, None),
             AnalysisState::Failed { message, .. } => (MinutesState::Failed, Some(message.as_str())),
             AnalysisState::Interrupted { .. } => (MinutesState::Interrupted, None),
+            _ if configured && self.auto_summarize.contains(id) => (MinutesState::Queued, None),
             _ if record.is_minutes_stale() => (MinutesState::Stale, None),
             _ if record.aggregate.minutes.is_some() => (MinutesState::Ready, None),
             _ if !configured => (MinutesState::Unconfigured, None),
-            _ if after_stop => (MinutesState::AfterStop, None),
-            _ if self.auto_summarize.contains(id) => (MinutesState::Queued, None),
             AnalysisState::Pending {
                 stage: AnalysisStage::Transcribing,
                 ..
@@ -318,6 +315,79 @@ impl KoeRuntime {
             analysis,
             minutes_stale: record.is_minutes_stale(),
             error,
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct LiveMinutesSchedule {
+    elapsed_ms: u64,
+    first_final_at: Option<u64>,
+    last_request_at: Option<u64>,
+    requested_revision: u64,
+}
+
+impl LiveMinutesSchedule {
+    pub(super) fn observe_final(&mut self) {
+        self.first_final_at.get_or_insert(self.elapsed_ms);
+    }
+
+    fn ready(&self, revision: u64, segments: usize) -> bool {
+        if revision <= self.requested_revision || segments == 0 {
+            return false;
+        }
+        match self.last_request_at {
+            Some(last) => self.elapsed_ms.saturating_sub(last) >= 45_000,
+            None => {
+                segments >= 3
+                    || self
+                        .first_final_at
+                        .is_some_and(|first| self.elapsed_ms.saturating_sub(first) >= 20_000)
+            }
+        }
+    }
+
+    pub(super) fn requested(&mut self, revision: u64) {
+        self.last_request_at = Some(self.elapsed_ms);
+        self.requested_revision = revision;
+    }
+}
+
+impl KoeRuntime {
+    pub(super) fn drive_live_minutes(&mut self, elapsed_ms: u64) {
+        for session in self.captures.sessions.values_mut() {
+            session.minutes_schedule.elapsed_ms = session
+                .minutes_schedule
+                .elapsed_ms
+                .saturating_add(elapsed_ms);
+        }
+        if self.is_quitting()
+            || !self.text_provider_configured()
+            || !self.pending.is_empty()
+            || !self.completed.is_empty()
+        {
+            return;
+        }
+        let candidate = self.captures.sessions.iter().find_map(|(id, session)| {
+            if session.terminal
+                || !matches!(
+                    session.capture_source(),
+                    Some(DictationSource::Microphone | DictationSource::Bean)
+                )
+            {
+                return None;
+            }
+            let record = self.workspace().record(id)?;
+            session
+                .minutes_schedule
+                .ready(record.content_revision, record.aggregate.spine.len())
+                .then(|| id.clone())
+        });
+        let Some(id) = candidate else {
+            return;
+        };
+        if let Err(error) = self.try_start_live_summary(&id) {
+            self.error = Some(error.message());
         }
     }
 }

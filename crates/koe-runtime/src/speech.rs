@@ -32,6 +32,7 @@ pub(super) struct SpeechSession {
     results: VecDeque<LiveEvent>,
     selected_ranges: Vec<(u64, Option<u64>)>,
     published: BTreeSet<String>,
+    pub(super) minutes_schedule: crate::live_minutes::LiveMinutesSchedule,
     pub saved: bool,
     pub terminal: bool,
     success: bool,
@@ -267,6 +268,7 @@ impl KoeRuntime {
             results: VecDeque::new(),
             selected_ranges: Vec::new(),
             published: BTreeSet::new(),
+            minutes_schedule: Default::default(),
             saved: false,
             terminal: false,
             success: false,
@@ -985,6 +987,7 @@ impl KoeRuntime {
                         self.error = None;
                         match event {
                             LiveEvent::Final { sequence, segment } => {
+                                s.minutes_schedule.observe_final();
                                 let delivery = sequence.to_string();
                                 let selected = s.selected_ranges.iter().any(|(start, end)| {
                                     segment.start_ms >= *start
