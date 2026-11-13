@@ -870,7 +870,7 @@ fn live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conf
         .spawn()
         .unwrap();
     let mut stdin = mcp_proc.stdin.take().unwrap();
-    for req in [
+    let requests = [
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"live-test","version":"1"}}}),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
@@ -881,11 +881,14 @@ fn live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conf
         json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"device_status","arguments":{}}}),
         json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"manage_record","arguments":{"record_id":seed_id,"action":"purge"}}}),
         json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"poll_updates","arguments":{"since_generation":1}}}),
-    ] {
-        writeln!(stdin, "{req}").unwrap();
-    }
-    drop(stdin);
+    ];
+    let writer = std::thread::spawn(move || {
+        for req in requests {
+            writeln!(stdin, "{req}").unwrap();
+        }
+    });
     let mcp_out = mcp_proc.wait_with_output().unwrap();
+    writer.join().unwrap();
     assert!(
         mcp_out.status.success(),
         "{}",

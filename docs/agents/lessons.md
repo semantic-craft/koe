@@ -381,3 +381,10 @@
 - 修复：恢复问 Koe 主导航，实时纪要提供独立路由，实时原文和已生成纪要分开投影与展示。
 - 验证点：原生窗口从侧栏进入问 Koe 和实时纪要，验证问答来源返回、录制跨页与停止后内容归属。Dock 菜单测试同步产品入口。
 - Seen 1x（2026-11-13）。
+
+### stdio 集成测试发送请求时必须同时排空子进程输出
+
+- 出处：2026-11-13 PR #677 的 CI 停在 `live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conflict`；两次进程采样均显示测试线程等待 `ChildStdin` 写入、MCP 子进程等待 stdout 写入，父进程尚未开始读取响应。
+- 修复：现有请求数组由独立线程写入并在结束时关闭 stdin，主线程同时通过 `wait_with_output` 读取 stdout/stderr，随后 join 写入线程；保留全部九条响应与持久化结果断言。
+- 验证点：`cargo test -p koe-cli --test commands live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conflict` 完整结束并通过；不能依赖请求数量少就先同步写完再读取响应。
+- Seen 1x（2026-11-13）。
