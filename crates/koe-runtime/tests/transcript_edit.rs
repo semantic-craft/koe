@@ -816,6 +816,11 @@ fn custody_guards_reject_edits_across_trash_archive_mic_ble_and_cloud_transcript
         }),
         NOW + 4,
     );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "configure_speech", "engine": "cloud"}),
+        NOW + 4,
+    );
     let transcribing = dispatch_ok(
         &mut runtime,
         json!({"type": "transcribe", "recordId": cloud_id}),

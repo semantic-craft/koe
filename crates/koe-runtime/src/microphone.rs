@@ -29,6 +29,8 @@ struct Lane {
 }
 pub(super) struct Microphone {
     record_id: String,
+    current_record_id: String,
+    segment_offset_ns: u64,
     session_id: String,
     pub(super) input_id: String,
     created_at: u64,
@@ -42,7 +44,7 @@ pub(super) struct Microphone {
 }
 impl Microphone {
     pub(super) fn owns_id(&self, id: &str) -> bool {
-        self.record_id == id || self.lanes.values().any(|l| l.asset_id == id)
+        self.current_record_id == id || self.lanes.values().any(|l| l.asset_id == id)
     }
     pub(super) fn audio_filenames(&self) -> std::collections::BTreeSet<String> {
         let mut files = std::collections::BTreeSet::from([
@@ -113,6 +115,8 @@ impl KoeRuntime {
         }
         self.microphone = Some(Microphone {
             record_id: id.clone(),
+            current_record_id: id.clone(),
+            segment_offset_ns: 0,
             session_id: format!("{id}-session"),
             input_id,
             created_at: now,
@@ -197,7 +201,8 @@ impl KoeRuntime {
             .values()
             .filter_map(|l| l.timeline.last()?.end_ns(l.sample_rate?))
             .max()
-            .unwrap_or(m.epoch_offset_ns);
+            .map(|offset| offset.saturating_add(m.segment_offset_ns))
+            .unwrap_or(m.segment_offset_ns.max(m.epoch_offset_ns));
         let previous_end = m
             .clock_ns
             .and_then(|n| n.checked_add(offset - m.epoch_offset_ns))
@@ -303,6 +308,7 @@ impl KoeRuntime {
                     let start = at
                         .checked_sub(base)
                         .and_then(|n| n.checked_add(m.epoch_offset_ns))
+                        .and_then(|n| n.checked_sub(m.segment_offset_ns))
                         .ok_or("采样时钟无效")?;
                     Some(
                         place_capture_span(
@@ -370,7 +376,60 @@ impl KoeRuntime {
         let l = m.lanes.get_mut(lane).unwrap();
         l.next_sequence += 1;
         l.save_error = None;
+        let rate = l.sample_rate.unwrap_or(16000);
         m.refresh_error();
+        let id = m.current_record_id.clone();
+        let created = m.created_at;
+        let written =
+            lane == "microphone" && !matches!(m.phase, Phase::Cancelling | Phase::CapacityReached);
+        let rotate = self
+            .all_day
+            .run
+            .as_ref()
+            .is_some_and(|r| r.source == "microphone" && !r.stopping)
+            && m.lanes["microphone"]
+                .asset
+                .as_ref()
+                .is_some_and(|a| a.duration_ms() >= crate::all_day::SEGMENT_MS);
+        if written {
+            if self.workspace().record(&id).is_none() {
+                let group = self.all_day_group("microphone");
+                self.commit(|w| {
+                    w.insert_record(
+                        id.clone(),
+                        "Mac 麦克风录音".into(),
+                        RecordOrigin::Microphone,
+                        0,
+                        created,
+                        0,
+                    )?;
+                    if let Some(group) = group {
+                        if w.record(&id).is_some_and(|r| r.all_day.is_none()) {
+                            w.group_all_day(&id, group)?;
+                        }
+                    }
+                    Ok(())
+                })?;
+            }
+            let pcm: Vec<u8> = if rate == 16000 {
+                samples.iter().flat_map(|s| s.to_le_bytes()).collect()
+            } else {
+                let wave = koe_engine::wav::OpusWave::wav_header_with_rate(
+                    (samples.len() * 2) as u32,
+                    rate,
+                )
+                .to_vec();
+                let mut bytes = wave;
+                bytes.extend(samples.iter().flat_map(|s| s.to_le_bytes()));
+                koe_engine::wav::parse_pcm_wave(&bytes)
+                    .map_err(|e| format!("音频格式无效：{e:?}"))?
+                    .mono_16khz()
+            };
+            self.feed_speech(&id, &pcm)?;
+        }
+        if rotate {
+            self.rotate_microphone_segment()?;
+        }
         Ok(())
     }
     pub(super) fn microphone_failed(
@@ -474,6 +533,15 @@ impl KoeRuntime {
                     .values()
                     .all(|l| l.asset.as_ref().is_none_or(|a| a.is_empty()))
             {
+                if m.phase == Phase::Cancelling {
+                    self.cancel_capture_speech(&m.current_record_id);
+                    if self.workspace().record(&m.current_record_id).is_some() {
+                        self.commit(|w| {
+                            w.trash_record(&m.current_record_id, 1)?;
+                            w.purge_record(&m.current_record_id).map(|_| ())
+                        })?;
+                    }
+                }
                 for l in m.lanes.values_mut() {
                     if let Some(asset) = &mut l.asset {
                         asset.discard()?;
@@ -493,6 +561,7 @@ impl KoeRuntime {
                 } else {
                     format!("未保存录音：{}", reasons.join("；"))
                 });
+                self.set_dictation_active(false);
                 return Ok(());
             }
             let mut outcomes = Vec::new();
@@ -528,9 +597,10 @@ impl KoeRuntime {
                 .max()
                 .unwrap_or(0);
             let partial = outcomes.iter().any(|l| l.interruption.is_some());
+            let group = self.all_day_group("microphone");
             self.commit(|w| {
                 w.insert_record(
-                    m.record_id.clone(),
+                    m.current_record_id.clone(),
                     if m.lanes.len() > 1 {
                         "Mac 双路录音".into()
                     } else {
@@ -541,14 +611,26 @@ impl KoeRuntime {
                     m.created_at,
                     duration,
                 )?;
-                w.set_capture_lanes(&m.record_id, outcomes)
+                w.finish_capture(&m.current_record_id, duration, &[])?;
+                if let Some(group) = group {
+                    if w.record(&m.current_record_id)
+                        .is_some_and(|r| r.all_day.is_none())
+                    {
+                        w.group_all_day(&m.current_record_id, group)?;
+                    }
+                }
+                w.set_capture_lanes(&m.current_record_id, outcomes)
             })?;
             for l in m.lanes.values() {
                 if let Some(asset) = &l.asset {
                     asset.release_staging();
                 }
             }
-            self.open_record(&m.record_id, None)?;
+            self.finish_speech(&m.current_record_id);
+            self.set_dictation_active(false);
+            self.capture_saved(&m.current_record_id);
+            self.poll_captures();
+            self.open_record(&m.current_record_id, None)?;
             self.notice = Some(if partial {
                 "采集中断，已保存收到的分路音频".into()
             } else {
@@ -562,6 +644,52 @@ impl KoeRuntime {
             }
             self.microphone = Some(m);
         }
+        result
+    }
+    fn rotate_microphone_segment(&mut self) -> Result<(), String> {
+        let Some(mut m) = self.microphone.take() else {
+            return Ok(());
+        };
+        let result = (|| {
+            let lane = m.lanes.get_mut("microphone").ok_or("缺少麦克风音源")?;
+            let asset = lane.asset.as_mut().ok_or("音频尚未就绪")?;
+            asset.publish()?;
+            let timeline_end = lane
+                .timeline
+                .last()
+                .and_then(|span| span.end_ns(lane.sample_rate?))
+                .unwrap_or(asset.duration_ms() * 1_000_000);
+            let duration = timeline_end / 1_000_000;
+            let outcome = CaptureLaneRecord {
+                lane: "microphone".into(),
+                timeline: lane.timeline.clone(),
+                asset_id: Some(lane.asset_id.clone()),
+                sample_rate: lane.sample_rate,
+                duration_ms: asset.duration_ms(),
+                interruption: None,
+            };
+            self.commit(|w| {
+                w.finish_capture(&m.current_record_id, duration, &[])?;
+                w.set_capture_lanes(&m.current_record_id, vec![outcome])
+            })?;
+            asset.release_staging();
+            self.finish_speech(&m.current_record_id);
+            self.capture_saved(&m.current_record_id);
+            self.poll_captures();
+            m.segment_offset_ns = m.segment_offset_ns.saturating_add(timeline_end);
+            let group = self.all_day_group("microphone").ok_or("全天听记已停止")?;
+            let next = format!("{}-{}", group.run_id, group.ordinal);
+            lane.asset = Some(CaptureAsset::create(
+                &self.root,
+                &next,
+                lane.sample_rate.ok_or("音频尚未就绪")?,
+            )?);
+            lane.asset_id = next.clone();
+            lane.timeline.clear();
+            m.current_record_id = next;
+            Ok(())
+        })();
+        self.microphone = Some(m);
         result
     }
     pub(super) fn microphone_json(&self) -> Value {
@@ -602,6 +730,6 @@ impl KoeRuntime {
         };
         json!({"recordId":m.record_id,"sessionId":m.session_id,"epoch":m.epoch,"clockNs":m.clock_ns,"lane":"microphone","inputId":m.input_id,"inputLabel":input_label,"inputBadge":input_badge,
             "phase":match m.phase {Phase::Starting=>"starting",Phase::Recording=>"recording",Phase::Pausing=>"pausing",Phase::Paused=>"paused",Phase::Stopping | Phase::CapacityReached=>"stopping",Phase::Cancelling=>"cancelling",Phase::Saving=>"saving"},
-            "nextSequence":mic.next_sequence,"durationMs":duration_ms,"level":m.level,"error":m.save_error,"interruption":mic.interruption,"lanes":lanes})
+            "nextSequence":mic.next_sequence,"durationMs":duration_ms+m.segment_offset_ns/1_000_000,"level":m.level,"error":m.save_error,"interruption":mic.interruption,"lanes":lanes})
     }
 }

@@ -1834,3 +1834,223 @@ fn release_ble_ignores_late_queued_ble_slices_and_allows_immediate_quit() {
     assert_eq!(quit_snap["lifecycle"]["quitPhase"], "ready");
     assert_eq!(quit_snap["lifecycle"]["keepAwake"], false);
 }
+
+#[test]
+fn standby_double_tap_recognizes_the_trimmed_selection_and_keeps_pcm_protocol() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(
+        r#"{"type":"local_asr_readiness","state":"ready","message":"ready"}"#,
+        NOW,
+    );
+    runtime.dispatch_json(
+        r#"{"type":"set_companion_mode","mode":"collar_standby"}"#,
+        NOW,
+    );
+    let session_key = connect_simulated_bean(&mut runtime, "ble-dictation", NOW);
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &session_key, 7401, NOW + 1);
+    runtime.drain_companion_events();
+    let mut slices = vec![(0, 1)];
+    slices.extend((1..21).map(|n| (n, 0)));
+    slices.push((21, 1));
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &slices),
+        NOW + 2,
+    );
+    assert_eq!(runtime.workspace().records().len(), 1);
+    let id = runtime.workspace().records().keys().next().unwrap().clone();
+    assert!(!runtime.is_known_bean_record(7401));
+    assert!(runtime.workspace().is_standby_scratch_file(7401));
+    let effects: Vec<Value> = serde_json::from_str(&runtime.drain_local_asr_json()).unwrap();
+    let op = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"].clone();
+    assert_eq!(
+        effects
+            .iter()
+            .filter_map(|e| e["pcm16"].as_array())
+            .map(Vec::len)
+            .sum::<usize>(),
+        320 * 6
+    );
+    assert!(effects.iter().any(|e| e["kind"] == "finish"));
+    runtime.dispatch_json(&json!({"type":"local_asr_result","operationId":op,"text":"真正的听写文字","startMs":0,"endMs":120,"isFinal":true}).to_string(),NOW+2);
+    runtime.dispatch_json(
+        &json!({"type":"local_asr_finished","operationId":op}).to_string(),
+        NOW + 2,
+    );
+    let events = runtime.drain_companion_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        6
+    );
+    assert!(events.iter().any(|e|matches!(e,CompanionStreamEvent::TranscriptFinal{record_id,text,dictation:true,..} if record_id==&id&&text=="真正的听写文字")));
+    assert_eq!(
+        recording_assets::transcription_pcm(&sandbox.0, &id)
+            .unwrap()
+            .len(),
+        120 * 32
+    );
+    assert_eq!(runtime.snapshot(NOW + 2)["dictation"]["active"], false);
+}
+
+#[test]
+fn all_day_bean_double_tap_selects_dictation_with_default_companion_mode() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(
+        r#"{"type":"local_asr_readiness","state":"ready","message":"ready"}"#,
+        NOW,
+    );
+    let session_key = connect_simulated_bean(&mut runtime, "ble-all-day-tap", NOW);
+    let start: Value = serde_json::from_str(
+        &runtime.dispatch_json(r#"{"type":"start_all_day","source":"bean"}"#, NOW),
+    )
+    .unwrap();
+    assert!(start["error"].is_null(), "{start}");
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &session_key, 7501, NOW + 1);
+    runtime.drain_companion_events();
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &[(0, 0), (1, 1)]),
+        NOW + 2,
+    );
+    assert_eq!(runtime.snapshot(NOW + 2)["dictation"]["active"], true);
+    assert_eq!(
+        runtime.workspace().companion_mode(),
+        CompanionRoutingMode::Disabled
+    );
+    let effects: Vec<Value> = serde_json::from_str(&runtime.drain_local_asr_json()).unwrap();
+    let first = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"].clone();
+    runtime.dispatch_json(
+        &json!({"type":"local_asr_finished","operationId":first}).to_string(),
+        NOW + 2,
+    );
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &[(2, 0)]),
+        NOW + 2,
+    );
+    let effects: Vec<Value> = serde_json::from_str(&runtime.drain_local_asr_json()).unwrap();
+    let op = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"].clone();
+    runtime.dispatch_json(&json!({"type":"local_asr_result","operationId":op,"text":"全天中的听写","startMs":0,"endMs":20,"isFinal":true}).to_string(),NOW+2);
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &[(3, 1)]),
+        NOW + 2,
+    );
+    assert_eq!(runtime.snapshot(NOW + 2)["dictation"]["active"], false);
+    assert_eq!(runtime.workspace().records().len(), 1);
+    let events = runtime.drain_companion_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, CompanionStreamEvent::ControlEdge { down: true, .. }))
+            .count(),
+        2
+    );
+    assert!(events.iter().any(
+        |e| matches!(e,CompanionStreamEvent::TranscriptFinal{text,..} if text=="全天中的听写")
+    ));
+    assert_eq!(runtime.snapshot(NOW + 2)["allDay"]["state"], "recording");
+    runtime.set_dictation_active(true);
+    assert!(!runtime.companion.capture_active);
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &[(4, 1)]),
+        NOW + 2,
+    );
+    assert_eq!(
+        runtime.snapshot(NOW + 2)["dictation"]["active"],
+        false,
+        "a UI selection must close on the next physical tap even while the PCM gate is already closed"
+    );
+}
+
+#[test]
+fn standby_dictation_reopens_the_checkpoint_without_claiming_device_custody() {
+    let sandbox = Sandbox::new();
+    let id = "standby-dictation-checkpoint";
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime
+        .commit(|w| {
+            w.insert_record(
+                id.into(),
+                "录音豆语音输入".into(),
+                RecordOrigin::Bean,
+                0,
+                NOW,
+                0,
+            )
+        })
+        .unwrap();
+    let mut asset =
+        koe_client_services::capture_asset::CaptureAsset::create(&sandbox.0, id, 16_000).unwrap();
+    asset.append(&[42; 320]).unwrap();
+    drop(asset);
+    drop(runtime);
+
+    let runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(id)
+            .unwrap()
+            .aggregate
+            .duration_ms,
+        20
+    );
+    assert_eq!(
+        recording_assets::transcription_pcm(&sandbox.0, id)
+            .unwrap()
+            .len(),
+        640
+    );
+    assert!(!sandbox
+        .0
+        .join("audio")
+        .join(format!("{id}.capture"))
+        .exists());
+    assert!(!runtime.is_known_bean_record(0));
+    assert!(!runtime.is_device_file_synced(0));
+}
+
+#[test]
+fn quitting_retries_a_standby_dictation_save_without_losing_audio() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.companion.standby_stream_owned = true;
+    runtime.set_dictation_active(true);
+    runtime.capture_standby_dictation(&[42; 320]);
+    let id = runtime.workspace().records().keys().next().unwrap().clone();
+    let product = sandbox.0.join("product-workspace.json");
+    let saved = sandbox.0.join("previous.json");
+    fs::rename(&product, &saved).unwrap();
+    fs::create_dir(&product).unwrap();
+
+    runtime.dispatch_json(r#"{"type":"request_quit"}"#, NOW);
+    assert_eq!(runtime.snapshot(NOW)["lifecycle"]["quitPhase"], "blocked");
+    assert_eq!(runtime.snapshot(NOW)["dictation"]["active"], false);
+    assert!(sandbox
+        .0
+        .join("audio")
+        .join(format!("{id}.capture"))
+        .is_file());
+
+    fs::remove_dir(&product).unwrap();
+    fs::rename(&saved, &product).unwrap();
+    runtime.poll_timers(0, NOW);
+    assert_eq!(runtime.snapshot(NOW)["lifecycle"]["quitPhase"], "ready");
+    assert_eq!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .duration_ms,
+        20
+    );
+    assert_eq!(
+        recording_assets::transcription_pcm(&sandbox.0, &id)
+            .unwrap()
+            .len(),
+        640
+    );
+}

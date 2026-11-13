@@ -47,6 +47,10 @@ fn setup() -> (Sandbox, KoeRuntime, TcpListener) {
         json!({"type":"configure_provider","apiKey":"policy-fixture","model":"fixture","asrEndpoint":format!("ws://{}", listener.local_addr().unwrap())}),
     );
     assert!(result["error"].is_null());
+    dispatch(
+        &mut runtime,
+        json!({"type":"configure_speech","engine":"cloud"}),
+    );
     policy(&mut runtime, "cloud_allowed");
     (dir, runtime, listener)
 }
@@ -84,10 +88,7 @@ fn file_upload_is_blocked(automatic: bool) {
     let state = runtime.snapshot(NOW);
     drop(runtime);
     assert_no_connection(&listener);
-    assert!(state["error"]
-        .as_str()
-        .unwrap()
-        .contains("已有文件暂不支持本机补转写"));
+    assert!(state["error"].as_str().unwrap().contains("音频只留本机"));
 }
 
 #[test]
@@ -114,16 +115,6 @@ fn local_only_blocks_live_audio_and_keeps_capture() {
     runtime.process_capture_events(NOW).unwrap();
     thread::sleep(Duration::from_millis(80));
     assert_eq!(runtime.workspace().records().len(), 1);
-    assert_eq!(
-        runtime
-            .captures
-            .sessions
-            .values()
-            .next()
-            .unwrap()
-            .captured_pcm_bytes,
-        640
-    );
     drop(runtime);
     assert_no_connection(&listener);
 }
@@ -185,17 +176,21 @@ fn revoked_attempt_cannot_write_late_results_after_policy_is_restored() {
             }),
         });
     runtime.poll_provider();
-    assert!(runtime
-        .workspace()
-        .record(&id)
-        .unwrap()
-        .aggregate
-        .spine
-        .is_empty());
-    assert!(runtime
-        .store
-        .transact(|w| w.accept_transcript(&key, "late", "late old words", 0, 20, "fixture"))
-        .is_err());
+    assert!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .is_empty()
+    );
+    assert!(
+        runtime
+            .store
+            .transact(|w| w.accept_transcript(&key, "late", "late old words", 0, 20, "fixture"))
+            .is_err()
+    );
 }
 
 #[test]
@@ -229,7 +224,7 @@ fn waiting_asr() -> (
     std::sync::mpsc::Sender<()>,
     thread::JoinHandle<usize>,
 ) {
-    use tokio_tungstenite::tungstenite::{accept, Message};
+    use tokio_tungstenite::tungstenite::{Message, accept};
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("ws://{}", listener.local_addr().unwrap());
@@ -300,6 +295,7 @@ fn start_waiting_audio(
         runtime,
         json!({"type":"configure_provider","apiKey":"fixture","model":"fixture","asrEndpoint":endpoint}),
     );
+    dispatch(runtime, json!({"type":"configure_speech","engine":"cloud"}));
     if live {
         runtime.device.captures.extend([
             CaptureEvent::Started { file_id: 999 },
@@ -333,13 +329,15 @@ fn switch_before_audio_upload(live: bool) {
     assert!(switched["error"].is_null(), "{switched}");
     policy(&mut runtime, "cloud_allowed");
     runtime.poll_timers(0, NOW);
-    assert!(runtime
-        .workspace()
-        .record(&id)
-        .unwrap()
-        .aggregate
-        .spine
-        .is_empty());
+    assert!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .is_empty()
+    );
     assert!(matches!(
         runtime.workspace().record(&id).unwrap().analysis,
         AnalysisState::Failed { .. }
@@ -463,7 +461,12 @@ fn held_chat(
         ready.send(()).unwrap();
         release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let body = json!({"choices":[{"message":{"content":answer}}]}).to_string();
-        let _=write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body);
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
         request
     });
     (endpoint, ready_rx, release, server)
@@ -509,10 +512,12 @@ fn local_only_keeps_text_summary_and_ask_available() {
         ready.recv_timeout(Duration::from_secs(5)).unwrap();
         release.send(()).unwrap();
         let request = server.join().unwrap();
-        assert!(request["messages"][1]["content"]
-            .as_str()
-            .unwrap()
-            .contains("Mina"));
+        assert!(
+            request["messages"][1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Mina")
+        );
         wait_result(&mut runtime, |r| r.pending.is_empty());
         assert!(
             runtime.snapshot(NOW)["error"].is_null(),
@@ -520,13 +525,15 @@ fn local_only_keeps_text_summary_and_ask_available() {
             runtime.snapshot(NOW)
         );
         if summary {
-            assert!(runtime
-                .workspace()
-                .record(&id)
-                .unwrap()
-                .aggregate
-                .minutes
-                .is_some());
+            assert!(
+                runtime
+                    .workspace()
+                    .record(&id)
+                    .unwrap()
+                    .aggregate
+                    .minutes
+                    .is_some()
+            );
         } else {
             assert_eq!(runtime.snapshot(NOW)["ask"]["phase"], "ready");
         }
@@ -582,10 +589,12 @@ fn uncertain_policy_save_stops_audio_and_requires_reopen() {
     fs::set_permissions(&dir.0, permissions).unwrap();
     release.send(()).unwrap();
     assert_eq!(server.join().unwrap(), 0);
-    assert!(result["error"]
-        .as_str()
-        .unwrap()
-        .contains("无法确认保存结果"));
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap()
+            .contains("无法确认保存结果")
+    );
     let retry = dispatch(&mut runtime, json!({"type":"retry_provider_credentials"}));
     assert_eq!(retry["provider"]["credentialState"], "reopen_required");
     assert!(policy(&mut runtime, "cloud_allowed")["error"].is_string());

@@ -127,11 +127,12 @@ impl LocalAsr {
 pub(super) enum LocalPhase {
     Active,
     Finishing,
-    Closed,
 }
 pub(super) struct LocalSession {
     pub operation_id: u64,
     pub phase: LocalPhase,
     pub draft: String,
     pub elapsed_ms: u64,
+    pub offset_ms: u64,
+    pub duration_ms: u64,
 }

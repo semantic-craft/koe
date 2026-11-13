@@ -6,7 +6,6 @@ public struct CaptureView: View {
 
     private var device: DeviceSnapshot { store.snapshot.device }
     private var capture: CaptureStudioSnapshot { store.snapshot.capture }
-    private var provider: ProviderSnapshot { store.snapshot.provider }
     private var isBeanLive: Bool {
         device.recording || device.stopping || device.transferPhase == "streaming_realtime"
     }
@@ -16,11 +15,12 @@ public struct CaptureView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 PageHeading(title: "录音", subtitle: "选择录音豆、Mac 蓝牙耳机或本机麦克风，录音先保存在本机。")
-                if isBeanLive {
+                AllDayCard(store: store)
+                if isBeanLive && store.snapshot.allDay.state == "idle" {
                     beanLiveCard
                 }
-                if let mic = store.snapshot.microphone {
-                    microphoneLiveCard(mic)
+                if let mic = store.snapshot.microphone, store.snapshot.allDay.state == "idle" {
+                    MicrophoneStatusCard(store: store, microphone: mic)
                 }
                 sourceSelectionDeck
                 if device.busy && device.transferPhase == "pulling_offline" {
@@ -57,13 +57,9 @@ public struct CaptureView: View {
                     Text(device.liveBytes > 0 ? "正在接收实时语音流 (\(device.liveBytes) B)" : "正在等待录音豆语音帧")
                         .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
                 }
-                if provider.meetingAudioPolicy == "local_only"
-                    ? store.snapshot.localAsr?.state != "ready"
-                    : !provider.configured {
+                if store.snapshot.speech.engine == "apple_speech" && store.snapshot.speech.appleState != "ready" {
                     HStack(spacing: 12) {
-                        Text(provider.meetingAudioPolicy == "local_only"
-                             ? store.snapshot.localAsr?.message ?? "本机语音识别尚未就绪，原始录音会保留。"
-                             : "尚未配置云端 AI 服务，音频完整保存在本机，配置后可生成字幕与纪要。")
+                        Text(store.snapshot.speech.appleMessage ?? "Apple 本机识别尚未就绪，原始录音会保留。")
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         Spacer()
                         KoeActionButton("打开设置", systemImage: "gearshape") {
@@ -77,49 +73,6 @@ public struct CaptureView: View {
                             .font(.system(size: AppFontSizes.xs, weight: .medium))
                             .foregroundStyle(AppColors.accent).contentShape(Rectangle())
                     }.buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private func microphoneLiveCard(_ mic: MicrophoneSnapshot) -> some View {
-        KoeCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Circle().fill(mic.phase == "paused" ? AppColors.warning : AppColors.danger).frame(width: 8, height: 8)
-                    Text("\(micPhaseLabel(mic.phase))  \(mic.inputLabel)")
-                        .font(.system(size: AppFontSizes.sm, weight: .medium))
-                    KoeBadge(mic.inputBadge)
-                    Spacer()
-                    Text(TimeLabel.duration(mic.durationMs))
-                        .font(.system(size: AppFontSizes.md, weight: .semibold, design: .monospaced))
-                }
-                CaptureLevelMeter(level: mic.level)
-                if let error = mic.error ?? mic.interruption {
-                    Text(error).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.danger)
-                }
-                HStack(spacing: 10) {
-                    if mic.error != nil {
-                        KoeActionButton("重试保存", systemImage: "arrow.clockwise", isPrimary: true) {
-                            store.send("retry_microphone_save")
-                        }
-                        if mic.phase != "saving" {
-                            KoeActionButton("取消录音", systemImage: "xmark.circle") { store.send("cancel_microphone") }
-                        }
-                    } else if ["recording", "starting", "pausing", "paused"].contains(mic.phase) {
-                        if mic.phase == "recording" {
-                            KoeActionButton("暂停", systemImage: "pause.circle") { store.send("pause_microphone") }
-                        } else if mic.phase == "paused" {
-                            KoeActionButton("继续", systemImage: "play.circle") {
-                                NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
-                            }
-                        }
-                        KoeActionButton("停止并保存", systemImage: "stop.circle", isPrimary: true) {
-                            store.send("stop_microphone")
-                        }
-                        KoeActionButton("取消录音", systemImage: "xmark.circle") { store.send("cancel_microphone") }
-                    }
-                    Spacer()
                 }
             }
         }
@@ -314,34 +267,6 @@ public struct CaptureView: View {
                         }.disabled(device.busy)
                     }
                 }
-            }
-        }
-    }
-
-    private func micPhaseLabel(_ phase: String) -> String {
-        switch phase {
-        case "starting": "等待麦克风权限"
-        case "recording": "正在录音"
-        case "pausing": "正在暂停并保存尾音"
-        case "paused": "已暂停"
-        case "cancelling": "正在取消录音"
-        case "saving": "正在保存"
-        default: "正在停止并保存"
-        }
-    }
-}
-
-private struct CaptureLevelMeter: View {
-    let level: Double
-    private let barCount = 12
-    var body: some View {
-        let clamped = min(max(level, 0.0), 1.0)
-        HStack(spacing: 5) {
-            ForEach(0..<barCount, id: \.self) { index in
-                let threshold = Double(index + 1) / Double(barCount)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(clamped >= threshold - 0.04 ? AppColors.accent : AppColors.bgSubtle)
-                    .frame(maxWidth: .infinity).frame(height: 8)
             }
         }
     }

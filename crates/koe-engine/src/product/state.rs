@@ -38,6 +38,8 @@ impl ProductWorkspace {
         for record in state.records {
             let id = record.aggregate.recording_id.clone();
             let lanes = record.capture_lanes;
+            let all_day = record.all_day;
+            let speech_engine = record.speech_engine;
             let retention = record.retention;
             let mut record = ProductRecord::restore(
                 record.aggregate,
@@ -50,6 +52,8 @@ impl ProductWorkspace {
                 record.final_keys,
                 record.completed_request,
             )?;
+            record.all_day = all_day;
+            record.speech_engine = speech_engine;
             record.restore_capture_lanes(lanes)?;
             record.restore_retention(retention);
             if records.insert(id, record).is_some() {

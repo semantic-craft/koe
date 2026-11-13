@@ -16,10 +16,11 @@ struct TodayView: View {
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         PageHeading(title: "今天", subtitle: "让值得记住的事，有个去处。")
                     }
-                    if let mic = store.snapshot.microphone {
+                    AllDayCard(store: store)
+                    if let mic = store.snapshot.microphone, store.snapshot.allDay.state == "idle" {
                         activeMicrophoneBanner(mic)
                     }
-                    if store.snapshot.device.recording || store.snapshot.device.stopping || store.snapshot.device.transferPhase == "streaming_realtime" {
+                    if store.snapshot.allDay.state == "idle" && (store.snapshot.device.recording || store.snapshot.device.stopping || store.snapshot.device.transferPhase == "streaming_realtime") {
                         liveRecordingCard
                     } else if store.snapshot.device.busy {
                         KoeCard {

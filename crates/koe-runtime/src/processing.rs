@@ -48,8 +48,23 @@ impl StartError {
 }
 
 impl KoeRuntime {
+    pub(super) fn text_provider_configured(&self) -> bool {
+        if !self.settings.key.is_empty() {
+            return true;
+        }
+        let endpoint = &self.workspace().provider_configuration().chat_endpoint;
+        endpoint.strip_prefix("http://").is_some_and(|rest| {
+            let authority = rest.split('/').next().unwrap_or("");
+            authority == "localhost"
+                || authority.starts_with("localhost:")
+                || authority == "127.0.0.1"
+                || authority.starts_with("127.0.0.1:")
+                || authority == "[::1]"
+                || authority.starts_with("[::1]:")
+        })
+    }
     fn ensure_configured(&self) -> Result<(), String> {
-        if self.settings.key.is_empty() {
+        if !self.text_provider_configured() {
             Err("请先在设置中配置模型；录音和文字已保存在本机".into())
         } else {
             Ok(())
@@ -60,17 +75,19 @@ impl KoeRuntime {
         let PendingWork::Summary(key) = work else {
             return false;
         };
-        self.workspace().record(&key.record_id).is_none_or(|record| {
-            !record.is_live()
-                || record.content_revision != key.input_revision
-                || !matches!(
-                    &record.analysis,
-                    AnalysisState::Pending {
-                        key: cur,
-                        stage: AnalysisStage::Summarizing,
-                    } if cur == key
-                )
-        })
+        self.workspace()
+            .record(&key.record_id)
+            .is_none_or(|record| {
+                !record.is_live()
+                    || record.content_revision != key.input_revision
+                    || !matches!(
+                        &record.analysis,
+                        AnalysisState::Pending {
+                            key: cur,
+                            stage: AnalysisStage::Summarizing,
+                        } if cur == key
+                    )
+            })
     }
 
     pub(super) fn reclaim_stale_summaries(&mut self) -> Result<(), String> {
@@ -89,8 +106,28 @@ impl KoeRuntime {
         self.try_start_transcription(id).map_err(|e| e.message())
     }
     pub(super) fn try_start_transcription(&mut self, id: &str) -> Result<(), StartError> {
+        if self.record_speech_engine(id) != SpeechEngine::Cloud {
+            let record = self.workspace().record(id).ok_or("记录不存在")?;
+            record.ensure_live().map_err(|e| e.to_string())?;
+            if matches!(record.analysis, AnalysisState::Pending { .. }) {
+                return Err("这条记录仍在处理中".into());
+            }
+            if !record.aggregate.spine.is_empty()
+                && !matches!(
+                    record.analysis,
+                    AnalysisState::Interrupted { .. } | AnalysisState::Failed { .. }
+                )
+            {
+                return Err("本机转写保留已有原文，请导入新副本后重新转写".into());
+            }
+            let pcm = recording_assets::transcription_pcm(&self.root, id)?;
+            self.start_file_speech(id, pcm)?;
+            return Ok(());
+        }
         self.ensure_meeting_audio_upload()?;
-        self.ensure_configured()?;
+        if self.settings.key.is_empty() {
+            return Err("请先配置云端语音凭据；原始录音已保留".into());
+        }
         self.reclaim_stale_summaries()?;
         if !self.pending.is_empty() {
             return Err(StartError::Other("已有云端任务正在处理，请稍后重试".into()));
@@ -207,7 +244,7 @@ impl KoeRuntime {
         question: &str,
         now: u64,
     ) -> Result<(), String> {
-        if self.settings.key.is_empty() {
+        if !self.text_provider_configured() {
             return self.commit(|w| {
                 if let Some(request) = w.begin_ask(scope, question, now)? {
                     w.complete_retrieval(request.operation)?;
@@ -385,19 +422,10 @@ impl KoeRuntime {
                         "未识别到语音，录音仍已保留".into(),
                     ));
                 }
-                self.store.transact(|w| {
-                    for (index, segment) in segments.iter().enumerate() {
-                        w.accept_transcript(
-                            key,
-                            &index.to_string(),
-                            &segment.text,
-                            segment.start_ms,
-                            segment.end_ms,
-                            "dashscope",
-                        )?;
-                    }
-                    w.finish_transcription(key)
-                })?;
+                for (index, segment) in segments.iter().enumerate() {
+                    self.accept_speech_final(key, &index.to_string(), segment, "dashscope")?;
+                }
+                self.store.transact(|w| w.finish_transcription(key))?;
                 self.notice = Some("转写完成".into());
             }
             (PendingWork::Summary(key), ProviderOutput::Chat { text }) if id == key.record_id => {

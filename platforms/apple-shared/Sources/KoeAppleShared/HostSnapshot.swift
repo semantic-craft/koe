@@ -339,6 +339,9 @@ public struct MicrophoneSnapshot: Codable, Equatable, Sendable {
 }
 
 public struct HostSnapshot: Codable, Equatable, Sendable {
+    public var speech: SpeechSnapshot = .empty
+    public var allDay: AllDaySnapshot = .empty
+    public var dictation: DictationSnapshot = .empty
     public var localAsr: LocalAsrSnapshot? = nil
     public var liveCaption: LiveCaptionSnapshot? = nil
     public var microphone: MicrophoneSnapshot? = nil
@@ -366,7 +369,7 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
     public let notice: String?
 
     private enum CodingKeys: String, CodingKey {
-        case localAsr, liveCaption
+        case localAsr, liveCaption, speech, allDay, dictation
         case microphone, capture, lifecycle, version, generation, section, canGoBack
         case selectedRecordId, focusSegmentId, records, todayRecordIds
         case trashRecords, undoTrash, detail, tasks, memories, ask
@@ -396,6 +399,9 @@ public struct HostSnapshot: Codable, Equatable, Sendable {
 extension HostSnapshot {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        speech = try c.decodeIfPresent(SpeechSnapshot.self, forKey: .speech) ?? .empty
+        allDay = try c.decodeIfPresent(AllDaySnapshot.self, forKey: .allDay) ?? .empty
+        dictation = try c.decodeIfPresent(DictationSnapshot.self, forKey: .dictation) ?? .empty
         localAsr = try c.decodeIfPresent(LocalAsrSnapshot.self, forKey: .localAsr)
         liveCaption = try c.decodeIfPresent(LiveCaptionSnapshot.self, forKey: .liveCaption)
         microphone = try c.decodeIfPresent(MicrophoneSnapshot.self, forKey: .microphone)

@@ -63,6 +63,7 @@ public struct KoeActionButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 }
 

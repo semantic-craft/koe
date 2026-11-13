@@ -13,18 +13,19 @@ use std::{
     },
     path::{Path, PathBuf},
     sync::{
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc, Arc, Condvar, Mutex,
+        mpsc,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
 use koe_runtime::{
-    resolve_bridge_socket_path, CompanionClientCommand, CompanionStreamEvent, KoeRuntime,
-    McpToolCallState, McpToolError,
+    CompanionClientCommand, CompanionStreamEvent, KoeRuntime, McpToolCallState, McpToolError,
+    resolve_bridge_socket_path,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{now, sessions};
 
@@ -60,7 +61,9 @@ impl SubscriberHub {
         }
         if let Ok(mut list) = self.subscribers.lock() {
             list.retain(|entry| {
-                let ok = lines.iter().all(|line| entry.tx.try_send(line.clone()).is_ok());
+                let ok = lines
+                    .iter()
+                    .all(|line| entry.tx.try_send(line.clone()).is_ok());
                 if !ok {
                     if let Some(sock) = &entry.socket {
                         let _ = sock.shutdown(Shutdown::Both);
@@ -292,10 +295,11 @@ impl Drop for BridgeServer {
             }
         }
         if let Ok(guard) = self.worker_state.count.lock() {
-            let _ = self
-                .worker_state
-                .cvar
-                .wait_timeout_while(guard, Duration::from_secs(2), |&mut count| count > 0);
+            let _ = self.worker_state.cvar.wait_timeout_while(
+                guard,
+                Duration::from_secs(2),
+                |&mut count| count > 0,
+            );
         }
     }
 }
@@ -404,7 +408,10 @@ fn serve_client(
             return;
         }
 
-        if matches!(method, "companion/set_capture_active" | "set_capture_active") {
+        if matches!(
+            method,
+            "companion/set_capture_active" | "set_capture_active"
+        ) {
             if let Some((active, reason)) = extract_capture_active(&request) {
                 apply_capture_active(handle, active, reason);
                 if let Some(id) = request.get("id").cloned() {
@@ -630,6 +637,20 @@ fn serve_companion_subscription(
         let Ok(cmd_val) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if let Ok(CompanionClientCommand::SetDictationActive { active }) =
+            serde_json::from_value::<CompanionClientCommand>(cmd_val.clone())
+        {
+            if let Ok(mut table) = sessions().lock() {
+                if let Some(entry) = table.entries.get_mut(&handle) {
+                    entry.runtime.dispatch_json(
+                        &serde_json::json!({"type":"set_dictation_active","active":active})
+                            .to_string(),
+                        0,
+                    );
+                }
+            }
+            continue;
+        }
         if let Ok(CompanionClientCommand::SetCaptureActive { active, reason }) =
             serde_json::from_value::<CompanionClientCommand>(cmd_val.clone())
         {
@@ -667,10 +688,16 @@ fn extract_auto_gate(request: &Value) -> Option<bool> {
 
 fn extract_capture_active(request: &Value) -> Option<(bool, Option<String>)> {
     let method = request.get("method").and_then(Value::as_str)?;
-    if !matches!(method, "set_capture_active" | "companion/set_capture_active") {
+    if !matches!(
+        method,
+        "set_capture_active" | "companion/set_capture_active"
+    ) {
         return None;
     }
-    let container = request.get("params").filter(|v| v.is_object()).unwrap_or(request);
+    let container = request
+        .get("params")
+        .filter(|v| v.is_object())
+        .unwrap_or(request);
     let active = container.get("active").and_then(Value::as_bool)?;
     let reason = container
         .get("reason")
@@ -808,8 +835,9 @@ mod tests {
     #[test]
     fn local_bridge_rejects_raw_dispatch_evicts_stalled_subscriber_and_scopes_manual_gate() {
         let base = PathBuf::from(format!("/tmp/kb-{}", std::process::id()));
-        let container_ws = base
-            .join("Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace");
+        let container_ws = base.join(
+            "Containers/com.anker.ankerRecorder/Data/Library/Application Support/KoeWorkspace",
+        );
         let _ = fs::remove_dir_all(&base);
         let sock_path = resolve_bridge_socket_path(&container_ws).unwrap();
         let dot_koe = sock_path.parent().unwrap();
@@ -888,7 +916,12 @@ mod tests {
 
         let subs = {
             let table = sessions().lock().unwrap();
-            table.entries.get(&session.handle()).unwrap().subscribers.clone()
+            table
+                .entries
+                .get(&session.handle())
+                .unwrap()
+                .subscribers
+                .clone()
         };
 
         let drain_auto = thread::spawn(move || {

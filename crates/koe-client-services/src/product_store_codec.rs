@@ -42,6 +42,10 @@ struct WorkspaceDto {
 struct ProviderDto {
     #[serde(default)]
     meeting_audio_policy: AudioPolicyDto,
+    #[serde(default)]
+    speech_engine: String,
+    #[serde(default)]
+    speech_model_id: Option<String>,
     model: String,
     asr_endpoint: String,
     chat_endpoint: String,
@@ -74,6 +78,11 @@ impl From<ProviderConfiguration> for ProviderDto {
                 MeetingAudioPolicy::CloudAllowed => AudioPolicyDto::CloudAllowed,
                 MeetingAudioPolicy::LocalOnly => AudioPolicyDto::LocalOnly,
             },
+            speech_engine: p.speech_engine.as_str().into(),
+            speech_model_id: match p.speech_engine {
+                SpeechEngine::Downloaded(id) => Some(id),
+                _ => None,
+            },
             model: p.model,
             asr_endpoint: p.asr_endpoint,
             chat_endpoint: p.chat_endpoint,
@@ -92,6 +101,11 @@ impl From<ProviderDto> for ProviderConfiguration {
             meeting_audio_policy: match p.meeting_audio_policy {
                 AudioPolicyDto::CloudAllowed => MeetingAudioPolicy::CloudAllowed,
                 AudioPolicyDto::LocalOnly => MeetingAudioPolicy::LocalOnly,
+            },
+            speech_engine: match p.speech_engine.as_str() {
+                "cloud" => SpeechEngine::Cloud,
+                "downloaded" => SpeechEngine::Downloaded(p.speech_model_id.unwrap_or_default()),
+                _ => SpeechEngine::AppleSpeech,
             },
             model: p.model,
             asr_endpoint: p.asr_endpoint,
@@ -126,6 +140,14 @@ struct ImportedSummaryDto {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RecordDto {
+    #[serde(default)]
+    speech_engine: Option<String>,
+    #[serde(default)]
+    speech_model_id: Option<String>,
+    #[serde(default)]
+    all_day_run_id: Option<String>,
+    #[serde(default)]
+    all_day_ordinal: Option<u64>,
     #[serde(default)]
     capture_lanes: Vec<CaptureLaneDto>,
     #[serde(default)]
@@ -483,6 +505,13 @@ impl RecordDto {
     fn from_record(record: &ProductRecord) -> Self {
         let a = &record.aggregate;
         Self {
+            speech_engine: record.speech_engine.as_ref().map(|e| e.as_str().into()),
+            speech_model_id: match &record.speech_engine {
+                Some(SpeechEngine::Downloaded(id)) => Some(id.clone()),
+                _ => None,
+            },
+            all_day_run_id: record.all_day.as_ref().map(|s| s.run_id.clone()),
+            all_day_ordinal: record.all_day.as_ref().map(|s| s.ordinal),
             capture_lanes: record.capture_lanes.iter().map(Into::into).collect(),
             archived: record.is_archived(),
             trashed_at_ms: record.retention().trashed_at_ms(),
@@ -658,6 +687,23 @@ impl RecordDto {
         record
             .restore_capture_lanes(self.capture_lanes.into_iter().map(Into::into).collect())
             .map_err(|e| invalid(e.to_string()))?;
+        record.speech_engine = match self.speech_engine.as_deref() {
+            Some("apple_speech") => Some(SpeechEngine::AppleSpeech),
+            Some("cloud") => Some(SpeechEngine::Cloud),
+            Some("downloaded") => Some(SpeechEngine::Downloaded(
+                self.speech_model_id
+                    .ok_or_else(|| invalid("missing speech model"))?,
+            )),
+            None => None,
+            _ => return Err(invalid("invalid speech engine")),
+        };
+        record.all_day = match (self.all_day_run_id, self.all_day_ordinal) {
+            (Some(run_id), Some(ordinal)) if !run_id.is_empty() && ordinal > 0 => {
+                Some(AllDaySegment { run_id, ordinal })
+            }
+            (None, None) => None,
+            _ => return Err(invalid("invalid all-day grouping")),
+        };
         record.restore_retention(retention);
         Ok(record)
     }

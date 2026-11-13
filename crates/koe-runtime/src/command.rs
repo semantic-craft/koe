@@ -30,6 +30,24 @@ pub(crate) struct CaptureTiming {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
+    ConfigureSpeech {
+        engine: String,
+        #[serde(default)]
+        model_id: Option<String>,
+    },
+    PrepareSpeechModel {
+        model_id: String,
+    },
+    CancelSpeechModel,
+    StartAllDay {
+        source: String,
+        #[serde(default)]
+        input_id: Option<String>,
+    },
+    StopAllDay,
+    SetDictationActive {
+        active: bool,
+    },
     LocalAsrReadiness {
         state: crate::local_asr::Readiness,
         message: String,
@@ -124,9 +142,6 @@ pub(crate) enum Command {
     OpenSource {
         record_id: String,
         segment_id: String,
-    },
-    ImportFlutterLibrary {
-        path: String,
     },
     ImportFile {
         path: String,

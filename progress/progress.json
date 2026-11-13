@@ -160,15 +160,15 @@
       },
       {
         "number": 653,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-12T14:59:11Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T04:05:48Z"
       },
       {
         "number": 654,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-12T15:00:26Z"
+        "updated_at": "2026-11-12T15:19:52Z"
       },
       {
         "number": 655,
@@ -178,13 +178,30 @@
       },
       {
         "number": 657,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-12T15:22:36Z"
+      },
+      {
+        "number": 661,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-12T15:11:53Z"
+        "updated_at": "2026-11-13T03:51:17Z"
+      },
+      {
+        "number": 662,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-13T04:11:03Z"
       }
     ],
-    "main": "2e60e8d17a640c5abc4d0d8979e5099fffe4e7fb",
-    "open_pulls": [],
+    "main": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
+    "open_pulls": [
+      {
+        "head": "9ce7f609e80692fbd754888d33f3eaf9827fb68c",
+        "number": 663
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -321,12 +338,28 @@
         "merged": true,
         "number": 656,
         "state": "closed"
+      },
+      {
+        "base": "704c3d928fb415891230d06af1e91c965ae18923",
+        "head": "ff8cfd60781347939c52055aae0784aca43ec7da",
+        "merge_commit": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
+        "merged": true,
+        "number": 660,
+        "state": "closed"
+      },
+      {
+        "base": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
+        "head": "9ce7f609e80692fbd754888d33f3eaf9827fb68c",
+        "merge_commit": "0a73d30b49c615f7cebace5ad0a670ba881d61ea",
+        "merged": false,
+        "number": 663,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-12T15:13:32.413063Z",
+  "observed_at": "2026-11-13T05:30:14.715862Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -429,25 +462,20 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "F1 实现范围。",
-              "ref": 597
+              "note": "用户明确不需要旧版资料迁移。",
+              "ref": 661
             },
             {
               "kind": "file",
-              "note": "真实旧格式迁入、原件保全与幂等校验入口。",
-              "ref": "crates/koe-runtime/src/flutter_import.rs"
-            },
-            {
-              "kind": "pull",
-              "note": "已通过 squash 合并；CI 与本地门禁通过，不代表签名安装或真机验收。",
-              "ref": 600
+              "note": "当前工作区与已有记录恢复仍保留。",
+              "ref": "crates/koe-runtime/src/restore.rs"
             }
           ],
           "id": "flutter-migration",
-          "next": "签名安装版验收见 #598；未支持领域随后续切片补迁。",
-          "status": "done",
-          "summary": "显式选择旧目录，迁入基础录音、可见原文、说话人与未验证来源的旧纪要；一次事务保存迁移回执，重复快照不覆盖编辑。原件保全与未迁清单持久保存，不表示完整迁移。整批上限 256 MB，增量合并未支持。",
-          "title": "旧 Flutter 基础资料迁移"
+          "next": "随全天听记集成完成全量验证和交付。",
+          "status": "in_progress",
+          "summary": "按 #661 移除旧目录迁入界面和专属导入实现；保留当前工作区、已迁记录及持久回执的读取兼容。",
+          "title": "移除旧 Flutter 资料迁移入口"
         },
         {
           "evidence": [
@@ -497,9 +525,9 @@
             }
           ],
           "id": "meeting-audio-policy",
-          "next": "签名版与真实设备验收按 #608 执行；本机 ASR 后续接入，不自动回退云端。",
+          "next": "音频上传策略独立于引擎；新的真实硬件与安装验收见 #662。",
           "status": "done",
-          "summary": "N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。本机 ASR 尚未接入，未安装新签名版。",
+          "summary": "N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。Apple 本机实时识别已另由 #660 接入；下载模型与引擎独立配置在 #661 集成。",
           "title": "会议音频只留本机"
         },
         {
@@ -726,9 +754,9 @@
             }
           ],
           "id": "collar-companion-mcp-bridge",
-          "next": "按 #641 在实体 04.92 D3200 上验收自动待命、敲击门控与控制权释放；后续在 Responsay 侧对接 companion/subscribe。",
+          "next": "现有PCM接口保留；#661增加通用听写文字，硬件验收见 #662。",
           "status": "done",
-          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。不为 Responsay 客户端提前写胶水；实体 D3200 真机行为拆入 #641 验收。",
+          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。面向通用外部语音输入法；实体 D3200 真机行为拆入 #641 验收。",
           "title": "16 工具实时 MCP 桥接与 D3200 领口伴侣接口"
         },
         {
@@ -807,6 +835,40 @@
           "status": "done",
           "summary": "macOS 26+ 本机中文实时识别与全局字幕已接通；签名版 D3200 实体按键在设置页停止前显示文字，停止后保存并重启读回。真实 Apple 引擎另通过禁止联网测试。",
           "title": "录音豆本机实时识别与全局字幕"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "实现范围。",
+              "ref": 661
+            },
+            {
+              "kind": "issue",
+              "note": "独立硬件验收。",
+              "ref": 662
+            },
+            {
+              "kind": "file",
+              "note": "设计、参考依据和代码验收标准。",
+              "ref": "docs/adr/0003-shared-speech-and-all-day.md"
+            },
+            {
+              "kind": "file",
+              "note": "生产Runtime与真实模型可重复验证入口。",
+              "ref": "crates/koe-cli/examples/verify_offline.rs"
+            },
+            {
+              "kind": "pull",
+              "note": "本轮实现、独立复核与交付。",
+              "ref": 663
+            }
+          ],
+          "id": "all-day-offline-models",
+          "next": "PR #663 等待 CI 与最终独立验收；真实麦克风/D3200、外部输入法和长时使用按 #662 验收。",
+          "status": "done",
+          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。",
+          "title": "全天听记、下载模型与通用听写文字"
         }
       ],
       "title": "当前产品实现"
@@ -926,9 +988,9 @@
             }
           ],
           "id": "merge-install",
-          "next": "真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 / #641 / #645 推进。",
+          "next": "本轮硬件长时验收见 #662。",
           "status": "done",
-          "summary": "2026-11-12 已从合并提交 e8e317e（含 PR #642 实时 MCP/领口伴侣与 PR #646 独立「录音」音源工作台）重新安装 Developer ID 签名版 /Applications/Koe.app（CDHash b567c5e501154071b3d444264b41277318fcd610，designated requirement 与既有版本一致，Keychain 授权持续有效），已安装二进制通过 --verify-self（含蓝牙输入优先、音源切换与「录音」页导航回退）与 --smoke-test 全部校验。签名安装完成不替代各独立工单的真机交互验收。",
+          "summary": "2026-11-13 已安装本轮全天听记和离线模型的 Developer ID 签名版，CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd，签名要求与旧版一致。verify-self/smoke-test 通过。日常界面 58 条记录仍可见、D3200 自动重连、设置和两种演示已核对；不代表硬件录制通过。",
           "title": "本机签名安装"
         },
         {
@@ -940,9 +1002,9 @@
             }
           ],
           "id": "flutter-device-acceptance",
-          "next": "使用授权旧库副本在签名版逐项核对。",
-          "status": "unverified",
-          "summary": "本轮未运行签名安装版目录导入、真实音频播放及退出重启读回。自动回归不能替代真机结果。",
+          "next": "不再实施旧库导入；当前工作区恢复按全天听记验收核对。",
+          "status": "done",
+          "summary": "按用户要求取消旧 Flutter 资料迁移功能及其专属验收。已保存记录与当前工作区读取保留。",
           "title": "旧 Flutter 库真机验收"
         },
         {
@@ -1065,7 +1127,7 @@
           "id": "later-platforms",
           "next": "先验证当前 macOS 产品流程，再选择下一阶段功能。",
           "status": "planned",
-          "summary": "iOS、Android、屏幕采集、系统麦克风全天监听、Google 写回与 ACP 不计入当前 macOS 已接通功能；保留的底层模块不等于界面已实现。",
+          "summary": "iOS、Android、屏幕采集、Google 写回与 ACP 不计入当前 macOS 已接通功能；Mac 麦克风全天听记已接入，硬件验收见 #662。",
           "title": "移动端与尚未接入能力"
         }
       ],
@@ -1104,7 +1166,9 @@
       653,
       654,
       655,
-      657
+      657,
+      661,
+      662
     ],
     "pulls": [
       589,
@@ -1123,7 +1187,9 @@
       638,
       642,
       646,
-      656
+      656,
+      660,
+      663
     ]
   }
 }

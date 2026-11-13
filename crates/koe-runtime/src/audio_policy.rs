@@ -1,7 +1,6 @@
 use super::*;
 
-pub(super) const LOCAL_ASR_UNAVAILABLE: &str =
-    "音频只留本机；已有文件暂不支持本机补转写。录音豆可使用本机实时字幕，文字纪要与问答仍可使用云服务。";
+pub(super) const LOCAL_ASR_UNAVAILABLE: &str = "音频只留本机；请在语音设置选择 Apple 或已下载的本机模型。文字纪要与问答仍可使用已配置的文字服务。";
 
 impl KoeRuntime {
     pub(super) fn ensure_meeting_audio_upload(&self) -> Result<(), String> {
@@ -73,10 +72,9 @@ impl KoeRuntime {
         })?;
         self.audio_policy_error = None;
         self.notice = Some(match policy {
-            MeetingAudioPolicy::LocalOnly => format!(
-                "会议录音只留本机；录音豆离线字幕：{}。文件转写暂不支持本机识别。",
-                self.local_asr.message
-            ),
+            MeetingAudioPolicy::LocalOnly => {
+                "会议音频只保存在本机；语音引擎和文字服务可在设置中单独选择。".into()
+            }
             MeetingAudioPolicy::CloudAllowed => {
                 "允许会议音频云端转写；已取消的任务不会自动恢复，请手动重试。".into()
             }

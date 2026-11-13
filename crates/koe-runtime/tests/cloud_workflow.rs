@@ -41,6 +41,7 @@ impl Drop for Sandbox {
 
 fn command(runtime: &mut KoeRuntime, command: Value) -> Value {
     if command["type"] == "configure_provider" {
+        runtime.dispatch_json(r#"{"type":"configure_speech","engine":"cloud"}"#, NOW);
         runtime.dispatch_json(
             r#"{"type":"set_meeting_audio_policy","policy":"cloud_allowed"}"#,
             NOW,
@@ -297,7 +298,11 @@ fn real_wire_transcription_and_auto_summary_remain_on_the_imported_record() {
         &mut reopened,
         json!({"type":"select_record","recordId":recording}),
     );
-    assert_eq!(reopened_detail["provider"]["configured"], false);
+    assert_eq!(reopened_detail["provider"]["configured"], true);
+    assert_eq!(
+        reopened_detail["provider"]["credentialState"],
+        "missing_saved"
+    );
     assert_eq!(reopened_detail["detail"], detail["detail"]);
     assert_eq!(reopened_detail["tasks"], detail["tasks"]);
     assert_eq!(reopened_detail["memories"], detail["memories"]);
