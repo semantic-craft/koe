@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-13T10:11:18.087627Z</p>
-<p>Main: <code>main: f7627b72aa7a0307a2d63c93eb4226ec13472f82</code></p>
+<p>Observed: 2026-11-13T11:35:36.881854Z</p>
+<p>Main: <code>main: 4ef9dbb6714bc8807bc0696226c9229c42a04d0e</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -115,7 +115,7 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/day_journal.rs">file crates/koe-runtime/tests/day_journal.rs: 四模式跨页、跨午夜刷新、真实导入原文及已有摘要。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/all_day_speech.rs">file crates/koe-runtime/tests/all_day_speech.rs: 语音输入恢复和结束尾块以外部桥定稿事件先红后绿。</a></li>
 <li>note 2026-11-13 隔离原生验收: 真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页/单独结束听写。非物理录音验收，QA应用和进程已清理。</li>
-</ul><p>Next: 物理麦克风/D3200、外部输入法与签名版按 #668 验收。只留文字后删除音频、整天合并分析及普通会议录制中的持续 AI 纪要生成尚未接入。</p></article>
+</ul><p>Next: 其余物理采集和外部输入法按 #668 最新记录推进。只留文字后删除音频、整天合并分析仍未接入；持续实时纪要已由 #681 接入，真实云端流程通过但内容质量失败。</p></article>
 <article id="live-minutes-workspace"><h3>问 Koe 主导航与实时纪要专页</h3><span class="badge">done</span><p>问 Koe 与实时纪要已接入独立主导航。Rust 按本次采集身份投影原文、草稿和已验证纪要；跨页、停录、后台文件转写及录音豆启动间隙已覆盖。全量 check 与隔离原生界面验证通过。 PR #672 已经 CI 与独立 PASS+NOTES 验收，squash 合并为 ec745e9。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/671">issue 671: 本轮界面与状态归属范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/668">issue 668: 真实录音与外部输入法验收仍分开记录。</a></li>
@@ -137,7 +137,8 @@
 <li>note 2026-11-13 全自动验证: 完整 scripts/check 与独立复核通过。原生生产 SwiftUI+C ABI 隔离程序验证录中 S1 纪要、停止后 S2 尾句来源；使用识别回调及回环 HTTP 响应，不是真实麦克风或云模型质量验收。</li>
 <li><a href="https://github.com/semantic-craft/koe/pull/680">pull 680: 完整门禁、独立执行回归和隔离原生验证通过；Developer ID 签名安装、自检与持久化烟测通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/681">pull 681: 与 #680 已验生产源码及测试相同；保留并行主线 #679 的进度事实。</a></li>
-</ul><p>Next: 签名版已安装，真实云端持续纪要质量沿 #668 自动跟进。交付采用最新主线上的 #681，#680 保留原始独立验收证据。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/acceptance/cloud-minutes-668-2026-11-13.md">file docs/acceptance/cloud-minutes-668-2026-11-13.md: Studio Display物理采集合成语音并调用真实云端，录中更新、停止补齐与来源通过；实体异写和时间更新的内容准确性失败。非自然人语音验收，不关闭#668。</a></li>
+</ul><p>Next: 复用真实云端失败样本修复实体异写与后续决定覆盖旧信息的问题。录中更新、停止补齐、来源引用与跳转已自动验证，不重复。#668整体保持未完成。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
@@ -203,6 +204,5 @@
 </ul><p>Next: 先验证当前 macOS 产品流程，再选择下一阶段功能。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/681">#681</a> <code>0fd633fb136704a2573fb22fce38353426385805</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

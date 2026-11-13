@@ -210,7 +210,7 @@
         "number": 668,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T09:14:37Z"
+        "updated_at": "2026-11-13T11:34:32Z"
       },
       {
         "number": 671,
@@ -226,18 +226,13 @@
       },
       {
         "number": 678,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-13T09:48:23Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T10:15:58Z"
       }
     ],
-    "main": "f7627b72aa7a0307a2d63c93eb4226ec13472f82",
-    "open_pulls": [
-      {
-        "head": "0fd633fb136704a2573fb22fce38353426385805",
-        "number": 681
-      }
-    ],
+    "main": "4ef9dbb6714bc8807bc0696226c9229c42a04d0e",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -441,17 +436,17 @@
       },
       {
         "base": "f7627b72aa7a0307a2d63c93eb4226ec13472f82",
-        "head": "0fd633fb136704a2573fb22fce38353426385805",
-        "merge_commit": "292ac9d9dee43e7b6b18136e3e1af69e13e56406",
-        "merged": false,
+        "head": "b67e810c42ffa680ce64efe1ee823910873fa430",
+        "merge_commit": "4ef9dbb6714bc8807bc0696226c9229c42a04d0e",
+        "merged": true,
         "number": 681,
-        "state": "open"
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T10:11:18.087627Z",
+  "observed_at": "2026-11-13T11:35:36.881854Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -996,7 +991,7 @@
             }
           ],
           "id": "day-journal-native",
-          "next": "物理麦克风/D3200、外部输入法与签名版按 #668 验收。只留文字后删除音频、整天合并分析及普通会议录制中的持续 AI 纪要生成尚未接入。",
+          "next": "其余物理采集和外部输入法按 #668 最新记录推进。只留文字后删除音频、整天合并分析仍未接入；持续实时纪要已由 #681 接入，真实云端流程通过但内容质量失败。",
           "status": "done",
           "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。2026-11-13 已安装签名版，使用开发工作区执行真实设备验收。 PR #669 已通过 CI 并 squash 合并为 c127845。",
           "title": "一天一页原生界面"
@@ -1100,10 +1095,15 @@
               "kind": "pull",
               "note": "与 #680 已验生产源码及测试相同；保留并行主线 #679 的进度事实。",
               "ref": 681
+            },
+            {
+              "kind": "file",
+              "note": "Studio Display物理采集合成语音并调用真实云端，录中更新、停止补齐与来源通过；实体异写和时间更新的内容准确性失败。非自然人语音验收，不关闭#668。",
+              "ref": "docs/acceptance/cloud-minutes-668-2026-11-13.md"
             }
           ],
           "id": "continuous-live-minutes",
-          "next": "签名版已安装，真实云端持续纪要质量沿 #668 自动跟进。交付采用最新主线上的 #681，#680 保留原始独立验收证据。",
+          "next": "复用真实云端失败样本修复实体异写与后续决定覆盖旧信息的问题。录中更新、停止补齐、来源引用与跳转已自动验证，不重复。#668整体保持未完成。",
           "status": "done",
           "summary": "Rust 独立持有转写与实时纪要请求，绑定来源快照；追加原文保留已覆盖纪要，修订使旧来源失效。停止后完成最终整理，界面统一称实时纪要。",
           "title": "录制中的持续实时纪要"
