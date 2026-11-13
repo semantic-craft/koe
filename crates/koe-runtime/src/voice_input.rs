@@ -49,6 +49,7 @@ impl KoeRuntime {
         if !self.is_quitting() && self.device.session.transfer.phase == TransferPhaseTag::Failed {
             self.device.session.reset_active_transfer();
         }
+        self.companion.armed = mode != CompanionRoutingMode::Disabled;
         self.companion.standby_suppressed_for_connection = false;
         if mode != CompanionRoutingMode::CollarStandby && self.companion.standby_stream_owned {
             self.stop_owned_standby_stream()?;

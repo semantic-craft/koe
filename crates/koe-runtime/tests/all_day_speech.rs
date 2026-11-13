@@ -37,7 +37,7 @@ fn live_minutes_keeps_final_and_draining_draft_until_the_next_recording() {
     let d = Sandbox::new();
     let mut r = KoeRuntime::open(&d.0).unwrap();
     apple_ready(&mut r);
-    let s = send(&mut r, json!({"type":"start_microphone","inputId":"fixture"}));
+    let s = send(&mut r, json!({"type":"start_capture_mode","mode":"meeting"}));
     let t = &s["microphone"];
     microphone_started(&mut r, t);
     audio(&mut r, t, 0, 320);
@@ -61,7 +61,7 @@ fn live_minutes_keeps_final_and_draining_draft_until_the_next_recording() {
     assert_eq!(minutes["parts"][0]["analysis"], "unconfigured");
     assert_eq!(minutes["parts"][0]["summary"], json!([]));
 
-    let next = send(&mut r, json!({"type":"start_microphone","inputId":"fixture"}));
+    let next = send(&mut r, json!({"type":"start_capture_mode","mode":"meeting"}));
     assert_ne!(next["liveMinutes"]["scope"], minutes["scope"]);
     assert_eq!(next["liveMinutes"]["parts"], json!([]));
     drop(r);

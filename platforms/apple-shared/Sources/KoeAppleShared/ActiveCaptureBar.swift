@@ -3,7 +3,7 @@ import SwiftUI
 extension CaptureMode {
     var title: String {
         switch self {
-        case .quickNote: "随手记"
+        case .quickNote: "随心闪记"
         case .allDay: "全天听记"
         case .meeting: "实时纪要"
         case .dictation: "语音输入"

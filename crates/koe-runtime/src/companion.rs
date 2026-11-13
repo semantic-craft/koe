@@ -256,6 +256,7 @@ pub(crate) struct CompanionRuntime {
     pub capture_active: bool,
     pub auto_gate: bool,
     pub manual_gate_subscribers: usize,
+    pub armed: bool,
     pub standby_stream_owned: bool,
     pub active_standby_file_id: Option<u32>,
     pub pending_standby_stop: bool,
@@ -283,6 +284,7 @@ impl Default for CompanionRuntime {
             capture_active: false,
             auto_gate: true,
             manual_gate_subscribers: 0,
+            armed: false,
             standby_stream_owned: false,
             active_standby_file_id: None,
             pending_standby_stop: false,
@@ -323,6 +325,14 @@ impl CompanionRuntime {
 }
 
 impl KoeRuntime {
+    pub(super) fn active_companion_mode(&self) -> CompanionRoutingMode {
+        if self.companion.armed {
+            self.workspace().companion_mode()
+        } else {
+            CompanionRoutingMode::Disabled
+        }
+    }
+
     pub(super) fn publish_transcript(
         &mut self,
         record_id: &str,
@@ -374,7 +384,7 @@ impl KoeRuntime {
     #[must_use]
     pub fn is_standby_ready(&self) -> bool {
         self.device.is_connected()
-            && self.workspace().companion_mode() != CompanionRoutingMode::Disabled
+            && self.active_companion_mode() != CompanionRoutingMode::Disabled
             && self.device.session.active_is_realtime
             && matches!(
                 self.device.session.transfer.phase,
@@ -793,7 +803,7 @@ impl KoeRuntime {
 
             if !self.is_quitting()
                 && !self.companion.standby_suppressed_for_connection
-                && self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+                && self.active_companion_mode() == CompanionRoutingMode::CollarStandby
                 && self.all_day.run.is_none()
             {
                 let open_entry = self
@@ -857,7 +867,6 @@ impl KoeRuntime {
         if signals.is_empty() {
             return false;
         }
-        let mode = self.workspace().companion_mode();
         let device_id = self.companion_device_id();
 
         for signal in signals {
@@ -887,6 +896,11 @@ impl KoeRuntime {
                             }
                         }
                     } else if state == 0 || state == 2 {
+                        if self.all_day.run.is_none()
+                            && (prev_recording_state == 1 || !self.captures.active.is_empty())
+                        {
+                            self.companion.armed = false;
+                        }
                         if self.companion.standby_stream_owned {
                             self.stop_bean_dictation();
                             let fid = file_id
@@ -935,7 +949,7 @@ impl KoeRuntime {
                 RawCompanionSignal::FrontDoubleTap {
                     file_id, offset_ms, ..
                 } => {
-                    if mode == CompanionRoutingMode::Disabled
+                    if self.active_companion_mode() == CompanionRoutingMode::Disabled
                         && !self
                             .all_day
                             .run
@@ -978,7 +992,7 @@ impl KoeRuntime {
                     }
                 }
                 RawCompanionSignal::LivePcm16 { samples, .. } => {
-                    if mode == CompanionRoutingMode::Disabled {
+                    if self.active_companion_mode() == CompanionRoutingMode::Disabled {
                         continue;
                     }
                     if self.companion.post_tap_skip_slices > 0 {

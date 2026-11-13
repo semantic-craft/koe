@@ -73,7 +73,7 @@ impl KoeRuntime {
     }
 
     pub(crate) fn maybe_start_auto_offline_pull(&mut self) -> bool {
-        if (self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+        if (self.active_companion_mode() == CompanionRoutingMode::CollarStandby
             && !self.companion.standby_suppressed_for_connection)
             || self.companion.standby_stream_owned
             || self.companion.pending_standby_stop

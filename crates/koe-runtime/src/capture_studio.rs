@@ -184,7 +184,7 @@ impl KoeRuntime {
         let bean_ready = self.device.is_connected()
             && !device_busy
             && !self.device.session.is_offline_pull_suspended()
-            && self.workspace().companion_mode() != CompanionRoutingMode::CollarStandby;
+            && self.active_companion_mode() != CompanionRoutingMode::CollarStandby;
 
         let resolve_auto = || -> (String, String, String, &'static str) {
             if bean_ready {

@@ -136,6 +136,7 @@ impl KoeRuntime {
                 .take()
                 .is_some_and(|run| run.source == "bean")
         {
+            self.companion.armed = false;
             self.set_source_dictation(crate::speech::DictationSource::Bean, false);
         }
         done
