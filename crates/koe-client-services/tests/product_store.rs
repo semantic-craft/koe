@@ -52,6 +52,51 @@ fn seed(store: &mut ProductStore) {
 }
 
 #[test]
+fn live_minutes_and_independent_paid_requests_survive_reopen_without_retry() {
+    let dir = Directory::new();
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    seed(&mut store);
+    let (asr, live) = store.transact(|w| {
+        let asr = w.begin_analysis("a", AnalysisStage::Transcribing)?;
+        let live = w.begin_live_summary("a")?;
+        let snapshot = w.record("a").unwrap().aggregate.spine.clone();
+        let minutes = koe_engine::minutes::parse_meeting_minutes_json(r#"{"schemaVersion":2,"title":"alpha","overview":"alpha decision","topics":[{"text":"alpha","summary":"alpha decision","sources":["S1"]}],"decisions":[],"actions":[],"questions":[]}"#, &snapshot).unwrap();
+        w.complete_live_summary(&live, &snapshot, minutes)?;
+        w.accept_transcript(&asr, "next", "alpha continues", 1000, 2000, "asr")?;
+        let live = w.begin_live_summary("a")?;
+        Ok((asr, live))
+    }).unwrap();
+    drop(store);
+    let mut store = ProductStore::open(&dir.0).unwrap();
+    let record = store.workspace().record("a").unwrap();
+    assert_eq!(record.analysis, AnalysisState::Interrupted { key: asr });
+    assert_eq!(
+        record.live_summary,
+        AnalysisState::Interrupted { key: live.clone() }
+    );
+    assert!(record.aggregate.minutes.is_some());
+    assert!(record.is_minutes_stale());
+    assert!(store.workspace().items().is_empty());
+    let next = store.transact(|w| w.begin_live_summary("a")).unwrap();
+    assert!(next.attempt > live.attempt);
+    store
+        .transact(|w| w.fail_live_summary(&next, "known failure"))
+        .unwrap();
+    drop(store);
+    let path = dir.0.join(PRODUCT_WORKSPACE_FILE);
+    let mut raw: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for record in raw["records"].as_array_mut().unwrap() {
+        record.as_object_mut().unwrap().remove("live_summary");
+    }
+    fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let store = ProductStore::open(&dir.0).unwrap();
+    assert_eq!(
+        store.workspace().record("a").unwrap().live_summary,
+        AnalysisState::Idle
+    );
+}
+
+#[test]
 fn reviews_and_cross_record_sources_survive_reopening() {
     let dir = Directory::new();
     let mut store = ProductStore::open(&dir.0).unwrap();

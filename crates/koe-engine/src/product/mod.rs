@@ -234,6 +234,8 @@ pub struct ProductRecord {
     pub origin: RecordOrigin,
     /// Authoritative analysis state.
     pub analysis: AnalysisState,
+    /// Independent minutes refresh while transcription continues.
+    pub live_summary: AnalysisState,
     /// Content revision, preserved across storage reconstruction.
     pub content_revision: u64,
     pub(super) minutes_revision: Option<u64>,

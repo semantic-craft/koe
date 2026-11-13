@@ -220,16 +220,22 @@
       },
       {
         "number": 675,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T09:35:18Z"
+      },
+      {
+        "number": 678,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T08:37:29Z"
+        "updated_at": "2026-11-13T09:48:23Z"
       }
     ],
-    "main": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
+    "main": "d6f9406cc076eacec02b2f0c56e1939e875bf375",
     "open_pulls": [
       {
-        "head": "ab6f2a4022e76308770f2bbe8e0063e74df16915",
-        "number": 677
+        "head": "79700fa460580a436234478bc2b598d9bc025107",
+        "number": 679
       }
     ],
     "pulls": [
@@ -408,12 +414,28 @@
         "merged": true,
         "number": 674,
         "state": "closed"
+      },
+      {
+        "base": "314adab314225716d7daafd22945065639548be8",
+        "head": "4647e3c31bf024523f0677bab7ac503e972e3494",
+        "merge_commit": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
+        "merged": true,
+        "number": 676,
+        "state": "closed"
+      },
+      {
+        "base": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
+        "head": "62449f45e7d568c34baab50cbef174d1983a9c7b",
+        "merge_commit": "d6f9406cc076eacec02b2f0c56e1939e875bf375",
+        "merged": true,
+        "number": 677,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T09:29:15.764448Z",
+  "observed_at": "2026-11-13T09:59:11.992431Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1007,7 +1029,7 @@
             }
           ],
           "id": "live-minutes-workspace",
-          "next": "按 #668 自动验证隐蔽的数据完整性问题，不重复人工体验检查。Micro Input 接收端未接入；普通会议持续 AI 纪要、系统音频、只留文字删音频、整天合并分析未接入。",
+          "next": "持续实时纪要由 #678 接入；外部 PCM 与 Responsay 接收端已合并，真实链路由 responsay-macos#810 全自动验证。系统音频、只留文字删音频和全天跨段综合分析另行推进。",
           "status": "done",
           "summary": "问 Koe 与实时纪要已接入独立主导航。Rust 按本次采集身份投影原文、草稿和已验证纪要；跨页、停录、后台文件转写及录音豆启动间隙已覆盖。全量 check 与隔离原生界面验证通过。 PR #672 已经 CI 与独立 PASS+NOTES 验收，squash 合并为 ec745e9。",
           "title": "问 Koe 主导航与实时纪要专页"
@@ -1035,6 +1057,25 @@
           "status": "done",
           "summary": "已实现按 socket 独占的外部 PCM 采集。Koe 不重复启动自身听写；停止确认排在音频尾部之后。完整 check 与清理后的相关回归、Clippy 通过；双端真实硬件识别仍未验收。",
           "title": "Responsay 独占外部 PCM 输入"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "保留原生布局与Rust业务状态，验收全自动。",
+              "ref": 678
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-13 全自动验证",
+              "note": "完整 scripts/check 与独立复核通过。原生生产 SwiftUI+C ABI 隔离程序验证录中 S1 纪要、停止后 S2 尾句来源；使用识别回调及回环 HTTP 响应，不是真实麦克风或云模型质量验收。"
+            }
+          ],
+          "id": "continuous-live-minutes",
+          "next": "完成 PR 合并与签名安装。真实云端模型的持续纪要质量尚未验收，沿 #668 全自动跟进；不重复录音传输验收。",
+          "status": "done",
+          "summary": "Rust 独立持有转写与实时纪要请求，绑定来源快照；追加原文保留已覆盖纪要，修订使旧来源失效。停止后完成最终整理，界面统一称实时纪要。",
+          "title": "录制中的持续实时纪要"
         }
       ],
       "title": "当前产品实现"
@@ -1373,7 +1414,8 @@
       667,
       668,
       671,
-      675
+      675,
+      678
     ],
     "pulls": [
       589,
@@ -1397,7 +1439,9 @@
       663,
       669,
       672,
-      674
+      674,
+      676,
+      677
     ]
   }
 }

@@ -794,7 +794,7 @@ impl KoeRuntime {
                         PendingWork::Transcription(key) => {
                             json!({"operationId": op_id, "kind": "transcription", "recordId": key.record_id})
                         }
-                        PendingWork::Summary(key) => {
+                        PendingWork::Summary(key) | PendingWork::LiveSummary { key, .. } => {
                             json!({"operationId": op_id, "kind": "summary", "recordId": key.record_id})
                         }
                         PendingWork::Ask(op) => {

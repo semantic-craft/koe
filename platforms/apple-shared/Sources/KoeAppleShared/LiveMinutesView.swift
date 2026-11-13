@@ -27,8 +27,8 @@ struct LiveMinutesView: View {
 
     private var subtitle: String {
         switch minutes?.scope.kind {
-        case .allDay: "全天听记会持续转写。已保存的片段可逐段整理。"
-        case .record, .beanStarting: "查看本次录音的原文。自动整理在录音结束后开始。"
+        case .allDay: "全天听记会持续转写和整理，停止后补齐最后的内容。"
+        case .record, .beanStarting: "原文确认后持续整理纪要，停止录音后补齐最后的内容。"
         case nil: "从今天开始录音，这里会显示本次采集的原文和纪要。"
         }
     }
@@ -111,7 +111,7 @@ struct LiveMinutesView: View {
                 } else if minutes.phase == .ended {
                     hint("本次录音没有可整理的原文。")
                 } else {
-                    hint(minutes.scope.kind == .allDay ? "等待第一段录音保存。" : "录音结束后整理。")
+                    hint("等待已确认的原文，纪要会在录音中持续更新。")
                 }
             }
             ForEach(minutes.parts) { part in
@@ -144,13 +144,12 @@ struct LiveMinutesView: View {
     private func analysisLabel(_ state: LiveMinutesSnapshot.Part.Analysis) -> String? {
         switch state {
         case .unconfigured: "尚未配置文字整理服务。"
-        case .afterStop: "录音结束后整理。"
-        case .awaitingTranscript: "等待转写完成。"
-        case .waiting: "尚未生成纪要。"
+        case .awaitingTranscript: "等待已确认的原文。"
+        case .waiting: "等待下一轮整理。"
         case .queued: "等待整理。"
         case .summarizing: "正在整理纪要。"
         case .ready: nil
-        case .stale: "原文已变更，下方纪要待重算。"
+        case .stale: "下方纪要尚未包含最新原文，正在等待更新。"
         case .failed: "处理失败"
         case .interrupted: "处理已中断。"
         }

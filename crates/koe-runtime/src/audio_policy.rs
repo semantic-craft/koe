@@ -24,7 +24,7 @@ impl KoeRuntime {
         let policy = match policy {
             "cloud_allowed" => MeetingAudioPolicy::CloudAllowed,
             "local_only" => MeetingAudioPolicy::LocalOnly,
-            _ => return Err("无法识别会议音频上传策略".into()),
+            _ => return Err("无法识别实时纪要音频上传策略".into()),
         };
         let revoke = policy == MeetingAudioPolicy::LocalOnly || self.audio_policy_error.is_some();
         if revoke {
@@ -65,7 +65,7 @@ impl KoeRuntime {
                     .collect();
                 for key in keys {
                     workspace
-                        .fail_analysis(&key, "会议音频上传已取消；此前已发送的音频无法撤回。")?;
+                        .fail_analysis(&key, "实时纪要音频上传已取消；此前已发送的音频无法撤回。")?;
                 }
             }
             Ok(())
@@ -73,10 +73,10 @@ impl KoeRuntime {
         self.audio_policy_error = None;
         self.notice = Some(match policy {
             MeetingAudioPolicy::LocalOnly => {
-                "会议音频只保存在本机；语音引擎和文字服务可在设置中单独选择。".into()
+                "实时纪要音频只保存在本机；语音引擎和文字服务可在设置中单独选择。".into()
             }
             MeetingAudioPolicy::CloudAllowed => {
-                "允许会议音频云端转写；已取消的任务不会自动恢复，请手动重试。".into()
+                "允许实时纪要音频云端转写；已取消的任务不会自动恢复，请手动重试。".into()
             }
         });
         Ok(())

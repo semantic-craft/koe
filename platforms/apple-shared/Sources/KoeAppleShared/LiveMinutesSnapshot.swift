@@ -19,7 +19,6 @@ public struct LiveMinutesSnapshot: Codable, Equatable, Sendable {
     public struct Part: Codable, Equatable, Identifiable, Sendable {
         public enum Analysis: String, Codable, Sendable {
             case unconfigured, waiting, queued, summarizing, ready, stale, failed, interrupted
-            case afterStop = "after_stop"
             case awaitingTranscript = "awaiting_transcript"
         }
 

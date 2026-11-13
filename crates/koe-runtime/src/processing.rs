@@ -199,6 +199,14 @@ impl KoeRuntime {
         self.try_start_summary(id).map_err(|e| e.message())
     }
     pub(super) fn try_start_summary(&mut self, id: &str) -> Result<(), StartError> {
+        if self
+            .captures
+            .sessions
+            .get(id)
+            .is_some_and(|s| !s.terminal && s.capture_source().is_some())
+        {
+            return self.try_start_live_summary(id);
+        }
         self.ensure_configured()?;
         let record = self.workspace().record(id).ok_or("记录不存在")?;
         record.ensure_live().map_err(|e| e.to_string())?;
@@ -234,6 +242,49 @@ impl KoeRuntime {
         );
         if let Err(error) = &result {
             self.defer_failure(id, PendingWork::Summary(key), error);
+        }
+        result.map_err(StartError::Other)
+    }
+
+    pub(super) fn try_start_live_summary(&mut self, id: &str) -> Result<(), StartError> {
+        self.ensure_configured()?;
+        self.reclaim_stale_summaries()?;
+        if !self.pending.is_empty() || !self.completed.is_empty() {
+            return Err("已有云端任务正在处理，请稍后重试".into());
+        }
+        let record = self.workspace().record(id).ok_or("记录不存在")?;
+        record.ensure_live().map_err(|e| e.to_string())?;
+        if record.aggregate.spine.is_empty() {
+            return Err("这条录音还没有文字，请先转写".into());
+        }
+        let sources = record.aggregate.spine.clone();
+        let source_text = sources.format_cited_sources().join("\n");
+        let prompt = build_meeting_minutes_prompt(
+            &source_text,
+            "zh",
+            None,
+            &[],
+            Some("录音仍在继续。只整理本次提供原文中有来源的结论，保留未决事项，不推测后续内容。"),
+            &[],
+        );
+        let key = self.store.transact(|w| w.begin_live_summary(id))?;
+        if let Some(session) = self.captures.sessions.get_mut(id) {
+            session.minutes_schedule.requested(key.input_revision);
+        }
+        let pending = PendingWork::LiveSummary { key, sources };
+        let config = self.chat_config();
+        let result = self.submit(
+            id,
+            config,
+            ProviderTask::Chat {
+                system: prompt,
+                user: source_text,
+            },
+            Duration::from_secs(180),
+            pending.clone(),
+        );
+        if let Err(error) = &result {
+            self.defer_failure(id, pending, error);
         }
         result.map_err(StartError::Other)
     }
@@ -358,6 +409,24 @@ impl KoeRuntime {
                             }
                         }
                     }
+                    if let PendingWork::LiveSummary { ref key, .. } = work {
+                        match self
+                            .store
+                            .transact(|w| w.fail_live_summary(key, "原文已更新，等待下一轮整理"))
+                        {
+                            Ok(())
+                            | Err(StoreError::Domain(
+                                ProductError::StaleRequest
+                                | ProductError::UnknownRecord
+                                | ProductError::RecordTrashed,
+                            )) => {}
+                            Err(error) => {
+                                self.drain_error = Some(error.to_string());
+                                self.error = self.drain_error.clone();
+                                break;
+                            }
+                        }
+                    }
                     self.error = None;
                     self.notice = Some("记录已更新，过期的处理结果已忽略".into());
                 }
@@ -369,6 +438,9 @@ impl KoeRuntime {
                     let recorded = match &work {
                         PendingWork::Transcription(key) | PendingWork::Summary(key) => {
                             self.store.transact(|w| w.fail_analysis(key, &error))
+                        }
+                        PendingWork::LiveSummary { key, .. } => {
+                            self.store.transact(|w| w.fail_live_summary(key, &error))
                         }
                         PendingWork::Ask(operation) => {
                             self.store.transact(|w| w.fail_ask(*operation, &error))
@@ -455,6 +527,16 @@ impl KoeRuntime {
                     })?;
                 self.store.transact(|w| w.complete_summary(key, minutes))?;
                 self.notice = Some("整理完成，待办与记忆等待你的确认".into());
+            }
+            (PendingWork::LiveSummary { key, sources }, ProviderOutput::Chat { text })
+                if id == key.record_id =>
+            {
+                let minutes = parse_meeting_minutes_json(&text, sources).map_err(|_| {
+                    CompletionError::Invalid("模型返回的纪要没有通过来源校验，原文保持不变".into())
+                })?;
+                self.store
+                    .transact(|w| w.complete_live_summary(key, sources, minutes))?;
+                self.notice = Some("实时纪要已更新".into());
             }
             (PendingWork::Ask(operation), ProviderOutput::Chat { text }) if id == "ask" => {
                 self.store.transact(|w| w.complete_ask(*operation, &text))?
