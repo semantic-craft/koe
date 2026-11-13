@@ -3122,6 +3122,89 @@ mod tests {
     }
 
     #[test]
+    fn realtime_error_head_before_stop_preserves_audio_until_finished() {
+        for error_code in [1, 3, 2] {
+            assert_realtime_error_head_preserves_capture(error_code, false);
+        }
+    }
+
+    #[test]
+    fn realtime_error_head_during_quiet_drain_preserves_audio_and_deadline() {
+        for error_code in [1, 3, 2] {
+            assert_realtime_error_head_preserves_capture(error_code, true);
+        }
+    }
+
+    fn assert_realtime_error_head_preserves_capture(error_code: u8, after_stop: bool) {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let sk = [0x21; 32];
+        let fk = [0x22; 32];
+        let nonce = [0x23; 16];
+        session.set_session_key(sk);
+        session.ingest_ble_chunk(
+            &build_test_head_frame(&sk, 4001, u32::MAX, &fk, &nonce),
+            1_700_000_720,
+        );
+        session.ingest_ble_chunk(
+            &build_test_slice_frame(&fk, &nonce, &[(0, 0), (1, 1)]),
+            1_700_000_720,
+        );
+        session.take_capture_events();
+        if after_stop {
+            session.stop_realtime_recording();
+            assert!(
+                session
+                    .poll_timers(1_500, 1_700_000_721)
+                    .finalized
+                    .is_none()
+            );
+        }
+        session.ingest_ble_chunk(
+            &build_test_head_frame_with_err(&sk, 4001, u32::MAX, &fk, &nonce, error_code),
+            1_700_000_721,
+        );
+        assert_eq!(session.transfer.error_code, error_code);
+        assert_eq!(session.transfer.phase, TransferPhaseTag::StreamingRealtime);
+        assert!(session.take_capture_events().is_empty());
+        if !after_stop {
+            session.ingest_ble_chunk(
+                &build_test_slice_frame(&fk, &nonce, &[(2, 0)]),
+                1_700_000_721,
+            );
+            assert!(matches!(
+                session.take_capture_events().back(),
+                Some(CaptureEvent::Audio { file_id: 4001, .. })
+            ));
+            session.stop_realtime_recording();
+        }
+        let remaining = if after_stop { 500 } else { 2_000 };
+        let finalized = session
+            .poll_timers(remaining, 1_700_000_723)
+            .finalized
+            .expect("a transfer error must not lose buffered audio or the stop deadline");
+        assert_eq!(finalized.entry.id, 4001);
+        assert_eq!(finalized.entry.marks_ms, vec![20]);
+        assert_eq!(
+            finalized.ogg_opus_bytes,
+            OggOpus::mux_raw_frames(&{
+                let mut expected = Vec::new();
+                for _ in 0..if after_stop { 2 } else { 3 } {
+                    let mut packet = [0; OPUS_FRAME_BYTES];
+                    packet[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+                        .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+                    expected.extend_from_slice(&packet);
+                }
+                expected
+            })
+        );
+        assert_eq!(
+            Vec::from(session.take_capture_events()),
+            vec![CaptureEvent::Finished { file_id: 4001 }]
+        );
+        assert_eq!(session.transfer.phase, TransferPhaseTag::Idle);
+    }
+
+    #[test]
     fn start_realtime_recording_queues_81_82_and_subscribes_known_or_pending_file() {
         let mut session = TransportSession::new();
         let out_pending = session.start_realtime_recording(None, 1_700_000_800_000);

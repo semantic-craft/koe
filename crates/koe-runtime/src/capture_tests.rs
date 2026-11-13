@@ -1006,6 +1006,122 @@ fn local_result_queue_overflow_keeps_accepted_finals_until_storage_recovers() {
 }
 
 #[test]
+fn realtime_error_head_before_stop_finishes_all_day_and_preserves_audio() {
+    assert_realtime_error_head_finishes_all_day(false, true);
+}
+
+#[test]
+fn realtime_error_head_during_quiet_drain_finishes_all_day_and_preserves_audio() {
+    assert_realtime_error_head_finishes_all_day(true, true);
+}
+
+#[test]
+fn realtime_error_head_without_audio_finishes_all_day_without_audio_asset() {
+    assert_realtime_error_head_finishes_all_day(false, false);
+    assert_realtime_error_head_finishes_all_day(true, false);
+}
+
+fn assert_realtime_error_head_finishes_all_day(after_stop: bool, with_audio: bool) {
+    for error_code in [1, 3, 2] {
+        let dir = Sandbox::new();
+        let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+        command(
+            &mut runtime,
+            json!({"type":"configure_speech","engine":"apple_speech"}),
+        );
+        command(
+            &mut runtime,
+            json!({"type":"local_asr_readiness","state":"ready","message":"本机识别已就绪"}),
+        );
+        runtime.all_day.run = Some(crate::all_day::AllDayRun {
+            id: "bean-error-run".into(),
+            source: "bean".into(),
+            stopping: false,
+        });
+        let (id, operation) = if with_audio {
+            prepare_capture(&mut runtime, 950, true);
+            runtime.ingest_ble_chunk(&slices(0..1), NOW);
+            let id = runtime.workspace().records().keys().next().unwrap().clone();
+            let effects = local_effects(&mut runtime);
+            assert_eq!(effects[0]["kind"], "start");
+            (id, effects[0]["operationId"].as_u64())
+        } else {
+            runtime.ingest_ble_chunk(&rx(0x06, &950u32.to_le_bytes()), NOW);
+            (
+                runtime.workspace().records().keys().next().unwrap().clone(),
+                None,
+            )
+        };
+        runtime.device.session.device_recording_active = true;
+        if after_stop {
+            command(&mut runtime, json!({"type":"stop_all_day"}));
+            runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x82, &[2]), NOW);
+            runtime.poll_timers(1_500, NOW + 1);
+        }
+        let mut error_head = file_head_rx(950, u32::MAX);
+        error_head[95] = error_code;
+        let checksum_index = error_head.len() - 1;
+        error_head[checksum_index] = ProtocolFrame::checksum(&error_head[..checksum_index]);
+        runtime.ingest_ble_chunk(&error_head, NOW + 1);
+        assert_eq!(runtime.device.session.transfer.error_code, error_code);
+        if !after_stop {
+            if with_audio {
+                runtime.ingest_ble_chunk(&slices(1..2), NOW + 1);
+            }
+            command(&mut runtime, json!({"type":"stop_all_day"}));
+            runtime.ingest_ble_chunk(&rx_cmd(0x18, 0x82, &[2]), NOW + 1);
+        }
+        runtime.poll_timers(if after_stop { 500 } else { 2_000 }, NOW + 3);
+        if let Some(operation) = operation {
+            let effects = local_effects(&mut runtime);
+            assert!(
+                effects.iter().any(|e| e["kind"] == "finish"),
+                "the retained capture must close its speech input: {effects:?}"
+            );
+            local_result(&mut runtime, operation, "保存收到的录音。", 0, true);
+            command(
+                &mut runtime,
+                json!({"type":"local_asr_finished","operationId":operation}),
+            );
+        } else {
+            assert!(local_effects(&mut runtime).is_empty());
+        }
+        runtime.poll_timers(0, NOW + 3);
+        assert_eq!(runtime.snapshot(NOW + 3)["allDay"]["state"], "idle");
+        assert!(runtime.captures.sessions.is_empty());
+        let quit = command(&mut runtime, json!({"type":"request_quit"}));
+        assert_eq!(quit["lifecycle"]["quitPhase"], "ready");
+        let expected_audio = if with_audio {
+            let pcm = recording_assets::transcription_pcm(&dir.0, &id).unwrap();
+            assert_eq!(pcm.len(), if after_stop { 640 } else { 1_280 });
+            assert!(pcm.iter().any(|byte| *byte != 0));
+            Some(pcm)
+        } else {
+            assert!(!recording_assets::audio_path(&dir.0, &id).unwrap().exists());
+            assert!(!recording_assets::opus_path(&dir.0, &id).unwrap().exists());
+            None
+        };
+        assert!(!runtime.is_device_file_synced(950));
+        drop(runtime);
+        let reopened = KoeRuntime::open(&dir.0).unwrap();
+        assert_eq!(reopened.snapshot(NOW + 3)["allDay"]["state"], "idle");
+        assert!(!reopened.is_device_file_synced(950));
+        let record = reopened.workspace().record(&id).unwrap();
+        assert_eq!(record.all_day.as_ref().unwrap().run_id, "bean-error-run");
+        if let Some(pcm) = expected_audio {
+            assert_eq!(
+                recording_assets::transcription_pcm(&dir.0, &id).unwrap(),
+                pcm
+            );
+            assert_eq!(
+                record.aggregate.spine.segments()[0].text,
+                "保存收到的录音。"
+            );
+        }
+    }
+}
+
+#[test]
 fn all_day_bean_segments_keep_distinct_assets_and_partial_custody_after_reopen() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
