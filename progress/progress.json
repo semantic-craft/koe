@@ -243,8 +243,13 @@
         "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "34d251b60cd5a22c50898eec93fb9e39dd2a0d86",
-    "open_pulls": [],
+    "main": "6c176fe053e7344fbad2cb5c9208fdbcd69e6eac",
+    "open_pulls": [
+      {
+        "head": "2f1ef97ea8687b0c9a89b95590d35045cb47492e",
+        "number": 693
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -482,7 +487,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-13T16:26:09.271299Z",
+  "observed_at": "2026-11-13T17:26:52.253794Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1531,18 +1536,18 @@
           "evidence": [
             {
               "kind": "release",
-              "ref": "v2.0.0",
-              "note": "正式私有 Release，arm64 zip、SHA256SUMS 与无秘密验收回执均已上传。zip SHA-256 c4b75ee1f79e7b52eaac77df000d4e5d974bb8fa3cbcfe9c08be5511afa15e35。"
+              "note": "正式私有 Release，arm64 zip、SHA256SUMS 与无秘密验收回执均已上传。zip SHA-256 c4b75ee1f79e7b52eaac77df000d4e5d974bb8fa3cbcfe9c08be5511afa15e35。",
+              "ref": "v2.0.0"
             },
             {
               "kind": "pull",
-              "ref": 690,
-              "note": "版本准备经独立评审与完整门禁通过，squash 合并为 34d251b6；远端 parent 和 tree 与受检范围一致。"
+              "note": "版本准备经独立评审与完整门禁通过，squash 合并为 34d251b6；远端 parent 和 tree 与受检范围一致。",
+              "ref": 690
             },
             {
               "kind": "file",
-              "ref": "docs/releases/v2.0.0.md",
-              "note": "当前可用范围、安装方式和未验收边界。"
+              "note": "当前可用范围、安装方式和未验收边界。",
+              "ref": "docs/releases/v2.0.0.md"
             }
           ],
           "id": "private-release-200",
