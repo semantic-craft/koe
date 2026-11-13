@@ -6,7 +6,6 @@ public struct CaptureView: View {
 
     private var device: DeviceSnapshot { store.snapshot.device }
     private var capture: CaptureStudioSnapshot { store.snapshot.capture }
-    private var provider: ProviderSnapshot { store.snapshot.provider }
     private var isBeanLive: Bool {
         device.recording || device.stopping || device.transferPhase == "streaming_realtime"
     }
@@ -16,10 +15,11 @@ public struct CaptureView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 PageHeading(title: "录音", subtitle: "选择录音豆、Mac 蓝牙耳机或本机麦克风，录音先保存在本机。")
-                if isBeanLive {
+                AllDayCard(store: store)
+                if isBeanLive && store.snapshot.allDay.state == "idle" {
                     beanLiveCard
                 }
-                if let mic = store.snapshot.microphone {
+                if let mic = store.snapshot.microphone, store.snapshot.allDay.state == "idle" {
                     microphoneLiveCard(mic)
                 }
                 sourceSelectionDeck
@@ -57,13 +57,9 @@ public struct CaptureView: View {
                     Text(device.liveBytes > 0 ? "正在接收实时语音流 (\(device.liveBytes) B)" : "正在等待录音豆语音帧")
                         .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
                 }
-                if provider.meetingAudioPolicy == "local_only"
-                    ? store.snapshot.localAsr?.state != "ready"
-                    : !provider.configured {
+                if store.snapshot.speech.engine == "apple_speech" && store.snapshot.speech.appleState != "ready" {
                     HStack(spacing: 12) {
-                        Text(provider.meetingAudioPolicy == "local_only"
-                             ? store.snapshot.localAsr?.message ?? "本机语音识别尚未就绪，原始录音会保留。"
-                             : "尚未配置云端 AI 服务，音频完整保存在本机，配置后可生成字幕与纪要。")
+                        Text(store.snapshot.speech.appleMessage ?? "Apple 本机识别尚未就绪，原始录音会保留。")
                             .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                         Spacer()
                         KoeActionButton("打开设置", systemImage: "gearshape") {

@@ -11,19 +11,26 @@ public struct CompanionSettingsCard: View {
         KoeCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Label("领夹麦伴侣", systemImage: "mic")
+                    Label("录音豆连接", systemImage: "mic")
                         .font(.system(size: AppFontSizes.md, weight: .medium))
                     Spacer()
                     KoeBadge(statusLabel, tint: statusTint)
                 }
-                Text("领夹待命会在录音豆出仓连上后自动建立后台实时流，免按侧键即可通过正面双击或语音输入快捷键收音；空闲时自动清理机内临时文件，并预留本地桥供 Responsay 联动。")
-                    .font(.system(size: AppFontSizes.sm))
-                    .foregroundStyle(AppColors.textSecondary)
-                    .lineSpacing(5)
-                HStack(spacing: 10) {
-                    modeButton("关闭", mode: "disabled")
-                    modeButton("领夹待命", mode: "collar_standby")
-                    modeButton("会议兼领夹听写", mode: "meeting_and_collar")
+                DisclosureGroup("高级录音豆音频模式") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Picker("音频模式", selection: Binding(
+                            get: { store.snapshot.device.companionMode },
+                            set: {
+                                store.send("set_companion_mode", ["mode": $0])
+                                NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
+                            }
+                        )) {
+                            Text("普通录音，按侧键开始和结束").tag("disabled")
+                            Text("领夹待命，出仓后持续接收声音").tag("collar_standby")
+                            Text("会议录音，同时圈定听写").tag("meeting_and_collar")
+                        }
+                        InfoTip("领夹待命会在录音豆出仓连接后建立后台音频流，并清理空闲临时文件。会议兼听写保留会议音频，同时允许双击圈定听写。日常使用可在今天或录音页直接开始全天录音。")
+                    }.padding(.top, 12)
                 }
                 HStack {
                     Toggle(
@@ -47,16 +54,6 @@ public struct CompanionSettingsCard: View {
                         .foregroundStyle(AppColors.textMuted)
                 }
             }
-        }
-    }
-
-    private func modeButton(_ title: String, mode: String) -> some View {
-        KoeActionButton(title, isPrimary: store.snapshot.device.companionMode == mode) {
-            store.send("set_companion_mode", ["mode": mode])
-            NotificationCenter.default.post(
-                name: Notification.Name("KoeFlushBleOutbound"),
-                object: nil
-            )
         }
     }
 

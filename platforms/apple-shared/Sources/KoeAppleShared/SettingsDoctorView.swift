@@ -2,15 +2,11 @@ import SwiftUI
 
 public struct SettingsDoctorView: View {
     let store: HostSessionStore
-    @State private var apiKey = ""
-    @State private var model = "qwen-plus"
-    @State private var chatEndpoint = ""
-    @State private var asrEndpoint = ""
     public init(store: HostSessionStore) { self.store = store }
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
-                PageHeading(title: "设置", subtitle: "连接录音豆，管理当前使用的 AI 服务。")
+                PageHeading(title: "设置", subtitle: "管理录音音源、语音识别和文字整理服务。")
                 KoeCard {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -97,84 +93,17 @@ public struct SettingsDoctorView: View {
                     }
                 }
                 CompanionSettingsCard(store: store)
-                KoeCard {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Label("AI 服务", systemImage: "sparkles").font(.system(size: AppFontSizes.md, weight: .medium))
-                            Spacer()
-                            KoeBadge(store.snapshot.provider.configured ? "已配置" : "未配置",
-                                     tint: store.snapshot.provider.configured ? AppColors.success : AppColors.textMuted)
-                        }
-                        Text("录音豆可在本机实时转写。云端服务用于可选的音频转写、文字整理与问答。")
-                            .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary).lineSpacing(5)
-                        HStack {
-                            Toggle("录音豆使用本机实时识别", isOn: Binding(
-                                get: { store.snapshot.provider.meetingAudioPolicy == "local_only" },
-                                set: { store.send("set_meeting_audio_policy", ["policy": $0 ? "local_only" : "cloud_allowed"]) }
-                            ))
-                            InfoTip("开启后音频只留本机。macOS 26 及以上使用 Apple 简体中文实时识别，首次准备语言资源需要联网，识别时无需联网。已有文件的本机补转写尚未支持。文字纪要与问答仍可发云；不会自动改用云端识别。")
-                        }
-                        if let local = store.snapshot.localAsr {
-                            Label(local.message, systemImage: local.state == "ready" ? "checkmark.circle" : "info.circle")
-                                .font(.system(size: AppFontSizes.xs))
-                                .foregroundStyle(local.state == "ready" ? AppColors.success : AppColors.textSecondary)
-                        }
-                        if let status = store.snapshot.provider.meetingAudioStatus {
-                            Text(status).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
-                        }
-                        SecureField("API Key", text: $apiKey).textFieldStyle(.roundedBorder).onSubmit { configure() }
-                        TextField("文本模型", text: $model).textFieldStyle(.roundedBorder).onSubmit { configure() }
-                        DisclosureGroup("自定义服务地址（可选）") {
-                            VStack(spacing: 10) {
-                                TextField("对话服务完整地址，留空使用默认", text: $chatEndpoint)
-                                    .textFieldStyle(.roundedBorder).onSubmit { configure() }
-                                TextField("转写服务完整地址，留空使用默认", text: $asrEndpoint)
-                                    .textFieldStyle(.roundedBorder).onSubmit { configure() }
-                            }.padding(.top, 10)
-                        }.font(.system(size: AppFontSizes.xs))
-                        HStack {
-                            Text(store.snapshot.provider.isolated ? "隔离运行，密钥仅在本次会话使用。" : "密钥保存在系统安全存储中，留空保留已存密钥。")
-                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-                            Spacer()
-                            KoeActionButton("保存配置", isPrimary: true) { configure() }
-
-                        }
-                        HStack {
-                            KoeActionButton("清除密钥") {
-                                apiKey = ""
-                                store.send("clear_provider_credential")
-                            }
-                            KoeActionButton("重试读取安全配置") { store.send("retry_provider_credentials", ["authorize": true]) }
-                        }
-                        if store.snapshot.provider.credentialState == "reopen_required" {
-                            Text("工作区保存结果尚未确认，请退出并重新打开 Koe。")
-                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
-                        }
-                        if store.snapshot.provider.credentialState == "missing_saved" {
-                            Text("已保存的密钥在当前安全存储中不存在，请重新输入或清除。")
-                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
-                        }
-                        if store.snapshot.provider.credentialState == "unavailable" {
-                            Text("安全凭据暂不可读取，云端处理已停用。")
-                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)
-                        }
-                    }
-                }
+                SpeechSettingsCard(store: store)
+                TextServiceSettingsCard(store: store)
                 KoeCard {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("旧版资料迁移").font(.system(size: AppFontSizes.md, weight: .medium))
-                        KoeActionButton("选择旧版资料目录", systemImage: "folder") {
-                            NotificationCenter.default.post(name: Notification.Name("KoeImportFlutterLibrary"), object: nil)
+                        HStack {
+                            Label("外部应用接入", systemImage: "app.connected.to.app.below.fill")
+                                .font(.system(size: AppFontSizes.md, weight: .medium))
+                            InfoTip("外部应用通过本机桥接协议请求语音输入并读取圈定片段。开始、结束语音输入与全天录音相互独立；是否将文字插入其他应用由接入方处理。")
                         }
-                        ForEach(store.snapshot.migrationReports ?? []) { report in
-                            Text("已迁入 \(report.recordCount) 条基础记录，尚未完成全部迁移。")
-                                .font(.system(size: AppFontSizes.sm))
-                            Text("保全副本：\(report.archivePath)").textSelection(.enabled)
-                                .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-                            ForEach(report.pending, id: \.self) { item in
-                                Text(item).font(.system(size: AppFontSizes.xs))
-                            }
-                        }
+                        Text("全天录音保留完整对话，外部应用可单独使用圈定的听写片段。")
+                            .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
                     }
                 }
                 Text("记录与确认结果保存在本机工作区。导出时可选择保存位置。")
@@ -182,22 +111,6 @@ public struct SettingsDoctorView: View {
             }.padding(30).frame(maxWidth: 850, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear {
-            model = store.snapshot.provider.model
-            chatEndpoint = store.snapshot.provider.chatEndpoint
-            asrEndpoint = store.snapshot.provider.asrEndpoint
-        }
-        .onDisappear { apiKey = "" }
-    }
-    private func configure() {
-        var fields: [String: Any] = ["model": model]
-        if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["apiKey"] = apiKey }
-        let chat = chatEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let asr = asrEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        fields["chatEndpoint"] = chat
-        fields["asrEndpoint"] = asr
-        store.send("configure_provider", fields)
-        apiKey = ""
     }
     private func telemetryTile(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
