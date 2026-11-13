@@ -3,7 +3,7 @@ import SwiftUI
 extension CaptureMode {
     var title: String {
         switch self {
-        case .quickNote: "随手记"
+        case .quickNote: "随心闪记"
         case .allDay: "全天听记"
         case .meeting: "实时纪要"
         case .dictation: "语音输入"
@@ -56,7 +56,8 @@ struct ActiveCaptureBar: View {
                     .accessibilityLabel("麦克风电平")
             }
             Spacer(minLength: 4)
-            if store.snapshot.section != "live_minutes" {
+            if (capture.mode == .meeting || capture.mode == .allDay)
+                && store.snapshot.section != "live_minutes" {
                 KoeActionButton("查看实时纪要", systemImage: "doc.text") {
                     store.send("navigate", ["section": "live_minutes"])
                 }

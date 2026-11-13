@@ -689,7 +689,7 @@ impl KoeRuntime {
                 {
                     self.device.session.reset_active_transfer();
                 }
-                if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby {
+                if self.active_companion_mode() == CompanionRoutingMode::CollarStandby {
                     if self.companion.standby_stream_owned {
                         return Err(
                             "当前处于领夹麦待命模式，如需录制实时纪要请先切换为普通或实时纪要兼听写模式"
@@ -710,7 +710,6 @@ impl KoeRuntime {
                         false,
                     );
                     self.device.accept(outcome);
-                    self.live_minutes_scope = Some(live_minutes::LiveMinutesScope::BeanStarting);
                     self.drive_companion(now);
                 }
             }

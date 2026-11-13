@@ -69,6 +69,9 @@ fn respond(socket: &mut TcpStream, text: &str, source: &str) {
     write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
 }
 fn begin(runtime: &mut KoeRuntime, endpoint: &str) -> (Value, u64) {
+    begin_mode(runtime, endpoint, "meeting")
+}
+fn begin_mode(runtime: &mut KoeRuntime, endpoint: &str, mode: &str) -> (Value, u64) {
     send(
         runtime,
         json!({"type":"configure_provider","model":"fixture","chatEndpoint":endpoint}),
@@ -83,7 +86,7 @@ fn begin(runtime: &mut KoeRuntime, endpoint: &str) -> (Value, u64) {
     );
     let snapshot = send(
         runtime,
-        json!({"type":"start_capture_mode","mode":"meeting"}),
+        json!({"type":"start_capture_mode","mode":mode}),
     );
     let mic = snapshot["microphone"].clone();
     send(
@@ -387,4 +390,53 @@ fn failed_live_minutes_do_not_repeat_the_revision_and_final_pass_owns_its_outcom
         }
         server.join().unwrap();
     }
+}
+
+#[test]
+fn quick_note_keeps_transcript_without_continuous_minutes_and_summarizes_after_stop() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}/chat", listener.local_addr().unwrap());
+    let (mic, operation) = begin_mode(&mut runtime, &endpoint, "quick_note");
+    let snapshot = final_line(&mut runtime, operation, 0, "随手记下一件事");
+    assert_eq!(snapshot["activeCapture"]["mode"], "quick_note");
+    advance_with_drafts(&mut runtime, operation, 20_000);
+    let quiet_deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < quiet_deadline {
+        runtime.poll_timers(0, 100);
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(runtime.snapshot(100)["liveMinutes"].is_null());
+    send(&mut runtime, json!({"type":"stop_microphone"}));
+    send(&mut runtime, json!({"type":"microphone_stopped","recordId":mic["recordId"],"sessionId":mic["sessionId"],"lane":"microphone","sequence":1}));
+    send(&mut runtime, json!({"type":"local_asr_finished","operationId":operation}));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut socket = loop {
+        runtime.poll_timers(5, 100);
+        match listener.accept() {
+            Ok((socket, _)) => break socket,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "final summary never started");
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("{error}"),
+        }
+    };
+    assert!(request(&mut socket).to_string().contains("随手记下一件事"));
+    respond(&mut socket, "随手记下一件事", "S1");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while runtime.workspace().record(mic["recordId"].as_str().unwrap()).unwrap().aggregate.minutes.is_none() {
+        runtime.poll_timers(5, 100);
+        assert!(Instant::now() < deadline, "final summary was not saved");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(runtime.snapshot(100)["activeCapture"].is_null());
+    drop(runtime);
+    let runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    let record = runtime.workspace().record(mic["recordId"].as_str().unwrap()).unwrap();
+    assert_eq!(record.aggregate.spine.segments()[0].text, "随手记下一件事");
+    assert_eq!(record.aggregate.minutes.as_ref().unwrap().overview, "随手记下一件事");
 }

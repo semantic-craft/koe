@@ -57,6 +57,9 @@ impl Microphone {
     pub(super) fn can_pause(&self) -> bool {
         self.phase == Phase::Recording && self.clock_ns.is_some()
     }
+    pub(super) fn current_record_id(&self) -> &str {
+        &self.current_record_id
+    }
     pub(super) fn owns_id(&self, id: &str) -> bool {
         self.current_record_id == id || self.lanes.values().any(|l| l.asset_id == id)
     }
@@ -144,7 +147,6 @@ impl KoeRuntime {
             level: 0.0,
             save_error: None,
         });
-        self.live_minutes_scope = Some(crate::live_minutes::LiveMinutesScope::Record(id));
         Ok(())
     }
     pub(super) fn microphone_prepared(

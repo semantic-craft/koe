@@ -94,6 +94,11 @@ impl KoeRuntime {
             self.set_source_dictation(self.capture_dictation_source(), true);
         }
         if mode == CaptureMode::Meeting {
+            self.live_minutes_scope = Some(if let Some(mic) = &self.microphone {
+                crate::live_minutes::LiveMinutesScope::Record(mic.current_record_id().to_owned())
+            } else {
+                crate::live_minutes::LiveMinutesScope::BeanStarting
+            });
             self.go(Location {
                 page: Page::LiveMinutes,
                 ..Location::default()
@@ -183,7 +188,7 @@ impl KoeRuntime {
             let mode = if run.is_some() {
                 CaptureMode::AllDay
             } else {
-                mic.mode.unwrap_or(CaptureMode::Meeting)
+                mic.mode.unwrap_or(CaptureMode::QuickNote)
             };
             if can_control {
                 if mic.save_error.is_some() {
@@ -226,7 +231,7 @@ impl KoeRuntime {
             let mode = if run.is_some() {
                 CaptureMode::AllDay
             } else {
-                self.bean_capture_mode.unwrap_or(CaptureMode::Meeting)
+                self.bean_capture_mode.unwrap_or(CaptureMode::QuickNote)
             };
             if can_control && self.device.awaiting_stop {
                 actions.push(CaptureAction::RetryStop);

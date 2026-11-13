@@ -97,7 +97,7 @@ impl KoeRuntime {
             }
             Ok(())
         })?;
-        if group.is_none() {
+        if group.is_none() && self.bean_capture_mode == Some(command::CaptureMode::Meeting) {
             self.live_minutes_scope = Some(crate::live_minutes::LiveMinutesScope::Record(id.clone()));
         }
         self.captures.active.insert(file_id, id.clone());

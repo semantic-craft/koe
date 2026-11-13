@@ -378,6 +378,17 @@ impl KoeRuntime {
                 return None;
             }
             let record = self.workspace().record(id)?;
+            let included = match self.live_minutes_scope.as_ref() {
+                Some(LiveMinutesScope::Record(record_id)) => record_id == id,
+                Some(LiveMinutesScope::AllDay(run_id)) => record
+                    .all_day
+                    .as_ref()
+                    .is_some_and(|group| &group.run_id == run_id),
+                _ => false,
+            };
+            if !included {
+                return None;
+            }
             session
                 .minutes_schedule
                 .ready(record.content_revision, record.aggregate.spine.len())

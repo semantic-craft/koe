@@ -244,9 +244,14 @@ enum CompanionTail {
     Discard,
 }
 
+struct ExternalPcmCapture {
+    id: String,
+    file_id: u32,
+}
+
 pub(crate) struct ExternalPcmLease {
     owner: u64,
-    capture: Option<String>,
+    capture: Option<ExternalPcmCapture>,
 }
 
 pub(crate) struct CompanionRuntime {
@@ -256,6 +261,7 @@ pub(crate) struct CompanionRuntime {
     pub capture_active: bool,
     pub auto_gate: bool,
     pub manual_gate_subscribers: usize,
+    pub armed: bool,
     pub standby_stream_owned: bool,
     pub active_standby_file_id: Option<u32>,
     pub pending_standby_stop: bool,
@@ -283,6 +289,7 @@ impl Default for CompanionRuntime {
             capture_active: false,
             auto_gate: true,
             manual_gate_subscribers: 0,
+            armed: false,
             standby_stream_owned: false,
             active_standby_file_id: None,
             pending_standby_stop: false,
@@ -323,6 +330,14 @@ impl CompanionRuntime {
 }
 
 impl KoeRuntime {
+    pub(super) fn active_companion_mode(&self) -> CompanionRoutingMode {
+        if self.companion.armed {
+            self.workspace().companion_mode()
+        } else {
+            CompanionRoutingMode::Disabled
+        }
+    }
+
     pub(super) fn publish_transcript(
         &mut self,
         record_id: &str,
@@ -374,7 +389,7 @@ impl KoeRuntime {
     #[must_use]
     pub fn is_standby_ready(&self) -> bool {
         self.device.is_connected()
-            && self.workspace().companion_mode() != CompanionRoutingMode::Disabled
+            && self.active_companion_mode() != CompanionRoutingMode::Disabled
             && self.device.session.active_is_realtime
             && matches!(
                 self.device.session.transfer.phase,
@@ -464,14 +479,27 @@ impl KoeRuntime {
             .ok_or("external PCM lease not owned")?;
         match action {
             "start" if lease.capture.is_none() && self.is_standby_ready() => {
-                self.companion.external_pcm.as_mut().unwrap().capture = Some(capture_id.into());
+                let file_id = self
+                    .device
+                    .session
+                    .active_file_id
+                    .ok_or("no active realtime file")?;
+                self.companion.external_pcm.as_mut().unwrap().capture = Some(ExternalPcmCapture {
+                    id: capture_id.into(),
+                    file_id,
+                });
                 self.set_companion_pcm_gate(
                     true,
                     reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER),
                     CompanionTail::Flush,
                 );
             }
-            "stop" | "cancel" if lease.capture.as_deref() == Some(capture_id) => {
+            "stop" | "cancel"
+                if lease
+                    .capture
+                    .as_ref()
+                    .is_some_and(|capture| capture.id == capture_id) =>
+            {
                 let tail = if action == "cancel"
                     || reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER)
                 {
@@ -793,7 +821,7 @@ impl KoeRuntime {
 
             if !self.is_quitting()
                 && !self.companion.standby_suppressed_for_connection
-                && self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+                && self.active_companion_mode() == CompanionRoutingMode::CollarStandby
                 && self.all_day.run.is_none()
             {
                 let open_entry = self
@@ -857,7 +885,6 @@ impl KoeRuntime {
         if signals.is_empty() {
             return false;
         }
-        let mode = self.workspace().companion_mode();
         let device_id = self.companion_device_id();
 
         for signal in signals {
@@ -887,6 +914,11 @@ impl KoeRuntime {
                             }
                         }
                     } else if state == 0 || state == 2 {
+                        if self.all_day.run.is_none()
+                            && (prev_recording_state == 1 || !self.captures.active.is_empty())
+                        {
+                            self.companion.armed = false;
+                        }
                         if self.companion.standby_stream_owned {
                             self.stop_bean_dictation();
                             let fid = file_id
@@ -935,7 +967,7 @@ impl KoeRuntime {
                 RawCompanionSignal::FrontDoubleTap {
                     file_id, offset_ms, ..
                 } => {
-                    if mode == CompanionRoutingMode::Disabled
+                    if self.active_companion_mode() == CompanionRoutingMode::Disabled
                         && !self
                             .all_day
                             .run
@@ -977,8 +1009,17 @@ impl KoeRuntime {
                         self.companion.pending_tap_holdback_extra = POST_TAP_SKIP_SLICES;
                     }
                 }
-                RawCompanionSignal::LivePcm16 { samples, .. } => {
-                    if mode == CompanionRoutingMode::Disabled {
+                RawCompanionSignal::LivePcm16 {
+                    file_id, samples, ..
+                } => {
+                    let accepts_pcm = match &self.companion.external_pcm {
+                        Some(lease) => lease
+                            .capture
+                            .as_ref()
+                            .is_some_and(|capture| capture.file_id == file_id),
+                        None => self.active_companion_mode() != CompanionRoutingMode::Disabled,
+                    };
+                    if !accepts_pcm {
                         continue;
                     }
                     if self.companion.post_tap_skip_slices > 0 {

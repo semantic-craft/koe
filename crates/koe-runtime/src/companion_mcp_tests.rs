@@ -346,7 +346,10 @@ fn collar_standby_auto_starts_streams_without_creating_records_and_deletes_scrat
     assert!(reopened.workspace().records().is_empty());
 
     let _ = connect_simulated_bean(&mut reopened, "ble-conn-2", NOW + 10);
-    let reconnect_tx = reopened.drain_outbound_ble_frames();
+    let mut reconnect_tx = reopened.drain_outbound_ble_frames();
+    assert!(!reconnect_tx.contains(&DeviceCommands::start_record()));
+    reopened.dispatch_json(r#"{"type":"prepare_voice_input"}"#, NOW + 10);
+    reconnect_tx.extend(reopened.drain_outbound_ble_frames());
     let delete_pos = reconnect_tx
         .iter()
         .position(|f| f == &DeviceCommands::delete_file(7001))
@@ -550,9 +553,17 @@ fn meeting_and_collar_retains_record_while_streaming_and_device_release_persists
     assert_eq!(saved.origin, RecordOrigin::Bean);
     assert_eq!(saved.aggregate.file_id, 9001);
     assert_eq!(saved.aggregate.bookmarks, vec![0]);
+    let mut next_start = Vec::from(9002u32.to_le_bytes());
+    next_start.push(1);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &next_start), NOW + 8);
+    let _ = activate_realtime_file(&mut runtime, &session_key, 9002, NOW + 8);
+    assert_eq!(runtime.snapshot(NOW + 8)["activeCapture"]["mode"], "quick_note");
+    assert!(!runtime.is_standby_ready(), "mixed routing must end with its explicit session");
+    runtime.ingest_ble_chunk(&build_rx_frame(0x18, 0x82, &[2]), NOW + 8);
+    runtime.poll_timers(2_100, NOW + 10);
 
     let release_snap: Value = serde_json::from_str(
-        &runtime.dispatch_json(&json!({"type": "device_release"}).to_string(), NOW + 8),
+        &runtime.dispatch_json(&json!({"type": "device_release"}).to_string(), NOW + 10),
     )
     .unwrap();
     assert!(release_snap["error"].is_null(), "{release_snap}");
@@ -1073,6 +1084,8 @@ fn collar_standby_preserves_manual_side_button_recordings_and_inflight_offline_p
         &build_encrypted_slices_rx(&manual_key, &manual_nonce, &[(0, 0), (1, 0), (2, 0)]),
         NOW + 10,
     );
+    assert_eq!(runtime.snapshot(NOW + 10)["activeCapture"]["mode"], "quick_note");
+    assert!(!runtime.is_standby_ready(), "the finished voice-input session must not own the next physical recording");
     let mut manual_stop = Vec::from(6103u32.to_le_bytes());
     manual_stop.push(0);
     runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &manual_stop), NOW + 11);
@@ -2130,6 +2143,115 @@ fn external_pcm_capture_does_not_create_a_koe_dictation_record() {
     runtime.set_companion_capture_active(false, None);
 }
 
+fn assert_external_pcm_quiet_drain_tail(physical_stop: bool) {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(
+        r#"{"type":"set_companion_mode","mode":"meeting_and_collar"}"#,
+        NOW,
+    );
+    let key = connect_simulated_bean(&mut runtime, "external-tail", NOW);
+    runtime.dispatch_json(r#"{"type":"device_start"}"#, NOW + 1);
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &key, 9001, NOW + 1);
+    let epoch = runtime.companion.epoch.clone();
+    assert!(runtime.acquire_external_pcm(41));
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "start", None)
+        .unwrap();
+    runtime.drain_companion_events();
+    let slices: Vec<_> = (0..18).map(|seq| (seq, 0)).collect();
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &slices),
+        NOW + 2,
+    );
+    let stop = if physical_stop {
+        let mut payload = Vec::from(9001u32.to_le_bytes());
+        payload.push(0);
+        build_rx_frame(0x1A, 0x06, &payload)
+    } else {
+        build_rx_frame(0x18, 0x82, &[2])
+    };
+    runtime.ingest_ble_chunk(&stop, NOW + 3);
+    assert!(!runtime.is_standby_ready());
+    assert!(matches!(
+        runtime.companion_hello(),
+        CompanionStreamEvent::Hello {
+            standby_ready: false,
+            ..
+        }
+    ));
+    let tail: Vec<_> = (18..36).map(|seq| (seq, 0)).collect();
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &tail),
+        NOW + 3,
+    );
+    runtime.poll_timers(2_100, NOW + 6);
+    let mut events = runtime.drain_companion_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        24,
+        "physical_stop={physical_stop}: quiet drain must deliver all slices beyond the holdback"
+    );
+    let mut next_start = Vec::from(9002u32.to_le_bytes());
+    next_start.push(1);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &next_start), NOW + 7);
+    let (next_key, next_nonce) = activate_realtime_file(&mut runtime, &key, 9002, NOW + 7);
+    assert_eq!(
+        runtime.snapshot(NOW + 7)["activeCapture"]["mode"],
+        "quick_note"
+    );
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&next_key, &next_nonce, &slices),
+        NOW + 8,
+    );
+    let next_events = runtime.drain_companion_events();
+    assert!(!next_events
+        .iter()
+        .any(|event| matches!(event, CompanionStreamEvent::AudioPcm16 { .. })));
+    events.extend(next_events);
+    let mut next_stop = Vec::from(9002u32.to_le_bytes());
+    next_stop.push(0);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &next_stop), NOW + 9);
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&next_key, &next_nonce, &tail),
+        NOW + 9,
+    );
+    events.extend(runtime.drain_companion_events());
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "stop", None)
+        .unwrap();
+    events.extend(runtime.drain_companion_events());
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        36,
+        "physical_stop={physical_stop}: include the original tail and exclude the next recording"
+    );
+    assert!(matches!(
+        events.last(),
+        Some(CompanionStreamEvent::CaptureState { state, capture_id, .. })
+            if state == "ended" && capture_id == "capture"
+    ));
+    assert!(runtime
+        .external_pcm_command(41, &epoch, "next", "start", None)
+        .is_err());
+}
+
+#[test]
+fn external_pcm_preserves_quiet_drain_tail_after_stop_ack() {
+    assert_external_pcm_quiet_drain_tail(false);
+}
+
+#[test]
+fn external_pcm_preserves_quiet_drain_tail_after_physical_stop() {
+    assert_external_pcm_quiet_drain_tail(true);
+}
+
 #[test]
 fn external_pcm_discards_tap_tail_and_rejects_old_epoch() {
     let sandbox = Sandbox::new();
@@ -2201,4 +2323,23 @@ fn prepare_voice_input_reuses_owned_standby_and_preserves_an_existing_recording(
     assert_eq!(rejected["activeCapture"], original["activeCapture"]);
     assert_eq!(rejected["device"]["companionMode"], "disabled");
     assert_eq!(busy.drain_host_actions_json(), "[]");
+}
+
+#[test]
+fn persisted_collar_standby_waits_for_explicit_activation_after_reopen() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(r#"{"type":"set_companion_mode","mode":"collar_standby"}"#, NOW);
+    drop(runtime);
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    connect_simulated_bean(&mut runtime, "cold-standby", NOW);
+    let frames = runtime.drain_outbound_ble_frames();
+    assert!(!frames.contains(&DeviceCommands::start_record()));
+    assert!(!frames.contains(&DeviceCommands::start_realtime_record_81()));
+    assert!(!runtime.is_standby_ready());
+    assert!(runtime.snapshot(NOW)["activeCapture"].is_null());
+    let prepared: Value = serde_json::from_str(&runtime.dispatch_json(r#"{"type":"prepare_voice_input"}"#, NOW)).unwrap();
+    assert!(prepared["error"].is_null(), "{prepared}");
+    assert!(runtime.drain_outbound_ble_frames().contains(&DeviceCommands::start_record()));
+    assert_eq!(runtime.workspace().companion_mode(), CompanionRoutingMode::CollarStandby);
 }
