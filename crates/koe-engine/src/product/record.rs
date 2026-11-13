@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::{MeetingMinutes, RecordingLifecyclePhase};
+use crate::domain::{MeetingMinutes, RecordingLifecyclePhase, UtteranceSpine};
 use crate::minutes::{validate_minutes_citations, validate_minutes_grounding};
 
 impl ProductWorkspace {
@@ -70,6 +70,7 @@ impl ProductWorkspace {
                 title,
                 origin,
                 analysis: AnalysisState::Idle,
+                live_summary: AnalysisState::Idle,
                 content_revision: 0,
                 minutes_revision: None,
                 highlighted_segments: BTreeSet::new(),
@@ -213,6 +214,9 @@ impl ProductWorkspace {
             .records
             .get_mut(id)
             .ok_or(ProductError::UnknownRecord)?;
+        if stage == AnalysisStage::Summarizing {
+            record.live_summary = AnalysisState::Idle;
+        }
         record.analysis = AnalysisState::Pending {
             key: key.clone(),
             stage,
@@ -260,6 +264,11 @@ impl ProductWorkspace {
                 {
                     return Err(ProductError::InvalidSource);
                 }
+                record.aggregate.minutes = None;
+                record.minutes_revision = None;
+                if matches!(record.live_summary, AnalysisState::Ready { .. }) {
+                    record.live_summary = AnalysisState::Idle;
+                }
                 id
             } else {
                 let id = record
@@ -292,6 +301,97 @@ impl ProductWorkspace {
         record.analysis = AnalysisState::Idle;
         record.aggregate.phase = RecordingLifecyclePhase::Local;
         record.completed_request = Some(key.clone());
+        self.changed();
+        Ok(())
+    }
+
+    /// Starts a durable minutes request without taking ownership of transcription.
+    pub fn begin_live_summary(&mut self, id: &str) -> Result<RequestKey, ProductError> {
+        let record = self.records.get(id).ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        if matches!(record.live_summary, AnalysisState::Pending { .. }) {
+            return Err(ProductError::Busy);
+        }
+        if record.aggregate.spine.is_empty() {
+            return Err(ProductError::InvalidInput(
+                "记录还没有可整理的文字".to_string(),
+            ));
+        }
+        let input_revision = record.content_revision;
+        let key = RequestKey {
+            record_id: id.to_string(),
+            attempt: self.operation(),
+            input_revision,
+        };
+        let record = self
+            .records
+            .get_mut(id)
+            .ok_or(ProductError::UnknownRecord)?;
+        record.live_summary = AnalysisState::Pending {
+            key: key.clone(),
+            stage: AnalysisStage::Summarizing,
+        };
+        self.changed();
+        Ok(key)
+    }
+
+    /// Commits a grounded prefix snapshot while allowing newer transcript appends.
+    pub fn complete_live_summary(
+        &mut self,
+        key: &RequestKey,
+        snapshot: &UtteranceSpine,
+        minutes: MeetingMinutes,
+    ) -> Result<(), ProductError> {
+        let record = self
+            .records
+            .get_mut(&key.record_id)
+            .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        if !matches!(&record.live_summary, AnalysisState::Pending { key: current, stage: AnalysisStage::Summarizing } if current == key)
+            || snapshot.session_id() != key.record_id
+            || snapshot.is_empty()
+            || !record
+                .aggregate
+                .spine
+                .segments()
+                .starts_with(snapshot.segments())
+            || record
+                .minutes_revision
+                .is_some_and(|revision| key.input_revision < revision)
+        {
+            return Err(ProductError::StaleRequest);
+        }
+        validate_minutes_grounding(&minutes, snapshot)
+            .map_err(|_| ProductError::InvalidEvidence)?;
+        record.aggregate.minutes = Some(minutes);
+        record.minutes_revision = Some(key.input_revision);
+        record.aggregate.visual_cards.clear();
+        record.live_summary = AnalysisState::Ready {
+            input_revision: key.input_revision,
+        };
+        self.changed();
+        Ok(())
+    }
+
+    /// Records a known minutes failure without changing transcription ownership.
+    pub fn fail_live_summary(
+        &mut self,
+        key: &RequestKey,
+        message: &str,
+    ) -> Result<(), ProductError> {
+        let record = self
+            .records
+            .get_mut(&key.record_id)
+            .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        if !matches!(&record.live_summary, AnalysisState::Pending { key: current, stage: AnalysisStage::Summarizing } if current == key)
+        {
+            return Err(ProductError::StaleRequest);
+        }
+        record.live_summary = AnalysisState::Failed {
+            key: key.clone(),
+            message: nonempty(message)?,
+        };
         self.changed();
         Ok(())
     }
@@ -347,6 +447,7 @@ impl ProductWorkspace {
         record.analysis = AnalysisState::Ready {
             input_revision: key.input_revision,
         };
+        record.live_summary = AnalysisState::Idle;
         record.completed_request = Some(key.clone());
         for (kind, text, citations, due) in candidates {
             if citations.is_empty() || text.trim().is_empty() {
@@ -398,8 +499,6 @@ impl ProductRecord {
 
     fn content_changed(&mut self) {
         self.content_revision = self.content_revision.saturating_add(1);
-        self.aggregate.minutes = None;
-        self.minutes_revision = None;
         self.aggregate.visual_cards.clear();
         if let AnalysisState::Pending {
             key,
@@ -427,6 +526,35 @@ impl ProductRecord {
     #[must_use]
     pub fn completed_request(&self) -> Option<&RequestKey> {
         self.completed_request.as_ref()
+    }
+
+    /// Validates the independently persisted live minutes state.
+    pub fn restore_live_summary(&mut self, state: AnalysisState) -> Result<(), ProductError> {
+        let key = match &state {
+            AnalysisState::Pending {
+                key,
+                stage: AnalysisStage::Summarizing,
+            }
+            | AnalysisState::Failed { key, .. }
+            | AnalysisState::Interrupted { key } => Some(key),
+            AnalysisState::Pending { .. } => return Err(ProductError::InvalidEvidence),
+            AnalysisState::Ready { input_revision }
+                if self.minutes_revision != Some(*input_revision) =>
+            {
+                return Err(ProductError::InvalidEvidence);
+            }
+            _ => None,
+        };
+        if key.is_some_and(|key| {
+            key.record_id != self.aggregate.recording_id
+                || key.attempt == 0
+                || key.input_revision == 0
+                || key.input_revision > self.content_revision
+        }) {
+            return Err(ProductError::InvalidEvidence);
+        }
+        self.live_summary = state;
+        Ok(())
     }
 
     /// Reconstructs a pure record from persisted values, validating all local references.
@@ -500,6 +628,7 @@ impl ProductRecord {
             title,
             origin,
             analysis,
+            live_summary: AnalysisState::Idle,
             content_revision,
             minutes_revision,
             highlighted_segments,

@@ -41,6 +41,7 @@ impl ProductWorkspace {
             let all_day = record.all_day;
             let speech_engine = record.speech_engine;
             let retention = record.retention;
+            let live_summary = record.live_summary;
             let mut record = ProductRecord::restore(
                 record.aggregate,
                 record.title,
@@ -52,6 +53,7 @@ impl ProductWorkspace {
                 record.final_keys,
                 record.completed_request,
             )?;
+            record.restore_live_summary(live_summary)?;
             record.all_day = all_day;
             record.speech_engine = speech_engine;
             record.restore_capture_lanes(lanes)?;
@@ -90,6 +92,12 @@ impl ProductWorkspace {
                 _ => None,
             };
             for key in key.into_iter().chain(record.completed_request.as_ref()) {
+                max_operation = max_operation.max(key.attempt);
+            }
+            if let AnalysisState::Pending { key, .. }
+            | AnalysisState::Failed { key, .. }
+            | AnalysisState::Interrupted { key } = &record.live_summary
+            {
                 max_operation = max_operation.max(key.attempt);
             }
         }
@@ -182,6 +190,10 @@ impl ProductWorkspace {
     pub fn interrupt_pending(&mut self) -> bool {
         let mut changed = false;
         for record in self.records.values_mut() {
+            if let AnalysisState::Pending { key, .. } = &record.live_summary {
+                record.live_summary = AnalysisState::Interrupted { key: key.clone() };
+                changed = true;
+            }
             if let AnalysisState::Pending { key, .. } = &record.analysis {
                 record.analysis = AnalysisState::Interrupted { key: key.clone() };
                 record.aggregate.phase = RecordingLifecyclePhase::Failed;
