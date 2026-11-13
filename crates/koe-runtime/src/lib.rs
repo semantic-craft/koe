@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod all_day;
 #[cfg(test)]
 mod ask_tests;
 mod audio_policy;
@@ -18,7 +19,6 @@ pub mod companion;
 mod companion_mcp_tests;
 pub mod credentials;
 mod device;
-mod flutter_import;
 mod legacy;
 mod lifecycle;
 #[cfg(test)]
@@ -33,6 +33,7 @@ mod playback;
 mod processing;
 mod projection;
 mod provider_settings;
+mod speech;
 use provider_settings::ProviderSettings;
 mod restore;
 mod transcript_edit;
@@ -40,10 +41,10 @@ mod trash;
 
 use command::{Command, Location, Page, Playback};
 pub use companion::{
-    decode_pcm16_le_b64, encode_pcm16_le_b64, resolve_bridge_socket_path, CompanionClientCommand,
-    CompanionRoutingMode, CompanionStreamEvent, DeclaredControlSpec, COMPANION_AUDIO_FORMAT,
-    COMPANION_DOUBLE_TAP_TRIGGER, COMPANION_FRONT_CONTROL, COMPANION_PROTOCOL_VERSION,
-    POST_TAP_SKIP_SLICES, PRE_STOP_TAP_HOLDBACK_SLICES,
+    COMPANION_AUDIO_FORMAT, COMPANION_DOUBLE_TAP_TRIGGER, COMPANION_FRONT_CONTROL,
+    COMPANION_PROTOCOL_VERSION, CompanionClientCommand, CompanionRoutingMode, CompanionStreamEvent,
+    DeclaredControlSpec, POST_TAP_SKIP_SLICES, PRE_STOP_TAP_HOLDBACK_SLICES, decode_pcm16_le_b64,
+    encode_pcm16_le_b64, resolve_bridge_socket_path,
 };
 use device::DeviceRuntime;
 use koe_client_providers::ProviderWorker;
@@ -83,6 +84,8 @@ pub struct KoeRuntime {
     completed: std::collections::VecDeque<koe_client_providers::ProviderEvent>,
     captures: capture::Captures,
     local_asr: local_asr::LocalAsr,
+    speech: speech::SpeechState,
+    all_day: all_day::AllDayState,
     capture_studio: capture_studio::CaptureStudioState,
     microphone: Option<microphone::Microphone>,
     auto_transcribe: std::collections::BTreeSet<String>,
@@ -113,6 +116,8 @@ impl KoeRuntime {
         let store = ProductStore::open(&root).map_err(|e| e.to_string())?;
         let mut runtime = Self {
             store,
+            speech: speech::SpeechState::new(&root),
+            all_day: Default::default(),
             root,
             generation: 1,
             location: Location::default(),
@@ -143,9 +148,18 @@ impl KoeRuntime {
         if !existed {
             runtime.restore_legacy()?;
         }
+        runtime.recover_local_captures()?;
         runtime.reconcile_orphan_audio();
         if let Err(error) = runtime.load_credentials() {
             runtime.error = Some(error);
+        }
+        if let SpeechEngine::Downloaded(id) = runtime
+            .workspace()
+            .provider_configuration()
+            .speech_engine
+            .clone()
+        {
+            let _ = runtime.prepare_speech_model(&id);
         }
         Ok(runtime)
     }
@@ -309,9 +323,6 @@ impl KoeRuntime {
                 }
                 self.drive_companion(now);
             }
-            Command::ImportFlutterLibrary { path } => {
-                self.import_flutter_library(Path::new(&path))?
-            }
             Command::Navigate { section } => self.go(Location {
                 page: section,
                 ..self.location.clone()
@@ -460,6 +471,16 @@ impl KoeRuntime {
                 let scope = search_scope(&scope, record_id)?;
                 self.commit(|w| w.set_ask_scope(scope))?;
             }
+            Command::ConfigureSpeech { engine, model_id } => {
+                self.configure_speech(&engine, model_id)?
+            }
+            Command::PrepareSpeechModel { model_id } => self.prepare_speech_model(&model_id)?,
+            Command::CancelSpeechModel => self.cancel_speech_model(),
+            Command::StartAllDay { source, input_id } => {
+                self.start_all_day(&source, input_id.unwrap_or_default(), now)?
+            }
+            Command::StopAllDay => self.stop_all_day()?,
+            Command::SetDictationActive { active } => self.set_dictation_active(active),
             Command::Transcribe { record_id } => self.start_transcription(&record_id)?,
             Command::LocalAsrReadiness { state, message } => {
                 self.local_asr_readiness(state, message)?
@@ -779,8 +800,12 @@ impl KoeRuntime {
             self.error = Some(error);
         }
         self.tick_local_asr(elapsed_ms);
-        let mut completed = self.poll_provider() | self.poll_captures();
+        let mut completed = self.poll_offline_speech()
+            | self.drive_speech_files()
+            | self.poll_provider()
+            | self.poll_captures();
         self.drive_analysis_queue();
+        self.reconcile_all_day();
         completed |= self.drive_companion(now);
         completed |= self.maybe_start_auto_offline_pull();
         if changed

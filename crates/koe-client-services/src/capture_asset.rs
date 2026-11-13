@@ -62,8 +62,37 @@ impl CaptureAsset {
         self.file.seek(SeekFrom::Start(offset)).map_err(io_error)?;
         let bytes: Vec<u8> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
         self.file.write_all(&bytes).map_err(io_error)?;
+        let header =
+            koe_engine::wav::OpusWave::wav_header_with_rate((next * 2) as u32, self.sample_rate);
+        self.file.seek(SeekFrom::Start(0)).map_err(io_error)?;
+        self.file.write_all(&header).map_err(io_error)?;
+        self.file.sync_data().map_err(io_error)?;
         self.samples = next;
         Ok(AppendOutcome::Written)
+    }
+    /// Recovers a validated, durably checkpointed stream after its producer has exited.
+    pub fn recover(root: &Path, id: &str) -> Result<Option<u64>, String> {
+        let target = audio_path(root, id)?;
+        let staging = target.with_extension("capture");
+        let bytes = match fs::read(&staging) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io_error(e)),
+        };
+        let wave = koe_engine::wav::parse_pcm_wave(&bytes)
+            .map_err(|e| format!("未完成录音格式无效：{e:?}"))?;
+        let duration = wave.duration_ms();
+        if !target.exists() {
+            fs::hard_link(&staging, &target).map_err(io_error)?;
+        }
+        File::open(&target)
+            .and_then(|f| f.sync_all())
+            .map_err(io_error)?;
+        File::open(target.parent().ok_or("无效音频目录")?)
+            .and_then(|f| f.sync_all())
+            .map_err(io_error)?;
+        fs::remove_file(staging).map_err(io_error)?;
+        Ok(Some(duration))
     }
     /// Duration derived from accepted frames, never from host timers.
     pub fn duration_ms(&self) -> u64 {

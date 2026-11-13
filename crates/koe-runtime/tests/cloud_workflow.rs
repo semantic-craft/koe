@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use futures_util::{SinkExt, StreamExt};
 use koe_engine::product::AnalysisState;
 use koe_runtime::KoeRuntime;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
 const NOW: u64 = 1_800_000_000;
@@ -41,6 +41,7 @@ impl Drop for Sandbox {
 
 fn command(runtime: &mut KoeRuntime, command: Value) -> Value {
     if command["type"] == "configure_provider" {
+        runtime.dispatch_json(r#"{"type":"configure_speech","engine":"cloud"}"#, NOW);
         runtime.dispatch_json(
             r#"{"type":"set_meeting_audio_policy","policy":"cloud_allowed"}"#,
             NOW,
@@ -277,15 +278,17 @@ fn real_wire_transcription_and_auto_summary_remain_on_the_imported_record() {
     assert_eq!(detail["detail"]["segments"][0]["text"], DECISION);
     assert_eq!(detail["detail"]["segments"][1]["text"], ACTION);
     assert_eq!(detail["detail"]["status"], "已整理");
-    assert!(detail["detail"]["summary"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|row| row["sources"]
+    assert!(
+        detail["detail"]["summary"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|source| source["recordId"] == recording && source["segmentId"] == "S1")));
+            .any(|row| row["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|source| source["recordId"] == recording && source["segmentId"] == "S1"))
+    );
     asr.join().unwrap();
     chat.join().unwrap();
     drop(runtime);

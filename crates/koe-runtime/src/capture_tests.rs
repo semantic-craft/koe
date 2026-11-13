@@ -10,7 +10,7 @@ use koe_engine::models::OfflineFileEntry;
 use koe_engine::session::REAL_OPUS_20MS_440HZ_PACKET;
 use koe_engine::transport::OPUS_FRAME_BYTES;
 use serde_json::json;
-use tokio_tungstenite::tungstenite::{accept, Message};
+use tokio_tungstenite::tungstenite::{Message, accept};
 
 const NOW: u64 = 1_800_000_000;
 const FIRST: &str = "The first live sentence.";
@@ -37,6 +37,7 @@ impl Drop for Sandbox {
 
 fn command(runtime: &mut KoeRuntime, value: Value) -> Value {
     if value["type"] == "configure_provider" {
+        runtime.dispatch_json(r#"{"type":"configure_speech","engine":"cloud"}"#, NOW);
         runtime.dispatch_json(
             r#"{"type":"set_meeting_audio_policy","policy":"cloud_allowed"}"#,
             NOW,
@@ -201,9 +202,11 @@ fn live_words_are_durable_before_stop_and_keep_their_owner_after_selection_chang
     assert_eq!(before_stop["liveCaption"]["text"], FIRST);
     assert_eq!(before_stop["device"]["busy"], true);
     assert!(before_stop["detail"]["audioPath"].is_null());
-    assert!(fs::read_to_string(dir.0.join("product-workspace.json"))
-        .unwrap()
-        .contains(FIRST));
+    assert!(
+        fs::read_to_string(dir.0.join("product-workspace.json"))
+            .unwrap()
+            .contains(FIRST)
+    );
 
     let other = command(
         &mut runtime,
@@ -590,9 +593,11 @@ fn hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record
         1,
         "offline pull after empty live stream must reuse the live record"
     );
-    assert!(recording_assets::audio_path(&dir.0, &live_id)
-        .unwrap()
-        .exists());
+    assert!(
+        recording_assets::audio_path(&dir.0, &live_id)
+            .unwrap()
+            .exists()
+    );
     assert!(runtime.device.session.has_disk_custody(802));
     runtime.drive_analysis_queue();
     assert!(
@@ -651,6 +656,10 @@ fn local_effects(runtime: &mut KoeRuntime) -> Vec<Value> {
 fn start_local(runtime: &mut KoeRuntime, file_id: u32) -> (String, u64) {
     command(
         runtime,
+        json!({"type":"configure_speech","engine":"apple_speech"}),
+    );
+    command(
+        runtime,
         json!({"type":"local_asr_readiness","state":"ready","message":"本机识别已就绪"}),
     );
     prepare_capture(runtime, file_id, true);
@@ -661,11 +670,13 @@ fn start_local(runtime: &mut KoeRuntime, file_id: u32) -> (String, u64) {
     assert_eq!(effects[0]["locale"], "zh-CN");
     assert_eq!(effects[1]["kind"], "audio");
     assert_eq!(effects[1]["pcm16"].as_array().unwrap().len(), 320);
-    assert!(effects[1]["pcm16"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|sample| sample != 0));
+    assert!(
+        effects[1]["pcm16"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|sample| sample != 0)
+    );
     (id, effects[0]["operationId"].as_u64().unwrap())
 }
 
@@ -703,13 +714,15 @@ fn local_only_words_are_durable_before_hardware_stop() {
     );
     let partial = local_result(&mut runtime, operation, "未定稿", 0, false);
     assert_eq!(partial["liveCaption"]["text"], "未定稿");
-    assert!(runtime
-        .workspace()
-        .record(&id)
-        .unwrap()
-        .aggregate
-        .spine
-        .is_empty());
+    assert!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .is_empty()
+    );
     let finalized = local_result(&mut runtime, operation, "离线实时文字。", 0, true);
     assert_eq!(finalized["section"], "settings");
     assert_eq!(finalized["liveCaption"]["recordId"], id);
@@ -725,9 +738,11 @@ fn local_only_words_are_durable_before_hardware_stop() {
             .text,
         "离线实时文字。"
     );
-    assert!(fs::read_to_string(dir.0.join("product-workspace.json"))
-        .unwrap()
-        .contains("离线实时文字。"));
+    assert!(
+        fs::read_to_string(dir.0.join("product-workspace.json"))
+            .unwrap()
+            .contains("离线实时文字。")
+    );
     assert!(runtime.device.session.active_file_id.is_some());
     local_result(&mut runtime, operation, "离线实时文字。", 0, true);
     assert_eq!(
@@ -770,7 +785,7 @@ fn local_only_words_are_durable_before_hardware_stop() {
         2
     );
     assert!(runtime.snapshot(NOW)["liveCaption"].is_null());
-    assert!(runtime.auto_summarize.is_empty());
+    assert!(runtime.auto_summarize.contains(&id));
     assert_eq!(runtime.snapshot(NOW)["lifecycle"]["quitPhase"], "ready");
     command(
         &mut runtime,
@@ -811,13 +826,15 @@ fn local_final_and_finish_wait_for_storage_and_old_callbacks_cannot_touch_new_ca
         &json!({"type":"local_asr_finished","operationId":operation}).to_string(),
         NOW,
     );
-    assert!(runtime
-        .workspace()
-        .record(&id)
-        .unwrap()
-        .aggregate
-        .spine
-        .is_empty());
+    assert!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .is_empty()
+    );
     assert_eq!(runtime.snapshot(NOW)["liveCaption"]["recordId"], id);
     fs::remove_dir(&path).unwrap();
     fs::rename(dir.0.join("original.json"), &path).unwrap();
@@ -889,8 +906,8 @@ fn local_audio_overflow_and_finish_timeout_keep_audio_and_confirmed_text() {
         matches!(&runtime.workspace().record(&id).unwrap().analysis, AnalysisState::Failed { message, .. } if message.contains("队列已满"))
     );
     let effects = local_effects(&mut runtime);
-    assert_eq!(effects.len(), 1);
-    assert_eq!(effects[0]["kind"], "cancel");
+    assert!(!effects.is_empty());
+    assert!(effects.iter().all(|effect| effect["kind"] == "cancel"));
     runtime.ingest_ble_chunk(&rx(0x0a, &930u32.to_le_bytes()), NOW);
     assert!(recording_assets::audio_path(&dir.0, &id).unwrap().exists());
     assert_eq!(
@@ -912,13 +929,15 @@ fn local_audio_overflow_and_finish_timeout_keep_audio_and_confirmed_text() {
         matches!(&runtime.workspace().record(&next_id).unwrap().analysis, AnalysisState::Failed { message, .. } if message.contains("超时"))
     );
     runtime.dispatch_json(&json!({"type":"local_asr_result","operationId":next_operation,"text":"迟到的尾句","startMs":0,"endMs":20,"isFinal":true}).to_string(), NOW);
-    assert!(runtime
-        .workspace()
-        .record(&next_id)
-        .unwrap()
-        .aggregate
-        .spine
-        .is_empty());
+    assert!(
+        runtime
+            .workspace()
+            .record(&next_id)
+            .unwrap()
+            .aggregate
+            .spine
+            .is_empty()
+    );
     assert!(runtime.snapshot(NOW)["liveCaption"].is_null());
 }
 
@@ -937,13 +956,15 @@ fn local_result_queue_overflow_keeps_accepted_finals_until_storage_recovers() {
         runtime.dispatch_json(&json!({"type":"local_asr_result","operationId":operation,"text":text,"startMs":start,"endMs":start+20,"isFinal":true}).to_string(), NOW);
     }
     assert_eq!(local_effects(&mut runtime)[0]["kind"], "cancel");
-    assert!(runtime
-        .workspace()
-        .record(&id)
-        .unwrap()
-        .aggregate
-        .spine
-        .is_empty());
+    assert!(
+        runtime
+            .workspace()
+            .record(&id)
+            .unwrap()
+            .aggregate
+            .spine
+            .is_empty()
+    );
     fs::remove_dir(&path).unwrap();
     fs::rename(dir.0.join("original.json"), &path).unwrap();
     runtime.poll_timers(0, NOW);

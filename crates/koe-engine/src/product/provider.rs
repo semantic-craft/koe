@@ -19,6 +19,28 @@ impl MeetingAudioPolicy {
     }
 }
 
+/// Speech execution engine, independent of audio upload permission.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SpeechEngine {
+    /// Native Apple on-device recognition.
+    #[default]
+    AppleSpeech,
+    /// Downloaded model executed inside the Rust client.
+    Downloaded(String),
+    /// Configured cloud speech service, subject to MeetingAudioPolicy.
+    Cloud,
+}
+impl SpeechEngine {
+    /// Stable host identifier.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AppleSpeech => "apple_speech",
+            Self::Downloaded(_) => "downloaded",
+            Self::Cloud => "cloud",
+        }
+    }
+}
+
 /// Durable reference to a secret held outside the workspace.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CredentialBinding {
@@ -36,6 +58,8 @@ pub enum CredentialBinding {
 pub struct ProviderConfiguration {
     /// Upload policy for meeting audio, independent of text services.
     pub meeting_audio_policy: MeetingAudioPolicy,
+    /// Persisted speech engine selection.
+    pub speech_engine: SpeechEngine,
     /// Text model identifier.
     pub model: String,
     /// Complete speech service endpoint, without embedded credentials.
@@ -51,6 +75,7 @@ impl Default for ProviderConfiguration {
     fn default() -> Self {
         Self {
             meeting_audio_policy: MeetingAudioPolicy::default(),
+            speech_engine: SpeechEngine::default(),
             model: "qwen-plus".into(),
             asr_endpoint: "wss://dashscope.aliyuncs.com/api-ws/v1/inference".into(),
             chat_endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
@@ -63,7 +88,8 @@ impl Default for ProviderConfiguration {
 impl ProviderConfiguration {
     /// Validates non-sensitive metadata before persistence or restoration.
     pub fn validate(&self) -> Result<(), ProductError> {
-        if self.model.trim().is_empty()
+        if matches!(&self.speech_engine, SpeechEngine::Downloaded(id) if id.is_empty() || id.len() > 200)
+            || self.model.trim().is_empty()
             || self.model.len() > 200
             || !safe_endpoint(&self.asr_endpoint, &["wss://", "ws://"])
             || !safe_endpoint(&self.chat_endpoint, &["https://", "http://"])

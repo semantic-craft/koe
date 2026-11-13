@@ -7,6 +7,39 @@ use koe_engine::{
 use std::fs;
 
 impl KoeRuntime {
+    pub(super) fn recover_local_captures(&mut self) -> Result<(), String> {
+        let ids: Vec<_> = self
+            .workspace()
+            .records()
+            .values()
+            .filter(|r| r.origin == RecordOrigin::Microphone)
+            .map(|r| r.aggregate.recording_id.clone())
+            .collect();
+        for id in ids {
+            if let Some(duration) =
+                koe_client_services::capture_asset::CaptureAsset::recover(&self.root, &id)?
+            {
+                self.commit(|w| w.finish_capture(&id, duration, &[]))?;
+            }
+        }
+        self.auto_transcribe.extend(
+            self.workspace()
+                .records()
+                .values()
+                .filter(|r| {
+                    matches!(r.analysis, AnalysisState::Interrupted { .. })
+                        && matches!(
+                            r.speech_engine,
+                            Some(SpeechEngine::AppleSpeech | SpeechEngine::Downloaded(_))
+                        )
+                        && recording_assets::audio_path(&self.root, &r.aggregate.recording_id)
+                            .is_ok_and(|p| p.is_file())
+                })
+                .map(|r| r.aggregate.recording_id.clone())
+                .collect::<Vec<_>>(),
+        );
+        Ok(())
+    }
     pub(crate) fn is_device_file_synced(&self, file_id: u32) -> bool {
         if self.device.session.has_disk_custody(file_id) {
             return true;
@@ -50,7 +83,11 @@ impl KoeRuntime {
             .catalog
             .iter()
             .find(|entry| {
-                (!self.is_quitting() || self.captures.records_by_file_id.contains_key(&entry.file_id))
+                (!self.is_quitting()
+                    || self
+                        .captures
+                        .records_by_file_id
+                        .contains_key(&entry.file_id))
                     && entry.has_duration()
                     && entry.end_time != Some(0)
                     && !self.is_standby_file(entry.file_id)
@@ -87,9 +124,7 @@ impl KoeRuntime {
                 if !self.can_own_as_standby_scratch(entry_id) {
                     continue;
                 }
-                if self.device.is_connected()
-                    && self.current_companion_recording_state() == 0
-                {
+                if self.device.is_connected() && self.current_companion_recording_state() == 0 {
                     if self.companion.deleted_in_connection.insert(entry_id) {
                         self.device
                             .outbound
@@ -163,7 +198,12 @@ impl KoeRuntime {
             if was_trashed {
                 self.clear_undo_trash_for(&id);
             }
-            if !should_skip_custody {
+            if !should_skip_custody
+                && self
+                    .workspace()
+                    .record(&id)
+                    .is_none_or(|r| r.all_day.is_none())
+            {
                 self.device.session.confirm_disk_custody(receipt);
             }
             self.device.finalized.remove(0);

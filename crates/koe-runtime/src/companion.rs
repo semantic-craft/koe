@@ -43,10 +43,7 @@ const MAX_UNIX_SOCKET_PATH_BYTES: usize = 103;
 /// back to `<workspace>/koe.sock` for standalone directories.
 #[must_use]
 pub fn resolve_bridge_socket_path(workspace: &Path) -> Option<PathBuf> {
-    resolve_bridge_socket_path_with_env(
-        workspace,
-        std::env::var_os("KOE_BRIDGE_SOCKET").as_deref(),
-    )
+    resolve_bridge_socket_path_with_env(workspace, std::env::var_os("KOE_BRIDGE_SOCKET").as_deref())
 }
 
 pub(crate) fn resolve_bridge_socket_path_with_env(
@@ -115,6 +112,11 @@ pub struct DeclaredControlSpec {
 pub enum CompanionClientCommand {
     /// Subscribes to live companion events and requests an initial `hello` event.
     Subscribe,
+    /// Selects whether recognized final text is sent to the companion text bridge.
+    SetDictationActive {
+        /// Explicit dictation selection; ordinary recording does not enable this.
+        active: bool,
+    },
     /// Synchronizes active voice capture state across keyboard shortcuts and front double-taps.
     SetCaptureActive {
         /// Whether decoded 16 kHz PCM16 frames should be emitted to subscribers.
@@ -185,6 +187,21 @@ pub enum CompanionStreamEvent {
         sample_rate_hz: u32,
         /// Standard RFC 4648 Base64-encoded little-endian `i16` PCM bytes.
         samples_le_b64: String,
+    },
+    /// A persisted recognition final selected by an explicit dictation intent.
+    TranscriptFinal {
+        /// Stable recording identity.
+        record_id: String,
+        /// Stable cited segment identity.
+        segment_id: String,
+        /// Inclusive start offset in the recording.
+        start_ms: u64,
+        /// End offset in the recording.
+        end_ms: u64,
+        /// Recognized text from the selected speech engine.
+        text: String,
+        /// Explicit dictation selection, always true for this event.
+        dictation: bool,
     },
     /// Device connection, standby readiness, battery, or recording-state update.
     DeviceStatus {
@@ -281,6 +298,22 @@ impl CompanionRuntime {
 }
 
 impl KoeRuntime {
+    pub(super) fn publish_transcript(
+        &mut self,
+        record_id: &str,
+        segment_id: koe_engine::domain::SegmentId,
+        segment: &koe_client_providers::TranscriptSegment,
+    ) {
+        self.companion
+            .push_event(CompanionStreamEvent::TranscriptFinal {
+                record_id: record_id.into(),
+                segment_id: segment_id.to_string(),
+                start_ms: segment.start_ms,
+                end_ms: segment.end_ms,
+                text: segment.text.clone(),
+                dictation: true,
+            });
+    }
     /// Builds a current [`CompanionStreamEvent::Hello`] snapshot for new subscribers.
     #[must_use]
     pub fn companion_hello(&self) -> CompanionStreamEvent {
@@ -291,7 +324,12 @@ impl KoeRuntime {
             epoch: self.companion.epoch.clone(),
             online: self.device.is_connected(),
             standby_ready: self.is_standby_ready(),
-            battery_percent: self.device.session.telemetry.as_ref().and_then(|t| t.battery),
+            battery_percent: self
+                .device
+                .session
+                .telemetry
+                .as_ref()
+                .and_then(|t| t.battery),
             routing_mode: self.workspace().companion_mode().as_str().to_string(),
             controls: vec![DeclaredControlSpec {
                 name: COMPANION_FRONT_CONTROL.to_string(),
@@ -351,6 +389,7 @@ impl KoeRuntime {
     /// window so finger-tap housing thumps never leak into ASR; stopping for any other reason
     /// flushes the held-back speech tail into the companion event queue.
     pub fn set_companion_capture_active(&mut self, active: bool, reason: Option<String>) {
+        self.set_dictation_active(active);
         let is_double_tap = reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER);
         self.companion.pending_tap_holdback_extra = 0;
         if self.companion.capture_active && !active {
@@ -377,9 +416,11 @@ impl KoeRuntime {
         file_id > 0
             && (self.captures.records_by_file_id.contains_key(&file_id)
                 || self.captures.active.contains_key(&file_id)
-                || self.workspace().records().values().any(|r| {
-                    r.origin == RecordOrigin::Bean && r.aggregate.file_id == file_id
-                }))
+                || self
+                    .workspace()
+                    .records()
+                    .values()
+                    .any(|r| r.origin == RecordOrigin::Bean && r.aggregate.file_id == file_id))
     }
 
     pub(crate) fn is_standby_file(&self, file_id: u32) -> bool {
@@ -390,6 +431,14 @@ impl KoeRuntime {
     }
 
     pub(crate) fn can_own_as_standby_scratch(&self, file_id: u32) -> bool {
+        if self
+            .all_day
+            .run
+            .as_ref()
+            .is_some_and(|r| r.source == "bean")
+        {
+            return false;
+        }
         file_id > 0
             && !self.is_known_bean_record(file_id)
             && (self.is_standby_file(file_id)
@@ -398,6 +447,14 @@ impl KoeRuntime {
     }
 
     pub(crate) fn treats_file_as_standby(&self, file_id: u32) -> bool {
+        if self
+            .all_day
+            .run
+            .as_ref()
+            .is_some_and(|r| r.source == "bean")
+        {
+            return false;
+        }
         !self.is_known_bean_record(file_id)
             && (self.is_standby_file(file_id)
                 || self.companion.standby_stream_owned
@@ -545,8 +602,7 @@ impl KoeRuntime {
         if self.device.session.has_complete_catalog()
             && !self.companion.pre_standby_catalog_complete
         {
-            self.companion.pre_standby_catalog_ids =
-                self.device.session.raw_catalog_file_ids();
+            self.companion.pre_standby_catalog_ids = self.device.session.raw_catalog_file_ids();
             self.companion.pre_standby_catalog_complete = true;
         }
 
@@ -568,7 +624,8 @@ impl KoeRuntime {
                         reclaim_ids.insert(entry.file_id);
                     }
                 }
-                reclaim_ids.retain(|&fid| fid > 0 && !self.companion.deleted_in_connection.contains(&fid));
+                reclaim_ids
+                    .retain(|&fid| fid > 0 && !self.companion.deleted_in_connection.contains(&fid));
                 if !reclaim_ids.is_empty() {
                     for &fid in &reclaim_ids {
                         self.device.outbound.push(DeviceCommands::delete_file(fid));
@@ -596,7 +653,8 @@ impl KoeRuntime {
                     .raw_catalog
                     .iter()
                     .find(|f| f.end_time == Some(0));
-                let open_is_known = open_entry.is_some_and(|f| self.is_known_bean_record(f.file_id));
+                let open_is_known =
+                    open_entry.is_some_and(|f| self.is_known_bean_record(f.file_id));
                 if self.current_companion_recording_state() != 0 && open_is_known {
                     self.companion.standby_suppressed_for_connection = true;
                 } else {
@@ -605,10 +663,11 @@ impl KoeRuntime {
                     self.companion.active_standby_file_id = None;
                     self.companion.pending_standby_stop = false;
                     let skip_existing = self.current_companion_recording_state() != 0;
-                    let outcome = self
-                        .device
-                        .session
-                        .start_realtime_recording_with_options(None, now.saturating_mul(1_000), skip_existing);
+                    let outcome = self.device.session.start_realtime_recording_with_options(
+                        None,
+                        now.saturating_mul(1_000),
+                        skip_existing,
+                    );
                     self.device.accept(outcome);
                     self.companion.standby_stream_owned = true;
                     let _ = self.process_companion_signals();
@@ -729,27 +788,30 @@ impl KoeRuntime {
                     if mode == CompanionRoutingMode::Disabled {
                         continue;
                     }
+                    self.set_dictation_active(!self.speech.dictation_active);
                     let epoch = self.companion.epoch.clone();
                     let seq_down = self.companion.next_sequence();
-                    self.companion.push_event(CompanionStreamEvent::ControlEdge {
-                        device_id: device_id.clone(),
-                        epoch: epoch.clone(),
-                        sequence: seq_down,
-                        control: COMPANION_FRONT_CONTROL.to_string(),
-                        down: true,
-                        file_id: Some(file_id),
-                        offset_ms: Some(offset_ms),
-                    });
+                    self.companion
+                        .push_event(CompanionStreamEvent::ControlEdge {
+                            device_id: device_id.clone(),
+                            epoch: epoch.clone(),
+                            sequence: seq_down,
+                            control: COMPANION_FRONT_CONTROL.to_string(),
+                            down: true,
+                            file_id: Some(file_id),
+                            offset_ms: Some(offset_ms),
+                        });
                     let seq_up = self.companion.next_sequence();
-                    self.companion.push_event(CompanionStreamEvent::ControlEdge {
-                        device_id: device_id.clone(),
-                        epoch,
-                        sequence: seq_up,
-                        control: COMPANION_FRONT_CONTROL.to_string(),
-                        down: false,
-                        file_id: Some(file_id),
-                        offset_ms: Some(offset_ms),
-                    });
+                    self.companion
+                        .push_event(CompanionStreamEvent::ControlEdge {
+                            device_id: device_id.clone(),
+                            epoch,
+                            sequence: seq_up,
+                            control: COMPANION_FRONT_CONTROL.to_string(),
+                            down: false,
+                            file_id: Some(file_id),
+                            offset_ms: Some(offset_ms),
+                        });
                     if self.effective_companion_auto_gate() {
                         let next = !self.companion.capture_active;
                         self.set_companion_capture_active(
@@ -857,7 +919,12 @@ impl KoeRuntime {
         StatusSnapshot {
             online,
             standby_ready: self.is_standby_ready(),
-            battery_percent: self.device.session.telemetry.as_ref().and_then(|t| t.battery),
+            battery_percent: self
+                .device
+                .session
+                .telemetry
+                .as_ref()
+                .and_then(|t| t.battery),
             recording_state: self.current_companion_recording_state(),
         }
     }
@@ -891,8 +958,7 @@ pub fn decode_pcm16_le_b64(encoded: &str) -> Option<Vec<i16>> {
     )
 }
 
-const B64_ALPHABET: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn encode_base64(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);

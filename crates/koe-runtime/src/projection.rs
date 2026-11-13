@@ -52,7 +52,7 @@ impl KoeRuntime {
             };
             json!({"id":record.aggregate.recording_id,"title":record.title,
                 "createdAtEpochSec":record.aggregate.created_at_epoch_sec,"durationMs":duration_ms,
-                "source":origin(record.origin),"status":status(record),"segmentCount":record.aggregate.spine.len(),
+                "source":origin(record.origin),"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"segmentCount":record.aggregate.spine.len(),
                 "preview":preview,"archived":record.is_archived()})
         }).collect();
         let today_ids: Vec<_> = records
@@ -269,7 +269,7 @@ impl KoeRuntime {
             "standbyReady": self.is_standby_ready(),
             "guide": self.device.guide_json()
         });
-        json!({"lifecycle": self.lifecycle_json(),
+        json!({"speech":self.speech_json(),"allDay":self.all_day_json(),"dictation":{"active":self.speech.dictation_active},"lifecycle": self.lifecycle_json(),
             "microphone": self.microphone_json(), "capture": self.capture_studio_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
@@ -277,7 +277,7 @@ impl KoeRuntime {
             "device":device_json,
             "localAsr":{"state":self.local_asr.state,"message":self.local_asr.message},
             "liveCaption":self.live_caption_json(),
-            "provider":{"meetingAudioPolicy":self.workspace().provider_configuration().meeting_audio_policy.as_str(),"meetingAudioPolicyError":self.audio_policy_error,"meetingAudioStatus":if self.workspace().provider_configuration().meeting_audio_policy == MeetingAudioPolicy::LocalOnly { Some(format!("录音豆离线字幕：{}。文件转写仍未接入本机识别。", self.local_asr.message)) } else { self.ensure_meeting_audio_upload().err() },"configured":!self.settings.key.is_empty(),"model":self.workspace().provider_configuration().model,"asrEndpoint":self.workspace().provider_configuration().asr_endpoint,"chatEndpoint":self.workspace().provider_configuration().chat_endpoint,"credentialState":self.credential_state(),"isolated":self.credentials.isolated()},
+            "provider":{"meetingAudioPolicy":self.workspace().provider_configuration().meeting_audio_policy.as_str(),"meetingAudioPolicyError":self.audio_policy_error,"meetingAudioStatus":if self.workspace().provider_configuration().meeting_audio_policy == MeetingAudioPolicy::LocalOnly { Some(format!("Apple 识别状态：{}。录音与文件使用所选本机语音引擎。", self.local_asr.message)) } else { self.ensure_meeting_audio_upload().err() },"configured":self.text_provider_configured(),"model":self.workspace().provider_configuration().model,"asrEndpoint":self.workspace().provider_configuration().asr_endpoint,"chatEndpoint":self.workspace().provider_configuration().chat_endpoint,"credentialState":self.credential_state(),"isolated":self.credentials.isolated()},
             "playback":self.playback_json(),
             "migrationReports": self.workspace().migrations().iter().map(|m|json!({"fingerprint":m.fingerprint,"archivePath":self.root.join(&m.archive).to_string_lossy(),"pending":m.pending,"recordCount":m.record_ids.len()})).collect::<Vec<_>>(),
             "error":self.error,"notice":self.notice})
@@ -387,7 +387,7 @@ impl KoeRuntime {
                 AnalysisState::Failed { .. } | AnalysisState::Interrupted { .. }
             );
         json!({"id":aggregate.recording_id,"title":record.title,"createdAtEpochSec":aggregate.created_at_epoch_sec,
-            "durationMs":duration_ms,"source":origin(record.origin),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
+            "durationMs":duration_ms,"source":origin(record.origin),"runId":record.all_day.as_ref().map(|s|&s.run_id),"ordinal":record.all_day.as_ref().map(|s|s.ordinal),"status":status(record),"archived":record.is_archived(),"segments":segments,"speakers":speakers,
             "minutesStale":record.is_minutes_stale(),"canEditTranscript":self.can_edit_record(&aggregate.recording_id),
             "captureLanes":capture_lanes,"summary":summary,"highlights":highlights,"audioPath":audio.map(|p|p.to_string_lossy().to_string()),
             "canRetranscribe":can_retranscribe,"isProcessing":matches!(record.analysis,AnalysisState::Pending {..})})

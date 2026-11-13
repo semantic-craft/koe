@@ -2,19 +2,21 @@
 
 mod ask;
 mod provider;
-pub use provider::{valid_reference, CredentialBinding, MeetingAudioPolicy, ProviderConfiguration};
+pub use provider::{
+    CredentialBinding, MeetingAudioPolicy, ProviderConfiguration, SpeechEngine, valid_reference,
+};
 mod migration;
 pub use migration::{ImportedSummary, MigrationReceipt};
 mod capture;
 mod record;
 pub use capture::CaptureLaneRecord;
 mod capture_timeline;
-pub use capture_timeline::{place_capture_span, CaptureSpan};
+pub use capture_timeline::{CaptureSpan, place_capture_span};
 mod state;
 mod transcript_edit;
 pub use transcript_edit::{
-    sanitize_speaker_lossy, MinutesFreshness, SpeakerName, SpeakerSummary, TranscriptEditReceipt,
-    MAX_SEGMENT_TEXT_CHARS, MAX_SPEAKER_NAME_CHARS,
+    MAX_SEGMENT_TEXT_CHARS, MAX_SPEAKER_NAME_CHARS, MinutesFreshness, SpeakerName, SpeakerSummary,
+    TranscriptEditReceipt, sanitize_speaker_lossy,
 };
 mod trash;
 pub use trash::{PurgeReceipt, RecordRetention, TRASH_RETENTION_MS};
@@ -212,6 +214,15 @@ pub enum AnalysisState {
     },
 }
 
+/// Membership of an ordinary record in an all-day capture run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllDaySegment {
+    /// Stable run identity shared by independently persisted records.
+    pub run_id: String,
+    /// One-based segment order.
+    pub ordinal: u64,
+}
+
 /// One recording's content and processing state. Mutations belong to ProductWorkspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductRecord {
@@ -230,6 +241,10 @@ pub struct ProductRecord {
     pub highlighted_segments: BTreeSet<SegmentId>,
     /// Expected native lanes, including explicitly interrupted or empty lanes.
     pub capture_lanes: Vec<CaptureLaneRecord>,
+    /// Grouping of bounded all-day capture segments.
+    pub all_day: Option<AllDaySegment>,
+    /// Engine bound to the most recent speech request, used for safe local recovery.
+    pub speech_engine: Option<SpeechEngine>,
     retention: RecordRetention,
     final_keys: BTreeMap<String, SegmentId>,
     completed_request: Option<RequestKey>,

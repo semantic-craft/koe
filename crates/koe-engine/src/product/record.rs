@@ -74,11 +74,47 @@ impl ProductWorkspace {
                 minutes_revision: None,
                 highlighted_segments: BTreeSet::new(),
                 capture_lanes: Vec::new(),
+                all_day: None,
+                speech_engine: None,
                 retention: RecordRetention::Active,
                 final_keys: BTreeMap::new(),
                 completed_request: None,
             },
         );
+        self.changed();
+        Ok(())
+    }
+
+    /// Binds a speech attempt to its execution engine in the same durable transaction.
+    pub fn bind_speech_engine(
+        &mut self,
+        id: &str,
+        engine: SpeechEngine,
+    ) -> Result<(), ProductError> {
+        let record = self
+            .records
+            .get_mut(id)
+            .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        record.speech_engine = Some(engine);
+        self.changed();
+        Ok(())
+    }
+    /// Assigns an immutable all-day run and segment order.
+    pub fn group_all_day(&mut self, id: &str, segment: AllDaySegment) -> Result<(), ProductError> {
+        nonempty(&segment.run_id)?;
+        if segment.ordinal == 0 {
+            return Err(ProductError::InvalidEvidence);
+        }
+        let record = self
+            .records
+            .get_mut(id)
+            .ok_or(ProductError::UnknownRecord)?;
+        record.ensure_live()?;
+        if record.all_day.as_ref().is_some_and(|s| s != &segment) {
+            return Err(ProductError::InvalidEvidence);
+        }
+        record.all_day = Some(segment);
         self.changed();
         Ok(())
     }
@@ -468,6 +504,8 @@ impl ProductRecord {
             minutes_revision,
             highlighted_segments,
             capture_lanes: Vec::new(),
+            all_day: None,
+            speech_engine: None,
             retention: RecordRetention::Active,
             final_keys,
             completed_request,
