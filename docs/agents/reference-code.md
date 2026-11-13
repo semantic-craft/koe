@@ -22,7 +22,7 @@ scripts/ref status                                                    # 节点�
 
 | 名称 | 内容 | 版本 | 许可 |
 | --- | --- | --- | --- |
-| `repos/soundcore-upstream` | 上游 tacshi/Soundcore，D3200 协议参考 | 固定 commit `f01a19c227aa` | 无许可，仅私用参考，不复制进其他项目 |
+| `repos/soundcore-upstream` | 上游 tacshi/Soundcore，D3200 协议参考 | 固定 commit `0e100df287ef` | MIT，Copyright (c) 2026 Rocky Shi；正文见 `assets/licenses/soundcore.txt`，移植时保留署名与许可 |
 | `repos/omi` | `BasedHardware/omi`（穿戴设备 BLE/WAL、双端导航壳、`knowledge_ledger.v1`、Review 确认卡、Agent/MCP） | 固定 commit `82357c8224ef` | MIT |
 | `repos/screenpipe` | `screenpipe/screenpipe`（24/7 本地音画捕获、UTC 时间戳 `BTreeMap` 多模态时间轴、`SubtitleBar`、`pipe.md` 技能） | 固定 commit `2eee9acea418` | MIT |
 | `repos/taosheng` | `0xCoach/TaoSheng`（全天候随身语音记忆、21 天日历消歧、寻物共乘、Ask 引用自愈、CAM++ 声纹） | 固定 commit `23907c464158` | 仅架构与交互参考，Rust/SwiftUI 独立实现 |

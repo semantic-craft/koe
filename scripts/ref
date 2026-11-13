@@ -19,7 +19,7 @@ MAIN="$(git -C "$ROOT" worktree list --porcelain | awk 'NR==1{print $2}')"
 
 # name  url  pinned commit  sparse path ("-" = whole repo)
 REPOS=(
-  "soundcore-upstream https://github.com/tacshi/Soundcore f01a19c227aac0cee9a7c851b3f6b69cf5540a24 -"
+  "soundcore-upstream https://github.com/tacshi/Soundcore 0e100df287ef44f8c343935ada8093b61da1f207 -"
   "omi https://github.com/BasedHardware/omi 82357c8224ef13627f4e88eff1338afee0ab02b5 -"
   "screenpipe https://github.com/screenpipe/screenpipe 2eee9acea41857146cb76a297756ea2d659b0e4b -"
   "taosheng https://github.com/0xCoach/TaoSheng 23907c46415828342b51a296332dd97db25243c4 -"

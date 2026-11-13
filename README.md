@@ -7,7 +7,7 @@
   <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-5.10%2B-F05138?style=flat-square&logo=swift&logoColor=white">
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white">
   <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <img alt="License pending" src="https://img.shields.io/badge/License-pending-lightgrey?style=flat-square">
+  <img alt="Upstream license: MIT" src="https://img.shields.io/badge/Upstream_license-MIT-blue?style=flat-square">
 </p>
 
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
@@ -109,4 +109,6 @@ D3200 协议建立在 [tacshi/Soundcore](https://github.com/tacshi/Soundcore) �
 
 ## 许可证
 
-本仓库沿用**许可证待定、在确认上游授权前不公开发布**的约定。上游相关代码权利归原作者所有；在完成授权确认前仅供个人使用，不作二次分发。Cargo 包元数据中的许可字段不替代上游代码的授权确认。
+[tacshi/Soundcore](https://github.com/tacshi/Soundcore) 已采用 MIT 许可，Copyright (c) 2026 Rocky Shi。Koe 沿用的协议文档与移植实现保留该署名，完整许可见 [soundcore.txt](assets/licenses/soundcore.txt)，来源版本与采纳范围见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+仓库目前保持私有，暂不公开发布。Cargo 包元数据中的 MIT 字段不替代各第三方组件的许可。macOS 安装包在 `Koe.app/Contents/Resources/Licenses/` 内附带第三方说明与许可正文。

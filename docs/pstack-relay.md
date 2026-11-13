@@ -129,3 +129,9 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: 移除旧迁移入口，按 Hex 固定模型与真实加载设计接离线识别；恢复全天分段与增量整理、通用听写文字桥，并提供明确配置和示意动画。
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check；真实模型Runtime文件与303秒跨段回放/重开通过，独立审查无阻断，真实硬件另见 #662。
 - **Evidence**: 1779461; full scripts/check PASS; independent real-model replay PASS; signed CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd
+
+### [x] Slice LIC: Soundcore MIT 署名与安装包许可
+- **Playbook**: `Feature`
+- **Outcome**: 保留现有 Rust 实现，补齐 tacshi/Soundcore 的 MIT 正文与 Rocky Shi 署名，更新过时许可说明；签名前打包第三方声明及已有许可正文，仓库保持私有。
+- **Done Predicate**: ./scripts/check；正常构建与 --skip-build 的安装包许可逐字节一致，签名、自检与冒烟通过。
+- **Evidence**: issue #665; scripts/check PASS; installer 9 tests PASS; signed package 8 notices byte-identical, self-check/smoke PASS
