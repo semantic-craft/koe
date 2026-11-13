@@ -145,10 +145,10 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift: 固定 URL、去重打开及失败重试回归。</a></li>
 <li>note 2026-11-13 入口版真实界面验收: Koe e383b2c / Responsay fedee8ab 的 acceptance.json 记录首页四模式无摘要、实际首页点击冷启动 Responsay、录音豆待命及 Responsay 输入就绪、侧栏重复进入通过。未注入合成 PCM；实体双击、实时 ASR 和原光标写入未验证。</li>
 </ul><p>Next: 入口实现与安装验收通过。PCMHW 的实体双击、实时 Responsay ASR 和原光标写入仍未验收，继续 #810，不要求人工参与或用合成 PCM 代替。</p></article>
-<article id="record-button-default-quick-note"><h3>录音键默认随心闪记</h3><span class="badge">in_progress</span><p>按用户新定稿，普通录音应归为随心闪记；其他模式只在macOS明确启用。替代未交付的持久四模式方案。新回归已复现普通录音被归为Meeting、自动持续纪要和重启待命收音，修复验收中。</p><ul>
+<article id="record-button-default-quick-note"><h3>录音键默认随心闪记</h3><span class="badge">done</span><p>普通设备与麦克风录音默认随心闪记，其他模式由macOS明确启用。修复持续纪要误入、冷启动自动待命和会话授权继承；普通最终转写/摘要保留。完整本地门禁、91项运行时单元及独立审查通过；签名安装后真实D3200闪记录音、Koe转写和保存通过，显式纪要/语音入口及重启空闲通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/685">issue 685: 用户最新决定与交付范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/capture_tests.rs">file crates/koe-runtime/src/capture_tests.rs: 直接从设备录音通知进入的默认模式和保存回归。</a></li>
-</ul><p>Next: 完成门禁、独立审查和签名安装。实体侧键、双击、真实ASR与原光标仍须各自取得证据。</p></article>
+</ul><p>Next: 实体侧键按压、双击弹窗、Responsay实时识别和原光标输入保持未验收，继续#810。协议夹具与软件按钮不替代物理证据。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>

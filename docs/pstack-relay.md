@@ -122,8 +122,8 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 
 ### [ ] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
 - **Playbook**: `Investigation`
-- **Outcome**: 只接续 PCMHW 与 Responsay #810 的实时识别和原光标上屏；先读 voice-mode-entry/acceptance.json，保留连接与权限，已通过入口及PCM项目不重跑。
-- **Done Predicate**: 自动取得真实D3200音频经Responsay实时识别及原目标文本变化的证据；无法自动触发的物理项保持未验收；python3 progress/progress.py check
+- **Outcome**: 只接续PCMHW和Responsay#810；先读record-button-quick-note/acceptance.json，不重跑已通过项目。实体侧键/双击、Responsay实时识别与原光标不能自动取得证据时保持未验收。
+- **Done Predicate**: 自动取得真实设备、明确触发来源、Responsay识别和原目标正文变化的关联证据；未执行物理动作保持NOT_RUN；python3 progress/progress.py check
 - **Evidence**: 2026-11-13 部分通过。已合并版本 Koe `d6f9406` 与 Responsay `b6a061e` 下，真实 D3200 提供 11.56 秒非静音 PCM，收到软件开始和结束确认。Responsay 隔离完整应用的蓝色条响应真实收音，引导完成后自动选中 soundcore Work。未注入合成 PCM。原始证据保留在本机 `Projects/_artifacts/koe/pcmhw-20261113`，状态见 [Responsay #810](https://github.com/semantic-craft/responsay-macos/issues/810)。
 - **Remaining**: 真实 Responsay ASR、原光标输入、实体双击、断连恢复、三种输入快捷键及无重复录音或识别仍未验收。先前隔离截图入口缺少辅助功能权限和录制监听器，不能代替完整应用验收。现有 dev socket override 已恢复，录音豆已待命；默认生产 socket 缺失已不是当前阻塞。首页模式选择与侧栏语音输入的一键联动已实现、独立审查并签名安装。原入口版冷启动和侧栏重复进入通过；合入最新主线的 19d75d5 也已从真实首页连接至两端就绪。现有配置与权限保留；实时识别、原光标和实体双击仍未验收。
 - **Watchouts**: 软件起止确认不证明尾音完整或无丢包。恢复普通模式时 Koe 显示保存 05:28 的设备录音，不能宣称设备或 Koe 不留录音。已恢复测试前模式并清理隔离应用，保留新版 Koe。
@@ -155,3 +155,9 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: 保留现有 Rust 实现，补齐 tacshi/Soundcore 的 MIT 正文与 Rocky Shi 署名，更新过时许可说明；签名前打包第三方声明及已有许可正文，仓库保持私有。
 - **Done Predicate**: ./scripts/check；正常构建与 --skip-build 的安装包许可逐字节一致，签名、自检与冒烟通过。
 - **Evidence**: issue #665; scripts/check PASS; installer 9 tests PASS; signed package 8 notices byte-identical, self-check/smoke PASS
+
+### [x] Slice QDEF: 普通录音键默认随心闪记
+- **Playbook**: `Bug fix`
+- **Outcome**: 普通录音默认QuickNote，其他模式macOS显式开启，本次授权不持久自动收音，普通最终转写摘要保留。
+- **Done Predicate**: 默认BLE通知、显式模式结束回归、尾音身份隔离、完整门禁与签名安装界面验收通过。
+- **Evidence**: 4d679e1 signed installed; record-button-quick-note/acceptance.json PARTIAL; check-release full PASS + native UI delta PASS
