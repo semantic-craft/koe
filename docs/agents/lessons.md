@@ -360,3 +360,10 @@
 - 修复：结果回调使用 Result，错误绑定 operation 与 epoch 立即交给 Rust，先失效当前操作，再由独立任务取消识别器，避免 reader 等待自己。首次模型准备遵循 AssetInventory.reserve 的幂等语义，返回 false 只表示已预留，不当作失败。
 - 验证点：NativeLocalTranscriptionTests 的录音中及 finish 中 reader 故障测试。主回归改前 5 项断言失败，改后 9 项原生测试通过；禁止 outbound IP 的真实 Apple 识别器测试在停止输入前收到中文临时结果。
 - Seen 1x（2026-11-12）。
+
+### 恢复音频先提交归属，再释放恢复检查点
+
+- 出处：#661 独立运行时审查发现恢复流程在工作区提交前删除 `.capture`，提交失败后再次启动会失去恢复入口。
+- 修复：`CaptureAsset::recover` 保留检查点；Runtime 完成 metadata 提交后调用 `release_recovered`。提交失败仍能重试同一份录音。
+- 验证：恢复提交失败、重开及退出重试行为回归通过。
+- Seen 1x (2026-11-13)

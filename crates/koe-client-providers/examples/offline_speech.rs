@@ -1,5 +1,3 @@
-//! Runs the production offline speech worker on a 16 kHz mono PCM16 WAV.
-
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};

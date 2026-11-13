@@ -21,3 +21,9 @@ cargo run -p koe-cli --example verify_offline -- /absolute/fresh-day-workspace /
 ```sh
 ./scripts/check
 ```
+
+## 本轮独立复核
+
+实现提交 `1779461` 通过独立真实 SenseVoice CPU 验收。文件得到「这是一段个人工作记录。」；303 秒回放保存为 300 秒、3 秒两条 WAV，分别包含 20 段和 1 段原文。唯一听写事件属于首条记录的 0–15000 ms，其分段身份、时间和文字与持久化结果一致。两条记录重开后原文一致。
+
+此次文字桥验收直接读取 Runtime 事件队列，未覆盖 Unix socket 和真实外部输入法。D3200 同批次音频与双击恰逢五分钟边界的物理时序仍需按 #662 验证。

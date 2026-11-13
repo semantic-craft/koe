@@ -108,6 +108,11 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && python3 progress/progress.py check
 - **Evidence**: 04d0eb6; signed CDHash 573498ceae3ab7eb2bba9e284786b0380c13fa20; full check and live selfcheck/quit/reopen PASS
 
+### [ ] Slice ADH: 全天听记真实硬件验收
+- **Outcome**: 按 #662 验证签名版真实麦克风和 D3200 跨五分钟、双击听写、缓存模型断网、外部输入法和退出恢复；只修实际失败，不重复已完成的模型与全天管线。
+- **Done Predicate**: python3 progress/progress.py check；#662 每项填写实际版本、结果与回读产物，未运行项保持未验收。
+- **Evidence**: issue #662
+
 ### [ ] Slice ULD: 浅色版剩余弹窗验收
 - **Outcome**: 核验连接引导与审核编辑弹窗浅色配色，更新 #654。
 - **Done Predicate**: python3 progress/progress.py check
@@ -119,8 +124,8 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check；签名安装版 D3200 实体按键在本机模式下停止前显示真实中文，停止后同一记录保留最终文字，验收 #655。
 - **Evidence**: scripts/check PASS; signed install self-check/smoke PASS; issue #655 comment-6827765221; hardware.jsonl and hardware-final-record.json
 
-### [ ] Slice AD: 全天听记与本机模型统一管线
+### [x] Slice AD: 全天听记与本机模型统一管线
 - **Playbook**: `figure-it-out` + `Feature`
 - **Outcome**: 移除旧迁移入口，按 Hex 固定模型与真实加载设计接离线识别；恢复全天分段与增量整理、通用听写文字桥，并提供明确配置和示意动画。
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check；真实模型Runtime文件与303秒跨段回放/重开通过，独立审查无阻断，真实硬件另见 #662。
-- **Evidence**: issue #661; issue #662; docs/adr/0003-shared-speech-and-all-day.md; crates/koe-cli/examples/verify_offline.rs
+- **Evidence**: 1779461; full scripts/check PASS; independent real-model replay PASS; signed CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd

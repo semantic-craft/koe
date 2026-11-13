@@ -847,9 +847,9 @@
             }
           ],
           "id": "all-day-offline-models",
-          "next": "完成审查修复、全量检查、PR交付和 #662 真机验收。",
-          "status": "in_progress",
-          "summary": "SenseVoice 与 Qwen 均以真实音频完成下载、校验、CPU加载及识别。Runtime 文件转写/重开、303秒回放跨段与听写范围验证通过；原生设置及双场景动画已操作回读。独立审查发现的并发、暂停和恢复边界正在修复，尚未完成最终门禁与交付。",
+          "next": "完成 PR 合并；真实麦克风/D3200、外部输入法和长时使用继续按 #662 验收。",
+          "status": "done",
+          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。",
           "title": "全天听记、下载模型与通用听写文字"
         }
       ],
@@ -970,9 +970,9 @@
             }
           ],
           "id": "merge-install",
-          "next": "真实 D3200 与付费服务全面验收见 #588，各子能力真机权限与听感按 #598 / #603 / #608 / #612 / #616 / #620 / #641 / #645 推进。",
+          "next": "本轮硬件长时验收见 #662。",
           "status": "done",
-          "summary": "2026-11-12 已从合并提交 e8e317e（含 PR #642 实时 MCP/领口伴侣与 PR #646 独立「录音」音源工作台）重新安装 Developer ID 签名版 /Applications/Koe.app（CDHash b567c5e501154071b3d444264b41277318fcd610，designated requirement 与既有版本一致，Keychain 授权持续有效），已安装二进制通过 --verify-self（含蓝牙输入优先、音源切换与「录音」页导航回退）与 --smoke-test 全部校验。签名安装完成不替代各独立工单的真机交互验收。",
+          "summary": "2026-11-13 已安装本轮全天听记和离线模型的 Developer ID 签名版，CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd，签名要求与旧版一致。verify-self/smoke-test 通过。日常界面 58 条记录仍可见、D3200 自动重连、设置和两种演示已核对；不代表硬件录制通过。",
           "title": "本机签名安装"
         },
         {
@@ -984,9 +984,9 @@
             }
           ],
           "id": "flutter-device-acceptance",
-          "next": "使用授权旧库副本在签名版逐项核对。",
-          "status": "unverified",
-          "summary": "本轮未运行签名安装版目录导入、真实音频播放及退出重启读回。自动回归不能替代真机结果。",
+          "next": "不再实施旧库导入；当前工作区恢复按全天听记验收核对。",
+          "status": "done",
+          "summary": "按用户要求取消旧 Flutter 资料迁移功能及其专属验收。已保存记录与当前工作区读取保留。",
           "title": "旧 Flutter 库真机验收"
         },
         {
@@ -1109,7 +1109,7 @@
           "id": "later-platforms",
           "next": "先验证当前 macOS 产品流程，再选择下一阶段功能。",
           "status": "planned",
-          "summary": "iOS、Android、屏幕采集、系统麦克风全天监听、Google 写回与 ACP 不计入当前 macOS 已接通功能；保留的底层模块不等于界面已实现。",
+          "summary": "iOS、Android、屏幕采集、Google 写回与 ACP 不计入当前 macOS 已接通功能；Mac 麦克风全天听记已接入，硬件验收见 #662。",
           "title": "移动端与尚未接入能力"
         }
       ],

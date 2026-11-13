@@ -595,7 +595,6 @@ impl KoeRuntime {
             .values_mut()
             .find(|s| s.operations.contains_key(&operation_id))
         {
-            // The adapter emits its final hypothesis before acknowledging completion.
             s.operations.remove(&operation_id);
             if s.active_operation == Some(operation_id) {
                 s.active_operation = None;

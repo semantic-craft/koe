@@ -6,7 +6,7 @@
 
 ## 决策
 
-`SpeechSession` 由 Rust Runtime 拥有，绑定记录、请求、识别引擎和结果归属。Mac 麦克风、D3200 和文件输入共同使用这条识别路径。Apple 识别通过已有平台 effect 接口执行；下载模型在 provider 工作线程内加载和推理，结果直接返回 Rust。Swift 只呈现快照并执行平台采集，不保存另一份业务状态。
+`SpeechSession` 由 Rust Runtime 拥有，绑定记录、请求、识别引擎和结果归属。Mac 麦克风与 D3200 实时输入，以及 Apple / 下载模型的文件转写，共同使用这条识别路径。云端文件转写保留既有批处理任务，结果同样经 Runtime 校验请求身份并持久化。Apple 识别通过已有平台 effect 接口执行；下载模型在 provider 工作线程内加载和推理，结果直接返回 Rust。Swift 只呈现快照并执行平台采集，不保存另一份业务状态。
 
 下载模型参考 [Hex 的固定版本实现](https://github.com/anomalyco/hex/tree/4793e168f4958c7c31aa924a8fe027768c7fcc51/src/transcription)。目录使用固定模型身份、文件大小和 SHA-256。下载先写临时文件，验证后原子发布，再实际加载。模型文件存在不能代表识别可用。推理依赖锁定 `transcribe.cpp` 源码，静态链接 CPU 后端，不通过 shell、HTTP 转发服务或外部可执行程序粘接本机识别。
 
