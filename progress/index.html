@@ -3,7 +3,7 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-13T13:17:48.451289Z</p>
+<p>Observed: 2026-11-13T13:23:00.880241Z</p>
 <p>Main: <code>main: bb5deef431ed7f505cb139ae4e09be74eef8551d</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
@@ -115,7 +115,7 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/day_journal.rs">file crates/koe-runtime/tests/day_journal.rs: 四模式跨页、跨午夜刷新、真实导入原文及已有摘要。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/all_day_speech.rs">file crates/koe-runtime/tests/all_day_speech.rs: 语音输入恢复和结束尾块以外部桥定稿事件先红后绿。</a></li>
 <li>note 2026-11-13 隔离原生验收: 真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页/单独结束听写。非物理录音验收，QA应用和进程已清理。</li>
-</ul><p>Next: 首页改为模式选择的补丁已实现并独立审查 PASS，尚未安装。首页不展示记录与摘要，既有数据保留。物理麦克风、D3200 与外部输入法继续按 #668 验收。只留文字后删除音频、整天合并分析及普通会议录制中的持续 AI 纪要生成尚未接入。</p></article>
+</ul><p>Next: 模式选择入口版 e383b2c 的首页、侧栏和两端一键联动已在真实界面通过，既有数据保留；合入最新主线后的构建待重新安装验收。其余物理采集和外部输入法按 #668 最新记录推进。只留文字后删除音频、整天合并分析仍未接入；持续实时纪要已由 #681 接入，真实云端流程通过但内容质量失败。</p></article>
 <article id="live-minutes-workspace"><h3>问 Koe 主导航与实时纪要专页</h3><span class="badge">done</span><p>问 Koe 与实时纪要已接入独立主导航。Rust 按本次采集身份投影原文、草稿和已验证纪要；跨页、停录、后台文件转写及录音豆启动间隙已覆盖。全量 check 与隔离原生界面验证通过。 PR #672 已经 CI 与独立 PASS+NOTES 验收，squash 合并为 ec745e9。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/671">issue 671: 本轮界面与状态归属范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/668">issue 668: 真实录音与外部输入法验收仍分开记录。</a></li>
@@ -125,18 +125,26 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/672">pull 672: 独立基线5项红灯、新版41项检查通过；CI成功并squash合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/acceptance/device-668-2026-11-13.md">file docs/acceptance/device-668-2026-11-13.md: 真实D3200音频和Studio Display实时原文、录后Qwen纪要及来源通过；其余真机场景仍未验收。</a></li>
 <li>note 2026-11-13 自动续验: SenseVoice真实推理与303秒回放封段通过。传输错误收尾和重复录音解密丢失均有先红后绿回归。签名版连续两段1596/1222音频包全部有效，WAV采样数一致，保存及退出通过。外部输入法接收端未接入。</li>
-</ul><p>Next: 按 #668 自动验证隐蔽的数据完整性问题，不重复人工体验检查。Micro Input 接收端未接入；普通会议持续 AI 纪要、系统音频、只留文字删音频、整天合并分析未接入。</p></article>
+</ul><p>Next: 持续实时纪要由 #681 接入。系统音频、只留文字删音频和全天跨段综合分析另行推进；外部输入法验收保持 #679 的新记录。</p></article>
 <article id="responsay-external-pcm"><h3>Responsay 独占外部 PCM 输入</h3><span class="badge">done</span><p>已实现按 socket 独占的外部 PCM 采集，停止确认排在音频尾部之后。软件回归已覆盖不重复启动 Koe 听写。2026-11-13 真实 D3200 提供 11.56 秒非静音 PCM，软件起止确认及 Responsay 隔离完整应用的真实音量检测、引导选源通过。真实识别与光标写入仍未验收，不能据此宣称无丢包、尾音完整或不留录音。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/675">issue 675: 外部音频协议实现范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/local-text-bridge.md">file docs/local-text-bridge.md: external_pcm_v1 能力、采集身份与停止确认契约。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/companion_mcp_tests.rs">file crates/koe-runtime/src/companion_mcp_tests.rs: 重复记录先红后绿，键盘尾音、取消与旧 epoch 回归。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/pstack-relay.md">file docs/pstack-relay.md: PCMHW 记录真实收音部分验收、环境限制和恢复普通模式时保存 05:28 设备录音的副作用。未注入合成 PCM，隔离实例清理通过。</a></li>
-</ul><p>Next: PCMHW 保持未完成。已恢复 Responsay 的现有 dev socket 配置，设备已待命。模式选择与侧栏语音输入的一键联动已实现、独立审查 PASS，尚未安装。安装后按 Responsay #810 继续验证真实 ASR、原光标输入、物理双击、断连恢复及无重复录音或识别。</p></article>
-<article id="voice-input-mode-entry"><h3>模式选择与一键语音输入入口</h3><span class="badge">in_progress</span><p>首页只展示模式选择，移除首页录音片段与摘要展示，不删除记录。侧栏语音输入与首页按钮共用 Rust PrepareVoiceInput，自动启用领夹待命和 BLE 自动连接，经宿主固定 URL 请求 Responsay 选择 Koe 音源。Koe b050935 与 Responsay a4052255 完整差异已由独立代理审查 PASS；入口补丁尚未安装。</p><ul>
+</ul><p>Next: PCMHW 保持未完成。现有 dev socket 配置保留。入口版 Koe e383b2c 与 Responsay fedee8ab 的首页冷启动联动、设备待命和侧栏重复进入已在真实界面通过；合入最新主线后的构建待重新安装验收。真实 ASR、原光标输入、物理双击、断连恢复及无重复录音或识别继续按 Responsay #810 验收。</p></article>
+<article id="continuous-live-minutes"><h3>录制中的持续实时纪要</h3><span class="badge">done</span><p>Rust 独立持有转写与实时纪要请求，绑定来源快照；追加原文保留已覆盖纪要，修订使旧来源失效。停止后完成最终整理，界面统一称实时纪要。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/678">issue 678: 保留原生布局与Rust业务状态，验收全自动。</a></li>
+<li>note 2026-11-13 全自动验证: 完整 scripts/check 与独立复核通过。原生生产 SwiftUI+C ABI 隔离程序验证录中 S1 纪要、停止后 S2 尾句来源；使用识别回调及回环 HTTP 响应，不是真实麦克风或云模型质量验收。</li>
+<li><a href="https://github.com/semantic-craft/koe/pull/680">pull 680: 完整门禁、独立执行回归和隔离原生验证通过；Developer ID 签名安装、自检与持久化烟测通过。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/681">pull 681: 与 #680 已验生产源码及测试相同；保留并行主线 #679 的进度事实。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/acceptance/cloud-minutes-668-2026-11-13.md">file docs/acceptance/cloud-minutes-668-2026-11-13.md: Studio Display物理采集合成语音并调用真实云端，录中更新、停止补齐与来源通过；实体异写和时间更新的内容准确性失败。非自然人语音验收，不关闭#668。</a></li>
+</ul><p>Next: 复用真实云端失败样本修复实体异写与后续决定覆盖旧信息的问题。录中更新、停止补齐、来源引用与跳转已自动验证，不重复。#668整体保持未完成。</p></article>
+<article id="voice-input-mode-entry"><h3>模式选择与一键语音输入入口</h3><span class="badge">in_progress</span><p>首页只展示模式选择，移除首页录音片段与摘要展示，不删除记录。侧栏语音输入与首页按钮共用 Rust PrepareVoiceInput，自动启用领夹待命和 BLE 自动连接，经宿主固定 URL 请求 Responsay 选择 Koe 音源。Koe b050935 与 Responsay a4052255 完整差异已由独立代理审查 PASS；入口版 Koe e383b2c 与 Responsay fedee8ab 已在真实界面验证首页冷启动联动、录音豆待命、Responsay 就绪和侧栏重复进入；合入最新主线后的构建待重新安装验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/voice_input.rs">file crates/koe-runtime/src/voice_input.rs: Rust 持有待命配置、录制保护与去重宿主动作。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift">file platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift: 首页移除录音与摘要展示，提供语音输入入口。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift: 固定 URL、去重打开及失败重试回归。</a></li>
-</ul><p>Next: 完成两仓门禁和原生安装验收，保留现有 dev socket override。真实 PCM 11.56 秒、软件起止与引导选源是既有证据，不能替代本补丁的 Release 冷热启动、真实 ASR、原光标输入和物理双击验收。</p></article>
+<li>note 2026-11-13 入口版真实界面验收: Koe e383b2c / Responsay fedee8ab 的 acceptance.json 记录首页四模式无摘要、实际首页点击冷启动 Responsay、录音豆待命及 Responsay 输入就绪、侧栏重复进入通过。未注入合成 PCM；实体双击、实时 ASR 和原光标写入未验证。</li>
+</ul><p>Next: 重新安装合入 #681/#682 后的构建并完成集成门禁。现有 dev socket override 保留。入口联动已通过，真实 ASR、原光标输入与物理双击仍按 Responsay #810 验收，不能用已有 PCM 或入口结果替代。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
@@ -202,5 +210,6 @@
 </ul><p>Next: 先验证当前 macOS 产品流程，再选择下一阶段功能。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/684">#684</a> <code>e03a3181c611addc06b9e4bbe1c3235fbd8e35c9</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

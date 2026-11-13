@@ -23,9 +23,9 @@ mod dictation_capture;
 mod journal;
 mod legacy;
 mod lifecycle;
-mod live_minutes;
 #[cfg(test)]
 mod lifecycle_tests;
+mod live_minutes;
 mod local_asr;
 /// Centralized 16-tool MCP registry and step/poll dispatcher shared by native host and CLI.
 pub mod mcp_surface;
@@ -68,6 +68,10 @@ pub const KOE_HOST_SNAPSHOT_VERSION: u32 = 2;
 enum PendingWork {
     Transcription(RequestKey),
     Summary(RequestKey),
+    LiveSummary {
+        key: RequestKey,
+        sources: koe_engine::domain::UtteranceSpine,
+    },
     Ask(u64),
 }
 
@@ -638,7 +642,7 @@ impl KoeRuntime {
                 }
                 if self.companion.standby_stream_owned {
                     return Err(
-                        "当前处于领夹麦待命模式，请先切换为关闭或会议兼领夹模式后再下载录音".into(),
+                        "当前处于领夹麦待命模式，请先切换为关闭或实时纪要兼听写模式后再下载录音".into(),
                     );
                 }
                 if !self.is_quitting()
@@ -688,7 +692,7 @@ impl KoeRuntime {
                 if self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby {
                     if self.companion.standby_stream_owned {
                         return Err(
-                            "当前处于领夹麦待命模式，如需录制会议请先切换为普通或会议兼领夹模式"
+                            "当前处于领夹麦待命模式，如需录制实时纪要请先切换为普通或实时纪要兼听写模式"
                                 .into(),
                         );
                     }
@@ -816,6 +820,7 @@ impl KoeRuntime {
             | self.poll_provider()
             | self.poll_captures();
         self.drive_analysis_queue();
+        self.drive_live_minutes(elapsed_ms);
         let all_day_finished = self.reconcile_all_day();
         completed |= self.drive_companion(now);
         completed |= self.maybe_start_auto_offline_pull();

@@ -129,7 +129,9 @@ impl KoeRuntime {
         let needed = self.workspace().record(&id).is_some_and(|record| {
             record.is_live()
                 && if summary {
-                    !record.aggregate.spine.is_empty() && record.aggregate.minutes.is_none()
+                    !record.aggregate.spine.is_empty()
+                        && (!matches!(record.analysis, AnalysisState::Ready { input_revision } if input_revision == record.content_revision)
+                            || record.is_minutes_stale())
                 } else {
                     record.aggregate.spine.is_empty()
                         || matches!(record.analysis, AnalysisState::Interrupted { .. })
@@ -143,7 +145,9 @@ impl KoeRuntime {
             self.try_start_transcription(&id)
         };
         let started = self.pending.values().any(|work| match work {
-            PendingWork::Transcription(key) | PendingWork::Summary(key) => key.record_id == id,
+            PendingWork::Transcription(key)
+            | PendingWork::Summary(key)
+            | PendingWork::LiveSummary { key, .. } => key.record_id == id,
             PendingWork::Ask(_) => false,
         });
         if result.is_ok() || result.as_ref().is_err_and(|e| !e.retryable()) || started {

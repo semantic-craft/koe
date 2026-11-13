@@ -29,7 +29,9 @@ impl KoeRuntime {
             .record(id)
             .is_some_and(|r| matches!(r.analysis, AnalysisState::Pending { .. }));
         let pending_work_busy = self.pending.values().any(|work| match work {
-            PendingWork::Transcription(key) | PendingWork::Summary(key) => key.record_id == id,
+            PendingWork::Transcription(key)
+            | PendingWork::Summary(key)
+            | PendingWork::LiveSummary { key, .. } => key.record_id == id,
             PendingWork::Ask(op) => ask_cites_id(Some(*op)),
         });
         let completed_busy = self.completed.iter().any(|event| {

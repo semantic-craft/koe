@@ -223,10 +223,21 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-13T09:35:18Z"
+      },
+      {
+        "number": 678,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T10:15:58Z"
       }
     ],
     "main": "bb5deef431ed7f505cb139ae4e09be74eef8551d",
-    "open_pulls": [],
+    "open_pulls": [
+      {
+        "head": "e03a3181c611addc06b9e4bbe1c3235fbd8e35c9",
+        "number": 684
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -403,12 +414,44 @@
         "merged": true,
         "number": 674,
         "state": "closed"
+      },
+      {
+        "base": "314adab314225716d7daafd22945065639548be8",
+        "head": "4647e3c31bf024523f0677bab7ac503e972e3494",
+        "merge_commit": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
+        "merged": true,
+        "number": 676,
+        "state": "closed"
+      },
+      {
+        "base": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
+        "head": "62449f45e7d568c34baab50cbef174d1983a9c7b",
+        "merge_commit": "d6f9406cc076eacec02b2f0c56e1939e875bf375",
+        "merged": true,
+        "number": 677,
+        "state": "closed"
+      },
+      {
+        "base": "f7627b72aa7a0307a2d63c93eb4226ec13472f82",
+        "head": "cfbd5476e39ef6d14f38d76f891fc1c9ac7aa416",
+        "merge_commit": null,
+        "merged": false,
+        "number": 680,
+        "state": "closed"
+      },
+      {
+        "base": "f7627b72aa7a0307a2d63c93eb4226ec13472f82",
+        "head": "b67e810c42ffa680ce64efe1ee823910873fa430",
+        "merge_commit": "4ef9dbb6714bc8807bc0696226c9229c42a04d0e",
+        "merged": true,
+        "number": 681,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T13:17:48.451289Z",
+  "observed_at": "2026-11-13T13:23:00.880241Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -953,7 +996,7 @@
             }
           ],
           "id": "day-journal-native",
-          "next": "首页改为模式选择的补丁已实现并独立审查 PASS，尚未安装。首页不展示记录与摘要，既有数据保留。物理麦克风、D3200 与外部输入法继续按 #668 验收。只留文字后删除音频、整天合并分析及普通会议录制中的持续 AI 纪要生成尚未接入。",
+          "next": "模式选择入口版 e383b2c 的首页、侧栏和两端一键联动已在真实界面通过，既有数据保留；合入最新主线后的构建待重新安装验收。其余物理采集和外部输入法按 #668 最新记录推进。只留文字后删除音频、整天合并分析仍未接入；持续实时纪要已由 #681 接入，真实云端流程通过但内容质量失败。",
           "status": "done",
           "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。2026-11-13 已安装签名版，使用开发工作区执行真实设备验收。 PR #669 已通过 CI 并 squash 合并为 c127845。",
           "title": "一天一页原生界面"
@@ -1002,7 +1045,7 @@
             }
           ],
           "id": "live-minutes-workspace",
-          "next": "按 #668 自动验证隐蔽的数据完整性问题，不重复人工体验检查。Micro Input 接收端未接入；普通会议持续 AI 纪要、系统音频、只留文字删音频、整天合并分析未接入。",
+          "next": "持续实时纪要由 #681 接入。系统音频、只留文字删音频和全天跨段综合分析另行推进；外部输入法验收保持 #679 的新记录。",
           "status": "done",
           "summary": "问 Koe 与实时纪要已接入独立主导航。Rust 按本次采集身份投影原文、草稿和已验证纪要；跨页、停录、后台文件转写及录音豆启动间隙已覆盖。全量 check 与隔离原生界面验证通过。 PR #672 已经 CI 与独立 PASS+NOTES 验收，squash 合并为 ec745e9。",
           "title": "问 Koe 主导航与实时纪要专页"
@@ -1031,34 +1074,73 @@
             }
           ],
           "id": "responsay-external-pcm",
-          "next": "PCMHW 保持未完成。已恢复 Responsay 的现有 dev socket 配置，设备已待命。模式选择与侧栏语音输入的一键联动已实现、独立审查 PASS，尚未安装。安装后按 Responsay #810 继续验证真实 ASR、原光标输入、物理双击、断连恢复及无重复录音或识别。",
+          "next": "PCMHW 保持未完成。现有 dev socket 配置保留。入口版 Koe e383b2c 与 Responsay fedee8ab 的首页冷启动联动、设备待命和侧栏重复进入已在真实界面通过；合入最新主线后的构建待重新安装验收。真实 ASR、原光标输入、物理双击、断连恢复及无重复录音或识别继续按 Responsay #810 验收。",
           "status": "done",
           "summary": "已实现按 socket 独占的外部 PCM 采集，停止确认排在音频尾部之后。软件回归已覆盖不重复启动 Koe 听写。2026-11-13 真实 D3200 提供 11.56 秒非静音 PCM，软件起止确认及 Responsay 隔离完整应用的真实音量检测、引导选源通过。真实识别与光标写入仍未验收，不能据此宣称无丢包、尾音完整或不留录音。",
           "title": "Responsay 独占外部 PCM 输入"
         },
         {
-          "id": "voice-input-mode-entry",
-          "title": "模式选择与一键语音输入入口",
-          "status": "in_progress",
-          "summary": "首页只展示模式选择，移除首页录音片段与摘要展示，不删除记录。侧栏语音输入与首页按钮共用 Rust PrepareVoiceInput，自动启用领夹待命和 BLE 自动连接，经宿主固定 URL 请求 Responsay 选择 Koe 音源。Koe b050935 与 Responsay a4052255 完整差异已由独立代理审查 PASS；入口补丁尚未安装。",
-          "next": "完成两仓门禁和原生安装验收，保留现有 dev socket override。真实 PCM 11.56 秒、软件起止与引导选源是既有证据，不能替代本补丁的 Release 冷热启动、真实 ASR、原光标输入和物理双击验收。",
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "保留原生布局与Rust业务状态，验收全自动。",
+              "ref": 678
+            },
+            {
+              "kind": "note",
+              "note": "完整 scripts/check 与独立复核通过。原生生产 SwiftUI+C ABI 隔离程序验证录中 S1 纪要、停止后 S2 尾句来源；使用识别回调及回环 HTTP 响应，不是真实麦克风或云模型质量验收。",
+              "ref": "2026-11-13 全自动验证"
+            },
+            {
+              "kind": "pull",
+              "note": "完整门禁、独立执行回归和隔离原生验证通过；Developer ID 签名安装、自检与持久化烟测通过。",
+              "ref": 680
+            },
+            {
+              "kind": "pull",
+              "note": "与 #680 已验生产源码及测试相同；保留并行主线 #679 的进度事实。",
+              "ref": 681
+            },
+            {
+              "kind": "file",
+              "note": "Studio Display物理采集合成语音并调用真实云端，录中更新、停止补齐与来源通过；实体异写和时间更新的内容准确性失败。非自然人语音验收，不关闭#668。",
+              "ref": "docs/acceptance/cloud-minutes-668-2026-11-13.md"
+            }
+          ],
+          "id": "continuous-live-minutes",
+          "next": "复用真实云端失败样本修复实体异写与后续决定覆盖旧信息的问题。录中更新、停止补齐、来源引用与跳转已自动验证，不重复。#668整体保持未完成。",
+          "status": "done",
+          "summary": "Rust 独立持有转写与实时纪要请求，绑定来源快照；追加原文保留已覆盖纪要，修订使旧来源失效。停止后完成最终整理，界面统一称实时纪要。",
+          "title": "录制中的持续实时纪要"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "crates/koe-runtime/src/voice_input.rs",
-              "note": "Rust 持有待命配置、录制保护与去重宿主动作。"
+              "note": "Rust 持有待命配置、录制保护与去重宿主动作。",
+              "ref": "crates/koe-runtime/src/voice_input.rs"
             },
             {
               "kind": "file",
-              "ref": "platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift",
-              "note": "首页移除录音与摘要展示，提供语音输入入口。"
+              "note": "首页移除录音与摘要展示，提供语音输入入口。",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift"
             },
             {
               "kind": "file",
-              "ref": "platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift",
-              "note": "固定 URL、去重打开及失败重试回归。"
+              "note": "固定 URL、去重打开及失败重试回归。",
+              "ref": "platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift"
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-13 入口版真实界面验收",
+              "note": "Koe e383b2c / Responsay fedee8ab 的 acceptance.json 记录首页四模式无摘要、实际首页点击冷启动 Responsay、录音豆待命及 Responsay 输入就绪、侧栏重复进入通过。未注入合成 PCM；实体双击、实时 ASR 和原光标写入未验证。"
             }
-          ]
+          ],
+          "id": "voice-input-mode-entry",
+          "next": "重新安装合入 #681/#682 后的构建并完成集成门禁。现有 dev socket override 保留。入口联动已通过，真实 ASR、原光标输入与物理双击仍按 Responsay #810 验收，不能用已有 PCM 或入口结果替代。",
+          "status": "in_progress",
+          "summary": "首页只展示模式选择，移除首页录音片段与摘要展示，不删除记录。侧栏语音输入与首页按钮共用 Rust PrepareVoiceInput，自动启用领夹待命和 BLE 自动连接，经宿主固定 URL 请求 Responsay 选择 Koe 音源。Koe b050935 与 Responsay a4052255 完整差异已由独立代理审查 PASS；入口版 Koe e383b2c 与 Responsay fedee8ab 已在真实界面验证首页冷启动联动、录音豆待命、Responsay 就绪和侧栏重复进入；合入最新主线后的构建待重新安装验收。",
+          "title": "模式选择与一键语音输入入口"
         }
       ],
       "title": "当前产品实现"
@@ -1397,7 +1479,8 @@
       667,
       668,
       671,
-      675
+      675,
+      678
     ],
     "pulls": [
       589,
@@ -1421,7 +1504,11 @@
       663,
       669,
       672,
-      674
+      674,
+      676,
+      677,
+      680,
+      681
     ]
   }
 }

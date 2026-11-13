@@ -170,6 +170,8 @@ struct RecordDto {
     coarse_place: Option<String>,
     selected_format: String,
     analysis: AnalysisDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    live_summary: Option<AnalysisDto>,
     final_keys: BTreeMap<String, u32>,
     completed_request: Option<KeyDto>,
 }
@@ -552,6 +554,8 @@ impl RecordDto {
             coarse_place: a.coarse_place.clone(),
             selected_format: a.selected_format.as_str().to_string(),
             analysis: AnalysisDto::from_analysis(&record.analysis),
+            live_summary: (record.live_summary != AnalysisState::Idle)
+                .then(|| AnalysisDto::from_analysis(&record.live_summary)),
             highlighted_segments: record
                 .highlighted_segments
                 .iter()
@@ -684,6 +688,14 @@ impl RecordDto {
             self.completed_request.map(KeyDto::into_key),
         )
         .map_err(|e| invalid(e.to_string()))?;
+        record
+            .restore_live_summary(
+                self.live_summary
+                    .map(AnalysisDto::into_analysis)
+                    .transpose()?
+                    .unwrap_or_default(),
+            )
+            .map_err(|e| invalid(e.to_string()))?;
         record
             .restore_capture_lanes(self.capture_lanes.into_iter().map(Into::into).collect())
             .map_err(|e| invalid(e.to_string()))?;
