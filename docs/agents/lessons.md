@@ -381,3 +381,10 @@
 - 修复：恢复问 Koe 主导航，实时纪要提供独立路由，实时原文和已生成纪要分开投影与展示。
 - 验证点：原生窗口从侧栏进入问 Koe 和实时纪要，验证问答来源返回、录制跨页与停止后内容归属。Dock 菜单测试同步产品入口。
 - Seen 1x（2026-11-13）。
+
+### 传输结束不等于文件解密身份结束
+
+- 出处：2026-11-13 #668 自动真机验收。第一次录音正常，停止后复用同一设备文件号的第二次录音丢失解密上下文，2225 包中1311包无法解码；文件存在和保存提示掩盖了音频损坏。错误头另会清掉活动录音，造成全天收尾一直等待。
+- 修复：文件解密材料按文件号保留，连接会话结束时清除；无有效材料的完整加密头不能启用明文路径。实时传输错误保留录音身份与排空计时，正常停止后保存已收到的音频。
+- 验证点：session.rs 的 repeated_realtime_capture_decrypts_without_fresh_file_key_wrapping、encrypted_head_without_valid_context_does_not_publish_ciphertext_as_audio 和 repeated_file_decrypt_context_is_isolated_by_file_and_connection 均先红后绿；capture_tests.rs 验证错误前后停止、保存重开和无音频终结。真机录音逐包解码并比较 WAV 采样数，不能只检查文件存在。
+- Seen 1x（2026-11-13）。

@@ -64,6 +64,9 @@ pub const REALTIME_QUIET_DRAIN_MS: u64 = 2_000;
 /// Synthetic error code reported when an offline pull exhausts its watchdog retries.
 pub const TRANSFER_ERR_WATCHDOG_TIMEOUT: u8 = 0xFE;
 
+/// Synthetic error code when an encrypted file has no validated decryption context.
+pub const TRANSFER_ERR_FILE_DECRYPTION: u8 = 0xFD;
+
 /// Connection phase of the D3200 transport session.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -294,10 +297,17 @@ pub enum CatalogLoadPhase {
     },
 }
 
+#[derive(Clone, Copy)]
+enum FileDecryption {
+    AwaitingKey,
+    Ready { key: [u8; 32], nonce: [u8; 16] },
+}
+
 /// Stateful D3200 transport session engine.
 pub struct TransportSession {
     capture_events: VecDeque<CaptureEvent>,
     companion_signals: VecDeque<RawCompanionSignal>,
+    file_decryption: BTreeMap<u32, FileDecryption>,
     /// Streaming packet reassembler.
     pub reassembler: FrameReassembler,
     /// Current connection phase.
@@ -405,6 +415,7 @@ impl Clone for TransportSession {
         Self {
             capture_events: self.capture_events.clone(),
             companion_signals: self.companion_signals.clone(),
+            file_decryption: self.file_decryption.clone(),
             reassembler: self.reassembler.clone(),
             connection_phase: self.connection_phase,
             telemetry: self.telemetry.clone(),
@@ -464,7 +475,7 @@ impl core::fmt::Debug for TransportSession {
             .field("connection_phase", &self.connection_phase)
             .field("telemetry", &self.telemetry)
             .field("has_ecdh_private_key", &self.ecdh_private_key.is_some())
-            .field("session_key", &self.session_key)
+            .field("has_session_key", &self.session_key.is_some())
             .field("catalog", &self.catalog)
             .field("raw_catalog_len", &self.raw_catalog.len())
             .field("catalog_load_phase", &self.catalog_load_phase)
@@ -475,7 +486,7 @@ impl core::fmt::Debug for TransportSession {
             .field("transfer", &self.transfer)
             .field("runtime_state", &self.runtime_state)
             .field("active_file_id", &self.active_file_id)
-            .field("active_file_key", &self.active_file_key)
+            .field("has_active_file_key", &self.active_file_key.is_some())
             .field("active_nonce", &self.active_nonce)
             .field("active_is_realtime", &self.active_is_realtime)
             .field("device_recording_active", &self.device_recording_active)
@@ -512,6 +523,7 @@ impl TransportSession {
         Self {
             capture_events: VecDeque::new(),
             companion_signals: VecDeque::new(),
+            file_decryption: BTreeMap::new(),
             reassembler: FrameReassembler::default(),
             connection_phase: ConnectionPhaseTag::Disconnected,
             telemetry: None,
@@ -735,7 +747,26 @@ impl TransportSession {
 
     /// Sets the 32-byte session key explicitly.
     pub fn set_session_key(&mut self, key: [u8; 32]) {
+        if self.session_key != Some(key) {
+            self.clear_file_decryption();
+        }
         self.session_key = Some(key);
+    }
+
+    fn clear_file_decryption(&mut self) {
+        self.file_decryption.clear();
+        self.active_file_key = None;
+        self.active_nonce = None;
+    }
+
+    fn bind_file_decryption(&mut self, file_id: u32) {
+        let context = self.file_decryption.get(&file_id).copied();
+        let (key, nonce) = match context {
+            Some(FileDecryption::Ready { key, nonce }) => (Some(key), Some(nonce)),
+            _ => (None, None),
+        };
+        self.active_file_key = key;
+        self.active_nonce = nonce;
     }
 
     /// Transitions the transport session into `Scanning` for D3200 BLE advertisements.
@@ -755,6 +786,7 @@ impl TransportSession {
         self.reassembler.reset();
         self.ecdh_private_key = Some(private_key);
         self.session_key = None;
+        self.clear_file_decryption();
         self.connection_phase = ConnectionPhaseTag::Handshaking;
         Some(vec![
             DeviceCommands::notify_encrypt_public_key(&pub_key),
@@ -784,6 +816,7 @@ impl TransportSession {
         self.reassembler.reset();
         self.ecdh_private_key = None;
         self.session_key = None;
+        self.clear_file_decryption();
         self.device_recording_active = false;
         self.pending_realtime_subscribe = false;
         self.pre_start_entries.clear();
@@ -812,6 +845,7 @@ impl TransportSession {
         self.reassembler.reset();
         self.ecdh_private_key = None;
         self.session_key = None;
+        self.clear_file_decryption();
         self.connection_phase = ConnectionPhaseTag::Disconnected;
         self.catalog_load_phase = CatalogLoadPhase::Idle;
         self.catalog_page_elapsed_ms = 0;
@@ -1049,8 +1083,7 @@ impl TransportSession {
             {
                 let _ = self.finalize_active_transfer(now_epoch_sec);
             }
-            self.active_file_key = None;
-            self.active_nonce = None;
+            self.bind_file_decryption(file_id);
             self.opus_buffer.clear();
             self.marks_ms.clear();
             self.live_pcm16_16khz.clear();
@@ -1450,6 +1483,7 @@ impl TransportSession {
         }
         let expected = self.transfer.expected_wire_bytes.max(offset_wire_bytes);
         self.active_file_id = Some(fid);
+        self.bind_file_decryption(fid);
         self.active_is_realtime = false;
         self.runtime_state = TransferRuntimeState::PullingOffline {
             file_id: fid,
@@ -1535,7 +1569,7 @@ impl TransportSession {
         let derived = DeviceCrypto::hkdf_sha256(computed_shared_secret, &[1, 2, 3], &[1, 2, 3], 32);
         let mut sk = [0u8; 32];
         sk.copy_from_slice(&derived);
-        self.session_key = Some(sk);
+        self.set_session_key(sk);
         true
     }
 
@@ -1543,8 +1577,7 @@ impl TransportSession {
     pub fn begin_offline_pull(&mut self, file_id: u32, duration_ms: u32) -> Vec<u8> {
         let estimated_wire = ((duration_ms / 20).max(1)).saturating_mul(SLICE_RECORD_BYTES as u32);
         self.active_file_id = Some(file_id);
-        self.active_file_key = None;
-        self.active_nonce = None;
+        self.bind_file_decryption(file_id);
         self.active_is_realtime = false;
         self.stream_base_slices = 0;
         self.opus_buffer.clear();
@@ -2094,12 +2127,20 @@ impl TransportSession {
                             }
                         }
                         self.active_file_id = Some(head.secret.file_id);
-                        self.active_file_key = head.file_key;
-                        self.active_nonce = if head.file_key.is_some() {
-                            Some(head.secret.nonce)
-                        } else {
-                            None
-                        };
+                        if let Some(key) = head.file_key {
+                            self.file_decryption.insert(
+                                head.secret.file_id,
+                                FileDecryption::Ready {
+                                    key,
+                                    nonce: head.secret.nonce,
+                                },
+                            );
+                        } else if !head.secret.encrypted_file_key.is_empty() {
+                            self.file_decryption
+                                .entry(head.secret.file_id)
+                                .or_insert(FileDecryption::AwaitingKey);
+                        }
+                        self.bind_file_decryption(head.secret.file_id);
                         self.active_is_realtime = is_realtime;
                         let received_wire = if is_realtime {
                             self.total_slice_offset()
@@ -2143,6 +2184,19 @@ impl TransportSession {
                                 quiet_draining: false,
                             };
                         }
+                        if matches!(
+                            self.file_decryption.get(&head.secret.file_id),
+                            Some(FileDecryption::AwaitingKey)
+                        ) {
+                            self.transfer.error_code = TRANSFER_ERR_FILE_DECRYPTION;
+                            if !is_realtime {
+                                self.runtime_state = TransferRuntimeState::Failed {
+                                    file_id: head.secret.file_id,
+                                    error_code: TRANSFER_ERR_FILE_DECRYPTION,
+                                };
+                                self.transfer.phase = TransferPhaseTag::Failed;
+                            }
+                        }
                         outcome.transfer_updated = true;
                     }
                 }
@@ -2150,6 +2204,12 @@ impl TransportSession {
                     let Some(fid) = self.active_file_id else {
                         continue;
                     };
+                    if matches!(
+                        self.file_decryption.get(&fid),
+                        Some(FileDecryption::AwaitingKey)
+                    ) {
+                        continue;
+                    }
                     if let TransferRuntimeState::PullingOffline { inactivity_ms, .. } =
                         &mut self.runtime_state
                     {
@@ -2700,21 +2760,29 @@ mod tests {
                 1_700_000_000,
             );
             let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0), (1, 1)]);
-            let first_pcm = session.ingest_ble_chunk(&slices, 1_700_000_001).live_pcm16_16khz;
+            let first_pcm = session
+                .ingest_ble_chunk(&slices, 1_700_000_001)
+                .live_pcm16_16khz;
             let mut expected_opus = [0; OPUS_FRAME_BYTES];
             expected_opus[..REAL_OPUS_20MS_440HZ_PACKET.len()]
                 .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
             assert_eq!(session.opus_buffer, expected_opus.repeat(2));
             assert_eq!(first_pcm.len(), 2 * 320 * 2);
             session.stop_realtime_recording();
-            let first = session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_003)
-                .finalized.unwrap();
+            let first = session
+                .poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_003)
+                .finalized
+                .unwrap();
 
             session.start_realtime_recording(Some(4001), 1_700_000_004_000);
             match repeat_head_kind {
                 0 => {
                     let invalid_wrapping = build_test_head_frame(
-                        &[0x99; 32], 4001, u32::MAX, &[0x88; 32], &[0x77; 16],
+                        &[0x99; 32],
+                        4001,
+                        u32::MAX,
+                        &[0x88; 32],
+                        &[0x77; 16],
                     );
                     session.ingest_ble_chunk(&invalid_wrapping, 1_700_000_004);
                 }
@@ -2729,12 +2797,20 @@ mod tests {
                 }
                 _ => {}
             }
-            let second_pcm = session.ingest_ble_chunk(&slices, 1_700_000_005).live_pcm16_16khz;
-            assert_eq!(session.opus_buffer, expected_opus.repeat(2), "repeat head kind {repeat_head_kind}");
+            let second_pcm = session
+                .ingest_ble_chunk(&slices, 1_700_000_005)
+                .live_pcm16_16khz;
+            assert_eq!(
+                session.opus_buffer,
+                expected_opus.repeat(2),
+                "repeat head kind {repeat_head_kind}"
+            );
             assert_eq!(second_pcm, first_pcm);
             session.stop_realtime_recording();
-            let second = session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_007)
-                .finalized.unwrap();
+            let second = session
+                .poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_007)
+                .finalized
+                .unwrap();
             assert_eq!(second.ogg_opus_bytes, first.ogg_opus_bytes);
             assert_eq!(second.preview_wav_bytes, first.preview_wav_bytes);
         }
@@ -2766,7 +2842,12 @@ mod tests {
         assert_eq!(recovered.live_pcm16_16khz.len(), 320 * 2);
         assert_eq!(session.transfer.error_code, 0);
         session.stop_realtime_recording();
-        assert!(session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_005).finalized.is_some());
+        assert!(
+            session
+                .poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_005)
+                .finalized
+                .is_some()
+        );
     }
 
     #[test]
@@ -2782,19 +2863,38 @@ mod tests {
                 1_700_000_000,
             );
             let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0)]);
-            let expected_pcm = session.ingest_ble_chunk(&slices, 1_700_000_001).live_pcm16_16khz;
+            let expected_pcm = session
+                .ingest_ble_chunk(&slices, 1_700_000_001)
+                .live_pcm16_16khz;
             session.stop_realtime_recording();
             session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_003);
             session.start_realtime_recording(Some(4001), 1_700_000_004_000);
-            assert_eq!(session.ingest_ble_chunk(&slices, 1_700_000_004).live_pcm16_16khz, expected_pcm);
+            assert_eq!(
+                session
+                    .ingest_ble_chunk(&slices, 1_700_000_004)
+                    .live_pcm16_16khz,
+                expected_pcm
+            );
             session.reset_active_transfer();
 
             let file_id = match reset_kind {
                 0 => 4002,
-                1 => { session.on_disconnected(); 4001 }
-                2 => { session.on_transport_interrupted(); 4001 }
-                3 => { session.on_gatt_ready([0x31; 32]).unwrap(); 4001 }
-                _ => { session.set_session_key([0x32; 32]); 4001 }
+                1 => {
+                    session.on_disconnected();
+                    4001
+                }
+                2 => {
+                    session.on_transport_interrupted();
+                    4001
+                }
+                3 => {
+                    session.on_gatt_ready([0x31; 32]).unwrap();
+                    4001
+                }
+                _ => {
+                    session.set_session_key([0x32; 32]);
+                    4001
+                }
             };
             session.start_realtime_recording(Some(file_id), 1_700_000_005_000);
             session.ingest_ble_chunk(
