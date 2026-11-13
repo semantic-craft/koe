@@ -392,6 +392,7 @@ fn loopback_chat_without_key_omits_authorization_and_returns_real_response() {
                 Err(error) => panic!("{error}"),
             }
         };
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();
