@@ -126,10 +126,16 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: test -f docs/mode-workspaces.md && python3 progress/progress.py check
 - **Evidence**: Responsay PR823 squash4167da5c; signed5c0127af UI and scoped gates PASS; mode-workspaces canvas check/export OK; docs/mode-workspaces.md
 
+### [x] Slice RELEASEPAIR: Koe 与 Responsay 正式发布
+- **Playbook**: `Shipping`
+- **Outcome**: 将已合并的联动与独立键开关交付为 Koe 2.0.0 build 9 私有 ZIP 和 Responsay 1.27.1 build 203 公开 DMG，保留原安装、配置与权限。
+- **Done Predicate**: 两仓版本 PR、独立评审、完整门禁、签名公证、发布下载校验通过；Responsay 更新源与仓库字节一致。客户端升级和 PCMHW 物理验收不在本项完成范围。
+- **Evidence**: Koe PR690/691; https://github.com/semantic-craft/koe/releases/tag/v2.0.0; Responsay PR825/826; https://github.com/semantic-craft/responsay-releases/releases/tag/v1.27.1; release-record-1.27.1/publication.jsonl artifacts+activate exit0
+
 ### [ ] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
 - **Playbook**: `Investigation`
-- **Outcome**: 只继续PCMHW与Responsay#810可自动验证的真实识别和原光标；先读现有acceptance及mode-research/live-attempt，不重跑已通过PCM/软件起止/选源。保留配置权限，物理无法自动执行保持未验收。
-- **Done Predicate**: 实际设备实时音频、Responsay真实识别与原目标文本变化有关联证据才通过；未执行项保持NOT_RUN；python3 progress/progress.py check
+- **Outcome**: 先读 Projects/_artifacts/koe/pcmhw-live-pickup-20261114/acceptance.json，仅在取得可操作的正式听写启动入口或新自动化能力后继续真实识别与原光标上屏。保留配置权限；不重复长按、失效菜单探测或已通过项目，不要求人工。
+- **Done Predicate**: 真实生产启动、录音豆实时音频、Responsay识别和原目标文本变化须有同一次会话的关联证据；无法自动验证保持NOT_VERIFIED/NOT_RUN；python3 progress/progress.py check。
 - **Evidence**: 2026-11-13 部分通过。已合并版本 Koe `d6f9406` 与 Responsay `b6a061e` 下，真实 D3200 提供 11.56 秒非静音 PCM，收到软件开始和结束确认。Responsay 隔离完整应用的蓝色条响应真实收音，引导完成后自动选中 soundcore Work。未注入合成 PCM。原始证据保留在本机 `Projects/_artifacts/koe/pcmhw-20261113`，状态见 [Responsay #810](https://github.com/semantic-craft/responsay-macos/issues/810)。
 - **Remaining**: 真实 Responsay ASR、原光标输入、实体双击、断连恢复、三种输入快捷键及无重复录音或识别仍未验收。先前隔离截图入口缺少辅助功能权限和录制监听器，不能代替完整应用验收。现有 dev socket override 已恢复，录音豆已待命；默认生产 socket 缺失已不是当前阻塞。首页模式选择与侧栏语音输入的一键联动已实现、独立审查并签名安装。原入口版冷启动和侧栏重复进入通过；合入最新主线的 19d75d5 也已从真实首页连接至两端就绪。现有配置与权限保留；实时识别、原光标和实体双击仍未验收。
 - **Latest**: Responsay独立键开关已经PR #823合并，本机安装5c0127af，两个开关与三权限保留。当前完整应用的鼠标按住入口尝试未观察到确认的生产录音或输入变化，未播放声学刺激，原文本未改变。仅软件回放通过，不能证明实体双击或识别上屏。
