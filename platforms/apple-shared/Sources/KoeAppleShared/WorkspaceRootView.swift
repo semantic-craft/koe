@@ -33,6 +33,9 @@ public struct KoeWorkspaceRootView: View {
                         .foregroundStyle(AppColors.textSecondary).padding(12).background(AppColors.surface1)
                 }
                 page.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let capture = store.snapshot.activeCapture {
+                    ActiveCaptureBar(capture: capture, store: store)
+                }
                 if let undo = store.snapshot.undoTrash {
                     UndoTrashBar(undo: undo, store: store)
                 }
@@ -68,6 +71,16 @@ public struct KoeWorkspaceRootView: View {
                 }
                 KoeActionButton("导出") { exportAction(detail.id) }
             }
+            if store.snapshot.section == "records" {
+                KoeActionButton("回收站", systemImage: "trash") {
+                    store.send("navigate", ["section": "trash"])
+                }
+            }
+            if store.snapshot.section != "ask" {
+                KoeActionButton("问 Koe", systemImage: "sparkles") {
+                    store.send("navigate", ["section": "ask"])
+                }
+            }
             KoeActionButton("新建记录", systemImage: "plus") { showNewNote = true }
                 .keyboardShortcut("n", modifiers: .command)
             KoeActionButton("导入", systemImage: "square.and.arrow.down", isPrimary: true, action: importAction)
@@ -78,10 +91,11 @@ public struct KoeWorkspaceRootView: View {
     }
     private var sectionTitle: String {
         switch store.snapshot.section {
-        case "capture": "录音"
+        case "capture": "设置 / 录音管理"
+        case "notes": "随心记"
         case "records": "所有记录"
-        case "detail": "所有记录 / \(store.snapshot.detail?.title ?? "记录")"
-        case "tasks": "待办"
+        case "detail": store.snapshot.detail?.title ?? "记录"
+        case "tasks": "行动"
         case "memory": "记忆"
         case "ask": "问 Koe"
         case "trash": "回收站"
@@ -92,6 +106,7 @@ public struct KoeWorkspaceRootView: View {
     @ViewBuilder private var page: some View {
         switch store.snapshot.section {
         case "capture": CaptureView(store: store)
+        case "notes": NotesView(store: store)
         case "records": RecordListView(store: store)
         case "detail": RecordDetailView(store: store)
         case "tasks": TasksView(store: store)

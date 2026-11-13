@@ -1,4 +1,5 @@
 use super::*;
+use crate::speech::DictationSource;
 use koe_client_services::capture_asset::CaptureAsset;
 
 pub(super) struct DictationCapture {
@@ -10,7 +11,7 @@ pub(super) struct DictationCapture {
 
 impl KoeRuntime {
     pub(super) fn capture_standby_dictation(&mut self, samples: &[i16]) {
-        if self.companion.standby_stream_owned && self.speech.dictation_active {
+        if self.companion.standby_stream_owned && self.dictation_active(DictationSource::Standby) {
             if let Err(error) = self.append_standby_dictation(samples) {
                 self.error = Some(error);
             }
@@ -39,7 +40,7 @@ impl KoeRuntime {
             self.commit(|w| insert_dictation_record(w, &id, created_at))?;
         }
         let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
-        self.feed_speech(&id, &bytes)?;
+        self.feed_speech(&id, &bytes, Some(DictationSource::Standby))?;
         if seal {
             self.finish_standby_dictation()?;
         }

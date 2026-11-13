@@ -6,75 +6,23 @@ public struct CaptureView: View {
 
     private var device: DeviceSnapshot { store.snapshot.device }
     private var capture: CaptureStudioSnapshot { store.snapshot.capture }
-    private var isBeanLive: Bool {
-        device.recording || device.stopping || device.transferPhase == "streaming_realtime"
-    }
-    private var isRecordingLocked: Bool { isBeanLive || store.snapshot.microphone != nil }
+    private var isRecordingLocked: Bool { store.snapshot.activeCapture != nil }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
-                PageHeading(title: "录音", subtitle: "选择录音豆、Mac 蓝牙耳机或本机麦克风，录音先保存在本机。")
-                AllDayCard(store: store)
-                if isBeanLive && store.snapshot.allDay.state == "idle" {
-                    beanLiveCard
-                }
-                if let mic = store.snapshot.microphone, store.snapshot.allDay.state == "idle" {
-                    MicrophoneStatusCard(store: store, microphone: mic)
-                }
+                PageHeading(title: "录音管理", subtitle: "选择录音豆、Mac 蓝牙耳机或本机麦克风。")
                 sourceSelectionDeck
                 if device.busy && device.transferPhase == "pulling_offline" {
-                    offlineProgressCard
-                } else if device.connected && !device.recording && !device.files.isEmpty {
-                    offlineFilesCard
+                    ProgressView(value: device.progress)
+                        .accessibilityLabel("录音豆文件取回进度")
+                }
+                if device.connected && !device.files.isEmpty {
+                    deviceFiles
                 }
             }
             .padding(30).frame(maxWidth: 850, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var beanLiveCard: some View {
-        let liveRecord = store.snapshot.activeLiveRecord
-        return KoeCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Circle().fill(AppColors.danger).frame(width: 8, height: 8)
-                    Text(device.stopping ? "正在等待录音豆停止" : "正在通过 \(device.deviceName) 录音")
-                        .font(.system(size: AppFontSizes.sm, weight: .medium))
-                    KoeBadge("录音豆")
-                    Spacer()
-                    Text(TimeLabel.duration(device.liveDurationMs))
-                        .font(.system(size: AppFontSizes.md, weight: .semibold, design: .monospaced))
-                    KoeActionButton(device.stopping ? "重试停止" : "停止录音", systemImage: "stop.circle") {
-                        store.send("device_stop")
-                        NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-                    }
-                }
-                if let caption = store.snapshot.liveCaption, !caption.text.isEmpty {
-                    Text(caption.text).font(.system(size: AppFontSizes.sm)).lineLimit(3)
-                } else {
-                    Text(device.liveBytes > 0 ? "正在接收实时语音流 (\(device.liveBytes) B)" : "正在等待录音豆语音帧")
-                        .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textSecondary)
-                }
-                if store.snapshot.speech.engine == "apple_speech" && store.snapshot.speech.appleState != "ready" {
-                    HStack(spacing: 12) {
-                        Text(store.snapshot.speech.appleMessage ?? "Apple 本机识别尚未就绪，原始录音会保留。")
-                            .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
-                        Spacer()
-                        KoeActionButton("打开设置", systemImage: "gearshape") {
-                            store.send("navigate", ["section": "settings"])
-                        }
-                    }
-                }
-                if let liveRecord {
-                    Button { store.send("select_record", ["recordId": liveRecord.id]) } label: {
-                        HStack(spacing: 5) { Text("查看完整实时字幕"); Image(systemName: "chevron.right") }
-                            .font(.system(size: AppFontSizes.xs, weight: .medium))
-                            .foregroundStyle(AppColors.accent).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                }
-            }
         }
     }
 
@@ -106,7 +54,6 @@ public struct CaptureView: View {
                         }
                     }
                     Spacer()
-                    primaryCaptureButton
                 }
                 Divider().overlay(AppColors.border)
                 VStack(alignment: .leading, spacing: 10) {
@@ -122,29 +69,6 @@ public struct CaptureView: View {
                     }
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var primaryCaptureButton: some View {
-        if capture.selectedSource == "bean" && !device.connected {
-            KoeActionButton("连接录音豆", systemImage: "antenna.radiowaves.left.and.right", isPrimary: true) {
-                store.send("device_open_guide")
-                NotificationCenter.default.post(name: Notification.Name("KoeRequestBleScan"), object: nil)
-            }.disabled(device.busy || isRecordingLocked)
-        } else if capture.selectedSource == "bean" && device.companionMode == "collar_standby" {
-            KoeActionButton("打开设置调整模式", systemImage: "slider.horizontal.3", isPrimary: true) {
-                store.send("navigate", ["section": "settings"])
-            }
-        } else if capture.selectedSource == "bean" {
-            KoeActionButton("使用录音豆开始录音", systemImage: "record.circle", isPrimary: true) {
-                store.send("device_start")
-                NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
-            }.disabled(!capture.canStart)
-        } else {
-            KoeActionButton("开始录音", systemImage: "mic.fill", isPrimary: true) {
-                store.send("start_microphone", ["inputId": capture.selectedInputId])
-            }.disabled(!capture.canStart)
         }
     }
 
@@ -170,7 +94,7 @@ public struct CaptureView: View {
                     } else {
                         Text(device.statusDetail).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                     }
-                    Text(device.connected ? "点击上方按钮或短按录音豆侧边按键均可开始录音。" : "连接录音豆后即可无线录音或取回离线文件。")
+                    Text(device.connected ? "可从今天页或录音豆侧边按键开始录音。" : "连接录音豆后即可无线录音或取回离线文件。")
                         .font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -234,35 +158,18 @@ public struct CaptureView: View {
         }.buttonStyle(.plain)
         .disabled(isRecordingLocked)
     }
-
-    private var offlineProgressCard: some View {
+    private var deviceFiles: some View {
         KoeCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label("正在取回录音", systemImage: "arrow.down.circle")
-                        .font(.system(size: AppFontSizes.sm, weight: .medium))
-                    Spacer()
-                    Text("\(Int((device.progress * 100).rounded()))%")
-                        .font(.system(size: AppFontSizes.xs, design: .monospaced)).foregroundStyle(AppColors.textSecondary)
-                }
-                ProgressView(value: device.progress)
-            }
-        }
-    }
-
-    private var offlineFilesCard: some View {
-        KoeCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("录音豆待取回文件 (\(device.files.count))")
-                    .font(.system(size: AppFontSizes.sm, weight: .medium))
+            VStack(alignment: .leading, spacing: 12) {
+                Text("录音豆文件").font(.system(size: AppFontSizes.md, weight: .medium))
                 ForEach(device.files) { file in
                     HStack(spacing: 10) {
-                        Text("#\(file.fileId)").font(.system(size: AppFontSizes.xs, design: .monospaced))
-                        Text(TimeLabel.duration(file.durationMs))
-                            .font(.system(size: AppFontSizes.xs, design: .monospaced)).foregroundStyle(AppColors.textSecondary)
+                        Text(file.title).font(.system(size: AppFontSizes.sm))
+                        Text(TimeLabel.duration(file.durationMs)).font(.system(size: AppFontSizes.xs))
+                            .foregroundStyle(AppColors.textMuted)
                         Spacer()
                         KoeActionButton("取回") {
-                            store.send("device_download", ["fileId": file.fileId])
+                            store.send("device_download", ["fileId": file.id])
                             NotificationCenter.default.post(name: Notification.Name("KoeFlushBleOutbound"), object: nil)
                         }.disabled(device.busy)
                     }

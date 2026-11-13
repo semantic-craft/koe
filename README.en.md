@@ -14,7 +14,7 @@
 
 Koe connects directly to an Anker soundcore Work (D3200) recorder without Feishu. It keeps recordings and transcripts on your Mac, then organizes discussions into minutes, tasks, and memories. You can also import files or create text notes.
 
-The product starts on macOS. **Today reviews the day, recording details preserve the original material, and Ask Koe searches across records.** Rust owns the data and processing state; SwiftUI presents it and handles native system interactions.
+The product starts on macOS. **Today starts capture and reviews the day, Notes collects transcripts and analysis, and Actions holds tasks.** Rust owns the data and processing state; SwiftUI presents it and handles native system interactions.
 
 ## Workflow
 
@@ -23,11 +23,11 @@ The product starts on macOS. **Today reviews the day, recording details preserve
 3. **Review tasks and memories.** Generated candidates wait for review. Accept, dismiss, edit, or restore them; task completion and memory decisions persist locally.
 4. **Follow the source.** Minutes, tasks, memories, and answers retain recording and utterance references. Open a source and return to the conversation. Audio records support playback and seeking; records export to Markdown.
 
-Today gathers the day's records, pending decisions, and next actions, with All and Archived filters. All Records holds the complete library. Each record owns its transcript, minutes, highlights, and processing state, supports inline segment editing with original ASR text provenance, speaker reassignment and batch merge with stale-minutes notice, and can be archive-locked or moved to the 30-day Trash with an undo bar, restore, and permanent purge after metadata commit. Questions can target one record or the whole library.
+Today combines quick notes, all-day listening, meetings and dictation with existing minutes summaries and the day's timeline. Capture controls remain available across pages. Device and source management live in Settings. All Records holds the complete library. Each record owns its transcript, minutes, highlights, and processing state, supports inline segment editing with original ASR text provenance, speaker reassignment and batch merge with stale-minutes notice, and can be archive-locked or moved to the 30-day Trash with an undo bar, restore, and permanent purge after metadata commit. Questions can target one record or the whole library.
 
 Without cloud configuration, text notes, browsing, review, playback, and local retrieval remain available. Ask Koe labels retrieved original passages accordingly. Speech recognition uses the selected local or cloud engine. Generated minutes require a configured text service.
 
-Mac microphone recording supports pause and resume. Pausing drains accepted audio before confirmation; resuming continues the same recording without adding the pause interval. Audio stays local by default. Real permission, device switching, playback, and signed-app restart checks remain in [#616](https://github.com/semantic-craft/koe/issues/616) and [#620](https://github.com/semantic-craft/koe/issues/620). System audio capture is not connected yet. Staged local audio can be recovered after restart.
+Mac microphone recording supports pause and resume. Pausing drains accepted audio before confirmation; resuming continues the same recording without adding the pause interval. Audio stays local by default. Real permission, device switching, playback, and signed-app restart checks remain in [#616](https://github.com/semantic-craft/koe/issues/616) and [#620](https://github.com/semantic-craft/koe/issues/620). System audio capture is not connected yet. Text-only audio deletion, a combined whole-day analysis and live AI meeting minutes are also not connected. Dictation exposes the local text bridge for an external input method and currently retains its recording. Device validation is tracked in [#668](https://github.com/semantic-craft/koe/issues/668). Staged local audio can be recovered after restart.
 
 ## Data and service boundaries
 

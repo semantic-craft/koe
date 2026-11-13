@@ -196,12 +196,24 @@
       },
       {
         "number": 665,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T05:54:10Z"
+      },
+      {
+        "number": 667,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T05:44:47Z"
+        "updated_at": "2026-11-13T06:03:06Z"
+      },
+      {
+        "number": 668,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-13T06:05:46Z"
       }
     ],
-    "main": "c24928644e10e1a49f821ea14791be188f466c55",
+    "main": "047f1326033cb3285b2f4272a6b3161e861837d6",
     "open_pulls": [],
     "pulls": [
       {
@@ -360,7 +372,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T05:45:53.149658Z",
+  "observed_at": "2026-11-13T06:09:37.436630Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -870,6 +882,25 @@
           "status": "done",
           "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。 PR #663 已通过 CI 并 squash 合并为 e513032。",
           "title": "全天听记、下载模型与通用听写文字"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "原生接入范围。",
+              "ref": 667
+            },
+            {
+              "kind": "issue",
+              "note": "真实录音、外部输入法与签名版连续使用验收。",
+              "ref": 668
+            }
+          ],
+          "id": "day-journal-native",
+          "next": "完成全量检查、隔离原生窗口验证与独立复核。",
+          "status": "in_progress",
+          "summary": "按已选定的一天一页收敛稿接入四模式、当天内容、随心记与行动。Rust 管理采集模式、可用动作与日页投影；原生验收进行中。",
+          "title": "一天一页原生界面"
         }
       ],
       "title": "当前产品实现"
@@ -1130,13 +1161,13 @@
             },
             {
               "kind": "file",
-              "ref": "scripts/test_install_macos.py",
-              "note": "许可完整复制、旧文件清除及软链包外写入回归先红后绿"
+              "note": "许可完整复制、旧文件清除及软链包外写入回归先红后绿",
+              "ref": "scripts/test_install_macos.py"
             },
             {
               "kind": "note",
-              "ref": "2026-11-13 本机验证",
-              "note": "正常构建与 --skip-build 的独立 Developer ID 安装包均通过签名、自检、冒烟及 8 份许可文件字节核对；完整 scripts/check 通过。"
+              "note": "正常构建与 --skip-build 的独立 Developer ID 安装包均通过签名、自检、冒烟及 8 份许可文件字节核对；完整 scripts/check 通过。",
+              "ref": "2026-11-13 本机验证"
             }
           ],
           "id": "third-party-license-bundle",
@@ -1204,7 +1235,9 @@
       657,
       661,
       662,
-      665
+      665,
+      667,
+      668
     ],
     "pulls": [
       589,

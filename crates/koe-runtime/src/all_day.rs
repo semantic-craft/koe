@@ -77,7 +77,10 @@ impl KoeRuntime {
             ordinal,
         })
     }
-    pub(super) fn all_day_json(&self) -> Value {
+    pub(super) fn all_day_json(
+        &self,
+        mic: Option<&crate::microphone::MicrophoneStatus<'_>>,
+    ) -> Value {
         let Some(run) = &self.all_day.run else {
             return json!({"state":"idle","source":null,"runId":null,"segmentCount":0,"message":null});
         };
@@ -87,21 +90,20 @@ impl KoeRuntime {
             .values()
             .filter(|r| r.all_day.as_ref().is_some_and(|s| s.run_id == run.id))
             .count();
-        let mic = self.microphone_json();
-        let failure = mic["error"]
-            .as_str()
-            .or_else(|| mic["interruption"].as_str())
-            .map(str::to_owned)
+        let failure = self
+            .microphone
+            .as_ref()
+            .and_then(|m| m.save_error.clone())
+            .or_else(|| mic.and_then(|m| m.interruption).map(str::to_owned))
             .or_else(|| self.drain_error.clone());
         let stopping = run.stopping
             || (run.source == "microphone"
-                && !matches!(
-                    mic["phase"].as_str(),
-                    Some("starting" | "recording" | "paused" | "pausing")
-                ));
+                && !mic.is_some_and(|m| {
+                    matches!(m.phase, "starting" | "recording" | "paused" | "pausing")
+                }));
         json!({"state":if stopping{"finishing"}else{"recording"},"source":run.source,"runId":run.id,"segmentCount":count,"message":failure.or_else(||stopping.then(||"正在保存最后一段".into()))})
     }
-    pub(super) fn reconcile_all_day(&mut self) {
+    pub(super) fn reconcile_all_day(&mut self) -> bool {
         if let Some(run) = &mut self.all_day.run {
             if run.source == "microphone" && self.microphone.is_none() {
                 run.stopping = true;
@@ -117,6 +119,7 @@ impl KoeRuntime {
         let done = self.all_day.run.as_ref().is_some_and(|run| {
             run.stopping
                 && self.microphone.is_none()
+                && (run.source != "bean" || !self.bean_capture_pending())
                 && self.captures.active.is_empty()
                 && !self.captures.sessions.iter().any(|(id, _)| {
                     self.workspace()
@@ -125,8 +128,15 @@ impl KoeRuntime {
                         .is_some_and(|s| s.run_id == run.id)
                 })
         });
-        if done {
-            self.all_day.run = None;
+        if done
+            && self
+                .all_day
+                .run
+                .take()
+                .is_some_and(|run| run.source == "bean")
+        {
+            self.set_source_dictation(crate::speech::DictationSource::Bean, false);
         }
+        done
     }
 }

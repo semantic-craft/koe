@@ -37,6 +37,7 @@ impl KoeRuntime {
         } else {
             0
         };
+        let now = if now > 0 { now } else { self.last_now_sec };
         let today = local_date(now);
         let rows: Vec<_> = records.iter().filter(|r| r.is_live()).map(|record| {
             let is_live = Some(record.aggregate.recording_id.as_str()) == live_record_id;
@@ -269,8 +270,12 @@ impl KoeRuntime {
             "standbyReady": self.is_standby_ready(),
             "guide": self.device.guide_json()
         });
-        json!({"speech":self.speech_json(),"allDay":self.all_day_json(),"dictation":{"active":self.speech.dictation_active},"lifecycle": self.lifecycle_json(),
-            "microphone": self.microphone_json(), "capture": self.capture_studio_json(), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
+        let microphone = self.microphone_status();
+        let capture_selection = self.capture_selection();
+        json!({"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
+            "journal":crate::journal::journal_json(now, &records, &today_ids),
+            "captureModes":self.capture_modes_json(&capture_selection),"activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
+            "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,
             "canGoBack":!self.back.is_empty(),"selectedRecordId":self.location.record,"focusSegmentId":self.location.segment,
             "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
@@ -428,7 +433,7 @@ impl KoeRuntime {
     }
 }
 
-fn local_date(epoch: u64) -> Option<chrono::NaiveDate> {
+pub(super) fn local_date(epoch: u64) -> Option<chrono::NaiveDate> {
     i64::try_from(epoch)
         .ok()
         .and_then(|n| DateTime::from_timestamp(n, 0))
