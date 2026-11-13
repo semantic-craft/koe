@@ -220,18 +220,13 @@
       },
       {
         "number": 675,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-13T08:37:29Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T09:35:18Z"
       }
     ],
-    "main": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
-    "open_pulls": [
-      {
-        "head": "ab6f2a4022e76308770f2bbe8e0063e74df16915",
-        "number": 677
-      }
-    ],
+    "main": "d6f9406cc076eacec02b2f0c56e1939e875bf375",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -413,7 +408,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T09:29:15.764448Z",
+  "observed_at": "2026-11-13T09:57:13.943913Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1028,12 +1023,17 @@
               "kind": "file",
               "note": "重复记录先红后绿，键盘尾音、取消与旧 epoch 回归。",
               "ref": "crates/koe-runtime/src/companion_mcp_tests.rs"
+            },
+            {
+              "kind": "file",
+              "note": "PCMHW 记录真实收音部分验收、环境限制和恢复普通模式时保存 05:28 设备录音的副作用。未注入合成 PCM，隔离实例清理通过。",
+              "ref": "docs/pstack-relay.md"
             }
           ],
           "id": "responsay-external-pcm",
-          "next": "与 Responsay 的硬件设置一起交付；物理设备证据单独记录，不以 PCM 回放替代。",
+          "next": "PCMHW 保持未完成。Responsay #810 跟踪全自动识别上屏、实体双击、三种快捷键、断连恢复及无重复录音或识别。隔离实例缺少辅助功能权限，截图验收启动也未启用快捷键录制监听器和双击回调；不得自动授予权限或安排人工操作。",
           "status": "done",
-          "summary": "已实现按 socket 独占的外部 PCM 采集。Koe 不重复启动自身听写；停止确认排在音频尾部之后。完整 check 与清理后的相关回归、Clippy 通过；双端真实硬件识别仍未验收。",
+          "summary": "已实现按 socket 独占的外部 PCM 采集，停止确认排在音频尾部之后。软件回归已覆盖不重复启动 Koe 听写。2026-11-13 真实 D3200 提供 11.56 秒非静音 PCM，软件起止确认及 Responsay 隔离完整应用的真实音量检测、引导选源通过。真实识别与光标写入仍未验收，不能据此宣称无丢包、尾音完整或不留录音。",
           "title": "Responsay 独占外部 PCM 输入"
         }
       ],
