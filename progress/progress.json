@@ -243,7 +243,7 @@
         "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "dec581345c91573bab3119089ca9138bcbcc43a1",
+    "main": "708dc880ee15d04bff3ed1aceaf54d73e756dcc0",
     "open_pulls": [],
     "pulls": [
       {
@@ -466,7 +466,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T15:29:10.242062Z",
+  "observed_at": "2026-11-13T16:18:06.538978Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1510,6 +1510,20 @@
           "status": "done",
           "summary": "已补齐 tacshi/Soundcore 的 MIT 正文和 Rocky Shi 署名；正常构建及 --skip-build 均在签名前更新许可。安装器 9 项回归和全量门禁通过；真实 Developer ID 签名包自检、冒烟通过，8 份文件逐字节一致。仓库保持私有，未替换日常应用。",
           "title": "Soundcore MIT 署名与安装包许可"
+        },
+        {
+          "id": "private-release-200",
+          "title": "Koe 2.0.0 私有发行包",
+          "status": "in_progress",
+          "summary": "准备首个私有 GitHub Release v2.0.0，macOS 构建号 9。模式入口、普通录音默认随心闪记和 Responsay 联动沿用当前主线；完整四业务页与硬件输入验收保持未完成。",
+          "next": "独立评审通过后合并版本变更，核验签名包、自检和公证，再创建私有 Release。日常升级由协调者统一执行。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/releases/v2.0.0.md",
+              "note": "发行范围、安装方式和未验收边界。"
+            }
+          ]
         }
       ],
       "title": "验收与交付"

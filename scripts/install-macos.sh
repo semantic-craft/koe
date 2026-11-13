@@ -57,7 +57,7 @@ write_info_plist() {
   <key>CFBundleShortVersionString</key>
   <string>2.0.0</string>
   <key>CFBundleVersion</key>
-  <string>8</string>
+  <string>9</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
