@@ -93,6 +93,12 @@ impl KoeRuntime {
         if mode == CaptureMode::Dictation {
             self.set_source_dictation(self.capture_dictation_source(), true);
         }
+        if mode == CaptureMode::Meeting {
+            self.go(Location {
+                page: Page::LiveMinutes,
+                ..Location::default()
+            });
+        }
         Ok(())
     }
 

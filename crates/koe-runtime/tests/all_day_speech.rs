@@ -33,6 +33,44 @@ fn audio(r: &mut KoeRuntime, t: &Value, sequence: u64, n: usize) -> Value {
     )
 }
 #[test]
+fn live_minutes_keeps_final_and_draining_draft_until_the_next_recording() {
+    let d = Sandbox::new();
+    let mut r = KoeRuntime::open(&d.0).unwrap();
+    apple_ready(&mut r);
+    let s = send(&mut r, json!({"type":"start_microphone","inputId":"fixture"}));
+    let t = &s["microphone"];
+    microphone_started(&mut r, t);
+    audio(&mut r, t, 0, 320);
+    let op = accept_windows(&mut r, "")[0];
+    let final_segment = send(&mut r, json!({"type":"local_asr_result","operationId":op,"text":"已确认原文","startMs":0,"endMs":10,"isFinal":true}));
+    assert_eq!(final_segment["liveMinutes"]["parts"][0]["segments"][0]["text"], "已确认原文");
+    send(&mut r, json!({"type":"local_asr_result","operationId":op,"text":"仍在识别","startMs":10,"endMs":20,"isFinal":false}));
+    send(&mut r, json!({"type":"navigate","section":"live_minutes"}));
+    send(&mut r, json!({"type":"stop_microphone"}));
+    let saved = send(&mut r, json!({"type":"microphone_stopped","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":1}));
+    assert_eq!(saved["section"], "live_minutes");
+    assert_eq!(saved["liveMinutes"]["phase"], "finishing");
+    assert_eq!(saved["liveMinutes"]["parts"][0]["drafts"], json!(["仍在识别"]));
+    send(&mut r, json!({"type":"local_asr_result","operationId":op,"text":"停止时的尾句","startMs":10,"endMs":20,"isFinal":true}));
+    let finished = send(&mut r, json!({"type":"local_asr_finished","operationId":op}));
+    let minutes = &finished["liveMinutes"];
+    assert_eq!(minutes["phase"], "ended");
+    assert_eq!(minutes["parts"][0]["recordId"], t["recordId"]);
+    assert_eq!(minutes["parts"][0]["segments"][1]["text"], "停止时的尾句");
+    assert_eq!(minutes["parts"][0]["drafts"], json!([]));
+    assert_eq!(minutes["parts"][0]["analysis"], "unconfigured");
+    assert_eq!(minutes["parts"][0]["summary"], json!([]));
+
+    let next = send(&mut r, json!({"type":"start_microphone","inputId":"fixture"}));
+    assert_ne!(next["liveMinutes"]["scope"], minutes["scope"]);
+    assert_eq!(next["liveMinutes"]["parts"], json!([]));
+    drop(r);
+    let reopened = KoeRuntime::open(&d.0).unwrap();
+    assert!(reopened.snapshot(100)["liveMinutes"].is_null());
+    assert!(reopened.workspace().record(t["recordId"].as_str().unwrap()).is_some());
+}
+
+#[test]
 fn microphone_creates_durable_record_on_first_audio_and_uses_selected_speech_engine() {
     let d = Sandbox::new();
     let mut r = KoeRuntime::open(&d.0).unwrap();
@@ -194,7 +232,7 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         wait_release
             .recv_timeout(std::time::Duration::from_secs(10))
             .unwrap();
-        let summary=json!({"schemaVersion":2,"title":"全天听记","overview":"已封段原文","topics":[],"decisions":[],"actions":[],"questions":[],"terms":[],"reviewItems":[]}).to_string();
+        let summary=json!({"schemaVersion":2,"title":"全天听记","overview":"已封段原文","topics":[{"text":"本段要点","summary":"已封段原文","sources":["S1"]}],"decisions":[],"actions":[],"questions":[],"terms":[],"reviewItems":[]}).to_string();
         let body = json!({"choices":[{"message":{"content":summary}}]}).to_string();
         write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
     });
@@ -282,6 +320,20 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert_eq!(r.snapshot(100)["journal"]["summaries"][0]["text"], "已封段原文");
+    let live = r.snapshot(100);
+    let minutes = &live["liveMinutes"];
+    assert_eq!(minutes["scope"], json!({"kind":"all_day","id":first.all_day.as_ref().unwrap().run_id}));
+    assert_eq!(minutes["phase"], "recording");
+    assert_eq!(minutes["parts"][0]["recordId"], first.aggregate.recording_id);
+    assert_eq!(minutes["parts"][0]["analysis"], "ready");
+    assert_eq!(minutes["parts"][0]["summary"][0]["text"], "已封段原文");
+    let source = &minutes["parts"][0]["summary"][1]["sources"][0];
+    assert_eq!(source["recordId"], first.aggregate.recording_id);
+    assert_eq!(source["segmentId"], "S1");
+    assert_eq!(source["quote"], "已封段原文");
+    assert_eq!(minutes["parts"][1]["ordinal"], 2);
+    assert_eq!(minutes["parts"][1]["summary"], json!([]));
+
     send(&mut r, json!({"type":"stop_all_day"}));
     send(
         &mut r,
@@ -502,6 +554,18 @@ fn dictation_selection_does_not_publish_background_file_transcription() {
     );
     let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
     let op = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"].clone();
+    let active = send(&mut r, json!({"type":"start_capture_mode","mode":"meeting"}));
+    let ticket = &active["microphone"];
+    microphone_started(&mut r, ticket);
+    audio(&mut r, ticket, 0, 320);
+    let during_background_draft = send(
+        &mut r,
+        json!({"type":"local_asr_result","operationId":op,"text":"后台文件临时字幕","startMs":0,"endMs":20,"isFinal":false}),
+    );
+    assert_eq!(during_background_draft["liveCaption"]["text"], "后台文件临时字幕");
+    let live = &during_background_draft["liveMinutes"];
+    assert_eq!(live["parts"][0]["recordId"], ticket["recordId"]);
+    assert_eq!(live["parts"][0]["drafts"], json!([]));
     send(
         &mut r,
         json!({"type":"local_asr_result","operationId":op,"text":"后台文件原文","startMs":0,"endMs":20,"isFinal":true}),
@@ -510,6 +574,7 @@ fn dictation_selection_does_not_publish_background_file_transcription() {
         &mut r,
         json!({"type":"local_asr_finished","operationId":op}),
     );
+    assert_eq!(r.snapshot(100)["liveMinutes"]["parts"][0]["segments"], json!([]));
     assert!(r.drain_companion_events().is_empty());
     assert_eq!(
         r.workspace()

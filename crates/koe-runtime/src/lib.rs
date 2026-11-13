@@ -23,6 +23,7 @@ mod dictation_capture;
 mod journal;
 mod legacy;
 mod lifecycle;
+mod live_minutes;
 #[cfg(test)]
 mod lifecycle_tests;
 mod local_asr;
@@ -89,6 +90,7 @@ pub struct KoeRuntime {
     speech: speech::SpeechState,
     dictation_capture: Option<dictation_capture::DictationCapture>,
     all_day: all_day::AllDayState,
+    live_minutes_scope: Option<live_minutes::LiveMinutesScope>,
     capture_studio: capture_studio::CaptureStudioState,
     microphone: Option<microphone::Microphone>,
     bean_capture_mode: Option<command::CaptureMode>,
@@ -123,6 +125,7 @@ impl KoeRuntime {
             speech: speech::SpeechState::new(&root),
             dictation_capture: None,
             all_day: Default::default(),
+            live_minutes_scope: None,
             root,
             generation: 1,
             location: Location::default(),
@@ -714,6 +717,7 @@ impl KoeRuntime {
                         false,
                     );
                     self.device.accept(outcome);
+                    self.live_minutes_scope = Some(live_minutes::LiveMinutesScope::BeanStarting);
                     self.drive_companion(now);
                 }
             }

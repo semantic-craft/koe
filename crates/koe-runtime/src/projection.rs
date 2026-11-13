@@ -281,7 +281,7 @@ impl KoeRuntime {
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
             "device":device_json,
             "localAsr":{"state":self.local_asr.state,"message":self.local_asr.message},
-            "liveCaption":self.live_caption_json(),
+            "liveCaption":self.live_caption_json(),"liveMinutes":self.live_minutes_view(),
             "provider":{"meetingAudioPolicy":self.workspace().provider_configuration().meeting_audio_policy.as_str(),"meetingAudioPolicyError":self.audio_policy_error,"meetingAudioStatus":if self.workspace().provider_configuration().meeting_audio_policy == MeetingAudioPolicy::LocalOnly { Some("音频只保存在本机；云端语音上传已关闭。".to_string()) } else { self.ensure_meeting_audio_upload().err() },"configured":self.text_provider_configured(),"model":self.workspace().provider_configuration().model,"asrEndpoint":self.workspace().provider_configuration().asr_endpoint,"chatEndpoint":self.workspace().provider_configuration().chat_endpoint,"credentialState":self.credential_state(),"isolated":self.credentials.isolated()},
             "playback":self.playback_json(),
             "migrationReports": self.workspace().migrations().iter().map(|m|json!({"fingerprint":m.fingerprint,"archivePath":self.root.join(&m.archive).to_string_lossy(),"pending":m.pending,"recordCount":m.record_ids.len()})).collect::<Vec<_>>(),
@@ -304,18 +304,7 @@ impl KoeRuntime {
             .spine
             .segments()
             .iter()
-            .map(|s| {
-                json!({
-                    "id": s.id.to_string(),
-                    "text": s.text,
-                    "originalText": s.original_text,
-                    "isEdited": s.is_edited(),
-                    "startMs": s.start_ms,
-                    "endMs": s.end_ms,
-                    "timed": s.end_ms > s.start_ms,
-                    "speaker": s.speaker,
-                })
-            })
+            .map(crate::live_minutes::TranscriptLine::from)
             .collect();
         let speakers: Vec<_> = record
             .distinct_speakers()
@@ -338,27 +327,7 @@ impl KoeRuntime {
         {
             summary.push(json!({"title":format!("旧版纪要（未验证来源） · {}", imported.slot),"text":imported.text,"sources":[]}));
         }
-        let source_values = |ids: &[SegmentId]| -> Vec<Value> {
-            ids.iter()
-                .filter_map(|s| {
-                    self.source_json(&SourceRef {
-                        record_id: aggregate.recording_id.clone(),
-                        segment_id: *s,
-                    })
-                })
-                .collect()
-        };
-        if let Some(minutes) = &aggregate.minutes {
-            if !minutes.overview.is_empty() {
-                summary.push(json!({"title":"摘要","text":minutes.overview,"sources":[]}));
-            }
-            for topic in &minutes.topics {
-                summary.push(json!({"title":topic.title,"text":topic.summary,"sources":source_values(&topic.citations)}));
-            }
-            for decision in &minutes.decisions {
-                summary.push(json!({"title":"决定","text":decision.claim,"sources":source_values(&decision.citations)}));
-            }
-        }
+        summary.extend(self.minutes_sections(record).iter().map(|section| json!(section)));
         let mut highlighted = record.highlighted_segments.clone();
         for mark in &aggregate.bookmarks {
             if let Some(segment) = aggregate
@@ -426,10 +395,8 @@ impl KoeRuntime {
     }
 
     pub(crate) fn source_json(&self, source: &SourceRef) -> Option<Value> {
-        let evidence = self.workspace().resolve_live_source(source).ok()?;
-        Some(
-            json!({"recordId":source.record_id,"segmentId":source.segment_id.to_string(),"title":evidence.title,"quote":evidence.quote,"startMs":evidence.start_ms}),
-        )
+        self.source_view(&source.record_id, source.segment_id)
+            .map(|source| json!(source))
     }
 }
 

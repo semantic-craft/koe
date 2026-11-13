@@ -144,6 +144,7 @@ impl KoeRuntime {
             level: 0.0,
             save_error: None,
         });
+        self.live_minutes_scope = Some(crate::live_minutes::LiveMinutesScope::Record(id));
         Ok(())
     }
     pub(super) fn microphone_prepared(
@@ -650,7 +651,7 @@ impl KoeRuntime {
             self.set_source_dictation(DictationSource::Microphone, false);
             self.capture_saved(&m.current_record_id);
             self.poll_captures();
-            if m.mode.is_none() {
+            if m.mode.is_none() && self.location.page != Page::LiveMinutes {
                 self.open_record(&m.current_record_id, None)?;
             }
             self.notice = Some(if partial {

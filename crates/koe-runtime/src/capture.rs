@@ -92,11 +92,14 @@ impl KoeRuntime {
                 now,
                 0,
             )?;
-            if let Some(group) = group {
-                w.group_all_day(&id, group)?;
+            if let Some(group) = &group {
+                w.group_all_day(&id, group.clone())?;
             }
             Ok(())
         })?;
+        if group.is_none() {
+            self.live_minutes_scope = Some(crate::live_minutes::LiveMinutesScope::Record(id.clone()));
+        }
         self.captures.active.insert(file_id, id.clone());
         self.captures.records_by_file_id.insert(file_id, id.clone());
         Ok(id)

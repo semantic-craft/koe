@@ -17,7 +17,7 @@ public struct KoeWorkspaceRootView: View {
             Rectangle().fill(AppColors.border).frame(width: 1)
             VStack(spacing: 0) {
                 toolbar
-                if let caption = store.snapshot.liveCaption {
+                if store.snapshot.section != "live_minutes", let caption = store.snapshot.liveCaption {
                     LiveCaptionBar(caption: caption, store: store)
                 }
                 if let message = store.nativeError ?? store.snapshot.error {
@@ -76,11 +76,6 @@ public struct KoeWorkspaceRootView: View {
                     store.send("navigate", ["section": "trash"])
                 }
             }
-            if store.snapshot.section != "ask" {
-                KoeActionButton("问 Koe", systemImage: "sparkles") {
-                    store.send("navigate", ["section": "ask"])
-                }
-            }
             KoeActionButton("新建记录", systemImage: "plus") { showNewNote = true }
                 .keyboardShortcut("n", modifiers: .command)
             KoeActionButton("导入", systemImage: "square.and.arrow.down", isPrimary: true, action: importAction)
@@ -97,6 +92,7 @@ public struct KoeWorkspaceRootView: View {
         case "detail": store.snapshot.detail?.title ?? "记录"
         case "tasks": "行动"
         case "memory": "记忆"
+        case "live_minutes": "实时纪要"
         case "ask": "问 Koe"
         case "trash": "回收站"
         case "settings": "设置"
@@ -111,6 +107,7 @@ public struct KoeWorkspaceRootView: View {
         case "detail": RecordDetailView(store: store)
         case "tasks": TasksView(store: store)
         case "memory": MemoryView(store: store)
+        case "live_minutes": LiveMinutesView(store: store)
         case "ask": AskView(store: store)
         case "trash": TrashView(store: store)
         case "settings": SettingsDoctorView(store: store)

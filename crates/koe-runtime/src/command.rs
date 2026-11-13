@@ -12,6 +12,7 @@ pub(crate) enum Page {
     Tasks,
     Memory,
     Ask,
+    LiveMinutes,
     Trash,
     Settings,
 }
