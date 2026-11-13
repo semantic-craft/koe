@@ -3,17 +3,18 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-13T15:18:56.315315Z</p>
-<p>Main: <code>main: 3740707c5f547371d906f3f63efdccd4c0b69ff3</code></p>
+<p>Observed: 2026-11-13T15:29:10.242062Z</p>
+<p>Main: <code>main: dec581345c91573bab3119089ca9138bcbcc43a1</code></p>
 <section id="mode-workspaces-definition"><h2>四模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>四种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。交付为文档和交互稿，尚未实现完整正式页面。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/687">issue 687: 本单仅交付业务定义和方案。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/mode-workspaces.md">file docs/mode-workspaces.md: 已明确实现、原型与未验收边界。</a></li>
 </ul><p>Next: 正式页面实现沿用当前Rust状态与既有MCP，不重建资料库。</p></article>
 <article id="mode-workspaces-pages"><h3>正式四工作区业务页面</h3><span class="badge">planned</span><p>项目归类、跨片段语义事件、完整实时纪要覆盖和跨App快捷键设置回执仍待实现。Responsay键家族开关软件已经独立合并并签名安装。</p><ul>
 <li>note https://github.com/semantic-craft/responsay-macos/pull/823: 仅证明Responsay软件交付；不证明Koe新业务页面或物理效果。</li>
 </ul><p>Next: 按单个可验证业务切片实施。</p></article>
-<article id="mode-workspaces-real-input"><h3>真实识别与光标上屏</h3><span class="badge">unverified</span><p>物理双击、Responsay实时识别与原光标仍未验收。既有PCM、软件起止和引导选源通过项保留。本轮鼠标按住尝试无确认结果，原测试文本未改变。</p><ul>
+<article id="mode-workspaces-real-input"><h3>真实识别与光标上屏</h3><span class="badge">unverified</span><p>物理双击、Responsay实时识别与原光标仍未验收。既有PCM、软件起止和引导选源通过项保留。本轮鼠标按住尝试无确认结果，原测试文本未改变。 前台确认后再次15秒按住，条件日志播放器仍未观察到启动证据；未播放测试声音，不能据此断言麦克风失败。</p><ul>
 <li>note https://github.com/semantic-craft/responsay-macos/issues/810: 不以软件回放、合成PCM或代贴文本替代。</li>
 </ul><p>Next: 仅补可自动执行的真实证据；无法执行的物理项保持未验收。</p></article>
 </section>
