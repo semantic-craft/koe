@@ -214,7 +214,12 @@
       }
     ],
     "main": "047f1326033cb3285b2f4272a6b3161e861837d6",
-    "open_pulls": [],
+    "open_pulls": [
+      {
+        "head": "8ec17ec9fbbb598736289815cba72fc2279a6ba8",
+        "number": 669
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -367,12 +372,20 @@
         "merged": true,
         "number": 663,
         "state": "closed"
+      },
+      {
+        "base": "047f1326033cb3285b2f4272a6b3161e861837d6",
+        "head": "8ec17ec9fbbb598736289815cba72fc2279a6ba8",
+        "merge_commit": "a1f6e95d1386be31af06499d27375ba6f902d1bf",
+        "merged": false,
+        "number": 669,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T06:09:37.436630Z",
+  "observed_at": "2026-11-13T06:22:33.276620Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -894,12 +907,32 @@
               "kind": "issue",
               "note": "真实录音、外部输入法与签名版连续使用验收。",
               "ref": 668
+            },
+            {
+              "kind": "pull",
+              "ref": 669,
+              "note": "原生实现与独立 PASS+NOTES 审查。"
+            },
+            {
+              "kind": "file",
+              "ref": "crates/koe-runtime/tests/day_journal.rs",
+              "note": "四模式跨页、跨午夜刷新、真实导入原文及已有摘要。"
+            },
+            {
+              "kind": "file",
+              "ref": "crates/koe-runtime/tests/all_day_speech.rs",
+              "note": "语音输入恢复和结束尾块以外部桥定稿事件先红后绿。"
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-13 隔离原生验收",
+              "note": "真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页/单独结束听写。非物理录音验收，QA应用和进程已清理。"
             }
           ],
           "id": "day-journal-native",
-          "next": "完成全量检查、隔离原生窗口验证与独立复核。",
-          "status": "in_progress",
-          "summary": "按已选定的一天一页收敛稿接入四模式、当天内容、随心记与行动。Rust 管理采集模式、可用动作与日页投影；原生验收进行中。",
+          "next": "物理麦克风/D3200、外部输入法与签名版按 #668 验收。只留文字后删除音频、整天合并分析及实时 AI 会议纪要尚未接入。",
+          "status": "done",
+          "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。尚未安装到日常应用。",
           "title": "一天一页原生界面"
         }
       ],
@@ -1258,7 +1291,8 @@
       646,
       656,
       660,
-      663
+      663,
+      669
     ]
   }
 }
