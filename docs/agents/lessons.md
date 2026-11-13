@@ -258,9 +258,10 @@
 ### 本地 HTTP 夹具的接收连接须显式恢复阻塞读取
 
 - 出处：2026-11-10 N4A（#607）首次全量门禁，`cloud_workflow` 的 HTTP 读取在 0.34 秒内返回 WouldBlock，未到设置的 5 秒读取期限。
-- 修复：监听器保留非阻塞 accept 与总期限，接受的连接在读取 HTTP 正文前显式 `set_nonblocking(false)`，再设置读写期限。
-- 验证点：`cargo test -p koe-runtime --test cloud_workflow` 与 `scripts/check`；读取必须等到完整 Content-Length，不能把刚 accept 当成正文已经到齐。
-- Seen 1x（2026-11-10）。
+- 复发：2026-11-13 #684 的 CI 在 `network.rs` 同类夹具失败；本机诊断读取在 19 微秒返回 WouldBlock，配置的 3 秒超时未生效。
+- 修复：监听器保留非阻塞 accept 与总期限，接受的连接在读取 HTTP 正文前显式 `set_nonblocking(false)`，再设置读写期限；5a600bf 将同样约束补入 loopback chat 夹具，保留完整正文和无 Authorization 断言。
+- 验证点：`cargo test -p koe-runtime --test cloud_workflow` 、`cargo test -p koe-client-providers --test network`（本轮 9 项通过）与 `scripts/check`；读取必须等到完整 Content-Length，不能把刚 accept 当成正文已经到齐。
+- Seen 2x（2026-11-10、2026-11-13）。
 
 ### 停止确认必须有丢包后的重试路径
 
