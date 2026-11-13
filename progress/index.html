@@ -139,12 +139,12 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/681">pull 681: 与 #680 已验生产源码及测试相同；保留并行主线 #679 的进度事实。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/acceptance/cloud-minutes-668-2026-11-13.md">file docs/acceptance/cloud-minutes-668-2026-11-13.md: Studio Display物理采集合成语音并调用真实云端，录中更新、停止补齐与来源通过；实体异写和时间更新的内容准确性失败。非自然人语音验收，不关闭#668。</a></li>
 </ul><p>Next: 复用真实云端失败样本修复实体异写与后续决定覆盖旧信息的问题。录中更新、停止补齐、来源引用与跳转已自动验证，不重复。#668整体保持未完成。</p></article>
-<article id="voice-input-mode-entry"><h3>模式选择与一键语音输入入口</h3><span class="badge">in_progress</span><p>首页只展示模式选择，移除首页录音片段与摘要展示，不删除记录。侧栏语音输入与首页按钮共用 Rust PrepareVoiceInput，自动启用领夹待命和 BLE 自动连接，经宿主固定 URL 请求 Responsay 选择 Koe 音源。Koe b050935 与 Responsay a4052255 完整差异已由独立代理审查 PASS；入口版 Koe e383b2c 与 Responsay fedee8ab 已在真实界面验证首页冷启动联动、录音豆待命、Responsay 就绪和侧栏重复进入；合入最新主线后的构建待重新安装验收。</p><ul>
+<article id="voice-input-mode-entry"><h3>模式选择与一键语音输入入口</h3><span class="badge">in_progress</span><p>首页改为模式选择并移除录音摘要展示，侧栏增加语音输入。点击入口自动准备录音豆待命并打开 Responsay，保留已有连接地址与记录。合入最新纪要主线后以 19d75d5 签名安装，真实首页联动显示两端已就绪；原入口版另验证了冷启动及侧栏重复进入。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/voice_input.rs">file crates/koe-runtime/src/voice_input.rs: Rust 持有待命配置、录制保护与去重宿主动作。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift">file platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift: 首页移除录音与摘要展示，提供语音输入入口。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift">file platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift: 固定 URL、去重打开及失败重试回归。</a></li>
 <li>note 2026-11-13 入口版真实界面验收: Koe e383b2c / Responsay fedee8ab 的 acceptance.json 记录首页四模式无摘要、实际首页点击冷启动 Responsay、录音豆待命及 Responsay 输入就绪、侧栏重复进入通过。未注入合成 PCM；实体双击、实时 ASR 和原光标写入未验证。</li>
-</ul><p>Next: 重新安装合入 #681/#682 后的构建并完成集成门禁。现有 dev socket override 保留。入口联动已通过，真实 ASR、原光标输入与物理双击仍按 Responsay #810 验收，不能用已有 PCM 或入口结果替代。</p></article>
+</ul><p>Next: 入口实现与安装验收通过，待本 PR 合并；PCMHW 的实体双击、实时 Responsay ASR 和原光标写入仍未验收，继续 #810，不要求人工参与或用合成 PCM 代替。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>

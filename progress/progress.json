@@ -1132,14 +1132,14 @@
             },
             {
               "kind": "note",
-              "ref": "2026-11-13 入口版真实界面验收",
-              "note": "Koe e383b2c / Responsay fedee8ab 的 acceptance.json 记录首页四模式无摘要、实际首页点击冷启动 Responsay、录音豆待命及 Responsay 输入就绪、侧栏重复进入通过。未注入合成 PCM；实体双击、实时 ASR 和原光标写入未验证。"
+              "note": "Koe e383b2c / Responsay fedee8ab 的 acceptance.json 记录首页四模式无摘要、实际首页点击冷启动 Responsay、录音豆待命及 Responsay 输入就绪、侧栏重复进入通过。未注入合成 PCM；实体双击、实时 ASR 和原光标写入未验证。",
+              "ref": "2026-11-13 入口版真实界面验收"
             }
           ],
           "id": "voice-input-mode-entry",
-          "next": "重新安装合入 #681/#682 后的构建并完成集成门禁。现有 dev socket override 保留。入口联动已通过，真实 ASR、原光标输入与物理双击仍按 Responsay #810 验收，不能用已有 PCM 或入口结果替代。",
+          "next": "入口实现与安装验收通过，待本 PR 合并；PCMHW 的实体双击、实时 Responsay ASR 和原光标写入仍未验收，继续 #810，不要求人工参与或用合成 PCM 代替。",
           "status": "in_progress",
-          "summary": "首页只展示模式选择，移除首页录音片段与摘要展示，不删除记录。侧栏语音输入与首页按钮共用 Rust PrepareVoiceInput，自动启用领夹待命和 BLE 自动连接，经宿主固定 URL 请求 Responsay 选择 Koe 音源。Koe b050935 与 Responsay a4052255 完整差异已由独立代理审查 PASS；入口版 Koe e383b2c 与 Responsay fedee8ab 已在真实界面验证首页冷启动联动、录音豆待命、Responsay 就绪和侧栏重复进入；合入最新主线后的构建待重新安装验收。",
+          "summary": "首页改为模式选择并移除录音摘要展示，侧栏增加语音输入。点击入口自动准备录音豆待命并打开 Responsay，保留已有连接地址与记录。合入最新纪要主线后以 19d75d5 签名安装，真实首页联动显示两端已就绪；原入口版另验证了冷启动及侧栏重复进入。",
           "title": "模式选择与一键语音输入入口"
         }
       ],
