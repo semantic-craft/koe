@@ -202,9 +202,9 @@
       },
       {
         "number": 667,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-13T06:03:06Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T06:29:17Z"
       },
       {
         "number": 668,
@@ -213,13 +213,8 @@
         "updated_at": "2026-11-13T06:05:46Z"
       }
     ],
-    "main": "047f1326033cb3285b2f4272a6b3161e861837d6",
-    "open_pulls": [
-      {
-        "head": "8ec17ec9fbbb598736289815cba72fc2279a6ba8",
-        "number": 669
-      }
-    ],
+    "main": "c12784593654af9450f9d9202d09928ac0fc0824",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -375,17 +370,17 @@
       },
       {
         "base": "047f1326033cb3285b2f4272a6b3161e861837d6",
-        "head": "8ec17ec9fbbb598736289815cba72fc2279a6ba8",
-        "merge_commit": "a1f6e95d1386be31af06499d27375ba6f902d1bf",
-        "merged": false,
+        "head": "39f55ca65a8eae202e6744583f383696e133f644",
+        "merge_commit": "c12784593654af9450f9d9202d09928ac0fc0824",
+        "merged": true,
         "number": 669,
-        "state": "open"
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T06:22:33.276620Z",
+  "observed_at": "2026-11-13T06:30:24.155857Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -910,29 +905,29 @@
             },
             {
               "kind": "pull",
-              "ref": 669,
-              "note": "原生实现与独立 PASS+NOTES 审查。"
+              "note": "原生实现与独立 PASS+NOTES 审查。",
+              "ref": 669
             },
             {
               "kind": "file",
-              "ref": "crates/koe-runtime/tests/day_journal.rs",
-              "note": "四模式跨页、跨午夜刷新、真实导入原文及已有摘要。"
+              "note": "四模式跨页、跨午夜刷新、真实导入原文及已有摘要。",
+              "ref": "crates/koe-runtime/tests/day_journal.rs"
             },
             {
               "kind": "file",
-              "ref": "crates/koe-runtime/tests/all_day_speech.rs",
-              "note": "语音输入恢复和结束尾块以外部桥定稿事件先红后绿。"
+              "note": "语音输入恢复和结束尾块以外部桥定稿事件先红后绿。",
+              "ref": "crates/koe-runtime/tests/all_day_speech.rs"
             },
             {
               "kind": "note",
-              "ref": "2026-11-13 隔离原生验收",
-              "note": "真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页/单独结束听写。非物理录音验收，QA应用和进程已清理。"
+              "note": "真实应用重开、新建记录、原文设为待办与来源返回通过；生产SwiftUI+真实Rust注入平台启动回执验证切页/单独结束听写。非物理录音验收，QA应用和进程已清理。",
+              "ref": "2026-11-13 隔离原生验收"
             }
           ],
           "id": "day-journal-native",
           "next": "物理麦克风/D3200、外部输入法与签名版按 #668 验收。只留文字后删除音频、整天合并分析及实时 AI 会议纪要尚未接入。",
           "status": "done",
-          "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。尚未安装到日常应用。",
+          "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。尚未安装到日常应用。 PR #669 已通过 CI 并 squash 合并为 c127845。",
           "title": "一天一页原生界面"
         }
       ],
