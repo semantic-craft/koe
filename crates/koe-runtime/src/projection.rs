@@ -252,6 +252,7 @@ impl KoeRuntime {
             "stopping": self.device.awaiting_stop,
             "recording": device_recording,
             "transferPhase": transfer_phase,
+            "transferErrorCode": device.transfer.error_code,
             "liveDurationMs": live_duration_ms,
             "liveBytes": device.transfer.received_wire_bytes,
             "liveRecordId": live_record_id,

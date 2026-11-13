@@ -1969,6 +1969,11 @@ impl TransportSession {
                 (0x1A, 0x07) | (0x1B, 0x07) => {
                     if let Some(head) = self.parse_any_file_head(&pkt.raw) {
                         let err = head.secret.error_code;
+                        if self.active_is_realtime && err != 0 && err != 0xFF {
+                            self.transfer.error_code = err;
+                            outcome.transfer_updated = true;
+                            continue;
+                        }
                         if err == 1 || err == 3 {
                             if self.wifi_batch_phase == WifiBatchPhase::Transferring {
                                 self.wifi_skipped_count = self.wifi_skipped_count.saturating_add(1);
