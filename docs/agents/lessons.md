@@ -353,3 +353,10 @@
 - 修复：仅正式默认工作区映射短路径；其他工作区独立解析。非阻塞 accept 通过线程唤醒和有界等待检查关闭状态，清理仅删除身份匹配的 socket。
 - 验证点：删除路径后会话销毁可结束、普通文件不被替换、隔离工作区不映射日常入口。
 - Seen 1x（2026-11-12）。
+
+### 原生实时识别的结果流错误必须在录音中立即交付
+
+- 出处：2026-11-12 #653 离线字幕独立审查。SpeechTranscriber 结果 reader 已失败时，旧实现只在 finish 等待 reader，导致录音继续而字幕停住。
+- 修复：结果回调使用 Result，错误绑定 operation 与 epoch 立即交给 Rust，先失效当前操作，再由独立任务取消识别器，避免 reader 等待自己。首次模型准备遵循 AssetInventory.reserve 的幂等语义，返回 false 只表示已预留，不当作失败。
+- 验证点：NativeLocalTranscriptionTests 的录音中及 finish 中 reader 故障测试。主回归改前 5 项断言失败，改后 9 项原生测试通过；禁止 outbound IP 的真实 Apple 识别器测试在停止输入前收到中文临时结果。
+- Seen 1x（2026-11-12）。

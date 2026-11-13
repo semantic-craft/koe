@@ -105,14 +105,19 @@ public struct SettingsDoctorView: View {
                             KoeBadge(store.snapshot.provider.configured ? "已配置" : "未配置",
                                      tint: store.snapshot.provider.configured ? AppColors.success : AppColors.textMuted)
                         }
-                        Text("使用阿里云百炼完成转写、整理与问答。未配置时，原文、待办、记忆和本地检索仍可使用。")
+                        Text("录音豆可在本机实时转写。云端服务用于可选的音频转写、文字整理与问答。")
                             .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary).lineSpacing(5)
                         HStack {
-                            Toggle("会议录音只留本机", isOn: Binding(
+                            Toggle("录音豆使用本机实时识别", isOn: Binding(
                                 get: { store.snapshot.provider.meetingAudioPolicy == "local_only" },
                                 set: { store.send("set_meeting_audio_policy", ["policy": $0 ? "local_only" : "cloud_allowed"]) }
                             ))
-                            InfoTip("开启后停止会议音频云端转写，保留本地录音。此前已发送的音频无法撤回。文字纪要与问答仍可发云；关闭后需手动重试已取消的任务。")
+                            InfoTip("开启后音频只留本机。macOS 26 及以上使用 Apple 简体中文实时识别，首次准备语言资源需要联网，识别时无需联网。已有文件的本机补转写尚未支持。文字纪要与问答仍可发云；不会自动改用云端识别。")
+                        }
+                        if let local = store.snapshot.localAsr {
+                            Label(local.message, systemImage: local.state == "ready" ? "checkmark.circle" : "info.circle")
+                                .font(.system(size: AppFontSizes.xs))
+                                .foregroundStyle(local.state == "ready" ? AppColors.success : AppColors.textSecondary)
                         }
                         if let status = store.snapshot.provider.meetingAudioStatus {
                             Text(status).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.warning)

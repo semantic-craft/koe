@@ -23,6 +23,7 @@ mod legacy;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
+mod local_asr;
 /// Centralized 16-tool MCP registry and step/poll dispatcher shared by native host and CLI.
 pub mod mcp_surface;
 mod microphone;
@@ -81,6 +82,7 @@ pub struct KoeRuntime {
     pending: BTreeMap<u64, PendingWork>,
     completed: std::collections::VecDeque<koe_client_providers::ProviderEvent>,
     captures: capture::Captures,
+    local_asr: local_asr::LocalAsr,
     capture_studio: capture_studio::CaptureStudioState,
     microphone: Option<microphone::Microphone>,
     auto_transcribe: std::collections::BTreeSet<String>,
@@ -124,6 +126,7 @@ impl KoeRuntime {
             pending: BTreeMap::new(),
             completed: std::collections::VecDeque::new(),
             captures: Default::default(),
+            local_asr: Default::default(),
             capture_studio: Default::default(),
             microphone: None,
             auto_transcribe: Default::default(),
@@ -166,7 +169,12 @@ impl KoeRuntime {
                 .and_then(|command| {
                     if !matches!(
                         command,
-                        Command::PlaybackProgress { .. } | Command::SyncAudioInputs { .. }
+                        Command::PlaybackProgress { .. }
+                            | Command::SyncAudioInputs { .. }
+                            | Command::LocalAsrReadiness { .. }
+                            | Command::LocalAsrResult { .. }
+                            | Command::LocalAsrFinished { .. }
+                            | Command::LocalAsrFailed { .. }
                     ) {
                         self.error = None;
                         self.notice = None;
@@ -205,7 +213,11 @@ impl KoeRuntime {
         if self.is_quitting()
             && !matches!(
                 command,
-                Command::RequestQuit
+                Command::LocalAsrReadiness { .. }
+                    | Command::LocalAsrResult { .. }
+                    | Command::LocalAsrFinished { .. }
+                    | Command::LocalAsrFailed { .. }
+                    | Command::RequestQuit
                     | Command::CancelQuit
                     | Command::ClearError
                     | Command::DismissUndoTrash
@@ -449,6 +461,21 @@ impl KoeRuntime {
                 self.commit(|w| w.set_ask_scope(scope))?;
             }
             Command::Transcribe { record_id } => self.start_transcription(&record_id)?,
+            Command::LocalAsrReadiness { state, message } => {
+                self.local_asr_readiness(state, message)?
+            }
+            Command::LocalAsrResult {
+                operation_id,
+                text,
+                start_ms,
+                end_ms,
+                is_final,
+            } => self.local_asr_result(operation_id, text, start_ms, end_ms, is_final)?,
+            Command::LocalAsrFinished { operation_id } => self.local_asr_finished(operation_id),
+            Command::LocalAsrFailed {
+                operation_id,
+                message,
+            } => self.local_asr_failed(operation_id, message),
             Command::SetMeetingAudioPolicy { policy } => self.set_meeting_audio_policy(&policy)?,
             Command::Summarize { record_id } => self.start_summary(&record_id)?,
             Command::ConfigureProvider {
@@ -651,10 +678,11 @@ impl KoeRuntime {
                         self.stop_owned_standby_stream()?;
                     }
                     self.ensure_device_idle()?;
-                    let outcome = self
-                        .device
-                        .session
-                        .start_realtime_recording_with_options(None, now.saturating_mul(1000), false);
+                    let outcome = self.device.session.start_realtime_recording_with_options(
+                        None,
+                        now.saturating_mul(1000),
+                        false,
+                    );
                     self.device.accept(outcome);
                     self.drive_companion(now);
                 }
@@ -750,6 +778,7 @@ impl KoeRuntime {
         if let Err(error) = self.save_captures(now) {
             self.error = Some(error);
         }
+        self.tick_local_asr(elapsed_ms);
         let mut completed = self.poll_provider() | self.poll_captures();
         self.drive_analysis_queue();
         completed |= self.drive_companion(now);

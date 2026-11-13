@@ -275,7 +275,9 @@ impl KoeRuntime {
             "records":rows,"todayRecordIds":today_ids,"trashRecords":trash_rows,"undoTrash":undo_trash,"detail":detail,"tasks":tasks,"memories":memories,
             "ask":{"scope":scope,"recordId":ask_record,"phase":phase,"messages":messages},
             "device":device_json,
-            "provider":{"meetingAudioPolicy":self.workspace().provider_configuration().meeting_audio_policy.as_str(),"meetingAudioPolicyError":self.audio_policy_error,"meetingAudioStatus":self.ensure_meeting_audio_upload().err(),"configured":!self.settings.key.is_empty(),"model":self.workspace().provider_configuration().model,"asrEndpoint":self.workspace().provider_configuration().asr_endpoint,"chatEndpoint":self.workspace().provider_configuration().chat_endpoint,"credentialState":self.credential_state(),"isolated":self.credentials.isolated()},
+            "localAsr":{"state":self.local_asr.state,"message":self.local_asr.message},
+            "liveCaption":self.live_caption_json(),
+            "provider":{"meetingAudioPolicy":self.workspace().provider_configuration().meeting_audio_policy.as_str(),"meetingAudioPolicyError":self.audio_policy_error,"meetingAudioStatus":if self.workspace().provider_configuration().meeting_audio_policy == MeetingAudioPolicy::LocalOnly { Some(format!("录音豆离线字幕：{}。文件转写仍未接入本机识别。", self.local_asr.message)) } else { self.ensure_meeting_audio_upload().err() },"configured":!self.settings.key.is_empty(),"model":self.workspace().provider_configuration().model,"asrEndpoint":self.workspace().provider_configuration().asr_endpoint,"chatEndpoint":self.workspace().provider_configuration().chat_endpoint,"credentialState":self.credential_state(),"isolated":self.credentials.isolated()},
             "playback":self.playback_json(),
             "migrationReports": self.workspace().migrations().iter().map(|m|json!({"fingerprint":m.fingerprint,"archivePath":self.root.join(&m.archive).to_string_lossy(),"pending":m.pending,"recordCount":m.record_ids.len()})).collect::<Vec<_>>(),
             "error":self.error,"notice":self.notice})

@@ -98,6 +98,10 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/652">issue 652: 配色实现范围与验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift">file platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift: 共享浅色色板。</a></li>
 </ul><p>Next: 日常安装与剩余弹窗验收见 #654。</p></article>
+<article id="bean-offline-live-captions"><h3>录音豆本机实时识别与全局字幕</h3><span class="badge">done</span><p>macOS 26+ 本机中文实时识别与全局字幕已接通；签名版 D3200 实体按键在设置页停止前显示文字，停止后保存并重启读回。真实 Apple 引擎另通过禁止联网测试。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/653">issue 653: 实现范围与自动验证</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/655">issue 655: 真机离线、实体按键与字幕可见性验收</a></li>
+</ul><p>Next: 已安装本机模式。#655 继续追踪运行中切换第二页及隐藏唤窗观察；本轮用户要求保持联网。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>

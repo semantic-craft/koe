@@ -87,7 +87,7 @@ fn file_upload_is_blocked(automatic: bool) {
     assert!(state["error"]
         .as_str()
         .unwrap()
-        .contains("本机语音识别尚未接入"));
+        .contains("已有文件暂不支持本机补转写"));
 }
 
 #[test]
