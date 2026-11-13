@@ -184,9 +184,9 @@
       },
       {
         "number": 661,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-13T03:51:17Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T05:35:11Z"
       },
       {
         "number": 662,
@@ -195,13 +195,8 @@
         "updated_at": "2026-11-13T04:11:03Z"
       }
     ],
-    "main": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
-    "open_pulls": [
-      {
-        "head": "9ce7f609e80692fbd754888d33f3eaf9827fb68c",
-        "number": 663
-      }
-    ],
+    "main": "e513032c6a783469d9be959e2b700fb472eec507",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -349,17 +344,17 @@
       },
       {
         "base": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
-        "head": "9ce7f609e80692fbd754888d33f3eaf9827fb68c",
-        "merge_commit": "0a73d30b49c615f7cebace5ad0a670ba881d61ea",
-        "merged": false,
+        "head": "c416450e7b2879c82fff3b109210ef8370507a5c",
+        "merge_commit": "e513032c6a783469d9be959e2b700fb472eec507",
+        "merged": true,
         "number": 663,
-        "state": "open"
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T05:30:14.715862Z",
+  "observed_at": "2026-11-13T05:36:12.407461Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -865,9 +860,9 @@
             }
           ],
           "id": "all-day-offline-models",
-          "next": "PR #663 等待 CI 与最终独立验收；真实麦克风/D3200、外部输入法和长时使用按 #662 验收。",
+          "next": "真实麦克风/D3200、外部输入法和长时使用按 #662 验收。",
           "status": "done",
-          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。",
+          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。 PR #663 已通过 CI 并 squash 合并为 e513032。",
           "title": "全天听记、下载模型与通用听写文字"
         }
       ],
