@@ -274,7 +274,7 @@ impl KoeRuntime {
         });
         let microphone = self.microphone_status();
         let capture_selection = self.capture_selection();
-        json!({"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
+        json!({"voiceInput":self.voice_input_json(),"speech":self.speech_json(),"allDay":self.all_day_json(microphone.as_ref()),"dictation":{"active":self.any_dictation_active()},"lifecycle": self.lifecycle_json(),
             "journal":crate::journal::journal_json(now, &records, &today_ids),
             "captureModes":self.capture_modes_json(&capture_selection),"activeCapture":self.active_capture_json(microphone.as_ref(), live_duration_ms),
             "microphone": self.microphone_json(microphone.as_ref()), "capture": self.capture_studio_json(&capture_selection), "version":KOE_HOST_SNAPSHOT_VERSION,"generation":self.generation,"section":self.location.page,

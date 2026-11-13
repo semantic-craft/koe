@@ -6,50 +6,32 @@ struct TodayView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 7) {
-                    let epoch = store.snapshot.journal.dateEpochSec
-                    if epoch > 0 {
-                        Text(Date(timeIntervalSince1970: TimeInterval(epoch)).formatted(.dateTime.year().month().day().weekday(.wide)))
-                            .font(.system(size: AppFontSizes.sm))
-                            .foregroundStyle(AppColors.textSecondary)
-                    }
-                    Text("今天").font(.system(size: AppFontSizes.lg, weight: .semibold))
-                }
+                PageHeading(title: "模式选择", subtitle: "选择接下来要做的事。")
                 HStack(spacing: 10) {
-                    ForEach(store.snapshot.captureModes) { entry in
+                    ForEach(store.snapshot.captureModes.filter { $0.mode != .dictation }) { entry in
                         CaptureModeButton(entry: entry, store: store)
                     }
+                    Button { store.send("prepare_voice_input") } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("语音输入", systemImage: "character.cursor.ibeam")
+                                .font(.system(size: AppFontSizes.sm, weight: .semibold))
+                            Text("双击录音豆，向输入框听写").font(.system(size: AppFontSizes.xs))
+                                .foregroundStyle(AppColors.textSecondary)
+                            Text(store.snapshot.voiceInput.sourceLabel).font(.system(size: AppFontSizes.xs))
+                                .foregroundStyle(AppColors.textMuted).lineLimit(1)
+                        }
+                        .padding(12).frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                        .background(AppColors.bgPanel, in: RoundedRectangle(cornerRadius: AppRadii.control))
+                        .overlay(RoundedRectangle(cornerRadius: AppRadii.control).stroke(AppColors.border))
+                        .contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(!store.snapshot.voiceInput.canPrepare)
                 }
-                overview
-                JournalTimeline(store: store, recordIds: store.snapshot.journal.recordIds, title: "今天的片段")
             }
             .padding(30).frame(maxWidth: 940, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 
-    private var overview: some View {
-        KoeCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("今日概览", systemImage: "sparkles")
-                    .font(.system(size: AppFontSizes.md, weight: .semibold))
-                if store.snapshot.journal.summaries.isEmpty {
-                    Text("今天还没有生成摘要。")
-                        .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textMuted)
-                }
-                ForEach(store.snapshot.journal.summaries) { summary in
-                    Button { store.send("select_record", ["recordId": summary.recordId]) } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Label(summary.title, systemImage: "arrow.up.right")
-                                .font(.system(size: AppFontSizes.sm, weight: .medium))
-                            Text(summary.text).font(.system(size: AppFontSizes.sm))
-                                .foregroundStyle(AppColors.textSecondary).lineLimit(3)
-                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                }
-            }
-        }
-    }
 }
 
 struct NotesView: View {
@@ -138,6 +120,8 @@ private struct CaptureModeButton: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label(entry.mode.title, systemImage: entry.mode.icon)
                     .font(.system(size: AppFontSizes.sm, weight: .semibold))
+                Text(entry.mode.purpose).font(.system(size: AppFontSizes.xs)).lineLimit(1)
+                    .foregroundStyle(AppColors.textSecondary)
                 Text(entry.sourceLabel).font(.system(size: AppFontSizes.xs)).lineLimit(1)
                     .foregroundStyle(AppColors.textSecondary)
             }

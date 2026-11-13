@@ -2169,3 +2169,36 @@ fn external_pcm_discards_tap_tail_and_rejects_old_epoch() {
     );
     assert!(runtime.workspace().records().is_empty());
 }
+
+#[test]
+fn prepare_voice_input_reuses_owned_standby_and_preserves_an_existing_recording() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(r#"{"type":"set_companion_mode","mode":"collar_standby"}"#, NOW);
+    let key = connect_simulated_bean(&mut runtime, "voice-entry", NOW);
+    activate_realtime_file(&mut runtime, &key, 7801, NOW + 1);
+    assert!(runtime.is_standby_ready());
+    runtime.drain_outbound_ble_frames();
+    for _ in 0..2 {
+        runtime.dispatch_json(r#"{"type":"prepare_voice_input"}"#, NOW + 2);
+        let snapshot = runtime.snapshot(NOW + 2);
+        assert!(snapshot["error"].is_null(), "{}", snapshot["error"]);
+        assert_eq!(snapshot["section"], "voice_input");
+        assert_eq!(snapshot["device"]["standbyReady"], true);
+        assert!(snapshot["activeCapture"].is_null());
+    }
+    assert!(runtime.drain_outbound_ble_frames().is_empty());
+    assert_eq!(runtime.drain_host_actions_json(), r#"[{"type":"open_responsay"}]"#);
+
+    let busy_sandbox = Sandbox::new();
+    let mut busy = KoeRuntime::open(&busy_sandbox.0).unwrap();
+    busy.dispatch_json(r#"{"type":"start_capture_mode","mode":"all_day"}"#, NOW);
+    let original = busy.snapshot(NOW);
+    assert_eq!(original["activeCapture"]["mode"], "all_day");
+    busy.dispatch_json(r#"{"type":"prepare_voice_input"}"#, NOW + 1);
+    let rejected = busy.snapshot(NOW + 1);
+    assert!(rejected["error"].is_string());
+    assert_eq!(rejected["activeCapture"], original["activeCapture"]);
+    assert_eq!(rejected["device"]["companionMode"], "disabled");
+    assert_eq!(busy.drain_host_actions_json(), "[]");
+}

@@ -10,6 +10,15 @@ extension CaptureMode {
         }
     }
 
+    var purpose: String {
+        switch self {
+        case .quickNote: "快速留下一段想法"
+        case .allDay: "持续记录，随时回看"
+        case .meeting: "记录讨论并整理纪要"
+        case .dictation: "将语音输入到光标位置"
+        }
+    }
+
     var icon: String {
         switch self {
         case .quickNote: "waveform"

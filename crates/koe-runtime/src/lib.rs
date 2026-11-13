@@ -41,6 +41,7 @@ use provider_settings::ProviderSettings;
 mod restore;
 mod transcript_edit;
 mod trash;
+mod voice_input;
 
 use command::{Command, Location, Page, Playback};
 pub use companion::{
@@ -92,6 +93,7 @@ pub struct KoeRuntime {
     all_day: all_day::AllDayState,
     live_minutes_scope: Option<live_minutes::LiveMinutesScope>,
     capture_studio: capture_studio::CaptureStudioState,
+    host_actions: Vec<voice_input::HostAction>,
     microphone: Option<microphone::Microphone>,
     bean_capture_mode: Option<command::CaptureMode>,
     auto_transcribe: std::collections::BTreeSet<String>,
@@ -141,6 +143,7 @@ impl KoeRuntime {
             captures: Default::default(),
             local_asr: Default::default(),
             capture_studio: Default::default(),
+            host_actions: Vec::new(),
             microphone: None,
             bean_capture_mode: None,
             auto_transcribe: Default::default(),
@@ -266,6 +269,7 @@ impl KoeRuntime {
             self.reconcile_expired_trash(now);
         }
         match command {
+            Command::PrepareVoiceInput => self.prepare_voice_input(now)?,
             Command::StartCaptureMode { mode } => self.start_capture_mode(mode, now)?,
             Command::CaptureAction { action, clock_ns } => self.capture_action(action, clock_ns)?,
             Command::StartMicrophone {
@@ -334,6 +338,9 @@ impl KoeRuntime {
                 }
                 self.drive_companion(now);
             }
+            Command::Navigate {
+                section: Page::VoiceInput,
+            } if !self.is_quitting() => self.prepare_voice_input(now)?,
             Command::Navigate { section } => self.go(Location {
                 page: section,
                 ..self.location.clone()
@@ -618,30 +625,12 @@ impl KoeRuntime {
                 })?;
             }
             Command::SetCompanionMode { mode } => {
-                if !self.is_quitting()
-                    && matches!(
-                        self.device.session.transfer.phase,
-                        koe_engine::session::TransferPhaseTag::Failed
-                    )
-                {
-                    self.device.session.reset_active_transfer();
-                }
                 let parsed = CompanionRoutingMode::parse(&mode).ok_or("无效的领夹麦伴侣模式")?;
                 self.commit(|w| {
                     w.set_companion_mode(parsed);
                     Ok(())
                 })?;
-                self.companion.standby_suppressed_for_connection = false;
-                if parsed != CompanionRoutingMode::CollarStandby
-                    && self.companion.standby_stream_owned
-                {
-                    self.stop_owned_standby_stream()?;
-                } else if parsed == CompanionRoutingMode::Disabled {
-                    self.companion.capture_active = false;
-                    self.companion.post_tap_skip_slices = 0;
-                    self.companion.tail_holdback.clear();
-                }
-                self.drive_companion(now);
+                self.apply_companion_mode(parsed, now)?;
             }
             Command::DeviceDownload { file_id } => {
                 if !self.device.is_connected() {

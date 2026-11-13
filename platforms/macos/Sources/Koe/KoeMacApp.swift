@@ -74,6 +74,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
     let files = NativeFileActions()
     private let playback: NativePlayback
     private let capture = NativeCapture()
+    private let hostActions = NativeHostActions()
     private let localTranscription = NativeLocalTranscription()
     private var lastLiveRecordId: String?
     private let makeDefaultStore: @MainActor () -> HostSessionStore
@@ -196,6 +197,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
             KoeWindowPresenter.presentPrimaryWorkspaceWindow()
         }
         lastLiveRecordId = liveRecordId
+        if let store { hostActions.apply(to: store) }
         bluetoothBridge.syncWithRuntimeDevice(store?.snapshot.device ?? snapshot.device)
         playback.tick()
         capture.apply()
@@ -236,7 +238,7 @@ public final class KoeAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelega
         status.isEnabled = false
         menu.addItem(status)
         menu.addItem(.separator())
-        for (id, title) in [("today", "今天"), ("notes", "随心记"), ("tasks", "行动"), ("live_minutes", "实时纪要"), ("ask", "问 Koe"), ("records", "所有记录"), ("settings", "设置")] {
+        for (id, title) in [("today", "模式选择"), ("voice_input", "语音输入"), ("notes", "随心记"), ("tasks", "行动"), ("live_minutes", "实时纪要"), ("ask", "问 Koe"), ("records", "所有记录"), ("settings", "设置")] {
             let item = NSMenuItem(title: title, action: #selector(navigate(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = id

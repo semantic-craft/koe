@@ -86,6 +86,7 @@ public struct KoeWorkspaceRootView: View {
     }
     private var sectionTitle: String {
         switch store.snapshot.section {
+        case "voice_input": "语音输入"
         case "capture": "设置 / 录音管理"
         case "notes": "随心记"
         case "records": "所有记录"
@@ -96,11 +97,12 @@ public struct KoeWorkspaceRootView: View {
         case "ask": "问 Koe"
         case "trash": "回收站"
         case "settings": "设置"
-        default: "今天"
+        default: "模式选择"
         }
     }
     @ViewBuilder private var page: some View {
         switch store.snapshot.section {
+        case "voice_input": VoiceInputView(store: store)
         case "capture": CaptureView(store: store)
         case "notes": NotesView(store: store)
         case "records": RecordListView(store: store)
