@@ -563,7 +563,7 @@ fn meeting_and_collar_retains_record_while_streaming_and_device_release_persists
     runtime.poll_timers(2_100, NOW + 10);
 
     let release_snap: Value = serde_json::from_str(
-        &runtime.dispatch_json(&json!({"type": "device_release"}).to_string(), NOW + 8),
+        &runtime.dispatch_json(&json!({"type": "device_release"}).to_string(), NOW + 10),
     )
     .unwrap();
     assert!(release_snap["error"].is_null(), "{release_snap}");

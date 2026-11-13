@@ -229,15 +229,16 @@
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-13T10:15:58Z"
-      }
-    ],
-    "main": "bb5deef431ed7f505cb139ae4e09be74eef8551d",
-    "open_pulls": [
+      },
       {
-        "head": "e03a3181c611addc06b9e4bbe1c3235fbd8e35c9",
-        "number": 684
+        "number": 685,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-13T13:54:18Z"
       }
     ],
+    "main": "a9e33353d70417874b8445060ac62be3f08f9b82",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -451,7 +452,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T13:23:00.880241Z",
+  "observed_at": "2026-11-13T13:56:10.929280Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1141,6 +1142,25 @@
           "status": "done",
           "summary": "首页改为模式选择并移除录音摘要展示，侧栏增加语音输入。点击入口自动准备录音豆待命并打开 Responsay，保留已有连接地址与记录。合入最新纪要主线后以 19d75d5 签名安装，真实首页联动显示两端已就绪；原入口版另验证了冷启动及侧栏重复进入。",
           "title": "模式选择与一键语音输入入口"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "用户最新决定与交付范围。",
+              "ref": 685
+            },
+            {
+              "kind": "file",
+              "note": "直接从设备录音通知进入的默认模式和保存回归。",
+              "ref": "crates/koe-runtime/src/capture_tests.rs"
+            }
+          ],
+          "id": "record-button-default-quick-note",
+          "next": "完成门禁、独立审查和签名安装。实体侧键、双击、真实ASR与原光标仍须各自取得证据。",
+          "status": "in_progress",
+          "summary": "按用户新定稿，普通录音应归为随心闪记；其他模式只在macOS明确启用。替代未交付的持久四模式方案。新回归已复现普通录音被归为Meeting、自动持续纪要和重启待命收音，修复验收中。",
+          "title": "录音键默认随心闪记"
         }
       ],
       "title": "当前产品实现"
@@ -1480,7 +1500,8 @@
       668,
       671,
       675,
-      678
+      678,
+      685
     ],
     "pulls": [
       589,
