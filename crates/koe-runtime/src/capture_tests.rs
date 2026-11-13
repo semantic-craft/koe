@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use koe_engine::crypto::{AesCtrStreamDecrypt, DeviceCrypto};
 use koe_engine::frame::{ProtocolFrame, RX_MAGIC};
 use koe_engine::models::OfflineFileEntry;
 use koe_engine::session::REAL_OPUS_20MS_440HZ_PACKET;
@@ -13,6 +14,9 @@ use serde_json::json;
 use tokio_tungstenite::tungstenite::{Message, accept};
 
 const NOW: u64 = 1_800_000_000;
+const SESSION_KEY: [u8; 32] = [0x55; 32];
+const FILE_KEY: [u8; 32] = [0x22; 32];
+const FILE_NONCE: [u8; 16] = [0x23; 16];
 const FIRST: &str = "The first live sentence.";
 const REVISED: &str = "The corrected live sentence.";
 
@@ -421,11 +425,33 @@ fn rx_cmd(group: u8, command: u8, payload: &[u8]) -> Vec<u8> {
     frame
 }
 
+fn encrypted_slices(sequences: std::ops::Range<u32>) -> Vec<u8> {
+    let cipher = AesCtrStreamDecrypt::new(&FILE_KEY, &FILE_NONCE).unwrap();
+    let mut payload = Vec::new();
+    for sequence in sequences {
+        payload.extend_from_slice(&sequence.to_le_bytes());
+        payload.push(0);
+        let mut opus = [0; OPUS_FRAME_BYTES];
+        opus[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+        cipher.decrypt_contiguous_in_place(&mut opus, sequence);
+        payload.extend_from_slice(&opus);
+        payload.push(0);
+    }
+    rx(0x08, &payload)
+}
+
 fn file_head_rx(file_id: u32, file_size: u32) -> Vec<u8> {
+    let session_nonce = [0x33; 16];
+    let mut key_material = b"soundcored3200".to_vec();
+    key_material.extend_from_slice(&FILE_KEY);
+    let wrapped_key =
+        DeviceCrypto::aes_ctr_decrypt(&key_material, &SESSION_KEY, &session_nonce).unwrap();
     let mut payload = Vec::with_capacity(87);
     payload.extend_from_slice(&file_id.to_le_bytes());
     payload.extend_from_slice(&file_size.to_le_bytes());
-    payload.extend_from_slice(&[0u8; 78]);
+    payload.extend_from_slice(&FILE_NONCE);
+    payload.extend_from_slice(&wrapped_key);
+    payload.extend_from_slice(&session_nonce);
     payload.push(0);
     rx_cmd(0x1a, 0x07, &payload)
 }
@@ -501,7 +527,7 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
     });
 
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
-    runtime.device.session.set_session_key([0x55; 32]);
+    runtime.device.session.set_session_key(SESSION_KEY);
     command(
         &mut runtime,
         json!({"type":"configure_provider","apiKey":"local-capture-fixture","model":"fixture","asrEndpoint":endpoint}),
@@ -521,7 +547,7 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
         "streaming_realtime"
     );
 
-    runtime.ingest_ble_chunk(&slices(0..1), NOW);
+    runtime.ingest_ble_chunk(&encrypted_slices(0..1), NOW);
     poll_until(&mut runtime, |runtime| {
         runtime
             .workspace()
@@ -532,7 +558,7 @@ fn live_head_with_zero_size_creates_record_immediately_and_hardware_stop_finaliz
     assert_eq!(snap_interim["records"][0]["preview"], FIRST);
     assert!(snap_interim["device"]["liveDurationMs"].as_u64().unwrap() >= 20);
 
-    runtime.ingest_ble_chunk(&slices(1..2), NOW);
+    runtime.ingest_ble_chunk(&encrypted_slices(1..2), NOW);
     poll_until(&mut runtime, |runtime| {
         runtime
             .workspace()
@@ -586,7 +612,7 @@ fn hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record
         &mut runtime,
         json!({"type":"configure_provider","apiKey":"fixture","model":"fixture","asrEndpoint":format!("ws://{}",listener.local_addr().unwrap())}),
     );
-    runtime.device.session.set_session_key([0x55; 32]);
+    runtime.device.session.set_session_key(SESSION_KEY);
     command(&mut runtime, json!({"type":"device_start"}));
     runtime.drain_outbound_ble_frames();
 
@@ -614,7 +640,7 @@ fn hardware_stop_with_zero_live_slices_auto_pulls_offline_audio_into_live_record
     );
 
     runtime.ingest_ble_chunk(&file_head_rx(802, 332), NOW + 2);
-    runtime.ingest_ble_chunk(&slices(0..2), NOW + 2);
+    runtime.ingest_ble_chunk(&encrypted_slices(0..2), NOW + 2);
     runtime.ingest_ble_chunk(&rx(0x0a, &802u32.to_le_bytes()), NOW + 2);
 
     assert_eq!(
