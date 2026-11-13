@@ -280,3 +280,45 @@ fn bean_all_day_keeps_its_mode_until_stop_acknowledgement() {
     runtime.ingest_ble_chunk(&acknowledged, 1800000001);
     assert!(runtime.snapshot(1800000001)["activeCapture"].is_null());
 }
+
+#[test]
+fn prepare_voice_input_preserves_records_and_restores_standby_without_capture() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let note = command(
+        &mut runtime,
+        json!({"type":"create_note","title":"Keep","text":"Original record"}),
+    );
+    let record_id = note["selectedRecordId"].clone();
+    command(
+        &mut runtime,
+        json!({"type":"set_ble_auto_connect","enabled":false}),
+    );
+
+    let prepared = command(&mut runtime, json!({"type":"prepare_voice_input"}));
+    assert!(prepared["error"].is_null(), "{}", prepared["error"]);
+    assert_eq!(prepared["section"], "voice_input");
+    assert_eq!(prepared["device"]["companionMode"], "collar_standby");
+    assert_eq!(prepared["device"]["autoConnect"], true);
+    assert!(prepared["activeCapture"].is_null());
+    assert_eq!(prepared["records"].as_array().unwrap().len(), 1);
+    assert_eq!(prepared["records"][0]["id"], record_id);
+
+    let repeated = command(&mut runtime, json!({"type":"prepare_voice_input"}));
+    assert!(repeated["error"].is_null(), "{}", repeated["error"]);
+    assert!(repeated["activeCapture"].is_null());
+    assert_eq!(runtime.drain_host_actions_json(), r#"[{"type":"open_responsay"}]"#);
+    assert_eq!(runtime.drain_host_actions_json(), "[]");
+    let navigated = command(&mut runtime, json!({"type":"navigate","section":"voice_input"}));
+    assert!(navigated["error"].is_null(), "{}", navigated["error"]);
+    assert_eq!(navigated["section"], "voice_input");
+    assert_eq!(runtime.drain_host_actions_json(), r#"[{"type":"open_responsay"}]"#);
+    drop(runtime);
+    let reopened = KoeRuntime::open(&dir.0).unwrap();
+    assert_eq!(
+        reopened.snapshot(1800000000)["device"]["companionMode"],
+        "collar_standby"
+    );
+    assert_eq!(reopened.snapshot(1800000000)["device"]["autoConnect"], true);
+    assert_eq!(reopened.workspace().records().len(), 1);
+}

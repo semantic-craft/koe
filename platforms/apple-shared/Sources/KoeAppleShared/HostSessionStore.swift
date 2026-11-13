@@ -132,6 +132,17 @@ public final class HostSessionStore {
         return frames
     }
 
+    public func drainHostActions() -> [HostAction] {
+        guard handle != 0, let pointer = koe_host_session_drain_host_actions_json(handle) else { return [] }
+        defer { koe_host_string_free(pointer) }
+        do {
+            return try JSONDecoder().decode([HostAction].self, from: Data(String(cString: pointer).utf8))
+        } catch {
+            nativeError = "无法读取应用启动请求，请重新连接。"
+            return []
+        }
+    }
+
     public func drainLocalASREffectsJSON() -> Data? {
         guard handle != 0, let pointer = koe_host_session_drain_local_asr_json(handle) else { return nil }
         defer { koe_host_string_free(pointer) }

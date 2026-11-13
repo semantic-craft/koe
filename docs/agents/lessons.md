@@ -258,9 +258,10 @@
 ### 本地 HTTP 夹具的接收连接须显式恢复阻塞读取
 
 - 出处：2026-11-10 N4A（#607）首次全量门禁，`cloud_workflow` 的 HTTP 读取在 0.34 秒内返回 WouldBlock，未到设置的 5 秒读取期限。
-- 修复：监听器保留非阻塞 accept 与总期限，接受的连接在读取 HTTP 正文前显式 `set_nonblocking(false)`，再设置读写期限。
-- 验证点：`cargo test -p koe-runtime --test cloud_workflow` 与 `scripts/check`；读取必须等到完整 Content-Length，不能把刚 accept 当成正文已经到齐。
-- Seen 1x（2026-11-10）。
+- 复发：2026-11-13 #684 的 CI 在 `network.rs` 同类夹具失败；本机诊断读取在 19 微秒返回 WouldBlock，配置的 3 秒超时未生效。
+- 修复：监听器保留非阻塞 accept 与总期限，接受的连接在读取 HTTP 正文前显式 `set_nonblocking(false)`，再设置读写期限；5a600bf 将同样约束补入 loopback chat 夹具，保留完整正文和无 Authorization 断言。
+- 验证点：`cargo test -p koe-runtime --test cloud_workflow` 、`cargo test -p koe-client-providers --test network`（本轮 9 项通过）与 `scripts/check`；读取必须等到完整 Content-Length，不能把刚 accept 当成正文已经到齐。
+- Seen 2x（2026-11-10、2026-11-13）。
 
 ### 停止确认必须有丢包后的重试路径
 
@@ -394,4 +395,12 @@
 - 出处：2026-11-13 PR #677 的 CI 停在 `live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conflict`；两次进程采样均显示测试线程等待 `ChildStdin` 写入、MCP 子进程等待 stdout 写入，父进程尚未开始读取响应。
 - 修复：现有请求数组由独立线程写入并在结束时关闭 stdin，主线程同时通过 `wait_with_output` 读取 stdout/stderr，随后 join 写入线程；保留全部九条响应与持久化结果断言。
 - 验证点：`cargo test -p koe-cli --test commands live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conflict` 完整结束并通过；不能依赖请求数量少就先同步写完再读取响应。
+- Seen 1x（2026-11-13）。
+
+### 语音输入入口必须同时准备待命和连接外部输入法
+
+- 出处：2026-11-13 用户纠正首页与语音输入入口。旧首页展示录音摘要，语音输入只启动 Koe 采集，未准备领夹待命或连接 Responsay。既有 dev socket 配置也被进度误写成默认 socket 缺失的当前阻塞。
+- 修复：`b050935` 在 Rust 统一准备待命和自动连接，经宿主动作打开 Responsay；Responsay `a4052255` 增加 Release URL 入口并保留 socket override。首页只移除录音与摘要展示，不删除记录。补丁独立审查 PASS，尚未安装验收。
+- 正确做法：从用户点击入口跟到待命和外部音源选择，核对实际配置。分别记录源码实现、已安装版本和真实识别输入证据。
+- 验证点：`navigation_tests` 与 `companion_mcp_tests` 验证记录重开、已有待命和录制保护；`NativeHostActionsTests` 验证固定 URL 与失败重试。真实 ASR、原光标输入与物理双击继续保持未验收。
 - Seen 1x（2026-11-13）。

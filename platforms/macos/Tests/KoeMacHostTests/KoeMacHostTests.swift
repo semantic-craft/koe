@@ -20,7 +20,7 @@ struct KoeMacHostTests {
         let delegate = KoeAppDelegate()
         let menu = delegate.buildStatusMenu()
         let destinations = menu.items.compactMap { $0.representedObject as? String }
-        #expect(destinations == ["today", "notes", "tasks", "live_minutes", "ask", "records", "settings"])
+        #expect(destinations == ["today", "voice_input", "notes", "tasks", "live_minutes", "ask", "records", "settings"])
     }
 
     @Test("CoreAudio transport classification and idempotent audio input sync avoid generation churn")

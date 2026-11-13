@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub(crate) enum Page {
     #[default]
     Today,
+    VoiceInput,
     Notes,
     Capture,
     Records,
@@ -53,6 +54,7 @@ pub(crate) struct CaptureTiming {
     deny_unknown_fields
 )]
 pub(crate) enum Command {
+    PrepareVoiceInput,
     StartCaptureMode {
         mode: CaptureMode,
     },

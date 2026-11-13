@@ -114,12 +114,18 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: scripts/check；cargo test -p koe-runtime external_pcm --lib；cargo test -p koe-host-api external_pcm_lease_is_exclusive_and_released_with_the_socket --lib
 - **Evidence**: Koe full check PASS; external PCM 3 regressions and Clippy PASS; Responsay 72 native tests and isolated GUI PASS
 
+### [x] Slice VOICEENTRY: 首页与侧栏一键进入语音输入
+- **Playbook**: `Feature`
+- **Outcome**: 模式选择首页与侧栏语音输入自动连接 Responsay，保留记录、连接与权限。
+- **Done Predicate**: 回归与独立审查通过；签名安装后真实点击入口读到两端就绪。
+- **Evidence**: Koe 19d75d5 installed; Responsay 13e679c1 merged; voice-mode-entry/acceptance.json PARTIAL
+
 ### [ ] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
 - **Playbook**: `Investigation`
-- **Outcome**: 核对已合并双端版本及 #810，只在可自动取得物理输入和识别上屏证据时验收真实链路；不重复接口实现，不要求人工参与。
-- **Done Predicate**: 自动记录真实 D3200 音频、起止与识别上屏的版本和产物；无法自动施加实体双击时该项保持未验收；python3 progress/progress.py check
+- **Outcome**: 只接续 PCMHW 与 Responsay #810 的实时识别和原光标上屏；先读 voice-mode-entry/acceptance.json，保留连接与权限，已通过入口及PCM项目不重跑。
+- **Done Predicate**: 自动取得真实D3200音频经Responsay实时识别及原目标文本变化的证据；无法自动触发的物理项保持未验收；python3 progress/progress.py check
 - **Evidence**: 2026-11-13 部分通过。已合并版本 Koe `d6f9406` 与 Responsay `b6a061e` 下，真实 D3200 提供 11.56 秒非静音 PCM，收到软件开始和结束确认。Responsay 隔离完整应用的蓝色条响应真实收音，引导完成后自动选中 soundcore Work。未注入合成 PCM。原始证据保留在本机 `Projects/_artifacts/koe/pcmhw-20261113`，状态见 [Responsay #810](https://github.com/semantic-craft/responsay-macos/issues/810)。
-- **Remaining**: 真实识别、光标写入、实体双击、断连恢复、三种输入快捷键及无重复录音或识别仍未验收。隔离应用缺少辅助功能权限，截图验收启动也未启用快捷键录制监听器和双击回调。不得自动授予权限或安排人工操作，后续只使用已有授权的自动验收入口。
+- **Remaining**: 真实 Responsay ASR、原光标输入、实体双击、断连恢复、三种输入快捷键及无重复录音或识别仍未验收。先前隔离截图入口缺少辅助功能权限和录制监听器，不能代替完整应用验收。现有 dev socket override 已恢复，录音豆已待命；默认生产 socket 缺失已不是当前阻塞。首页模式选择与侧栏语音输入的一键联动已实现、独立审查并签名安装。原入口版冷启动和侧栏重复进入通过；合入最新主线的 19d75d5 也已从真实首页连接至两端就绪。现有配置与权限保留；实时识别、原光标和实体双击仍未验收。
 - **Watchouts**: 软件起止确认不证明尾音完整或无丢包。恢复普通模式时 Koe 显示保存 05:28 的设备录音，不能宣称设备或 Koe 不留录音。已恢复测试前模式并清理隔离应用，保留新版 Koe。
 
 ### [ ] Slice ADH: 全天听记真实硬件验收
