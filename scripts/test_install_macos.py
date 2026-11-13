@@ -167,6 +167,8 @@ class InstallMacosScriptTest(unittest.TestCase):
             shutil.copy2(src, dst)
             dst.chmod(0o755)
         self._write_executable(scripts_dir / "sign-macos.sh", STUB_SIGN_SCRIPT)
+        shutil.copy2(REPO_ROOT / "THIRD_PARTY_NOTICES.md", root)
+        shutil.copytree(REPO_ROOT / "assets" / "licenses", root / "assets" / "licenses")
         return root
 
     def _make_build_app(self, app_path: Path) -> Path:
@@ -272,6 +274,64 @@ class InstallMacosScriptTest(unittest.TestCase):
         smoke_idx = events.index(["koe", str(install_app / "Contents" / "MacOS" / "Koe"), "--smoke-test"])
         self.assertLess(reg_idx, verify_idx)
         self.assertLess(verify_idx, smoke_idx)
+
+    def test_skip_build_installs_current_third_party_notices(self) -> None:
+        bundle_path = Path("Contents/Resources/Licenses")
+        notice = Path("THIRD_PARTY_NOTICES.md")
+        license_path = Path("assets/licenses")
+        old_licenses = self.build_app / bundle_path
+        (old_licenses / license_path).mkdir(parents=True)
+        (old_licenses / notice).write_bytes(b"stale notice\n")
+        (old_licenses / license_path / "retired.txt").write_bytes(b"stale license\n")
+        install_app = self.sandbox / "Install" / "Koe.app"
+
+        proc = self._run_installer(
+            "--skip-build",
+            extra_env={"MACOS_INSTALL_PATH": str(install_app)},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        installed = install_app / bundle_path
+        self.assertEqual((installed / notice).read_bytes(), (self.repo / notice).read_bytes())
+        expected_paths = {
+            source.relative_to(self.repo)
+            for source in (self.repo / license_path).rglob("*")
+            if source.is_file()
+        }
+        installed_paths = {
+            path.relative_to(installed)
+            for path in (installed / license_path).rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(installed_paths, expected_paths)
+        for path in sorted(expected_paths):
+            with self.subTest(license=path):
+                self.assertEqual((installed / path).read_bytes(), (self.repo / path).read_bytes())
+
+    def test_skip_build_rejects_symlinked_license_parents_without_modifying_external_files(self) -> None:
+        licenses = Path("Contents/Resources/Licenses")
+        for linked_parent in (Path("Contents"), licenses.parent):
+            with self.subTest(linked_parent=linked_parent):
+                case = self.sandbox / linked_parent.name
+                source = self._make_build_app(case / "Build" / "Koe.app")
+                install_app = case / "Install" / "Koe.app"
+                external = case / "External"
+                (source / linked_parent).rename(external)
+                (source / linked_parent).symlink_to(external)
+                external_licenses = external / licenses.relative_to(linked_parent)
+                external_licenses.mkdir()
+                sentinel = external_licenses / "keep.txt"
+                sentinel.write_bytes(b"external license\n")
+
+                proc = self._run_installer(
+                    "--skip-build",
+                    extra_env={"KOE_BUILD_APP": str(source), "MACOS_INSTALL_PATH": str(install_app)},
+                )
+
+                self.assertEqual(list(external_licenses.iterdir()), [sentinel])
+                self.assertEqual(sentinel.read_bytes(), b"external license\n")
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertFalse(install_app.exists())
 
     def test_staged_verification_failure_preserves_existing_target_and_cleans_stage(self) -> None:
         self._make_build_app(self.repo / "build" / "macos" / "Build" / "Products" / "Release" / "Koe.app")

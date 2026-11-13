@@ -4,11 +4,20 @@
 
 | 项目 | 固定参考版本 | 采纳范围 | 许可 |
 | --- | --- | --- | --- |
+| [Soundcore](https://github.com/tacshi/Soundcore/tree/0e100df287ef44f8c343935ada8093b61da1f207) | `0e100df287ef44f8c343935ada8093b61da1f207` | 继承的 D3200 协议文档、原始实现及其 Rust 移植 | MIT，Copyright (c) 2026 Rocky Shi；[完整许可](assets/licenses/soundcore.txt) |
 | [Meetily](https://github.com/Zackriya-Solutions/meetily/tree/a2cb62e827da7ef59f65064c97233efb2313878e) | a2cb62e827da7ef59f65064c97233efb2313878e | standard_meeting.json 的摘要、决策、待办及来源字段设计 | assets/licenses/meetily.txt |
 | [Ownscribe](https://github.com/paberr/ownscribe/tree/9d5f82e2b8ec6c093755b43ebe8fead9ec06d7fe) | 9d5f82e2b8ec6c093755b43ebe8fead9ec06d7fe | prompts.py 的通用会议章节、合并去重和保留事实/任务规则 | assets/licenses/ownscribe.txt |
 | [Shiyin（拾音）](https://github.com/juinwei7/Shiyin/tree/7ffd7d4b43b3f3cf06012cf3abfbe8e2b0e257f9) | 7ffd7d4b43b3f3cf06012cf3abfbe8e2b0e257f9 | 麦克风/系统音频 Core Audio 采集适配、五种会议纪要模板、待确认问题与修订、AI 猜发言人名字、逐字稿校正建议及转写段落按时间重叠与最近中点分配发言人设计思路（以纯 Rust 重新实现） | assets/licenses/shiyin.txt |
 | [TaoSheng（涛声）](https://github.com/0xCoach/TaoSheng/tree/23907c46415828342b51a296332dd97db25243c4) | 23907c46415828342b51a296332dd97db25243c4 | 全天候随身语音记忆管线、21 天日历消歧 + 寻物共乘、AskEngine 多轮工具检索与 `[^n]` 引用自愈、乐观锁确认卡、CAM++ 声纹认人及五栏信息架构设计思路（以纯 Rust + SwiftUI 独立实现） | 架构参考 |
 | [MetasequoiaIME (`msime`)](https://github.com/metasequoiaime/msime) | main | 纯 Rust 内核 + 全原生 Apple 平台宿主（SwiftUI + C ABI）四层分离架构 | MIT / Apache-2.0 |
+
+## Soundcore 协议来源与署名
+
+Koe 的 D3200 协议实现源自 tacshi/Soundcore，作者 Rocky Shi。`PROTOCOL.md` 保留并扩展上游协议笔记；`crates/koe-engine/` 中的帧、命令、认证、加解密与音频封装等实现由原 Dart 实现移植为 Rust。语言迁移不消除上游署名与许可义务。
+
+原先锁定的上游版本为 `f01a19c227aac0cee9a7c851b3f6b69cf5540a24`。其直接后继 [`0e100df287ef44f8c343935ada8093b61da1f207`](https://github.com/tacshi/Soundcore/commit/0e100df287ef44f8c343935ada8093b61da1f207) 添加 MIT 许可证并更新 README，未修改协议代码。Koe 现以该已许可版本记录来源，完整保留 `Copyright (c) 2026 Rocky Shi` 和许可正文。该记录不代表制造商商标、产品图片或其他第三方材料的权利已完成核验。
+
+macOS 安装器在签名前将本文件和整个 `assets/licenses/` 目录复制到 `Koe.app/Contents/Resources/Licenses/`，保留相对目录。正常构建和 `--skip-build` 安装均执行此步骤。许可文件随包提供不表示对应历史依赖或模型已被包含。
 
 ## 本机发言人区分运行时与模型参考（#371）
 

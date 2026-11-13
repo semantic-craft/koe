@@ -367,3 +367,10 @@
 - 修复：`CaptureAsset::recover` 保留检查点；Runtime 完成 metadata 提交后调用 `release_recovered`。提交失败仍能重试同一份录音。
 - 验证：恢复提交失败、重开及退出重试行为回归通过。
 - Seen 1x (2026-11-13)
+
+### 暂存应用仍会保留包内目录软链
+
+- 出处：2026-11-13 #665 许可打包独立审查，真实 `ditto` 与安装器回归复现 `Contents` 或 `Contents/Resources` 软链导致暂存包外的许可文件被删除并重写。
+- 修复：签名前更新许可目录前，拒绝这两个父目录为软链；源包和安装目标的顶层路径校验不能替代包内写入路径校验。
+- 验证点：`test_skip_build_rejects_symlinked_license_parents_without_modifying_external_files` 在修复前两个子场景失败，修复后拒绝安装且外部许可原样保留。
+- Seen 1x（2026-11-13）。

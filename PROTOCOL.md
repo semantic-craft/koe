@@ -1,5 +1,7 @@
 # soundcore Work (安克 AI 录音豆) Protocol Notes
 
+Derived from [tacshi/Soundcore](https://github.com/tacshi/Soundcore/tree/0e100df287ef44f8c343935ada8093b61da1f207). Copyright (c) 2026 Rocky Shi. Distributed under the [MIT License](assets/licenses/soundcore.txt); Koe maintains additions to these notes.
+
 Reverse-engineered from the Feishu Android APK (`lark_feishu.apk`) embedded Anker SDK.
 
 | Item | Value |

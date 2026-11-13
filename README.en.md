@@ -7,7 +7,7 @@
   <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-5.10%2B-F05138?style=flat-square&logo=swift&logoColor=white">
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white">
   <a href="https://github.com/semantic-craft/koe/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/semantic-craft/koe/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <img alt="License pending" src="https://img.shields.io/badge/License-pending-lightgrey?style=flat-square">
+  <img alt="Upstream license: MIT" src="https://img.shields.io/badge/Upstream_license-MIT-blue?style=flat-square">
 </p>
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
@@ -95,4 +95,6 @@ Structured-minutes prompts also draw from Meetily and Ownscribe. See [THIRD_PART
 
 ## License
 
-The repository retains its **license-pending, no-public-distribution policy until upstream authorization is confirmed**. Rights in upstream code remain with its authors. Until authorization is resolved, use is personal and redistribution is not permitted. Cargo package metadata does not substitute for authorization of upstream code.
+[tacshi/Soundcore](https://github.com/tacshi/Soundcore) is licensed under MIT, Copyright (c) 2026 Rocky Shi. Koe retains this attribution for the inherited protocol documentation and ported implementation. See the full [license](assets/licenses/soundcore.txt) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the source revision and scope.
+
+This repository remains private and is not being publicly released. The MIT field in Cargo metadata does not replace third-party license terms. The macOS installer includes third-party notices and license texts in `Koe.app/Contents/Resources/Licenses/`.

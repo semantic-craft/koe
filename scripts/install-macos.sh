@@ -238,6 +238,15 @@ trap cleanup_stage EXIT
 
 APP="$STAGING/${APP_NAME}.app"
 ditto "$SOURCE" "$APP"
+if [[ -L "$APP/Contents" || -L "$APP/Contents/Resources" ]]; then
+  echo 'error: bundle Contents and Contents/Resources must be real directories, not symlinks.' >&2
+  exit 1
+fi
+LICENSES="$APP/Contents/Resources/Licenses"
+rm -rf "$LICENSES"
+mkdir -p "$LICENSES/assets"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$LICENSES/"
+ditto "$ROOT/assets/licenses" "$LICENSES/assets/licenses"
 if [[ -n "$IDENTITY" ]]; then
   "$SIGN_SCRIPT" --identity "$IDENTITY" "$APP"
 else

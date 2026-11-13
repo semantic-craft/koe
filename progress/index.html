@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-13T05:36:12.407461Z</p>
-<p>Main: <code>main: e513032c6a783469d9be959e2b700fb472eec507</code></p>
+<p>Observed: 2026-11-13T05:45:53.149658Z</p>
+<p>Main: <code>main: c24928644e10e1a49f821ea14791be188f466c55</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -159,6 +159,13 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/654">issue 654: 签名日常安装与 GUI 退出重开通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/657">issue 657: 路径删除后的退出死锁有先红后绿回归和真机采样。</a></li>
 </ul><p>Next: 连接引导和审核编辑弹窗的剩余配色验收见 #654。</p></article>
+<article id="third-party-license-bundle"><h3>Soundcore MIT 署名与安装包许可</h3><span class="badge">done</span><p>已补齐 tacshi/Soundcore 的 MIT 正文和 Rocky Shi 署名；正常构建及 --skip-build 均在签名前更新许可。安装器 9 项回归和全量门禁通过；真实 Developer ID 签名包自检、冒烟通过，8 份文件逐字节一致。仓库保持私有，未替换日常应用。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/assets/licenses/soundcore.txt">file assets/licenses/soundcore.txt: 上游固定提交的完整 MIT 正文</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/THIRD_PARTY_NOTICES.md">file THIRD_PARTY_NOTICES.md: 来源版本、采纳范围与安装包目录</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/665">issue 665: 本次许可与打包工作</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/scripts/test_install_macos.py">file scripts/test_install_macos.py: 许可完整复制、旧文件清除及软链包外写入回归先红后绿</a></li>
+<li>note 2026-11-13 本机验证: 正常构建与 --skip-build 的独立 Developer ID 安装包均通过签名、自检、冒烟及 8 份许可文件字节核对；完整 scripts/check 通过。</li>
+</ul><p>Next: 本项不授权公开仓库。XERJ 缓存同步因指定可执行文件缺失未完成，上游来源已直接核验。</p></article>
 </section>
 <section id="scope"><h2>后续范围</h2>
 <article id="later-platforms"><h3>移动端与尚未接入能力</h3><span class="badge">planned</span><p>iOS、Android、屏幕采集、Google 写回与 ACP 不计入当前 macOS 已接通功能；Mac 麦克风全天听记已接入，硬件验收见 #662。</p><ul>
