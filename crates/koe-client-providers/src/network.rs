@@ -20,7 +20,7 @@ pub const DASHSCOPE_ASR_ENDPOINT: &str = "wss://dashscope.aliyuncs.com/api-ws/v1
 pub const DASHSCOPE_CHAT_ENDPOINT: &str =
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 /// Default real-time ASR model.
-pub const DASHSCOPE_ASR_MODEL: &str = "fun-asr-realtime";
+pub const DASHSCOPE_ASR_MODEL: &str = "qwen-audio-3.1-asr-flash-streaming";
 /// Default general-purpose chat model.
 pub const DASHSCOPE_CHAT_MODEL: &str = "qwen-plus";
 

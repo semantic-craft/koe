@@ -68,18 +68,71 @@ struct CredentialsTests {
     func isolatedNativeAdapter() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("koe-isolated-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let native = NativeCredentials(workspaceOverride: true)
+        let native = NativeCredentials(workspaceOverride: true, environment: ["DASHSCOPE_API_KEY": "ignored-fixture"])
         #expect(native.isolated)
         let first = HostSessionStore(workspacePath: root.path, credentials: native)
+        #expect(!first.snapshot.provider.configured)
         first.send("configure_provider", ["apiKey": "isolated-fixture", "model": "isolated-model"])
         #expect(first.snapshot.provider.configured)
         #expect(first.snapshot.provider.isolated)
         first.shutdown()
-        let second = HostSessionStore(workspacePath: root.path, credentials: NativeCredentials(workspaceOverride: true))
+        let second = HostSessionStore(workspacePath: root.path, credentials: NativeCredentials(
+            workspaceOverride: true, environment: ["KOE_CREDENTIAL_SOURCE": "isolated", "DASHSCOPE_API_KEY": "ignored-fixture"]))
         defer { second.shutdown() }
         #expect(!second.snapshot.provider.configured)
         #expect(second.snapshot.provider.model == "isolated-model")
         second.send("clear_provider_credential")
         #expect(second.snapshot.provider.credentialState == "cleared")
+    }
+
+    @Test("Explicit environment credentials configure a new workspace, survive restart and respect clear")
+    func environmentLifecycle() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("koe-environment-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = ["KOE_CREDENTIAL_SOURCE": "environment", "DASHSCOPE_API_KEY": "environment-fixture-secret"]
+        let first = HostSessionStore(workspacePath: root.path,
+                                     credentials: NativeCredentials(workspaceOverride: true, environment: environment))
+        #expect(first.snapshot.provider.configured)
+        #expect(first.snapshot.provider.isolated)
+        #expect(first.nativeError == nil)
+        first.shutdown()
+
+        let missing = HostSessionStore(workspacePath: root.path, credentials: NativeCredentials(
+            workspaceOverride: true, environment: ["KOE_CREDENTIAL_SOURCE": "environment"]))
+        #expect(!missing.snapshot.provider.configured)
+        #expect(missing.snapshot.provider.credentialState == "missing_saved")
+        missing.shutdown()
+
+        let reopened = HostSessionStore(workspacePath: root.path,
+                                        credentials: NativeCredentials(workspaceOverride: true, environment: environment))
+        defer { reopened.shutdown() }
+        #expect(reopened.snapshot.provider.configured)
+        let workspace = try String(contentsOf: root.appendingPathComponent("product-workspace.json"), encoding: .utf8)
+        #expect(!workspace.contains("environment-fixture-secret"))
+        let snapshot = try JSONEncoder().encode(reopened.snapshot)
+        #expect(!String(decoding: snapshot, as: UTF8.self).contains("environment-fixture-secret"))
+        reopened.send("configure_provider", ["apiKey": "environment-fixture-secret", "model": "environment-model"])
+        #expect(reopened.snapshot.provider.model == "environment-model")
+        reopened.send("configure_provider", ["apiKey": "manual-fixture-secret", "model": "manual-model"])
+        #expect(reopened.snapshot.provider.configured)
+        #expect(reopened.snapshot.provider.model == "manual-model")
+        reopened.send("retry_provider_credentials")
+        #expect(reopened.snapshot.provider.configured)
+        reopened.shutdown()
+
+        let manual = HostSessionStore(workspacePath: root.path,
+                                      credentials: NativeCredentials(workspaceOverride: true, environment: environment))
+        #expect(!manual.snapshot.provider.configured)
+        #expect(manual.snapshot.provider.model == "manual-model")
+        #expect(manual.snapshot.provider.credentialState == "missing_saved")
+        manual.send("clear_provider_credential")
+        #expect(manual.snapshot.provider.credentialState == "cleared")
+        manual.shutdown()
+
+        let cleared = HostSessionStore(workspacePath: root.path,
+                                       credentials: NativeCredentials(workspaceOverride: true, environment: environment))
+        defer { cleared.shutdown() }
+        #expect(!cleared.snapshot.provider.configured)
+        #expect(cleared.snapshot.provider.credentialState == "cleared")
     }
 }

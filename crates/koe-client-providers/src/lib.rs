@@ -42,7 +42,7 @@ pub const ASR_SPEECH_WINDOW_PCM_BYTES: usize = 3_200;
 /// Default RMS energy threshold above which a 16 kHz PCM16 frame is treated as active speech.
 pub const ASR_DEFAULT_RMS_THRESHOLD: u16 = 120;
 
-/// RFC 6455 WebSocket frame opcode used by DashScope `fun-asr-realtime`.
+/// RFC 6455 WebSocket frame opcode used by DashScope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsFrameOpcode {
     /// UTF-8 text frame (`0x1`, used for `run-task`, `finish-task`, and `result-generated` JSON).
@@ -99,7 +99,7 @@ pub struct DecodedWsFrame {
 
 /// Encodes an RFC 6455 client-to-server masked WebSocket frame (`FIN = 1`, `MASK = 1`).
 ///
-///Per RFC 6455 Section 5.3, all client-to-server frames sent to DashScope `fun-asr-realtime`
+///Per RFC 6455 Section 5.3, all client-to-server frames sent to DashScope
 /// must set the `MASK` bit (`0x80` in byte 1) and XOR the payload with a 4-byte `mask_key`.
 #[must_use]
 pub fn encode_masked_ws_frame(opcode: WsFrameOpcode, payload: &[u8], mask_key: [u8; 4]) -> Vec<u8> {

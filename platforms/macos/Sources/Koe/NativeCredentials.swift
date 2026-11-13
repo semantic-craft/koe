@@ -4,29 +4,46 @@ import Security
 
 final class NativeCredentials: HostCredentials {
     enum Failure: Error { case unavailable }
+    private enum Source {
+        case productionKeychain
+        case isolated
+        case environment(String?)
+    }
     private static let lock = NSLock()
     private static let service = "com.semanticcraft.koe.provider.credentials"
     private static let legacyService = "com.semanticcraft.soundcore.credentials"
-    private let system: Bool
+    private static let environmentReferencePrefix = "isolated-environment-qwen-"
+    private let source: Source
     private var memory: [String: String] = [:]
-    var isolated: Bool { !system }
+    private var deleted: Set<String> = []
+    var isolated: Bool {
+        if case .productionKeychain = source { return false }
+        return true
+    }
 
     static func allowsSystemStorage(debug: Bool, sourceOverride: Bool, workspaceOverride: Bool, trusted: Bool) -> Bool {
         !debug && !sourceOverride && !workspaceOverride && trusted
     }
 
-    init(workspaceOverride: Bool) {
+    init(workspaceOverride: Bool, environment: [String: String] = ProcessInfo.processInfo.environment) {
         #if DEBUG
         let debug = true
         #else
         let debug = false
         #endif
-        system = Self.allowsSystemStorage(
+        if environment["KOE_CREDENTIAL_SOURCE"] == "environment" {
+            let key = environment["DASHSCOPE_API_KEY"]
+            source = .environment(key)
+        } else if Self.allowsSystemStorage(
             debug: debug,
-            sourceOverride: ProcessInfo.processInfo.environment["KOE_CREDENTIAL_SOURCE"] != nil,
+            sourceOverride: environment["KOE_CREDENTIAL_SOURCE"] != nil,
             workspaceOverride: workspaceOverride,
             trusted: Self.trustedSignature()
-        )
+        ) {
+            source = .productionKeychain
+        } else {
+            source = .isolated
+        }
     }
 
     private static func trustedSignature() -> Bool {
@@ -45,7 +62,7 @@ final class NativeCredentials: HostCredentials {
     func perform(operation: UInt32, reference: String, value: String) throws -> String? {
         Self.lock.lock()
         defer { Self.lock.unlock() }
-        if !system { return try isolatedOperation(operation, reference, value) }
+        if isolated { return try isolatedOperation(operation, reference, value) }
         var wasAllowed = DarwinBoolean(false)
         guard SecKeychainGetUserInteractionAllowed(&wasAllowed) == errSecSuccess,
               SecKeychainSetUserInteractionAllowed(operation == 4) == errSecSuccess else { throw Failure.unavailable }
@@ -74,13 +91,31 @@ final class NativeCredentials: HostCredentials {
 
     private func isolatedOperation(_ operation: UInt32, _ reference: String, _ value: String) throws -> String? {
         switch operation {
-        case 0: return memory[reference]
+        case 0:
+            if let value = memory[reference] { return value }
+            guard case .environment(let key) = source,
+                  !deleted.contains(reference),
+                  reference.hasPrefix(Self.environmentReferencePrefix),
+                  UUID(uuidString: String(reference.dropFirst(Self.environmentReferencePrefix.count))) != nil
+            else { return nil }
+            return key
         case 1:
-            let id = "isolated-" + UUID().uuidString.lowercased()
+            let prefix: String
+            if case .environment(let key) = source, key == value {
+                prefix = Self.environmentReferencePrefix
+            } else {
+                prefix = "isolated-"
+            }
+            let id = prefix + UUID().uuidString.lowercased()
             memory[id] = value
             return id
-        case 2: memory.removeValue(forKey: reference); return ""
-        case 3: return nil
+        case 2:
+            memory.removeValue(forKey: reference)
+            deleted.insert(reference)
+            return ""
+        case 3:
+            guard case .environment(let key?) = source else { return nil }
+            return String(decoding: try JSONEncoder().encode(["qwen": key]), as: UTF8.self)
         case 4: return ""
         default: throw Failure.unavailable
         }

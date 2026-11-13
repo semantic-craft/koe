@@ -1,12 +1,12 @@
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use koe_client_providers::{LiveEvent, LiveTranscription, ProviderConfig};
+use koe_client_providers::{LiveEvent, LiveTranscription, ProviderConfig, DASHSCOPE_ASR_MODEL};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::Message;
 
 fn config(endpoint: String) -> ProviderConfig {
-    ProviderConfig::new(endpoint, "fun-asr-realtime".into(), "unit-test-key".into())
+    ProviderConfig::new(endpoint, DASHSCOPE_ASR_MODEL.into(), "unit-test-key".into())
 }
 
 fn wait_event(live: &mut LiveTranscription) -> LiveEvent {
@@ -28,6 +28,7 @@ async fn ready(stream: tokio::net::TcpStream) -> (ServerSocket, String) {
     let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
     let run: Value =
         serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert_eq!(run["payload"]["model"], "qwen-audio-3.1-asr-flash-streaming");
     let id = run["header"]["task_id"].as_str().unwrap().to_owned();
     socket
         .send(Message::Text(

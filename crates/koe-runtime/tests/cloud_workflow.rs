@@ -167,7 +167,7 @@ fn asr_server(
                 }).await.unwrap();
                 let run: Value = serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
                 assert_eq!(run["header"]["action"], "run-task");
-                assert_eq!(run["payload"]["model"], "fun-asr-realtime");
+                assert_eq!(run["payload"]["model"], "qwen-audio-3.1-asr-flash-streaming");
                 assert_eq!(run["payload"]["parameters"]["sample_rate"], 16000);
                 let id = run["header"]["task_id"].as_str().unwrap();
                 ws.send(Message::Text(json!({"header":{"event":"task-started","task_id":id},"payload":{}}).to_string().into())).await.unwrap();
