@@ -210,7 +210,7 @@
         "number": 668,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T09:14:37Z"
+        "updated_at": "2026-11-13T11:34:32Z"
       },
       {
         "number": 671,
@@ -225,7 +225,7 @@
         "updated_at": "2026-11-13T09:35:18Z"
       }
     ],
-    "main": "d6f9406cc076eacec02b2f0c56e1939e875bf375",
+    "main": "bb5deef431ed7f505cb139ae4e09be74eef8551d",
     "open_pulls": [],
     "pulls": [
       {
@@ -408,7 +408,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T09:57:13.943913Z",
+  "observed_at": "2026-11-13T13:17:48.451289Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -472,7 +472,7 @@
           "next": "按 #588 继续验收取回与真实云服务。",
           "status": "done",
           "summary": "今天、记录详情、待办、记忆、问答与录音豆连接引导使用 C ABI v2 快照。已恢复充电仓按键脉冲引导动画与连接成功双电量 5 步引导，真机 D3200（固件 04.92）已实测自动重连并同步双端电量与设备录音目录。",
-          "title": "今天、记录详情、全局问答与连接引导"
+          "title": "原生页面、记录详情、问答与连接引导"
         },
         {
           "evidence": [
@@ -953,7 +953,7 @@
             }
           ],
           "id": "day-journal-native",
-          "next": "物理麦克风/D3200、外部输入法与签名版按 #668 验收。只留文字后删除音频、整天合并分析及普通会议录制中的持续 AI 纪要生成尚未接入。",
+          "next": "首页改为模式选择的补丁已实现并独立审查 PASS，尚未安装。首页不展示记录与摘要，既有数据保留。物理麦克风、D3200 与外部输入法继续按 #668 验收。只留文字后删除音频、整天合并分析及普通会议录制中的持续 AI 纪要生成尚未接入。",
           "status": "done",
           "summary": "四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。2026-11-13 已安装签名版，使用开发工作区执行真实设备验收。 PR #669 已通过 CI 并 squash 合并为 c127845。",
           "title": "一天一页原生界面"
@@ -1031,10 +1031,34 @@
             }
           ],
           "id": "responsay-external-pcm",
-          "next": "PCMHW 保持未完成。Responsay #810 跟踪全自动识别上屏、实体双击、三种快捷键、断连恢复及无重复录音或识别。隔离实例缺少辅助功能权限，截图验收启动也未启用快捷键录制监听器和双击回调；不得自动授予权限或安排人工操作。",
+          "next": "PCMHW 保持未完成。已恢复 Responsay 的现有 dev socket 配置，设备已待命。模式选择与侧栏语音输入的一键联动已实现、独立审查 PASS，尚未安装。安装后按 Responsay #810 继续验证真实 ASR、原光标输入、物理双击、断连恢复及无重复录音或识别。",
           "status": "done",
           "summary": "已实现按 socket 独占的外部 PCM 采集，停止确认排在音频尾部之后。软件回归已覆盖不重复启动 Koe 听写。2026-11-13 真实 D3200 提供 11.56 秒非静音 PCM，软件起止确认及 Responsay 隔离完整应用的真实音量检测、引导选源通过。真实识别与光标写入仍未验收，不能据此宣称无丢包、尾音完整或不留录音。",
           "title": "Responsay 独占外部 PCM 输入"
+        },
+        {
+          "id": "voice-input-mode-entry",
+          "title": "模式选择与一键语音输入入口",
+          "status": "in_progress",
+          "summary": "首页只展示模式选择，移除首页录音片段与摘要展示，不删除记录。侧栏语音输入与首页按钮共用 Rust PrepareVoiceInput，自动启用领夹待命和 BLE 自动连接，经宿主固定 URL 请求 Responsay 选择 Koe 音源。Koe b050935 与 Responsay a4052255 完整差异已由独立代理审查 PASS；入口补丁尚未安装。",
+          "next": "完成两仓门禁和原生安装验收，保留现有 dev socket override。真实 PCM 11.56 秒、软件起止与引导选源是既有证据，不能替代本补丁的 Release 冷热启动、真实 ASR、原光标输入和物理双击验收。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "crates/koe-runtime/src/voice_input.rs",
+              "note": "Rust 持有待命配置、录制保护与去重宿主动作。"
+            },
+            {
+              "kind": "file",
+              "ref": "platforms/apple-shared/Sources/KoeAppleShared/TodayView.swift",
+              "note": "首页移除录音与摘要展示，提供语音输入入口。"
+            },
+            {
+              "kind": "file",
+              "ref": "platforms/macos/Tests/KoeMacHostTests/NativeHostActionsTests.swift",
+              "note": "固定 URL、去重打开及失败重试回归。"
+            }
+          ]
         }
       ],
       "title": "当前产品实现"

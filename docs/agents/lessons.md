@@ -395,3 +395,11 @@
 - 修复：现有请求数组由独立线程写入并在结束时关闭 stdin，主线程同时通过 `wait_with_output` 读取 stdout/stderr，随后 join 写入线程；保留全部九条响应与持久化结果断言。
 - 验证点：`cargo test -p koe-cli --test commands live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conflict` 完整结束并通过；不能依赖请求数量少就先同步写完再读取响应。
 - Seen 1x（2026-11-13）。
+
+### 语音输入入口必须同时准备待命和连接外部输入法
+
+- 出处：2026-11-13 用户纠正首页与语音输入入口。旧首页展示录音摘要，语音输入只启动 Koe 采集，未准备领夹待命或连接 Responsay。既有 dev socket 配置也被进度误写成默认 socket 缺失的当前阻塞。
+- 修复：`b050935` 在 Rust 统一准备待命和自动连接，经宿主动作打开 Responsay；Responsay `a4052255` 增加 Release URL 入口并保留 socket override。首页只移除录音与摘要展示，不删除记录。补丁独立审查 PASS，尚未安装验收。
+- 正确做法：从用户点击入口跟到待命和外部音源选择，核对实际配置。分别记录源码实现、已安装版本和真实识别输入证据。
+- 验证点：`navigation_tests` 与 `companion_mcp_tests` 验证记录重开、已有待命和录制保护；`NativeHostActionsTests` 验证固定 URL 与失败重试。真实 ASR、原光标输入与物理双击继续保持未验收。
+- Seen 1x（2026-11-13）。
