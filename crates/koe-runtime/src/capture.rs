@@ -66,6 +66,7 @@ impl KoeRuntime {
                         let id = self.captures.active.remove(&file_id);
                         if let Some(id) = &id {
                             self.finish_speech(id);
+                            self.set_dictation_active(false);
                         }
                         self.captures.targets.push_back(id);
                     }

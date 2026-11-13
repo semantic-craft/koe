@@ -158,6 +158,51 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
     let d = Sandbox::new();
     let mut r = KoeRuntime::open(&d.0).unwrap();
     apple_ready(&mut r);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/chat", listener.local_addr().unwrap());
+    let (received, wait_received) = std::sync::mpsc::channel();
+    let (release, wait_release) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buf = [0; 4096];
+        loop {
+            let n = socket.read(&mut buf).unwrap();
+            assert!(n > 0);
+            request.extend_from_slice(&buf[..n]);
+            if let Some(end) = request.windows(4).position(|s| s == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&request[..end]);
+                let len = headers
+                    .lines()
+                    .find_map(|s| {
+                        s.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|s| s.trim().parse::<usize>().ok())
+                    })
+                    .unwrap();
+                assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+                if request.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        received.send(()).unwrap();
+        wait_release
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let summary=json!({"schemaVersion":2,"title":"全天听记","overview":"已封段原文","topics":[],"decisions":[],"actions":[],"questions":[],"terms":[],"reviewItems":[]}).to_string();
+        let body = json!({"choices":[{"message":{"content":summary}}]}).to_string();
+        write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+    });
+    let settings = send(
+        &mut r,
+        json!({"type":"configure_provider","model":"fixture","chatEndpoint":endpoint}),
+    );
+    assert_eq!(settings["provider"]["configured"], true);
     let s = send(
         &mut r,
         json!({"type":"start_all_day","source":"microphone","inputId":"fixture"}),
@@ -184,6 +229,20 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         .join("audio")
         .join(format!("{}.wav", first.aggregate.recording_id))
         .is_file());
+    r.poll_timers(0, 100);
+    wait_received
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(matches!(
+        r.workspace()
+            .record(&first.aggregate.recording_id)
+            .unwrap()
+            .analysis,
+        koe_engine::product::AnalysisState::Pending {
+            stage: koe_engine::product::AnalysisStage::Summarizing,
+            ..
+        }
+    ));
     let s = audio(&mut r, &t, sequence, 320);
     assert!(s["error"].is_null(), "{s}");
     sequence += 1;
@@ -202,6 +261,21 @@ fn all_day_seals_records_without_restarting_the_native_audio_producer() {
         second.all_day.as_ref().unwrap().run_id,
         first.all_day.as_ref().unwrap().run_id
     );
+    release.send(()).unwrap();
+    server.join().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while r
+        .workspace()
+        .record(&first.aggregate.recording_id)
+        .unwrap()
+        .aggregate
+        .minutes
+        .is_none()
+    {
+        r.poll_timers(0, 100);
+        assert!(std::time::Instant::now() < deadline, "{}", r.snapshot(100));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     send(&mut r, json!({"type":"stop_all_day"}));
     send(
         &mut r,
@@ -270,6 +344,7 @@ fn dictation_bridge_publishes_only_selected_persisted_finals_and_the_stop_tail()
     fs::remove_dir(&path).unwrap();
     fs::rename(d.0.join("saved.json"), &path).unwrap();
     r.poll_timers(0, 100);
+    assert_eq!(r.snapshot(100)["dictation"]["active"], false);
     let events = r.drain_companion_events();
     assert_eq!(events.len(), 1);
     let e = serde_json::to_value(&events[0]).unwrap();
@@ -341,4 +416,171 @@ fn interrupted_microphone_audio_is_recovered_and_only_local_unfinished_work_resu
         .unwrap();
     assert_eq!(record.aggregate.spine.segments().len(), 2);
     assert_eq!(record.aggregate.spine.segments()[1].start_ms, 20);
+}
+
+#[test]
+fn apple_waits_for_the_previous_window_tail_before_starting_the_next() {
+    let d = Sandbox::new();
+    let mut r = KoeRuntime::open(&d.0).unwrap();
+    apple_ready(&mut r);
+    let s = send(
+        &mut r,
+        json!({"type":"start_microphone","inputId":"fixture"}),
+    );
+    let t = s["microphone"].clone();
+    microphone_started(&mut r, &t);
+    let mut sequence = 0;
+    let mut n = 0;
+    let mut operation = None;
+    while n < 240_000 {
+        let count = 8192.min(240_000 - n);
+        audio(&mut r, &t, sequence, count);
+        let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+        for e in effects {
+            if e["kind"] == "start" {
+                operation = e["operationId"].as_u64();
+            }
+        }
+        n += count;
+        sequence += 1;
+    }
+    audio(&mut r, &t, sequence, 320);
+    let waiting: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+    assert!(!waiting
+        .iter()
+        .any(|e| e["kind"] == "start" || e["kind"] == "cancel"));
+    let operation = operation.unwrap();
+    send(
+        &mut r,
+        json!({"type":"local_asr_result","operationId":operation,"text":"前窗尾句","startMs":14980,"endMs":15000,"isFinal":true}),
+    );
+    send(
+        &mut r,
+        json!({"type":"local_asr_finished","operationId":operation}),
+    );
+    let next: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+    assert_eq!(next.iter().filter(|e| e["kind"] == "start").count(), 1);
+    assert_eq!(
+        next.iter().find(|e| e["kind"] == "audio").unwrap()["pcm16"]
+            .as_array()
+            .unwrap()
+            .len(),
+        320
+    );
+    assert!(r
+        .workspace()
+        .records()
+        .values()
+        .next()
+        .unwrap()
+        .aggregate
+        .spine
+        .segments()
+        .iter()
+        .any(|s| s.text == "前窗尾句"));
+}
+#[test]
+fn dictation_selection_does_not_publish_background_file_transcription() {
+    let d = Sandbox::new();
+    let mut r = KoeRuntime::open(&d.0).unwrap();
+    apple_ready(&mut r);
+    let mut bytes = koe_engine::wav::OpusWave::wav_header_with_rate(640, 16000).to_vec();
+    bytes.extend(vec![0; 640]);
+    let file = d.0.join("audio.wav");
+    fs::write(&file, bytes).unwrap();
+    let s = send(&mut r, json!({"type":"import_file","path":file}));
+    send(&mut r, json!({"type":"set_dictation_active","active":true}));
+    send(
+        &mut r,
+        json!({"type":"transcribe","recordId":s["selectedRecordId"]}),
+    );
+    let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+    let op = effects.iter().find(|e| e["kind"] == "start").unwrap()["operationId"].clone();
+    send(
+        &mut r,
+        json!({"type":"local_asr_result","operationId":op,"text":"后台文件原文","startMs":0,"endMs":20,"isFinal":true}),
+    );
+    send(
+        &mut r,
+        json!({"type":"local_asr_finished","operationId":op}),
+    );
+    assert!(r.drain_companion_events().is_empty());
+    assert_eq!(
+        r.workspace()
+            .record(s["selectedRecordId"].as_str().unwrap())
+            .unwrap()
+            .aggregate
+            .spine
+            .segments()[0]
+            .text,
+        "后台文件原文"
+    );
+}
+#[test]
+fn timed_all_day_pause_after_rotation_keeps_one_clock_coordinate() {
+    let d = Sandbox::new();
+    let mut r = KoeRuntime::open(&d.0).unwrap();
+    apple_ready(&mut r);
+    let s = send(
+        &mut r,
+        json!({"type":"start_all_day","source":"microphone","inputId":"fixture"}),
+    );
+    let t = s["microphone"].clone();
+    let clock = 1_000_000_000u64;
+    send(
+        &mut r,
+        json!({"type":"microphone_prepared","recordId":t["recordId"],"sessionId":t["sessionId"],"epoch":0,"clockNs":clock}),
+    );
+    microphone_started(&mut r, &t);
+    let mut sequence = 0u64;
+    let mut n = 0usize;
+    while n < 4_800_320 {
+        let count = 8192.min(4_800_320 - n);
+        let s = send(
+            &mut r,
+            json!({"type":"microphone_chunk","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"samples":vec![10;count],"timing":{"epoch":0,"capturedStartNs":clock+n as u64*62500+10_000_000}}),
+        );
+        assert!(s["error"].is_null(), "{s}");
+        accept_windows(&mut r, "已识别");
+        n += count;
+        sequence += 1;
+    }
+    send(&mut r, json!({"type":"pause_microphone"}));
+    send(
+        &mut r,
+        json!({"type":"microphone_paused","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"epoch":0}),
+    );
+    let resumed_at = clock + n as u64 * 62500 + 10_000_000 + 1_000_000_000;
+    let s = send(
+        &mut r,
+        json!({"type":"resume_microphone","clockNs":resumed_at}),
+    );
+    assert!(s["error"].is_null(), "{s}");
+    let s = send(
+        &mut r,
+        json!({"type":"microphone_chunk","recordId":t["recordId"],"sessionId":t["sessionId"],"lane":"microphone","sequence":sequence,"samples":vec![20;320],"timing":{"epoch":1,"capturedStartNs":resumed_at}}),
+    );
+    assert!(s["error"].is_null(), "{s}");
+    assert_eq!(s["microphone"]["nextSequence"], sequence + 1);
+}
+
+#[test]
+fn apple_file_backpressure_waits_for_native_completion_instead_of_filling_its_queue() {
+    let d = Sandbox::new();
+    let mut r = KoeRuntime::open(&d.0).unwrap();
+    apple_ready(&mut r);
+    let mut bytes = koe_engine::wav::OpusWave::wav_header_with_rate(32000 * 90, 16000).to_vec();
+    bytes.resize(44 + 32000 * 90, 0);
+    let file = d.0.join("long.wav");
+    fs::write(&file, bytes).unwrap();
+    let s = send(&mut r, json!({"type":"import_file","path":file}));
+    let id = s["selectedRecordId"].clone();
+    send(&mut r, json!({"type":"transcribe","recordId":id}));
+    for _ in 0..10 {
+        r.poll_timers(0, 100);
+    }
+    assert!(r.snapshot(100)["error"].is_null(), "{}", r.snapshot(100));
+    let effects: Vec<Value> = serde_json::from_str(&r.drain_local_asr_json()).unwrap();
+    assert_eq!(effects.iter().filter(|e| e["kind"] == "start").count(), 1);
+    assert!(!effects.iter().any(|e| e["kind"] == "cancel"));
 }

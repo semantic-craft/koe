@@ -91,8 +91,16 @@ impl CaptureAsset {
         File::open(target.parent().ok_or("无效音频目录")?)
             .and_then(|f| f.sync_all())
             .map_err(io_error)?;
-        fs::remove_file(staging).map_err(io_error)?;
         Ok(Some(duration))
+    }
+    /// Releases a recovered staging name only after its recording metadata commits.
+    pub fn release_recovered(root: &Path, id: &str) -> Result<(), String> {
+        let staging = audio_path(root, id)?.with_extension("capture");
+        match fs::remove_file(staging) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(io_error(e)),
+        }
     }
     /// Duration derived from accepted frames, never from host timers.
     pub fn duration_ms(&self) -> u64 {

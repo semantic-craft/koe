@@ -80,7 +80,12 @@ fn independent_sequences_tail_barrier_and_reopen_preserve_both_assets() {
     chunk(&mut r, &t, "microphone", 0, 1);
     send(&mut r, json!({"type":"request_quit"}));
     stop(&mut r, &t, "microphone", 1);
-    assert!(r.workspace().records().is_empty());
+    assert!(r
+        .workspace()
+        .record(t["recordId"].as_str().unwrap())
+        .unwrap()
+        .capture_lanes
+        .is_empty());
     assert_eq!(r.snapshot(100)["lifecycle"]["quitPhase"], "draining");
     assert!(stop(&mut r, &t, "system", 2)["error"].is_string());
     chunk(&mut r, &t, "system", 1, 3);
@@ -131,7 +136,12 @@ fn failed_lane_is_persisted_as_incomplete_and_old_callbacks_are_isolated() {
         json!({"type":"microphone_failed","message":"permission denied"}),
     );
     stop(&mut r, &t, "system", 0);
-    assert!(r.workspace().records().is_empty());
+    assert!(r
+        .workspace()
+        .record(t["recordId"].as_str().unwrap())
+        .unwrap()
+        .capture_lanes
+        .is_empty());
     stop(&mut r, &t, "microphone", 1);
     let data: Value =
         serde_json::from_str(&fs::read_to_string(p.0.join("product-workspace.json")).unwrap())
@@ -174,7 +184,12 @@ fn publication_retry_keeps_each_lane_and_cancel_quit_keeps_session() {
     send(&mut r, json!({"type":"request_quit"}));
     stop(&mut r, &t, "microphone", 1);
     stop(&mut r, &t, "system", 1);
-    assert!(r.workspace().records().is_empty());
+    assert!(r
+        .workspace()
+        .record(t["recordId"].as_str().unwrap())
+        .unwrap()
+        .capture_lanes
+        .is_empty());
     assert_eq!(r.snapshot(100)["lifecycle"]["quitPhase"], "blocked");
     send(&mut r, json!({"type":"cancel_quit"}));
     assert_eq!(r.snapshot(100)["microphone"]["recordId"], t["recordId"]);

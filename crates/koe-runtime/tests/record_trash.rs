@@ -757,6 +757,11 @@ fn active_microphone_ble_and_cloud_guards_block_trash_and_preserve_staging_asset
     );
     dispatch_ok(
         &mut runtime,
+        json!({"type": "configure_speech", "engine": "cloud"}),
+        NOW + 4,
+    );
+    dispatch_ok(
+        &mut runtime,
         json!({"type": "transcribe", "recordId": cloud_id}),
         NOW + 4,
     );
@@ -1130,6 +1135,11 @@ fn late_cloud_completion_after_policy_cancel_and_purge_converges_quit_to_ready()
             "model": "qwen-plus",
             "asrEndpoint": asr_url
         }),
+        NOW,
+    );
+    dispatch_ok(
+        &mut runtime,
+        json!({"type": "configure_speech", "engine": "cloud"}),
         NOW,
     );
     dispatch_ok(

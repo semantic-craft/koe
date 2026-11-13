@@ -389,7 +389,6 @@ impl KoeRuntime {
     /// window so finger-tap housing thumps never leak into ASR; stopping for any other reason
     /// flushes the held-back speech tail into the companion event queue.
     pub fn set_companion_capture_active(&mut self, active: bool, reason: Option<String>) {
-        self.set_dictation_active(active);
         let is_double_tap = reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER);
         self.companion.pending_tap_holdback_extra = 0;
         if self.companion.capture_active && !active {
@@ -399,9 +398,7 @@ impl KoeRuntime {
                 self.flush_companion_holdback();
             }
             self.companion.capture_active = false;
-            return;
-        }
-        if !self.companion.capture_active && active {
+        } else if !self.companion.capture_active && active {
             self.companion.tail_holdback.clear();
             self.companion.post_tap_skip_slices = if is_double_tap {
                 POST_TAP_SKIP_SLICES
@@ -410,6 +407,7 @@ impl KoeRuntime {
             };
             self.companion.capture_active = true;
         }
+        self.set_dictation_active(active);
     }
 
     pub(crate) fn is_known_bean_record(&self, file_id: u32) -> bool {
@@ -476,6 +474,7 @@ impl KoeRuntime {
     }
 
     pub(crate) fn stop_owned_standby_stream(&mut self) -> Result<(), String> {
+        self.set_dictation_active(false);
         let session = &self.device.session;
         let in_flight = session.device_recording_active
             || session.pending_realtime_subscribe
@@ -535,6 +534,7 @@ impl KoeRuntime {
             self.companion.push_event(hello);
             changed = true;
         } else if self.companion.was_connected && !connected {
+            self.set_dictation_active(false);
             if self.companion.standby_stream_owned
                 || self.companion.pending_standby_stop
                 || self.companion.active_standby_file_id.is_some()
@@ -646,6 +646,7 @@ impl KoeRuntime {
             if !self.is_quitting()
                 && !self.companion.standby_suppressed_for_connection
                 && self.workspace().companion_mode() == CompanionRoutingMode::CollarStandby
+                && self.all_day.run.is_none()
             {
                 let open_entry = self
                     .device
@@ -739,6 +740,7 @@ impl KoeRuntime {
                         }
                     } else if state == 0 || state == 2 {
                         if self.companion.standby_stream_owned {
+                            self.set_dictation_active(false);
                             let fid = file_id
                                 .filter(|&id| id > 0)
                                 .or_else(|| self.companion.active_standby_file_id.take())
@@ -785,10 +787,16 @@ impl KoeRuntime {
                 RawCompanionSignal::FrontDoubleTap {
                     file_id, offset_ms, ..
                 } => {
-                    if mode == CompanionRoutingMode::Disabled {
+                    if mode == CompanionRoutingMode::Disabled
+                        && !self
+                            .all_day
+                            .run
+                            .as_ref()
+                            .is_some_and(|r| r.source == "bean")
+                    {
                         continue;
                     }
-                    self.set_dictation_active(!self.speech.dictation_active);
+                    let next_dictation = !self.speech.dictation_active;
                     let epoch = self.companion.epoch.clone();
                     let seq_down = self.companion.next_sequence();
                     self.companion
@@ -813,9 +821,8 @@ impl KoeRuntime {
                             offset_ms: Some(offset_ms),
                         });
                     if self.effective_companion_auto_gate() {
-                        let next = !self.companion.capture_active;
                         self.set_companion_capture_active(
-                            next,
+                            next_dictation,
                             Some(COMPANION_DOUBLE_TAP_TRIGGER.to_string()),
                         );
                     } else if self.companion.capture_active {
@@ -841,6 +848,7 @@ impl KoeRuntime {
                             + self.companion.pending_tap_holdback_extra;
                         while self.companion.tail_holdback.len() > effective_limit {
                             if let Some(ready) = self.companion.tail_holdback.pop_front() {
+                                self.capture_standby_dictation(&ready);
                                 let epoch = self.companion.epoch.clone();
                                 let seq = self.companion.next_sequence();
                                 self.companion.push_event(CompanionStreamEvent::AudioPcm16 {
@@ -859,9 +867,10 @@ impl KoeRuntime {
         true
     }
 
-    fn flush_companion_holdback(&mut self) {
+    pub(super) fn flush_companion_holdback(&mut self) {
         let device_id = self.companion_device_id();
         while let Some(ready) = self.companion.tail_holdback.pop_front() {
+            self.capture_standby_dictation(&ready);
             let epoch = self.companion.epoch.clone();
             let seq = self.companion.next_sequence();
             self.companion.push_event(CompanionStreamEvent::AudioPcm16 {

@@ -20,6 +20,7 @@ pub(super) struct SpeechSession {
     pcm: Vec<i16>,
     consumed_samples: u64,
     input_closed: bool,
+    live_input: bool,
     file_audio: Option<VecDeque<u8>>,
     results: VecDeque<LiveEvent>,
     selected_ranges: Vec<(u64, Option<u64>)>,
@@ -35,10 +36,17 @@ struct ModelState {
     bytes: u64,
     message: Option<String>,
 }
+struct ModelPreparation {
+    id: String,
+    cancelled: bool,
+}
+
 pub(super) struct SpeechState {
     worker: Option<OfflineSpeechWorker>,
     worker_error: Option<String>,
     loaded_model_id: Option<String>,
+    preparation: Option<ModelPreparation>,
+    apple_owner: Option<u64>,
     models: BTreeMap<String, ModelState>,
     pub dictation_active: bool,
 }
@@ -52,6 +60,8 @@ impl SpeechState {
             worker,
             worker_error,
             loaded_model_id: None,
+            preparation: None,
+            apple_owner: None,
             models: BTreeMap::new(),
             dictation_active: false,
         }
@@ -93,6 +103,9 @@ impl KoeRuntime {
         if !offline_speech_models().iter().any(|m| m.id == id) {
             return Err("未找到此语音模型".into());
         }
+        if self.speech.preparation.is_some() {
+            return Err("请等待当前模型准备结束；取消后也需等待后台确认".into());
+        }
         if self
             .captures
             .sessions
@@ -108,6 +121,10 @@ impl KoeRuntime {
                 .unwrap_or_else(|| "本机识别不可用".into())
         })?;
         worker.prepare(id)?;
+        self.speech.preparation = Some(ModelPreparation {
+            id: id.into(),
+            cancelled: false,
+        });
         self.speech.loaded_model_id = None;
         for state in self
             .speech
@@ -136,6 +153,9 @@ impl KoeRuntime {
         {
             self.notice = Some("请先结束当前本机转写".into());
             return;
+        }
+        if let Some(preparation) = &mut self.speech.preparation {
+            preparation.cancelled = true;
         }
         self.speech.loaded_model_id = None;
         for state in self
@@ -186,7 +206,7 @@ impl KoeRuntime {
             SpeechEngine::Cloud => !self.settings.key.is_empty(),
         }
     }
-    pub(super) fn ensure_live_stream(&mut self, id: &str) -> Result<(), String> {
+    fn ensure_speech_session(&mut self, id: &str, live_input: bool) -> Result<(), String> {
         if self.captures.sessions.contains_key(id) {
             return Ok(());
         }
@@ -222,6 +242,7 @@ impl KoeRuntime {
             pcm: Vec::new(),
             consumed_samples: 0,
             input_closed: false,
+            live_input,
             file_audio: None,
             results: VecDeque::new(),
             selected_ranges: Vec::new(),
@@ -231,32 +252,29 @@ impl KoeRuntime {
             success: false,
             captured_pcm_bytes: 0,
         };
-        if self.speech.dictation_active {
+        if self.speech.dictation_active && session.live_input {
             session.selected_ranges.push((0, None));
         }
-        match engine {
-            SpeechEngine::Cloud => {
-                if let Some(error) = blocked {
-                    session.results.push_back(LiveEvent::Failed(error));
-                } else if self.settings.key.is_empty() {
-                    session.results.push_back(LiveEvent::Failed(
-                        "请先配置云端语音凭据；原始录音已保留".into(),
-                    ));
-                } else {
-                    match LiveTranscription::start(ProviderConfig::new(
-                        self.workspace()
-                            .provider_configuration()
-                            .asr_endpoint
-                            .clone(),
-                        DASHSCOPE_ASR_MODEL.into(),
-                        self.settings.key.clone(),
-                    )) {
-                        Ok(stream) => session.stream = Some(stream),
-                        Err(e) => session.results.push_back(LiveEvent::Failed(e)),
-                    }
+        if engine == SpeechEngine::Cloud {
+            if let Some(error) = blocked {
+                session.results.push_back(LiveEvent::Failed(error));
+            } else if self.settings.key.is_empty() {
+                session.results.push_back(LiveEvent::Failed(
+                    "请先配置云端语音凭据；原始录音已保留".into(),
+                ));
+            } else {
+                match LiveTranscription::start(ProviderConfig::new(
+                    self.workspace()
+                        .provider_configuration()
+                        .asr_endpoint
+                        .clone(),
+                    DASHSCOPE_ASR_MODEL.into(),
+                    self.settings.key.clone(),
+                )) {
+                    Ok(stream) => session.stream = Some(stream),
+                    Err(e) => session.results.push_back(LiveEvent::Failed(e)),
                 }
             }
-            _ => {}
         }
         self.captures.sessions.insert(id.into(), session);
         Ok(())
@@ -271,7 +289,7 @@ impl KoeRuntime {
                 .max()
                 .unwrap_or(0)
         });
-        self.ensure_live_stream(id)?;
+        self.ensure_speech_session(id, false)?;
         if let Some(s) = self.captures.sessions.get_mut(id) {
             s.saved = true;
             let skip = (offset as usize).saturating_mul(32).min(pcm.len());
@@ -292,11 +310,15 @@ impl KoeRuntime {
             })
             .map(|(id, _)| id.clone())
             .collect();
-        let changed = !ids.is_empty();
+        let mut changed = false;
         for id in ids {
             let Some(s) = self.captures.sessions.get_mut(&id) else {
                 continue;
             };
+            if s.engine == SpeechEngine::AppleSpeech && self.speech.apple_owner.is_some() {
+                continue;
+            }
+            changed = true;
             let audio = s.file_audio.as_mut().unwrap();
             let n = audio.len().min(WINDOW_SAMPLES * 2);
             let chunk: Vec<u8> = audio.drain(..n).collect();
@@ -314,7 +336,7 @@ impl KoeRuntime {
         changed
     }
     pub(super) fn feed_speech(&mut self, id: &str, pcm16: &[u8]) -> Result<(), String> {
-        if let Err(error) = self.ensure_live_stream(id) {
+        if let Err(error) = self.ensure_speech_session(id, true) {
             self.notice = Some(error);
             return Ok(());
         }
@@ -334,7 +356,12 @@ impl KoeRuntime {
                         break;
                     }
                 }
-            } else if session.engine != SpeechEngine::Cloud && session.results.is_empty() {
+            } else if session.engine != SpeechEngine::Cloud
+                && !session
+                    .results
+                    .iter()
+                    .any(|e| matches!(e, LiveEvent::Failed(_)))
+            {
                 for bytes in pcm16.chunks(2) {
                     if bytes.len() == 2 {
                         session.pcm.push(i16::from_le_bytes([bytes[0], bytes[1]]));
@@ -352,13 +379,17 @@ impl KoeRuntime {
     fn flush_speech_window(&mut self, s: &mut SpeechSession, finish: bool) -> Result<(), String> {
         match s.engine {
             SpeechEngine::AppleSpeech => {
+                if s.pcm.len() > WINDOW_SAMPLES * MAX_PENDING_WINDOWS {
+                    return Err("本机识别队列已满，音频已保留，可稍后补转写".into());
+                }
+                if s.active_operation.is_none() && self.speech.apple_owner.is_some() {
+                    return Ok(());
+                }
                 if s.active_operation.is_none() && !s.pcm.is_empty() {
-                    if s.operations.len() >= MAX_PENDING_WINDOWS {
-                        return Err("本机识别队列已满，音频已保留，可稍后补转写".into());
-                    }
                     let op = self.next_job;
                     self.next_job += 1;
                     self.local_asr.start(op);
+                    self.speech.apple_owner = Some(op);
                     s.operations.insert(
                         op,
                         LocalSession {
@@ -373,13 +404,16 @@ impl KoeRuntime {
                     s.active_operation = Some(op);
                 }
                 if let Some(op) = s.active_operation {
-                    let bytes: Vec<u8> = s.pcm.drain(..).flat_map(i16::to_le_bytes).collect();
+                    let current =
+                        (s.consumed_samples / 16 - s.operations[&op].offset_ms) as usize * 16;
+                    let n = s.pcm.len().min(WINDOW_SAMPLES.saturating_sub(current));
+                    let bytes: Vec<u8> = s.pcm.drain(..n).flat_map(i16::to_le_bytes).collect();
                     self.local_asr.audio(op, &bytes)?;
                     s.consumed_samples += bytes.len() as u64 / 2;
                     let offset = s.operations[&op].offset_ms;
                     s.operations.get_mut(&op).unwrap().duration_ms =
                         s.consumed_samples / 16 - offset;
-                    if finish || s.consumed_samples / 16 - offset >= 15_000 {
+                    if finish || current + n == WINDOW_SAMPLES {
                         self.local_asr.finish(op);
                         s.active_operation = None;
                         s.operations.get_mut(&op).unwrap().phase = LocalPhase::Finishing;
@@ -429,7 +463,12 @@ impl KoeRuntime {
             if let Err(error) = result {
                 s.results.push_back(LiveEvent::Failed(error));
             }
-            if s.stream.is_none() && s.operations.is_empty() && s.results.is_empty() {
+            if s.stream.is_none()
+                && s.operations.is_empty()
+                && s.pcm.is_empty()
+                && s.results.is_empty()
+                && !s.terminal
+            {
                 s.results.push_back(LiveEvent::Finished);
             }
             self.captures.sessions.insert(id.into(), s);
@@ -446,6 +485,23 @@ impl KoeRuntime {
             }
         }
         self.local_asr.drain()
+    }
+    pub(super) fn cancel_capture_speech(&mut self, id: &str) {
+        if let Some(mut session) = self.captures.sessions.remove(id) {
+            self.cancel_speech_operations(&mut session);
+        }
+    }
+    fn cancel_speech_operations(&mut self, session: &mut SpeechSession) {
+        if session.engine == SpeechEngine::AppleSpeech {
+            for &op in session.operations.keys() {
+                if self.speech.apple_owner == Some(op) {
+                    self.speech.apple_owner = None;
+                }
+                self.local_asr.cancel(op);
+            }
+        }
+        session.operations.clear();
+        session.active_operation = None;
     }
     pub(super) fn local_asr_readiness(
         &mut self,
@@ -530,6 +586,9 @@ impl KoeRuntime {
         Ok(())
     }
     pub(super) fn local_asr_finished(&mut self, operation_id: u64) {
+        if self.speech.apple_owner == Some(operation_id) {
+            self.speech.apple_owner = None;
+        }
         if let Some(s) = self
             .captures
             .sessions
@@ -542,13 +601,17 @@ impl KoeRuntime {
                 s.active_operation = None;
             }
             self.local_asr.complete(operation_id);
-            if s.input_closed && s.operations.is_empty() {
+            if s.input_closed && s.operations.is_empty() && s.pcm.is_empty() {
                 s.results.push_back(LiveEvent::Finished);
             }
         }
         self.poll_captures();
+        self.drive_apple_speech();
     }
     pub(super) fn local_asr_failed(&mut self, operation_id: u64, message: String) {
+        if self.speech.apple_owner == Some(operation_id) {
+            self.speech.apple_owner = None;
+        }
         if let Some(s) = self
             .captures
             .sessions
@@ -565,6 +628,30 @@ impl KoeRuntime {
             ));
         }
         self.poll_captures();
+    }
+    pub(super) fn drive_apple_speech(&mut self) -> bool {
+        if self.speech.apple_owner.is_some() {
+            return false;
+        }
+        let id = self
+            .captures
+            .sessions
+            .iter()
+            .filter(|(_, s)| {
+                s.engine == SpeechEngine::AppleSpeech && !s.terminal && !s.pcm.is_empty()
+            })
+            .min_by_key(|(_, s)| s.key.attempt)
+            .map(|(id, _)| id.clone());
+        let Some(id) = id else {
+            return false;
+        };
+        let mut s = self.captures.sessions.remove(&id).unwrap();
+        let finish = s.input_closed;
+        if let Err(error) = self.flush_speech_window(&mut s, finish) {
+            s.results.push_back(LiveEvent::Failed(error));
+        }
+        self.captures.sessions.insert(id, s);
+        true
     }
     pub(super) fn tick_local_asr(&mut self, elapsed_ms: u64) {
         let mut timeout = Vec::new();
@@ -590,113 +677,154 @@ impl KoeRuntime {
             .map_or_else(Vec::new, OfflineSpeechWorker::poll);
         let changed = !events.is_empty();
         for event in events {
-            match event {
-                OfflineSpeechEvent::Preparing {
-                    model_id,
-                    downloaded_bytes,
-                    ..
-                } => {
-                    self.speech.models.insert(
-                        model_id,
-                        ModelState {
-                            state: "preparing".into(),
-                            bytes: downloaded_bytes,
-                            message: None,
-                        },
-                    );
-                }
-                OfflineSpeechEvent::Ready { model_id } => {
-                    self.speech.loaded_model_id = Some(model_id.clone());
-                    for state in self
-                        .speech
-                        .models
-                        .values_mut()
-                        .filter(|s| s.state == "ready")
-                    {
-                        state.state = "downloaded".into();
-                    }
-                    let bytes = offline_speech_models()
-                        .iter()
-                        .find(|m| m.id == model_id)
-                        .map_or(0, |m| m.size_bytes);
-                    self.speech.models.insert(
-                        model_id,
-                        ModelState {
-                            state: "ready".into(),
-                            bytes,
-                            message: None,
-                        },
-                    );
-                }
-                OfflineSpeechEvent::PreparationFailed { model_id, error } => {
-                    self.speech.loaded_model_id = None;
-                    self.speech.models.insert(
-                        model_id,
-                        ModelState {
-                            state: "failed".into(),
-                            bytes: 0,
-                            message: Some(error),
-                        },
-                    );
-                }
-                OfflineSpeechEvent::TranscriptionFailed {
-                    operation_id,
-                    error,
-                } => self.local_asr_failed(operation_id, error),
-                OfflineSpeechEvent::Transcribed {
-                    operation_id,
-                    text,
-                    segments,
-                } => {
-                    if segments.is_empty() && !text.trim().is_empty() {
-                        let _ = self.local_asr_result(
-                            operation_id,
-                            text,
-                            0,
-                            self.captures
-                                .sessions
-                                .values()
-                                .find_map(|s| {
-                                    s.operations.get(&operation_id).map(|o| o.duration_ms)
-                                })
-                                .unwrap_or(0),
-                            true,
-                        );
-                    } else {
-                        for segment in segments {
-                            let _ = self.local_asr_result(
-                                operation_id,
-                                segment.text,
-                                segment.start_ms,
-                                segment.end_ms,
-                                true,
-                            );
-                        }
-                    }
-                    self.local_asr_finished(operation_id);
-                }
-            }
+            self.accept_offline_speech_event(event);
         }
         changed
+    }
+    pub(super) fn accept_offline_speech_event(&mut self, event: OfflineSpeechEvent) {
+        match event {
+            OfflineSpeechEvent::Preparing {
+                model_id,
+                downloaded_bytes,
+                ..
+            } => {
+                if !self
+                    .speech
+                    .preparation
+                    .as_ref()
+                    .is_some_and(|p| p.id == model_id && !p.cancelled)
+                {
+                    return;
+                }
+                self.speech.models.insert(
+                    model_id,
+                    ModelState {
+                        state: "preparing".into(),
+                        bytes: downloaded_bytes,
+                        message: None,
+                    },
+                );
+            }
+            OfflineSpeechEvent::Ready { model_id } => {
+                if !self.complete_model_preparation(&model_id) {
+                    return;
+                }
+                self.speech.loaded_model_id = Some(model_id.clone());
+                for state in self
+                    .speech
+                    .models
+                    .values_mut()
+                    .filter(|s| s.state == "ready")
+                {
+                    state.state = "downloaded".into();
+                }
+                let bytes = offline_speech_models()
+                    .iter()
+                    .find(|m| m.id == model_id)
+                    .map_or(0, |m| m.size_bytes);
+                self.speech.models.insert(
+                    model_id,
+                    ModelState {
+                        state: "ready".into(),
+                        bytes,
+                        message: None,
+                    },
+                );
+            }
+            OfflineSpeechEvent::PreparationFailed { model_id, error } => {
+                if !self.complete_model_preparation(&model_id) {
+                    return;
+                }
+                self.speech.loaded_model_id = None;
+                self.speech.models.insert(
+                    model_id,
+                    ModelState {
+                        state: "failed".into(),
+                        bytes: 0,
+                        message: Some(error),
+                    },
+                );
+            }
+            OfflineSpeechEvent::TranscriptionFailed {
+                operation_id,
+                error,
+            } => self.local_asr_failed(operation_id, error),
+            OfflineSpeechEvent::Transcribed {
+                operation_id,
+                text,
+                segments,
+            } => {
+                if segments.is_empty() && !text.trim().is_empty() {
+                    let _ = self.local_asr_result(
+                        operation_id,
+                        text,
+                        0,
+                        self.captures
+                            .sessions
+                            .values()
+                            .find_map(|s| s.operations.get(&operation_id).map(|o| o.duration_ms))
+                            .unwrap_or(0),
+                        true,
+                    );
+                } else {
+                    for segment in segments {
+                        let _ = self.local_asr_result(
+                            operation_id,
+                            segment.text,
+                            segment.start_ms,
+                            segment.end_ms,
+                            true,
+                        );
+                    }
+                }
+                self.local_asr_finished(operation_id);
+            }
+        }
+    }
+    fn complete_model_preparation(&mut self, id: &str) -> bool {
+        if self.speech.preparation.as_ref().is_some_and(|p| p.id == id) {
+            return !self.speech.preparation.take().unwrap().cancelled;
+        }
+        false
     }
     pub(super) fn set_dictation_active(&mut self, active: bool) {
         if self.speech.dictation_active == active {
             return;
         }
+        if !active && self.companion.standby_stream_owned {
+            if self.companion.capture_active {
+                self.flush_companion_holdback();
+            }
+            self.companion.capture_active = false;
+        }
         self.speech.dictation_active = active;
+        if active && self.companion.standby_stream_owned {
+            self.companion.capture_active = true;
+        }
         let ids: Vec<_> = self.captures.sessions.keys().cloned().collect();
         for id in ids {
             if let Some(mut s) = self.captures.sessions.remove(&id) {
+                if !s.live_input || s.terminal {
+                    self.captures.sessions.insert(id, s);
+                    continue;
+                }
                 let at = s.captured_pcm_bytes / 32;
                 if active {
                     s.selected_ranges.push((at, None));
                 } else if let Some((_, end)) = s.selected_ranges.last_mut() {
                     *end = Some(at);
                 }
-                if let Err(error) = self.flush_speech_window(&mut s, true) {
-                    s.results.push_back(LiveEvent::Failed(error));
+                if !s.input_closed {
+                    if let Err(error) = self.flush_speech_window(&mut s, true) {
+                        s.results.push_back(LiveEvent::Failed(error));
+                    }
                 }
                 self.captures.sessions.insert(id, s);
+            }
+        }
+        if !active {
+            if let Err(error) = self.finish_standby_dictation() {
+                self.error = Some(error);
             }
         }
     }
@@ -787,7 +915,7 @@ impl KoeRuntime {
                                 SpeechEngine::Cloud => "dashscope",
                             },
                         )
-                        .map(|seg| Some(seg)),
+                        .map(Some),
                     LiveEvent::Finished => self
                         .store
                         .transact(|w| {
@@ -830,10 +958,7 @@ impl KoeRuntime {
                                 self.error = Some(error.clone());
                                 s.terminal = true;
                                 s.stream = None;
-                                for op in s.operations.keys() {
-                                    self.local_asr.cancel(*op);
-                                }
-                                s.operations.clear();
+                                self.cancel_speech_operations(s);
                                 s.pcm.clear();
                             }
                         }
@@ -847,6 +972,7 @@ impl KoeRuntime {
                         s.terminal = true;
                         s.stream = None;
                         s.results.clear();
+                        self.cancel_speech_operations(s);
                         break;
                     }
                     Err(error) => {
@@ -864,5 +990,58 @@ impl KoeRuntime {
         sessions.retain(|_, s| !(s.saved && s.terminal && s.results.is_empty()));
         self.captures.sessions = sessions;
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn preparation_is_single_owner_and_cancelled_ready_never_reenables_a_model() {
+        let root = std::env::temp_dir().join(format!("koe-model-lifecycle-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut runtime = KoeRuntime::open(&root).unwrap();
+        runtime.speech.preparation = Some(ModelPreparation {
+            id: "sensevoice-small".into(),
+            cancelled: false,
+        });
+        runtime.speech.models.insert(
+            "sensevoice-small".into(),
+            ModelState {
+                state: "preparing".into(),
+                bytes: 1,
+                message: None,
+            },
+        );
+        let busy: Value = serde_json::from_str(&runtime.dispatch_json(
+            r#"{"type":"prepare_speech_model","modelId":"qwen3-asr-0.6b"}"#,
+            100,
+        ))
+        .unwrap();
+        assert!(busy["error"].as_str().unwrap().contains("等待当前模型"));
+        runtime.cancel_speech_model();
+        let cancelled_busy: Value = serde_json::from_str(&runtime.dispatch_json(
+            r#"{"type":"prepare_speech_model","modelId":"qwen3-asr-0.6b"}"#,
+            100,
+        ))
+        .unwrap();
+        assert!(cancelled_busy["error"].is_string());
+        runtime.accept_offline_speech_event(OfflineSpeechEvent::Ready {
+            model_id: "sensevoice-small".into(),
+        });
+        let snapshot = runtime.snapshot(100);
+        assert!(!snapshot["speech"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["state"] == "ready"));
+        assert!(!runtime.speech_ready(&SpeechEngine::Downloaded("sensevoice-small".into())));
+        assert!(runtime.speech.preparation.is_none());
+        runtime.accept_offline_speech_event(OfflineSpeechEvent::Ready {
+            model_id: "qwen3-asr-0.6b".into(),
+        });
+        assert!(!runtime.speech_ready(&SpeechEngine::Downloaded("qwen3-asr-0.6b".into())));
+        drop(runtime);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -20,7 +20,7 @@ fn failed_first_write_can_be_cancelled_and_restarted() {
     let root =
         Sandbox(std::env::temp_dir().join(format!("koe-capture-limit-{}", std::process::id())));
     fs::create_dir_all(&root.0).unwrap();
-    let script="import os,resource,signal,sys\nsignal.signal(signal.SIGXFSZ,signal.SIG_IGN)\nresource.setrlimit(resource.RLIMIT_FSIZE,(16,resource.getrlimit(resource.RLIMIT_FSIZE)[1]))\nos.execv(sys.argv[1],[sys.argv[1],'--exact','failed_first_write_can_be_cancelled_and_restarted','--nocapture'])";
+    let script = "import os,resource,signal,sys\nsignal.signal(signal.SIGXFSZ,signal.SIG_IGN)\nresource.setrlimit(resource.RLIMIT_FSIZE,(16,resource.getrlimit(resource.RLIMIT_FSIZE)[1]))\nos.execv(sys.argv[1],[sys.argv[1],'--exact','failed_first_write_can_be_cancelled_and_restarted','--nocapture'])";
     let result = Command::new("python3")
         .arg("-c")
         .arg(script)
@@ -39,4 +39,27 @@ fn failed_first_write_can_be_cancelled_and_restarted() {
     asset.publish().unwrap();
     let bytes = fs::read(root.0.join("audio/mic-limit.wav")).unwrap();
     assert_eq!(bytes.len(), 364);
+}
+
+#[test]
+fn recovered_audio_keeps_the_checkpoint_until_metadata_owner_releases_it() {
+    let root =
+        Sandbox(std::env::temp_dir().join(format!("koe-capture-recovery-{}", std::process::id())));
+    fs::create_dir_all(&root.0).unwrap();
+    let mut capture = CaptureAsset::create(&root.0, "interrupted", 16000).unwrap();
+    capture.append(&[7; 320]).unwrap();
+    drop(capture);
+    assert_eq!(
+        CaptureAsset::recover(&root.0, "interrupted").unwrap(),
+        Some(20)
+    );
+    assert!(root.0.join("audio/interrupted.capture").is_file());
+    assert!(root.0.join("audio/interrupted.wav").is_file());
+    assert_eq!(
+        CaptureAsset::recover(&root.0, "interrupted").unwrap(),
+        Some(20)
+    );
+    CaptureAsset::release_recovered(&root.0, "interrupted").unwrap();
+    assert!(!root.0.join("audio/interrupted.capture").exists());
+    assert!(root.0.join("audio/interrupted.wav").is_file());
 }

@@ -975,3 +975,53 @@ fn local_result_queue_overflow_keeps_accepted_finals_until_storage_recovers() {
         matches!(&record.analysis, AnalysisState::Failed { message, .. } if message.contains("超出范围"))
     );
 }
+
+#[test]
+fn all_day_bean_segments_keep_distinct_assets_and_partial_custody_after_reopen() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    runtime.all_day.run = Some(crate::all_day::AllDayRun {
+        id: "bean-run".into(),
+        source: "bean".into(),
+        stopping: false,
+    });
+    prepare_capture(&mut runtime, 950, true);
+    for start in (0..15000).step_by(100) {
+        runtime.ingest_ble_chunk(&slices(start..start + 100), NOW);
+    }
+    assert_eq!(runtime.workspace().records().len(), 1);
+    let first = runtime.workspace().records().values().next().unwrap();
+    let first_id = first.aggregate.recording_id.clone();
+    assert_eq!(first.all_day.as_ref().unwrap().ordinal, 1);
+    assert!(!runtime.is_device_file_synced(950));
+    assert_eq!(runtime.device.session.active_file_id, Some(950));
+    assert_eq!(runtime.device.session.total_slice_offset(), 15000);
+    runtime.ingest_ble_chunk(&slices(15000..15002), NOW);
+    runtime.ingest_ble_chunk(&rx(0x0a, &950u32.to_le_bytes()), NOW);
+    assert_eq!(runtime.workspace().records().len(), 2);
+    let second = runtime
+        .workspace()
+        .records()
+        .values()
+        .find(|r| r.aggregate.recording_id != first_id)
+        .unwrap();
+    assert_eq!(second.all_day.as_ref().unwrap().ordinal, 2);
+    assert_eq!(second.aggregate.duration_ms, 400);
+    let second_id = second.aggregate.recording_id.clone();
+    let first_audio = recording_assets::transcription_pcm(&dir.0, &first_id).unwrap();
+    let second_audio = recording_assets::transcription_pcm(&dir.0, &second_id).unwrap();
+    assert_eq!(first_audio.len(), 300000 * 32);
+    assert_eq!(second_audio.len(), 40 * 32);
+    drop(runtime);
+    let runtime = KoeRuntime::open(&dir.0).unwrap();
+    assert!(!runtime.is_device_file_synced(950));
+    assert_eq!(runtime.workspace().records().len(), 2);
+    assert_eq!(
+        recording_assets::transcription_pcm(&dir.0, &first_id).unwrap(),
+        first_audio
+    );
+    assert_eq!(
+        recording_assets::transcription_pcm(&dir.0, &second_id).unwrap(),
+        second_audio
+    );
+}

@@ -152,7 +152,12 @@ fn failed_commit_blocks_quit_cancel_quit_preserves_audio_for_retry() {
     );
     r.poll_timers(250, 100);
     assert_eq!(r.snapshot(100)["lifecycle"]["quitPhase"], "blocked");
-    assert!(r.workspace().records().is_empty());
+    assert!(r
+        .workspace()
+        .record(t["recordId"].as_str().unwrap())
+        .unwrap()
+        .capture_lanes
+        .is_empty());
     send(&mut r, json!({"type":"cancel_quit"}));
     assert_eq!(r.snapshot(100)["microphone"]["recordId"], t["recordId"]);
     fs::remove_dir(&file).unwrap();

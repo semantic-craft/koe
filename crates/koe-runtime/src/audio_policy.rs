@@ -72,10 +72,9 @@ impl KoeRuntime {
         })?;
         self.audio_policy_error = None;
         self.notice = Some(match policy {
-            MeetingAudioPolicy::LocalOnly => format!(
-                "会议录音只留本机；Apple 识别状态：{}。本机文件转写使用所选语音引擎。",
-                self.local_asr.message
-            ),
+            MeetingAudioPolicy::LocalOnly => {
+                "会议音频只保存在本机；语音引擎和文字服务可在设置中单独选择。".into()
+            }
             MeetingAudioPolicy::CloudAllowed => {
                 "允许会议音频云端转写；已取消的任务不会自动恢复，请手动重试。".into()
             }

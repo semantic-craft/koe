@@ -19,6 +19,7 @@ pub mod companion;
 mod companion_mcp_tests;
 pub mod credentials;
 mod device;
+mod dictation_capture;
 mod legacy;
 mod lifecycle;
 #[cfg(test)]
@@ -41,10 +42,10 @@ mod trash;
 
 use command::{Command, Location, Page, Playback};
 pub use companion::{
-    COMPANION_AUDIO_FORMAT, COMPANION_DOUBLE_TAP_TRIGGER, COMPANION_FRONT_CONTROL,
-    COMPANION_PROTOCOL_VERSION, CompanionClientCommand, CompanionRoutingMode, CompanionStreamEvent,
-    DeclaredControlSpec, POST_TAP_SKIP_SLICES, PRE_STOP_TAP_HOLDBACK_SLICES, decode_pcm16_le_b64,
-    encode_pcm16_le_b64, resolve_bridge_socket_path,
+    decode_pcm16_le_b64, encode_pcm16_le_b64, resolve_bridge_socket_path, CompanionClientCommand,
+    CompanionRoutingMode, CompanionStreamEvent, DeclaredControlSpec, COMPANION_AUDIO_FORMAT,
+    COMPANION_DOUBLE_TAP_TRIGGER, COMPANION_FRONT_CONTROL, COMPANION_PROTOCOL_VERSION,
+    POST_TAP_SKIP_SLICES, PRE_STOP_TAP_HOLDBACK_SLICES,
 };
 use device::DeviceRuntime;
 use koe_client_providers::ProviderWorker;
@@ -85,6 +86,7 @@ pub struct KoeRuntime {
     captures: capture::Captures,
     local_asr: local_asr::LocalAsr,
     speech: speech::SpeechState,
+    dictation_capture: Option<dictation_capture::DictationCapture>,
     all_day: all_day::AllDayState,
     capture_studio: capture_studio::CaptureStudioState,
     microphone: Option<microphone::Microphone>,
@@ -117,6 +119,7 @@ impl KoeRuntime {
         let mut runtime = Self {
             store,
             speech: speech::SpeechState::new(&root),
+            dictation_capture: None,
             all_day: Default::default(),
             root,
             generation: 1,
@@ -568,6 +571,7 @@ impl KoeRuntime {
                 self.drive_companion(now);
             }
             Command::DeviceRelease => {
+                self.set_dictation_active(false);
                 self.commit(|w| {
                     w.set_ble_auto_connect(false);
                     Ok(())
@@ -761,6 +765,9 @@ impl KoeRuntime {
 
     /// Feeds real platform notifications into the existing protocol engine.
     pub fn ingest_ble_chunk(&mut self, bytes: &[u8], now: u64) {
+        if now > 0 {
+            self.last_now_sec = now;
+        }
         let lifecycle = self.lifecycle_json();
         let revision = self.workspace().revision();
         let error = self.error.clone();
@@ -799,9 +806,13 @@ impl KoeRuntime {
         if let Err(error) = self.save_captures(now) {
             self.error = Some(error);
         }
+        if let Err(error) = self.retry_standby_dictation_save() {
+            self.error = Some(error);
+        }
         self.tick_local_asr(elapsed_ms);
         let mut completed = self.poll_offline_speech()
             | self.drive_speech_files()
+            | self.drive_apple_speech()
             | self.poll_provider()
             | self.poll_captures();
         self.drive_analysis_queue();

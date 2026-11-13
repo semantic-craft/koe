@@ -12,7 +12,7 @@ impl KoeRuntime {
             .workspace()
             .records()
             .values()
-            .filter(|r| r.origin == RecordOrigin::Microphone)
+            .filter(|record| record.is_live())
             .map(|r| r.aggregate.recording_id.clone())
             .collect();
         for id in ids {
@@ -20,6 +20,9 @@ impl KoeRuntime {
                 koe_client_services::capture_asset::CaptureAsset::recover(&self.root, &id)?
             {
                 self.commit(|w| w.finish_capture(&id, duration, &[]))?;
+                koe_client_services::capture_asset::CaptureAsset::release_recovered(
+                    &self.root, &id,
+                )?;
             }
         }
         self.auto_transcribe.extend(
@@ -41,6 +44,9 @@ impl KoeRuntime {
         Ok(())
     }
     pub(crate) fn is_device_file_synced(&self, file_id: u32) -> bool {
+        if file_id == 0 {
+            return false;
+        }
         if self.device.session.has_disk_custody(file_id) {
             return true;
         }
@@ -49,12 +55,18 @@ impl KoeRuntime {
                 || recording_assets::opus_path(&self.root, id).is_ok_and(|p| p.exists())
         };
         if let Some(id) = self.captures.records_by_file_id.get(&file_id) {
-            if has_asset(id) {
+            if has_asset(id)
+                && self
+                    .workspace()
+                    .record(id)
+                    .is_some_and(|r| r.all_day.is_none())
+            {
                 return true;
             }
         }
         self.workspace().records().values().any(|record| {
             record.origin == RecordOrigin::Bean
+                && record.all_day.is_none()
                 && record.aggregate.file_id == file_id
                 && has_asset(&record.aggregate.recording_id)
         })

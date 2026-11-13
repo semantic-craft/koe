@@ -1,6 +1,6 @@
 use super::*;
 use koe_client_providers::{
-    DASHSCOPE_ASR_MODEL, ProviderConfig, ProviderOutput, ProviderRequest, ProviderTask,
+    ProviderConfig, ProviderOutput, ProviderRequest, ProviderTask, DASHSCOPE_ASR_MODEL,
 };
 use koe_client_services::product_store::StoreError;
 use koe_engine::minutes::{build_meeting_minutes_prompt, parse_meeting_minutes_json};
@@ -125,7 +125,9 @@ impl KoeRuntime {
             return Ok(());
         }
         self.ensure_meeting_audio_upload()?;
-        self.ensure_configured()?;
+        if self.settings.key.is_empty() {
+            return Err("请先配置云端语音凭据；原始录音已保留".into());
+        }
         self.reclaim_stale_summaries()?;
         if !self.pending.is_empty() {
             return Err(StartError::Other("已有云端任务正在处理，请稍后重试".into()));

@@ -19,6 +19,7 @@ impl KoeRuntime {
             return;
         }
         self.quit = QuitState::Draining;
+        self.set_dictation_active(false);
         let _ = self.stop_microphone(false);
         if self.companion.standby_stream_owned {
             let _ = self.stop_owned_standby_stream();
@@ -35,7 +36,9 @@ impl KoeRuntime {
 
     pub(super) fn lifecycle_json(&self) -> Value {
         let session = &self.device.session;
-        let owned_work = self.microphone.is_some() || session.active_file_id.is_some()
+        let owned_work = self.microphone.is_some()
+            || self.dictation_capture.is_some()
+            || session.active_file_id.is_some()
             || session.pending_realtime_subscribe
             || session.device_recording_active
             || self.device.awaiting_stop
@@ -51,7 +54,7 @@ impl KoeRuntime {
             && (!self.auto_summarize.is_empty() || !self.auto_transcribe.is_empty());
         let failure = if self.store.requires_reopen() {
             Some("无法确认保存结果，退出已暂停。请保留应用并恢复存储后处理。".to_string())
-        } else if let Some(error) = self.microphone.as_ref().and_then(|m|m.save_error.as_ref()) {
+        } else if let Some(error) = self.microphone.as_ref().and_then(|m| m.save_error.as_ref()) {
             Some(error.clone())
         } else if let Some(error) = &self.drain_error {
             Some(error.clone())

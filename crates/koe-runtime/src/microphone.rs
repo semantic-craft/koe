@@ -1,7 +1,7 @@
 use super::*;
 use crate::command::CaptureTiming;
 use koe_client_services::capture_asset::{AppendOutcome, CaptureAsset};
-use koe_engine::product::{CaptureLaneRecord, CaptureSpan, place_capture_span};
+use koe_engine::product::{place_capture_span, CaptureLaneRecord, CaptureSpan};
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -44,9 +44,7 @@ pub(super) struct Microphone {
 }
 impl Microphone {
     pub(super) fn owns_id(&self, id: &str) -> bool {
-        self.record_id == id
-            || self.current_record_id == id
-            || self.lanes.values().any(|l| l.asset_id == id)
+        self.current_record_id == id || self.lanes.values().any(|l| l.asset_id == id)
     }
     pub(super) fn audio_filenames(&self) -> std::collections::BTreeSet<String> {
         let mut files = std::collections::BTreeSet::from([
@@ -203,7 +201,8 @@ impl KoeRuntime {
             .values()
             .filter_map(|l| l.timeline.last()?.end_ns(l.sample_rate?))
             .max()
-            .unwrap_or(m.epoch_offset_ns);
+            .map(|offset| offset.saturating_add(m.segment_offset_ns))
+            .unwrap_or(m.segment_offset_ns.max(m.epoch_offset_ns));
         let previous_end = m
             .clock_ns
             .and_then(|n| n.checked_add(offset - m.epoch_offset_ns))
@@ -393,23 +392,25 @@ impl KoeRuntime {
                 .as_ref()
                 .is_some_and(|a| a.duration_ms() >= crate::all_day::SEGMENT_MS);
         if written {
-            let group = self.all_day_group("microphone");
-            self.commit(|w| {
-                w.insert_record(
-                    id.clone(),
-                    "Mac 麦克风录音".into(),
-                    RecordOrigin::Microphone,
-                    0,
-                    created,
-                    0,
-                )?;
-                if let Some(group) = group {
-                    if w.record(&id).is_some_and(|r| r.all_day.is_none()) {
-                        w.group_all_day(&id, group)?;
+            if self.workspace().record(&id).is_none() {
+                let group = self.all_day_group("microphone");
+                self.commit(|w| {
+                    w.insert_record(
+                        id.clone(),
+                        "Mac 麦克风录音".into(),
+                        RecordOrigin::Microphone,
+                        0,
+                        created,
+                        0,
+                    )?;
+                    if let Some(group) = group {
+                        if w.record(&id).is_some_and(|r| r.all_day.is_none()) {
+                            w.group_all_day(&id, group)?;
+                        }
                     }
-                }
-                Ok(())
-            })?;
+                    Ok(())
+                })?;
+            }
             let pcm: Vec<u8> = if rate == 16000 {
                 samples.iter().flat_map(|s| s.to_le_bytes()).collect()
             } else {
@@ -533,7 +534,7 @@ impl KoeRuntime {
                     .all(|l| l.asset.as_ref().is_none_or(|a| a.is_empty()))
             {
                 if m.phase == Phase::Cancelling {
-                    self.captures.sessions.remove(&m.current_record_id);
+                    self.cancel_capture_speech(&m.current_record_id);
                     if self.workspace().record(&m.current_record_id).is_some() {
                         self.commit(|w| {
                             w.trash_record(&m.current_record_id, 1)?;
@@ -560,6 +561,7 @@ impl KoeRuntime {
                 } else {
                     format!("未保存录音：{}", reasons.join("；"))
                 });
+                self.set_dictation_active(false);
                 return Ok(());
             }
             let mut outcomes = Vec::new();
@@ -625,6 +627,7 @@ impl KoeRuntime {
                 }
             }
             self.finish_speech(&m.current_record_id);
+            self.set_dictation_active(false);
             self.capture_saved(&m.current_record_id);
             self.poll_captures();
             self.open_record(&m.current_record_id, None)?;
@@ -651,13 +654,18 @@ impl KoeRuntime {
             let lane = m.lanes.get_mut("microphone").ok_or("缺少麦克风音源")?;
             let asset = lane.asset.as_mut().ok_or("音频尚未就绪")?;
             asset.publish()?;
-            let duration = asset.duration_ms();
+            let timeline_end = lane
+                .timeline
+                .last()
+                .and_then(|span| span.end_ns(lane.sample_rate?))
+                .unwrap_or(asset.duration_ms() * 1_000_000);
+            let duration = timeline_end / 1_000_000;
             let outcome = CaptureLaneRecord {
                 lane: "microphone".into(),
                 timeline: lane.timeline.clone(),
                 asset_id: Some(lane.asset_id.clone()),
                 sample_rate: lane.sample_rate,
-                duration_ms: duration,
+                duration_ms: asset.duration_ms(),
                 interruption: None,
             };
             self.commit(|w| {
@@ -668,7 +676,7 @@ impl KoeRuntime {
             self.finish_speech(&m.current_record_id);
             self.capture_saved(&m.current_record_id);
             self.poll_captures();
-            m.segment_offset_ns = m.segment_offset_ns.saturating_add(duration * 1_000_000);
+            m.segment_offset_ns = m.segment_offset_ns.saturating_add(timeline_end);
             let group = self.all_day_group("microphone").ok_or("全天听记已停止")?;
             let next = format!("{}-{}", group.run_id, group.ordinal);
             lane.asset = Some(CaptureAsset::create(
