@@ -210,7 +210,7 @@
         "number": 668,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T08:04:56Z"
+        "updated_at": "2026-11-13T09:14:37Z"
       },
       {
         "number": 671,
@@ -225,11 +225,11 @@
         "updated_at": "2026-11-13T08:37:29Z"
       }
     ],
-    "main": "314adab314225716d7daafd22945065639548be8",
+    "main": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
     "open_pulls": [
       {
-        "head": "587fcbaabd967883d94c61319bf46ffc5fcf77c7",
-        "number": 676
+        "head": "ab6f2a4022e76308770f2bbe8e0063e74df16915",
+        "number": 677
       }
     ],
     "pulls": [
@@ -400,12 +400,20 @@
         "merged": true,
         "number": 672,
         "state": "closed"
+      },
+      {
+        "base": "4502f802bcbfe787a8e7168402c9647737bb233c",
+        "head": "ffb34785149f22a80f57a700cc182d8211dfa9f3",
+        "merge_commit": "314adab314225716d7daafd22945065639548be8",
+        "merged": true,
+        "number": 674,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T09:07:26.674054Z",
+  "observed_at": "2026-11-13T09:29:15.764448Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -991,10 +999,15 @@
               "kind": "file",
               "note": "真实D3200音频和Studio Display实时原文、录后Qwen纪要及来源通过；其余真机场景仍未验收。",
               "ref": "docs/acceptance/device-668-2026-11-13.md"
+            },
+            {
+              "kind": "note",
+              "note": "SenseVoice真实推理与303秒回放封段通过。传输错误收尾和重复录音解密丢失均有先红后绿回归。签名版连续两段1596/1222音频包全部有效，WAV采样数一致，保存及退出通过。外部输入法接收端未接入。",
+              "ref": "2026-11-13 自动续验"
             }
           ],
           "id": "live-minutes-workspace",
-          "next": "继续 #668 的D3200软件入口/重连、全天封段和外部输入法。摘要质量另需验收，普通会议录制中的持续AI纪要尚未接入。",
+          "next": "按 #668 自动验证隐蔽的数据完整性问题，不重复人工体验检查。Micro Input 接收端未接入；普通会议持续 AI 纪要、系统音频、只留文字删音频、整天合并分析未接入。",
           "status": "done",
           "summary": "问 Koe 与实时纪要已接入独立主导航。Rust 按本次采集身份投影原文、草稿和已验证纪要；跨页、停录、后台文件转写及录音豆启动间隙已覆盖。全量 check 与隔离原生界面验证通过。 PR #672 已经 CI 与独立 PASS+NOTES 验收，squash 合并为 ec745e9。",
           "title": "问 Koe 主导航与实时纪要专页"
@@ -1383,7 +1396,8 @@
       660,
       663,
       669,
-      672
+      672,
+      674
     ]
   }
 }
