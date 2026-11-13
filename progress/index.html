@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-13T05:30:14.715862Z</p>
-<p>Main: <code>main: 164e2513c7f88b2f2916cbda824ccf4d48bae0f4</code></p>
+<p>Observed: 2026-11-13T05:36:12.407461Z</p>
+<p>Main: <code>main: e513032c6a783469d9be959e2b700fb472eec507</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -101,13 +101,13 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/653">issue 653: 实现范围与自动验证</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/655">issue 655: 真机离线、实体按键与字幕可见性验收</a></li>
 </ul><p>Next: 已安装本机模式。#655 继续追踪运行中切换第二页及隐藏唤窗观察；本轮用户要求保持联网。</p></article>
-<article id="all-day-offline-models"><h3>全天听记、下载模型与通用听写文字</h3><span class="badge">done</span><p>实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。</p><ul>
+<article id="all-day-offline-models"><h3>全天听记、下载模型与通用听写文字</h3><span class="badge">done</span><p>实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。 PR #663 已通过 CI 并 squash 合并为 e513032。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/661">issue 661: 实现范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/662">issue 662: 独立硬件验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/adr/0003-shared-speech-and-all-day.md">file docs/adr/0003-shared-speech-and-all-day.md: 设计、参考依据和代码验收标准。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/examples/verify_offline.rs">file crates/koe-cli/examples/verify_offline.rs: 生产Runtime与真实模型可重复验证入口。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/663">pull 663: 本轮实现、独立复核与交付。</a></li>
-</ul><p>Next: PR #663 等待 CI 与最终独立验收；真实麦克风/D3200、外部输入法和长时使用按 #662 验收。</p></article>
+</ul><p>Next: 真实麦克风/D3200、外部输入法和长时使用按 #662 验收。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
@@ -166,6 +166,5 @@
 </ul><p>Next: 先验证当前 macOS 产品流程，再选择下一阶段功能。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/koe/pull/663">#663</a> <code>9ce7f609e80692fbd754888d33f3eaf9827fb68c</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
