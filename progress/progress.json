@@ -196,7 +196,12 @@
       }
     ],
     "main": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
-    "open_pulls": [],
+    "open_pulls": [
+      {
+        "head": "9ce7f609e80692fbd754888d33f3eaf9827fb68c",
+        "number": 663
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -341,12 +346,20 @@
         "merged": true,
         "number": 660,
         "state": "closed"
+      },
+      {
+        "base": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
+        "head": "9ce7f609e80692fbd754888d33f3eaf9827fb68c",
+        "merge_commit": "0a73d30b49c615f7cebace5ad0a670ba881d61ea",
+        "merged": false,
+        "number": 663,
+        "state": "open"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T04:12:21.253372Z",
+  "observed_at": "2026-11-13T05:30:14.715862Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -844,10 +857,15 @@
               "kind": "file",
               "note": "生产Runtime与真实模型可重复验证入口。",
               "ref": "crates/koe-cli/examples/verify_offline.rs"
+            },
+            {
+              "kind": "pull",
+              "note": "本轮实现、独立复核与交付。",
+              "ref": 663
             }
           ],
           "id": "all-day-offline-models",
-          "next": "完成 PR 合并；真实麦克风/D3200、外部输入法和长时使用继续按 #662 验收。",
+          "next": "PR #663 等待 CI 与最终独立验收；真实麦克风/D3200、外部输入法和长时使用按 #662 验收。",
           "status": "done",
           "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。",
           "title": "全天听记、下载模型与通用听写文字"
@@ -1170,7 +1188,8 @@
       642,
       646,
       656,
-      660
+      660,
+      663
     ]
   }
 }
