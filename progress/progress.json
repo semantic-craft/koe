@@ -243,13 +243,8 @@
         "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "6c176fe053e7344fbad2cb5c9208fdbcd69e6eac",
-    "open_pulls": [
-      {
-        "head": "2f1ef97ea8687b0c9a89b95590d35045cb47492e",
-        "number": 693
-      }
-    ],
+    "main": "61211e9cf1bd628e5b4705ba8195eb252a389b33",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -487,7 +482,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-13T17:26:52.253794Z",
+  "observed_at": "2026-11-13T17:30:40.610617Z",
   "outputs": [
     "progress/index.html"
   ],
