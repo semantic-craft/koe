@@ -9,7 +9,7 @@ pub use credentials::KoeCredentialCallback;
 use koe_runtime::KoeRuntime;
 use std::{
     collections::BTreeMap,
-    ffi::{c_char, CStr, CString},
+    ffi::{CStr, CString, c_char},
     path::Path,
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -305,7 +305,7 @@ pub unsafe extern "C" fn koe_host_session_dispatch_json(
         let Some(command) = (unsafe { read_string(command) }) else {
             return std::ptr::null_mut();
         };
-        let (json_out, subscribers, events) = {
+        let json_out = {
             let Ok(mut table) = sessions().lock() else {
                 return std::ptr::null_mut();
             };
@@ -314,9 +314,9 @@ pub unsafe extern "C" fn koe_host_session_dispatch_json(
             };
             let out = entry.runtime.dispatch_json(&command, now(epoch));
             let events = entry.runtime.drain_companion_events();
-            (out, entry.subscribers.clone(), events)
+            entry.subscribers.broadcast(&events);
+            out
         };
-        subscribers.broadcast(&events);
         string(json_out)
     })
 }
@@ -341,7 +341,7 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
             // SAFETY: Checked pointer and length follow the caller contract.
             unsafe { std::slice::from_raw_parts(bytes, length) }
         };
-        let (generation, subscribers, events) = {
+        let generation = {
             let Ok(mut table) = sessions().lock() else {
                 return 0;
             };
@@ -351,9 +351,9 @@ pub unsafe extern "C" fn koe_host_session_ingest_ble(
             entry.runtime.ingest_ble_chunk(bytes, now(epoch));
             let generation = entry.runtime.generation();
             let events = entry.runtime.drain_companion_events();
-            (generation, entry.subscribers.clone(), events)
+            entry.subscribers.broadcast(&events);
+            generation
         };
-        subscribers.broadcast(&events);
         generation
     })
 }
@@ -401,7 +401,7 @@ pub extern "C" fn koe_host_session_drain_local_asr_json(handle: u64) -> *mut c_c
 #[unsafe(no_mangle)]
 pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epoch: u64) -> u64 {
     guarded(|| {
-        let (generation, subscribers, events) = {
+        let generation = {
             let Ok(mut table) = sessions().lock() else {
                 return 0;
             };
@@ -411,9 +411,9 @@ pub extern "C" fn koe_host_session_poll_timers(handle: u64, elapsed_ms: u64, epo
             entry.runtime.poll_timers(elapsed_ms, now(epoch));
             let generation = entry.runtime.generation();
             let events = entry.runtime.drain_companion_events();
-            (generation, entry.subscribers.clone(), events)
+            entry.subscribers.broadcast(&events);
+            generation
         };
-        subscribers.broadcast(&events);
         generation
     })
 }

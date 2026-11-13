@@ -12,7 +12,7 @@ use koe_engine::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{speech::DictationSource, KoeRuntime};
+use crate::{KoeRuntime, speech::DictationSource};
 
 /// Number of 20 ms slices (`60 ms`) skipped immediately after a start front double-tap.
 pub const POST_TAP_SKIP_SLICES: usize = 3;
@@ -139,6 +139,8 @@ pub enum CompanionStreamEvent {
     Hello {
         /// Companion protocol version (`1`).
         protocol_version: u32,
+        /// Optional negotiated stream features.
+        capabilities: Vec<String>,
         /// Stable D3200 device identifier.
         device_id: String,
         /// Human-readable device display name.
@@ -157,6 +159,17 @@ pub enum CompanionStreamEvent {
         controls: Vec<DeclaredControlSpec>,
         /// Audio stream format descriptor (`"pcm16/16000/mono"`).
         audio_format: String,
+    },
+    /// Ordered external capture acknowledgement.
+    CaptureState {
+        /// Active BLE epoch.
+        epoch: String,
+        /// Monotonic event sequence.
+        sequence: u64,
+        /// Caller-assigned capture identity.
+        capture_id: String,
+        /// `started` or `ended`.
+        state: String,
     },
     /// Stateless hardware control edge event.
     ControlEdge {
@@ -226,7 +239,18 @@ struct StatusSnapshot {
     recording_state: u8,
 }
 
+enum CompanionTail {
+    Flush,
+    Discard,
+}
+
+pub(crate) struct ExternalPcmLease {
+    owner: u64,
+    capture: Option<String>,
+}
+
 pub(crate) struct CompanionRuntime {
+    external_pcm: Option<ExternalPcmLease>,
     pub epoch: String,
     pub sequence: u64,
     pub capture_active: bool,
@@ -253,6 +277,7 @@ pub(crate) struct CompanionRuntime {
 impl Default for CompanionRuntime {
     fn default() -> Self {
         Self {
+            external_pcm: None,
             epoch: generate_uuid_v4(),
             sequence: 0,
             capture_active: false,
@@ -319,6 +344,7 @@ impl KoeRuntime {
     pub fn companion_hello(&self) -> CompanionStreamEvent {
         CompanionStreamEvent::Hello {
             protocol_version: COMPANION_PROTOCOL_VERSION,
+            capabilities: vec!["external_pcm_v1".into()],
             device_id: self.companion_device_id(),
             device_name: self.companion_device_name(),
             epoch: self.companion.epoch.clone(),
@@ -379,7 +405,99 @@ impl KoeRuntime {
     }
 
     fn effective_companion_auto_gate(&self) -> bool {
-        self.companion.auto_gate && self.companion.manual_gate_subscribers == 0
+        self.companion.auto_gate
+            && self.companion.manual_gate_subscribers == 0
+            && self.companion.external_pcm.is_none()
+    }
+
+    /// Returns whether no external PCM subscriber currently owns a lease.
+    pub fn external_pcm_unleased(&self) -> bool {
+        self.companion.external_pcm.is_none()
+    }
+
+    /// Acquires exclusive external PCM ownership for a socket.
+    pub fn acquire_external_pcm(&mut self, owner: u64) -> bool {
+        if self.companion.external_pcm.is_some()
+            || self.companion.capture_active
+            || self.dictation_active(self.bean_dictation_source())
+        {
+            return false;
+        }
+        self.companion.external_pcm = Some(ExternalPcmLease {
+            owner,
+            capture: None,
+        });
+        true
+    }
+
+    /// Releases the socket lease and discards unfinished audio.
+    pub fn release_external_pcm(&mut self, owner: u64) {
+        if self
+            .companion
+            .external_pcm
+            .as_ref()
+            .is_some_and(|lease| lease.owner == owner)
+        {
+            self.companion.tail_holdback.clear();
+            self.companion.capture_active = false;
+            self.companion.external_pcm = None;
+        }
+    }
+
+    /// Applies a capture transition bound to the lease, BLE epoch and capture identity.
+    pub fn external_pcm_command(
+        &mut self,
+        owner: u64,
+        epoch: &str,
+        capture_id: &str,
+        action: &str,
+        reason: Option<String>,
+    ) -> Result<(), String> {
+        if epoch != self.companion.epoch || capture_id.is_empty() {
+            return Err("stale capture identity".into());
+        }
+        let lease = self
+            .companion
+            .external_pcm
+            .as_ref()
+            .filter(|lease| lease.owner == owner)
+            .ok_or("external PCM lease not owned")?;
+        match action {
+            "start" if lease.capture.is_none() && self.is_standby_ready() => {
+                self.companion.external_pcm.as_mut().unwrap().capture = Some(capture_id.into());
+                self.set_companion_pcm_gate(
+                    true,
+                    reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER),
+                    CompanionTail::Flush,
+                );
+            }
+            "stop" | "cancel" if lease.capture.as_deref() == Some(capture_id) => {
+                let tail = if action == "cancel"
+                    || reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER)
+                {
+                    CompanionTail::Discard
+                } else {
+                    CompanionTail::Flush
+                };
+                self.set_companion_pcm_gate(false, false, tail);
+                self.companion.external_pcm.as_mut().unwrap().capture = None;
+            }
+            _ => return Err("capture transition refused".into()),
+        }
+        let sequence = self.companion.next_sequence();
+        self.companion
+            .push_event(CompanionStreamEvent::CaptureState {
+                epoch: epoch.into(),
+                sequence,
+                capture_id: capture_id.into(),
+                state: if action == "start" {
+                    "started"
+                } else {
+                    "ended"
+                }
+                .into(),
+            });
+        Ok(())
     }
 
     /// Synchronizes companion PCM capture gating across front double-taps and host shortcuts.
@@ -389,25 +507,36 @@ impl KoeRuntime {
     /// window so finger-tap housing thumps never leak into ASR; stopping for any other reason
     /// flushes the held-back speech tail into the companion event queue.
     pub fn set_companion_capture_active(&mut self, active: bool, reason: Option<String>) {
-        let is_double_tap = reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER);
+        if self.companion.external_pcm.is_some() {
+            return;
+        }
+        let double_tap = reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER);
+        let tail = if double_tap {
+            CompanionTail::Discard
+        } else {
+            CompanionTail::Flush
+        };
+        self.set_companion_pcm_gate(active, double_tap, tail);
+        self.set_source_dictation(self.bean_dictation_source(), active);
+    }
+
+    fn set_companion_pcm_gate(&mut self, active: bool, skip_start_tap: bool, tail: CompanionTail) {
         self.companion.pending_tap_holdback_extra = 0;
         if self.companion.capture_active && !active {
-            if is_double_tap {
-                self.companion.tail_holdback.clear();
-            } else {
-                self.flush_companion_holdback();
+            match tail {
+                CompanionTail::Discard => self.companion.tail_holdback.clear(),
+                CompanionTail::Flush => self.flush_companion_holdback(),
             }
             self.companion.capture_active = false;
         } else if !self.companion.capture_active && active {
             self.companion.tail_holdback.clear();
-            self.companion.post_tap_skip_slices = if is_double_tap {
+            self.companion.post_tap_skip_slices = if skip_start_tap {
                 POST_TAP_SKIP_SLICES
             } else {
                 0
             };
             self.companion.capture_active = true;
         }
-        self.set_source_dictation(self.bean_dictation_source(), active);
     }
 
     pub(crate) fn is_known_bean_record(&self, file_id: u32) -> bool {
@@ -527,6 +656,9 @@ impl KoeRuntime {
         if reconnected {
             self.companion.epoch = generate_uuid_v4();
             self.companion.sequence = 0;
+            if let Some(lease) = &mut self.companion.external_pcm {
+                lease.capture = None;
+            }
             self.companion.capture_active = false;
             self.companion.active_standby_file_id = None;
             self.companion.pending_standby_stop = false;
@@ -547,6 +679,9 @@ impl KoeRuntime {
             self.companion.push_event(hello);
             changed = true;
         } else if self.companion.was_connected && !connected {
+            if let Some(lease) = &mut self.companion.external_pcm {
+                lease.capture = None;
+            }
             self.stop_bean_dictation();
             if self.companion.standby_stream_owned
                 || self.companion.pending_standby_stop
@@ -861,7 +996,9 @@ impl KoeRuntime {
                             + self.companion.pending_tap_holdback_extra;
                         while self.companion.tail_holdback.len() > effective_limit {
                             if let Some(ready) = self.companion.tail_holdback.pop_front() {
-                                self.capture_standby_dictation(&ready);
+                                if self.companion.external_pcm.is_none() {
+                                    self.capture_standby_dictation(&ready);
+                                }
                                 let epoch = self.companion.epoch.clone();
                                 let seq = self.companion.next_sequence();
                                 self.companion.push_event(CompanionStreamEvent::AudioPcm16 {
@@ -883,7 +1020,9 @@ impl KoeRuntime {
     pub(super) fn flush_companion_holdback(&mut self) {
         let device_id = self.companion_device_id();
         while let Some(ready) = self.companion.tail_holdback.pop_front() {
-            self.capture_standby_dictation(&ready);
+            if self.companion.external_pcm.is_none() {
+                self.capture_standby_dictation(&ready);
+            }
             let epoch = self.companion.epoch.clone();
             let seq = self.companion.next_sequence();
             self.companion.push_event(CompanionStreamEvent::AudioPcm16 {

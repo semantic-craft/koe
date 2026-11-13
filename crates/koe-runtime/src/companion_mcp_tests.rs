@@ -2072,3 +2072,100 @@ fn microphone_dictation_does_not_capture_or_stop_with_standby_bean() {
     assert_eq!(disconnected["dictation"]["active"], true);
     assert_eq!(disconnected["activeCapture"]["mode"], "dictation");
 }
+
+#[test]
+fn external_pcm_capture_does_not_create_a_koe_dictation_record() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(
+        r#"{"type":"set_companion_mode","mode":"collar_standby"}"#,
+        NOW,
+    );
+    let key = connect_simulated_bean(&mut runtime, "external-pcm", NOW);
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &key, 9001, NOW + 1);
+    runtime.drain_companion_events();
+    let epoch = runtime.companion.epoch.clone();
+    assert!(runtime.acquire_external_pcm(41));
+    assert!(!runtime.acquire_external_pcm(42));
+    assert!(
+        runtime
+            .external_pcm_command(42, &epoch, "capture", "start", None)
+            .is_err()
+    );
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "start", None)
+        .unwrap();
+    runtime.set_companion_capture_active(false, None);
+    runtime.dispatch_json(r#"{"type":"set_dictation_active","active":true}"#, NOW + 2);
+    assert!(!runtime.dictation_active(crate::speech::DictationSource::Standby));
+    let slices: Vec<_> = (0..18).map(|n| (n, 0)).collect();
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &slices),
+        NOW + 2,
+    );
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "stop", None)
+        .unwrap();
+    assert!(
+        runtime.workspace().records().is_empty(),
+        "external PCM must not create an internal dictation record"
+    );
+    let events = runtime.drain_companion_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        18
+    );
+    assert!(
+        matches!(events.last(), Some(CompanionStreamEvent::CaptureState {state, ..}) if state == "ended")
+    );
+    runtime.release_external_pcm(42);
+    assert!(!runtime.external_pcm_unleased());
+    runtime.release_external_pcm(41);
+    assert!(runtime.external_pcm_unleased());
+    runtime.set_companion_capture_active(true, None);
+    assert!(!runtime.acquire_external_pcm(43), "active Koe dictation cannot be stolen");
+    runtime.set_companion_capture_active(false, None);
+}
+
+#[test]
+fn external_pcm_discards_tap_tail_and_rejects_old_epoch() {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(
+        r#"{"type":"set_companion_mode","mode":"collar_standby"}"#,
+        NOW,
+    );
+    let key = connect_simulated_bean(&mut runtime, "external-tap", NOW);
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &key, 9002, NOW + 1);
+    runtime.drain_companion_events();
+    let epoch = runtime.companion.epoch.clone();
+    assert!(runtime.acquire_external_pcm(41));
+    assert!(
+        runtime
+            .external_pcm_command(41, "old", "capture", "start", None)
+            .is_err()
+    );
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "start", None)
+        .unwrap();
+    let slices: Vec<_> = (0..18).map(|n| (n, 0)).collect();
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &slices),
+        NOW + 2,
+    );
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "stop", Some("double_tap".into()))
+        .unwrap();
+    let events = runtime.drain_companion_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        6
+    );
+    assert!(runtime.workspace().records().is_empty());
+}
