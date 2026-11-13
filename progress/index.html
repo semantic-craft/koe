@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-13T06:55:32.009917Z</p>
-<p>Main: <code>main: ec745e9e3924b11136168ea5b7c6f0f31c99bb0e</code></p>
+<p>Observed: 2026-11-13T08:42:45.346543Z</p>
+<p>Main: <code>main: 314adab314225716d7daafd22945065639548be8</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -124,7 +124,8 @@
 <li>note 2026-11-13 隔离原生验收: 完整应用验证问答检索与来源返回；生产视图/C ABI诊断窗口验证模拟采集、停录末句和纪要来源。非真实设备或云端验收。</li>
 <li><a href="https://github.com/semantic-craft/koe/pull/672">pull 672: 独立基线5项红灯、新版41项检查通过；CI成功并squash合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/acceptance/device-668-2026-11-13.md">file docs/acceptance/device-668-2026-11-13.md: 真实D3200音频和Studio Display实时原文、录后Qwen纪要及来源通过；其余真机场景仍未验收。</a></li>
-</ul><p>Next: 继续 #668 的D3200软件入口/重连、全天封段和外部输入法。摘要质量另需验收，普通会议录制中的持续AI纪要尚未接入。</p></article>
+<li>note 2026-11-13 自动续验: SenseVoice真实推理与303秒回放封段通过。传输错误收尾和重复录音解密丢失均有先红后绿回归。签名版连续两段1596/1222音频包全部有效，WAV采样数一致，保存及退出通过。外部输入法接收端未接入。</li>
+</ul><p>Next: 按 #668 自动验证隐蔽的数据完整性问题，不重复人工体验检查。Micro Input 接收端未接入；普通会议持续 AI 纪要、系统音频、只留文字删音频、整天合并分析未接入。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
