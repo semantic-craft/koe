@@ -2212,6 +2212,14 @@ fn assert_external_pcm_quiet_drain_tail(physical_stop: bool) {
         .iter()
         .any(|event| matches!(event, CompanionStreamEvent::AudioPcm16 { .. })));
     events.extend(next_events);
+    let mut next_stop = Vec::from(9002u32.to_le_bytes());
+    next_stop.push(0);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &next_stop), NOW + 9);
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&next_key, &next_nonce, &tail),
+        NOW + 9,
+    );
+    events.extend(runtime.drain_companion_events());
     runtime
         .external_pcm_command(41, &epoch, "capture", "stop", None)
         .unwrap();

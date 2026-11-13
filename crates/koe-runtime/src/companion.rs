@@ -244,9 +244,14 @@ enum CompanionTail {
     Discard,
 }
 
+struct ExternalPcmCapture {
+    id: String,
+    file_id: u32,
+}
+
 pub(crate) struct ExternalPcmLease {
     owner: u64,
-    capture: Option<String>,
+    capture: Option<ExternalPcmCapture>,
 }
 
 pub(crate) struct CompanionRuntime {
@@ -474,14 +479,27 @@ impl KoeRuntime {
             .ok_or("external PCM lease not owned")?;
         match action {
             "start" if lease.capture.is_none() && self.is_standby_ready() => {
-                self.companion.external_pcm.as_mut().unwrap().capture = Some(capture_id.into());
+                let file_id = self
+                    .device
+                    .session
+                    .active_file_id
+                    .ok_or("no active realtime file")?;
+                self.companion.external_pcm.as_mut().unwrap().capture = Some(ExternalPcmCapture {
+                    id: capture_id.into(),
+                    file_id,
+                });
                 self.set_companion_pcm_gate(
                     true,
                     reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER),
                     CompanionTail::Flush,
                 );
             }
-            "stop" | "cancel" if lease.capture.as_deref() == Some(capture_id) => {
+            "stop" | "cancel"
+                if lease
+                    .capture
+                    .as_ref()
+                    .is_some_and(|capture| capture.id == capture_id) =>
+            {
                 let tail = if action == "cancel"
                     || reason.as_deref() == Some(COMPANION_DOUBLE_TAP_TRIGGER)
                 {
@@ -991,10 +1009,17 @@ impl KoeRuntime {
                         self.companion.pending_tap_holdback_extra = POST_TAP_SKIP_SLICES;
                     }
                 }
-                RawCompanionSignal::LivePcm16 { samples, .. } => {
-                    if self.active_companion_mode() == CompanionRoutingMode::Disabled
-                        && !self.device.session.is_realtime_quiet_draining()
-                    {
+                RawCompanionSignal::LivePcm16 {
+                    file_id, samples, ..
+                } => {
+                    let accepts_pcm = match &self.companion.external_pcm {
+                        Some(lease) => lease
+                            .capture
+                            .as_ref()
+                            .is_some_and(|capture| capture.file_id == file_id),
+                        None => self.active_companion_mode() != CompanionRoutingMode::Disabled,
+                    };
+                    if !accepts_pcm {
                         continue;
                     }
                     if self.companion.post_tap_skip_slices > 0 {
