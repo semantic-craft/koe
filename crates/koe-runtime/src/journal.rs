@@ -95,7 +95,7 @@ impl KoeRuntime {
         }
         if mode == CaptureMode::Meeting {
             self.live_minutes_scope = Some(if let Some(mic) = &self.microphone {
-                crate::live_minutes::LiveMinutesScope::Record(mic.record_id().to_owned())
+                crate::live_minutes::LiveMinutesScope::Record(mic.current_record_id().to_owned())
             } else {
                 crate::live_minutes::LiveMinutesScope::BeanStarting
             });

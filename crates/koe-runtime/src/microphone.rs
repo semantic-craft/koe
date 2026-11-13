@@ -57,7 +57,7 @@ impl Microphone {
     pub(super) fn can_pause(&self) -> bool {
         self.phase == Phase::Recording && self.clock_ns.is_some()
     }
-    pub(super) fn record_id(&self) -> &str {
+    pub(super) fn current_record_id(&self) -> &str {
         &self.current_record_id
     }
     pub(super) fn owns_id(&self, id: &str) -> bool {

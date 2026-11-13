@@ -2143,6 +2143,107 @@ fn external_pcm_capture_does_not_create_a_koe_dictation_record() {
     runtime.set_companion_capture_active(false, None);
 }
 
+fn assert_external_pcm_quiet_drain_tail(physical_stop: bool) {
+    let sandbox = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&sandbox.0).unwrap();
+    runtime.dispatch_json(
+        r#"{"type":"set_companion_mode","mode":"meeting_and_collar"}"#,
+        NOW,
+    );
+    let key = connect_simulated_bean(&mut runtime, "external-tail", NOW);
+    runtime.dispatch_json(r#"{"type":"device_start"}"#, NOW + 1);
+    let (file_key, file_nonce) = activate_realtime_file(&mut runtime, &key, 9001, NOW + 1);
+    let epoch = runtime.companion.epoch.clone();
+    assert!(runtime.acquire_external_pcm(41));
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "start", None)
+        .unwrap();
+    runtime.drain_companion_events();
+    let slices: Vec<_> = (0..18).map(|seq| (seq, 0)).collect();
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &slices),
+        NOW + 2,
+    );
+    let stop = if physical_stop {
+        let mut payload = Vec::from(9001u32.to_le_bytes());
+        payload.push(0);
+        build_rx_frame(0x1A, 0x06, &payload)
+    } else {
+        build_rx_frame(0x18, 0x82, &[2])
+    };
+    runtime.ingest_ble_chunk(&stop, NOW + 3);
+    assert!(!runtime.is_standby_ready());
+    assert!(matches!(
+        runtime.companion_hello(),
+        CompanionStreamEvent::Hello {
+            standby_ready: false,
+            ..
+        }
+    ));
+    let tail: Vec<_> = (18..36).map(|seq| (seq, 0)).collect();
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&file_key, &file_nonce, &tail),
+        NOW + 3,
+    );
+    runtime.poll_timers(2_100, NOW + 6);
+    let mut events = runtime.drain_companion_events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        24,
+        "physical_stop={physical_stop}: quiet drain must deliver all slices beyond the holdback"
+    );
+    let mut next_start = Vec::from(9002u32.to_le_bytes());
+    next_start.push(1);
+    runtime.ingest_ble_chunk(&build_rx_frame(0x1A, 0x06, &next_start), NOW + 7);
+    let (next_key, next_nonce) = activate_realtime_file(&mut runtime, &key, 9002, NOW + 7);
+    assert_eq!(
+        runtime.snapshot(NOW + 7)["activeCapture"]["mode"],
+        "quick_note"
+    );
+    runtime.ingest_ble_chunk(
+        &build_encrypted_slices_rx(&next_key, &next_nonce, &slices),
+        NOW + 8,
+    );
+    let next_events = runtime.drain_companion_events();
+    assert!(!next_events
+        .iter()
+        .any(|event| matches!(event, CompanionStreamEvent::AudioPcm16 { .. })));
+    events.extend(next_events);
+    runtime
+        .external_pcm_command(41, &epoch, "capture", "stop", None)
+        .unwrap();
+    events.extend(runtime.drain_companion_events());
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CompanionStreamEvent::AudioPcm16 { .. }))
+            .count(),
+        36,
+        "physical_stop={physical_stop}: include the original tail and exclude the next recording"
+    );
+    assert!(matches!(
+        events.last(),
+        Some(CompanionStreamEvent::CaptureState { state, capture_id, .. })
+            if state == "ended" && capture_id == "capture"
+    ));
+    assert!(runtime
+        .external_pcm_command(41, &epoch, "next", "start", None)
+        .is_err());
+}
+
+#[test]
+fn external_pcm_preserves_quiet_drain_tail_after_stop_ack() {
+    assert_external_pcm_quiet_drain_tail(false);
+}
+
+#[test]
+fn external_pcm_preserves_quiet_drain_tail_after_physical_stop() {
+    assert_external_pcm_quiet_drain_tail(true);
+}
+
 #[test]
 fn external_pcm_discards_tap_tail_and_rejects_old_epoch() {
     let sandbox = Sandbox::new();

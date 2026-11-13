@@ -992,7 +992,9 @@ impl KoeRuntime {
                     }
                 }
                 RawCompanionSignal::LivePcm16 { samples, .. } => {
-                    if self.active_companion_mode() == CompanionRoutingMode::Disabled {
+                    if self.active_companion_mode() == CompanionRoutingMode::Disabled
+                        && !self.device.session.is_realtime_quiet_draining()
+                    {
                         continue;
                     }
                     if self.companion.post_tap_skip_slices > 0 {
