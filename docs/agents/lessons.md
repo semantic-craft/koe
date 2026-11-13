@@ -388,3 +388,10 @@
 - 修复：文件解密材料按文件号保留，连接会话结束时清除；无有效材料的完整加密头不能启用明文路径。实时传输错误保留录音身份与排空计时，正常停止后保存已收到的音频。
 - 验证点：session.rs 的 repeated_realtime_capture_decrypts_without_fresh_file_key_wrapping、encrypted_head_without_valid_context_does_not_publish_ciphertext_as_audio 和 repeated_file_decrypt_context_is_isolated_by_file_and_connection 均先红后绿；capture_tests.rs 验证错误前后停止、保存重开和无音频终结。真机录音逐包解码并比较 WAV 采样数，不能只检查文件存在。
 - Seen 1x（2026-11-13）。
+
+### stdio 集成测试发送请求时必须同时排空子进程输出
+
+- 出处：2026-11-13 PR #677 的 CI 停在 `live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conflict`；两次进程采样均显示测试线程等待 `ChildStdin` 写入、MCP 子进程等待 stdout 写入，父进程尚未开始读取响应。
+- 修复：现有请求数组由独立线程写入并在结束时关闭 stdin，主线程同时通过 `wait_with_output` 读取 stdout/stderr，随后 join 写入线程；保留全部九条响应与持久化结果断言。
+- 验证点：`cargo test -p koe-cli --test commands live_host_session_serves_cli_and_full_mcp_stdio_over_bridge_without_lock_conflict` 完整结束并通过；不能依赖请求数量少就先同步写完再读取响应。
+- Seen 1x（2026-11-13）。

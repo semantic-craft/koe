@@ -109,22 +109,32 @@ impl SubscriberHub {
 struct ManualGateGuard {
     handle: u64,
     active: bool,
+    external_owner: Option<u64>,
 }
 
 impl ManualGateGuard {
     fn new(handle: u64, active: bool) -> Self {
-        Self { handle, active }
+        Self {
+            handle,
+            active,
+            external_owner: None,
+        }
     }
 }
 
 impl Drop for ManualGateGuard {
     fn drop(&mut self) {
-        if !self.active {
+        if !self.active && self.external_owner.is_none() {
             return;
         }
         if let Ok(mut table) = sessions().lock() {
             if let Some(entry) = table.entries.get_mut(&self.handle) {
-                entry.runtime.release_companion_manual_gate();
+                if self.active {
+                    entry.runtime.release_companion_manual_gate();
+                }
+                if let Some(owner) = self.external_owner {
+                    entry.runtime.release_external_pcm(owner);
+                }
             }
         }
     }
@@ -396,9 +406,19 @@ fn serve_client(
 
         if matches!(method, "companion/subscribe" | "subscribe") {
             let auto_gate = extract_auto_gate(&request);
+            let external_pcm = request
+                .pointer("/params/capability")
+                .and_then(Value::as_str)
+                == Some("external_pcm_v1");
             serve_companion_subscription(
                 handle,
-                auto_gate,
+                if external_pcm {
+                    SubscriptionPolicy::ExternalPcm
+                } else if auto_gate == Some(false) {
+                    SubscriptionPolicy::ManualGate
+                } else {
+                    SubscriptionPolicy::Observe
+                },
                 &mut reader,
                 writer,
                 shutdown,
@@ -448,7 +468,7 @@ fn handle_rpc_call(
 ) -> Result<Value, (i64, String)> {
     match method {
         "koe/status" => {
-            let (snap, subs, events) = {
+            let snap = {
                 let mut table = sessions()
                     .lock()
                     .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
@@ -460,13 +480,13 @@ fn handle_rpc_call(
                 entry.runtime.poll_timers(0, t);
                 let snap = entry.runtime.snapshot(t);
                 let events = entry.runtime.drain_companion_events();
-                (snap, entry.subscribers.clone(), events)
+                entry.subscribers.broadcast(&events);
+                snap
             };
-            subs.broadcast(&events);
             Ok(snap)
         }
         "koe/doctor" => {
-            let (doctor, subs, events) = {
+            let doctor = {
                 let mut table = sessions()
                     .lock()
                     .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
@@ -485,9 +505,9 @@ fn handle_rpc_call(
                     "provider": snap["provider"],
                     "error": snap["error"]
                 });
-                (payload, entry.subscribers.clone(), events)
+                entry.subscribers.broadcast(&events);
+                payload
             };
-            subs.broadcast(&events);
             Ok(doctor)
         }
         "koe/mcp_tools_list" => Ok(KoeRuntime::mcp_tools_list()),
@@ -511,7 +531,7 @@ fn handle_mcp_tool_call(
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    let (step_res, subs, events) = {
+    let step_res = {
         let mut table = sessions()
             .lock()
             .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
@@ -521,9 +541,9 @@ fn handle_mcp_tool_call(
             .ok_or_else(|| (-32000, "Koe 会话已关闭".to_string()))?;
         let res = entry.runtime.call_mcp_tool_step(name, &arguments, now(0));
         let events = entry.runtime.drain_companion_events();
-        (res, entry.subscribers.clone(), events)
+        entry.subscribers.broadcast(&events);
+        res
     };
-    subs.broadcast(&events);
 
     match step_res {
         Err(McpToolError { code, message }) => Err((code, message)),
@@ -545,7 +565,7 @@ fn handle_mcp_tool_call(
                     return Ok(json!({"isError": true, "error": "问答未在期限内完成"}));
                 }
                 thread::sleep(ASK_POLL_SLEEP);
-                let (poll_res, poll_subs, poll_events) = {
+                let poll_res = {
                     let mut table = sessions()
                         .lock()
                         .map_err(|_| (-32603, "会话锁不可用".to_string()))?;
@@ -554,9 +574,9 @@ fn handle_mcp_tool_call(
                     };
                     let res = entry.runtime.poll_mcp_ask(&question, 0, now(0));
                     let evs = entry.runtime.drain_companion_events();
-                    (res, entry.subscribers.clone(), evs)
+                    entry.subscribers.broadcast(&evs);
+                    res
                 };
-                poll_subs.broadcast(&poll_events);
                 if let Some(done) = poll_res {
                     return Ok(match done {
                         Ok(value) => json!({"isError": false, "value": value}),
@@ -568,16 +588,23 @@ fn handle_mcp_tool_call(
     }
 }
 
+enum SubscriptionPolicy {
+    Observe,
+    ManualGate,
+    ExternalPcm,
+}
+
 fn serve_companion_subscription(
     handle: u64,
-    auto_gate: Option<bool>,
+    policy: SubscriptionPolicy,
     reader: &mut BufReader<UnixStream>,
     mut writer: UnixStream,
     shutdown: Arc<AtomicBool>,
     active_streams: Arc<Mutex<BTreeMap<u64, UnixStream>>>,
     worker_state: Arc<WorkerState>,
 ) {
-    let manual_gate = auto_gate == Some(false);
+    let manual_gate = matches!(policy, SubscriptionPolicy::ManualGate);
+    let external_pcm = matches!(policy, SubscriptionPolicy::ExternalPcm);
     let evict_socket = writer.try_clone().ok();
     let setup = {
         sessions().lock().ok().and_then(|mut table| {
@@ -591,6 +618,10 @@ fn serve_companion_subscription(
             let hello_line = serde_json::to_string(&hello).ok()?;
             let subs = entry.subscribers.clone();
             let (sub_id, rx) = subs.subscribe(hello_line, evict_socket);
+            if external_pcm && !entry.runtime.acquire_external_pcm(sub_id) {
+                subs.unsubscribe(sub_id);
+                return None;
+            }
             Some((subs, sub_id, rx))
         })
     };
@@ -598,7 +629,8 @@ fn serve_companion_subscription(
         let _ = writer.shutdown(Shutdown::Both);
         return;
     };
-    let _manual_gate_guard = ManualGateGuard::new(handle, manual_gate);
+    let mut _manual_gate_guard = ManualGateGuard::new(handle, manual_gate);
+    _manual_gate_guard.external_owner = external_pcm.then_some(sub_id);
 
     let _ = writer.set_write_timeout(Some(Duration::from_secs(2)));
     let writer_shutdown = Arc::clone(&shutdown);
@@ -637,11 +669,38 @@ fn serve_companion_subscription(
         let Ok(cmd_val) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if external_pcm {
+            if cmd_val.get("method").and_then(Value::as_str) == Some("external_pcm") {
+                let result = sessions().lock().ok().and_then(|mut table| {
+                    let entry = table.entries.get_mut(&handle)?;
+                    let epoch = cmd_val.get("epoch")?.as_str()?;
+                    let capture = cmd_val.get("captureId")?.as_str()?;
+                    let action = cmd_val.get("action")?.as_str()?;
+                    let reason = cmd_val
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    let result = entry
+                        .runtime
+                        .external_pcm_command(sub_id, epoch, capture, action, reason);
+                    let events = entry.runtime.drain_companion_events();
+                    entry.subscribers.broadcast(&events);
+                    Some(result)
+                });
+                if !matches!(result, Some(Ok(()))) {
+                    break;
+                }
+            }
+            continue;
+        }
         if let Ok(CompanionClientCommand::SetDictationActive { active }) =
             serde_json::from_value::<CompanionClientCommand>(cmd_val.clone())
         {
             if let Ok(mut table) = sessions().lock() {
                 if let Some(entry) = table.entries.get_mut(&handle) {
+                    if !entry.runtime.external_pcm_unleased() {
+                        continue;
+                    }
                     entry.runtime.dispatch_json(
                         &serde_json::json!({"type":"set_dictation_active","active":active})
                             .to_string(),
@@ -667,14 +726,12 @@ fn serve_companion_subscription(
 }
 
 fn apply_capture_active(handle: u64, active: bool, reason: Option<String>) {
-    let maybe_events = sessions().lock().ok().and_then(|mut table| {
-        let entry = table.entries.get_mut(&handle)?;
-        entry.runtime.set_companion_capture_active(active, reason);
-        let events = entry.runtime.drain_companion_events();
-        Some((entry.subscribers.clone(), events))
-    });
-    if let Some((subs, events)) = maybe_events {
-        subs.broadcast(&events);
+    if let Ok(mut table) = sessions().lock() {
+        if let Some(entry) = table.entries.get_mut(&handle) {
+            entry.runtime.set_companion_capture_active(active, reason);
+            let events = entry.runtime.drain_companion_events();
+            entry.subscribers.broadcast(&events);
+        }
     }
 }
 
@@ -815,6 +872,74 @@ mod tests {
             status.is_some_and(|status| status.success()),
             "destroy did not finish after its socket path was removed"
         );
+    }
+
+    #[test]
+    fn external_pcm_lease_is_exclusive_and_released_with_the_socket() {
+        let ws = temp_workspace();
+        let session = HostSessionGuard::open(&ws).unwrap();
+        let path = resolve_bridge_socket_path(&ws).unwrap();
+        let subscribe = || {
+            let mut stream = UnixStream::connect(&path).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            writeln!(
+                stream,
+                "{}",
+                json!({"method":"subscribe","params":{"capability":"external_pcm_v1"}})
+            )
+            .unwrap();
+            stream.flush().unwrap();
+            BufReader::new(stream)
+        };
+        let mut first = subscribe();
+        let mut line = String::new();
+        first.read_line(&mut line).unwrap();
+        let hello: Value = serde_json::from_str(&line).unwrap();
+        assert!(
+            hello["capabilities"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("external_pcm_v1"))
+        );
+        let mut second = subscribe();
+        line.clear();
+        assert_eq!(
+            second.read_line(&mut line).unwrap(),
+            0,
+            "second socket must not acquire the lease"
+        );
+        drop(first);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if sessions()
+                .lock()
+                .unwrap()
+                .entries
+                .get(&session.handle())
+                .unwrap()
+                .runtime
+                .external_pcm_unleased()
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "socket close did not release lease"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        let mut next = subscribe();
+        line.clear();
+        next.read_line(&mut line).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&line).unwrap()["event"],
+            "hello"
+        );
+        drop(next);
+        drop(session);
+        let _ = fs::remove_dir_all(ws);
     }
 
     #[test]

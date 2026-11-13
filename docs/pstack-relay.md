@@ -108,6 +108,18 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: ./scripts/install-macos.sh && /Applications/Koe.app/Contents/MacOS/Koe --verify-self && /Applications/Koe.app/Contents/MacOS/Koe --smoke-test && python3 progress/progress.py check
 - **Evidence**: 04d0eb6; signed CDHash 573498ceae3ab7eb2bba9e284786b0380c13fa20; full check and live selfcheck/quit/reopen PASS
 
+### [x] Slice PCM: Koe 到 Responsay 的独占音频输入
+- **Playbook**: `Feature`
+- **Outcome**: 外部应用取得独占 PCM 会话，使用带采集身份和 BLE 代次的起止命令；Koe 不重复启动听写，普通停止保留尾音。
+- **Done Predicate**: scripts/check；cargo test -p koe-runtime external_pcm --lib；cargo test -p koe-host-api external_pcm_lease_is_exclusive_and_released_with_the_socket --lib
+- **Evidence**: Koe full check PASS; external PCM 3 regressions and Clippy PASS; Responsay 72 native tests and isolated GUI PASS
+
+### [ ] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
+- **Playbook**: `Investigation`
+- **Outcome**: 核对已合并双端版本及 #810，只在可自动取得物理输入和识别上屏证据时验收真实链路；不重复接口实现，不要求人工参与。
+- **Done Predicate**: 自动记录真实 D3200 音频、起止与识别上屏的版本和产物；无法自动施加实体双击时该项保持未验收；python3 progress/progress.py check
+- **Evidence**: PENDING
+
 ### [ ] Slice ADH: 全天听记真实硬件验收
 - **Outcome**: 按 #662 验证签名版真实麦克风和 D3200 跨五分钟、双击听写、缓存模型断网、外部输入法和退出恢复；只修实际失败，不重复已完成的模型与全天管线。
 - **Done Predicate**: python3 progress/progress.py check；#662 每项填写实际版本、结果与回读产物，未运行项保持未验收。

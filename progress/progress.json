@@ -210,17 +210,28 @@
         "number": 668,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T08:04:56Z"
+        "updated_at": "2026-11-13T09:14:37Z"
       },
       {
         "number": 671,
         "reason": "completed",
         "state": "closed",
         "updated_at": "2026-11-13T06:54:20Z"
+      },
+      {
+        "number": 675,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-13T08:37:29Z"
       }
     ],
-    "main": "314adab314225716d7daafd22945065639548be8",
-    "open_pulls": [],
+    "main": "dcc2adc041bfe4934bfbb72f4ba8bf63dc0efaa6",
+    "open_pulls": [
+      {
+        "head": "ab6f2a4022e76308770f2bbe8e0063e74df16915",
+        "number": 677
+      }
+    ],
     "pulls": [
       {
         "base": "78cd184a62217f7f70d3b3b043c09ded1f4a2a7a",
@@ -402,7 +413,7 @@
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-13T08:42:45.346543Z",
+  "observed_at": "2026-11-13T09:29:15.764448Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1000,6 +1011,30 @@
           "status": "done",
           "summary": "问 Koe 与实时纪要已接入独立主导航。Rust 按本次采集身份投影原文、草稿和已验证纪要；跨页、停录、后台文件转写及录音豆启动间隙已覆盖。全量 check 与隔离原生界面验证通过。 PR #672 已经 CI 与独立 PASS+NOTES 验收，squash 合并为 ec745e9。",
           "title": "问 Koe 主导航与实时纪要专页"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "外部音频协议实现范围。",
+              "ref": 675
+            },
+            {
+              "kind": "file",
+              "note": "external_pcm_v1 能力、采集身份与停止确认契约。",
+              "ref": "docs/local-text-bridge.md"
+            },
+            {
+              "kind": "file",
+              "note": "重复记录先红后绿，键盘尾音、取消与旧 epoch 回归。",
+              "ref": "crates/koe-runtime/src/companion_mcp_tests.rs"
+            }
+          ],
+          "id": "responsay-external-pcm",
+          "next": "与 Responsay 的硬件设置一起交付；物理设备证据单独记录，不以 PCM 回放替代。",
+          "status": "done",
+          "summary": "已实现按 socket 独占的外部 PCM 采集。Koe 不重复启动自身听写；停止确认排在音频尾部之后。完整 check 与清理后的相关回归、Clippy 通过；双端真实硬件识别仍未验收。",
+          "title": "Responsay 独占外部 PCM 输入"
         }
       ],
       "title": "当前产品实现"
@@ -1337,7 +1372,8 @@
       665,
       667,
       668,
-      671
+      671,
+      675
     ],
     "pulls": [
       589,
