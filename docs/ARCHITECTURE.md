@@ -11,7 +11,9 @@ flowchart TD
     CLI[CLI / MCP stdio] --> Runtime[KoeRuntime]
     API --> Runtime
     Runtime --> Store[ProductStore]
-    Runtime --> Network[ProviderWorker / LiveTranscription]
+    Runtime --> Speech[SpeechSession]
+    Speech --> Network[ProviderWorker / LiveTranscription]
+    Speech --> Offline[OfflineSpeechWorker]
     Runtime --> Device[DeviceRuntime / TransportSession]
     Store --> Domain[ProductWorkspace / RecordingAggregate]
     Device --> Engine[协议 / 密码 / 音频领域规则]
@@ -25,7 +27,7 @@ flowchart TD
 | 领域与协议 | `crates/koe-engine/src/product/`、`domain.rs`、`context.rs`、`session.rs` 等 | 记录聚合、来源解析、审核与处理状态转换、搜索、协议和加密；不做文件或网络 I/O |
 | 音频编解码边界 | `crates/koe-opus` | 对静态 libopus 的窄安全封装；保持 `OpusStreamDecoder` 接口 |
 | 客户端基础与格式 | `koe-client-base`、`koe-client-core` | 原子文件工具、锁、资料格式、通用模型及设计令牌 |
-| 存储与传输服务 | `koe-client-services`、`koe-client-providers` | 持久化编解码、文件导入、音频资产、真实 HTTPS/WebSocket、后台网络工作线程 |
+| 存储与传输服务 | `koe-client-services`、`koe-client-providers` | 持久化编解码、文件导入、音频资产、真实 HTTPS/WebSocket、后台网络与本机模型工作线程 |
 | 应用编排 | `crates/koe-runtime` | 连接命令、领域事务、设备事件、异步结果和页面投影；选择要处理的记录 |
 | 宿主接口与入口 | `koe-host-api`、`koe-cli`、`platforms/` | 版本化 C ABI、命令行与 MCP、SwiftUI、系统窗口和硬件 I/O |
 
@@ -51,9 +53,11 @@ flowchart TD
   audio/
     <record-id>.wav
     <record-id>.opus
+  speech-models/
+    <pinned-model>.gguf
 ```
 
-`ProductStore` 在整个打开期间持有排他文件锁，保证磁盘只有单一写者。`Koe.app` 运行时在容器内监听属主私有的 `.koe/koe.sock`（`0700` 目录、`0600` 套接字与同 UID 校验），CLI 与 MCP 优先经桥接共享同一 `KoeRuntime` 会话，应用未运行时再直接获取文件锁。读取失败、未知或损坏的持久格式必须报错并保留原文件；不能以空库覆盖。旧记录迁移同样保留原文件。
+`ProductStore` 在整个打开期间持有排他文件锁，保证磁盘只有单一写者。`Koe.app` 运行时在容器内监听属主私有的 `.koe/koe.sock`（`0700` 目录、`0600` 套接字与同 UID 校验），CLI 与 MCP 优先经桥接共享同一 `KoeRuntime` 会话，应用未运行时再直接获取文件锁。读取失败、未知或损坏的持久格式必须报错并保留原文件；不能以空库覆盖。已有记录的读取兼容同样保留原文件；旧 Flutter 目录导入入口已移除。
 
 ## 记录处理管线
 
@@ -67,9 +71,9 @@ CoreBluetooth 将连接、订阅完成、断开和通知字节交给 Rust，执�
 
 Runtime 持有一个采集操作，以 `record_id / session_id / microphone / sequence` 绑定所有回调。Swift 的 AVAudioEngine 只选择输入、提供原生采样率的单声道 PCM16 和有效 hostTime 对应的首样本时刻；固定 64 块队列每块最多 8192 样本。队列满或输入格式变化明确停止，不静默丢块后冒充完整录音。停止等待已进入的音频回调完成，再排空已接纳块，Rust 核对最终序号后收尾。
 
-`CaptureAsset` 增量写入 `.capture` 文件，封口、文件持久屏障及目录持久屏障完成后，才由 ProductStore 插入一条 `Microphone` 记录。保存失败保留采集所有权并阻止退出，恢复存储后可重试；取消退出不清除待保存音频。权限被拒、空音频或确认取消不生成成功记录。新采集不自动发云，手动转写走现有会议音频策略。
+`CaptureAsset` 增量写入 `.capture` 文件。第一次有效音频写入后建立记录，识别结果可在停止前持久保存。封口、音频持久屏障及工作区提交完成后才移除暂存文件。保存失败保留采集所有权并阻止退出，恢复存储后可重试；取消退出不清除待保存音频。权限被拒或空音频不生成成功记录。
 
-暂停会停止生产、等待回调并排空尾块，Rust 确认后才显示已暂停；恢复重新核对权限，以新 epoch 接续原序号，采样率变化明确中断并保留已收音频。启动时不把遗留 `.capture` 文件当成成功录音；崩溃恢复和系统双路仍未接入。系统权限、真实输入切换、回放与签名版退出重开见 [#616](https://github.com/semantic-craft/koe/issues/616)。
+暂停会停止生产、等待回调并排空尾块，Rust 确认后才显示已暂停；恢复重新核对权限，以新 epoch 接续原序号，采样率变化明确中断并保留已收音频。启动时恢复具有记录身份的 `.capture` 音频，提交工作区后释放暂存文件；未完成云请求保留中断状态。系统双路仍未接入。系统权限、真实输入切换、回放与签名版退出重开见 [#616](https://github.com/semantic-craft/koe/issues/616)。
 
 ### Rust 双路时间轴与暂停协议
 
@@ -89,7 +93,15 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 `ProviderConfiguration.meeting_audio_policy` 在同一工作区中保存会议音频策略，默认 `LocalOnly`。Rust 在实时与文件转写入口守门，文字任务不受影响。切换为本机策略时先取消音频并等待传输线程停止，再原子保存策略与失效请求状态；保存失败继续暂停音频，未知提交只能重开。已开始或明确撤销的实时转写不会在取回时自动重新上传；未收到实时音频的云端会话仍可通过取回完整文件补转写。Swift 只展示快照并发送策略意图。
 
-本机模式的录音豆 PCM 进入 Rust 有界 effect 队列，经专用 C ABI drain 交给 macOS `SpeechAnalyzer` / `SpeechTranscriber`。宿主回传 operation ID、音频时间范围、文字与 final 标志，Rust 将操作身份绑定到原 `RequestKey`。临时字幕保留在 Runtime，最终段沿既有事务队列持久化；停止输入后等待识别末句，取消则撤销操作身份。原生资源准备与识别都不持有 host-api 的 session 锁。本机识别失败不会触发云端上传。本机实时转写结束后不自动调用云端纪要，用户仍可手动整理文字。全局 `liveCaption` 快照驱动根视图字幕条，不依赖当前导航页面。
+`SpeechSession` 统一绑定录音豆、Mac 麦克风及文件的记录和请求身份。Apple PCM 经有界 effect 队列与专用 C ABI 交给 macOS `SpeechAnalyzer`；下载模型由 `OfflineSpeechWorker` 在 Rust 进程内运行。最终文字沿同一事务队列持久化，临时字幕只保留在 Runtime。停止等待末句，取消撤销操作身份，迟到结果不能改写其他请求。全局 `liveCaption` 快照驱动字幕条。
+
+下载模型配置与音频上传策略独立。固定版本文件下载至临时路径，大小及 SHA-256 验证通过后原子发布；后台实际加载成功后才可识别。一个 worker 只持有一个模型，运行中的会话绑定实际加载身份。原生链接 CPU 后端、C++ 与 Accelerate，没有外部进程推理或 Swift 转发本机模型请求。
+
+### 全天听记与输入法
+
+全天听记使用同一采集和识别管线，每五分钟封成普通记录，以 run ID 和序号关联。麦克风原生采集身份和 D3200 输入序列不因封段重启。当前实现按固定时长分段，尚未加入涛声的 VAD 静音切段。
+
+封段音频与最终文字持久完成后，配置了文字服务的记录排入增量整理；下一段继续采集。纪要、待办和记忆复用普通记录的来源校验与审核。听写只圈定现场采集中的一段文字，不停止全天听记，也不选取后台文件转写。文字桥在原文提交成功后发布所选定稿。具体决策和可证伪标准见 [ADR 0003](adr/0003-shared-speech-and-all-day.md)。
 
 网络运行在后台工作线程。runtime 不因等待远端结果阻塞 SwiftUI 的命令处理。宿主每 250ms 推进 runtime、读取新结果并执行设备发送队列；这一生命周期属于应用，而非某个页面。
 
@@ -121,14 +133,14 @@ Rust 把各路 WAV 的 `sample_offset/sample_count` 映射到共同活动时间 
 
 `HostSessionStore` 只持有一份快照。Swift 可以保存输入草稿、焦点、当前展示标签及原生 I/O 错误，不能自行提取待办、拼接转写时间、修补引用或改变处理阶段。AppKit 管理窗口和菜单，`NativeFileActions` 管理系统文件选择，`NativePlayback` 执行音频播放并回报实际进度。
 
-CLI 与 MCP 在宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）转发至同一 `KoeRuntime` 实例，宿主未运行时回退直开 `KoeRuntime`。MCP stdio 暴露 16 项检索、审核、修订与设备工具且不开放不可逆彻底清除；`companion/subscribe` 在同一桥接上为外部语音输入提供 D3200 领口待命的 `control_edge` 双击边沿与带防敲击门控的 `16 kHz` 单声道 `PCM16` 音频流，支持主机快捷键 `set_capture_active` 双向启停。离线 CLI/MCP 进程使用隔离凭据，不读取 GUI 的系统密钥，也不提供另一套独立的记录库。
+CLI 与 MCP 在宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`）转发至同一 `KoeRuntime` 实例，宿主未运行时回退直开 `KoeRuntime`。MCP stdio 暴露 16 项检索、审核、修订与设备工具且不开放不可逆彻底清除；`companion/subscribe` 在同一桥接上为外部语音输入提供 D3200 领口待命的 `control_edge` 双击边沿与带防敲击门控的 `16 kHz` 单声道 `PCM16` 音频流，支持主机快捷键 `set_capture_active` 双向启停。新增 `set_dictation_active` 圈定现场听写，`transcript_final` 事件包含 recordId、segmentId、startMs、endMs、text 和 dictation，供其他语音输入法直接复用原文。离线 CLI/MCP 进程使用隔离凭据，不读取 GUI 的系统密钥，也不提供另一套独立的记录库。
 
 ## 构建约束与当前边界
 
 - `audiopus_sys = 0.2.2` 从其打包源码静态编译。仓库配置禁用系统 pkg-config 探测，拒绝外部 Opus 库目录覆盖。Rust、CMake 和 Swift 统一使用 macOS 14 部署目标。
 - 原生界面使用深色中性表面与淡紫强调色，四级字号为 12、14、16、22pt。Swift 文件保持不超过 500 行，按钮热区和输入提交有明确行为。
 - 当前产品入口是 macOS。`apple-shared` 的包定义不代表已经提供 iOS 应用；移动宿主另行开发。
-- Google 载荷构造器、历史 ACP 类型、屏幕时间轴等已有代码，不等同于产品已经接通相应服务。当前界面不承诺屏幕采集、麦克风全天监听、翻译、Google 同步或自动备份。
+- Google 载荷构造器、历史 ACP 类型、屏幕时间轴等已有代码，不等同于产品已经接通相应服务。当前界面不承诺屏幕采集、翻译、Google 同步或自动备份。
 - 空库不注入演示记录。测试输入只能出现在测试或隔离的自检工作区；生产转写和问答不能用固定句子冒充远端结果。
 
 ## 参考

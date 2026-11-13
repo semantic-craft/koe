@@ -160,15 +160,15 @@
       },
       {
         "number": 653,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-12T14:59:11Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-13T04:05:48Z"
       },
       {
         "number": 654,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-12T15:00:26Z"
+        "updated_at": "2026-11-12T15:19:52Z"
       },
       {
         "number": 655,
@@ -178,12 +178,24 @@
       },
       {
         "number": 657,
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-12T15:22:36Z"
+      },
+      {
+        "number": 661,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-12T15:11:53Z"
+        "updated_at": "2026-11-13T03:51:17Z"
+      },
+      {
+        "number": 662,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-13T04:11:03Z"
       }
     ],
-    "main": "2e60e8d17a640c5abc4d0d8979e5099fffe4e7fb",
+    "main": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
     "open_pulls": [],
     "pulls": [
       {
@@ -321,12 +333,20 @@
         "merged": true,
         "number": 656,
         "state": "closed"
+      },
+      {
+        "base": "704c3d928fb415891230d06af1e91c965ae18923",
+        "head": "ff8cfd60781347939c52055aae0784aca43ec7da",
+        "merge_commit": "164e2513c7f88b2f2916cbda824ccf4d48bae0f4",
+        "merged": true,
+        "number": 660,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [],
-  "observed_at": "2026-11-12T15:13:32.413063Z",
+  "observed_at": "2026-11-13T04:12:21.253372Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -429,25 +449,20 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "F1 实现范围。",
-              "ref": 597
+              "note": "用户明确不需要旧版资料迁移。",
+              "ref": 661
             },
             {
               "kind": "file",
-              "note": "真实旧格式迁入、原件保全与幂等校验入口。",
-              "ref": "crates/koe-runtime/src/flutter_import.rs"
-            },
-            {
-              "kind": "pull",
-              "note": "已通过 squash 合并；CI 与本地门禁通过，不代表签名安装或真机验收。",
-              "ref": 600
+              "note": "当前工作区与已有记录恢复仍保留。",
+              "ref": "crates/koe-runtime/src/restore.rs"
             }
           ],
           "id": "flutter-migration",
-          "next": "签名安装版验收见 #598；未支持领域随后续切片补迁。",
-          "status": "done",
-          "summary": "显式选择旧目录，迁入基础录音、可见原文、说话人与未验证来源的旧纪要；一次事务保存迁移回执，重复快照不覆盖编辑。原件保全与未迁清单持久保存，不表示完整迁移。整批上限 256 MB，增量合并未支持。",
-          "title": "旧 Flutter 基础资料迁移"
+          "next": "随全天听记集成完成全量验证和交付。",
+          "status": "in_progress",
+          "summary": "按 #661 移除旧目录迁入界面和专属导入实现；保留当前工作区、已迁记录及持久回执的读取兼容。",
+          "title": "移除旧 Flutter 资料迁移入口"
         },
         {
           "evidence": [
@@ -497,9 +512,9 @@
             }
           ],
           "id": "meeting-audio-policy",
-          "next": "签名版与真实设备验收按 #608 执行；本机 ASR 后续接入，不自动回退云端。",
+          "next": "音频上传策略独立于引擎；新的真实硬件与安装验收见 #662。",
           "status": "done",
-          "summary": "N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。本机 ASR 尚未接入，未安装新签名版。",
+          "summary": "N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。Apple 本机实时识别已另由 #660 接入；下载模型与引擎独立配置在 #661 集成。",
           "title": "会议音频只留本机"
         },
         {
@@ -726,9 +741,9 @@
             }
           ],
           "id": "collar-companion-mcp-bridge",
-          "next": "按 #641 在实体 04.92 D3200 上验收自动待命、敲击门控与控制权释放；后续在 Responsay 侧对接 companion/subscribe。",
+          "next": "现有PCM接口保留；#661增加通用听写文字，硬件验收见 #662。",
           "status": "done",
-          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。不为 Responsay 客户端提前写胶水；实体 D3200 真机行为拆入 #641 验收。",
+          "summary": "PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。面向通用外部语音输入法；实体 D3200 真机行为拆入 #641 验收。",
           "title": "16 工具实时 MCP 桥接与 D3200 领口伴侣接口"
         },
         {
@@ -807,6 +822,35 @@
           "status": "done",
           "summary": "macOS 26+ 本机中文实时识别与全局字幕已接通；签名版 D3200 实体按键在设置页停止前显示文字，停止后保存并重启读回。真实 Apple 引擎另通过禁止联网测试。",
           "title": "录音豆本机实时识别与全局字幕"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "实现范围。",
+              "ref": 661
+            },
+            {
+              "kind": "issue",
+              "note": "独立硬件验收。",
+              "ref": 662
+            },
+            {
+              "kind": "file",
+              "note": "设计、参考依据和代码验收标准。",
+              "ref": "docs/adr/0003-shared-speech-and-all-day.md"
+            },
+            {
+              "kind": "file",
+              "note": "生产Runtime与真实模型可重复验证入口。",
+              "ref": "crates/koe-cli/examples/verify_offline.rs"
+            }
+          ],
+          "id": "all-day-offline-models",
+          "next": "完成审查修复、全量检查、PR交付和 #662 真机验收。",
+          "status": "in_progress",
+          "summary": "SenseVoice 与 Qwen 均以真实音频完成下载、校验、CPU加载及识别。Runtime 文件转写/重开、303秒回放跨段与听写范围验证通过；原生设置及双场景动画已操作回读。独立审查发现的并发、暂停和恢复边界正在修复，尚未完成最终门禁与交付。",
+          "title": "全天听记、下载模型与通用听写文字"
         }
       ],
       "title": "当前产品实现"
@@ -1104,7 +1148,9 @@
       653,
       654,
       655,
-      657
+      657,
+      661,
+      662
     ],
     "pulls": [
       589,
@@ -1123,7 +1169,8 @@
       638,
       642,
       646,
-      656
+      656,
+      660
     ]
   }
 }

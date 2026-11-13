@@ -29,7 +29,7 @@ struct MicrophoneStatusCard: View {
                         if microphone.phase != "saving" {
                             KoeActionButton("取消录音", systemImage: "xmark.circle") { store.send("cancel_microphone") }
                         }
-                    } else if store.snapshot.allDay.state == "idle" {
+                    } else {
                         if microphone.phase == "recording" {
                             KoeActionButton("暂停", systemImage: "pause.circle") { store.send("pause_microphone") }
                         } else if microphone.phase == "paused" {
@@ -37,7 +37,8 @@ struct MicrophoneStatusCard: View {
                                 NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
                             }
                         }
-                        if ["recording", "starting", "pausing", "paused"].contains(microphone.phase) {
+                        if store.snapshot.allDay.state == "idle",
+                           ["recording", "starting", "pausing", "paused"].contains(microphone.phase) {
                             KoeActionButton("停止并保存", systemImage: "stop.circle", isPrimary: true) {
                                 store.send("stop_microphone")
                             }

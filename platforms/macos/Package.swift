@@ -27,6 +27,8 @@ let package = Package(
                 .unsafeFlags(["-L\(repoRoot)/target/debug"], .when(configuration: .debug)),
                 .unsafeFlags(["-L\(repoRoot)/target/release"], .when(configuration: .release)),
                 .linkedLibrary("koe_host_api"),
+                .linkedLibrary("c++"),
+                .linkedFramework("Accelerate"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreBluetooth"),
                 .linkedFramework("SwiftUI"),
@@ -43,6 +45,8 @@ let package = Package(
                 .unsafeFlags(["-L\(repoRoot)/target/debug"], .when(configuration: .debug)),
                 .unsafeFlags(["-L\(repoRoot)/target/release"], .when(configuration: .release)),
                 .linkedLibrary("koe_host_api"),
+                .linkedLibrary("c++"),
+                .linkedFramework("Accelerate"),
             ]
         ),
     ]

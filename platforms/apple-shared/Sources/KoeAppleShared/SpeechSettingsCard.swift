@@ -22,7 +22,7 @@ struct SpeechSettingsCard: View {
                         Label(speech.appleMessage ?? "正在检查本机识别能力。",
                               systemImage: speech.appleState == "ready" ? "checkmark.circle" : "info.circle")
                             .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
-                        InfoTip("Apple 本机实时识别需要 macOS 26 或更新版本及支持的 Mac，当前使用简体中文。首次准备系统语言资源需要联网。已有录音文件的本机补转写尚未支持。实际可用性以系统检查结果为准。")
+                        InfoTip("Apple 本机实时识别需要 macOS 26 或更新版本及支持的 Mac，当前使用简体中文。首次准备系统语言资源需要联网。系统识别就绪后，也可在本机转写已有录音文件。实际可用性以系统检查结果为准。")
                     }
                 } else if speech.engine == "downloaded" {
                     ForEach(speech.models) { model in modelRow(model) }
@@ -65,10 +65,14 @@ struct SpeechSettingsCard: View {
                 } else if model.state == "preparing" {
                     KoeActionButton("取消下载", systemImage: "xmark.circle") { store.send("cancel_speech_model") }
                 } else {
-                    KoeActionButton(model.state == "failed" ? "重新下载" : "下载", systemImage: "arrow.down.circle") {
+                    KoeActionButton(model.state == "downloaded" ? "加载模型" : model.state == "failed" ? "重试准备" : "下载",
+                                    systemImage: model.state == "downloaded" ? "play.circle" : "arrow.down.circle") {
                         store.send("prepare_speech_model", ["modelId": model.id])
                     }
                 }
+            }
+            if model.state == "downloaded" {
+                Text("已下载，待加载").font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.textMuted)
             }
             if model.state == "preparing" {
                 ProgressView(value: Double(model.downloadedBytes), total: Double(max(model.sizeBytes, 1)))

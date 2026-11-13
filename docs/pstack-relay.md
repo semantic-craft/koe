@@ -118,3 +118,9 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: macOS 26+ 使用 Apple SpeechAnalyzer 在本机识别 D3200 实时 PCM；Rust 管理请求归属和收尾，当前页面顶部显示字幕，实体录音开始时唤出应用窗口。
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check；签名安装版 D3200 实体按键在本机模式下停止前显示真实中文，停止后同一记录保留最终文字，验收 #655。
 - **Evidence**: scripts/check PASS; signed install self-check/smoke PASS; issue #655 comment-6827765221; hardware.jsonl and hardware-final-record.json
+
+### [ ] Slice AD: 全天听记与本机模型统一管线
+- **Playbook**: `figure-it-out` + `Feature`
+- **Outcome**: 移除旧迁移入口，按 Hex 固定模型与真实加载设计接离线识别；恢复全天分段与增量整理、通用听写文字桥，并提供明确配置和示意动画。
+- **Done Predicate**: ./scripts/check && python3 progress/progress.py check；真实模型Runtime文件与303秒跨段回放/重开通过，独立审查无阻断，真实硬件另见 #662。
+- **Evidence**: issue #661; issue #662; docs/adr/0003-shared-speech-and-all-day.md; crates/koe-cli/examples/verify_offline.rs

@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-12T15:13:32.413063Z</p>
-<p>Main: <code>main: 2e60e8d17a640c5abc4d0d8979e5099fffe4e7fb</code></p>
+<p>Observed: 2026-11-13T04:12:21.253372Z</p>
+<p>Main: <code>main: 164e2513c7f88b2f2916cbda824ccf4d48bae0f4</code></p>
 <section id="rust-product"><h2>当前产品实现</h2>
 <article id="workspace-domain"><h3>单一 Rust 产品工作区</h3><span class="badge">done</span><p>录音、原文、纪要、待办、记忆和问答以 ProductWorkspace 为事实，ProductStore 持久化后发布；Rust 回归、Clippy 与原生流程验证通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-engine/src/product/mod.rs">file crates/koe-engine/src/product/mod.rs: 领域入口</a></li>
@@ -23,22 +23,21 @@
 <article id="old-data-restore"><h3>旧 Rust 工作区恢复</h3><span class="badge">done</span><p>保留说话人、硬件重点与只有 Opus 的录音；真实解码失败保留原始文件并提示。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/lib.rs">file crates/koe-runtime/src/lib.rs: 启动时迁移旧工作区的统一入口</a></li>
 </ul><p>Next: 升级后的真实录音长期使用继续在 #588 记录。</p></article>
-<article id="flutter-migration"><h3>旧 Flutter 基础资料迁移</h3><span class="badge">done</span><p>显式选择旧目录，迁入基础录音、可见原文、说话人与未验证来源的旧纪要；一次事务保存迁移回执，重复快照不覆盖编辑。原件保全与未迁清单持久保存，不表示完整迁移。整批上限 256 MB，增量合并未支持。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/597">issue 597: F1 实现范围。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/flutter_import.rs">file crates/koe-runtime/src/flutter_import.rs: 真实旧格式迁入、原件保全与幂等校验入口。</a></li>
-<li><a href="https://github.com/semantic-craft/koe/pull/600">pull 600: 已通过 squash 合并；CI 与本地门禁通过，不代表签名安装或真机验收。</a></li>
-</ul><p>Next: 签名安装版验收见 #598；未支持领域随后续切片补迁。</p></article>
+<article id="flutter-migration"><h3>移除旧 Flutter 资料迁移入口</h3><span class="badge">in_progress</span><p>按 #661 移除旧目录迁入界面和专属导入实现；保留当前工作区、已迁记录及持久回执的读取兼容。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/661">issue 661: 用户明确不需要旧版资料迁移。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/restore.rs">file crates/koe-runtime/src/restore.rs: 当前工作区与已有记录恢复仍保留。</a></li>
+</ul><p>Next: 随全天听记集成完成全量验证和交付。</p></article>
 <article id="provider-persistence"><h3>服务凭据与非敏感配置持久化</h3><span class="badge">done</span><p>非敏感配置和凭据引用由唯一工作区保存。Rust 编排安全项回读、清除墓碑、待删项重试和未知提交重开；macOS 平台适配与开发隔离已接通。17 项 Rust 回归、2 项 Swift 桥接回归、check、独立评审与 PR CI 通过，已 squash 合并。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/605">pull 605: N1 实现已合并，包含配置与安全存储故障回归。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/tests/provider_persistence.rs">file crates/koe-runtime/tests/provider_persistence.rs: 重启、故障、清除、授权与隔离行为回归。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/604">issue 604: 新安全项创建后、引用提交前崩溃可能留下无引用项，尚未自动回收。</a></li>
 </ul><p>Next: 跨版本安装升级与系统授权仍待 #603；无引用安全项回收见 #604。</p></article>
-<article id="meeting-audio-policy"><h3>会议音频只留本机</h3><span class="badge">done</span><p>N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。本机 ASR 尚未接入，未安装新签名版。</p><ul>
+<article id="meeting-audio-policy"><h3>会议音频只留本机</h3><span class="badge">done</span><p>N4A 持久会议音频策略已由 PR #609 squash 合并，默认只留本机。Rust 阻断实时和文件上传，切换取消待发音频并隔离旧结果，文字纪要与问答仍可发云。本地协议回归、完整 scripts/check、独立评审及 PR CI 通过。Apple 本机实时识别已另由 #660 接入；下载模型与引擎独立配置在 #661 集成。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/609">pull 609: 独立评审 PASS+NOTES，14 项策略与 7 项采集独立复跑通过，CI success，已 squash 合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/607">issue 607: 本轮实现与自动验收范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/audio_policy.rs">file crates/koe-runtime/src/audio_policy.rs: 持久策略切换、音频取消与保存失败阻断。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/audio_policy_tests.rs">file crates/koe-runtime/src/audio_policy_tests.rs: 本地 HTTP/WS 计数、持久与旧结果回归。</a></li>
-</ul><p>Next: 签名版与真实设备验收按 #608 执行；本机 ASR 后续接入，不自动回退云端。</p></article>
+</ul><p>Next: 音频上传策略独立于引擎；新的真实硬件与安装验收见 #662。</p></article>
 <article id="activity-quit-drain"><h3>活动断言与退出排空</h3><span class="badge">done</span><p>Rust 从录音、取回和处理队列推导活动与退出状态；Swift 持有系统活动并延后退出。保存失败阻止退出，可取消；停止确认丢失支持重连与重试，过期结果不影响新请求。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/613">pull 613: squash 225681c 已合并；完整本地门禁、CI 和独立复核通过。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/lifecycle.rs">file crates/koe-runtime/src/lifecycle.rs: 退出与活动状态由 Rust 统一派生。</a></li>
@@ -77,7 +76,7 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-runtime/src/transcript_edit.rs">file crates/koe-runtime/src/transcript_edit.rs: 录音与处理守卫、过期摘要槽位回收及持久化发布编排。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/TranscriptDetailView.swift">file platforms/apple-shared/Sources/KoeAppleShared/TranscriptDetailView.swift: 原生记录详情说话人胶囊、同人合并面板、单句内联修订与还原及过期纪要横幅。</a></li>
 </ul><p>Next: 实体 D3200 与真实付费云服务下的多说话人转写改名及重算按 #588 验收。</p></article>
-<article id="collar-companion-mcp-bridge"><h3>16 工具实时 MCP 桥接与 D3200 领口伴侣接口</h3><span class="badge">done</span><p>PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。不为 Responsay 客户端提前写胶水；实体 D3200 真机行为拆入 #641 验收。</p><ul>
+<article id="collar-companion-mcp-bridge"><h3>16 工具实时 MCP 桥接与 D3200 领口伴侣接口</h3><span class="badge">done</span><p>PR #642（#640）在 koe-host-api 新增属主私有 AF_UNIX 实时桥接（0700 目录与 0600 套接字、getpeereid 同 UID 校验、有界 sync_channel(512) 订阅队列），使 koe CLI 与 mcp-stdio 在 Koe.app 打开期间零锁冲突直连实时工作区并暴露全部 16 项只读及可逆工具（不暴露永久删除），关闭时自动回退离线单写模式；同时在纯 Rust 领域与运行时落地对标 Typeless 交互的 04.92 国行 D3200 领口伴侣状态机（出仓握手自动进入 1A 07 待命、按所属 file_id 隔离待命临时文件与手动侧键会议录音、崩溃安全闪存回收、正面双击 1A 08 与快捷键双路零冷启动启停、敲击闷响门控与手动门控引用计数），并在设置页提供蓝牙自动连接开关与先暂停采集再释放蓝牙控制权操作。面向通用外部语音输入法；实体 D3200 真机行为拆入 #641 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/640">issue 640: 16 工具实时 MCP 桥接与 D3200 领口伴侣接口需求及验收范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 四层实现、三模型对抗审查 6 项加固、独立分支复验（flash PASS+NOTES）与 CI 通过后 squash 合并。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/641">issue 641: 独立真机验收工单：实体 04.92 D3200 自动待命、闪存回收、敲击门控与蓝牙控制权移交。</a></li>
@@ -85,7 +84,7 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-host-api/src/local_bridge.rs">file crates/koe-host-api/src/local_bridge.rs: 属主私有 0600 koe.sock JSON-RPC 桥接、有界订阅推送与作用域化手动门控引用计数。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/src/mcp.rs">file crates/koe-cli/src/mcp.rs: 在线优先回退离线的 16 工具 MCP stdio 服务与宿主重启自动重连。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift">file platforms/apple-shared/Sources/KoeAppleShared/CompanionSettingsCard.swift: 原生设置页伴侣模式选择、蓝牙自动连接开关与释放蓝牙控制权卡片。</a></li>
-</ul><p>Next: 按 #641 在实体 04.92 D3200 上验收自动待命、敲击门控与控制权释放；后续在 Responsay 侧对接 companion/subscribe。</p></article>
+</ul><p>Next: 现有PCM接口保留；#661增加通用听写文字，硬件验收见 #662。</p></article>
 <article id="capture-source-studio"><h3>独立「录音」音源工作台与实时字幕状态说明</h3><span class="badge">done</span><p>PR #646（#644）新增左侧边栏独立「录音」页（CaptureView），移除今天页顶部的 MicrophoneCard 输入条与阻塞式 NSAlert + NSPopUpButton 下拉弹窗，在 KoeRuntime 统一管理 D3200 蓝牙录音豆、Mac 蓝牙耳机与 CoreAudio 输入设备；Auto 模式按已连闲置非领口待命录音豆、Mac 蓝牙输入、系统默认输入动态选源，支持手动选卡与一键恢复自动优先；仅在正式录音期间由入站采样块计算归一化 RMS 电平以免平时打开音频输入把蓝牙耳机从立体声 A2DP 降级为单声道 HFP；录音豆实时录制遇到只留本机或未配云端密钥时直接说明无实时字幕原因并提供设置跳转。实体硬件联调归入 #645。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/644">issue 644: 独立「录音」音源工作台与实时字幕状态说明需求范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 三层实现、三模型对抗审查 5 项边界加固与远端 CI 通过后 squash 合并。</a></li>
@@ -102,6 +101,12 @@
 <li><a href="https://github.com/semantic-craft/koe/issues/653">issue 653: 实现范围与自动验证</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/655">issue 655: 真机离线、实体按键与字幕可见性验收</a></li>
 </ul><p>Next: 已安装本机模式。#655 继续追踪运行中切换第二页及隐藏唤窗观察；本轮用户要求保持联网。</p></article>
+<article id="all-day-offline-models"><h3>全天听记、下载模型与通用听写文字</h3><span class="badge">in_progress</span><p>SenseVoice 与 Qwen 均以真实音频完成下载、校验、CPU加载及识别。Runtime 文件转写/重开、303秒回放跨段与听写范围验证通过；原生设置及双场景动画已操作回读。独立审查发现的并发、暂停和恢复边界正在修复，尚未完成最终门禁与交付。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/661">issue 661: 实现范围。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/issues/662">issue 662: 独立硬件验收。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/docs/adr/0003-shared-speech-and-all-day.md">file docs/adr/0003-shared-speech-and-all-day.md: 设计、参考依据和代码验收标准。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/examples/verify_offline.rs">file crates/koe-cli/examples/verify_offline.rs: 生产Runtime与真实模型可重复验证入口。</a></li>
+</ul><p>Next: 完成审查修复、全量检查、PR交付和 #662 真机验收。</p></article>
 </section>
 <section id="validation"><h2>验收与交付</h2>
 <article id="automated-check"><h3>自动化与独立代码评审</h3><span class="badge">done</span><p>最新全量 scripts/check 通过 Python 契约测试、50 文件 verify-ui-principles 零违规、全量离线 Rust 工作区测试（Clippy 零警告）与 Swift apple-shared / macos 测试，PR #646 CI 与三模型独立对抗审查（pro / flash / inherit）通过，5 项边界加固均以先红后绿回归验证。此前切片的验收记录保留在各自条目。</p><ul>
