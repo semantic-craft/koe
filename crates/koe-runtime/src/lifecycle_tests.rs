@@ -1,6 +1,7 @@
 use super::*;
 use koe_client_providers::{ProviderEvent, ProviderOutput, TranscriptSegment};
 use koe_engine::{
+    crypto::{AesCtrStreamDecrypt, DeviceCrypto},
     frame::{ProtocolFrame, RX_MAGIC},
     session::REAL_OPUS_20MS_440HZ_PACKET,
     transport::OPUS_FRAME_BYTES,
@@ -12,6 +13,9 @@ use std::{
 };
 
 const NOW: u64 = 1_800_000_000;
+const SESSION_KEY: [u8; 32] = [0x55; 32];
+const FILE_KEY: [u8; 32] = [0x22; 32];
+const FILE_NONCE: [u8; 16] = [0x23; 16];
 struct Sandbox(PathBuf);
 impl Sandbox {
     fn new() -> Self {
@@ -296,10 +300,31 @@ fn quit_during_unconfirmed_start_waits_for_device_stop_confirmation() {
     assert_eq!(quit_phase(&runtime), "ready");
 }
 
+fn encrypted_audio(sequence: u32) -> Vec<u8> {
+    let mut payload = sequence.to_le_bytes().to_vec();
+    payload.push(0);
+    let mut opus = [0; OPUS_FRAME_BYTES];
+    opus[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+    AesCtrStreamDecrypt::new(&FILE_KEY, &FILE_NONCE)
+        .unwrap()
+        .decrypt_contiguous_in_place(&mut opus, sequence);
+    payload.extend_from_slice(&opus);
+    payload.push(0);
+    rx(0x1a, 0x08, &payload)
+}
+
 fn file_head(file_id: u32, size: u32) -> Vec<u8> {
+    let session_nonce = [0x33; 16];
+    let mut key_material = b"soundcored3200".to_vec();
+    key_material.extend_from_slice(&FILE_KEY);
+    let wrapped_key =
+        DeviceCrypto::aes_ctr_decrypt(&key_material, &SESSION_KEY, &session_nonce).unwrap();
     let mut payload = file_id.to_le_bytes().to_vec();
     payload.extend_from_slice(&size.to_le_bytes());
-    payload.extend_from_slice(&[0; 79]);
+    payload.extend_from_slice(&FILE_NONCE);
+    payload.extend_from_slice(&wrapped_key);
+    payload.extend_from_slice(&session_nonce);
+    payload.push(0);
     rx(0x1a, 0x07, &payload)
 }
 fn catalog(file_id: u32) -> Vec<u8> {
@@ -314,7 +339,7 @@ fn catalog(file_id: u32) -> Vec<u8> {
 fn quit_salvages_zero_live_audio_without_starting_unrelated_catalog_work() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
-    runtime.device.session.set_session_key([0x55; 32]);
+    runtime.device.session.set_session_key(SESSION_KEY);
     dispatch(&mut runtime, json!({"type":"device_start"}));
     runtime.ingest_ble_chunk(&file_head(913, 0), NOW);
     let id = runtime.workspace().records().keys().next().unwrap().clone();
@@ -324,7 +349,7 @@ fn quit_salvages_zero_live_audio_without_starting_unrelated_catalog_work() {
     runtime.poll_timers(2_000, NOW + 2);
     assert_ne!(quit_phase(&runtime), "ready");
     runtime.ingest_ble_chunk(&file_head(913, 166), NOW + 2);
-    runtime.ingest_ble_chunk(&audio(0), NOW + 2);
+    runtime.ingest_ble_chunk(&encrypted_audio(0), NOW + 2);
     runtime.ingest_ble_chunk(&rx(0x1a, 0x0a, &913u32.to_le_bytes()), NOW + 2);
     runtime.poll_timers(0, NOW + 2);
     assert_eq!(quit_phase(&runtime), "ready");
@@ -343,10 +368,10 @@ fn disconnected_offline_pull_blocks_quit_until_reconnected_and_saved() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();
     runtime.device.connection = Some("fixture".into());
-    runtime.device.session.set_session_key([0x55; 32]);
+    runtime.device.session.set_session_key(SESSION_KEY);
     runtime.ingest_ble_chunk(&catalog(914), NOW);
     runtime.ingest_ble_chunk(&file_head(914, 332), NOW);
-    runtime.ingest_ble_chunk(&audio(0), NOW);
+    runtime.ingest_ble_chunk(&encrypted_audio(0), NOW);
     dispatch(&mut runtime, json!({"type":"request_quit"}));
     dispatch(
         &mut runtime,
@@ -355,13 +380,21 @@ fn disconnected_offline_pull_blocks_quit_until_reconnected_and_saved() {
     assert_eq!(quit_phase(&runtime), "blocked");
     dispatch(&mut runtime, json!({"type":"cancel_quit"}));
     assert_eq!(quit_phase(&runtime), "running");
-    runtime.device.session.set_session_key([0x55; 32]);
+    runtime.device.session.set_session_key(SESSION_KEY);
     assert!(runtime.device.session.resume_offline_pull().is_some());
-    runtime.ingest_ble_chunk(&audio(1), NOW);
+    runtime.ingest_ble_chunk(&file_head(914, 332), NOW);
+    runtime.ingest_ble_chunk(&encrypted_audio(1), NOW);
     runtime.ingest_ble_chunk(&rx(0x1a, 0x0a, &914u32.to_le_bytes()), NOW);
     dispatch(&mut runtime, json!({"type":"request_quit"}));
     assert_eq!(quit_phase(&runtime), "ready");
     assert!(runtime.device.session.has_disk_custody(914));
+    let id = runtime.workspace().records().keys().next().unwrap();
+    let mut packet = [0; OPUS_FRAME_BYTES];
+    packet[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+    assert_eq!(
+        fs::read(recording_assets::opus_path(&dir.0, id).unwrap()).unwrap(),
+        koe_engine::ogg_opus::OggOpus::mux_raw_frames(&packet.repeat(2))
+    );
 }
 
 #[test]
@@ -528,7 +561,7 @@ fn lost_stop_reply_is_retried_after_reconnect_and_cancel_remains_usable() {
     runtime.ingest_ble_chunk(&rx(0x18, 0x82, &[0]), NOW);
     assert_eq!(runtime.device.session.active_file_id, Some(999));
     runtime.ingest_ble_chunk(&file_head(999, 166), NOW);
-    runtime.ingest_ble_chunk(&audio(0), NOW);
+    runtime.ingest_ble_chunk(&encrypted_audio(0), NOW);
     runtime.ingest_ble_chunk(&rx(0x1a, 0x0a, &999u32.to_le_bytes()), NOW);
     let started = dispatch(&mut runtime, json!({"type":"device_start"}));
     assert!(started["error"].is_null(), "{started}");
