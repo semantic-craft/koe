@@ -6,6 +6,12 @@
 
 use std::collections::VecDeque;
 
+pub mod offline_speech;
+pub use offline_speech::{
+    offline_speech_models, OfflineSpeechEvent, OfflineSpeechModel, OfflineSpeechSegment,
+    OfflineSpeechWorker,
+};
+
 mod network;
 pub use network::{
     LiveEvent, LiveTranscription, ProviderConfig, ProviderEvent, ProviderOutput, ProviderRequest,
