@@ -382,11 +382,19 @@ fn disconnected_offline_pull_blocks_quit_until_reconnected_and_saved() {
     assert_eq!(quit_phase(&runtime), "running");
     runtime.device.session.set_session_key(SESSION_KEY);
     assert!(runtime.device.session.resume_offline_pull().is_some());
+    runtime.ingest_ble_chunk(&file_head(914, 332), NOW);
     runtime.ingest_ble_chunk(&encrypted_audio(1), NOW);
     runtime.ingest_ble_chunk(&rx(0x1a, 0x0a, &914u32.to_le_bytes()), NOW);
     dispatch(&mut runtime, json!({"type":"request_quit"}));
     assert_eq!(quit_phase(&runtime), "ready");
     assert!(runtime.device.session.has_disk_custody(914));
+    let id = runtime.workspace().records().keys().next().unwrap();
+    let mut packet = [0; OPUS_FRAME_BYTES];
+    packet[..REAL_OPUS_20MS_440HZ_PACKET.len()].copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+    assert_eq!(
+        fs::read(recording_assets::opus_path(&dir.0, id).unwrap()).unwrap(),
+        koe_engine::ogg_opus::OggOpus::mux_raw_frames(&packet.repeat(2))
+    );
 }
 
 #[test]
