@@ -47,6 +47,11 @@ struct ActiveCaptureBar: View {
                     .accessibilityLabel("麦克风电平")
             }
             Spacer(minLength: 4)
+            if store.snapshot.section != "live_minutes" {
+                KoeActionButton("查看实时纪要", systemImage: "doc.text") {
+                    store.send("navigate", ["section": "live_minutes"])
+                }
+            }
             ForEach(capture.actions, id: \.self) { action in
                 KoeActionButton(actionTitle(action)) { perform(action) }
             }

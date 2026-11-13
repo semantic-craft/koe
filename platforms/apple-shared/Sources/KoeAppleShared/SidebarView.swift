@@ -15,6 +15,8 @@ public struct SidebarView: View {
             navigationRow("today", title: "今天", icon: "sun.max")
             navigationRow("notes", title: "随心记", icon: "text.alignleft")
             navigationRow("tasks", title: "行动", icon: "checkmark.circle")
+            navigationRow("live_minutes", title: "实时纪要", icon: "doc.text")
+            navigationRow("ask", title: "问 Koe", icon: "sparkles")
             Spacer(minLength: 30)
             navigationRow("records", title: "所有记录", icon: "rectangle.stack")
             navigationRow("settings", title: "设置", icon: "gearshape")

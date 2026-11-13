@@ -314,6 +314,35 @@ fn busy_device_rejects_start_and_download_without_discarding_captured_audio() {
 }
 
 #[test]
+fn accepted_bean_start_replaces_prior_scope_before_the_file_header() {
+    let dir = Sandbox::new();
+    let mut runtime = KoeRuntime::open(&dir.0).unwrap();
+    let mic = command(&mut runtime, json!({"type":"start_microphone","inputId":""}));
+    let ticket = &mic["microphone"];
+    command(&mut runtime, json!({"type":"stop_microphone"}));
+    let stopped = command(
+        &mut runtime,
+        json!({"type":"microphone_stopped","recordId":ticket["recordId"],"sessionId":ticket["sessionId"],"lane":"microphone","sequence":0}),
+    );
+    assert_eq!(stopped["liveMinutes"]["scope"]["id"], ticket["recordId"]);
+
+    let rejected: Value = serde_json::from_str(&runtime.dispatch_json(r#"{"type":"device_start"}"#, NOW)).unwrap();
+    assert!(rejected["error"].is_string());
+    assert_eq!(rejected["liveMinutes"]["scope"], stopped["liveMinutes"]["scope"]);
+
+    runtime.device.session.set_session_key([0x55; 32]);
+    let starting = command(&mut runtime, json!({"type":"device_start"}));
+    assert_eq!(starting["liveMinutes"]["scope"], json!({"kind":"bean_starting"}));
+    assert_eq!(starting["liveMinutes"]["phase"], "starting");
+    assert_eq!(starting["liveMinutes"]["parts"], json!([]));
+
+    runtime.ingest_ble_chunk(&file_head_rx(803, 0), NOW);
+    let recording = runtime.snapshot(NOW);
+    assert_eq!(recording["liveMinutes"]["scope"], json!({"kind":"record","id":recording["device"]["liveRecordId"]}));
+    assert_eq!(recording["liveMinutes"]["phase"], "recording");
+}
+
+#[test]
 fn reused_bean_file_id_with_changed_content_preserves_both_recordings() {
     let dir = Sandbox::new();
     let mut runtime = KoeRuntime::open(&dir.0).unwrap();

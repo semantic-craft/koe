@@ -37,6 +37,19 @@ pub(super) struct SpeechSession {
     success: bool,
     pub captured_pcm_bytes: u64,
 }
+impl SpeechSession {
+    pub(super) fn capture_source(&self) -> Option<DictationSource> {
+        self.source
+    }
+
+    pub(super) fn drafts(&self) -> impl Iterator<Item = &str> {
+        self.operations
+            .values()
+            .map(|op| op.draft.as_str())
+            .filter(|text| !text.is_empty())
+    }
+}
+
 #[derive(Default)]
 struct ModelState {
     state: String,
