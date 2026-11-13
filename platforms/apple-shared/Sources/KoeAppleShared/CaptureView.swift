@@ -20,7 +20,7 @@ public struct CaptureView: View {
                     beanLiveCard
                 }
                 if let mic = store.snapshot.microphone, store.snapshot.allDay.state == "idle" {
-                    microphoneLiveCard(mic)
+                    MicrophoneStatusCard(store: store, microphone: mic)
                 }
                 sourceSelectionDeck
                 if device.busy && device.transferPhase == "pulling_offline" {
@@ -73,49 +73,6 @@ public struct CaptureView: View {
                             .font(.system(size: AppFontSizes.xs, weight: .medium))
                             .foregroundStyle(AppColors.accent).contentShape(Rectangle())
                     }.buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private func microphoneLiveCard(_ mic: MicrophoneSnapshot) -> some View {
-        KoeCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Circle().fill(mic.phase == "paused" ? AppColors.warning : AppColors.danger).frame(width: 8, height: 8)
-                    Text("\(micPhaseLabel(mic.phase))  \(mic.inputLabel)")
-                        .font(.system(size: AppFontSizes.sm, weight: .medium))
-                    KoeBadge(mic.inputBadge)
-                    Spacer()
-                    Text(TimeLabel.duration(mic.durationMs))
-                        .font(.system(size: AppFontSizes.md, weight: .semibold, design: .monospaced))
-                }
-                CaptureLevelMeter(level: mic.level)
-                if let error = mic.error ?? mic.interruption {
-                    Text(error).font(.system(size: AppFontSizes.xs)).foregroundStyle(AppColors.danger)
-                }
-                HStack(spacing: 10) {
-                    if mic.error != nil {
-                        KoeActionButton("重试保存", systemImage: "arrow.clockwise", isPrimary: true) {
-                            store.send("retry_microphone_save")
-                        }
-                        if mic.phase != "saving" {
-                            KoeActionButton("取消录音", systemImage: "xmark.circle") { store.send("cancel_microphone") }
-                        }
-                    } else if ["recording", "starting", "pausing", "paused"].contains(mic.phase) {
-                        if mic.phase == "recording" {
-                            KoeActionButton("暂停", systemImage: "pause.circle") { store.send("pause_microphone") }
-                        } else if mic.phase == "paused" {
-                            KoeActionButton("继续", systemImage: "play.circle") {
-                                NotificationCenter.default.post(name: Notification.Name("KoeResumeMicrophone"), object: nil)
-                            }
-                        }
-                        KoeActionButton("停止并保存", systemImage: "stop.circle", isPrimary: true) {
-                            store.send("stop_microphone")
-                        }
-                        KoeActionButton("取消录音", systemImage: "xmark.circle") { store.send("cancel_microphone") }
-                    }
-                    Spacer()
                 }
             }
         }
@@ -310,34 +267,6 @@ public struct CaptureView: View {
                         }.disabled(device.busy)
                     }
                 }
-            }
-        }
-    }
-
-    private func micPhaseLabel(_ phase: String) -> String {
-        switch phase {
-        case "starting": "等待麦克风权限"
-        case "recording": "正在录音"
-        case "pausing": "正在暂停并保存尾音"
-        case "paused": "已暂停"
-        case "cancelling": "正在取消录音"
-        case "saving": "正在保存"
-        default: "正在停止并保存"
-        }
-    }
-}
-
-private struct CaptureLevelMeter: View {
-    let level: Double
-    private let barCount = 12
-    var body: some View {
-        let clamped = min(max(level, 0.0), 1.0)
-        HStack(spacing: 5) {
-            ForEach(0..<barCount, id: \.self) { index in
-                let threshold = Double(index + 1) / Double(barCount)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(clamped >= threshold - 0.04 ? AppColors.accent : AppColors.bgSubtle)
-                    .frame(maxWidth: .infinity).frame(height: 8)
             }
         }
     }

@@ -100,9 +100,9 @@ public struct SettingsDoctorView: View {
                         HStack {
                             Label("外部应用接入", systemImage: "app.connected.to.app.below.fill")
                                 .font(.system(size: AppFontSizes.md, weight: .medium))
-                            InfoTip("外部应用通过本机桥接协议请求语音输入并读取圈定片段。开始、结束语音输入与全天录音相互独立；是否将文字插入其他应用由接入方处理。")
+                            InfoTip("外部应用通过本机桥接协议请求语音输入并读取圈定片段。开始、结束语音输入与全天听记相互独立；是否将文字插入其他应用由接入方处理。")
                         }
-                        Text("全天录音保留完整对话，外部应用可单独使用圈定的听写片段。")
+                        Text("全天听记保留完整对话，外部应用可单独使用圈定的听写片段。")
                             .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary)
                     }
                 }

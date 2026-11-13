@@ -14,7 +14,7 @@ public struct CompanionSettingsCard: View {
                     Label("录音豆连接", systemImage: "mic")
                         .font(.system(size: AppFontSizes.md, weight: .medium))
                     Spacer()
-                    KoeBadge(statusLabel, tint: statusTint)
+                    KoeBadge(store.snapshot.device.state, tint: statusTint)
                 }
                 DisclosureGroup("高级录音豆音频模式") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -29,7 +29,7 @@ public struct CompanionSettingsCard: View {
                             Text("领夹待命，出仓后持续接收声音").tag("collar_standby")
                             Text("会议录音，同时圈定听写").tag("meeting_and_collar")
                         }
-                        InfoTip("领夹待命会在录音豆出仓连接后建立后台音频流，并清理空闲临时文件。会议兼听写保留会议音频，同时允许双击圈定听写。日常使用可在今天或录音页直接开始全天录音。")
+                        InfoTip("领夹待命会在录音豆出仓连接后建立后台音频流，并清理空闲临时文件。会议兼听写保留会议音频，同时允许双击圈定听写。日常使用可在今天或录音页直接开始全天听记。")
                     }.padding(.top, 12)
                 }
                 HStack {
@@ -57,17 +57,8 @@ public struct CompanionSettingsCard: View {
         }
     }
 
-    private var statusLabel: String {
-        if store.snapshot.device.companionMode == "disabled" {
-            return "未启用"
-        }
-        return store.snapshot.device.standbyReady ? "待命就绪" : "等待连接"
-    }
-
     private var statusTint: Color {
-        if store.snapshot.device.companionMode == "disabled" {
-            return AppColors.textMuted
-        }
-        return store.snapshot.device.standbyReady ? AppColors.success : AppColors.warning
+        if store.snapshot.device.connected { return AppColors.success }
+        return store.snapshot.device.phase == "disconnected" ? AppColors.textMuted : AppColors.warning
     }
 }

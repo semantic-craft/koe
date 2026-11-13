@@ -10,7 +10,7 @@ struct AllDayDemoView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                Text("全天录音与语音输入").font(.system(size: AppFontSizes.lg, weight: .semibold))
+                Text("全天听记与语音输入").font(.system(size: AppFontSizes.lg, weight: .semibold))
                 Spacer()
                 Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
             }
@@ -26,7 +26,7 @@ struct AllDayDemoView: View {
             HStack(spacing: 10) {
                 Circle().fill(AppColors.danger).frame(width: 8, height: 8)
                     .scaleEffect(step.isMultiple(of: 2) ? 1 : 1.3)
-                Text("全天录音持续进行")
+                Text("全天听记持续进行")
                 Spacer()
                 KoeBadge(step == 0 ? "语音输入未开始" : step < 3 ? "语音输入中" : "语音输入已结束")
             }.font(.system(size: AppFontSizes.sm))
@@ -48,7 +48,7 @@ struct AllDayDemoView: View {
                     .foregroundStyle(AppColors.accent)
                 VStack(alignment: .leading, spacing: 8) {
                     Text(caption).font(.system(size: AppFontSizes.md, weight: .medium))
-                    Text("双击录音豆或点击“开始语音输入”圈定开头，再次双击或点击“结束语音输入”圈定结尾。全天录音保持进行。")
+                    Text("双击录音豆或点击“开始语音输入”圈定开头，再次双击或点击“结束语音输入”圈定结尾。全天听记保持进行。")
                         .font(.system(size: AppFontSizes.sm)).foregroundStyle(AppColors.textSecondary).lineSpacing(5)
                 }
             }
@@ -69,7 +69,7 @@ struct AllDayDemoView: View {
 
     private var caption: String {
         switch step {
-        case 0: "先开始全天录音"
+        case 0: "先开始全天听记"
         case 1: "第一次双击，开始圈定语音输入"
         case 2: "只圈定这一句，其他对话仍在录音中"
         default: "再次双击，结束语音输入，麦克风继续录音"
