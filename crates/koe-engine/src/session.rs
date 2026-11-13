@@ -2687,6 +2687,128 @@ mod tests {
     }
 
     #[test]
+    fn repeated_realtime_capture_decrypts_without_fresh_file_key_wrapping() {
+        for repeat_head_kind in 0..3 {
+            let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+            let sk = [0x21; 32];
+            let fk = [0x22; 32];
+            let nonce = [0x23; 16];
+            session.set_session_key(sk);
+            session.start_realtime_recording(Some(4001), 1_700_000_000_000);
+            session.ingest_ble_chunk(
+                &build_test_head_frame(&sk, 4001, u32::MAX, &fk, &nonce),
+                1_700_000_000,
+            );
+            let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0), (1, 1)]);
+            let first_pcm = session.ingest_ble_chunk(&slices, 1_700_000_001).live_pcm16_16khz;
+            let mut expected_opus = [0; OPUS_FRAME_BYTES];
+            expected_opus[..REAL_OPUS_20MS_440HZ_PACKET.len()]
+                .copy_from_slice(&REAL_OPUS_20MS_440HZ_PACKET);
+            assert_eq!(session.opus_buffer, expected_opus.repeat(2));
+            assert_eq!(first_pcm.len(), 2 * 320 * 2);
+            session.stop_realtime_recording();
+            let first = session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_003)
+                .finalized.unwrap();
+
+            session.start_realtime_recording(Some(4001), 1_700_000_004_000);
+            match repeat_head_kind {
+                0 => {
+                    let invalid_wrapping = build_test_head_frame(
+                        &[0x99; 32], 4001, u32::MAX, &[0x88; 32], &[0x77; 16],
+                    );
+                    session.ingest_ble_chunk(&invalid_wrapping, 1_700_000_004);
+                }
+                1 => {
+                    let mut short_head = 4001u32.to_le_bytes().to_vec();
+                    short_head.extend_from_slice(&u32::MAX.to_le_bytes());
+                    short_head.push(0);
+                    session.ingest_ble_chunk(
+                        &TransportSession::build_rx_frame(0x1A, 0x07, &short_head),
+                        1_700_000_004,
+                    );
+                }
+                _ => {}
+            }
+            let second_pcm = session.ingest_ble_chunk(&slices, 1_700_000_005).live_pcm16_16khz;
+            assert_eq!(session.opus_buffer, expected_opus.repeat(2), "repeat head kind {repeat_head_kind}");
+            assert_eq!(second_pcm, first_pcm);
+            session.stop_realtime_recording();
+            let second = session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_007)
+                .finalized.unwrap();
+            assert_eq!(second.ogg_opus_bytes, first.ogg_opus_bytes);
+            assert_eq!(second.preview_wav_bytes, first.preview_wav_bytes);
+        }
+    }
+
+    #[test]
+    fn encrypted_head_without_valid_context_does_not_publish_ciphertext_as_audio() {
+        let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+        let sk = [0x21; 32];
+        let fk = [0x22; 32];
+        let nonce = [0x23; 16];
+        session.set_session_key(sk);
+        session.start_realtime_recording(Some(4001), 1_700_000_000_000);
+        session.ingest_ble_chunk(
+            &build_test_head_frame(&[0x99; 32], 4001, u32::MAX, &fk, &nonce),
+            1_700_000_000,
+        );
+        let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0)]);
+        let rejected = session.ingest_ble_chunk(&slices, 1_700_000_001);
+        assert_eq!(rejected.slices_unpacked_count, 0);
+        assert!(rejected.live_pcm16_16khz.is_empty());
+        assert!(session.opus_buffer.is_empty());
+        assert_ne!(session.transfer.error_code, 0);
+        session.ingest_ble_chunk(
+            &build_test_head_frame(&sk, 4001, u32::MAX, &fk, &nonce),
+            1_700_000_002,
+        );
+        let recovered = session.ingest_ble_chunk(&slices, 1_700_000_003);
+        assert_eq!(recovered.live_pcm16_16khz.len(), 320 * 2);
+        assert_eq!(session.transfer.error_code, 0);
+        session.stop_realtime_recording();
+        assert!(session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_005).finalized.is_some());
+    }
+
+    #[test]
+    fn repeated_file_decrypt_context_is_isolated_by_file_and_connection() {
+        for reset_kind in 0..5 {
+            let mut session = TransportSession::with_decoder_factory(Some(test_decoder_factory));
+            let sk = [0x21; 32];
+            let fk = [0x22; 32];
+            let nonce = [0x23; 16];
+            session.set_session_key(sk);
+            session.ingest_ble_chunk(
+                &build_test_head_frame(&sk, 4001, u32::MAX, &fk, &nonce),
+                1_700_000_000,
+            );
+            let slices = build_test_slice_frame(&fk, &nonce, &[(0, 0)]);
+            let expected_pcm = session.ingest_ble_chunk(&slices, 1_700_000_001).live_pcm16_16khz;
+            session.stop_realtime_recording();
+            session.poll_timers(REALTIME_QUIET_DRAIN_MS, 1_700_000_003);
+            session.start_realtime_recording(Some(4001), 1_700_000_004_000);
+            assert_eq!(session.ingest_ble_chunk(&slices, 1_700_000_004).live_pcm16_16khz, expected_pcm);
+            session.reset_active_transfer();
+
+            let file_id = match reset_kind {
+                0 => 4002,
+                1 => { session.on_disconnected(); 4001 }
+                2 => { session.on_transport_interrupted(); 4001 }
+                3 => { session.on_gatt_ready([0x31; 32]).unwrap(); 4001 }
+                _ => { session.set_session_key([0x32; 32]); 4001 }
+            };
+            session.start_realtime_recording(Some(file_id), 1_700_000_005_000);
+            session.ingest_ble_chunk(
+                &build_test_head_frame(&[0x99; 32], file_id, u32::MAX, &fk, &nonce),
+                1_700_000_005,
+            );
+            let rejected = session.ingest_ble_chunk(&slices, 1_700_000_006);
+            assert_eq!(rejected.slices_unpacked_count, 0, "reset kind {reset_kind}");
+            assert!(rejected.live_pcm16_16khz.is_empty());
+            assert!(session.opus_buffer.is_empty());
+        }
+    }
+
+    #[test]
     fn offline_pull_watchdog_retries_with_byte_offset_and_deduplicates_overlapping_slices() {
         let mut session = TransportSession::new();
         let sk = [0x77u8; 32];
