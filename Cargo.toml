@@ -3,7 +3,6 @@ resolver = "2"
 members = [
   "crates/koe-cli",
   "crates/koe-client-base",
-  "crates/koe-client-core",
   "crates/koe-client-providers",
   "crates/koe-client-services",
   "crates/koe-engine",

@@ -1550,6 +1550,20 @@
           "status": "done",
           "summary": "2026-11-14 已在私有仓库发布 v2.0.0（构建 9），提供 Apple silicon 签名包、校验和及验收回执。完整门禁、独立评审、Apple 公证、票据装订与解压包 Gatekeeper、自检和冒烟均通过。授权下载回读与发布哈希一致。本机已从正式发行包安装构建 9，签名、Gatekeeper 与实际启动通过；配置、绑定与权限保留。",
           "title": "Koe 2.0.0 私有发行包"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "来源标准、范围、回归证据与尚未验证的边界。",
+              "ref": "docs/acceptance/code-quality-2026-11-14.md"
+            }
+          ],
+          "id": "code-quality-cleanup",
+          "next": "合并清理并核对发布；退出暂停帧与 ABI 失败降级规则需要独立行为验证。物理验收状态不变。",
+          "status": "done",
+          "summary": "删除无消费者的旧 MCP/ACP、Google/Copilot、分析队列、偏好和 memory hub，移除空余 core crate。UI 门禁改查真实 Swift 配色；完整 scripts/check 与独立审查通过。尚未合并或发布该清理。",
+          "title": "废弃子系统清理与实际 UI 门禁"
         }
       ],
       "title": "验收与交付"

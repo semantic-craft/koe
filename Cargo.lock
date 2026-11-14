@@ -582,21 +582,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "koe-client-core"
-version = "2.0.0"
-dependencies = [
- "koe-client-base",
- "koe-engine",
-]
-
-[[package]]
 name = "koe-client-providers"
 version = "0.1.0"
 dependencies = [
  "futures-util",
  "hound",
  "koe-client-base",
- "koe-client-core",
  "koe-engine",
  "reqwest",
  "serde_json",
@@ -612,7 +603,6 @@ name = "koe-client-services"
 version = "0.1.0"
 dependencies = [
  "koe-client-base",
- "koe-client-core",
  "koe-engine",
  "serde",
  "serde_json",
@@ -630,7 +620,6 @@ name = "koe-host-api"
 version = "2.0.0"
 dependencies = [
  "koe-client-base",
- "koe-client-core",
  "koe-client-providers",
  "koe-client-services",
  "koe-engine",
@@ -654,7 +643,6 @@ dependencies = [
  "chrono",
  "futures-util",
  "koe-client-base",
- "koe-client-core",
  "koe-client-providers",
  "koe-client-services",
  "koe-engine",

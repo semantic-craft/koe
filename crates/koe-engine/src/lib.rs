@@ -33,7 +33,6 @@ pub mod crypto;
 pub mod domain;
 pub mod frame;
 pub mod library;
-pub mod memory_hub;
 pub mod minutes;
 pub mod models;
 pub mod ogg_opus;
@@ -87,15 +86,6 @@ pub use domain::{
     VisualSummaryCard,
 };
 pub use hash::{is_valid_sha256_hex, sha256_hex};
-pub use memory_hub::{
-    build_twenty_one_day_calendar_table, civil_to_days, days_to_civil, detect_todo_done_hints,
-    extract_things_from_spine, resolve_relative_date_zh, validate_and_heal_ask_citations,
-    AskChangeProposal, AudioDeviceKind, AudioTimelineEntry, CalendarDayRow, DoneHint,
-    GoogleDriveBackupStatus, HotTimelineStore, PipeSkillSpec, ReviewCardItem, ScreenFrameContext,
-    SpeakerVoiceProfile, ThingAction, ThingRecord, TimeSeriesFrame, VoiceprintBank,
-    AUDIO_FRAME_PAD_MS, MAX_VOICEPRINT_SAMPLES_PER_PERSON, SUBTITLE_WINDOW_MS,
-    VOICEPRINT_CONFIRM_THRESHOLD, VOICEPRINT_SUGGEST_THRESHOLD,
-};
 pub use minutes::{
     contains_calculation_phrase, contains_percentage, parse_persisted_meeting_minutes_json,
     validate_calculation_grounding, validate_minutes_citations, validate_minutes_grounding,

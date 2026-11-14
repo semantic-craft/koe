@@ -180,3 +180,10 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Outcome**: 普通录音默认QuickNote，其他模式macOS显式开启，本次授权不持久自动收音，普通最终转写摘要保留。
 - **Done Predicate**: 默认BLE通知、显式模式结束回归、尾音身份隔离、完整门禁与签名安装界面验收通过。
 - **Evidence**: 4d679e1 signed installed; record-button-quick-note/acceptance.json PARTIAL; check-release full PASS + native UI delta PASS
+
+### [x] Slice QUALITY: 删除废弃子系统并修复实际 UI 门禁
+- **Playbook**: `Refactoring` + `Shipping`
+- **Outcome**: 按消费者关系删除旧子系统，保留现行 MCP、资料库和平台适配器；UI 门禁改查真实 Swift 配色。
+- **Done Predicate**: 完整 scripts/check、变异回归先红后绿和独立审查通过；发布与物理验收分别记录。
+- **Evidence**: docs/acceptance/code-quality-2026-11-14.md; Projects/_artifacts/koe/code-quality-20261114/combined-check.log exit0
+- **Remaining**: 蓝牙退出帧归属与 Responsay ABI 失败降级需独立行为证明。PCMHW 原光标和实体双击状态不变。

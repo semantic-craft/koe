@@ -26,7 +26,7 @@ flowchart TD
 | --- | --- | --- |
 | 领域与协议 | `crates/koe-engine/src/product/`、`domain.rs`、`context.rs`、`session.rs` 等 | 记录聚合、来源解析、审核与处理状态转换、搜索、协议和加密；不做文件或网络 I/O |
 | 音频编解码边界 | `crates/koe-opus` | 对静态 libopus 的窄安全封装；保持 `OpusStreamDecoder` 接口 |
-| 客户端基础与格式 | `koe-client-base`、`koe-client-core` | 原子文件工具、锁、资料格式、通用模型及设计令牌 |
+| 客户端基础与格式 | `koe-client-base` | 原子文件工具与锁 |
 | 存储与传输服务 | `koe-client-services`、`koe-client-providers` | 持久化编解码、文件导入、音频资产、真实 HTTPS/WebSocket、后台网络与本机模型工作线程 |
 | 应用编排 | `crates/koe-runtime` | 连接命令、领域事务、设备事件、异步结果和页面投影；选择要处理的记录 |
 | 宿主接口与入口 | `koe-host-api`、`koe-cli`、`platforms/` | 版本化 C ABI、命令行与 MCP、SwiftUI、系统窗口和硬件 I/O |
@@ -138,9 +138,9 @@ CLI 与 MCP 在宿主运行期间经 `koe-host-api::local_bridge`（`koe.sock`�
 ## 构建约束与当前边界
 
 - `audiopus_sys = 0.2.2` 从其打包源码静态编译。仓库配置禁用系统 pkg-config 探测，拒绝外部 Opus 库目录覆盖。Rust、CMake 和 Swift 统一使用 macOS 14 部署目标。
-- 原生界面使用深色中性表面与淡紫强调色，四级字号为 12、14、16、22pt。Swift 文件保持不超过 500 行，按钮热区和输入提交有明确行为。
+- 原生界面使用 `DesignKit.swift` 的浅色中性表面与深色强调色，四级字号为 12、14、16、22pt。Swift 文件保持不超过 500 行，按钮热区和输入提交有明确行为。
 - 当前产品入口是 macOS。`apple-shared` 的包定义不代表已经提供 iOS 应用；移动宿主另行开发。
-- Google 载荷构造器、历史 ACP 类型、屏幕时间轴等已有代码，不等同于产品已经接通相应服务。当前界面不承诺屏幕采集、翻译、Google 同步或自动备份。
+- 未接入产品的旧 Google、ACP 和屏幕时间轴模型已移除。当前界面不承诺屏幕采集、翻译、Google 同步或自动备份。
 - 空库不注入演示记录。测试输入只能出现在测试或隔离的自检工作区；生产转写和问答不能用固定句子冒充远端结果。
 
 ## 参考

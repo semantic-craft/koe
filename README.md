@@ -99,7 +99,7 @@ cargo run --package koe-cli -- companion-listen
 | 层 | 目录 | 责任 |
 | --- | --- | --- |
 | 领域与协议 | [koe-engine](crates/koe-engine/)、[koe-opus](crates/koe-opus/) | `ProductWorkspace`、每条记录的聚合、审核与来源规则、检索、D3200 协议；独立的 libopus 安全封装 |
-| 客户端服务 | [koe-client-base](crates/koe-client-base/)、[core](crates/koe-client-core/)、[providers](crates/koe-client-providers/)、[services](crates/koe-client-services/) | 文件锁与原子保存、资料格式、真实网络传输、音频导入和工作区存储 |
+| 客户端服务 | [koe-client-base](crates/koe-client-base/)、[providers](crates/koe-client-providers/)、[services](crates/koe-client-services/) | 文件锁与原子保存、资料格式、真实网络传输、音频导入和工作区存储 |
 | 运行时与接口 | [koe-runtime](crates/koe-runtime/)、[koe-host-api](crates/koe-host-api/) | 协调设备、异步任务和持久化，生成版本 2 的快照与意图接口 |
 | 原生宿主与 CLI | [apple-shared](platforms/apple-shared/)、[macos](platforms/macos/)、[koe-cli](crates/koe-cli/) | SwiftUI 页面、窗口、CoreBluetooth、文件选择与播放；共享运行时的命令行入口 |
 

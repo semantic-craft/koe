@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -18,7 +19,7 @@ def load_verifier():
 verifier = load_verifier()
 
 
-VALID_LIGHT_THEME = """
+LEGACY_LIGHT_THEME = """
 pub struct AppFontSizes;
 impl AppFontSizes {
     pub const XS: f32 = 12.0;
@@ -51,6 +52,12 @@ impl AppColors {
 """
 
 
+VALID_LIGHT_THEME = (
+    Path(__file__).resolve().parent.parent
+    / "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
+).read_text(encoding="utf-8")
+
+
 class VerifyUiPrinciplesTest(unittest.TestCase):
     def test_accepts_approved_light_palette(self) -> None:
         res = verifier.check_theme_file(VALID_LIGHT_THEME)
@@ -58,21 +65,19 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
         self.assertGreaterEqual(res["accent"]["foreground_contrast"], 4.5)
 
     def test_rejects_colored_accents(self) -> None:
-        for color in ("0xFFD9480F", "0xFF0066CC", "0xFFC4B5FD"):
-            res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("0xFF242426", color))
+        for color in ("0xD9480F", "0x0066CC", "0xC4B5FD"):
+            res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("0x242426", color))
             self.assertTrue(any("approved charcoal" in v for v in res["violations"]), res["violations"])
 
     def test_rejects_unreadable_text_and_action_foreground(self) -> None:
-        for before, after in (("TEXT_MUTED: u32 = 0xFF686870", "TEXT_MUTED: u32 = 0xFFBBBBBB"),
-                              ("ON_ACCENT: u32 = 0xFFFFFFFF", "ON_ACCENT: u32 = 0xFF202022")):
+        for before, after in (("textMuted = Color(hex: 0x686870)", "textMuted = Color(hex: 0xBBBBBB)"),
+                              ("onAccent = Color(hex: 0xFFFFFF)", "onAccent = Color(hex: 0x202022)")):
             res = verifier.check_theme_file(VALID_LIGHT_THEME.replace(before, after))
             self.assertTrue(any("contrast" in v for v in res["violations"]), res["violations"])
 
-    def test_rejects_dark_surface_and_non_empty_shadow(self) -> None:
-        res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("SURFACE_0: u32 = 0xFFFFFFFF", "SURFACE_0: u32 = 0xFF1A1A1D"))
+    def test_rejects_dark_surface(self) -> None:
+        res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("surface0 = Color(hex: 0xFFFFFF)", "surface0 = Color(hex: 0x1A1A1D)"))
         self.assertTrue(any("light surface" in v for v in res["violations"]), res["violations"])
-        res = verifier.check_theme_file(VALID_LIGHT_THEME.replace("&[]", "&[0x11000000]"))
-        self.assertTrue(any("CARD_SHADOW" in v for v in res["violations"]), res["violations"])
 
     def test_catches_font_size_sprawl_middle_dots_uppercase_and_italics_in_swiftui(self) -> None:
         bad_swift_ui = """
@@ -371,6 +376,27 @@ class VerifyUiPrinciplesTest(unittest.TestCase):
             any("NSMicrophoneUsageDescription" in v for v in plist_violations),
             plist_violations,
         )
+
+    def test_repository_rejects_native_palette_regressions(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        theme_path = Path("platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift")
+        native_theme = (root / theme_path).read_text(encoding="utf-8")
+        for before, after, violation in (
+            ("accent = Color(hex: 0x242426)", "accent = Color(hex: 0xFF0000)", "approved charcoal"),
+            ("textMuted = Color(hex: 0x686870)", "textMuted = Color(hex: 0xBBBBBB)", "Contrast violation: textMuted"),
+        ):
+            with self.subTest(token=before), tempfile.TemporaryDirectory() as tmp:
+                fixture_root = Path(tmp)
+                native_path = fixture_root / theme_path
+                native_path.parent.mkdir(parents=True)
+                native_path.write_text(native_theme, encoding="utf-8")
+                legacy_path = fixture_root / "crates/koe-client-core/src/theme.rs"
+                legacy_path.parent.mkdir(parents=True)
+                legacy_path.write_text(LEGACY_LIGHT_THEME, encoding="utf-8")
+                self.assertEqual(verifier.analyze_repository(fixture_root, "all")["violations"], [])
+                native_path.write_text(native_theme.replace(before, after), encoding="utf-8")
+                report = verifier.analyze_repository(fixture_root, "all")
+                self.assertTrue(any(violation in v for v in report["violations"]), report["violations"])
 
     def test_repository_shared_theme_passes_all_principles(self) -> None:
         root = Path(__file__).resolve().parent.parent
