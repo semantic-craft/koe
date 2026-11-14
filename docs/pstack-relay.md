@@ -157,16 +157,16 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: python3 progress/progress.py check；#662 每项填写实际版本、结果与回读产物，未运行项保持未验收。
 - **Evidence**: issue #662; crates/koe-cli/examples/verify_offline_socket.rs; Projects/_artifacts/koe/adh-20261114/{sensevoice-sandbox-socket.json,qwen3-sandbox-offline.json,interrogate-red.log,full-check.log}
 
-### [ ] Slice ADH_CONT: 全天听记与浅色弹窗空闲真机验收
+### [ ] Slice ADH_CONT: 全天听记用户真实硬件验收
 - **Playbook**: `Feature`
-- **Outcome**: 在桌面空闲窗口更新签名版 /Applications/Koe.app，按 #662 执行超过五分钟的真实麦克风与 D3200 连续说话、锁屏续录、物理蓝牙断连重连及外部输入法实机联调（未配置本机 LLM 等未跑项如实保持未验收），同时顺带目视复核 #654 四个浅色弹窗并结案 #654。
-- **Done Predicate**: 空闲窗口运行 ./scripts/install-macos.sh 后完成 #662 可执行真机项与 #654 实机弹窗复核，且 origin/main 通过 python3 progress/progress.py check --live。
+- **Outcome**: 在已安装的签名版 /Applications/Koe.app（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22）上，回收用户自行执行的 #662 真实麦克风与 D3200 跨五分钟连续说话、锁屏续录、物理蓝牙断连重连及外部输入法联调结果，回填 #662 清单（未跑项如实保持未验收）并结案 #662。
+- **Done Predicate**: 用户完成 #662 真实硬件项后回填实际结果与回读产物，且 origin/main 通过 python3 progress/progress.py check --live。
 - **Evidence**: `PENDING`
 
-### [ ] Slice ULD: 浅色版剩余弹窗验收
+### [x] Slice ULD: 浅色版剩余弹窗验收
 - **Outcome**: 核验连接引导、审核编辑弹窗、全天听记演示与退出面板浅色配色，更新 #654。
 - **Done Predicate**: ./scripts/check && python3 progress/progress.py check；签名版安装窗口完成实机视觉复核后结案 #654。
-- **Evidence**: issue #654; LightModalAppearanceTests (.darkAqua/.aqua offscreen bitmap PASS for ConnectGuideSheet, ItemEditor, AllDayDemoView, NativeQuitPanel); Projects/_artifacts/koe/uld-20261114; pending signed /Applications/Koe.app visual check at next ./scripts/install-macos.sh window
+- **Evidence**: CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22; Projects/_artifacts/koe/uld-install-20261115/acceptance.json; Closes #654
 
 ### [x] Slice OL: 录音豆本机实时识别与全局字幕
 - **Playbook**: `Feature` + `figure-it-out`
