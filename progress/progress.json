@@ -192,7 +192,7 @@
         "number": 662,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T04:11:03Z"
+        "updated_at": "2026-11-14T12:29:31Z"
       },
       {
         "number": 665,
@@ -243,7 +243,7 @@
         "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "a9e422af738e620d3f559e909d8c00daaccc242e",
+    "main": "f369db72db1f682d0d55f3063db76ef5baabc826",
     "open_pulls": [],
     "pulls": [
       {
@@ -493,6 +493,14 @@
         "merged": true,
         "number": 702,
         "state": "closed"
+      },
+      {
+        "base": "5257f98156226acb8e9e07221851ea64499e397d",
+        "head": "f53c921a7a675c4c5df4bfbefcdf47656f2d6d40",
+        "merge_commit": "f369db72db1f682d0d55f3063db76ef5baabc826",
+        "merged": true,
+        "number": 704,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -506,7 +514,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-14T09:25:27.698366Z",
+  "observed_at": "2026-11-14T12:31:21.525888Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1077,15 +1085,25 @@
               "ref": "crates/koe-cli/examples/verify_offline.rs"
             },
             {
+              "kind": "file",
+              "note": "C ABI 与真实 koe.sock 禁外网沙盒离线验收入口。",
+              "ref": "crates/koe-cli/examples/verify_offline_socket.rs"
+            },
+            {
               "kind": "pull",
               "note": "本轮实现、独立复核与交付。",
               "ref": 663
+            },
+            {
+              "kind": "pull",
+              "note": "修复蓝牙断连收尾、分段队列归属与 koe.sock 听写事件冲刷，完成禁外网沙盒验收。",
+              "ref": 704
             }
           ],
           "id": "all-day-offline-models",
-          "next": "真实麦克风/D3200、外部输入法和长时使用按 #662 验收。",
+          "next": "超过五分钟真人说话、物理蓝牙断连、锁屏、外部输入法与本机 LLM 继续按 #662 验收。",
           "status": "done",
-          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。SenseVoice/Qwen 真实识别、文件重开、303 秒跨段和听写范围通过。签名安装 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 自检通过，日常界面已核对入口、演示及旧资料可见；硬件长时场景尚未验收。 PR #663 已通过 CI 并 squash 合并为 e513032。",
+          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。PR #663（e513032）与 PR #704（f369db7）已完成 SenseVoice/Qwen 禁外网沙盒离线识别、koe.sock 听写圈定零泄漏、303 秒跨段暂停恢复、目录故障重试恢复与重开模型自动就绪；签名版 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 已验入口与演示，物理长说话、物理蓝牙断连与锁屏仍按 #662 待验。",
           "title": "全天听记、下载模型与通用听写文字"
         },
         {
@@ -1703,7 +1721,8 @@
       690,
       695,
       701,
-      702
+      702,
+      704
     ]
   }
 }
