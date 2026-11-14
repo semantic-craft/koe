@@ -2,7 +2,7 @@
 
 use koe_client_base::{hash::sha256_hex, write_atomic};
 use koe_engine::{
-    cicada::decode_koepack, domain::MeetingMinutes, domain::UtteranceSpine,
+    domain::MeetingMinutes, domain::UtteranceSpine, koepack::decode_koepack,
     minutes::parse_meeting_minutes_json, wav::parse_pcm_wave,
 };
 use std::{

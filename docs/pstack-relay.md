@@ -138,6 +138,12 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: 正式包哈希、安装签名指定要求、Gatekeeper、升级前后状态指纹和真实启动界面均已核对。Sparkle 自动升级和 PCMHW 缺项分别计验。
 - **Evidence**: Projects/_artifacts/koe/install-pair-20261114/acceptance.json; installed-pair.json; final-preservation-delta.json
 
+### [x] Slice CQ2: Deep Engine Reducer & Cross-Layer BLE Subtraction
+- **Playbook**: `Refactoring` + `deslop`
+- **Outcome**: 从 `KoeRuntime` 单一权威投影 `device.teardownStopFramesHex` 并清理 Swift 重复状态判断与本地断链代码；移除 `koe-client-services` 冗余导出与 `StreamingAsrPump` 死代码；将 `.koepack` 独立为 `crates/koe-engine/src/koepack.rs` 并裁减已退出的 `Cicada` / `ContextReducer` / `MinutesReducer` / `RecordingLibrary` / `VisualSummaryCard` 等旧层代码，保留 `ProductWorkspace`、`legacy_restore` 与 `PCMHW` 不动。
+- **Done Predicate**: `./scripts/check` 全量通过（Rust + Clippy + 脚本契约 + UI 原则 + Swift 测试）
+- **Evidence**: Unit 1 436907c; Unit 2 d08f7ae; Unit 3 ./scripts/check PASS
+
 ### [ ] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
 - **Playbook**: `Investigation`
 - **Outcome**: 只接续 PCMHW/#810/#822 的原光标和实体双击缺项。先读 install-pair-20261114/acceptance.json，核对 PR828 与本机候选版本；前台可独占时才进行真实原光标验证，保留全部配置权限。

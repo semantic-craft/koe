@@ -1,9 +1,9 @@
 //! Canonical utterance spine (`S1..Sn`), structured meeting minutes (`MeetingMinutes`),
-//! personal context timeline items, and pure AI provider command descriptions.
+//! and per-recording aggregate state.
 //!
-//! Every downstream subsystem (minutes grounding, Cicada rolling bilingual translation,
-//! personal context extraction, and MCP/ACP tools) reads from [`UtteranceSpine`] via
-//! 1-based [`SegmentId`] citations (`S1..Sn`) instead of mutating raw transcript strings.
+//! Every downstream subsystem (minutes grounding, persistence, and Q&A) reads from
+//! [`UtteranceSpine`] via 1-based [`SegmentId`] citations (`S1..Sn`) instead of mutating
+//! raw transcript strings.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -729,177 +729,6 @@ pub struct MinuteCustomSection {
     pub points: Vec<MinutePoint>,
 }
 
-/// Category of a [`ContextItem`] on the user's personal timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContextKind {
-    /// Imported or live audio recording.
-    Recording,
-    /// Quick text or voice memo.
-    QuickNote,
-    /// Spoken commitment or promise detected from conversation.
-    Commitment,
-    /// Daily journal synthesis.
-    Journal,
-    /// Geographic place visit attachment.
-    PlaceVisit,
-}
-
-/// Originating source of a [`ContextItem`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContextSource {
-    /// Soundcore Work D3200 recording bean.
-    BeanHardware,
-    /// Local phone/desktop microphone.
-    DeviceMic,
-    /// Direct user input.
-    ManualEntry,
-    /// AI synthesis from [`UtteranceSpine`].
-    AiSynthesis,
-}
-
-/// A single item in the user's personal context timeline.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContextItem {
-    /// Stable unique identifier.
-    pub id: String,
-    /// Item category.
-    pub kind: ContextKind,
-    /// Originating capture source.
-    pub source: ContextSource,
-    /// UTC creation timestamp in Unix seconds.
-    pub created_at_epoch_sec: u64,
-    /// Primary title or headline.
-    pub title: String,
-    /// Body text or summary.
-    pub summary: String,
-    /// Optional project tag.
-    pub project_id: Option<String>,
-    /// Optional human-readable location label.
-    pub place_label: Option<String>,
-    /// Supporting [`SegmentId`] citations when derived from an [`UtteranceSpine`].
-    pub citations: Vec<SegmentId>,
-}
-
-/// Ownership category of a [`TodoItem`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TodoKind {
-    /// Action item owned by the user (`"我的待办"`).
-    Mine,
-    /// Wish or desire with no promised owner (`"愿望"`).
-    Wish,
-    /// Action item delegated to or awaited from another person (`"他人承诺"`).
-    Delegated,
-}
-
-impl TodoKind {
-    /// Returns the canonical wire token (`"mine"`, `"wish"`, or `"others"`).
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Mine => "mine",
-            Self::Wish => "wish",
-            Self::Delegated => "others",
-        }
-    }
-
-    /// Parses a wire token (`"mine"`, `"wish"`, `"others"`, or `"delegated"`) into [`TodoKind`].
-    #[must_use]
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim() {
-            "mine" => Some(Self::Mine),
-            "wish" => Some(Self::Wish),
-            "others" | "delegated" => Some(Self::Delegated),
-            _ => None,
-        }
-    }
-
-    /// Returns the user-facing Chinese label (`"我的待办"`, `"愿望"`, or `"他人承诺"`).
-    #[must_use]
-    pub const fn label_zh(&self) -> &'static str {
-        match self {
-            Self::Mine => "我的待办",
-            Self::Wish => "愿望",
-            Self::Delegated => "他人承诺",
-        }
-    }
-}
-
-/// Completion state of a [`TodoItem`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TodoStatus {
-    /// Pending execution.
-    Open,
-    /// Completed.
-    Done,
-    /// Archived or cancelled.
-    Archived,
-}
-
-/// A personal or meeting-derived action item linked to [`SegmentId`] citations.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TodoItem {
-    /// Stable unique identifier.
-    pub id: String,
-    /// Action description.
-    pub title: String,
-    /// Whether the user owns the task or is waiting on someone else.
-    pub kind: TodoKind,
-    /// Current completion status.
-    pub status: TodoStatus,
-    /// UTC creation timestamp in Unix seconds.
-    pub created_at_epoch_sec: u64,
-    /// Optional due timestamp in Unix seconds.
-    pub due_at_epoch_sec: Option<u64>,
-    /// Optional assignee or counterparty name.
-    pub assignee: Option<String>,
-    /// Supporting [`SegmentId`] citations from the originating recording.
-    pub citations: Vec<SegmentId>,
-}
-
-/// Pure value description of an outbound AI provider request emitted by a domain reducer.
-///
-/// The `#![forbid(unsafe_code)]` Rust kernel never performs network I/O directly; it emits
-/// [`AiProviderCommand`] values that the host executes and feeds back as reducer events.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AiProviderCommand {
-    /// Submit an audio file or PCM stream for ASR transcription with optional hot-words.
-    TranscribeAudio {
-        /// Session or recording identifier.
-        session_id: String,
-        /// Language hint (such as `"zh"` or `"en"`).
-        language_hint: String,
-        /// Domain hot-words to boost recognition accuracy.
-        hot_words: Vec<String>,
-    },
-    /// Generate or merge [`MeetingMinutes`] over a range of [`SegmentId`]s.
-    GenerateMinutes {
-        /// Session or recording identifier.
-        session_id: String,
-        /// Spine revision being summarized.
-        spine_revision: u64,
-        /// Inclusive segment range `(first, last)`.
-        segment_range: (SegmentId, SegmentId),
-        /// Optional custom template identifier.
-        template_id: Option<String>,
-    },
-    /// Translate a batch of [`SegmentId`]s into `target_language`.
-    TranslateSegments {
-        /// Session or recording identifier.
-        session_id: String,
-        /// Target language code (such as `"en"` or `"zh"`).
-        target_language: String,
-        /// Segments requiring translation.
-        segments: Vec<SegmentId>,
-    },
-    /// Extract [`ContextItem`]s and [`TodoItem`]s from finalized segments.
-    ExtractContext {
-        /// Session or recording identifier.
-        session_id: String,
-        /// Spine revision being analyzed.
-        spine_revision: u64,
-    },
-}
-
 /// Lifecycle phase of a [`RecordingAggregate`] across hardware sync, local storage, and AI synthesis.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum RecordingLifecyclePhase {
@@ -910,7 +739,7 @@ pub enum RecordingLifecyclePhase {
     Local,
     /// ASR transcription and structured synthesis are in progress.
     Transcribing,
-    /// Utterance spine, visual summary cards, and minutes are ready for reading.
+    /// Utterance spine and structured minutes are ready for reading.
     Ready,
     /// Transfer or transcription failed and can be retried.
     Failed,
@@ -1012,134 +841,8 @@ impl SummaryFormat {
     }
 }
 
-/// Semantic role for each of the 6 cards in the AI Visual Editorial Bento grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EditorialCardRole {
-    /// Card 1: Core conclusion (`核心结论`, warm amber tint).
-    ConclusionAmber,
-    /// Card 2: Action items (`行动事项`, soft sage tint).
-    ActionsBlue,
-    /// Card 3: Risks & blockers (`风险与阻塞`, soft rose tint).
-    RisksCoral,
-    /// Card 4: Process flow (`脉络推进`, warm cream tint).
-    FlowEmerald,
-    /// Card 5: Open questions (`待决问题`, soft sky tint).
-    QuestionsSlate,
-    /// Card 6: Key takeaways (`关键收获`, soft lavender tint).
-    TakeawaysPlum,
-}
-
-impl EditorialCardRole {
-    /// All six editorial card roles in canonical layout order.
-    pub const ALL: [Self; 6] = [
-        Self::ConclusionAmber,
-        Self::ActionsBlue,
-        Self::RisksCoral,
-        Self::FlowEmerald,
-        Self::TakeawaysPlum,
-        Self::QuestionsSlate,
-    ];
-
-    /// Returns the canonical wire identifier for this card role.
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::ConclusionAmber => "conclusion_amber",
-            Self::ActionsBlue => "actions_blue",
-            Self::RisksCoral => "risks_coral",
-            Self::FlowEmerald => "flow_emerald",
-            Self::TakeawaysPlum => "takeaways_plum",
-            Self::QuestionsSlate => "questions_slate",
-        }
-    }
-
-    /// Returns the localized Chinese editorial section title.
-    #[must_use]
-    pub const fn label_zh(&self) -> &'static str {
-        match self {
-            Self::ConclusionAmber => "核心结论",
-            Self::ActionsBlue => "行动事项",
-            Self::RisksCoral => "风险与阻塞",
-            Self::FlowEmerald => "脉络推进",
-            Self::TakeawaysPlum => "关键收获",
-            Self::QuestionsSlate => "待决问题",
-        }
-    }
-
-    /// Canonical Chinese badge label alias.
-    #[must_use]
-    pub const fn badge_label(&self) -> &'static str {
-        self.label_zh()
-    }
-}
-
-/// A citation-grounded editorial summary card rendered in the recording detail workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VisualSummaryCard {
-    /// Stable card identifier within the recording aggregate.
-    pub id: String,
-    /// Semantic role and palette token.
-    pub role: EditorialCardRole,
-    /// Short eyebrow / kicker label above the headline.
-    pub kicker: String,
-    /// Primary card headline.
-    pub headline: String,
-    /// Grounded narrative or bullet summary text.
-    pub body: String,
-    /// Optional callout or metric highlight box.
-    pub highlight_box: Option<String>,
-    /// Non-empty [`SegmentId`] citations (`S1..Sn`) backing this card.
-    pub citations: Vec<SegmentId>,
-}
-
-impl VisualSummaryCard {
-    /// Constructs a new [`VisualSummaryCard`].
-    #[must_use]
-    pub fn new(
-        id: impl Into<String>,
-        role: EditorialCardRole,
-        kicker: impl Into<String>,
-        headline: impl Into<String>,
-        body: impl Into<String>,
-        highlight_box: Option<String>,
-        citations: Vec<SegmentId>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            role,
-            kicker: kicker.into(),
-            headline: headline.into(),
-            body: body.into(),
-            highlight_box,
-            citations,
-        }
-    }
-
-    /// Returns `true` when `citations` is non-empty and every cited [`SegmentId`] resolves
-    /// to a non-empty segment in `spine`.
-    #[must_use]
-    pub fn validate_citations(&self, spine: &UtteranceSpine) -> bool {
-        !self.citations.is_empty() && self.citations.iter().all(|&id| spine.validate_citation(id))
-    }
-}
-
-/// Lightweight metadata summary of an exported `.koepack v2` archive attached to a [`RecordingAggregate`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KoePackSummary {
-    /// Archive identifier or SHA-256 prefix.
-    pub pack_id: String,
-    /// Human-readable archive title.
-    pub title: String,
-    /// UTC export timestamp in Unix seconds.
-    pub exported_at_epoch_sec: u64,
-    /// Encoded `.koepack v2` size in bytes.
-    pub byte_length: usize,
-    /// Number of historical minutes revisions bundled in the archive.
-    pub history_count: usize,
-}
-
 /// Unified domain aggregate root for a single recording across capture, transcript spine,
-/// visual summary cards, structured minutes, and `.koepack v2` export metadata.
+/// and structured minutes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordingAggregate {
     /// Stable recording identifier (`"rec-{file_id}"` or UUID).
@@ -1154,14 +857,10 @@ pub struct RecordingAggregate {
     pub bookmarks: Vec<u64>,
     /// Canonical `S1..Sn` utterance spine.
     pub spine: UtteranceSpine,
-    /// Citation-grounded visual summary cards synthesized from `spine` and `minutes`.
-    pub visual_cards: Vec<VisualSummaryCard>,
     /// Active summary presentation format selected by the user.
     pub selected_format: SummaryFormat,
     /// Optional structured meeting minutes (`v2`).
     pub minutes: Option<MeetingMinutes>,
-    /// Optional exported `.koepack v2` archive summary.
-    pub pack_summary: Option<KoePackSummary>,
     /// UTC creation timestamp in Unix seconds.
     pub created_at_epoch_sec: u64,
     /// Recording duration in milliseconds.
@@ -1186,17 +885,15 @@ impl RecordingAggregate {
             coarse_place: None,
             bookmarks: Vec::new(),
             spine,
-            visual_cards: Vec::new(),
             selected_format: SummaryFormat::DecisionMemo,
             minutes: None,
-            pack_summary: None,
             created_at_epoch_sec,
             duration_ms,
         }
     }
 
     /// Reconstructs a [`RecordingAggregate`] from an existing [`UtteranceSpine`] and optional
-    /// [`MeetingMinutes`], immediately synthesizing citation-verified [`VisualSummaryCard`]s.
+    /// [`MeetingMinutes`].
     #[must_use]
     pub fn from_spine_and_minutes(
         recording_id: impl Into<String>,
@@ -1211,22 +908,18 @@ impl RecordingAggregate {
         } else {
             RecordingLifecyclePhase::Local
         };
-        let mut agg = Self {
+        Self {
             recording_id: recording_id.into(),
             file_id,
             phase,
             coarse_place: None,
             bookmarks: Vec::new(),
             spine,
-            visual_cards: Vec::new(),
             selected_format: SummaryFormat::DecisionMemo,
             minutes,
-            pack_summary: None,
             created_at_epoch_sec,
             duration_ms,
-        };
-        agg.synthesize_visual_cards();
-        agg
+        }
     }
 
     /// Inserts a bookmark timestamp in milliseconds if not already present, keeping `bookmarks` sorted.
@@ -1244,25 +937,16 @@ impl RecordingAggregate {
         self.phase = phase;
     }
 
-    /// Switches the active [`SummaryFormat`] and refreshes visual cards.
+    /// Switches the active [`SummaryFormat`].
     pub fn set_selected_format(&mut self, format: SummaryFormat) {
         self.selected_format = format;
-        if !self.spine.is_empty() {
-            self.synthesize_visual_cards();
-        }
     }
 
-    /// Attaches validated [`MeetingMinutes`], transitions the aggregate to [`RecordingLifecyclePhase::Ready`],
-    /// and synthesizes citation-grounded [`VisualSummaryCard`]s.
+    /// Attaches validated [`MeetingMinutes`] and transitions the aggregate to
+    /// [`RecordingLifecyclePhase::Ready`].
     pub fn attach_minutes(&mut self, minutes: MeetingMinutes) {
         self.minutes = Some(minutes);
         self.phase = RecordingLifecyclePhase::Ready;
-        self.synthesize_visual_cards();
-    }
-
-    /// Attaches `.koepack v2` export metadata to this recording.
-    pub fn attach_pack_summary(&mut self, summary: KoePackSummary) {
-        self.pack_summary = Some(summary);
     }
 
     /// Sets or clears the coarse geographic place tag, trimming whitespace.
@@ -1270,204 +954,6 @@ impl RecordingAggregate {
         self.coarse_place = place
             .map(|p| p.trim().to_string())
             .filter(|p| !p.is_empty());
-    }
-
-    /// Synthesizes citation-backed [`VisualSummaryCard`]s from `spine` and `minutes`,
-    /// retaining only cards whose [`SegmentId`] citations pass [`VisualSummaryCard::validate_citations`].
-    pub fn synthesize_visual_cards(&mut self) -> usize {
-        self.visual_cards.clear();
-        if self.spine.is_empty() {
-            return 0;
-        }
-        let all_ids: Vec<SegmentId> = self.spine.segments().iter().map(|s| s.id).collect();
-        let valid_citations = |candidates: &[SegmentId]| -> Vec<SegmentId> {
-            let mut out: Vec<SegmentId> = candidates
-                .iter()
-                .copied()
-                .filter(|&id| self.spine.validate_citation(id))
-                .collect();
-            out.sort_unstable();
-            out.dedup();
-            out
-        };
-
-        if let Some(ref mins) = self.minutes {
-            let dec_cites: Vec<SegmentId> = mins
-                .decisions
-                .iter()
-                .flat_map(|d| d.citations.iter().copied())
-                .collect();
-            let c1 = if mins.decisions.is_empty() {
-                all_ids.first().copied().into_iter().collect()
-            } else {
-                valid_citations(&dec_cites)
-            };
-            let headline1 = if !mins.title.trim().is_empty() {
-                mins.title.clone()
-            } else {
-                "会议核心决议".to_string()
-            };
-            let body1 = if let Some(first_dec) = mins.decisions.first() {
-                first_dec.claim.clone()
-            } else if !mins.overview.trim().is_empty() {
-                mins.overview.clone()
-            } else {
-                self.spine.segments()[0].text.clone()
-            };
-            self.visual_cards.push(VisualSummaryCard::new(
-                format!("{}-card-conclusion", self.recording_id),
-                EditorialCardRole::ConclusionAmber,
-                EditorialCardRole::ConclusionAmber.label_zh(),
-                headline1,
-                body1,
-                Some(format!("格式：{}", self.selected_format.label_zh())),
-                c1,
-            ));
-
-            if !mins.actions.is_empty() {
-                let act_cites: Vec<SegmentId> = mins
-                    .actions
-                    .iter()
-                    .flat_map(|a| a.citations.iter().copied())
-                    .collect();
-                let body = mins
-                    .actions
-                    .iter()
-                    .map(|a| a.claim.as_str())
-                    .collect::<Vec<_>>()
-                    .join("；");
-                self.visual_cards.push(VisualSummaryCard::new(
-                    format!("{}-card-actions", self.recording_id),
-                    EditorialCardRole::ActionsBlue,
-                    EditorialCardRole::ActionsBlue.label_zh(),
-                    format!("共 {} 项待办行动", mins.actions.len()),
-                    body,
-                    mins.actions.first().and_then(|a| a.owner.clone()),
-                    valid_citations(&act_cites),
-                ));
-            }
-
-            if !mins.fishbones.is_empty() {
-                let fb_cites: Vec<SegmentId> = mins
-                    .fishbones
-                    .iter()
-                    .flat_map(|f| f.causes.iter().flat_map(|c| c.citations.iter().copied()))
-                    .collect();
-                let fb = &mins.fishbones[0];
-                let body = fb
-                    .causes
-                    .iter()
-                    .map(|c| format!("{}: {}", c.category, c.description))
-                    .collect::<Vec<_>>()
-                    .join("；");
-                self.visual_cards.push(VisualSummaryCard::new(
-                    format!("{}-card-risks", self.recording_id),
-                    EditorialCardRole::RisksCoral,
-                    EditorialCardRole::RisksCoral.label_zh(),
-                    fb.issue.clone(),
-                    body,
-                    Some(format!("{} 条根因分支", fb.causes.len())),
-                    valid_citations(&fb_cites),
-                ));
-            }
-
-            if !mins.topics.is_empty() {
-                let top_cites: Vec<SegmentId> = mins
-                    .topics
-                    .iter()
-                    .flat_map(|t| {
-                        t.citations
-                            .iter()
-                            .copied()
-                            .chain(t.points.iter().flat_map(|p| p.citations.iter().copied()))
-                    })
-                    .collect();
-                let topic = &mins.topics[0];
-                self.visual_cards.push(VisualSummaryCard::new(
-                    format!("{}-card-flow", self.recording_id),
-                    EditorialCardRole::FlowEmerald,
-                    EditorialCardRole::FlowEmerald.label_zh(),
-                    topic.title.clone(),
-                    topic.summary.clone(),
-                    Some(format!("共 {} 个议题", mins.topics.len())),
-                    valid_citations(&top_cites),
-                ));
-            }
-
-            if !mins.terms.is_empty() {
-                let term_cites: Vec<SegmentId> = mins
-                    .terms
-                    .iter()
-                    .flat_map(|t| t.citations.iter().copied())
-                    .collect();
-                let body = mins
-                    .terms
-                    .iter()
-                    .map(|t| format!("{}: {}", t.term, t.definition))
-                    .collect::<Vec<_>>()
-                    .join("；");
-                self.visual_cards.push(VisualSummaryCard::new(
-                    format!("{}-card-takeaways", self.recording_id),
-                    EditorialCardRole::TakeawaysPlum,
-                    EditorialCardRole::TakeawaysPlum.label_zh(),
-                    format!("提取 {} 个领域术语", mins.terms.len()),
-                    body,
-                    None,
-                    valid_citations(&term_cites),
-                ));
-            }
-
-            if !mins.questions.is_empty() {
-                let q_cites: Vec<SegmentId> = mins
-                    .questions
-                    .iter()
-                    .flat_map(|q| q.citations.iter().copied())
-                    .collect();
-                let body = mins
-                    .questions
-                    .iter()
-                    .map(|q| q.claim.as_str())
-                    .collect::<Vec<_>>()
-                    .join("；");
-                self.visual_cards.push(VisualSummaryCard::new(
-                    format!("{}-card-questions", self.recording_id),
-                    EditorialCardRole::QuestionsSlate,
-                    EditorialCardRole::QuestionsSlate.label_zh(),
-                    format!("{} 个待决问题", mins.questions.len()),
-                    body,
-                    None,
-                    valid_citations(&q_cites),
-                ));
-            }
-        } else {
-            let first_seg = &self.spine.segments()[0];
-            let last_seg = self.spine.segments().last().unwrap_or(first_seg);
-            self.visual_cards.push(VisualSummaryCard::new(
-                format!("{}-card-conclusion", self.recording_id),
-                EditorialCardRole::ConclusionAmber,
-                EditorialCardRole::ConclusionAmber.label_zh(),
-                format!("已收录 {} 句原声转写", self.spine.len()),
-                first_seg.text.clone(),
-                Some(self.selected_format.label_zh().to_string()),
-                vec![first_seg.id],
-            ));
-            if self.spine.len() > 1 {
-                self.visual_cards.push(VisualSummaryCard::new(
-                    format!("{}-card-flow", self.recording_id),
-                    EditorialCardRole::FlowEmerald,
-                    EditorialCardRole::FlowEmerald.label_zh(),
-                    "最新语句进展".to_string(),
-                    last_seg.text.clone(),
-                    None,
-                    vec![last_seg.id],
-                ));
-            }
-        }
-
-        let spine_ref = &self.spine;
-        self.visual_cards
-            .retain(|card| card.validate_citations(spine_ref));
-        self.visual_cards.len()
     }
 }
 
@@ -1601,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_aggregate_synthesizes_grounded_visual_cards_and_tracks_lifecycle() {
+    fn recording_aggregate_tracks_lifecycle_bookmarks_and_minutes() {
         let mut agg = RecordingAggregate::new("rec-20261108", 20261108, 1_762_590_000, 120_000);
         assert_eq!(agg.phase, RecordingLifecyclePhase::Copying);
         assert_eq!(agg.phase.as_str(), "copying");
@@ -1622,7 +1108,6 @@ mod tests {
             assert_eq!(SummaryFormat::parse(fmt.as_str()), Some(fmt));
             assert_eq!(SummaryFormat::parse(fmt.label_zh()), Some(fmt));
         }
-        assert_eq!(EditorialCardRole::ALL.len(), 6);
 
         let s1 = agg
             .spine
@@ -1642,23 +1127,6 @@ mod tests {
                 "qwen",
             )
             .unwrap();
-
-        assert_eq!(agg.synthesize_visual_cards(), 2);
-        assert!(agg
-            .visual_cards
-            .iter()
-            .all(|card| card.validate_citations(&agg.spine)));
-
-        let invalid_card = VisualSummaryCard::new(
-            "bad-card",
-            EditorialCardRole::QuestionsSlate,
-            "待决问题",
-            "越界引用",
-            "不存在的段落",
-            None,
-            vec![SegmentId::new(99).unwrap()],
-        );
-        assert!(!invalid_card.validate_citations(&agg.spine));
 
         let mins = MeetingMinutes {
             version: 2,
@@ -1713,22 +1181,31 @@ mod tests {
         };
 
         agg.set_selected_format(SummaryFormat::RootCauseFishbone);
-        agg.attach_minutes(mins);
+        assert_eq!(agg.selected_format, SummaryFormat::RootCauseFishbone);
+        agg.attach_minutes(mins.clone());
         assert_eq!(agg.phase, RecordingLifecyclePhase::Ready);
         assert!(agg.phase.is_terminal());
-        assert_eq!(agg.visual_cards.len(), 6);
-        assert!(agg
-            .visual_cards
-            .iter()
-            .all(|card| card.validate_citations(&agg.spine)));
+        assert_eq!(agg.minutes, Some(mins.clone()));
 
-        agg.attach_pack_summary(KoePackSummary {
-            pack_id: "pack-20261108".to_string(),
-            title: "Slice Q 实时流收口评审".to_string(),
-            exported_at_epoch_sec: 1_762_590_120,
-            byte_length: 4096,
-            history_count: 1,
-        });
-        assert_eq!(agg.pack_summary.as_ref().map(|p| p.byte_length), Some(4096));
+        let empty = RecordingAggregate::from_spine_and_minutes(
+            "rec-empty",
+            0,
+            1_762_590_000,
+            0,
+            UtteranceSpine::new("rec-empty"),
+            None,
+        );
+        assert_eq!(empty.phase, RecordingLifecyclePhase::Local);
+
+        let restored = RecordingAggregate::from_spine_and_minutes(
+            "rec-restored",
+            20261108,
+            1_762_590_000,
+            120_000,
+            agg.spine.clone(),
+            Some(mins.clone()),
+        );
+        assert_eq!(restored.phase, RecordingLifecyclePhase::Ready);
+        assert_eq!(restored.minutes, Some(mins));
     }
 }

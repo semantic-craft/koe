@@ -204,9 +204,6 @@ impl ProductRecord {
 
     pub(super) fn mark_transcript_edited(&mut self) {
         self.content_revision = self.content_revision.saturating_add(1);
-        if !self.aggregate.visual_cards.is_empty() {
-            self.aggregate.synthesize_visual_cards();
-        }
         if matches!(
             self.analysis,
             AnalysisState::Pending {

@@ -365,7 +365,6 @@ impl ProductWorkspace {
             .map_err(|_| ProductError::InvalidEvidence)?;
         record.aggregate.minutes = Some(minutes);
         record.minutes_revision = Some(key.input_revision);
-        record.aggregate.visual_cards.clear();
         record.live_summary = AnalysisState::Ready {
             input_revision: key.input_revision,
         };
@@ -442,7 +441,6 @@ impl ProductWorkspace {
             .collect();
         record.aggregate.minutes = Some(minutes);
         record.minutes_revision = Some(key.input_revision);
-        record.aggregate.visual_cards.clear();
         record.aggregate.phase = RecordingLifecyclePhase::Ready;
         record.analysis = AnalysisState::Ready {
             input_revision: key.input_revision,
@@ -499,7 +497,6 @@ impl ProductRecord {
 
     fn content_changed(&mut self) {
         self.content_revision = self.content_revision.saturating_add(1);
-        self.aggregate.visual_cards.clear();
         if let AnalysisState::Pending {
             key,
             stage: AnalysisStage::Summarizing,

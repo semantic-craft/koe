@@ -20,7 +20,8 @@
 
 ## 保留的待处理发现
 
-- 蓝牙退出时 Swift 重复构造暂停帧；当前用于断连前发送保障。需先证明退出时序，再统一到 Rust，不能直接删除。
+- 蓝牙退出前已由 `KoeRuntime` 单一投影 `device.teardownStopFramesHex` 并移除 Swift `pauseRecordFrame` 及 standby/recording 规则重复，物理 D3200 真实断连与退出时序仍待硬件实测。
+- 后续 CQ2 收敛已将 `.koepack` 独立至 `crates/koe-engine/src/koepack.rs`，并清理未接入产品的 `Cicada` / `ContextReducer` / `MinutesReducer` / `RecordingLibrary` / `VisualSummaryCard`、`StreamingAsrPump` 桩与 `koe-client-services` 冗余重导出，保留 `legacy_restore` 与 `ProductWorkspace`。
 - Responsay 的 RustSmartInputBridge 在 ABI 失败时由 Swift 重算部分规则；已确认静态规则差异，尚无运行时故障复现，需要专门的失败契约测试。
 - 其余便捷 API、旧测试路径和安装脚本遗留选项需各自证明消费者与升级行为后再删。
 

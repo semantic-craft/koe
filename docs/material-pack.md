@@ -1,6 +1,6 @@
 # Koe 资料包格式（`.koepack`）
 
-资料详情「更多 → 导出…」生成，「新记录 → 导入资料包」恢复（#145）。一个包只装一条资料。代码在 [crates/koe-engine/src/cicada.rs](../crates/koe-engine/src/cicada.rs)（`KOEPACK1\n` 帧格式、SHA-256 校验、导出与导入去重）及 [crates/koe-client-services/src/recording_assets.rs](../crates/koe-client-services/src/recording_assets.rs)（资料包读取与音频保管）。
+资料详情「更多 → 导出…」生成，「新记录 → 导入资料包」恢复（#145）。一个包只装一条资料。代码在 [crates/koe-engine/src/koepack.rs](../crates/koe-engine/src/koepack.rs)（`KOEPACK1\n` 帧格式、SHA-256 校验、导出与导入去重）及 [crates/koe-client-services/src/recording_assets.rs](../crates/koe-client-services/src/recording_assets.rs)（资料包读取与音频保管）。
 
 ## 两种导出
 
