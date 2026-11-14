@@ -17,11 +17,6 @@ pub use network::{
     DASHSCOPE_CHAT_ENDPOINT, DASHSCOPE_CHAT_MODEL,
 };
 
-pub use koe_engine::minutes::{
-    encode_qwen_stream_finish_task_json, encode_qwen_stream_run_task_json, QwenStreamAccumulator,
-    QwenStreamStep, QWEN_FILETRANS_DEFAULT_MODEL, QWEN_STREAMING_DEFAULT_MODEL,
-};
-
 /// RFC 6455 WebSocket frame opcode used by DashScope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsFrameOpcode {

@@ -49,11 +49,10 @@ pub use koepack::{
     KOEPACK_FORMAT_NAME, KOEPACK_MAGIC, KOEPACK_MAX_MANIFEST_BYTES, KOEPACK_MAX_MINUTES_HISTORY,
 };
 pub use context::{
-    cited_labels, is_delegation_request, is_followup_question, query_terms, rank_texts,
-    relabel_citations, render_source_lines, stem_latin_token, AskMessage, AskPromptPlan, AskRole,
-    AskScope, AskSession, AskStatus, AskStepOutcome, ContextSearchIndex, ScoringMode, SearchHit,
-    SourceLine, SourcePointer, ASK_MAX_CORPUS_CHARS, ASK_SYSTEM_PROMPT, ASK_TOP_K_LIMIT,
-    DELEGATION_CLOSED_NOTICE, RANK_BACKGROUND_THRESHOLD_CHARS, STOP_PAIRS,
+    cited_labels, is_delegation_request, is_followup_question, rank_texts, relabel_citations,
+    render_source_lines, AskMessage, AskPromptPlan, AskRole, AskScope, AskSession, AskStatus,
+    AskStepOutcome, ContextSearchIndex, ScoringMode, SearchHit, SourceLine, SourcePointer,
+    ASK_MAX_CORPUS_CHARS, ASK_SYSTEM_PROMPT, ASK_TOP_K_LIMIT, DELEGATION_CLOSED_NOTICE,
 };
 pub use domain::{
     MeetingMinutes, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm,
@@ -63,7 +62,7 @@ pub use domain::{
 pub use hash::{is_valid_sha256_hex, sha256_hex};
 pub use minutes::{
     parse_persisted_meeting_minutes_json, validate_minutes_citations, validate_minutes_grounding,
-    MinutesState, MinutesValidationError,
+    MinutesValidationError,
 };
 pub use product::CompanionRoutingMode;
 pub use session::{CustodyReceipt, RawCompanionSignal};

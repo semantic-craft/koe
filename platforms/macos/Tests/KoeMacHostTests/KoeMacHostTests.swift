@@ -406,4 +406,52 @@ struct KoeMacHostTests {
         #expect(preassignedMakeCount == 0)
         #expect(retrievedStore === preassignedStore)
     }
+
+    @Test("disconnect writes projected teardown stop frames before clearing link state")
+    @MainActor
+    func disconnectWritesProjectedTeardownStopFrames() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let expectedPauseFrame = Data([0x08, 0xEE, 0x00, 0x00, 0x00, 0x18, 0x82, 0x0B, 0x00, 0x02, 0x9D])
+        store.send("set_ble_auto_connect", ["enabled": true])
+        store.send("set_companion_mode", ["mode": "collar_standby"])
+        #expect(store.snapshot.device.teardownStopFramesHex == ["08EE00000018820B00029D"])
+
+        let bridge = BluetoothBridge(store: store)
+        bridge.reportedReady = true
+        bridge.isScanRequested = true
+        bridge.disconnect()
+
+        #expect(bridge.lastTeardownStopFrames == [expectedPauseFrame])
+        #expect(!bridge.reportedReady)
+        #expect(!bridge.isScanRequested)
+        #expect(store.snapshot.device.phase == "disconnected")
+    }
+
+    @Test("Toggling autoConnect false while phase is handshaking disconnects runtime")
+    @MainActor
+    func toggleAutoConnectFalseTearsDownHandshaking() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HostSessionStore(workspacePath: directory.path)
+        defer { store.shutdown() }
+
+        let bridge = BluetoothBridge(store: store)
+        bridge.activateHost(allowsCoreBluetooth: false)
+        store.send("device_event", ["event": "scanning", "connectionId": "c1"])
+        store.send("device_event", ["event": "connecting", "connectionId": "c1", "deviceName": "soundcore Work"])
+        store.send("device_event", ["event": "ready", "connectionId": "c1"])
+        #expect(store.snapshot.device.phase == "handshaking")
+
+        bridge.reportedReady = true
+        store.send("set_ble_auto_connect", ["enabled": false])
+        bridge.syncWithRuntimeDevice(store.snapshot.device)
+
+        #expect(!bridge.isScanRequested)
+        #expect(!bridge.reportedReady)
+        #expect(store.snapshot.device.phase == "disconnected")
+    }
 }

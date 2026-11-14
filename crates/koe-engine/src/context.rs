@@ -167,16 +167,6 @@ pub fn relabel_citations(text: &str, from: &[SourceLine], to: &[SourceLine]) -> 
     out
 }
 
-/// High-frequency conversational Chinese character pairs excluded from retrieval indexing.
-pub const STOP_PAIRS: [&str; 27] = [
-    "什么", "怎么", "我们", "你们", "他们", "一下", "这个", "那个", "是不", "不是", "有没", "没有",
-    "可以", "就是", "还是", "然后", "因为", "所以", "如果", "时候", "一个", "的话", "了吗", "是什",
-    "么时", "吗？", "问一",
-];
-
-/// Corpus character threshold (`50_000`) above which ranking moves off the UI thread.
-pub const RANK_BACKGROUND_THRESHOLD_CHARS: usize = 50_000;
-
 const fn pack_pair(c1: char, c2: char) -> u32 {
     ((c1 as u32) << 16) | (c2 as u32)
 }
@@ -243,7 +233,7 @@ fn is_cjk_ideograph(c: char) -> bool {
 /// Strips common English suffixes (`"ings"`, `"ing"`, `"edly"`, `"ed"`, `"ies"`, `"es"`,
 /// `"s"`, `"ly"`, `"tion"`, `"ment"`) when the remaining stem is at least 3 characters.
 #[must_use]
-pub fn stem_latin_token(token: &str) -> &str {
+fn stem_latin_token(token: &str) -> &str {
     if token.len() < 4 || !token.bytes().all(|b| b.is_ascii_lowercase()) {
         return token;
     }
@@ -257,54 +247,6 @@ pub fn stem_latin_token(token: &str) -> &str {
         }
     }
     token
-}
-
-/// Extracts query terms from `text`: lowercased ASCII alphanumeric words (`len >= 2`, plus
-/// their stemmed root when distinct) and overlapping 2-character CJK Unified Ideograph bigrams
-/// excluding [`STOP_PAIRS`].
-#[must_use]
-pub fn query_terms(text: &str) -> BTreeSet<String> {
-    let mut terms = BTreeSet::new();
-    let lower = text.to_ascii_lowercase();
-    let bytes = lower.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i].is_ascii_alphanumeric() {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
-                i += 1;
-            }
-            if i - start >= 2 {
-                let tok = &lower[start..i];
-                terms.insert(tok.to_string());
-                let stem = stem_latin_token(tok);
-                if stem != tok {
-                    terms.insert(stem.to_string());
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    let mut prev_han: Option<char> = None;
-    for ch in lower.chars() {
-        if is_cjk_ideograph(ch) {
-            if let Some(p) = prev_han {
-                if !is_stop_pair_key(pack_pair(p, ch)) {
-                    let mut pair = String::with_capacity(6);
-                    pair.push(p);
-                    pair.push(ch);
-                    terms.insert(pair);
-                }
-            }
-            prev_han = Some(ch);
-        } else {
-            prev_han = None;
-        }
-    }
-    terms
 }
 
 /// Scoring mode for [`ContextSearchIndex::search`].

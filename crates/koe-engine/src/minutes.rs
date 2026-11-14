@@ -1,5 +1,5 @@
-//! Structured meeting minutes grounding validator (`S1..Sn` evidence checks),
-//! DashScope Qwen streaming ASR codec, and prompt/JSON codec.
+//! Structured meeting minutes grounding validator (`S1..Sn` evidence checks)
+//! and prompt/JSON codec.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -10,12 +10,6 @@ use crate::domain::{
     MeetingMinutes, MinuteCause, MinuteCustomSection, MinuteFishbone, MinutePoint, MinuteTerm,
     MinuteTermAdoption, MinuteTopic, SegmentId, UtteranceSpine,
 };
-
-/// Default DashScope batch file transcription model (`qwen-audio-3.1-asr-flash-filetrans`).
-pub const QWEN_FILETRANS_DEFAULT_MODEL: &str = "qwen-audio-3.1-asr-flash-filetrans";
-
-/// Default DashScope realtime streaming ASR model (`qwen-audio-3.1-asr-flash-streaming`).
-pub const QWEN_STREAMING_DEFAULT_MODEL: &str = "qwen-audio-3.1-asr-flash-streaming";
 
 /// Zero-dependency JSON DOM value with canonical `BTreeMap` key ordering.
 #[derive(Debug, Clone, PartialEq)]
@@ -438,259 +432,6 @@ pub fn extract_json_object(raw: &str) -> &str {
         }
     }
     s
-}
-
-/// Encodes the DashScope WebSocket `run-task` frame for `qwen-audio-3.1-asr-flash-streaming`.
-#[must_use]
-pub fn encode_qwen_stream_run_task_json(
-    task_id: &str,
-    language: Option<&str>,
-    hot_words: &[String],
-) -> String {
-    let mut header = BTreeMap::new();
-    header.insert(
-        "action".to_string(),
-        JsonValue::String("run-task".to_string()),
-    );
-    header.insert(
-        "task_id".to_string(),
-        JsonValue::String(task_id.to_string()),
-    );
-    header.insert(
-        "streaming".to_string(),
-        JsonValue::String("duplex".to_string()),
-    );
-
-    let mut parameters = BTreeMap::new();
-    parameters.insert("format".to_string(), JsonValue::String("pcm".to_string()));
-    parameters.insert("sample_rate".to_string(), JsonValue::Number(16000.0));
-    parameters.insert(
-        "semantic_punctuation_enabled".to_string(),
-        JsonValue::Bool(false),
-    );
-    if let Some(lang) = language.map(str::trim).filter(|s| !s.is_empty()) {
-        parameters.insert(
-            "language_hints".to_string(),
-            JsonValue::Array(vec![JsonValue::String(lang.to_string())]),
-        );
-    }
-    let clean_hw: Vec<JsonValue> = hot_words
-        .iter()
-        .map(|w| w.trim())
-        .filter(|w| !w.is_empty())
-        .take(500)
-        .map(|w| JsonValue::String(w.to_string()))
-        .collect();
-    if !clean_hw.is_empty() {
-        parameters.insert("hotwords".to_string(), JsonValue::Array(clean_hw));
-    }
-
-    let mut payload = BTreeMap::new();
-    payload.insert(
-        "task_group".to_string(),
-        JsonValue::String("audio".to_string()),
-    );
-    payload.insert("task".to_string(), JsonValue::String("asr".to_string()));
-    payload.insert(
-        "function".to_string(),
-        JsonValue::String("recognition".to_string()),
-    );
-    payload.insert(
-        "model".to_string(),
-        JsonValue::String(QWEN_STREAMING_DEFAULT_MODEL.to_string()),
-    );
-    payload.insert("parameters".to_string(), JsonValue::Object(parameters));
-    payload.insert("input".to_string(), JsonValue::Object(BTreeMap::new()));
-
-    let mut root = BTreeMap::new();
-    root.insert("header".to_string(), JsonValue::Object(header));
-    root.insert("payload".to_string(), JsonValue::Object(payload));
-    JsonValue::Object(root).to_json_string()
-}
-
-/// Encodes the DashScope WebSocket `finish-task` frame.
-#[must_use]
-pub fn encode_qwen_stream_finish_task_json(task_id: &str) -> String {
-    let mut header = BTreeMap::new();
-    header.insert(
-        "action".to_string(),
-        JsonValue::String("finish-task".to_string()),
-    );
-    header.insert(
-        "task_id".to_string(),
-        JsonValue::String(task_id.to_string()),
-    );
-    header.insert(
-        "streaming".to_string(),
-        JsonValue::String("duplex".to_string()),
-    );
-
-    let mut payload = BTreeMap::new();
-    payload.insert("input".to_string(), JsonValue::Object(BTreeMap::new()));
-
-    let mut root = BTreeMap::new();
-    root.insert("header".to_string(), JsonValue::Object(header));
-    root.insert("payload".to_string(), JsonValue::Object(payload));
-    JsonValue::Object(root).to_json_string()
-}
-
-/// Decoded step from [`QwenStreamAccumulator::handle_event_json`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QwenStreamStep {
-    /// Server acknowledged `run-task` and is ready to receive PCM frames.
-    TaskStarted,
-    /// Heartbeat or empty frame with no transcript change.
-    Heartbeat,
-    /// Partial or finalized transcript update (`full_text`, `is_sentence_end`).
-    TranscriptUpdate {
-        /// Combined confirmed sentences + active partial sentence.
-        full_text: String,
-        /// Whether this frame finalized the current sentence.
-        sentence_end: bool,
-    },
-    /// Server completed the streaming task.
-    TaskFinished {
-        /// Final combined transcript.
-        full_text: String,
-    },
-    /// Server reported a task failure.
-    TaskFailed {
-        /// Error message from `header.error_message` or `header.error_code`.
-        message: String,
-    },
-}
-
-/// Stateful accumulator for DashScope `qwen-audio-3.1-asr-flash-streaming` WebSocket events.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct QwenStreamAccumulator {
-    confirmed_sentences: Vec<String>,
-    current_partial: String,
-    started: bool,
-    finished: bool,
-}
-
-impl QwenStreamAccumulator {
-    /// Creates a new streaming ASR accumulator.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Returns whether `task-started` has been received.
-    #[must_use]
-    pub fn is_started(&self) -> bool {
-        self.started
-    }
-
-    /// Returns whether `task-finished` has been received.
-    #[must_use]
-    pub fn is_finished(&self) -> bool {
-        self.finished
-    }
-
-    /// Returns the combined confirmed sentences + current partial text.
-    #[must_use]
-    pub fn full_text(&self) -> String {
-        let mut combined = self.confirmed_sentences.join("");
-        if !self.current_partial.is_empty() {
-            combined.push_str(&self.current_partial);
-        }
-        combined
-    }
-
-    /// Processes a single WebSocket JSON event frame and updates `spine` on finalized sentences.
-    pub fn handle_event_json(
-        &mut self,
-        raw: &str,
-        spine: &mut UtteranceSpine,
-    ) -> Result<QwenStreamStep, String> {
-        let val = JsonValue::parse(raw)?;
-        let root = val
-            .as_object()
-            .ok_or_else(|| "stream event must be a JSON object".to_string())?;
-        let header = root
-            .get("header")
-            .and_then(JsonValue::as_object)
-            .ok_or_else(|| "stream event missing 'header'".to_string())?;
-        let event = header
-            .get("event")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("");
-
-        match event {
-            "task-started" => {
-                self.started = true;
-                Ok(QwenStreamStep::TaskStarted)
-            }
-            "task-failed" => {
-                let msg = header
-                    .get("error_message")
-                    .or_else(|| header.get("error_code"))
-                    .and_then(JsonValue::as_str)
-                    .unwrap_or("ASR stream failed")
-                    .to_string();
-                Ok(QwenStreamStep::TaskFailed { message: msg })
-            }
-            "task-finished" => {
-                self.finished = true;
-                Ok(QwenStreamStep::TaskFinished {
-                    full_text: self.full_text(),
-                })
-            }
-            "result-generated" => {
-                let Some(sentence) = root
-                    .get("payload")
-                    .and_then(JsonValue::as_object)
-                    .and_then(|p| p.get("output"))
-                    .and_then(JsonValue::as_object)
-                    .and_then(|o| o.get("sentence"))
-                    .and_then(JsonValue::as_object)
-                else {
-                    return Ok(QwenStreamStep::Heartbeat);
-                };
-                if sentence.get("heartbeat").and_then(JsonValue::as_bool) == Some(true) {
-                    return Ok(QwenStreamStep::Heartbeat);
-                }
-                let text = sentence
-                    .get("text")
-                    .and_then(JsonValue::as_str)
-                    .unwrap_or("");
-                if text.is_empty() {
-                    return Ok(QwenStreamStep::Heartbeat);
-                }
-                let is_end = sentence
-                    .get("sentence_end")
-                    .and_then(JsonValue::as_bool)
-                    .unwrap_or(false);
-                let sentence_id = sentence
-                    .get("sentence_id")
-                    .and_then(JsonValue::as_i64)
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| format!("s-{}", self.confirmed_sentences.len() + 1));
-
-                if is_end {
-                    self.confirmed_sentences.push(text.to_string());
-                    self.current_partial.clear();
-                    spine.accept_final(
-                        "qwen-stream",
-                        &sentence_id,
-                        text,
-                        "zh",
-                        None,
-                        None,
-                        QWEN_STREAMING_DEFAULT_MODEL,
-                    );
-                } else {
-                    self.current_partial = text.to_string();
-                }
-                Ok(QwenStreamStep::TranscriptUpdate {
-                    full_text: self.full_text(),
-                    sentence_end: is_end,
-                })
-            }
-            _ => Ok(QwenStreamStep::Heartbeat),
-        }
-    }
 }
 
 /// Validation failure returned when a [`MeetingMinutes`] document or claim violates `S1..Sn` grounding.
@@ -1904,7 +1645,6 @@ impl MeetingMinutes {
 pub fn build_meeting_minutes_prompt(
     numbered_transcript: &str,
     locale_code: &str,
-    _template_id: Option<&str>,
     custom_sections: &[String],
     custom_instructions: Option<&str>,
     vocabulary: &[String],
@@ -1915,11 +1655,11 @@ pub fn build_meeting_minutes_prompt(
         .filter(|s| !s.is_empty())
         .collect();
 
-    let extra_instructions = custom_instructions
+    let extra = custom_instructions
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("")
-        .to_string();
+        .map(|s| format!("\n- {s}"))
+        .unwrap_or_default();
 
     let clean_vocab: Vec<String> = vocabulary
         .iter()
@@ -1929,7 +1669,7 @@ pub fn build_meeting_minutes_prompt(
         .collect();
 
     let mut custom_schema = String::new();
-    let mut custom_rule = String::new();
+    let mut custom_rule = extra.clone();
     if !sections.is_empty() {
         let entries: Vec<String> = sections
             .iter()
@@ -1940,11 +1680,6 @@ pub fn build_meeting_minutes_prompt(
             })
             .collect();
         custom_schema = format!(",\n  \"custom\": {{\n{}\n  }}", entries.join(",\n"));
-        let extra = if extra_instructions.is_empty() {
-            String::new()
-        } else {
-            format!("\n- {extra_instructions}")
-        };
         custom_rule = match locale_code {
             "en" => format!(
                 "\n- Fill \"custom\" with the template sections ({}); use [] when a section has no grounded points.{extra}",
@@ -1990,19 +1725,6 @@ pub fn build_meeting_minutes_prompt(
             "请根据下方带编号的逐句原话，整理结构化闪记纪要。\n只返回一个 JSON 对象（不要 ``` 代码块，不要任何额外说明），严格符合以下结构：\n{{\n  \"schemaVersion\": 2,\n  \"title\": \"简短标题（20字以内）\",\n  \"overview\": \"2到4句话的整体概述\",\n  \"topics\": [\n    {{\n      \"text\": \"主题标题\",\n      \"summary\": \"1到2句话概括该主题的核心内容\",\n      \"sources\": [\"S1\", \"S2\"],\n      \"points\": [\n        {{ \"text\": \"该主题下的具体观点、论据或事实\", \"sources\": [\"S1\"] }}\n      ],\n      \"fishbone\": {{\n        \"question\": \"核心问题（可选：仅在该主题讨论问题成因/故障排查时填写）\",\n        \"branches\": [\n          {{ \"text\": \"原因类别（如人员/流程/环境）\", \"detail\": \"具体原因说明\", \"sources\": [\"S2\"] }}\n        ]\n      }}\n    }}\n  ],\n  \"decisions\": [\n    {{ \"text\": \"已达成的决定或结论\", \"sources\": [\"S3\"] }}\n  ],\n  \"actions\": [\n    {{ \"text\": \"具体待办事项\", \"owner\": \"负责人（原话未提则省略）\", \"due\": \"期限（原话未提则省略）\", \"sources\": [\"S4\"] }}\n  ],\n  \"questions\": [\n    {{ \"text\": \"未解决的问题或风险\", \"sources\": [\"S5\"] }}\n  ],\n  \"terms\": [\n    {{ \"name\": \"专有名词/人名/项目名/术语（最多6个）\", \"note\": \"在本次录音中的简短说明\", \"heard\": [\"若原话被识别成同音错字，填所引原句中实际出现的错字子串\"], \"sources\": [\"S1\"] }}\n  ],\n  \"reviewItems\": [\"S3：疑似识别有误或表述含糊、建议人工复核的地方\"]{custom_schema}\n}}\n\n严格约束：\n- topics、topic.points、fishbone.branches、decisions、actions、questions、terms 中的每一条都必须带有非空的 \"sources\" 数组，且只能引用直接支撑该条内容的原句编号（S1、S2……）。\n- 严禁编造原话中没有的事实、数字、比例、计算公式、人名或期限。\n- 严禁把不同句子的数字拼在一起推算工资、基数或比例公式（例如原话未在同一句明确说出“按基本工资乘以80%计算”，绝不能自行合成此类算式）。\n- 没有对应内容的列表填 []；非原因分析的主题省略 \"fishbone\"；未明确提及的 \"owner\" / \"due\" 直接省略字段。\n- \"terms.heard\" 只能填写所引原句（sources）中逐字出现过的错别字子串；若原话本身写法正确则省略 \"heard\"。{custom_rule}{vocab_rule}\n\n带编号原话：\n{numbered_transcript}"
         ),
     }
-}
-
-/// Pure state for the structured meeting minutes domain module.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MinutesState {
-    /// Latest validated meeting minutes document, if any.
-    pub latest_minutes: Option<MeetingMinutes>,
-    /// User-configured hot-words (`qwennote-minutes`).
-    pub hot_words: Vec<String>,
-    /// Active template identifier, if any.
-    pub active_template_id: Option<String>,
-    /// Last grounding validation error encountered.
-    pub last_error: Option<MinutesValidationError>,
 }
 
 #[cfg(test)]
@@ -2111,59 +1833,6 @@ mod tests {
     }
 
     #[test]
-    fn qwen_streaming_protocol_codec_roundtrips() {
-        let run_task = encode_qwen_stream_run_task_json(
-            "task-123",
-            Some("zh"),
-            &["声刻".to_string(), "D3200".to_string()],
-        );
-        assert!(run_task.contains("\"action\":\"run-task\""));
-        assert!(run_task.contains("\"task_id\":\"task-123\""));
-        assert!(run_task.contains("\"hotwords\":[\"声刻\",\"D3200\"]"));
-
-        let finish_task = encode_qwen_stream_finish_task_json("task-123");
-        assert!(finish_task.contains("\"action\":\"finish-task\""));
-        assert!(finish_task.contains("\"task_id\":\"task-123\""));
-
-        let mut stream_spine = UtteranceSpine::new("qwen-stream");
-        let mut acc = QwenStreamAccumulator::new();
-        assert_eq!(
-            acc.handle_event_json(r#"{"header":{"event":"task-started"}}"#, &mut stream_spine)
-                .unwrap(),
-            QwenStreamStep::TaskStarted
-        );
-        let step1 = acc
-            .handle_event_json(
-                r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"text":"你好","sentence_end":false}}}}"#,
-                &mut stream_spine,
-            )
-            .unwrap();
-        assert_eq!(
-            step1,
-            QwenStreamStep::TranscriptUpdate {
-                full_text: "你好".to_string(),
-                sentence_end: false,
-            }
-        );
-        assert_eq!(stream_spine.len(), 0);
-
-        let step2 = acc
-            .handle_event_json(
-                r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"sentence_id":1,"text":"你好世界。","sentence_end":true}}}}"#,
-                &mut stream_spine,
-            )
-            .unwrap();
-        assert_eq!(
-            step2,
-            QwenStreamStep::TranscriptUpdate {
-                full_text: "你好世界。".to_string(),
-                sentence_end: true,
-            }
-        );
-        assert_eq!(stream_spine.len(), 1);
-    }
-
-    #[test]
     fn longest_match_single_pass_term_replacement_and_heard_pruning() {
         let mut spine = UtteranceSpine::new("rec-terms");
         spine.append_segment("今天测试深科和深科Work录音豆。", 0, 1000, "zh", "qwen");
@@ -2181,5 +1850,37 @@ mod tests {
         doc.replace_terms(&[("深科", "声刻"), ("深科Work", "Soundcore Work")]);
         assert_eq!(doc.title, "声刻的Soundcore Work录音豆");
         assert!(doc.terms[0].heard.is_empty());
+    }
+
+    #[test]
+    fn build_meeting_minutes_prompt_includes_custom_instructions_without_custom_sections() {
+        for (locale, instruction) in [
+            ("zh", "只写有来源的结论、行动和记忆。"),
+            ("en", "Keep only cited outcomes."),
+            ("ja", "出典のある結論のみ記載してください。"),
+        ] {
+            let prompt = build_meeting_minutes_prompt(
+                "[S1] Example",
+                locale,
+                &[],
+                Some(&format!("  {instruction}  ")),
+                &[],
+            );
+            assert!(
+                prompt.contains(&format!("\n- {instruction}")),
+                "locale {locale} prompt missing custom instruction: {prompt}"
+            );
+            assert!(!prompt.contains("\"custom\":"));
+        }
+
+        let with_sections = build_meeting_minutes_prompt(
+            "[S1] Example",
+            "zh",
+            &["风险与建议".to_string()],
+            Some("仅输出高置信结论。"),
+            &[],
+        );
+        assert!(with_sections.contains("\"custom\":"));
+        assert!(with_sections.contains("\n- 仅输出高置信结论。"));
     }
 }

@@ -692,7 +692,7 @@ impl KoeRuntime {
         Ok(())
     }
 
-    fn retire_active_standby_stream(&mut self) {
+    pub(crate) fn retire_active_standby_stream(&mut self) {
         if self.companion.standby_stream_owned
             || self.companion.pending_standby_stop
             || self.companion.active_standby_file_id.is_some()

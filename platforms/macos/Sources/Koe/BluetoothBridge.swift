@@ -105,6 +105,9 @@ public final class BluetoothBridge: NSObject, CBCentralManagerDelegate, CBPeriph
     }
 
     public func disconnect() {
+        if let device = store?.snapshot.device {
+            writeProjectedTeardownStopFramesIfReady(for: device)
+        }
         teardownLocalBleLink()
         store?.send("device_disconnect")
     }

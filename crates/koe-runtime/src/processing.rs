@@ -221,7 +221,6 @@ impl KoeRuntime {
         let prompt = build_meeting_minutes_prompt(
             &sources,
             "zh",
-            None,
             &[],
             Some("只写有来源的结论、行动和记忆。没有信息的栏目留空，不补全六个栏目。"),
             &[],
@@ -262,7 +261,6 @@ impl KoeRuntime {
         let prompt = build_meeting_minutes_prompt(
             &source_text,
             "zh",
-            None,
             &[],
             Some("录音仍在继续。只整理本次提供原文中有来源的结论，保留未决事项，不推测后续内容。"),
             &[],

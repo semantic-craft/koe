@@ -17,7 +17,7 @@ extension BluetoothBridge {
         }
     }
 
-    private func writeProjectedTeardownStopFramesIfReady(for device: DeviceSnapshot) {
+    func writeProjectedTeardownStopFramesIfReady(for device: DeviceSnapshot) {
         let stopFrames = device.teardownStopFramesHex.compactMap(Self.decodeHex)
         if reportedReady && !stopFrames.isEmpty {
             lastTeardownStopFrames = stopFrames
@@ -52,7 +52,7 @@ extension BluetoothBridge {
             if reportedReady || isScanRequested || peripheral != nil || reconnectingPeripheral != nil {
                 writeProjectedTeardownStopFramesIfReady(for: device)
                 teardownLocalBleLink()
-                if device.phase == "scanning" || device.phase == "connecting" {
+                if device.phase != "disconnected" {
                     store?.send("device_disconnect")
                 }
             }
