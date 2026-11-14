@@ -166,9 +166,9 @@
       },
       {
         "number": 654,
-        "reason": null,
-        "state": "open",
-        "updated_at": "2026-11-14T09:23:55Z"
+        "reason": "completed",
+        "state": "closed",
+        "updated_at": "2026-11-14T18:23:45Z"
       },
       {
         "number": 655,
@@ -192,7 +192,7 @@
         "number": 662,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-14T12:29:31Z"
+        "updated_at": "2026-11-14T18:18:48Z"
       },
       {
         "number": 665,
@@ -243,7 +243,7 @@
         "updated_at": "2026-11-13T15:25:12Z"
       }
     ],
-    "main": "f369db72db1f682d0d55f3063db76ef5baabc826",
+    "main": "27d0c099cc22e7b1145d09fdf93ee7e22fc197de",
     "open_pulls": [],
     "pulls": [
       {
@@ -501,6 +501,14 @@
         "merged": true,
         "number": 704,
         "state": "closed"
+      },
+      {
+        "base": "2bcac4940c0b272b4a6b7801beae0b37dfad9139",
+        "head": "4b147f9ec935f9018edfa6e066939fdc385f84ce",
+        "merge_commit": "27d0c099cc22e7b1145d09fdf93ee7e22fc197de",
+        "merged": true,
+        "number": 706,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -514,7 +522,7 @@
     ]
   },
   "inputs": [],
-  "observed_at": "2026-11-14T12:31:21.525888Z",
+  "observed_at": "2026-11-14T18:27:15.523133Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -1035,12 +1043,22 @@
               "kind": "file",
               "note": "共享浅色色板。",
               "ref": "platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift"
+            },
+            {
+              "kind": "pull",
+              "note": "锁定 ItemEditor、AllDayDemoView 与 NativeQuitPanel 显式浅色底色并补齐 .darkAqua/.aqua 位图门禁。",
+              "ref": 702
+            },
+            {
+              "kind": "pull",
+              "note": "签名版实机深色进程下四个浅色弹窗目视复核通过并结案 #654。",
+              "ref": 706
             }
           ],
           "id": "plaud-light-palette",
-          "next": "下次重装签名版 /Applications/Koe.app 的日常窗口弹窗视觉复核见 #654。",
+          "next": "#654 实机四个浅色弹窗视觉复核已完成并结案；后续新增模态视图继续由 verify-ui-principles 与 LightModalAppearanceTests 守护。",
           "status": "done",
-          "summary": "白色内容区、浅灰侧栏、炭黑主按钮及浅色原生控件已实现，并经 PR #702 锁定 ItemEditor、AllDayDemoView 与 NativeQuitPanel 的显式浅色底色；全量门禁、隔离工作区与 .darkAqua/.aqua 离屏位图测试通过。",
+          "summary": "白色内容区、浅灰侧栏、炭黑主按钮及浅色原生控件已实现，经 PR #702 锁定弹窗浅色底色并通过离屏位图门禁，再经 PR #706 在签名版 /Applications/Koe.app 实机复核结案 #654。",
           "title": "PLAUD 风格浅色配色"
         },
         {
@@ -1101,9 +1119,9 @@
             }
           ],
           "id": "all-day-offline-models",
-          "next": "超过五分钟真人说话、物理蓝牙断连、锁屏、外部输入法与本机 LLM 继续按 #662 验收。",
+          "next": "超过五分钟真人说话、物理蓝牙断连、锁屏、外部输入法与本机 LLM 留交用户按 #662 真机验收。",
           "status": "done",
-          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。PR #663（e513032）与 PR #704（f369db7）已完成 SenseVoice/Qwen 禁外网沙盒离线识别、koe.sock 听写圈定零泄漏、303 秒跨段暂停恢复、目录故障重试恢复与重开模型自动就绪；签名版 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 已验入口与演示，物理长说话、物理蓝牙断连与锁屏仍按 #662 待验。",
+          "summary": "实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。PR #663（e513032）与 PR #704（f369db7）已完成 SenseVoice/Qwen 禁外网沙盒离线识别、koe.sock 听写圈定零泄漏、303 秒跨段暂停恢复、目录故障重试恢复与重开模型自动就绪；最新签名版 CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22 已重装并核对双场景演示、日常 59 条既有记录与蓝牙自动重连，物理长说话、物理蓝牙断连、锁屏与外部输入法按 #662 留待用户实测。",
           "title": "全天听记、下载模型与通用听写文字"
         },
         {
@@ -1420,12 +1438,17 @@
               "kind": "pull",
               "note": "合并提交 e8e317e 已重装 Developer ID 签名版 /Applications/Koe.app（CDHash b567c5e501154071b3d444264b41277318fcd610）并通过 verify-self 与 smoke-test。",
               "ref": 646
+            },
+            {
+              "kind": "pull",
+              "note": "基于 2bcac49 重装 Developer ID 签名版 /Applications/Koe.app（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22），通过 verify-self 与 smoke-test，完成四个浅色弹窗实机复核并结案 #654。",
+              "ref": 706
             }
           ],
           "id": "merge-install",
-          "next": "本轮硬件长时验收见 #662。",
+          "next": "物理长时说话、断连与锁屏验收由用户按 #662 推进。",
           "status": "done",
-          "summary": "2026-11-13 已安装本轮全天听记和离线模型的 Developer ID 签名版，CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd，签名要求与旧版一致。verify-self/smoke-test 通过。日常界面 58 条记录仍可见、D3200 自动重连、设置和两种演示已核对；不代表硬件录制通过。",
+          "summary": "2026-11-15 已安装包含 #702 浅色弹窗锁定与 #704 全天听记修复的 Developer ID 签名版 /Applications/Koe.app（2.0.0 构建 9，CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22），签名要求与旧版一致，Keychain 凭据静默继承。verify-self 与 smoke-test 前后均通过；日常界面 59 条记录可见、无旧版迁移入口、D3200 自动重连、设置与双场景演示及四个浅色弹窗均已核对；不代表物理录制通过。",
           "title": "本机签名安装"
         },
         {
@@ -1530,19 +1553,29 @@
           "evidence": [
             {
               "kind": "issue",
-              "note": "签名日常安装与 GUI 退出重开通过。",
+              "note": "签名日常安装、-AppleInterfaceStyle Dark 四个浅色弹窗实机截图复核与 GUI 退出重开全部通过，工单已关闭。",
               "ref": 654
             },
             {
               "kind": "issue",
               "note": "路径删除后的退出死锁有先红后绿回归和真机采样。",
               "ref": 657
+            },
+            {
+              "kind": "pull",
+              "note": "锁定 ItemEditor、AllDayDemoView 与 NativeQuitPanel 浅色底色并新增 LightModalAppearanceTests。",
+              "ref": 702
+            },
+            {
+              "kind": "pull",
+              "note": "重装签名版 CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22 完成实机复核并结案 #654。",
+              "ref": 706
             }
           ],
           "id": "plaud-light-install",
-          "next": "待下次运行 scripts/install-macos.sh 更新 /Applications/Koe.app 后完成实体弹窗视觉复核并结案 #654。",
+          "next": "#654 已全部验收并结案；后续新增弹窗继续由 DesignKit 浅色契约与 LightModalAppearanceTests 守护。",
           "status": "done",
-          "summary": "已安装 Developer ID 签名浅色修复版。自检不再覆盖日常通信入口；运行中自检后 CLI 仍正常，Cmd-Q 退出与重开通过，已有记录可见。PR #702 已补充 ItemEditor、AllDayDemoView、ConnectGuideSheet 与 NativeQuitPanel 的 .darkAqua 离屏位图回归。",
+          "summary": "已安装 Developer ID 签名浅色修复版（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22）。自检不覆盖日常通信入口，Cmd-Q 退出重开与 59 条既有记录读取通过；在 -AppleInterfaceStyle Dark 实机进程下完成 ConnectGuideSheet、ItemEditor（待办/记忆）、AllDayDemoView 双场景及 NativeQuitPanel 正在退出面板截图复核，全部保持纯白浅色表面与深色可读正文，#654 已结案。",
           "title": "浅色版日常安装与退出修复"
         },
         {
@@ -1722,7 +1755,8 @@
       695,
       701,
       702,
-      704
+      704,
+      706
     ]
   }
 }

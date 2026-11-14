@@ -3,8 +3,8 @@
 <title>Koe · Rust/macOS 产品管线</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Koe · Rust/macOS 产品管线</h1>
-<p>Observed: 2026-11-14T12:31:21.525888Z</p>
-<p>Main: <code>main: f369db72db1f682d0d55f3063db76ef5baabc826</code></p>
+<p>Observed: 2026-11-14T18:27:15.523133Z</p>
+<p>Main: <code>main: 27d0c099cc22e7b1145d09fdf93ee7e22fc197de</code></p>
 <section id="mode-workspaces-definition"><h2>四模式工作区业务定义</h2>
 <article id="mode-workspaces-spec"><h3>四种业务与界面方案</h3><span class="badge">done</span><p>随心闪记保留原话并梳理事项/项目；全天听记整理事件与全天上下文；实时纪要并排原文和纪要；语音输入引导Responsay设置。交付为文档和交互稿，尚未实现完整正式页面。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/pull/688">pull 688: 业务定义文档已squash合并dec5813，受验head与远端合并tree相同；正式业务页面仍待实现。</a></li>
@@ -108,15 +108,17 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/CaptureView.swift">file platforms/apple-shared/Sources/KoeAppleShared/CaptureView.swift: 独立「录音」页音源卡片、自动优先切换、12 段实时电平表与实时字幕状态说明。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/macos/Sources/Koe/NativeAudioSource.swift">file platforms/macos/Sources/Koe/NativeAudioSource.swift: CoreAudio 传输类型分类（蓝牙/USB/内置/外接）、输入声道过滤与 UID 去重同步。</a></li>
 </ul><p>Next: 按 #645 连接实体 D3200 录音豆与蓝牙耳机完成热插拔、A2DP 音质与实时字幕真机核对。</p></article>
-<article id="plaud-light-palette"><h3>PLAUD 风格浅色配色</h3><span class="badge">done</span><p>白色内容区、浅灰侧栏、炭黑主按钮及浅色原生控件已实现，并经 PR #702 锁定 ItemEditor、AllDayDemoView 与 NativeQuitPanel 的显式浅色底色；全量门禁、隔离工作区与 .darkAqua/.aqua 离屏位图测试通过。</p><ul>
+<article id="plaud-light-palette"><h3>PLAUD 风格浅色配色</h3><span class="badge">done</span><p>白色内容区、浅灰侧栏、炭黑主按钮及浅色原生控件已实现，经 PR #702 锁定弹窗浅色底色并通过离屏位图门禁，再经 PR #706 在签名版 /Applications/Koe.app 实机复核结案 #654。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/652">issue 652: 配色实现范围与验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift">file platforms/apple-shared/Sources/KoeAppleShared/DesignKit.swift: 共享浅色色板。</a></li>
-</ul><p>Next: 下次重装签名版 /Applications/Koe.app 的日常窗口弹窗视觉复核见 #654。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/702">pull 702: 锁定 ItemEditor、AllDayDemoView 与 NativeQuitPanel 显式浅色底色并补齐 .darkAqua/.aqua 位图门禁。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/706">pull 706: 签名版实机深色进程下四个浅色弹窗目视复核通过并结案 #654。</a></li>
+</ul><p>Next: #654 实机四个浅色弹窗视觉复核已完成并结案；后续新增模态视图继续由 verify-ui-principles 与 LightModalAppearanceTests 守护。</p></article>
 <article id="bean-offline-live-captions"><h3>录音豆本机实时识别与全局字幕</h3><span class="badge">done</span><p>macOS 26+ 本机中文实时识别与全局字幕已接通；签名版 D3200 实体按键在设置页停止前显示文字，停止后保存并重启读回。真实 Apple 引擎另通过禁止联网测试。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/653">issue 653: 实现范围与自动验证</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/655">issue 655: 真机离线、实体按键与字幕可见性验收</a></li>
 </ul><p>Next: 已安装本机模式。#655 继续追踪运行中切换第二页及隐藏唤窗观察；本轮用户要求保持联网。</p></article>
-<article id="all-day-offline-models"><h3>全天听记、下载模型与通用听写文字</h3><span class="badge">done</span><p>实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。PR #663（e513032）与 PR #704（f369db7）已完成 SenseVoice/Qwen 禁外网沙盒离线识别、koe.sock 听写圈定零泄漏、303 秒跨段暂停恢复、目录故障重试恢复与重开模型自动就绪；签名版 CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd 已验入口与演示，物理长说话、物理蓝牙断连与锁屏仍按 #662 待验。</p><ul>
+<article id="all-day-offline-models"><h3>全天听记、下载模型与通用听写文字</h3><span class="badge">done</span><p>实现与全量 scripts/check 通过，独立代码和真实模型验收 PASS+NOTES。PR #663（e513032）与 PR #704（f369db7）已完成 SenseVoice/Qwen 禁外网沙盒离线识别、koe.sock 听写圈定零泄漏、303 秒跨段暂停恢复、目录故障重试恢复与重开模型自动就绪；最新签名版 CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22 已重装并核对双场景演示、日常 59 条既有记录与蓝牙自动重连，物理长说话、物理蓝牙断连、锁屏与外部输入法按 #662 留待用户实测。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/661">issue 661: 实现范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/662">issue 662: 独立硬件验收。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/docs/adr/0003-shared-speech-and-all-day.md">file docs/adr/0003-shared-speech-and-all-day.md: 设计、参考依据和代码验收标准。</a></li>
@@ -124,7 +126,7 @@
 <li><a href="https://github.com/semantic-craft/koe/blob/main/crates/koe-cli/examples/verify_offline_socket.rs">file crates/koe-cli/examples/verify_offline_socket.rs: C ABI 与真实 koe.sock 禁外网沙盒离线验收入口。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/663">pull 663: 本轮实现、独立复核与交付。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/704">pull 704: 修复蓝牙断连收尾、分段队列归属与 koe.sock 听写事件冲刷，完成禁外网沙盒验收。</a></li>
-</ul><p>Next: 超过五分钟真人说话、物理蓝牙断连、锁屏、外部输入法与本机 LLM 继续按 #662 验收。</p></article>
+</ul><p>Next: 超过五分钟真人说话、物理蓝牙断连、锁屏、外部输入法与本机 LLM 留交用户按 #662 真机验收。</p></article>
 <article id="day-journal-native"><h3>一天一页原生界面</h3><span class="badge">done</span><p>四模式、当天片段/已有纪要、随心记、行动与设置内录音管理已接入原生界面；Rust 独占模式、动作与听写音源。完整 check 通过，独立父版本3条红、新版90条绿，原生隔离窗口验证导航、原文来源和跨页听写。2026-11-13 已安装签名版，使用开发工作区执行真实设备验收。 PR #669 已通过 CI 并 squash 合并为 c127845。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/667">issue 667: 原生接入范围。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/668">issue 668: 真实录音、外部输入法与签名版连续使用验收。</a></li>
@@ -181,7 +183,7 @@
 <article id="hardware-cloud"><h3>真实设备与付费服务</h3><span class="badge">in_progress</span><p>实体 D3200（soundcore Work，固件 04.92，存储 27.5 MB / 58.2 GB）已在签名版 /Applications/Koe.app 完成真机 BLE 发现、2E/01 ECDH 握手、01/01 双端 100% 电量遥测、1B/0E 10 条硬件录音目录同步及 5 步使用引导验证；完整音频取回与真实付费云服务继续在 #588 验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/588">issue 588: 独立需要真机工单</a></li>
 </ul><p>Next: 按 #588 继续验收完整取回、边录边转写与真实云服务。</p></article>
-<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-13 已安装本轮全天听记和离线模型的 Developer ID 签名版，CDHash 6effb6569c7eca24be6064e3662e9b18f87455fd，签名要求与旧版一致。verify-self/smoke-test 通过。日常界面 58 条记录仍可见、D3200 自动重连、设置和两种演示已核对；不代表硬件录制通过。</p><ul>
+<article id="merge-install"><h3>本机签名安装</h3><span class="badge">done</span><p>2026-11-15 已安装包含 #702 浅色弹窗锁定与 #704 全天听记修复的 Developer ID 签名版 /Applications/Koe.app（2.0.0 构建 9，CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22），签名要求与旧版一致，Keychain 凭据静默继承。verify-self 与 smoke-test 前后均通过；日常界面 59 条记录可见、无旧版迁移入口、D3200 自动重连、设置与双场景演示及四个浅色弹窗均已核对；不代表物理录制通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/587">issue 587: 实现范围与验收入口</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/594">issue 594: 未运行态下已在同一 Dock 并排截图确认 Responsay、Sonori、Koe、Micro Input、Kotone 视觉轮廓对齐。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/595">pull 595: 系统图标大小修复已 squash 合并，CI 通过；安装与 GUI 重启验证完成。</a></li>
@@ -191,7 +193,8 @@
 <li><a href="https://github.com/semantic-craft/koe/pull/638">pull 638: 含转写原文分段编辑与说话人合并的签名版已重装并通过 verify-self 与 smoke-test。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/642">pull 642: 沙盒态运行中签名版 Koe.app（CDHash 9c8f3beb2dee51b88d372612064c60265ffcee54）实测 0600 koe.sock 实时暴露 16 项 MCP 工具；最终加固提交 cc58082 通过 verify-self 与 smoke-test，待退出运行中应用后重装刷新。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/pull/646">pull 646: 合并提交 e8e317e 已重装 Developer ID 签名版 /Applications/Koe.app（CDHash b567c5e501154071b3d444264b41277318fcd610）并通过 verify-self 与 smoke-test。</a></li>
-</ul><p>Next: 本轮硬件长时验收见 #662。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/706">pull 706: 基于 2bcac49 重装 Developer ID 签名版 /Applications/Koe.app（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22），通过 verify-self 与 smoke-test，完成四个浅色弹窗实机复核并结案 #654。</a></li>
+</ul><p>Next: 物理长时说话、断连与锁屏验收由用户按 #662 推进。</p></article>
 <article id="flutter-device-acceptance"><h3>旧 Flutter 库真机验收</h3><span class="badge">done</span><p>按用户要求取消旧 Flutter 资料迁移功能及其专属验收。已保存记录与当前工作区读取保留。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/598">issue 598: 独立真机验收工单，保持未验。</a></li>
 </ul><p>Next: 不再实施旧库导入；当前工作区恢复按全天听记验收核对。</p></article>
@@ -213,10 +216,12 @@
 <article id="capture-studio-device-acceptance"><h3>独立「录音」页音源切换与实时字幕真机验收</h3><span class="badge">unverified</span><p>本轮已通过 C ABI v2 隔离音源回归、CoreAudio 传输类型分类测试与签名版二进制自检；尚未在真机连接实体 D3200 与蓝牙耳机核对热插拔选源切换、闲置态 A2DP 音质保持、录音期电平跳动与实时字幕提示。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/issues/645">issue 645: 独立真机验收工单，保持开放未验。</a></li>
 </ul><p>Next: 连接实体 D3200 与蓝牙耳机按 #645 逐项核对。</p></article>
-<article id="plaud-light-install"><h3>浅色版日常安装与退出修复</h3><span class="badge">done</span><p>已安装 Developer ID 签名浅色修复版。自检不再覆盖日常通信入口；运行中自检后 CLI 仍正常，Cmd-Q 退出与重开通过，已有记录可见。PR #702 已补充 ItemEditor、AllDayDemoView、ConnectGuideSheet 与 NativeQuitPanel 的 .darkAqua 离屏位图回归。</p><ul>
-<li><a href="https://github.com/semantic-craft/koe/issues/654">issue 654: 签名日常安装与 GUI 退出重开通过。</a></li>
+<article id="plaud-light-install"><h3>浅色版日常安装与退出修复</h3><span class="badge">done</span><p>已安装 Developer ID 签名浅色修复版（CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22）。自检不覆盖日常通信入口，Cmd-Q 退出重开与 59 条既有记录读取通过；在 -AppleInterfaceStyle Dark 实机进程下完成 ConnectGuideSheet、ItemEditor（待办/记忆）、AllDayDemoView 双场景及 NativeQuitPanel 正在退出面板截图复核，全部保持纯白浅色表面与深色可读正文，#654 已结案。</p><ul>
+<li><a href="https://github.com/semantic-craft/koe/issues/654">issue 654: 签名日常安装、-AppleInterfaceStyle Dark 四个浅色弹窗实机截图复核与 GUI 退出重开全部通过，工单已关闭。</a></li>
 <li><a href="https://github.com/semantic-craft/koe/issues/657">issue 657: 路径删除后的退出死锁有先红后绿回归和真机采样。</a></li>
-</ul><p>Next: 待下次运行 scripts/install-macos.sh 更新 /Applications/Koe.app 后完成实体弹窗视觉复核并结案 #654。</p></article>
+<li><a href="https://github.com/semantic-craft/koe/pull/702">pull 702: 锁定 ItemEditor、AllDayDemoView 与 NativeQuitPanel 浅色底色并新增 LightModalAppearanceTests。</a></li>
+<li><a href="https://github.com/semantic-craft/koe/pull/706">pull 706: 重装签名版 CDHash 34dd9d91834d9fbb63360a9a6d307485e3b3cc22 完成实机复核并结案 #654。</a></li>
+</ul><p>Next: #654 已全部验收并结案；后续新增弹窗继续由 DesignKit 浅色契约与 LightModalAppearanceTests 守护。</p></article>
 <article id="third-party-license-bundle"><h3>Soundcore MIT 署名与安装包许可</h3><span class="badge">done</span><p>已补齐 tacshi/Soundcore 的 MIT 正文和 Rocky Shi 署名；正常构建及 --skip-build 均在签名前更新许可。安装器 9 项回归和全量门禁通过；真实 Developer ID 签名包自检、冒烟通过，8 份文件逐字节一致。仓库保持私有，未替换日常应用。</p><ul>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/assets/licenses/soundcore.txt">file assets/licenses/soundcore.txt: 上游固定提交的完整 MIT 正文</a></li>
 <li><a href="https://github.com/semantic-craft/koe/blob/main/THIRD_PARTY_NOTICES.md">file THIRD_PARTY_NOTICES.md: 来源版本、采纳范围与安装包目录</a></li>
