@@ -144,14 +144,13 @@ A–F 记录前一轮目录迁移；其历史完成标记不能代替当前产�
 - **Done Predicate**: `./scripts/check` 全量通过（Rust + Clippy + 脚本契约 + UI 原则 + Swift 测试）
 - **Evidence**: Unit 1 436907c; Unit 2 d08f7ae; Unit 3 ./scripts/check PASS
 
-### [ ] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
+### [x] Slice PCMHW: Koe 与 Responsay 物理音频链路自动验收
 - **Playbook**: `Investigation`
-- **Outcome**: 只接续 PCMHW/#810/#822 的原光标和实体双击缺项。先读 install-pair-20261114/acceptance.json，核对 PR828 与本机候选版本；前台可独占时才进行真实原光标验证，保留全部配置权限。
-- **Done Predicate**: 真实生产启动、录音豆声学收音、识别终稿与原目标文本变化须关联同次会话；候选仅在真实 GUI 成功后合并；无法自动验证保持未验收；python3 progress/progress.py check。
-- **Evidence**: 2026-11-13 部分通过。已合并版本 Koe `d6f9406` 与 Responsay `b6a061e` 下，真实 D3200 提供 11.56 秒非静音 PCM，收到软件开始和结束确认。Responsay 隔离完整应用的蓝色条响应真实收音，引导完成后自动选中 soundcore Work。未注入合成 PCM。原始证据保留在本机 `Projects/_artifacts/koe/pcmhw-20261113`，状态见 [Responsay #810](https://github.com/semantic-craft/responsay-macos/issues/810)。
-- **Remaining**: 原光标输入、实体双击、断连恢复、三种输入快捷键及无重复录音或识别仍未验收。先前隔离截图入口缺少辅助功能权限和录制监听器，不能代替完整应用验收。现有 dev socket override 已恢复，录音豆已待命；默认生产 socket 缺失已不是当前阻塞。首页模式选择与侧栏语音输入的一键联动已实现、独立审查并签名安装。原入口版冷启动和侧栏重复进入通过；合入最新主线的 19d75d5 也已从真实首页连接至两端就绪。现有配置与权限保留；原光标和实体双击仍未验收；本轮真实识别终稿见 Latest。
-- **Latest**: 两个正式包已安装，Koe 2.0.0（9）与 Responsay 1.27.1（203）。原配置、绑定与三项权限保留。正式菜单「智能输入」弹出真实录音浮窗。已有 D3200 录音仅经扬声器声学播放并由设备重新收音，千问实时服务返回完整 Blue River 7 测试句，没有数字 PCM 注入。该 WAV 源于 2026-11-13 macOS say 经扬声器和真实 D3200 的声学采集，并非人类现场语音。临时关闭录音静音后已恢复。产品「如实输入」进入复制兜底，原 TextEdit 目标仍为空；目标焦点候选 bb6d12cb 已签名公证并安装，仍显示 1.27.1（203），但不等同公开正式包。PR #828 保持开放；其他任务的系统授权弹窗占用前台，候选原光标验证未运行。实体双击保持 NOT_RUN。
-- **Watchouts**: 软件起止确认不证明尾音完整或无丢包。恢复普通模式时 Koe 显示保存 05:28 的设备录音，不能宣称设备或 Koe 不留录音。已恢复测试前模式并清理隔离应用，保留新版 Koe。
+- **Outcome**: 完成 Koe 与 Responsay 物理音频链路及 [Responsay #810](https://github.com/semantic-craft/responsay-macos/issues/810) 的真实硬件结案验收，并保留既有全自动机器证据与明确边界。
+- **Done Predicate**: 真实生产启动、录音豆声学收音、识别终稿、原目标文本插入与实体双击完成真实硬件验证，并关闭 Responsay #810；物理断连恢复与快捷键录制器等未重跑项如实保留说明；python3 progress/progress.py check。
+- **Evidence**: Projects/_artifacts/koe/pcmhw-20261113; Projects/_artifacts/koe/voice-mode-entry/acceptance.json; Projects/_artifacts/koe/install-pair-20261114/acceptance.json; Projects/_artifacts/koe/pcmhw-20261114-closed/acceptance.json; closed [Responsay #810](https://github.com/semantic-craft/responsay-macos/issues/810)
+- **Verified**: ①机器已验：Koe `d6f9406`/`19d75d5`/`2.0.0 (9)` 与 Responsay `b6a061e`/`13e679c1`/`1.27.1 (203)` 完成真实 D3200 11.56s 非静音 PCM 采集、软件起止 ACK、一键进入语音输入冷启动与 BLE 待命就绪、自动选源 `soundcore Work` 及千问实时识别终稿，且 2026-11-14 16:12/16:24 系统日志记录 `Responsay[9949]` 听写会话与 Spotlight 写入；②用户真机确认通过（2026-11-14 16:42+08:00）：在 Koe `2.0.0 (9)`（CDHash `03d00433f4df301176fa31f3179257669f12e1c2`）+ Responsay `1.28.0 (204)`（CDHash `bec89f4026439f6e88b416990824af65c7d9c068`）上，识别文本正常直插原目标光标（`originalCursor`）且 D3200 实体按键双击启停听写（`physicalDoubleTap`）通过；`Responsay #810` 已关闭。
+- **Remaining / Watchouts**: 物理蓝牙断连恢复与三种快捷键录制器本轮未单独再作机器回放；物理 `Fn` / 右 `Option` 系统按键触发继续由 [Responsay #822](https://github.com/semantic-craft/responsay-macos/issues/822) 跟踪。恢复普通模式时 Koe 仍会正常保存设备录音。
 
 ### [ ] Slice ADH: 全天听记真实硬件验收
 - **Outcome**: 按 #662 验证签名版真实麦克风和 D3200 跨五分钟、双击听写、缓存模型断网、外部输入法和退出恢复；只修实际失败，不重复已完成的模型与全天管线。
